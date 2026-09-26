@@ -1422,3 +1422,310 @@ def test_detail_shape_and_counts_label(api):
 
     refreshed = client.get(f"{BASE}/{delivered['id']}").json()
     assert refreshed["counts_label"] == "Delivered (by DO date)"
+
+
+# --------------------------------------------------------------------------------------- #
+# Review round 2: null in PATCH, non-UUID ids, cross-company and soft-deleted DO, company
+# scope hardening, performance guard.
+# --------------------------------------------------------------------------------------- #
+
+
+def _no_leaked_sql(body_text: str) -> None:
+    lowered = body_text.lower()
+    for needle in ("psycopg", "sql", "insert", "update"):
+        assert needle not in lowered, f"{needle!r} leaked into the error body: {body_text}"
+
+
+@pytest.mark.parametrize(
+    "field", ["metric", "basis", "product_scope", "start_date", "end_date"],
+)
+def test_patch_null_field_is_422_not_500(api, field):
+    """A PATCH sending an explicit JSON null for a required header field must be refused as a
+    validation error, never let the null reach a NOT NULL column and surface as a raw DB 500
+    with the statement and parameters in the body."""
+    client, db, _ = api
+    agent = _agent(db, "A")
+    target = client.post(BASE, json={
+        "subject_kind": "agent", "sales_agent_id": agent.id, "name": "ZZT", "metric": "amount",
+        "basis": "ordered", "product_scope": "all", "start_date": "2026-10-01", "end_date": "2026-10-31",
+        "target_value": 100,
+    }).json()
+    res = client.patch(f"{BASE}/{target['id']}", json={field: None})
+    assert res.status_code == 422, res.text
+    _no_leaked_sql(res.text)
+
+
+@pytest.mark.parametrize(
+    "payload_fn",
+    [
+        lambda agent, team: {
+            "subject_kind": "agent", "sales_agent_id": agent.id, "name": "ZZT", "metric": "amount",
+            "basis": "ordered", "product_scope": "categories", "category_ids": ["x"],
+            "start_date": "2026-10-01", "end_date": "2026-10-31", "target_value": 1,
+        },
+        lambda agent, team: {
+            "subject_kind": "agent", "sales_agent_id": agent.id, "name": "ZZT", "metric": "amount",
+            "basis": "ordered", "product_scope": "products", "product_ids": ["x"],
+            "start_date": "2026-10-01", "end_date": "2026-10-31", "target_value": 1,
+        },
+        lambda agent, team: {
+            "subject_kind": "agent", "sales_agent_id": "x", "name": "ZZT", "metric": "amount",
+            "basis": "ordered", "product_scope": "all",
+            "start_date": "2026-10-01", "end_date": "2026-10-31", "target_value": 1,
+        },
+        lambda agent, team: {
+            "subject_kind": "team", "sales_team_id": "x", "name": "ZZT", "metric": "amount",
+            "basis": "ordered", "product_scope": "all",
+            "start_date": "2026-10-01", "end_date": "2026-10-31",
+            "agent_figures": [{"sales_agent_id": agent.id, "target_value": 1}],
+        },
+        lambda agent, team: {
+            "subject_kind": "team", "sales_team_id": team["id"], "name": "ZZT", "metric": "amount",
+            "basis": "ordered", "product_scope": "all",
+            "start_date": "2026-10-01", "end_date": "2026-10-31",
+            "agent_figures": [{"sales_agent_id": "x", "target_value": 1}],
+        },
+    ],
+    ids=["category_ids", "product_ids", "sales_agent_id", "sales_team_id", "agent_figures_agent_id"],
+)
+def test_create_rejects_non_uuid_ids_as_422(api, payload_fn):
+    client, db, _ = api
+    agent = _agent(db, "A")
+    team = client.post(TEAMS_BASE, json={"name": "ZZT North", "sales_agent_ids": [agent.id]}).json()
+    res = client.post(BASE, json=payload_fn(agent, team))
+    assert res.status_code == 422, res.text
+    _no_leaked_sql(res.text)
+
+
+def test_do_cross_company_link_counts_nothing(api):
+    """A DO seeded under a DIFFERENT company (`orders.company_id` and `order_lines.company_id`
+    = B) but linked (`sales_order_line_id`) to company A's sales order line must not count for
+    company A's target: the residual behaves exactly as if no DO were linked at all (the case
+    (a) figure in `test_do_golden_a_to_d`), and `counts_label` agrees - it never sees a linked
+    DO line, because that row belongs to another company."""
+    from app.models.company import Company
+    from app.models.inventory import Warehouse
+    from app.models.order import Order, OrderLine
+
+    client, db, company_id = api
+    agent = _agent(db, "X")
+    category = _category(db, company_id)
+    product = _product(db, company_id, category.id)
+    _, line = _so_line(
+        db, company_id, agent_id=agent.id, order_date=date(2026, 9, 20), line_total=Decimal("10000"),
+        qty_ordered=100, qty_delivered=100, product_id=product.id,
+    )
+
+    other = Company(id=_uid(), name="ZZT Other Co", code=f"Z{_uid()[:6]}")
+    db.add(other)
+    db.flush()
+    with company_scope(db, None):
+        foreign_warehouse = Warehouse(
+            id=_uid(), company_id=other.id, warehouse_code=f"ZZT{_uid()[:8]}", is_active=True
+        )
+        db.add(foreign_warehouse)
+        db.flush()
+        foreign_order = Order(
+            id=_uid(), company_id=other.id, order_number=f"ZZT{_uid()[:8]}", order_date=date(2026, 10, 5),
+            is_cancelled=False,
+        )
+        db.add(foreign_order)
+        db.flush()
+        db.add(OrderLine(
+            id=_uid(), company_id=other.id, line_sequence=1, order_id=foreign_order.id,
+            product_id=product.id, warehouse_id=foreign_warehouse.id, quantity=40,
+            sales_order_line_id=line.id,
+        ))
+        db.flush()
+
+    target = client.post(BASE, json={
+        "subject_kind": "agent", "sales_agent_id": agent.id, "name": "ZZT", "metric": "amount",
+        "basis": "delivered", "product_scope": "all", "start_date": "2026-09-01", "end_date": "2026-09-30",
+        "target_value": 0,
+    }).json()
+    rows = client.get(BASE, params={"on": "2026-09-25", "subject": "agent"}).json()["rows"]
+    row = next(r for r in rows if r["target_id"] == target["id"])
+    assert row["achieved_value"] == 10000  # as if no DO were linked at all
+    assert client.get(f"{BASE}/{target['id']}").json()["counts_label"] == "Delivered"
+
+
+def test_do_soft_deleted_counts_nothing_like_cancelled(api):
+    """A linked DO with `orders.deleted_at` set counts nothing, exactly like a cancelled one
+    (the case-(c) numbers in `test_do_golden_a_to_d`)."""
+    from datetime import datetime
+
+    from app.models.order import Order
+
+    client, db, company_id = api
+    agent = _agent(db, "DEL")
+    category = _category(db, company_id)
+    product = _product(db, company_id, category.id)
+    warehouse = _warehouse(db, company_id)
+    _, line = _so_line(
+        db, company_id, agent_id=agent.id, order_date=date(2026, 9, 20), line_total=Decimal("10000"),
+        qty_ordered=100, qty_delivered=100, product_id=product.id,
+    )
+    sep = client.post(BASE, json={
+        "subject_kind": "agent", "sales_agent_id": agent.id, "name": "ZZT Sep", "metric": "amount",
+        "basis": "delivered", "product_scope": "all", "start_date": "2026-09-01", "end_date": "2026-09-30",
+        "target_value": 0,
+    }).json()
+    nov = client.post(BASE, json={
+        "subject_kind": "agent", "sales_agent_id": agent.id, "name": "ZZT Nov", "metric": "amount",
+        "basis": "delivered", "product_scope": "all", "start_date": "2026-11-01", "end_date": "2026-11-30",
+        "target_value": 0,
+    }).json()
+    _do_line(db, company_id, product.id, warehouse.id, line.id, quantity=40, order_date=date(2026, 10, 5))
+    do_nov_order, _do_nov_line = _do_line(
+        db, company_id, product.id, warehouse.id, line.id, quantity=30, order_date=date(2026, 11, 3)
+    )
+
+    def achieved(target_id, on):
+        rows = client.get(BASE, params={"on": on, "subject": "agent"}).json()["rows"]
+        return next(r for r in rows if r["target_id"] == target_id)["achieved_value"]
+
+    assert achieved(nov["id"], "2026-11-15") == 3000
+    assert achieved(sep["id"], "2026-09-25") == 3000
+
+    db.query(Order).filter(Order.id == do_nov_order).update({"deleted_at": datetime(2026, 11, 4)})
+    db.flush()
+    assert achieved(nov["id"], "2026-11-15") == 0     # soft-deleted: counts nothing, like cancelled
+    assert achieved(sep["id"], "2026-09-25") == 6000  # the residual absorbs it back, like case (c)
+
+
+def test_company_scope_hardened(api):
+    """Security nit 5: the foreign target carries a period (not a bare header), a foreign
+    agent/team/category/product named in a CREATE payload is refused, and a PATCH cannot reach
+    a foreign target by pairing a foreign target id with the caller's OWN period id."""
+    from app.models.company import Company
+    from app.models.inventory import Warehouse
+    from app.models.product import Product, ProductCategory
+    from app.models.sales import SalesTarget, SalesTargetPeriod
+    from app.models.sales_agent import SalesAgent
+
+    client, db, company_id = api
+    other = Company(id=_uid(), name="ZZT Other Co", code=f"Z{_uid()[:6]}")
+    db.add(other)
+    db.flush()
+    with company_scope(db, None):
+        foreign_agent = SalesAgent(id=_uid(), sales_agent=f"ZZT{_uid()[:8]}", company_id=other.id)
+        db.add(foreign_agent)
+        db.flush()
+        foreign_category = ProductCategory(
+            id=_uid(), company_id=other.id, category_code=f"ZZT{_uid()[:8]}", category_name="ZZT Foreign Cat",
+        )
+        db.add(foreign_category)
+        db.flush()
+        foreign_uom = _uom(db)
+        foreign_product = Product(
+            id=_uid(), company_id=other.id, product_code=f"ZZT{_uid()[:8]}", product_name="ZZT Foreign Product",
+            category_id=foreign_category.id, base_uom_id=foreign_uom.id, list_price=Decimal("0"),
+        )
+        db.add(foreign_product)
+        db.flush()
+
+        foreign_target = SalesTarget(
+            id=_uid(), company_id=other.id, target_no="TGT-999999", name="ZZT Foreign",
+            subject_kind="agent", sales_agent_id=foreign_agent.id, metric="amount", basis="ordered",
+            product_scope="all", start_date=date(2026, 10, 1), end_date=date(2026, 10, 31),
+        )
+        db.add(foreign_target)
+        db.flush()
+        foreign_period = SalesTargetPeriod(
+            id=_uid(), company_id=other.id, target_id=foreign_target.id,
+            period_start=date(2026, 10, 1), period_end=date(2026, 10, 31), target_value=Decimal("100"),
+        )
+        db.add(foreign_period)
+        db.flush()
+        from app.models.sales import SalesTeam
+
+        foreign_team = SalesTeam(id=_uid(), company_id=other.id, name="ZZT Foreign Team")
+        db.add(foreign_team)
+        db.flush()
+
+    rows = client.get(BASE, params={"on": "2026-10-15", "subject": "agent"}).json()["rows"]
+    assert foreign_target.id not in [r["target_id"] for r in rows]
+    assert client.get(f"{BASE}/{foreign_target.id}").status_code == 404
+    assert client.delete(f"{BASE}/{foreign_target.id}").status_code == 404
+
+    own_agent = _agent(db, "OWN")
+    # A foreign agent named in a create payload.
+    res = client.post(BASE, json={
+        "subject_kind": "agent", "sales_agent_id": foreign_agent.id, "name": "ZZT", "metric": "amount",
+        "basis": "ordered", "product_scope": "all", "start_date": "2026-10-01", "end_date": "2026-10-31",
+        "target_value": 1,
+    })
+    assert res.status_code in (404, 422), res.text
+
+    # A foreign team named in a create payload.
+    res = client.post(BASE, json={
+        "subject_kind": "team", "sales_team_id": foreign_team.id, "name": "ZZT", "metric": "amount",
+        "basis": "ordered", "product_scope": "all", "start_date": "2026-10-01", "end_date": "2026-10-31",
+        "agent_figures": [{"sales_agent_id": own_agent.id, "target_value": 1}],
+    })
+    assert res.status_code in (404, 422), res.text
+
+    # A foreign category named in a create payload.
+    res = client.post(BASE, json={
+        "subject_kind": "agent", "sales_agent_id": own_agent.id, "name": "ZZT", "metric": "amount",
+        "basis": "ordered", "product_scope": "categories", "category_ids": [foreign_category.id],
+        "start_date": "2026-10-01", "end_date": "2026-10-31", "target_value": 1,
+    })
+    assert res.status_code in (404, 422), res.text
+
+    # A foreign product named in a create payload.
+    res = client.post(BASE, json={
+        "subject_kind": "agent", "sales_agent_id": own_agent.id, "name": "ZZT", "metric": "amount",
+        "basis": "ordered", "product_scope": "products", "product_ids": [foreign_product.id],
+        "start_date": "2026-10-01", "end_date": "2026-10-31", "target_value": 1,
+    })
+    assert res.status_code in (404, 422), res.text
+
+    # A PATCH on the foreign target's period, using MY OWN target's period id: still 404,
+    # because the target lookup itself is company-scoped before the period is ever consulted.
+    mine = client.post(BASE, json={
+        "subject_kind": "agent", "sales_agent_id": own_agent.id, "name": "ZZT Mine", "metric": "amount",
+        "basis": "ordered", "product_scope": "all", "start_date": "2026-10-01", "end_date": "2026-10-31",
+        "target_value": 1,
+    }).json()
+    my_period_id = mine["periods"][0]["id"]
+    res = client.patch(f"{BASE}/{foreign_target.id}/periods/{my_period_id}", json={"target_value": 5})
+    assert res.status_code == 404, res.text
+
+
+def test_detail_query_stays_fast_at_scale(api):
+    """Regression guard for quadratic growth in the delivered-by-DO-date achievement query
+    (reviewer measured 0.78s at 500 lines on the old query, on this machine's DB). 12 monthly
+    periods, 300 SO lines and 2 linked, non-residual DO lines each: GET /sales/targets/{id}
+    must return well inside a generous budget, not scale like O(n^2) with the line count."""
+    import time
+
+    client, db, company_id = api
+    agent = _agent(db, "PERF")
+    category = _category(db, company_id)
+    product = _product(db, company_id, category.id)
+    warehouse = _warehouse(db, company_id)
+
+    for month in range(1, 13):
+        order_date = date(2026, month, 5)
+        for _ in range(300):
+            _, line = _so_line(
+                db, company_id, agent_id=agent.id, order_date=order_date, line_total=Decimal("100"),
+                qty_ordered=10, qty_delivered=10, product_id=product.id,
+            )
+            # No residual: the two DOs exactly cover qty_ordered.
+            _do_line(db, company_id, product.id, warehouse.id, line.id, quantity=6, order_date=order_date)
+            _do_line(db, company_id, product.id, warehouse.id, line.id, quantity=4, order_date=order_date)
+    db.flush()
+
+    target = client.post(BASE, json={
+        "subject_kind": "agent", "sales_agent_id": agent.id, "name": "ZZT Perf", "metric": "amount",
+        "basis": "delivered", "product_scope": "all", "start_date": "2026-01-01", "end_date": "2026-12-31",
+        "split_every": 1, "split_unit": "month", "target_value": 0,
+    }).json()
+
+    started = time.monotonic()
+    res = client.get(f"{BASE}/{target['id']}")
+    elapsed = time.monotonic() - started
+    assert res.status_code == 200, res.text
+    assert elapsed < 1.5, f"detail took {elapsed:.2f}s for 3,600 SO lines / 7,200 DO lines"
