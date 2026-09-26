@@ -1,7 +1,8 @@
 # PLAN: Order inquiry view without double counting - one row per sales order line, history behind the History icon
 
 Status: grilled (owner rulings 26 Sep 2026 folded in, see "Owner rulings 26 Sep 2026" below). S0
-(FE mock) starts on `feat/oi-no-double-count-s0`. S3 (worklist) is dropped (G8). Track: feature (three-phase) - expected diff is over ~300 lines across FE and BE; no
+(FE mock) built on `feat/oi-no-double-count-s0`, awaiting the owner's hands-on; S1 next. S3
+(worklist) is dropped (G8). Track: feature (three-phase) - expected diff is over ~300 lines across FE and BE; no
 migration, no auth/RBAC change, no new ingest surface, so `security-reviewer` is expected to be
 skipped. Issue #1248. Docs branch `claude/oi-no-double-count-plan-kyf2l4` (draft PR; docs PRs are
 never merged alone, this plan rides in the first feature PR).
@@ -246,8 +247,10 @@ client-side by id; S1 moves it server-side for the whole-OI Confirm).
 
 ### History dialog (G2, G3)
 
-Extends `DecisionTrailDialog` (#1244) rather than adding a component: title "History - <item>
-(<SO> L<n>)", `TabsList variant="line"`: Rows | Decisions | Reserve. Rows is a small `DataGrid`
+Reuses #1244's trail rather than forking it: `DecisionTrailDialog`'s body is exported as
+`DecisionTrailEntries` and is the Decisions tab of `OrderInquiryLineHistoryDialog` (S0 as built;
+the board and the worklist keep `DecisionTrailButton` and its dialog unchanged). Title "History -
+<item> (<SO> L<n>)", `TabsList variant="line"`: Rows | Decisions | Reserve. Rows is a small `DataGrid`
 (fixed layout, explicit sizes, truncate + title) inside its own horizontal scroller: When, Qty,
 What, Document, Why. The live rows on top as "Now"; retired rows follow newest first. What is a
 `Badge` pill: Now / Used / Superseded / Re-raised / Cancelled / Cancel balance / Line cancelled.
