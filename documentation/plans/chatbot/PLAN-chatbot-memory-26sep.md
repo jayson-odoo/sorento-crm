@@ -688,5 +688,192 @@ English replies continue.
 (the existing escalation comment gets the summary line). Without memory: a team question with
 no context carried.
 
-Every example is a replay case in S4 (section 8.1); 1, 2, 3, 5, 8 and 10 go red with memory
-ablated.
+Every example is a replay case in S4 (section 8.1). Examples 1, 2, 3, 4, 5, 8 and 10 go red
+with memory ablated (they read memory); 7 and 9 test the write path (the fact must be on the
+profile afterwards); 6 tests the live CRM read and the two-option offer.
+
+## 8. How each layer is evaluated
+
+Three questions per layer: does it go red without memory (proof the test tests memory), what
+does it cost in prompt tokens, and what does it cost in latency.
+
+### 8.1 Key-free turn replay (CI, every PR)
+
+New directory `tests/chatbot/replay_turns/memory/`, run by the existing
+`tests/chatbot/test_turn_replay.py`. The case shape gains three optional inputs and two
+expectations:
+
+```
+given:    frames: [...]            closed episodes seeded for the contact (is_test)
+          profile_facts: [...]     facts seeded into chatbot_profile.facts
+          live_turns: [...]        earlier turns of the live episode (message, branch, focus)
+expected: prompt_contains: [...]   lines the assembled user block must contain
+          context_caps: true       the ContextReport shows every layer within budget
+          (plus the existing branch_kind, tools, focus_after, text, canned, action_kinds)
+```
+
+Replay stubs the parser with the recorded verdict, so it proves the ENGINE side: assembly,
+routing, the history composer, the reply shape, the writes. Each case carries
+`needs_memory: true`, and a meta-test re-runs every such case with memory ablated (a fixture
+that empties L3 to L5 and the frames and facts reads) and **asserts it now fails**. A memory
+case that stays green without memory is a defect in the case (the PRINCIPLES kill test,
+applied to the corpus). AC-MEM067.
+
+Cases per layer (minimum; each lands in its slice):
+
+| layer | cases | red without memory because |
+|---|---|---|
+| episodes (S1, S3) | gap close + summary text; topic-switch close with all turn ids; "same report as yesterday" re-runs without asking; "and in kuching?" carries the live product; "that one" resolves to the previous episode's product after a topic switch | prompt lacks the summary or earlier message; the recorded verdict's carried entity has no source line |
+| profile (S2, S3) | "the usual" (example 8); usual site ordering; stated role written (example 7); stated language used on the next canned line (example 9); a staff tombstone is not re-learned; "I'm the owner" grants nothing | no `About this contact` line; fact missing after the turn |
+| out-of-boundary (S4) | the ten examples of 7.3; the ack guard replaces a hallucinated number; no silent turn on `out_of_scope` / `escalation_declined`; no exception text | no memory_line / offer; silence |
+
+### 8.2 Live parser evaluation (needs the OpenAI key; run on every PR that touches the prompt)
+
+`tests/chatbot/fixtures/parser_memory_cases.json`, about 30 cases: an assembled user block
+with memory, plus the expected verdict keys (resolved entities with `current_message: false`,
+`message_type`, `profile_statement`). Run through the existing parity path
+(`scripts/chatbot_parser_parity.py`) twice:
+
+| run | pass bar |
+|---|---|
+| with memory blocks | at least 27 of 30 correct |
+| memory blocks stripped (ablation) | at least 24 of 30 WRONG (else the case does not test memory and is rewritten) |
+| the existing parser corpus (about 1,871 params) new prompt vs pre-S3 prompt | agreement at least 97% (the S1b slim work measured 95.8% as a regression and 99.0% as self-agreement), every disagreement listed in the PR and ruled on |
+
+### 8.3 Console check (live, after deploy; `documentation/agents/chatbot-verification.md`)
+
+`tests/chatbot/console_cases/2026-09-memory.yaml`: multi-turn sequences that close an episode
+by a natural topic switch (no clock tricks): "stock SRTWB1455" / "outstanding DO for chin
+chun" / "back to that sink, stock in kuching?" must answer SRTWB1455 in Kuching. Plus examples
+1, 3, 4 and 10 on the console contact. These run on `is_test` turns and so write and read
+`is_test` frames only.
+
+### 8.4 Token measurement (the S3 production gate)
+
+Recorded per turn from S3 on: `understood.facts.prompt_tokens`, `completion_tokens`, and the
+`context` event's per-layer estimates. The gate query (3 weekdays before vs 3 after):
+
+```sql
+select t.created_at::date d, count(*) turns,
+  percentile_cont(0.5)  within group (order by (e->'facts'->>'prompt_tokens')::int) p50,
+  percentile_cont(0.95) within group (order by (e->'facts'->>'prompt_tokens')::int) p95,
+  max((e->'facts'->>'prompt_tokens')::int) mx,
+  count(*) filter (where t.trace::text like '%"kind": "recall"%') recall_turns
+from chatbot.turns t, jsonb_array_elements(t.trace) e
+where e->>'stage' = 'understood' and not t.is_test and t.ingress = 'webhook'
+group by 1 order by 1;
+```
+
+Before S3 the same query uses `facts.tokens` (total) minus the completion estimate; S0 adds
+`prompt_tokens` to the facts early so the "before" window is measured the same way.
+
+Pass: p95 prompt tokens after <= p95 before; `recall_turns` = 0; the estimator is never below
+the provider's `prompt_tokens` for the user block's share (checked on the same window).
+
+### 8.5 Latency
+
+The stage query of #1275 (appendix A3) over the same two windows, with the budgets of 6.6.
+Pass: CRM turn p50 +0.1 s at most, p95 not higher; `received` p95 +40 ms at most;
+`remembered` p95 <= 150 ms.
+
+### 8.6 Owner hand pass
+
+The ten examples of 7.3 on the WhatsApp test number, after S4, before merge. The owner's
+verdict is recorded verbatim in the PR.
+
+## 9. Slices
+
+One lane, one branch (`feat/chatbot-memory`), one PR; slices land as commits (lane merge
+discipline). Phase 1 first: the FE for S2 (facts grid, episodes grid, open orders) and the
+S0 drawer fix and S1 settings card, against mocks, verified in the browser. Then Phase 2 per
+slice, tester first. Phase 3 once for the lane; `security-reviewer` joins because S2 adds
+write routes on contacts and S3 changes what reaches an LLM from stored data.
+
+| slice | what | depends on | UAC |
+|---|---|---|---|
+| S0 | schema and write path: frame index + `is_test`; episode boundaries (topic switch, gap at intake, handover); every turn id recorded; trace `memory` event fixed; drawer contract fixed; `prompt_tokens` on the trace; usage logs carry turn id | none | AC-MEM001 to AC-MEM012 |
+| S1 | episode summaries: `episode_digest`; summary rules (no figures); backfill script; retention sweep; settings card wired / trimmed | S0 | AC-MEM020 to AC-MEM029 |
+| S2 | profile facts and staff screen: vocabulary, four writers, precedence, tombstones, "facts never grant", tier pick writes, Contact card sections, facts routes | S1 (tally reads digests) | AC-MEM030 to AC-MEM049 |
+| S3 | prompt assembly under budget: `turn/context.py`, per-layer caps, memory addendum and its paid cuts, `history_question` and `profile_statement` in the schema, recall re-parse deleted, date moved to the end, budget CI test, production token gate | S1, S2 | AC-MEM060 to AC-MEM072 |
+| S4 | out-of-boundary replies: reply shape, clarifier gets the memory slice, ack guard, history composer, handover names who, no silence, no exception text, language templates | S3 | AC-MEM080 to AC-MEM095 |
+
+### S0 - Schema and write path
+
+- Migration: `conversation_frames.is_test boolean not null default false`; index
+  `(contact_respond_id, is_test, closed_at desc)`. Revision id <= 32 chars, reparented at
+  PR time (`scripts/alembic-reparent.sh`).
+- `_write_episode` takes the full turn range (turns since the previous frame's `closed_at`),
+  writes on `topic_reset` and on a gap detected at intake inside the per-contact ticket; no
+  write when the range is empty; still none on a dry run.
+- Handover close: the first bot turn after a human takeover closes the range.
+- The trace `memory` event records the frame WRITTEN this turn and the real profile before and
+  after; `trace_detail._memory` and `TurnDetailDrawer` agree on one shape (backend shape wins;
+  FE types follow it); a vitest crosses the seam with a recorded production trace
+  (LESSONS-LEARNT #102).
+- `understood.facts` carries `prompt_tokens` and `completion_tokens`; `usage.py` logs the turn
+  id.
+- Summary text stays the old placeholder in S0 (S1 replaces it); behaviour for the dealer is
+  unchanged in S0.
+
+DoD: migration up and down on a prod copy; `pytest tests/chatbot -k "memory or episode"` green
+on Postgres; a three-topic conversation plus one 31-minute gap produces three frames with the
+right turn ids; drawer shows the Memory panel on a real turn at 375 and 1280 px
+(agent-browser, sidebar navigation); single alembic head.
+
+### S1 - Episode summaries
+
+- `turn/episode_digest.py` (pure) and the summary line of 5.2, written by S0's writer.
+- `scripts/backfill_chatbot_episodes.py` over the retention window; deletes placeholder
+  frames; idempotent.
+- Nightly sweep: retention, idle close.
+- Settings card: `memory_default`, `episode_retention_days`, `episode_gap_minutes`; the two
+  dead keys removed from model, schema, both dict builders and the card.
+
+DoD: digest golden tests over 10 recorded episodes from the 25 Sep dump (anonymised), each
+summary <= 240 chars with no figure; backfill run twice on a prod copy gives the same frame
+count; sweep deletes a 91-day frame and keeps an 89-day one; card saves and reloads each key;
+browser pass on the card.
+
+### S2 - Profile facts and staff screen
+
+- `turn/profile_facts.py`: vocabulary, `derive_crm`, `tally`, `apply_statement`, precedence,
+  tombstones, expiry; called from the S0 writer's transaction and from APPLY's tail write.
+- Routes: `GET /user-management/contacts/{id}/chatbot/memory` (facts, last 10 episodes, top 5
+  open orders); `PUT` and `DELETE .../chatbot/facts/{key}` (deferred-action delete). The
+  whole-profile PUT stops writing `facts`.
+- Tier pick in chat writes `tier`. `always_full_report` removed.
+- FE: the two grids and the open orders list in `ContactChatbotSection.tsx`, via hook and
+  service (`useContactChatbotMemory`, `contactChatbotService`), `extractApiError`,
+  `SearchableSelect clearable` for the key, DataGrid fixed layout.
+
+DoD: pytest per route (happy, 403 without the permission, 422 on an unknown key, tombstone
+survives a tally); the "I'm the owner" case leaves `access_levels` and linked customers
+byte-identical; agent-browser: sidebar to User Management > Contacts > a contact, add, edit,
+delete (countdown, no dialog) a fact, at 375 and 1280 px; both dict builders carry `facts`.
+
+### S3 - Prompt assembly under budget
+
+- `turn/context.py` and its budget table (6.2); `build_user_block` becomes a caller.
+- Parser prompt: the memory addendum, the cuts of 6.4, the date moved to the end, the schema
+  additions; published as a new registry version (Prompts page, one commit message).
+- Recall re-parse and its trace kind deleted; the per-contact toggle relabelled.
+- CI: `test_parser_prompt_budget.py`, the `assemble` worst-case test, the ablation meta-test.
+
+DoD: 8.1 memory cases green and red under ablation; 8.2 bars met and the parity list ruled on
+in the PR; the budget test green; after deploy, the 8.4 gate and 8.5 latency pass (the lane
+stays open, or a follow-up is filed, until the 3-weekday window is in).
+
+### S4 - Out-of-boundary replies
+
+- Reply shape (7.2); clarifier input gains the L5 + L4 slice under 400 tokens and returns
+  `{"ack": ...}`; the guard; templates in `chatbot_reply_copy` (en, ms, zh).
+- `history` route and composer (frames only, numbered re-run options that the parser can
+  resolve next turn against `Recent conversations`).
+- `out_of_scope` and `escalation_declined` always send a visible line; the error path sends
+  the existing apology copy, never exception text.
+- Handover names the salesperson for commercial asks, the domain team otherwise; the routed
+  message carries the live episode's summary line.
+
+DoD: the ten examples as replay cases (8.1) green, and red under ablation where 7.3 says so;
+console YAML green after deploy; the owner's hand pass (8.6) recorded; the #1275 no-reply
+query shows 0 `out_of_scope` / `escalation_declined` turns without a send over 3 weekdays.
