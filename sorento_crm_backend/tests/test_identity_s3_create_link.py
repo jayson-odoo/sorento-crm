@@ -821,6 +821,49 @@ def test_ac52_get_user_and_get_me_carry_five_fields(api_client):
         assert field in me_data, f"GET /users/me must carry {field!r}"
 
 
+def test_ac52_get_me_carries_real_sign_in_field_values_not_just_schema_defaults(api_client):
+    """GET /users/me must actually merge `sign_in_summary` for the CALLER, not merely
+    answer with UserResponse's own field defaults (None/False), which would make the
+    `field in me_data` check in test_ac52_get_user_and_get_me_carry_five_fields pass
+    even when get_current_user_profile never calls sign_in_summary at all."""
+    import datetime as _dt
+
+    from app.dependencies import get_current_user
+    from app.services.user_session_service import mint_session
+
+    client, db, admin = api_client
+    contact = _seed_contact(db, name="Me Sign In Contact")
+    phone = _msisdn(_phone())
+    self_user = _seed_user(db, name="Self Sign In User", email=None, phone=phone)
+    self_user.respond_contact_id = contact.id
+    self_user.phone_verified_at = _dt.datetime.utcnow()
+    db.commit()
+    mint_session(db, self_user.id, remember=True, auth_method="phone_otp")
+
+    def _override_self():
+        return {"id": self_user.id, "email": None, "name": self_user.name, "status": "ACTIVE"}
+
+    app.dependency_overrides[get_current_user] = _override_self
+    try:
+        resp = client.get("/api/v1/user-management/users/me")
+    finally:
+        app.dependency_overrides[get_current_user] = lambda: {
+            "id": admin.id,
+            "email": admin.email,
+            "name": admin.name,
+            "status": "ACTIVE",
+        }
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data.get("linked_contact") is not None and data["linked_contact"]["id"] == contact.id, (
+        "GET /users/me must carry the caller's real linked_contact, not the schema default"
+    )
+    assert data.get("last_sign_in_method") == "phone_otp", (
+        "GET /users/me must carry the caller's real last_sign_in_method, not the schema default"
+    )
+
+
 def test_ac52_needs_invitation_true_then_false_after_resend_invite(api_client):
     client, db, _admin = api_client
     user = _seed_user(db, name="Never Invited", email=f"{unique_code('inv')}@x.com".lower())
