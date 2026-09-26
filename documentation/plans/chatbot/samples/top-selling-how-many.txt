@@ -1,0 +1,11 @@
+*Top selling items*
+Ranked by: Quantity
+Basis: Delivered (transferred to DO)
+Items with sales: 1,284
+Customer: all
+Category: all
+Sales agent: all
+Channel: all
+Delivery date: 01/01/2026 to 31/12/2026
+
+That list is too long for one message. How many items do you want to see?

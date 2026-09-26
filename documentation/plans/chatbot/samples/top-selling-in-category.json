@@ -1,0 +1,37 @@
+{
+  "group": "item",
+  "rank_by": "qty",
+  "basis": "delivered",
+  "top_n": 3,
+  "total": 42,
+  "customer_name": null,
+  "category_name": "KITCHEN SINK",
+  "sales_agent": null,
+  "agent_fill_pct": null,
+  "channel": null,
+  "date_from": "2026-01-01",
+  "date_to": "2026-12-31",
+  "rows": [
+    {
+      "rank": 1,
+      "code": "SRTWT7445",
+      "name": "Kitchen Sink 2 Bowl",
+      "qty": 1240,
+      "amount": 86400.0
+    },
+    {
+      "rank": 2,
+      "code": "SRTWT7446",
+      "name": "Kitchen Sink 1 Bowl",
+      "qty": 760,
+      "amount": 41800.0
+    },
+    {
+      "rank": 3,
+      "code": "SRTWT8120",
+      "name": "Undermount Sink",
+      "qty": 315,
+      "amount": 28350.0
+    }
+  ]
+}

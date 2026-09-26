@@ -1,0 +1,16 @@
+*Top 10 selling items*
+Ranked by: Quantity
+Basis: Delivered (transferred to DO)
+Items with sales: 4
+Customer: HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I]
+Category: all
+Sales agent: all
+Channel: all
+Delivery date: 01/07/2026 to 30/09/2026
+
+1. SRTWT7445 Kitchen Sink 2 Bowl: Qty 180, RM 12,600.00
+2. SRTKT39SS Kitchen Tap: Qty 150, RM 4,800.00
+3. SRTBS1020 Basin Mixer: Qty 40, RM 2,400.00
+4. SRTSH2201 Shower Set: Qty 12, RM 0.00
+
+Reply with a rank number to see that item's customers and months.

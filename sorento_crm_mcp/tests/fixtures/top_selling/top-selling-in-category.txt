@@ -1,0 +1,15 @@
+*Top 3 selling items*
+Ranked by: Quantity
+Basis: Delivered (transferred to DO)
+Items with sales: 42
+Customer: all
+Category: KITCHEN SINK
+Sales agent: all
+Channel: all
+Delivery date: 01/01/2026 to 31/12/2026
+
+1. SRTWT7445 Kitchen Sink 2 Bowl: Qty 1,240, RM 86,400.00
+2. SRTWT7446 Kitchen Sink 1 Bowl: Qty 760, RM 41,800.00
+3. SRTWT8120 Undermount Sink: Qty 315, RM 28,350.00
+
+Reply with a rank number to see that item's customers and months.
