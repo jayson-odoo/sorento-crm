@@ -126,7 +126,12 @@ async def get_product_suppliers_by_product(
     db: Session = Depends(get_db)
 ):
     """Every current sourcing link for a product, "their code" (S4) and its cost lists
-    (#1288, AC-CL-08) alongside each one."""
+    (#1288, AC-CL-08) alongside each one.
+
+    A bare list, NOT `{"data": [...]}` - this route predates the cost-price lane and two
+    FE components (`ProductSuppliersTab.tsx`, `ProductSuppliersSection.tsx`) already read
+    the response as an array of `ProductSupplier`; only a `costs` field is new here.
+    """
     try:
         from app.services.procurement.supplier_cost_service import costs_for_link
 
@@ -136,7 +141,6 @@ async def get_product_suppliers_by_product(
         for row in rows:
             data.append({
                 "id": str(row.id),
-                "product_supplier_id": str(row.id),
                 "product_id": str(row.product_id),
                 "supplier_id": str(row.supplier_id),
                 "standard_lead_time_days": row.standard_lead_time_days,
@@ -151,6 +155,14 @@ async def get_product_suppliers_by_product(
                 ),
                 "created_at": row.created_at.isoformat() if row.created_at else None,
                 "supplier_item_code": getattr(row, "supplier_item_code", None),
+                "product": (
+                    {
+                        "id": str(row.product.id),
+                        "product_code": row.product.product_code,
+                        "product_name": row.product.product_name,
+                    }
+                    if row.product else None
+                ),
                 "supplier": (
                     {
                         "id": str(row.supplier.id),
@@ -161,7 +173,7 @@ async def get_product_suppliers_by_product(
                 ),
                 "costs": costs_for_link(db, row.id),
             })
-        return {"data": data}
+        return data
     except HTTPException:
         raise
     except Exception as e:
