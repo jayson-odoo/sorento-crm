@@ -511,6 +511,71 @@ def test_run_extraction_commits_progress_once_per_page(scenario, monkeypatch):
     assert commit_count["n"] >= 5
 
 
+def test_the_polled_detail_reports_each_page_as_it_is_read(scenario, monkeypatch):
+    """W3 (PR #1265 round 3): the schedule screen's progress bar is the pages read of the
+    total, and it only moves if the detail the screen polls says so WHILE the version is
+    still RUNNING. Read through ``get_version_detail`` (the route's own read) after every
+    commit, so a progress key the poller never sees fails here even if the commits happen.
+    """
+    db = scenario["db"]
+    service = ProjectScheduleService(db)
+    version = scenario["version"]
+    version.extracted_json = {"page_count": 3}
+    db.flush()
+
+    monkeypatch.setattr(
+        ProjectScheduleService, "_document_bytes",
+        lambda self, version: (b"ZZT", "application/pdf"),
+    )
+    monkeypatch.setattr(project_schedule_service, "parse_text_matrix", lambda *a, **k: {})
+    monkeypatch.setattr(
+        document_extraction, "_render_pages_rich",
+        lambda *a, **k: [RenderedPage(image_b64="i", image_mime="image/jpeg") for _ in range(3)],
+    )
+
+    class _StubProvider:
+        name = "stub"
+
+        def chat(self, messages, **kwargs):
+            return ChatResult(content="{}", prompt_tokens=1, completion_tokens=1, total_tokens=2)
+
+    monkeypatch.setattr(document_extraction, "get_provider", lambda *a, **k: _StubProvider())
+    monkeypatch.setattr(app_settings, "document_ai_provider", "gemini", raising=False)
+    monkeypatch.setattr(app_settings, "gemini_api_key", "ZZT-key", raising=False)
+    monkeypatch.setattr(app_settings, "document_ai_page_concurrency", 1, raising=False)
+
+    polled: list[tuple[str, int, int]] = []
+    original_commit = db.commit
+
+    polling = {"now": False}
+
+    def polling_commit(*args, **kwargs):
+        result = original_commit(*args, **kwargs)
+        if version.extraction_state == "running" and not polling["now"]:
+            polling["now"] = True
+            try:
+                detail = service.get_version_detail(version.id)
+            finally:
+                polling["now"] = False
+            polled.append(
+                (detail["extraction_state"], detail["pages_extracted"], detail["page_count"])
+            )
+        return result
+
+    db.commit = polling_commit
+
+    result = service.run_extraction(version.id)
+    db.commit = original_commit
+
+    assert result["status"] in ("done", "partial")
+    assert polled == [
+        ("running", 0, 3),
+        ("running", 1, 3),
+        ("running", 2, 3),
+        ("running", 3, 3),
+    ]
+
+
 def test_a_retry_after_a_failed_read_does_not_pin_progress_to_the_old_page_count(scenario, monkeypatch):
     """Same defect as the PO reader's sibling test: a retry runs `run_extraction` again
     on the SAME version row, and a failed attempt can leave stale entries in

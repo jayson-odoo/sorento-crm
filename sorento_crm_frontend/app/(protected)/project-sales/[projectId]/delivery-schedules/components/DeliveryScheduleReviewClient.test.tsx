@@ -312,8 +312,12 @@ describe('DeliveryScheduleReviewClient, reading states', () => {
     );
     renderReview();
 
-    expect(await screen.findByText('Queued')).toBeInTheDocument();
-    expect(screen.getByText('7 pages waiting to be read.')).toBeInTheDocument();
+    // W3: the PO read's own progress element, bar included (owner hand test, 26 Sep).
+    // Twice, as on the PO: the status pill in the header and the progress card.
+    expect(await screen.findAllByText('Waiting to be read')).toHaveLength(2);
+    expect(screen.getByText('7 pages')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar')).toBeInTheDocument();
+    expect(screen.getByText('This page updates itself. You can leave it and come back.')).toBeInTheDocument();
     expect(screen.queryByTestId('schedule-matrix')).toBeNull();
   });
 
@@ -323,8 +327,10 @@ describe('DeliveryScheduleReviewClient, reading states', () => {
     );
     renderReview();
 
-    expect(await screen.findByText('Reading the schedule')).toBeInTheDocument();
-    expect(screen.getByText('Page 4 of 7.')).toBeInTheDocument();
+    expect(await screen.findByText('Reading the document')).toBeInTheDocument();
+    expect(screen.getByText('Page 4 of 7')).toBeInTheDocument();
+    // W3: the bar is the pages read, 3 of 7, not a fixed stand-in.
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '43');
   });
 
   it('does not let a partial extraction look like success', async () => {
@@ -864,6 +870,37 @@ describe('DeliveryScheduleReviewClient Need attention (S5-4)', () => {
 
     fireEvent.click(screen.getByRole('radio', { name: 'By area' }));
     expect(await screen.findByTestId('schedule-matrix')).toBeInTheDocument();
+  });
+
+  it('fills the chosen segment of both controls with the accent, in bold (W2)', async () => {
+    // Owner hand test, 26 Sep: "i don't really know which one is being focused". A slightly
+    // whiter background is not a selection. Both controls take the one filled style the
+    // dealer-kit segmented control already uses, and a focus ring that is not a fill.
+    renderReview();
+    await screen.findByTestId('schedule-matrix');
+
+    const segments = ['By area', 'By date', 'Need attention (2)', 'All rows (3)'].map((name) =>
+      screen.getByRole('radio', { name }),
+    );
+    for (const segment of segments) {
+      expect(segment).toHaveClass(
+        'data-[state=on]:bg-primary',
+        'data-[state=on]:text-primary-foreground',
+        'data-[state=on]:font-semibold',
+        'focus-visible:ring-2',
+        'focus-visible:ring-offset-2',
+      );
+    }
+    expect(segments.map((segment) => segment.getAttribute('data-state'))).toEqual([
+      'on',
+      'off',
+      'on',
+      'off',
+    ]);
+
+    fireEvent.click(segments[1]);
+    expect(segments[1]).toHaveAttribute('data-state', 'on');
+    expect(segments[0]).toHaveAttribute('data-state', 'off');
   });
 });
 
