@@ -81,9 +81,9 @@ def test_t15_one_candidate_is_a_pick_carrying_the_quantity():
     assert pick.payload["stock_qty"] == 10
 
 
-def test_several_candidates_list_one_code_per_line():
+def test_several_candidates_list_one_numbered_code_per_line():
     text, pick = _t15_pick(codes=("ELP3754", "ELP3756"))
-    assert text == "Couldn't find ELP3753. Did you mean:\nELP3754\nELP3756"
+    assert text == "Couldn't find ELP3753. Did you mean:\n1. ELP3754\n2. ELP3756"
     assert [o["label"] for o in pick.options] == ["ELP3754", "ELP3756"]
 
 

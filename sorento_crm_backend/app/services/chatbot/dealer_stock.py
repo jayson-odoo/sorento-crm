@@ -17,7 +17,7 @@ from dataclasses import replace
 from typing import Any
 
 from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS, Pending, ask
-from app.services.chatbot.turn.task import MAX_NAMED, MAX_SLOTS, REFER_TO_SALESMAN
+from app.services.chatbot.turn.task import MAX_NAMED, MAX_SLOTS, REFER_TO_SALESMAN, numbered
 
 #: Every escalation sentence the stock ask's composers print
 #: (`lanes/business/answer.py`, `turn/compose.py`), whole: the "reply with a code"
@@ -99,7 +99,7 @@ def did_you_mean(
             if len(labels) > len(lines)
             else []
         )
-        text = "\n".join([f"Couldn't find {shown}. Did you mean:", *lines, *more])
+        text = "\n".join([f"Couldn't find {shown}. Did you mean:", *numbered(lines), *more])
     pick = ask(
         "product_pick",
         options,

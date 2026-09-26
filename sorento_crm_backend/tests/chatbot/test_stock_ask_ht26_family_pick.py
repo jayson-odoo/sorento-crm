@@ -49,7 +49,9 @@ def test_t1_family_with_no_quantity_is_a_pick_and_opens_no_task():
     )
 
     assert reply.tasks == (), "a family is a pick, never a ten-slot quantity task"
-    assert reply.text == "\n".join(["SRTWC286 matches 10 products. Which one?", *FAMILY])
+    assert reply.text == "\n".join(
+        ["SRTWC286 matches 10 products. Which one?", *task_mod.numbered(FAMILY)]
+    )
     assert reply.pick is not None
     assert [o["label"] for o in reply.pick["options"]] == FAMILY
     assert all(o["uuid"] == ht.uuid_of(o["label"]) for o in reply.pick["options"])
@@ -68,7 +70,7 @@ def test_t3_family_with_a_quantity_carries_it_on_the_pick():
 
     assert reply.tasks == ()
     assert reply.text.splitlines()[0] == "SRTWC286 x 88: which one?"
-    assert reply.text.splitlines()[1:] == FAMILY
+    assert reply.text.splitlines()[1:] == task_mod.numbered(FAMILY)
     assert reply.pick["payload"]["stock_qty"] == 88
 
 
@@ -89,7 +91,7 @@ def test_more_than_ten_matches_lists_ten_and_counts_the_rest():
     )
     lines = reply.text.splitlines()
     assert lines[0] == "SRTX1 matches 12 products. Which one?"
-    assert lines[1:11] == codes[:10]
+    assert lines[1:11] == task_mod.numbered(codes[:10])
     assert lines[11] == "and 2 others, reply with the full code."
 
 

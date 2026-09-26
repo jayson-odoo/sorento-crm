@@ -735,9 +735,18 @@ def _group(rows: list[dict[str, Any]], token: str) -> list[dict[str, Any]]:
     ]
 
 
+def numbered(labels: list[str]) -> list[str]:
+    """One "1. CODE" line per option, the format every other picker prints
+    (`turn/compose.py::compose_question`). Owner ruling 26 Sep 2026 (round 3 hand test):
+    a which-one list is numbered, "like the other pickers"."""
+    return [f"{i}. {label}" for i, label in enumerate(labels, 1)]
+
+
 def pick_question(typed: str, labels: list[str], quantity: Any = None, count: int | None = None) -> str:
-    """The family pick (owner hand test 26 Sep, slice 2, the scout's wording). The code
-    is the answer, so the lines carry no numbers."""
+    """The family pick (owner hand test 26 Sep, slice 2, the scout's wording), one
+    numbered code per line. A number is read as a position only while this question is
+    open and nothing has been picked from it yet (`apply._bare_position_is_the_quantity`
+    says what it is after that)."""
     total = count if isinstance(count, int) and count > len(labels) else len(labels)
     qty = _number(quantity)
     head = (
@@ -751,7 +760,7 @@ def pick_question(typed: str, labels: list[str], quantity: Any = None, count: in
         if total > len(lines)
         else []
     )
-    return "\n".join([head, *lines, *tail])
+    return "\n".join([head, *numbered(lines), *tail])
 
 
 def after_reply(
