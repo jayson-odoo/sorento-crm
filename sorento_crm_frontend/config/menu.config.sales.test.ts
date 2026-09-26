@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { MENU_SIDEBAR, MENU_SIDEBAR_COMPACT } from './menu.config';
-import { filterMenuByModule } from '@/app/components/layouts/demo1/components/sidebar-menu';
+import { filterMenuByModule } from '@/lib/menu-module-filter';
 import type { MenuConfig, MenuItem } from './types';
 
 const SALES_AGENTS_PATH = '/master-data-management/sales-agents';
