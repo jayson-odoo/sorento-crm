@@ -99,6 +99,13 @@ export function productShortName(description: string | null | undefined): string
 }
 
 /**
+ * Wide enough for a code and its short name on one line (24rem), wider than the Flag popover
+ * it opens from, and never wider than the screen: the menu is portalled, and the select caps it
+ * at the space Radix measured.
+ */
+const MENU_CLASS = 'min-w-[280px] w-[max(var(--radix-popper-anchor-width),24rem)]';
+
+/**
  * One line per option: the code, then the short name, clipped with an ellipsis if even that
  * does not fit. The whole description is the row's hover title.
  */
@@ -225,7 +232,7 @@ export function DeliveryScheduleProductPicker({
         initialQuery={seed}
         emptyMessage={emptyMessage}
         renderOption={renderProductOption}
-        className="min-w-[280px]"
+        className={MENU_CLASS}
         renderTrigger={({ disabled: isDisabled }) => (
           <button
             type="button"
@@ -262,7 +269,7 @@ export function DeliveryScheduleProductPicker({
         emptyMessage={emptyMessage}
         renderOption={renderProductOption}
         triggerClassName="w-full"
-        className="min-w-[280px]"
+        className={MENU_CLASS}
       />
     </>
   );

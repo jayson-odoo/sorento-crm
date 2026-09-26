@@ -14,7 +14,9 @@ FE only; vitest/type-check green; browser evidence is component-level (the real 
 `?demo=` fixture in Chromium, no live stack in the cloud lane); the S5-7 pass on HQ/26/01/121 v2
 stays owed on a local stack. Reviewer pass on #1265 (26 Sep): B1, B2, S1 and S2 fixed on the
 same branch, test-first (S2 adds a backend gate on the schedule's `document_url`, no
-migration). S7 not started.
+migration). Owner hand test 26 Sep (round 3): W1 picker options one line, W2 filled segments,
+W3 the schedule read shows the PO read's progress bar (pages read of total); fixed on the same
+branch, test-first. S7 not started.
 Track per slice: S1 small fix; S4 small fix; S2, S3, S5, S6, S7 full track.
 
 UAC: `documentation/plans/projects/po-schedule-redesign-24sep-acceptance-criteria.md`.
