@@ -48,15 +48,23 @@ export function isSafeCallbackUrl(cb: string | null | undefined): cb is string {
 }
 
 /**
- * A `callbackUrl` the user may open wins; otherwise the session's own
- * `homePath` (a salesperson's portal home, the CRM home for anyone with a
- * permission, else the portal home) - never a bare `/` when the backend
- * already knows better (AC-28).
+ * A deep link the user followed wins; otherwise the session's own `homePath`
+ * (a salesperson's portal home, the CRM home for anyone with a permission,
+ * else the portal home), AC-28. The bare `/` the protected layout adds on a
+ * plain visit is not a deep link, so it never beats `homePath`.
  */
+export function pickLandingUrl(
+  callbackUrl: string | null,
+  homePath: string | null | undefined,
+): string {
+  if (isSafeCallbackUrl(callbackUrl) && callbackUrl !== '/') return callbackUrl;
+  return homePath || '/';
+}
+
 async function resolveLandingUrl(callbackUrl: string | null): Promise<string> {
-  if (isSafeCallbackUrl(callbackUrl)) return callbackUrl;
+  if (isSafeCallbackUrl(callbackUrl) && callbackUrl !== '/') return callbackUrl;
   const session = await getSession();
-  return session?.user?.homePath || '/';
+  return pickLandingUrl(callbackUrl, session?.user?.homePath);
 }
 
 export default function Page() {

@@ -4,7 +4,7 @@
  * genuine same-origin path.
  */
 import { describe, expect, it } from 'vitest';
-import { isSafeCallbackUrl } from './page';
+import { isSafeCallbackUrl, pickLandingUrl } from './page';
 
 describe('isSafeCallbackUrl', () => {
   it('rejects a backslash-smuggled absolute URL', () => {
@@ -26,5 +26,23 @@ describe('isSafeCallbackUrl', () => {
   it('rejects null/empty', () => {
     expect(isSafeCallbackUrl(null)).toBe(false);
     expect(isSafeCallbackUrl('')).toBe(false);
+  });
+});
+
+describe('pickLandingUrl (AC-28)', () => {
+  it('a deep link the user followed wins over the home path', () => {
+    expect(pickLandingUrl('/orders/42', '/portal/c/ABC')).toBe('/orders/42');
+  });
+
+  it('the bare "/" the protected layout adds is not a deep link, so the home path wins', () => {
+    expect(pickLandingUrl('/', '/portal/c/ABC')).toBe('/portal/c/ABC');
+  });
+
+  it('no callback and no home path lands on the CRM home', () => {
+    expect(pickLandingUrl(null, null)).toBe('/');
+  });
+
+  it('an unsafe callback falls back to the home path', () => {
+    expect(pickLandingUrl('//evil.com', '/portal/c/ABC')).toBe('/portal/c/ABC');
   });
 });
