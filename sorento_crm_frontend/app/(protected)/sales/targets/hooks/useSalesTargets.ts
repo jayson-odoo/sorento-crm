@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   createSalesTarget,
   createTargetChild,
@@ -26,9 +27,9 @@ const SALES_TEAMS_KEY = ['sales-teams'] as const;
 
 export function useSalesTargets(params: SalesTargetListParams, enabled = true) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [...SALES_TARGETS_KEY, params],
     queryFn: () => getSalesTargets(params),
-    placeholderData: (previous) => previous,
     enabled,
   });
 }

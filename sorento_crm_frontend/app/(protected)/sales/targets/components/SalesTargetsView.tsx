@@ -159,7 +159,7 @@ export default function SalesTargetsView() {
     ...(tab === 'agent' && teamFilter ? { salesTeamId: teamFilter } : {}),
     ...(debouncedSearch ? { query: debouncedSearch } : {}),
   };
-  const { data, isLoading, isFetching, isError, error } =
+  const { data, isLoading, isFetching, isPlaceholderData, isError, error } =
     useSalesTargets(listParams);
   // The Team filter's choices: the teams on the landing's own list (usually already cached).
   const { data: teamList } = useSalesTargets(
@@ -265,6 +265,7 @@ export default function SalesTargetsView() {
             on={on}
             canAdd={canAdd}
             isLoading={isLoading}
+            isPlaceholderData={isPlaceholderData}
             emptyMessage={emptyMessage}
             onSetTarget={setModal}
             toolbar={
@@ -371,6 +372,7 @@ function TargetsGrid({
   on,
   canAdd,
   isLoading,
+  isPlaceholderData,
   emptyMessage,
   onSetTarget,
   toolbar,
@@ -381,6 +383,7 @@ function TargetsGrid({
   on: string;
   canAdd: boolean;
   isLoading: boolean;
+  isPlaceholderData: boolean;
   emptyMessage: string;
   onSetTarget: (modal: ModalState) => void;
   toolbar: ReactNode;
@@ -649,6 +652,7 @@ function TargetsGrid({
       table={table}
       recordCount={lines.length}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       listingKey={`sales.targets.view::${tab}`}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
       emptyMessage={emptyMessage}
