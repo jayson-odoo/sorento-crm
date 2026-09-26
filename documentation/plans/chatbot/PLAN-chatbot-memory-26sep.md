@@ -311,3 +311,132 @@ sections under the toggles, same layout on view and edit:
 Permissions: view needs the existing `user_management.contacts.view`; add, edit and delete
 need the existing `user_management.contacts.edit`. No new permission, so no grant sweep.
 Both dict builders (`contact_to_response_dict` and the chatbot GET) list `facts` (DoD 4).
+
+## 5. Layer 2: episodes
+
+### 5.1 What an episode is
+
+A contiguous run of one contact's turns about one thing. It is **closed** by the first of:
+
+| trigger | close_reason | detected where |
+|---|---|---|
+| the parser says `topic_reset` (today's only trigger) | `topic_switch` | APPLY, written by the tail (unchanged seam) |
+| a gap: this turn arrives more than `episode_gap_minutes` (default 30) after the contact's previous turn | `idle` | intake, before the parser runs, inside the per-contact ticket |
+| the nightly memory sweep finds a live episode idle past the gap | `idle` | the existing scheduler (section 5.5) |
+| staff take over the conversation (human intervention flag) | `handover` | intake of the next bot turn |
+
+There is **no open row**. The live episode is simply "this contact's turns since the last
+closed frame's `closed_at`" (one indexed read of `chatbot.turns`, at most 4 rows needed). An
+episode is written once, already closed, as `write_episode` does today. This keeps the one
+writer (the tail, or intake for a gap close) and needs no "open then patch" state.
+
+Why 30 minutes: turns per contact per day are p50 4, p95 30 (#1275), and a WhatsApp dealer's
+burst is minutes long. Grill question 2 lets the owner pick another number; it is one value
+in the existing `system_settings.chatbot_memory` JSON (the Memory card already has the field
+slot; section 5.6).
+
+`is_test` turns (console) write frames flagged `is_test = true` and read only `is_test`
+frames, so console conversations never leak into a real dealer's memory and vice versa. Dry
+runs keep writing nothing (LESSONS-LEARNT #101: a dry run previews the decision, it does not
+persist it).
+
+### 5.2 The written summary (deterministic, no LLM call)
+
+Built by one pure function, `turn/episode_digest.py::digest(turns) -> Digest`, from what the
+turns already recorded: each turn's `branch_kind`, `focus` after, the composer's section data
+(domain, entities, hit or miss), the offer and its answer, the escalation team. Output:
+
+```
+Digest = {
+  domains: ["stock", "incoming"],
+  entities: {"product": ["SRTWB1455"], "customer": ["CC001 Chin Chun Trading"], ...},
+  asks: [{"domain": "stock", "entities": ["SRTWB1455"], "outcome": "answered"},
+         {"domain": "incoming", "entities": ["M486-75-BL"], "outcome": "not_found"}],
+  offers: [{"team": "Stock", "answer": "declined"}],
+  small_talk_turns: 1,
+  turn_count: 5, first_at, last_at, close_reason
+}
+summary (<= 240 chars) =
+  "Thu 25 Sep, 5 turns: stock SRTWB1455 (answered); incoming M486-75-BL (not found);
+   offered Stock team, declined."
+```
+
+Rules:
+
+- **No figures in a summary.** A stock count, a price or an ETA is stale by the next day; the
+  summary says what was asked and how it ended, never the number. A follow-up re-fetches.
+- Outcome is one of `answered | not_found | asked_back | escalated | declined | denied |
+  small_talk`, read from the turn's branch and offer, never from reply text.
+- Written into the existing columns: `summary`, `entities` (the digest's entities),
+  `result_refs` (document numbers the turns returned, e.g. SO numbers, for the history
+  answer), `turn_ids` (every turn of the episode, fixing today's one-id bug), `tools_used`,
+  `domain` (first domain), `intent`, `last_user_message` (200 chars).
+- It is a function of recorded data, so it is replayable in CI and backfillable over history.
+
+Why not an LLM summary: it would be a second model call per episode on the same shared 200k
+TPM org, it cannot be replayed key-free, and it can invent a fact. The deterministic line
+carries everything the parser and the history answer need (what, which entities, outcome).
+What it loses is the colour of small talk ("my son is sick today"). Trigger to add an LLM
+sentence (written down per PRINCIPLES): the S4 history-question replay cases or the owner's
+hand pass show a question the digest cannot answer. Grill question 3.
+
+### 5.3 Backfill (DoD 2)
+
+`scripts/backfill_chatbot_episodes.py` (idempotent, run once at deploy, re-runnable): for each
+contact, walk live `chatbot.turns` of the last `episode_retention_days` (default 90) in order,
+cut episodes by the same two triggers (recorded `topic_reset` in the `apply` event, and the
+gap), write one frame per episode with its digest, and delete the placeholder frames whose
+summary matches `Closed the % topic.`. Key: `(contact_respond_id, first turn id)`, so a second
+run changes nothing. About 4.4k turns from 74 contacts today: seconds, not minutes. After it
+runs, every dealer already has memory on day one.
+
+### 5.4 What the parser gets from episodes
+
+Two blocks, both inside the budget (section 6):
+
+```
+Earlier in this conversation (oldest first):
+- 10:02 you: stock SRTWB1455
+- 10:03 you: and in kuching?
+Recent conversations:
+- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.
+- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).
+```
+
+- "Earlier in this conversation": the live episode's user messages before the current one,
+  newest 3, each cut to 200 chars. The existing `Previous response:` line stays and is capped
+  at 600 chars. This is the "live episode instead of raw history" the owner asked for: the
+  parser has never seen a single earlier user message until now.
+- "Recent conversations": the last 3 closed episodes of the last 30 days, newest first in the
+  query, printed oldest first.
+- Recall is replaced by this. The vector recall and its second parse (`engine.py:1487-1520`)
+  are deleted in S3: every parse already carries the last three summaries, and a reference
+  beyond three episodes is a history question the S4 composer answers from the table. The
+  embedding enqueue stays (it exists, costs nothing on the turn, and
+  `/external/memory/frames/search` still serves n8n). Grill question 5.
+- The per-contact `chatbot_recall_enabled` toggle becomes the memory opt-out for that
+  contact (label "Use conversation memory"), default ON. Owner decision D3 of 15 Sep set
+  "global default off" for recall; this plan asks to flip it (grill question 1) because the
+  new blocks cost no extra call and carry no other contact's data.
+
+### 5.5 Retention
+
+A nightly sweep on the existing scheduler (`ENABLE_SCHEDULER` worker): deletes frames older
+than `episode_retention_days` (default 90), drops expired `tallied` / `stated` facts, and
+closes live episodes idle past the gap (so the staff screen and the tally are current even for
+a dealer who never writes again). The sweep is the only new scheduled job; it also closes
+BL-054's gap for frames (turns keep their own backlog item).
+
+### 5.6 Settings card: wire or remove
+
+The four dead `chatbot_memory` keys become:
+
+| key today | becomes |
+|---|---|
+| `recall_default` | `memory_default` (bool, default true): the value a new contact's toggle starts at |
+| `episode_retention_days` | wired: sweep and backfill window (default 90) |
+| `profile_fields` | removed (the vocabulary is code; a field list that nothing reads is config for a hypothetical) |
+| `focus_reset_events` | removed; replaced by `episode_gap_minutes` (default 30) |
+
+Both dict builders of `system_settings` carry the two new keys (DoD 4); the card shows three
+controls. Grill question 11.
