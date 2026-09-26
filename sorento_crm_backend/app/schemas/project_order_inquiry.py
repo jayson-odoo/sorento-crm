@@ -454,6 +454,10 @@ class OrderInquiryWorklistRow(BaseModel):
     # it has no core line; both null when the row names no sales order line at all.
     so_line_qty: Optional[str] = None
     so_line_no: Optional[int] = None
+    # PR #1266 review S1: the row's mirror sales order line, the OI detail's fold key and
+    # the header Lines count's own (G10). Unlike `core_line_id` it is there before
+    # AutoCount reconciles the line. Null when the row names no sales order line.
+    so_line_id: Optional[str] = None
     is_adopted: bool = False
     # The placed purchase order this row traces to (same coalesce the PO NO column reads),
     # so the "PO no" cell's popup can address `GET .../order-inquiries/po/{po_id}` without

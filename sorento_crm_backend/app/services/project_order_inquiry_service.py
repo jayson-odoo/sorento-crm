@@ -5687,11 +5687,20 @@ class ProjectOrderInquiryService:
     ) -> int:
         """G6 (`PLAN-oi-no-double-count-25sep.md`, owner ruling 26 Sep 2026): the OI
         detail shows ONE row per sales order line and puts a used row in History only, so
-        confirming a line also takes on that line's used rows still in `changed` - on the
-        SAME header and the SAME sales order line as a confirmed row, never another line
-        or another header (AC-ND-24, AC-ND-25). Without it the header sits Outstanding on
-        a row nobody can see. A cancelled used row is history and stays as it is. Swept
-        rows are not linked: a used row's goods were released to the pool."""
+        confirming a line also takes on that line's WAITING used rows - on the SAME header
+        and the SAME sales order line as a confirmed row, never another line or another
+        header (AC-ND-24, AC-ND-25). Without it the header sits Outstanding on a row
+        nobody can see.
+
+        A used row waits while it is not cancelled and its ack is awaiting or changed:
+        the same rule `lines_to_confirm` counts and the Lines tab reads as To confirm
+        (PR #1266 review S2), so a used row redirected before anyone read it (still
+        `awaiting`) is taken on too. A cancelled used row is history and stays as it is.
+        Swept rows are not linked: a used row's goods were released to the pool.
+
+        The (header, line) PAIR is matched in the query itself (review N1): one Confirm
+        can name header A line 1 and header B line 2, and a used row on header A line 2
+        is on neither pair."""
         lines = {
             (str(row.order_inquiry_id), str(row.so_line_id))
             for row in rows
@@ -5703,10 +5712,11 @@ class ProjectOrderInquiryService:
         used = (
             self.db.query(OrderInquiryRow)
             .filter(
-                OrderInquiryRow.order_inquiry_id.in_({key[0] for key in lines}),
-                OrderInquiryRow.so_line_id.in_({key[1] for key in lines}),
+                tuple_(OrderInquiryRow.order_inquiry_id, OrderInquiryRow.so_line_id).in_(
+                    list(lines)
+                ),
                 OrderInquiryRow.redirected_to_pool.is_(True),
-                OrderInquiryRow.ack_state == ACK_CHANGED,
+                OrderInquiryRow.ack_state.in_((ACK_AWAITING, ACK_CHANGED)),
                 OrderInquiryRow.state != INQUIRY_CANCELLED,
             )
             .all()
@@ -5714,8 +5724,6 @@ class ProjectOrderInquiryService:
         swept = 0
         for row in used:
             if str(row.id) in named:
-                continue
-            if (str(row.order_inquiry_id), str(row.so_line_id)) not in lines:
                 continue
             row.ack_state = ACK_ACKNOWLEDGED
             row.acknowledged_by = actor_user_id

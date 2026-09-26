@@ -2383,6 +2383,10 @@ class OrderInquiryWorklistService:
                 _qty_str(_dec(row.so_line_qty)) if row.so_line_qty is not None else None
             ),
             "so_line_no": row.so_line_no,
+            # PR #1266 review S1: the mirror line, the Lines tab's fold key and the header
+            # Lines count's own (G10). Present before AutoCount reconciles the line, when
+            # `core_line_id` above is still null.
+            "so_line_id": str(row.so_line_id) if row.so_line_id else None,
             # An adopted record is a mirror of a core sales order and has no project
             # registration; that pair is the whole distinction and the screen links on it.
             "is_adopted": bool(row.core_sales_order_id) and row.project_id is None,

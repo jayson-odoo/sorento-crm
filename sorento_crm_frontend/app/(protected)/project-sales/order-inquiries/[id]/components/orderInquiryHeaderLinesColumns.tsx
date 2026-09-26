@@ -570,7 +570,11 @@ export function useOrderInquiryHeaderLinesColumns({
       },
       // `PLAN-oi-request-cs-reserve.md` 6e.2 (AC-RS-83): the pill is plain text.
       {
-        accessorKey: 'state',
+        // PR #1266 review nit: sorts on the line's own State, what the cell shows, not
+        // the primary row's raw state (To confirm, Line cancelled and Nothing to buy
+        // sorted as raised / placed). Same id, so saved column preferences still apply.
+        id: 'state',
+        accessorFn: (row) => lineOf(row).state,
         header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
         // AC-RS-83c (owner, 24 Sep: "this pen can put right next to state?"): the
         // reserve icons sit in this cell, right of the pill - no separate column, which

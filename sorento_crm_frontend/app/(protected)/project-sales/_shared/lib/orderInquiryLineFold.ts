@@ -17,13 +17,16 @@ import type { OrderInquiryWorklistRow } from '../types/orderInquiry.types';
 
 /** The four quantity columns (G4) plus how the line reads. */
 export interface OrderInquiryLine {
-  /** Stable grid row id: `line:<core_line_id>`, `so:<so_number>:<line_no>` or `row:<id>`. */
+  /** Stable grid row id: `sol:<so_line_id>`, `line:<core_line_id>`, `so:<so_number>:<line_no>`
+   * or `row:<id>`. */
   key: string;
   lineNo: number | null;
   /** Every row of the line the Lines fetch returned: live, used and cancelled. */
   rows: OrderInquiryWorklistRow[];
   liveRows: OrderInquiryWorklistRow[];
   historyRows: OrderInquiryWorklistRow[];
+  /** Used rows still waiting on Confirm (`isWaitingUsedRow`), read in History only. */
+  waitingUsedRows: OrderInquiryWorklistRow[];
   /** Addresses the line's reserve actions, Raised via, Delivery date, Supplier, Location
    * and product: the reserve-bearing live buy row, else the most urgent live buy row,
    * else the first live row, else the first row. */
@@ -67,11 +70,28 @@ export function isLiveInquiryRow(row: OrderInquiryWorklistRow): boolean {
 }
 
 /**
- * Which sales order line a row belongs to. The worklist row carries no `so_line_id`; it
- * carries `core_line_id`, the core line the server resolved off the row's mirror
- * `so_line_id` (one-to-one), and `line_no`. A row that names neither is a line of its own.
+ * PR #1266 review S2 (G6 rationale: the header never sits Outstanding on a row nobody can
+ * see or confirm): a used row waits on Confirm while it is not cancelled and its ack is
+ * awaiting or changed. ONE rule, shared by the header's `lines_to_confirm`, the line's
+ * State (To confirm) and the server's Confirm sweep (`_acknowledge_used_rows_of`).
+ */
+export function isWaitingUsedRow(row: OrderInquiryWorklistRow): boolean {
+  return (
+    Boolean(row.redirected_to_pool) &&
+    row.state !== 'cancelled' &&
+    (row.ack_state === 'awaiting' || row.ack_state === 'changed')
+  );
+}
+
+/**
+ * Which sales order line a row belongs to: its mirror line `so_line_id`, the key the
+ * header's Lines count reads too (G10). It is one-to-one with the core line and, unlike
+ * `core_line_id` / `line_no` (both off the core line join), is there before AutoCount
+ * reconciles the line (review S1). A row served without it falls back to the core line,
+ * then SO number + line no; a row that names none is a line of its own.
  */
 export function foldKeyOf(row: OrderInquiryWorklistRow): string {
+  if (row.so_line_id) return `sol:${row.so_line_id}`;
   if (row.core_line_id) return `line:${row.core_line_id}`;
   if (row.line_no != null) return `so:${row.so_number ?? ''}:${row.line_no}`;
   return `row:${row.id}`;
@@ -94,6 +114,7 @@ function pickPrimary(live: OrderInquiryWorklistRow[], all: OrderInquiryWorklistR
 function buildLine(key: string, rows: OrderInquiryWorklistRow[]): OrderInquiryLine {
   const liveRows = rows.filter(isLiveInquiryRow);
   const historyRows = rows.filter((row) => !isLiveInquiryRow(row));
+  const waitingUsedRows = rows.filter(isWaitingUsedRow);
   const liveBuy = liveRows.filter((row) => isInquiryBuyRow(row.verb));
   const primary = pickPrimary(liveRows, rows);
   const lineCancelled = rows.some((row) => row.line_cancelled);
@@ -116,12 +137,14 @@ function buildLine(key: string, rows: OrderInquiryWorklistRow[]): OrderInquiryLi
 
   let state: string;
   if (lineCancelled) state = 'line_cancelled';
-  else if (liveRows.length === 0) state = 'nothing_to_buy';
   // AC-ND-7 (review B1): a live buy row CS amended after purchasing took it on waits on
   // purchasing again, and the approved mockup reads that line "To confirm". Only an
   // explicit `changed`: every fresh row is born `awaiting`, and AC-ND-8's fresh 4 still
-  // reads To buy.
-  else if (liveBuy.some((row) => row.ack_state === 'changed')) state = 'to_confirm';
+  // reads To buy. Review S2: a waiting used row makes it To confirm too, whether the
+  // line's live rows are already confirmed or it has none at all.
+  else if (liveBuy.some((row) => row.ack_state === 'changed') || waitingUsedRows.length > 0) {
+    state = 'to_confirm';
+  } else if (liveRows.length === 0) state = 'nothing_to_buy';
   else state = pickPrimary(
     // The most urgent STATE, whatever row the reserve pill reads.
     liveBuy.map((row) => ({ ...row, reserve_state: null })),
@@ -134,15 +157,18 @@ function buildLine(key: string, rows: OrderInquiryWorklistRow[]): OrderInquiryLi
 
   return {
     key,
-    lineNo: primary.line_no ?? null,
+    // `so_line_no` reads the mirror's No. when AutoCount has not reconciled the line yet.
+    lineNo: primary.so_line_no ?? primary.line_no ?? null,
     rows,
     liveRows,
     historyRows,
+    waitingUsedRows,
     primary,
     instructionRow,
     state,
     lineCancelled,
-    muted: lineCancelled || liveRows.length === 0,
+    // O2's grey "Nothing to buy" row, unless a used row on it still waits on Confirm.
+    muted: lineCancelled || (liveRows.length === 0 && waitingUsedRows.length === 0),
     soQty,
     requested,
     taken,
@@ -182,6 +208,16 @@ export function toLineRows(lines: OrderInquiryLine[]): OrderInquiryLineRow[] {
 
 export function lineOf(row: OrderInquiryLineRow): OrderInquiryLine {
   return row.line ?? buildLine(foldKeyOf(row), [row]);
+}
+
+/**
+ * The rows a tick on the line selects (AC-ND-12): its live rows, or, on a line with none,
+ * its waiting used rows, so a line whose only waiting row is used can still be ticked and
+ * confirmed (review S2). Never a cancelled row, and never a used row beside live ones:
+ * Link, Unlink and Reject work on live rows only (AC-ND-27).
+ */
+export function tickRowsOf(line: OrderInquiryLine): OrderInquiryWorklistRow[] {
+  return line.liveRows.length > 0 ? line.liveRows : line.waitingUsedRows;
 }
 
 /** Footer totals (AC-ND-17): cancelled lines excluded. Remaining is the sum of the line

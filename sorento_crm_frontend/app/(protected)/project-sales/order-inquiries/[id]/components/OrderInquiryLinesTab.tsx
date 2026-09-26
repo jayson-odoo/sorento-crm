@@ -35,6 +35,7 @@ import {
 import {
   foldInquiryLines,
   lineOf,
+  tickRowsOf,
   toLineRows,
   type OrderInquiryLine,
   type OrderInquiryLineRow,
@@ -86,23 +87,24 @@ function lineMatchesStateFilter(line: OrderInquiryLine, selected: string[]): boo
 }
 
 /** Detail's selection is keyed by ROW id (every mutation takes row ids); the grid ticks
- * LINES. A line reads ticked when every one of its live rows is. */
+ * LINES. A line reads ticked when every one of its tick rows is (`tickRowsOf`: its live
+ * rows, or its waiting used rows when it has none, review S2). */
 function lineSelectionOf(
   lineRows: OrderInquiryLineRow[],
   rowSelection: RowSelectionState,
 ): RowSelectionState {
   const next: RowSelectionState = {};
   for (const lineRow of lineRows) {
-    const live = lineOf(lineRow).liveRows;
-    if (live.length > 0 && live.every((row) => rowSelection[row.id])) {
+    const ticked = tickRowsOf(lineOf(lineRow));
+    if (ticked.length > 0 && ticked.every((row) => rowSelection[row.id])) {
       next[lineOf(lineRow).key] = true;
     }
   }
   return next;
 }
 
-/** A ticked line hands back its live row ids only, never a used or cancelled one
- * (AC-ND-12, AC-ND-27). */
+/** A ticked line hands back its live row ids only, never a cancelled one, and a used one
+ * only on a line whose only waiting rows are used (AC-ND-12, AC-ND-27, review S2). */
 function rowSelectionOf(
   lineRows: OrderInquiryLineRow[],
   lineSelection: RowSelectionState,
@@ -111,7 +113,7 @@ function rowSelectionOf(
   for (const lineRow of lineRows) {
     const line = lineOf(lineRow);
     if (!lineSelection[line.key]) continue;
-    for (const row of line.liveRows) next[row.id] = true;
+    for (const row of tickRowsOf(line)) next[row.id] = true;
   }
   return next;
 }
@@ -218,8 +220,9 @@ export function OrderInquiryLinesTab({
           typeof updater === 'function' ? updater(lineSelection) : updater,
         ),
       ),
-    // AC-ND-12: a line with no live row has nothing to confirm or link.
-    enableRowSelection: (row) => lineOf(row.original).liveRows.length > 0,
+    // AC-ND-12: a line with no live row has nothing to confirm or link - unless a used row
+    // on it still waits on Confirm (review S2).
+    enableRowSelection: (row) => tickRowsOf(lineOf(row.original)).length > 0,
     getColumnCanGlobalFilter: () => true,
     globalFilterFn: (row, _columnId, value) => lineMatches(row.original, String(value ?? '')),
     getCoreRowModel: getCoreRowModel(),

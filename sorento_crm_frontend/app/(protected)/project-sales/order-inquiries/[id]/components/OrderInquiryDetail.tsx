@@ -67,6 +67,7 @@ import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquir
 import {
   foldKeyOf,
   isLiveInquiryRow,
+  isWaitingUsedRow,
   reserveHistoryRowOf,
   type OrderInquiryLine,
 } from '../../../_shared/lib/orderInquiryLineFold';
@@ -219,6 +220,14 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     [activeLines, rowSelection],
   );
   const selectedIds = useMemo(() => selectedLines.map((l) => l.id), [selectedLines]);
+  // AC-ND-12: the sales order lines ticked. Review S2: a line whose only waiting rows are
+  // used ticks those used rows, so "anything ticked" reads the lines, not `selectedIds`
+  // (live rows only) - else one such tick would widen Unconfirm and Auto link to the OI.
+  const tickedLineKeys = useMemo(
+    () => new Set(lines.filter((l) => rowSelection[l.id]).map(foldKeyOf)),
+    [lines, rowSelection],
+  );
+  const anyTicked = tickedLineKeys.size > 0;
   const selectedConfirmable = useMemo(
     () =>
       selectedLines.filter((l) => {
@@ -227,6 +236,19 @@ export function OrderInquiryDetail({ id }: { id: string }) {
       }),
     [selectedLines],
   );
+  // Review S2 (G6): a ticked line whose only waiting rows are used ones (its live rows
+  // were confirmed before the sweep existed, or it has none) sends those used rows, so
+  // the header never sits Outstanding on a row no tick can confirm. A line with a live
+  // row still waiting sends its live rows only; the server sweeps its used rows.
+  const selectedUsedToConfirm = useMemo(() => {
+    const confirmableKeys = new Set(selectedConfirmable.map(foldKeyOf));
+    return lines.filter(
+      (l) =>
+        isWaitingUsedRow(l) &&
+        tickedLineKeys.has(foldKeyOf(l)) &&
+        !confirmableKeys.has(foldKeyOf(l)),
+    );
+  }, [lines, tickedLineKeys, selectedConfirmable]);
   const selectedUnconfirmable = useMemo(
     () =>
       selectedLines.filter((l) => {
@@ -248,7 +270,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
       }),
     [activeLines],
   );
-  const unconfirmScope = selectedIds.length > 0 ? selectedUnconfirmable : allUnconfirmable;
+  const unconfirmScope = anyTicked ? selectedUnconfirmable : allUnconfirmable;
   const selectedRejectable = useMemo(
     () =>
       selectedLines.filter(
@@ -543,21 +565,19 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   // the header's own count with nothing ticked.
   // AC-ND-12 (`PLAN-oi-no-double-count-25sep.md`): the grid ticks LINES, so N counts the
   // ticked sales order lines, not the rows behind them.
-  const selectedLineCount = useMemo(
-    () => new Set(selectedLines.map(foldKeyOf)).size,
-    [selectedLines],
-  );
-  const confirmLabel = selectedIds.length > 0 ? `Confirm (${selectedLineCount})` : 'Confirm';
-  const confirmDisabled =
-    selectedIds.length > 0
-      ? selectedConfirmable.length === 0
-      : (header?.lines_to_confirm ?? 0) === 0;
+  const confirmLabel = anyTicked ? `Confirm (${tickedLineKeys.size})` : 'Confirm';
+  const confirmDisabled = anyTicked
+    ? selectedConfirmable.length === 0 && selectedUsedToConfirm.length === 0
+    : (header?.lines_to_confirm ?? 0) === 0;
 
   function runConfirm() {
-    // G6 (owner ruling 26 Sep): the ticked lines' live rows only; the server takes on
-    // each line's used rows still in `changed` in the same call (S1, AC-ND-24).
+    // G6 (owner ruling 26 Sep): the ticked lines' live rows; the server takes on each
+    // line's waiting used rows in the same call (S1, AC-ND-24). Review S2: plus the used
+    // rows of a ticked line with nothing live left to confirm.
     acknowledge.mutate(
-      selectedIds.length > 0 ? { rowIds: selectedIds } : { filter: { inquiry_id: id } },
+      anyTicked
+        ? { rowIds: [...selectedIds, ...selectedUsedToConfirm.map((l) => l.id)] }
+        : { filter: { inquiry_id: id } },
       { onSuccess: () => setRowSelection({}) },
     );
   }
@@ -597,8 +617,11 @@ export function OrderInquiryDetail({ id }: { id: string }) {
    * scope when nothing is ticked.
    */
   function runAutoLink() {
+    // Review S2: a tick on a line with only used rows is still a tick - it links nothing,
+    // and it never widens to the whole OI.
+    if (anyTicked && selectedIds.length === 0) return;
     autoPlace.mutate(
-      selectedIds.length > 0 ? { row_ids: selectedIds } : { filter: { inquiry_id: id } },
+      anyTicked ? { row_ids: selectedIds } : { filter: { inquiry_id: id } },
       { onSuccess: () => setRowSelection({}) },
     );
   }

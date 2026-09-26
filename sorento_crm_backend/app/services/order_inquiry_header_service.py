@@ -181,19 +181,22 @@ class OrderInquiryHeaderService:
         list lines and qty should be truthful to what is shown in the Lines tab").
 
         * A LINE is the rows' sales order line, keyed exactly as the tab folds them
-          (`orderInquiryLineFold.ts::foldKeyOf`): the core line the row's mirror line
-          resolves to, else the row alone. Only NON-CANCELLED rows make a line render,
+          (`orderInquiryLineFold.ts::foldKeyOf`): the row's MIRROR line (`so_line_id`),
+          else the row alone. The mirror is one-to-one with the core line and is there
+          before AutoCount reconciles it (PR #1266 review S1: a core-line key split an
+          unreconciled line in two). Only NON-CANCELLED rows make a line render,
           so a line whose every row was superseded is not one; a used row and a
           cancelled sales order line's row still do (the tab shows them folded, or grey).
         * `lines_total` = distinct lines. `lines_to_confirm` = distinct lines with a
           non-cancelled row in awaiting / changed, used rows included (G6).
         * `qty_total` = the tab's Requested footer: `qty` of the live buy rows (a buy
           verb, not cancelled, not `redirected_to_pool`) on lines not cancelled on the SO.
+          The two line joins below are for that last test (`line_status`) only.
 
         A subquery rather than a join on the outer query, so a header's row count never
         fans the header itself out."""
         line_key = func.coalesce(
-            cast(SalesOrderLine.id, String), cast(OrderInquiryRow.id, String)
+            cast(OrderInquiryRow.so_line_id, String), cast(OrderInquiryRow.id, String)
         )
         live_buy_qty = case(
             (

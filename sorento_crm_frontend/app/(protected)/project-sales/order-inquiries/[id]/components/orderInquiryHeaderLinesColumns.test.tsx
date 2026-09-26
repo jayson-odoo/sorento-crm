@@ -209,7 +209,7 @@ describe('AC-RS-83 / 83b / 83c: the reserve icons live inside the State cell', (
   ) {
     const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns(options as never));
     const stateColumn = result.current.find(
-      (column) => (column as { accessorKey?: string }).accessorKey === 'state',
+      (column) => ((column as { id?: string }).id ?? (column as { accessorKey?: string }).accessorKey) === 'state',
     ) as { cell: (context: unknown) => React.ReactNode } | undefined;
     expect(stateColumn).toBeDefined();
     return stateColumn!.cell({ row: { original: row } });
@@ -244,7 +244,7 @@ describe('AC-RS-83 / 83b / 83c: the reserve icons live inside the State cell', (
       useOrderInquiryHeaderLinesColumns({ canReserve: true } as never),
     );
     const stateColumn = result.current.find(
-      (column) => (column as { accessorKey?: string }).accessorKey === 'state',
+      (column) => ((column as { id?: string }).id ?? (column as { accessorKey?: string }).accessorKey) === 'state',
     ) as { size?: number; minSize?: number };
     // Round 2 (`PLAN-oi-decision-trail-ui.md`): 380 -> 410, room for the new Decision
     // trail icon beside the pill and the reserve icons.
@@ -627,7 +627,7 @@ describe('AC-ND-13 (owner ruling 26 Sep, G3): ONE History icon per line, in the 
   function stateCellFor(row: OrderInquiryWorklistRow, options: Record<string, unknown> = {}) {
     const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns(options as never));
     const stateColumn = result.current.find(
-      (column) => (column as { accessorKey?: string }).accessorKey === 'state',
+      (column) => ((column as { id?: string }).id ?? (column as { accessorKey?: string }).accessorKey) === 'state',
     ) as { cell: (context: unknown) => React.ReactNode } | undefined;
     expect(stateColumn).toBeDefined();
     return stateColumn!.cell({ row: { original: row } });
@@ -716,7 +716,7 @@ describe('AC-ND-7 (owner ruling 26 Sep, G1): no Was / now on the line row', () =
   function cellOf(key: string, lineRow: OrderInquiryWorklistRow) {
     const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
     const column = result.current.find(
-      (c) => (c as { accessorKey?: string }).accessorKey === key,
+      (c) => ((c as { id?: string }).id ?? (c as { accessorKey?: string }).accessorKey) === key,
     ) as { cell: (context: unknown) => React.ReactNode };
     return column.cell({ row: { original: lineRow } });
   }
@@ -856,5 +856,41 @@ describe('AC-ND-9 (G5): the SPO cell lists every document of the line as first +
     expect(more).toHaveTextContent('+1');
     fireEvent.click(more);
     expect(await screen.findByText('SPO-2026/09-0009')).toBeInTheDocument();
+  });
+});
+
+/**
+ * PR #1266 review at d0d328d7f, State-sort nit: the State column sorted on the primary
+ * row's raw `state`, so a line reading To confirm, Line cancelled or Nothing to buy sorted
+ * as raised / placed. It sorts on what the cell shows, the line's own State.
+ */
+describe('State sorts on the line State, not the primary row state', () => {
+  it('reads to_confirm, line_cancelled and nothing_to_buy through its accessor', () => {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const stateColumn = result.current.find(
+      (column) => (column as { id?: string }).id === 'state',
+    ) as { accessorFn?: (row: unknown, index: number) => unknown } | undefined;
+    expect(typeof stateColumn?.accessorFn).toBe('function');
+
+    const base = {
+      verb: 'ORDER',
+      qty: '5',
+      linked_qty: '0',
+      reserved_qty: '0',
+      bundled_qty: '0',
+      state: 'placed',
+    } as Partial<OrderInquiryWorklistRow>;
+    const lineRows = toLineRows(
+      foldInquiryLines([
+        { ...base, id: 'a', core_line_id: 'cl-1', line_no: 1, ack_state: 'changed' },
+        { ...base, id: 'b', core_line_id: 'cl-2', line_no: 2, line_cancelled: true },
+        { ...base, id: 'c', core_line_id: 'cl-3', line_no: 3, redirected_to_pool: true, ack_state: 'acknowledged' },
+      ] as OrderInquiryWorklistRow[]),
+    );
+    expect(lineRows.map((row, index) => stateColumn!.accessorFn!(row, index))).toEqual([
+      'to_confirm',
+      'line_cancelled',
+      'nothing_to_buy',
+    ]);
   });
 });
