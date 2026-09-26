@@ -1,0 +1,235 @@
+# Console case for PR #1279 round 2: the owner's console test of 26 Sep 2026 14:09Z
+# (`documentation/plans/ideation/PLAN-ideation-chat-reply-format.md`, AC-9 to AC-12).
+#
+# Proves, on the owner's own session: no reply shows the opening message's preamble or
+# typo in any field on any turn (W1), the typed "the manufactuirng?" never shows as the
+# department (W2), and once the four fields are filled the bot shows the recap and asks
+# "Submit this idea? ..." - the department answer and its "?" follow-up do NOT create the
+# idea; only the final "ok" does (W3).
+#
+# NOT collected by pytest. Run against a lane stack (ideation configured, the shared
+# service reachable, the `ideation_confirm_prompts` migration applied):
+#
+#   cd sorento_crm_backend
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-26-ideation-confirm-before-create.yaml \
+#       --base-url http://127.0.0.1:<lane backend port> --mock-parser
+#
+# `--mock-parser` pins the routing only; the ideation extractor and the reply composer
+# still call the live LLM, so this is the live check of the prompt versions. The media
+# menu turn of the original session is left out: whether a menu appears depends on the
+# contact's recent WhatsApp media, not on this change.
+
+contact: "437264483"
+
+cases:
+  - name: owner console session 26 Sep 14:09Z, clean values and a confirm before create
+    cold: true
+    turns:
+      - text: "i have an idea, i think we should implemnt production line"
+        parser:
+          message_type: "business_query"
+          intent_hint: "submit_idea"
+          domain_hint: "ideate"
+          scope_intent: null
+          is_affirmative: null
+          user_goal: "submitting an idea"
+          continuation: null
+          access_levels: []
+          broaden_axis: null
+          broaden_to: null
+          date_mode: null
+          date_filter_start: null
+          date_filter_end: null
+          match_mode: null
+          demand_qty: null
+          entities: []
+          entity_op: null
+          domain_in_message: true
+          requested_attributes: []
+          contains_flyer: false
+          reference_positions: []
+          reference_target: null
+          person_mention: null
+          is_active: null
+          order_status: null
+          group_by: null
+          top_n: null
+          sales_channel: null
+          correction: false
+          routing: {suggested_team: null, suggested_agent: null}
+          escalation: {is_escalation_confirmation: null, company_pick: null}
+          document: null
+          status: null
+          asks: []
+          topic_reset: false
+          anaphora: {backward_reference: false}
+        expect:
+          branch_kind: ideate
+          reply_not_contains: ["implemnt", "i have an idea", "manufactuirng", "the manufacturing?"]
+      - text: "it will reduce our supply chain constraints"
+        parser:
+          message_type: "clarification"
+          intent_hint: null
+          domain_hint: null
+          scope_intent: null
+          is_affirmative: null
+          user_goal: "continuing the idea draft"
+          continuation: null
+          access_levels: []
+          broaden_axis: null
+          broaden_to: null
+          date_mode: null
+          date_filter_start: null
+          date_filter_end: null
+          match_mode: null
+          demand_qty: null
+          entities: []
+          entity_op: null
+          domain_in_message: false
+          requested_attributes: []
+          contains_flyer: false
+          reference_positions: []
+          reference_target: null
+          person_mention: null
+          is_active: null
+          order_status: null
+          group_by: null
+          top_n: null
+          sales_channel: null
+          correction: false
+          routing: {suggested_team: null, suggested_agent: null}
+          escalation: {is_escalation_confirmation: null, company_pick: null}
+          document: null
+          status: null
+          asks: []
+          topic_reset: false
+          anaphora: {backward_reference: false}
+        expect:
+          branch_kind: ideate
+          reply_not_contains: ["implemnt", "i have an idea", "manufactuirng", "the manufacturing?"]
+      - text: "the manufactuirng?"
+        parser:
+          message_type: "clarification"
+          intent_hint: null
+          domain_hint: null
+          scope_intent: null
+          is_affirmative: null
+          user_goal: "continuing the idea draft"
+          continuation: null
+          access_levels: []
+          broaden_axis: null
+          broaden_to: null
+          date_mode: null
+          date_filter_start: null
+          date_filter_end: null
+          match_mode: null
+          demand_qty: null
+          entities: []
+          entity_op: null
+          domain_in_message: false
+          requested_attributes: []
+          contains_flyer: false
+          reference_positions: []
+          reference_target: null
+          person_mention: null
+          is_active: null
+          order_status: null
+          group_by: null
+          top_n: null
+          sales_channel: null
+          correction: false
+          routing: {suggested_team: null, suggested_agent: null}
+          escalation: {is_escalation_confirmation: null, company_pick: null}
+          document: null
+          status: null
+          asks: []
+          topic_reset: false
+          anaphora: {backward_reference: false}
+        expect:
+          branch_kind: ideate
+          reply_contains: ["Submit this idea? Reply yes to submit, or tell me what to change."]
+          reply_not_contains: ["implemnt", "i have an idea", "manufactuirng", "the manufacturing?"]
+      - text: "manufacturing?"
+        parser:
+          message_type: "clarification"
+          intent_hint: null
+          domain_hint: null
+          scope_intent: null
+          is_affirmative: null
+          user_goal: "continuing the idea draft"
+          continuation: null
+          access_levels: []
+          broaden_axis: null
+          broaden_to: null
+          date_mode: null
+          date_filter_start: null
+          date_filter_end: null
+          match_mode: null
+          demand_qty: null
+          entities: []
+          entity_op: null
+          domain_in_message: false
+          requested_attributes: []
+          contains_flyer: false
+          reference_positions: []
+          reference_target: null
+          person_mention: null
+          is_active: null
+          order_status: null
+          group_by: null
+          top_n: null
+          sales_channel: null
+          correction: false
+          routing: {suggested_team: null, suggested_agent: null}
+          escalation: {is_escalation_confirmation: null, company_pick: null}
+          document: null
+          status: null
+          asks: []
+          topic_reset: false
+          anaphora: {backward_reference: false}
+        expect:
+          branch_kind: ideate
+          reply_contains: ["Submit this idea? Reply yes to submit, or tell me what to change.", "Manufacturing"]
+          reply_not_contains: ["implemnt", "i have an idea", "manufactuirng", "the manufacturing?"]
+      - text: "ok"
+        parser:
+          message_type: "clarification"
+          intent_hint: null
+          domain_hint: null
+          scope_intent: null
+          is_affirmative: null
+          user_goal: "continuing the idea draft"
+          continuation: null
+          access_levels: []
+          broaden_axis: null
+          broaden_to: null
+          date_mode: null
+          date_filter_start: null
+          date_filter_end: null
+          match_mode: null
+          demand_qty: null
+          entities: []
+          entity_op: null
+          domain_in_message: false
+          requested_attributes: []
+          contains_flyer: false
+          reference_positions: []
+          reference_target: null
+          person_mention: null
+          is_active: null
+          order_status: null
+          group_by: null
+          top_n: null
+          sales_channel: null
+          correction: false
+          routing: {suggested_team: null, suggested_agent: null}
+          escalation: {is_escalation_confirmation: null, company_pick: null}
+          document: null
+          status: null
+          asks: []
+          topic_reset: false
+          anaphora: {backward_reference: false}
+        expect:
+          branch_kind: ideate
+          reply_contains: ["IDEA-", "Track it here:"]

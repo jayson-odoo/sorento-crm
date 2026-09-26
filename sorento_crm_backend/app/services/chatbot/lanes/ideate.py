@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc
@@ -127,6 +128,35 @@ def build_reply(result: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def offered_images(result: Mapping[str, Any]) -> list[dict[str, Any]] | None:
+    """#1277: the images the reply's media menu offered, as `send_attachments` entries.
+
+    One entry per image, captioned with its menu number so the customer can match the
+    picture to the "1, 2, ..." list the text asks about. Other kinds keep their number in
+    the list but are not sent. `None`, not `[]`, when there is nothing to send: the
+    engine's `_send_actions` emits a `send_attachments` action for any non-None value.
+    The window needs no check of its own: this is the reply to a message the customer
+    just sent, the same as every other chatbot attachment send.
+    """
+    entries: list[dict[str, Any]] = []
+    for media in jsc.get(result, "offered_media") or []:
+        if not isinstance(media, dict) or media.get("kind") != "image" or not media.get("url"):
+            continue
+        position = media.get("position")
+        filename = media.get("filename") or f"image-{position}.jpg"
+        mime, _ = mimetypes.guess_type(filename)
+        entries.append(
+            {
+                "url": media["url"],
+                "filename": filename,
+                "mimeType": mime if mime and mime.startswith("image/") else "image/jpeg",
+                "attachmentType": "image",
+                "caption": jsc.js_string(position),
+            }
+        )
+    return entries or None
+
+
 def run(
     ctx: Mapping[str, Any], item: Mapping[str, Any], *, dry_run: bool = False
 ) -> dict[str, Any]:
@@ -162,5 +192,8 @@ def run(
             "manualResponse": reply["manualResponse"],
             "includeResponse": reply["includeResponse"],
             "ideate_status": reply["ideate_status"],
+            # #1277: the offered images ride the engine's existing `send_attachments`
+            # action, sent after the text (n8n does the Respond.io send, D9).
+            "attachments_src": offered_images(result),
         },
     }
