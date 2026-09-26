@@ -6,8 +6,9 @@ Status: grilled (26 Sep 2026; owner rulings on PR #1175 folded in below, S1 in b
 "As built (S2 + S3, PR #1263)" for where the route differs from the contract below and which
 ruling decides it. S1 (PR #1258), S2 + S3 (PR #1263) and S4 are folded into ONE PR on
 branch `claude/top-selling-s4-parser-wiring-69mpx3` (S4 built 26 Sep 2026, see "As built
-(S4)"); S5 (sales agent resolver), S6 (review + live console) and S7 (per-month breakdown)
-open. Track: full track (new route + MCP tool = a new external
+(S4)"); the reviewer pass of 26 Sep 08:42Z (B1, B2, S1, S2, S3, N1, N2, kill R4) is fixed
+on the same PR, the live-parser console run still owed on the local stack; S5 (sales agent
+resolver), S6 (review + live console) and S7 (per-month breakdown) open. Track: full track (new route + MCP tool = a new external
 ingest surface, one policy-row migration, one prompt migration, one entity-kind migration;
 the diff will pass 300 lines).
 Issue: #1171. UAC: `chatbot-top-x-hot-selling-24sep-acceptance-criteria.md` (AC-19xx).
