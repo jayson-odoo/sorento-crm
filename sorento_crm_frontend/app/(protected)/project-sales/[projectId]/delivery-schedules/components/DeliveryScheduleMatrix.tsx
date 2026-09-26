@@ -83,10 +83,14 @@ export interface ScheduleGridController {
 export const PRODUCT_COL = 'w-[240px] min-w-[240px] max-w-[240px]';
 /**
  * The Flag column, pinned beside the product so a reviewer eight dates in still sees what is
- * wrong with the row. Its `left` is the product column's width.
+ * wrong with the row. Its `left` is the product column's width. Pinned from `md` up only:
+ * By date renders at 375 too, where the scroller is 341px and Product (240) plus a pinned
+ * Flag (190) left no room for a single date (review of #1265, B2).
  */
 export const FLAG_COL = 'w-[190px] min-w-[190px] max-w-[190px]';
-export const FLAG_LEFT = 'left-[240px]';
+export const FLAG_LEFT = 'md:left-[240px]';
+/** Below `md` the Flag scrolls with the dates, so its heading and foot sit on their layer. */
+const FLAG_Z_EDGE = 'z-(--z-sticky-content) md:z-(--z-sticky-content-corner)';
 /** One per delivery phase, sized for a date plus the phase it belongs to. */
 export const DATE_COL = 'w-[136px] min-w-[136px] max-w-[136px]';
 /** The two numbers that close every product row. */
@@ -505,7 +509,7 @@ export function FlagHeading() {
       className={cn(
         FLAG_COL,
         FLAG_LEFT,
-        Z_CORNER,
+        FLAG_Z_EDGE,
         'sticky top-0 border-b border-e border-border bg-muted px-2 py-2 text-start align-bottom font-medium',
       )}
     >
@@ -520,7 +524,7 @@ export function FlagFootCell() {
       className={cn(
         FLAG_COL,
         FLAG_LEFT,
-        Z_CORNER,
+        FLAG_Z_EDGE,
         'sticky bottom-0 border-t border-e border-border bg-muted px-2 py-1.5',
       )}
     />
@@ -543,7 +547,7 @@ export function FlagCell({
         FLAG_COL,
         FLAG_LEFT,
         Z_PINNED,
-        'sticky border-b border-e border-border px-2 py-2 align-top',
+        'border-b border-e border-border px-2 py-2 align-top md:sticky',
         column.reconciled ? 'bg-background' : UNRECONCILED_BG,
       )}
     >

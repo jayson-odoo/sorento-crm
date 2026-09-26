@@ -194,7 +194,20 @@ export function DeliveryScheduleReviewClient({
   /** One rule for what blocks, shared by Confirm, its dialog and "Need attention" (lesson e). */
   const blocking = React.useMemo(() => columns.filter(blocksConfirm), [columns]);
   const effectiveFilter: RowFilter = rowFilter ?? (version?.confirmed_at ? 'all' : 'attention');
-  const visibleColumns = effectiveFilter === 'attention' ? blocking : columns;
+  /**
+   * Rows typed into since "Need attention" was last chosen. They stay in it even once they add
+   * up: the keystroke that fixes a row must not unmount the input being typed into, or it never
+   * blurs and the fix is never saved. Choosing the view again lets them go.
+   */
+  const [touched, setTouched] = React.useState<ReadonlySet<string>>(new Set());
+  const chooseFilter = (next: RowFilter) => {
+    setTouched(new Set());
+    setRowFilter(next);
+  };
+  const visibleColumns =
+    effectiveFilter === 'attention'
+      ? columns.filter((column) => blocksConfirm(column) || touched.has(column.key))
+      : columns;
 
   const registerColumnRef = React.useCallback((key: string, node: HTMLElement | null) => {
     // A ref callback reports its unmount as a bare null and never says which node it was
@@ -248,6 +261,9 @@ export function DeliveryScheduleReviewClient({
         next.set(cellMapKey(phaseId, columnKey), value);
         return next;
       });
+      setTouched((previous) =>
+        previous.has(columnKey) ? previous : new Set(previous).add(columnKey),
+      );
     },
     [],
   );
@@ -530,7 +546,7 @@ export function DeliveryScheduleReviewClient({
                     type="single"
                     variant="outline"
                     value={effectiveFilter}
-                    onValueChange={(next) => next && setRowFilter(next as RowFilter)}
+                    onValueChange={(next) => next && chooseFilter(next as RowFilter)}
                   >
                     <ToggleGroupItem value="attention" className="px-3">
                       {`Need attention (${blocking.length})`}
