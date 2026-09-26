@@ -1,0 +1,176 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Supplier price page mockup</title><style>
+:root{color-scheme:light}
+body{margin:0;background:#eef0f3;color:#18202b;font:15px/1.55 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:1360px;margin:0 auto;padding:24px 16px 60px}
+h1{font-size:26px;margin:0 0 6px}
+h2{font-size:21px;margin:40px 0 10px;padding-top:14px;border-top:2px solid #d5d9e0}
+h3{font-size:17px;margin:26px 0 6px}
+p{margin:6px 0}
+.sub{color:#5b6472}
+.lbl{font-size:12px;font-weight:600;color:#5b6472;text-transform:uppercase;letter-spacing:.05em;margin:14px 0 6px}
+.dd{font-size:14px;color:#3d4653}
+blockquote{margin:8px 0;padding:10px 14px;background:#fff;border-left:4px solid #1b84ff;border-radius:6px}
+.rul{background:#fff;border:1px solid #dde1e7;border-radius:10px;padding:12px 14px;margin:10px 0}
+.rul .when{font-size:13px;color:#5b6472;font-weight:600}
+.rul .then{margin-top:6px}
+.rul .then b{color:#0f5e40}
+.slice{background:#fff;border:1px solid #dde1e7;border-radius:10px;padding:12px 14px;margin:12px 0}
+.slice .tag{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;background:#fdf5e1;color:#8a5a0c;margin-left:6px}
+.slice .tag.no{background:#f1f2f4;color:#4b5563}
+.ba{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}
+.ba div{background:#f7f8fa;border-radius:8px;padding:9px 11px;font-size:14px}
+.ba b{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#5b6472}
+.oq{background:#fff;border:1px solid #dde1e7;border-radius:10px;padding:12px 14px;margin:10px 0}
+.toc a{color:#1463c7;text-decoration:none}
+.toc{columns:2;font-size:14px}
+ul{padding-left:20px}
+li{margin:3px 0}
+.screen{margin-bottom:34px}
+.note{background:#fff8e6;border:1px solid #f0dca8;border-radius:8px;padding:10px 12px;font-size:14px}
+@media (max-width:700px){.ba{grid-template-columns:1fr}.toc{columns:1}h1{font-size:22px}}
+
+.mk{--bg:#f5f6f8;--card:#fff;--line:#e4e6eb;--text:#18202b;--muted:#6b7280;--pri:#1b84ff;--pri-soft:#e9f3ff;
+--ok:#17a36b;--ok-soft:#e6f7ef;--bad:#e5484d;--bad-soft:#fdecec;--warn:#b7791f;--warn-soft:#fdf5e1;--gray-soft:#f1f2f4;
+font:13px/1.45 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--text)}
+.mk *{box-sizing:border-box}
+.mk .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:6px}
+.mk .fd{width:1280px;background:var(--bg);border:1px solid #cfd3da;border-radius:10px;overflow:hidden;display:flex;min-height:560px}
+.mk .fm{width:375px;background:var(--bg);border:1px solid #cfd3da;border-radius:22px;overflow:hidden;min-height:640px;position:relative}
+.mk .side{width:210px;background:#101828;color:#cbd2dc;padding:14px 10px;flex:none}
+.mk .side .logo{color:#fff;font-weight:700;font-size:15px;padding:4px 8px 14px}
+.mk .side .grp{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#8792a2;padding:10px 8px 4px}
+.mk .side .it{padding:6px 8px;border-radius:6px}
+.mk .side .it.on{background:#1f2a3d;color:#fff}
+.mk .main{flex:1;min-width:0;display:flex;flex-direction:column}
+.mk .top{height:48px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 20px;gap:12px;color:var(--muted)}
+.mk .top .sp{flex:1}
+.mk .av{width:26px;height:26px;border-radius:50%;background:#dbe7ff;color:#1b4fb8;display:inline-grid;place-items:center;font-size:11px;font-weight:600}
+.mk .pg{padding:18px 20px;flex:1}
+.mk .mtop{height:48px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 14px;gap:10px}
+.mk .mtop b{font-size:15px}
+.mk .mpg{padding:12px}
+.mk h1{font-size:19px;margin:0}
+.mk .crumb{color:var(--muted);font-size:12px;margin-bottom:4px}
+.mk .ph{display:flex;align-items:flex-start;gap:8px;margin-bottom:14px}
+.mk .ph .sp{flex:1}
+.mk .meta{color:var(--muted);font-size:12px;margin-top:3px}
+.mk .card{background:var(--card);border:1px solid var(--line);border-radius:10px}
+.mk .btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:7px;border:1px solid var(--line);background:#fff;color:var(--text);font-weight:500;white-space:nowrap}
+.mk .btn.p{background:var(--pri);border-color:var(--pri);color:#fff}
+.mk .btn.g{background:var(--ok);border-color:var(--ok);color:#fff}
+.mk .btn.d{color:var(--bad)}
+.mk .btn.sm{height:26px;padding:0 9px;font-size:12px}
+.mk .btn.dis{opacity:.45}
+.mk .btn.full{width:100%;justify-content:center;height:40px}
+.mk .icon{width:32px;padding:0;justify-content:center}
+.mk .search{display:flex;align-items:center;gap:7px;height:32px;border:1px solid var(--line);border-radius:7px;background:#fff;padding:0 10px;color:var(--muted);min-width:0}
+.mk .search .q{color:var(--text)}
+.mk .search .ic{width:12px;height:12px;border:2px solid #9aa3af;border-radius:50%;position:relative;flex:none}
+.mk .search .ic:after{content:"";position:absolute;width:6px;height:2px;background:#9aa3af;right:-6px;bottom:-3px;transform:rotate(45deg)}
+.mk .ss{display:inline-flex;align-items:center;gap:6px;height:32px;border:1px solid var(--line);border-radius:7px;background:#fff;padding:0 8px 0 10px;min-width:0}
+.mk .ss .v{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mk .ss .ph2{flex:1;color:#9aa3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mk .ss .x{color:#9aa3af;font-size:13px}
+.mk .ss .cv{color:#6b7280;font-size:10px}
+.mk .ss .lab{color:var(--muted);font-size:12px;white-space:nowrap}
+.mk .chip{display:inline-flex;align-items:center;gap:4px;background:var(--gray-soft);border-radius:5px;padding:1px 6px;font-size:12px;white-space:nowrap}
+.mk .open{position:relative}
+.mk .menu{position:absolute;left:0;right:0;top:36px;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(16,24,40,.12);z-index:3;padding:6px}
+.mk .menu .search{height:30px;margin-bottom:4px}
+.mk .menu .o{padding:6px 8px;border-radius:5px;display:flex;gap:8px;align-items:center}
+.mk .menu .o.h{background:var(--pri-soft)}
+.mk .menu .o small{color:var(--muted)}
+.mk .ck{width:14px;height:14px;border:1.5px solid #9aa3af;border-radius:3px;display:inline-block;flex:none}
+.mk .ck.on{background:var(--pri);border-color:var(--pri)}
+.mk .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.mk .bar .sp{flex:1}
+.mk table{width:100%;border-collapse:collapse;table-layout:fixed}
+.mk th{text-align:left;font-weight:600;color:var(--muted);font-size:12px;padding:9px 10px;border-bottom:1px solid var(--line);background:#fafbfc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mk td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top;overflow:hidden;text-overflow:ellipsis}
+.mk tr:last-child td{border-bottom:0}
+.mk td.ovv{overflow:visible}
+.mk td .sub{color:var(--muted);font-size:12px}
+.mk .num{text-align:right;font-variant-numeric:tabular-nums}
+.mk .code{font-weight:600}
+.mk .b{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:500;white-space:nowrap}
+.mk .b.blue{background:var(--pri-soft);color:#1463c7}
+.mk .b.green{background:var(--ok-soft);color:#11774f}
+.mk .b.red{background:var(--bad-soft);color:#b42328}
+.mk .b.amber{background:var(--warn-soft);color:#8a5a0c}
+.mk .b.gray{background:var(--gray-soft);color:#4b5563}
+.mk .stats{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:12px}
+.mk .stat{background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px 12px}
+.mk .stat .n{font-size:18px;font-weight:700}
+.mk .stat .t{color:var(--muted);font-size:12px}
+.mk .stat.on{border-color:var(--pri);box-shadow:inset 0 0 0 1px var(--pri)}
+.mk .mstats{display:flex;gap:8px;overflow-x:auto;margin-bottom:10px}
+.mk .mstats .stat{flex:none;min-width:98px;padding:7px 10px}
+.mk .mstats .stat .n{font-size:16px}
+.mk .tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);margin-bottom:12px;overflow-x:auto;white-space:nowrap}
+.mk .tabs span{padding:8px 0;color:var(--muted)}
+.mk .tabs span.on{color:var(--text);font-weight:600;box-shadow:inset 0 -2px 0 var(--pri)}
+.mk .foot{position:sticky;bottom:0;background:#fff;border-top:1px solid var(--line);padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.mk .foot .sp{flex:1}
+.mk .banner{border-radius:8px;padding:9px 12px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.mk .banner.info{background:var(--pri-soft);color:#154a8a}
+.mk .banner.warn{background:var(--warn-soft);color:#7a4f0b}
+.mk .banner.ok{background:var(--ok-soft);color:#0f5e40}
+.mk .mc{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px}
+.mk .mc .r{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.mk .mc .r+.r{margin-top:4px}
+.mk .muted{color:var(--muted)}
+.mk .small{font-size:12px}
+.mk .up{color:#b42328}
+.mk .down{color:#11774f}
+.mk .strike{text-decoration:line-through;color:var(--muted)}
+.mk .ov{position:absolute;inset:0;background:rgba(16,24,40,.45);display:flex;align-items:flex-start;justify-content:center;padding-top:60px;z-index:4}
+.mk .ovm{position:absolute;inset:0;background:rgba(16,24,40,.45);z-index:4}
+.mk .modal{background:#fff;border-radius:12px;width:560px;box-shadow:0 20px 50px rgba(0,0,0,.25)}
+.mk .modal .mh{padding:14px 18px;border-bottom:1px solid var(--line);font-weight:600;font-size:15px;display:flex}
+.mk .modal .mh .sp{flex:1}
+.mk .modal .mb{padding:16px 18px}
+.mk .modal .mf{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end}
+.mk .sheet{position:absolute;left:0;right:0;bottom:0;top:40px;background:#fff;border-radius:16px 16px 0 0;z-index:5;display:flex;flex-direction:column}
+.mk .sheet .mb{padding:14px;flex:1}
+.mk .sheet .mh{padding:12px 14px;border-bottom:1px solid var(--line);font-weight:600;font-size:15px;display:flex}
+.mk .sheet .mh .sp{flex:1}
+.mk .sheet .mf{padding:12px 14px;border-top:1px solid var(--line);display:flex;gap:8px}
+.mk .fl{display:block;font-weight:500;margin:0 0 5px}
+.mk .fg{margin-bottom:13px}
+.mk .fg .ss,.mk .fg .inp{width:100%}
+.mk .inp{display:inline-flex;align-items:center;height:32px;border:1px solid var(--line);border-radius:7px;padding:0 10px;background:#fff;gap:6px}
+.mk .inp .ph2{color:#9aa3af;flex:1}
+.mk .inp.big{height:40px;font-size:16px}
+.mk .inp.hl{border-color:var(--pri);box-shadow:0 0 0 2px var(--pri-soft)}
+.mk .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.mk .drop{border:1.5px dashed #b8c0cc;border-radius:10px;padding:14px;display:flex;gap:12px;align-items:center;background:#fafbfc;margin-bottom:13px}
+.mk .file{width:34px;height:40px;border-radius:5px;background:#17a36b;color:#fff;font-size:10px;font-weight:700;display:grid;place-items:center;flex:none}
+.mk .sw{width:36px;height:20px;border-radius:999px;background:#cfd4dc;position:relative;flex:none}
+.mk .sw:after{content:"";position:absolute;width:16px;height:16px;border-radius:50%;background:#fff;top:2px;left:2px}
+.mk .sw.on{background:var(--pri)}
+.mk .sw.on:after{left:18px}
+.mk .seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.mk .seg span{padding:4px 10px;font-size:12px}
+.mk .seg span.on{background:var(--text);color:#fff}
+.mk .qr{width:132px;height:132px;flex:none;background:
+ conic-gradient(from 90deg at 18% 18%,#000 25%,#fff 0) 0 0/33px 33px;border:6px solid #fff;outline:1px solid var(--line);border-radius:6px;position:relative}
+.mk .qr:before,.mk .qr:after{content:"";position:absolute;width:34px;height:34px;border:6px solid #000;background:#fff;box-shadow:inset 0 0 0 5px #fff,inset 0 0 0 20px #000}
+.mk .qr:before{top:0;left:0}.mk .qr:after{top:0;right:0}
+.mk .msg{background:#f6f8fa;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;white-space:pre-line}
+.mk .lead{font-size:14px;font-weight:600}
+.mk .en{color:var(--muted);font-size:12px;font-weight:400}
+.mk .cl{display:grid;grid-template-columns:auto 1fr auto;gap:2px 10px;font-size:12px;margin-top:6px;padding-top:6px;border-top:1px dashed var(--line)}
+.mk .inforce{box-shadow:inset 3px 0 0 var(--ok)}
+.mk .dec{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.mk .dec span{padding:2px 9px;font-size:12px}
+.mk .dec .a{background:var(--ok-soft);color:#11774f;font-weight:600}
+.mk .dec .r{background:var(--bad-soft);color:#b42328;font-weight:600}
+.mk .nested td{background:#fbfcfd}
+.mk .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:5px}
+</style></head><body><div class="wrap mk-host"><h1>Supplier price page mockup</h1><p class="sub">Final mockup, round 3, 27 Sep 2026. Plan: PLAN-cost-price-supplier-26sep.md. Every screen is drawn at 1280 wide and at 375 wide. Every dropdown is the system dropdown (single or multi select).</p><div class="mk"><section class="screen" id="share"><h3>Share price page dialog (staff)</h3><p>Link, QR code and a ready bilingual message to paste into WeChat.</p><p class="dd"><b>Dropdowns:</b> None.</p><div class="lbl">At 1280 wide</div><div class="scroll"><div class="fd" style="position:relative"><div class="side"><div class="logo">Sorento CRM</div><div class="grp">Purchasing</div><div class="it">Purchase orders</div><div class="it">Proforma invoices</div><div class="it">Loading plans</div><div class="it on">Suppliers</div><div class="it">Cost price uploads</div><div class="grp">Master data</div><div class="it">Products</div><div class="grp">System</div><div class="it">Settings</div></div><div class="main"><div class="top"><span class="search"><i class="ic"></i><span>Search anything</span></span><span class="sp"></span><span>Sorento</span><span class="av">ML</span></div><div class="pg"><div class="ph"><div><h1>XIAMEN TAIYANG TECHNOLOGY</h1></div></div><div class="tabs"><span>Details</span><span>Products</span><span class="on">Prices</span></div></div></div><div class="ov"><div class="modal"><div class="mh">Share price page<span class="sp"></span><span class="muted">&#x2715;</span></div><div class="mb"><div style="display:flex;gap:14px;flex-wrap:wrap"><span class="qr"></span><div style="flex:1;min-width:180px"><div class="small muted">Link for XIAMEN TAIYANG TECHNOLOGY, valid until 27 Oct 2026</div><div class="inp" style="width:100%;margin:6px 0;overflow:hidden;white-space:nowrap">sorento.app/c/sorento/supplier-prices/&bull;&bull;&bull;&bull;&bull;&bull;</div><div style="display:flex;gap:6px;flex-wrap:wrap"><span class="btn sm">Copy link</span><span class="btn sm">Save QR image</span></div><div class="small muted" style="margin-top:8px">Last opened 27 Sep 14:20 &middot; opened 3 times</div></div></div><div class="fl" style="margin-top:14px">Message to paste into WeChat</div><div class="msg">Sorento 价格维护 / Sorento price page
+请在此更新贵司的产品价格:
+sorento.app/c/sorento/supplier-prices/&bull;&bull;&bull;
+(2026-10-27 前有效 / valid until 27 Oct 2026)</div></div><div class="mf"><span class="btn d" style="margin-right:auto">Revoke</span><span class="btn">Close</span><span class="btn p">Copy message</span></div></div></div></div></div><div class="lbl">At 375 wide (phone)</div><div class="scroll"><div class="fm"><div class="mtop"><span>&#8592;</span><b>TAIYANG</b></div><div class="mpg"></div><div class="ovm"></div><div class="sheet"><div class="mh">Share price page<span class="sp"></span><span class="muted">&#x2715;</span></div><div class="mb"><div style="display:flex;gap:14px;flex-wrap:wrap"><span class="qr"></span><div style="flex:1;min-width:180px"><div class="small muted">Link for XIAMEN TAIYANG TECHNOLOGY, valid until 27 Oct 2026</div><div class="inp" style="width:100%;margin:6px 0;overflow:hidden;white-space:nowrap">sorento.app/c/sorento/supplier-prices/&bull;&bull;&bull;&bull;&bull;&bull;</div><div style="display:flex;gap:6px;flex-wrap:wrap"><span class="btn sm">Copy link</span><span class="btn sm">Save QR image</span></div><div class="small muted" style="margin-top:8px">Last opened 27 Sep 14:20 &middot; opened 3 times</div></div></div><div class="fl" style="margin-top:14px">Message to paste into WeChat</div><div class="msg">Sorento 价格维护 / Sorento price page
+请在此更新贵司的产品价格:
+sorento.app/c/sorento/supplier-prices/&bull;&bull;&bull;
+(2026-10-27 前有效 / valid until 27 Oct 2026)</div></div><div class="mf"><span class="btn d">Revoke</span><span class="sp" style="flex:1"></span><span class="btn p">Copy message</span></div></div></div></div></section><section class="screen" id="public-prices"><h3>The supplier's own page: Prices</h3><p>Chinese first, English beneath. Search, cost lists with date ranges, new prices with an optional validity for the whole submission.</p><p class="dd"><b>Dropdowns:</b> None.</p><div class="lbl">At 1280 wide</div><div class="scroll"><div class="fd" style="display:block"><div class="mtop" style="height:56px;padding:0 24px"><b>Sorento 价格维护</b><span class="en">Price page</span><span class="sp" style="flex:1"></span><span class="seg"><span class="on">中文</span><span>EN</span></span></div><div class="pg"><div style="max-width:1060px;margin:0 auto"><div class="small muted" style="margin-bottom:8px">XIAMEN TAIYANG TECHNOLOGY &middot; CNY &middot; 链接 2026-10-27 前有效 <span class="en">valid until 27 Oct 2026</span></div><div class="tabs"><span class="on">价格表 <span class="en">Prices</span></span><span>上传Excel <span class="en">Upload</span></span><span>记录 <span class="en">History</span></span></div><div class="bar"><span class="search"><i class="ic"></i><span>搜索型号或配置 Search model or configuration</span></span></div><div class="card " style="overflow:hidden"><table><thead><tr><th style="width:200px" class="">型号 Model</th><th style="width:190px" class="">产品配置 Configuration</th><th style="width:140px" class="num">价格 Price (CNY)</th><th style="width:220px" class="">有效期 Valid</th><th style="width:150px" class="">状态 Status</th><th style="width:150px" class="">新价格 New price</th></tr></thead><tbody><tr class=""><td class=""><span class='code'>SRTWT1900-BL-DIY</span></td><td class="">304不锈钢 单把 冷热</td><td class="num"><span class='dot'></span>86.00</td><td class="">一直有效 Always</td><td class=""><span class="b green">生效中 In force</span></td><td class=""><span class="inp hl" style="width:100%">95.00</span><div class="sub up">+3.3%</div></td></tr><tr class="nested"><td class=""></td><td class=""></td><td class="num">92.00</td><td class="">2026-10-01 起 from</td><td class=""><span class="b blue">待生效 Scheduled</span></td><td class=""></td></tr><tr class=""><td class=""><span class='code'>CB2500SS-BL</span></td><td class="">不锈钢 拉丝 蓝</td><td class="num">498.00</td><td class="">一直有效 Always</td><td class=""><span class="b gray">基础 Always</span></td><td class=""><span class="inp" style="width:100%"><span class="ph2">468.00</span></span></td></tr><tr class="nested"><td class=""></td><td class=""></td><td class="num"><span class='dot'></span>468.00</td><td class="">2026-09-15 至 2026-09-30</td><td class=""><span class="b green">生效中 In force</span></td><td class=""></td></tr></tbody></table></div><p class="small muted" style="margin:6px 0 0">Sample rows. The codes CB2500SS-BL（彩盒） and SRTWT1900-BL-DIY are quoted from the TAIYANG file in the issue; every other code, configuration and price is illustrative, not read from the file.</p><div class="foot" style="margin-top:12px;border:1px solid var(--line);border-radius:10px"><span class="small">生效日期 <span class="en">Valid from</span></span><span class="inp" style="width:150px">2026-10-01</span><span class="small">截止日期 <span class="en">Valid to</span></span><span class="inp" style="width:150px"><span class="ph2">不填 No end</span></span><span class="sp"></span><span class="small">已修改 1 / 258 <span class="en">changed</span></span><span class="btn p">提交审核 Submit for review</span></div></div></div></div></div><div class="lbl">At 375 wide (phone)</div><div class="scroll"><div class="fm"><div class="mtop" style=""><b>Sorento 价格维护</b><span class="en">Price page</span><span class="sp" style="flex:1"></span><span class="seg"><span class="on">中文</span><span>EN</span></span></div><div class="mpg"><div class="small muted" style="margin-bottom:8px">XIAMEN TAIYANG TECHNOLOGY &middot; CNY &middot; 链接 2026-10-27 前有效 <span class="en">valid until 27 Oct 2026</span></div><div class="tabs"><span class="on">价格表 <span class="en">Prices</span></span><span>上传Excel <span class="en">Upload</span></span><span>记录 <span class="en">History</span></span></div><div class="bar"><span class="search" style="flex:1"><i class="ic"></i><span>搜索型号或配置 Search model or configuration</span></span></div><div class="mc"><div class="r"><span class="code">SRTWT1900-BL-DIY</span><span class="small muted">304不锈钢 单把 冷热</span></div><div class="cl"><span><span class=dot></span>86.00</span><span class="muted">一直有效 Always</span><span><span class="b green">生效中 In force</span></span><span>92.00</span><span class="muted">2026-10-01 起 from</span><span><span class="b blue">待生效 Scheduled</span></span></div><div class="r" style="margin-top:8px;align-items:center"><span class="small">新价格 <span class="en">New price</span></span><span style="display:flex;gap:6px;align-items:center"><span class="b red">+3.3%</span><span class="inp big hl" style="width:120px">95.00</span></span></div></div><div class="mc"><div class="r"><span class="code">CB2500SS-BL</span><span class="small muted">不锈钢 拉丝 蓝</span></div><div class="cl"><span>498.00</span><span class="muted">一直有效 Always</span><span><span class="b gray">基础 Always</span></span><span><span class=dot></span>468.00</span><span class="muted">09-15 至 09-30</span><span><span class="b green">生效中 In force</span></span></div><div class="r" style="margin-top:8px;align-items:center"><span class="small">新价格 <span class="en">New price</span></span><span style="display:flex;gap:6px;align-items:center"><span class="inp big" style="width:120px"><span class="ph2">468.00</span></span></span></div></div><div style="height:150px"></div></div><div style="position:absolute;left:0;right:0;bottom:0"><div class="foot" style="display:block"><div class="row2" style="margin-bottom:8px"><div><div class="small">生效日期 <span class="en">Valid from</span></div><span class="inp big" style="width:100%">2026-10-01</span></div><div><div class="small">截止日期 <span class="en">Valid to</span></div><span class="inp big" style="width:100%"><span class="ph2">不填 No end</span></span></div></div><div style="display:flex;align-items:center;gap:8px"><span class="small">已修改 1 / 258 <span class="en">changed</span></span><span class="sp" style="flex:1"></span><span class="btn p">提交审核 Submit for review</span></div></div></div></div></div></section><section class="screen" id="public-history"><h3>The supplier's own page: History</h3><p>Its own submissions and outcomes, searchable by code.</p><p class="dd"><b>Dropdowns:</b> None.</p><div class="lbl">At 1280 wide</div><div class="scroll"><div class="fd" style="display:block;min-height:320px"><div class="mtop" style="height:56px;padding:0 24px"><b>Sorento 价格维护</b><span class="en">Price page</span><span class="sp" style="flex:1"></span><span class="seg"><span class="on">中文</span><span>EN</span></span></div><div class="pg"><div style="max-width:1060px;margin:0 auto"><div class="tabs"><span>价格表 <span class="en">Prices</span></span><span>上传Excel <span class="en">Upload</span></span><span class="on">记录 <span class="en">History</span></span></div><div class="bar"><span class="search"><i class="ic"></i><span>搜索编号 Search code</span></span></div><div class="card " style="overflow:hidden"><table><thead><tr><th style="width:120px" class="">编号 Code</th><th style="width:150px" class="">提交日期 Submitted</th><th style="width:200px" class="">有效期 Valid</th><th style="width:180px" class="">状态 Status</th><th style="width:140px" class="num">通过 Accepted</th></tr></thead><tbody><tr class=""><td class=""><b>CPC-0008</b></td><td class="">2026-09-27</td><td class="">2026-10-01 起 from</td><td class=""><span class="b amber">审核中 Pending review</span></td><td class="num">-</td></tr><tr class=""><td class=""><b>CPC-0003</b></td><td class="">2026-08-30</td><td class="">一直有效 Always</td><td class=""><span class="b green">已生效 Applied</span></td><td class="num">38 / 40</td></tr></tbody></table></div></div></div></div></div><div class="lbl">At 375 wide (phone)</div><div class="scroll"><div class="fm"><div class="mtop" style=""><b>Sorento 价格维护</b><span class="en">Price page</span><span class="sp" style="flex:1"></span><span class="seg"><span class="on">中文</span><span>EN</span></span></div><div class="mpg"><div class="tabs"><span>价格表 <span class="en">Prices</span></span><span>上传Excel <span class="en">Upload</span></span><span class="on">记录 <span class="en">History</span></span></div><div class="bar"><span class="search" style="flex:1"><i class="ic"></i><span>搜索编号 Search code</span></span></div><div class="mc"><div class="r"><b>CPC-0008</b><span class="b amber">审核中 Pending review</span></div><div class="r small muted"><span>提交 2026-09-27</span><span>2026-10-01 起</span></div></div><div class="mc"><div class="r"><b>CPC-0003</b><span class="b green">已生效 Applied</span></div><div class="r small muted"><span>提交 2026-08-30</span><span>通过 38 / 40 accepted</span></div></div></div></div></div></section><section class="screen" id="public-expired"><h3>The supplier's own page: expired or revoked link</h3><p>Nothing else is readable.</p><p class="dd"><b>Dropdowns:</b> None.</p><div class="lbl">At 1280 wide</div><div class="scroll"><div class="fd" style="display:block;min-height:260px"><div class="mtop" style="height:56px;padding:0 24px"><b>Sorento 价格维护</b><span class="en">Price page</span><span class="sp" style="flex:1"></span><span class="seg"><span class="on">中文</span><span>EN</span></span></div><div style="text-align:center;padding:80px 16px"><div style="font-size:20px;font-weight:700">链接已失效</div><div class="muted">This link is no longer valid</div></div></div></div><div class="lbl">At 375 wide (phone)</div><div class="scroll"><div class="fm"><div class="mtop" style=""><b>Sorento 价格维护</b><span class="en">Price page</span><span class="sp" style="flex:1"></span><span class="seg"><span class="on">中文</span><span>EN</span></span></div><div class="mpg"><div style="text-align:center;padding:120px 16px"><div style="font-size:18px;font-weight:700">链接已失效</div><div class="muted">This link is no longer valid</div></div></div></div></div></section></div></div></body></html>
