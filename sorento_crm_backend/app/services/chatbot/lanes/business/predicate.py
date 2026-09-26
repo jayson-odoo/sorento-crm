@@ -57,11 +57,27 @@ _BARE_CERT_WORDS: frozenset[str] = frozenset(
 _BARE_CERT_WORD_RE = re.compile(r"\b(?:certs?|certif\w*|sijil)\b", re.IGNORECASE)
 
 
+# Words that describe a certificate's own PROPERTY (its validity, expiry, number),
+# never a scheme: "valid cert", "cert validity", "certificate expiry", "cert no".
+# Reviewer B1 on PR #833: before this they split off as scheme "valid", which no
+# register holds, so the answer said "0 products" over an unfiltered list. Validity
+# is flagged on every row, never filtered (D-lane), so these read as the bare leg.
+_CERT_PROPERTY_WORDS: frozenset[str] = frozenset(
+    {
+        "valid", "validity", "invalid", "expiry", "expired", "expire", "expires",
+        "expiration", "no", "no.", "number", "num", "status", "date", "copy",
+        "latest", "current", "active", "still", "sah", "tamat",
+    }
+)
+
+
 def _cert_scheme_from_raw(raw: str) -> str | None:
-    """What is left of `raw` once every bare cert word is removed, or None when
-    nothing is - the raw WAS only the cert word."""
+    """What is left of `raw` once every bare cert word and every certificate
+    PROPERTY word is removed, or None when nothing is - the raw named no scheme."""
     words = [w for w in re.split(r"\s+", raw.strip()) if w]
-    remainder = [w for w in words if w.lower() not in _BARE_CERT_WORDS]
+    remainder = [
+        w for w in words if w.lower() not in _BARE_CERT_WORDS and w.lower() not in _CERT_PROPERTY_WORDS
+    ]
     return " ".join(remainder).strip() or None
 
 
@@ -108,6 +124,12 @@ def _require_from_attributes(parser_output: dict[str, Any]) -> dict[str, Any] | 
     An attribute word the table does not know is NOT guessed into a leg: it stays a
     plain requested attribute and the ordinary answer projects it, which is what a
     spec question ("what is its width") has always done.
+
+    A cert PHRASE ("PPS cert", "sirim certificate") is the same split an
+    `attachment_type` raw gets below (S2, AC-1303): the scheme is what is left once the
+    bare cert word is removed. Without it the phrase missed the one-word table, fell to
+    the bare leg, and "PPS" was then stripped from the remainder as a predicate word, so
+    nothing downstream could recover the scheme either.
     """
     for raw in parser_output.get("requested_attributes") or []:
         if not isinstance(raw, str):
@@ -115,6 +137,10 @@ def _require_from_attributes(parser_output: dict[str, Any]) -> dict[str, Any] | 
         leg = _LEG_BY_ATTRIBUTE_WORD.get(raw.strip().lower())
         if leg:
             return {leg: True}
+        words = [w for w in re.split(r"\s+", raw.strip()) if w]
+        if len(words) > 1 and _CERT_RE.search(raw):
+            scheme = _cert_scheme_from_raw(raw)
+            return {"certificate": {"scheme": scheme}} if scheme else {"certificate": True}
     return None
 
 
@@ -174,6 +200,14 @@ def derive_require(
     """
     from_attributes = _require_from_attributes(parser_output)
     if from_attributes is not None:
+        if from_attributes == {"certificate": True}:
+            # The attribute names only the bare leg; an attachment_type raw beside it
+            # may still carry the scheme ("certificate" + entity "PPS cert").
+            for raw in _attachment_type_raws(parser_output):
+                if _CERT_RE.search(raw):
+                    scheme = _cert_scheme_from_raw(raw)
+                    if scheme:
+                        return {"certificate": {"scheme": scheme}}
         return from_attributes
 
     intent = parser_output.get("intent_hint")

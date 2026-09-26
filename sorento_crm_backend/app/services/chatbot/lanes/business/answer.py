@@ -2418,6 +2418,12 @@ def _token_requests(norm_code: str, tokens: set[str], all_norm_codes: set[str]) 
     )
 
 
+def _plain_words(value: Any) -> str:
+    """A domain key said in a sentence ("purchase_order" -> "purchase order"); anything
+    else is left as written. Round 4 R7 on PR #833: no snake_case reaches a reply."""
+    return jsc.js_string(value).replace("_", " ")
+
+
 def _prettify_type(value: Any) -> str:
     """A snake_case / kebab-ish resolver entity type, rendered for a customer.
 
@@ -2482,12 +2488,23 @@ def _unplaced_token_has_neighbours(resolved: Any, gate: Any) -> bool:
     Read through `miss_resolutions` + `_ms_is_exact`, the same two `build_suggest_offer`'s
     own D1 arm is built on, so this guard cannot claim a did-you-mean D1 then declines to
     print. `allowed_lookup` narrows it the same way D1 does.
+
+    Only a CODE-shaped token counts (the resolver's own `_CODE_RE`, letters and digits):
+    every F8 turn above typed a code. A plain class word ("bidet", "basin") that
+    substring-matches a few product codes is the described set's own word, not a typo,
+    and treating its matches as neighbours silenced AC-1319's zero-qualifying answer
+    ("Couldn't find a bidet with a certificate") under an unrelated did-you-mean.
     """
+    from app.services.entity_resolver import _CODE_RE
+
     r = resolved if isinstance(resolved, dict) else {}
     g = gate if isinstance(gate, dict) else {}
     allowed_lookup = jsc.get(jsc.get(g, "gate_debug"), "allowed_lookup")
     allowed = allowed_lookup if isinstance(allowed_lookup, list) else None
     for res in _ms_miss_resolutions(r, gate=g):
+        token = jsc.nullish_str(jsc.get(res, "token")).strip()
+        if len(token) < 3 or not _CODE_RE.fullmatch(token):
+            continue
         candidates = [
             *jsc.array(jsc.get(res, "matches")),
             *jsc.array(jsc.get(res, "alternatives")),
@@ -2570,21 +2587,132 @@ def _header_predicate_phrase(require: dict[str, Any]) -> str:
     return _and_list(parts) if parts else "that"
 
 
-def build_set_header(qualifying_total: int, shown: int, set_noun: str, require: dict[str, Any]) -> str:
-    """AC-1316 (work item E2): "<qualifying_total> <set noun> have <predicate noun>.
-    Showing <n>." - prepended, as its OWN line, ahead of the existing render (the
-    block below it is untouched). "Showing <n>" is dropped when every qualifying
-    product already fits on the page (`qualifying_total <= shown`).
+#: The longest counted set listed in one reply (owner ruling, 26 Sep 2026: "A counted set
+#: that fits one WhatsApp message (about 50 rows) is listed in full"). Read at call time
+#: (`answer.SET_LIST_MAX`) so a test can lower it rather than seed fifty products.
+SET_LIST_MAX = 50
 
-    A pure string function: `qualifying_total` and `shown` are counts the caller
-    already has (the resolver's own `qualifying_total`, and the page the domain
-    tool actually rendered), never re-derived here.
+
+def describe_set_line(description: Any) -> str:
+    """The resolver's own labelled bindings (`product_predicate_service.describe_set`),
+    one filter per line with its label bold, or "" when the set was described by nothing
+    it could name:
+
+        *Brand:* Sorento
+        *Product type:* Wash basin
+        *Mounting:* Wall hung
+
+    Owner brief W2 on PR #833 named the bindings; round 4 R2 (owner console test, 27 Sep
+    2026: "Brand, product type needs to be line by line, label needs to be bold") put
+    each on its own line. Bold is the WhatsApp markup the rows already use ("*Label:*"),
+    the same contract #1279's console renderer reads."""
+    lines = []
+    for entry in jsc.array(description):
+        label = jsc.js_string(jsc.get(entry, "label") or "").strip()
+        value = jsc.js_string(jsc.get(entry, "value") or "").strip()
+        if label and value:
+            lines.append(f"*{label}:* {value}")
+    return "\n".join(lines)
+
+
+def not_understood_line(words: Any) -> str:
+    """The words the set reader could not use, said rather than silently dropped."""
+    terms = [jsc.js_string(w).strip() for w in jsc.array(words) if jsc.js_string(w).strip()]
+    if not terms:
+        return ""
+    quoted = _and_list([f'"{t}"' for t in terms])
+    return f"I did not understand {quoted}, so it is not part of this search."
+
+
+def build_set_header(
+    qualifying_total: int,
+    shown: int,
+    set_noun: str,
+    require: dict[str, Any],
+    *,
+    description: Any = None,
+    not_understood: Any = None,
+    offset: int = 0,
+    previous_total: int | None = None,
+    exhausted: bool = False,
+) -> str:
+    """AC-1316: "<qualifying_total> <set noun> have <predicate noun>." - the counted set's
+    own line, ahead of the rows. No paging (owner ruling, 26 Sep 2026: no "Showing 5", no
+    "more"):
+
+    - every qualifying product listed (`shown >= qualifying_total`): the count alone;
+    - some listed because the customer named how many (`0 < shown < qualifying_total`):
+      "Here are the first <shown>.";
+    - none listed (`shown == 0`, a set longer than `SET_LIST_MAX`): the count, then the
+      question - how many to show, or ask again naming a brand or size (reviewer S2 on
+      PR #833: a bare "grohe" reply is not carried against the set, so the question offers
+      the full re-ask, which is).
+
+    A pure string function: `qualifying_total` and `shown` are counts the caller already
+    has, never re-derived here.
     """
     verb = "has" if qualifying_total == 1 else "have"
     header = f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}."
-    if qualifying_total > shown:
-        header += f" Showing {shown}."
+    # W2 / R2: what the set was identified as leads, one filter per line.
+    described = describe_set_line(description)
+    if described:
+        header = f"{described}\n{header}"
+    missed = not_understood_line(not_understood)
+    if missed:
+        header += f" {missed}"
+    if previous_total and previous_total != qualifying_total:
+        # W4: the page re-counted and the set moved since the question; say so.
+        header += f" It was {previous_total:,} when you asked."
+    if exhausted:
+        # Round 3 W2: a count after the last page; every product was already listed.
+        header += f" That is all {qualifying_total:,}."
+    elif offset and shown > 0:
+        # W4: "another N" continues the list; the numbers say where.
+        header += f" Here are {offset + 1} to {offset + shown}."
+    elif qualifying_total > shown:
+        if shown > 0:
+            header += f" Here are the first {shown}."
+        else:
+            header += (
+                " That is too many to list in one message. How many should I show "
+                f"(up to {SET_LIST_MAX})? Or ask again naming a brand or size."
+            )
     return header
+
+
+#: The other-brands line's own phrase per leg ("Other brands with stock"), owner hand
+#: test round 3 on PR #833: "with certificates" / "with incoming" / "with stock".
+_OTHER_BRANDS_NOUN: dict[str, str] = {
+    "certificate": "certificates",
+    "stock": "stock",
+    "incoming": "incoming",
+    "promotion": "a promotion",
+}
+
+
+def other_brands_line(other_brands: Any, require: dict[str, Any]) -> str:
+    """"Other brands with stock: Bravat 79, Cabana 57. Name one to see them." - the
+    last line of a reply answered for the company's default brand because the customer
+    named none (owner hand test round 3 on PR #833, W4). Every other brand with its full
+    count, largest first; "" when there is none."""
+    others = [
+        f"{jsc.js_string(jsc.get(o, 'brand')).strip()} {int(jsc.get(o, 'count') or 0):,}"
+        for o in jsc.array(other_brands)
+        if jsc.js_string(jsc.get(o, "brand")).strip() and jsc.get(o, "count")
+    ]
+    if not others:
+        return ""
+    parts: list[str] = []
+    for key, value in (require or {}).items():
+        if key == "attachment_type":
+            label = jsc.js_string(value).strip().lower()
+            parts.append(label if label else "an attachment")
+        elif key == "certificate" and isinstance(value, dict) and jsc.js_string(jsc.get(value, "scheme")).strip():
+            parts.append(f"{jsc.js_string(jsc.get(value, 'scheme')).strip()} certificates")
+        elif key in _OTHER_BRANDS_NOUN:
+            parts.append(_OTHER_BRANDS_NOUN[key])
+    phrase = f" with {_and_list(parts)}" if parts else ""
+    return f"Other brands{phrase}: {', '.join(others)}. Name one to see them."
 
 
 # REV-N2/AC-1337 (third console pass): the irregular endings a bare "+s" gets
@@ -2616,71 +2744,58 @@ def set_noun_for(class_labels: list[str] | None) -> str:
     return " ".join(w.lower() for w in words)
 
 
-# --------------------------------------------------------------------------- #
-# E3 (attribute-first asks, AC-1317): "more" paging through the set_page carry.
-# --------------------------------------------------------------------------- #
-
-#: The carried id list's own cap - a 2,704-long qualifying set is carried as ids,
-#: not re-queried, so it has to stop somewhere short of the whole catalogue.
-#: Named so a test can monkeypatch it (`raising=False`) rather than seed the real
-#: count.
-SET_PAGE_ID_CAP = 200
-
-# REV-N1/AC-1337 (third console pass): the fixed set a paging reply must EQUAL,
-# lower-cased and stripped of punctuation - never a bare substring/word search,
-# which let "no more" and "next week?" wrongly page a carry that was never
-# asked to continue.
-_MORE_FIXED_PHRASES: frozenset[str] = frozenset(
-    {"more", "next", "lagi", "more please", "show more", "next 5", "next five", "lagi 5"}
-)
-_MORE_NUMBER_RE = re.compile(r"^more \d+$")
-_PUNCTUATION_RE = re.compile(r"[^\w\s]")
-_WHITESPACE_RE = re.compile(r"\s+")
+#: The qualifying ids one described set is counted and fetched from - the resolver's own
+#: cap, so a 2,704-long set is counted in full but never carried as a list of that size.
+SET_ID_CAP = 200
 
 
-def is_more_reply(text: Any) -> bool:
-    """AC-1317/AC-1337: a bare "more" / "next" / "lagi" reply, or one of the
-    fixed short courtesy/paging phrases, lower-cased and stripped of
-    punctuation - equality only, never a substring/word search over an
-    arbitrary short message: "no more", "next week?" and "more taps with
-    stock" must NOT page a carry that was never asked to continue.
-    """
-    normalized = _WHITESPACE_RE.sub(" ", _PUNCTUATION_RE.sub("", jsc.js_string(text).lower())).strip()
-    if not normalized:
-        return False
-    return normalized in _MORE_FIXED_PHRASES or bool(_MORE_NUMBER_RE.match(normalized))
+def unknown_values_sentence(unknown: Any) -> str:
+    """"I don't know 't trap' as a trap. I know P trap and S trap." - round 4 R6 (owner
+    console test on PR #833: "the water closet t trap ask, why it match s trap?"). One
+    sentence pair per unknown value, off `product_spec_search.unknown_spec_values`."""
+    parts = []
+    for u in jsc.array(unknown):
+        said = jsc.js_string(jsc.get(u, "said")).strip()
+        label = jsc.js_string(jsc.get(u, "label")).strip().lower()
+        known = [jsc.js_string(k) for k in jsc.array(jsc.get(u, "known")) if jsc.truthy(k)]
+        if not said or not label:
+            continue
+        line = f"I don't know '{said}' as a {label}."
+        if known:
+            line += f" I know {_and_list(known)}."
+        parts.append(line)
+    return " ".join(parts)
 
 
-def build_set_page_header(
-    qualifying_total: int, start: int, end: int, set_noun: str, require: dict[str, Any]
-) -> str:
-    """AC-1317: "<qualifying_total> <set noun> have <predicate noun>. Showing
-    <start> to <end>." - the CONTINUATION page's own header, off the SAME
-    predicate-noun phrase `build_set_header` uses, with a pre-known `set_noun`
-    (the carry's own, never re-derived from `class_labels` - a "more" turn runs
-    no resolver call and so never re-computes them).
-    """
-    verb = "has" if qualifying_total == 1 else "have"
-    return (
-        f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}. "
-        f"Showing {start} to {end}."
+def near_miss_sentence(near: Any, require: dict[str, Any]) -> str:
+    """Round 4 R4 (owner console test on PR #833, "so it got match or not? i have no
+    visibility into whether it does the matching"): a set that qualifies nothing says
+    the value it looked for and what the set holds in the key's other values:
+
+        No gunmetal wash basins with incoming stock (I looked for Finish or colour:
+        Gunmetal among wash basins). 12 wash basins have incoming stock in another
+        finish or colour: Chrome 5, Matt black 4, White 3.
+
+    `near` is the resolver's `predicate.near_miss` (`product_predicate_service._near_miss`)."""
+    labels = [jsc.js_string(c).strip() for c in jsc.array(jsc.get(near, "class_labels")) if jsc.truthy(c)]
+    noun = set_noun_for(labels)
+    singular = labels[0].lower() if len(labels) == 1 else "product"
+    label = jsc.js_string(jsc.get(near, "label")).strip()
+    value = jsc.js_string(jsc.get(near, "value")).strip()
+    with_what = _predicate_phrase(require)
+    has_what = _header_predicate_phrase(require)
+    # An acronym value keeps its capitals ("No PVC wash basins"; PR #833 round 5 N2).
+    named = value if value.isupper() else value.lower()
+    said = f"No {named} {noun} with {with_what} (I looked for {label}: {value} among {noun})."
+    total = int(jsc.get(near, "other_total") or 0)
+    if not total:
+        return f"{said} No {noun} have {with_what} in any {label.lower()}."
+    others = ", ".join(
+        f"{jsc.js_string(jsc.get(o, 'value'))} {int(jsc.get(o, 'count') or 0):,}"
+        for o in jsc.array(jsc.get(near, "other_values"))
     )
-
-
-def build_set_page_exhausted_message(qualifying_total: int, set_noun: str) -> str:
-    """AC-1317: "That was all <N> <noun>." - the fixed idiom, never conjugated
-    off `qualifying_total` ("was", not "were", even for a plural count)."""
-    return f"That was all {qualifying_total:,} {set_noun}."
-
-
-def build_set_page_narrow_message(set_noun: str) -> str:
-    """AC-1317: past the CARRIED id list's own cap (`SET_PAGE_ID_CAP`) - real
-    qualifying products remain, but the carry ran out before they did, so the
-    honest answer is to ask for a narrower question, never "that was all"."""
-    return (
-        f"That's as many {set_noun} as I can carry in one list - narrow the ask "
-        f"(a brand, or a more specific type) and I can show you the right ones."
-    )
+    counted = f"1 {singular} has" if total == 1 else f"{total:,} {noun} have"
+    return f"{said} {counted} {has_what} in another {label.lower()}: {others}."
 
 
 def not_found_error_message(
@@ -3318,7 +3433,8 @@ def not_found_error_message(
                 entitlement_miss
                 if jsc.truthy(entitlement_miss)
                 else (
-                    f"But no{active_inactive} {domain_word}{miss_window}{access} "
+                    # R7 (round 4): "But no purchase order matched", never the domain key.
+                    f"But no{active_inactive} {_plain_words(domain_word)}{miss_window}{access} "
                     f"matched these{co_suffix}. {esc_ask}"
                 )
             )
@@ -3360,7 +3476,7 @@ def not_found_error_message(
             else:
                 escalate_message = (
                     f'I captured "{captured}" but couldn\'t tell which part is which. '
-                    f"For a {jsc.js_string(domain_hint)} enquiry, please give me a labeled "
+                    f"For a {_plain_words(domain_hint)} enquiry, please give me a labeled "
                     f"specific - e.g. {labels}."
                 )
         else:
@@ -3447,6 +3563,17 @@ def not_found_error_message(
                         f"Try a product type such as {common_text}."
                     )
                 is_clarification = True
+            elif (
+                described_set_answers
+                and jsc.get(predicate, "qualifying_total") == 0
+                and isinstance(jsc.get(predicate, "near_miss"), dict)
+            ):
+                # R4 (round 4 on PR #833): the miss says what was searched and what the
+                # set holds in the key's other values, before the escalation offer.
+                escalate_message = (
+                    f"{near_miss_sentence(jsc.get(predicate, 'near_miss'), jsc.get(predicate, 'require') or {})} "
+                    f"Would you like me to escalate to {team} team?"
+                )
             elif (
                 described_set_answers
                 and jsc.get(predicate, "qualifying_total") == 0
@@ -3660,9 +3787,20 @@ def not_found_error_message(
                     for_requested = f" for {requested}" if jsc.truthy(requested) else ""
                     escalate_message = (
                         f"Could not find{active_inactive} {status_label}"
-                        f"{jsc.js_string(domain_hint)}{for_requested}{date_range}{access}. "
+                        f"{_plain_words(domain_hint)}{for_requested}{date_range}{access}. "
                         f"Would you like me to escalate to {team} team?"
                     )
+
+    # R6 (round 4 on PR #833): an attribute value the registry does not know is said back
+    # with the values it does, on a set ask (`predicate.unknown_values`) and a product ask
+    # (`unknown_spec_values`) alike. It outranks every miss sentence above: nothing was
+    # searched for it, so no "couldn't find" is true.
+    unknown_values = jsc.array(jsc.get(predicate, "unknown_values")) if isinstance(predicate, dict) else []
+    unknown_values = unknown_values or jsc.array(jsc.get(r, "unknown_spec_values"))
+    if unknown_values:
+        escalate_message = unknown_values_sentence(unknown_values)
+        is_clarification = True
+        found_summary = ""
 
     # Q23: the customer named an access level they do not hold. The gate detects it; say so
     # here too, or an entitlement problem reads as an ordinary "couldn't find it".
@@ -4058,6 +4196,15 @@ def build_suggest_offer(
         return keep
 
     misses = _ms_miss_resolutions(r, gate=g)
+    # Reviewer B2 on PR #833: a described set that qualifies nothing names its own miss
+    # (`not_found_error_message`'s set branches: the honest zero of AC-1319 with the
+    # codes it checked, the scheme or document type not on file of AC-1321 / R6). Its
+    # class word ("tap") forward-matched a few product codes, which is the set's own
+    # word and not a typo, so it offers no did-you-mean over the top of that sentence -
+    # the same code-shape rule `_unplaced_token_has_neighbours` applies.
+    from app.services.entity_resolver import _CODE_RE
+
+    zero_set = jsc.get(jsc.get(g, "predicate"), "qualifying_total") == 0
 
     d1s: list[dict[str, Any]] = []
     if not is_clar and not require_spec:
@@ -4065,6 +4212,8 @@ def build_suggest_offer(
         # number of missed tokens shown at 5, which with cap3 per token keeps the numbered
         # list at or under 15.
         for res in misses:
+            if zero_set and not _CODE_RE.fullmatch(jsc.nullish_str(jsc.get(res, "token")).strip()):
+                continue
             cands = token_candidates(res)
             if cands:
                 token = jsc.get(res, "token")

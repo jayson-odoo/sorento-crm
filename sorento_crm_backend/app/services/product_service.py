@@ -657,6 +657,7 @@ class ProductService:
         `specifications_for_products`.
         """
         from app.models.product_spec import ProductSpecifications, ProductSpecRegistry
+        from app.services.product_spec_registry import display_spec_value
 
         ids = [str(pid) for pid in product_ids if pid]
         if not ids:
@@ -686,6 +687,15 @@ class ProductService:
                         "key": key,
                         "label": reg.label,
                         "value": entry["value"],
+                        # R7 (round 4 on PR #833): the value in plain words, off the
+                        # registry's own `value_labels`, for every reader that shows it.
+                        # A LIST value (two finishes on one product) reads as its values
+                        # joined (PR #833 round 5 N1).
+                        "display_value": (
+                            " / ".join(display_spec_value(v, reg.value_labels) for v in entry["value"])
+                            if isinstance(entry["value"], list)
+                            else display_spec_value(entry["value"], reg.value_labels)
+                        ),
                         "unit": entry.get("unit") or reg.unit,
                         "rank_weight": float(reg.rank_weight) if reg.rank_weight is not None else 1.0,
                     }
@@ -2427,6 +2437,7 @@ class BrandService:
                 # Manual dict builder: a column not listed here never reaches the FE
                 # however faithfully the response schema inherits it.
                 "flows_to_purchasing": b.flows_to_purchasing,
+                "chatbot_weight": float(b.chatbot_weight or 0),
                 "created_at": b.created_at,
                 "updated_at": b.updated_at,
                 "created_by": str(b.created_by) if b.created_by else None,
@@ -2465,7 +2476,7 @@ class BrandService:
         self.db.commit()
         self.db.refresh(brand)
         return brand
-    
+
     def update_brand(self, brand_id: str, brand_data: BrandUpdate):
         """Update a brand."""
         brand = self.get_brand(brand_id)

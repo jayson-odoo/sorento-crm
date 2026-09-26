@@ -978,6 +978,10 @@ def _spec_field_value(spec: dict) -> Any:
     registry label) - `_qty` compacts a numeric value the same way every other
     quantity field does ("1.2000" -> "1.2")."""
     value = spec.get("value")
+    # R7 (PR #833 round 4): an enum value in the CRM's own plain words ("cold_only" ->
+    # "Cold only"), off the registry's `value_labels`, when the CRM sent them.
+    if isinstance(value, str) and _filled(spec.get("display_value")):
+        value = spec["display_value"]
     val_text = _qty(value) if isinstance(value, (int, float)) else value
     unit = spec.get("unit")
     return f"{val_text} {unit}".strip() if _filled(unit) else val_text

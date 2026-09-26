@@ -465,125 +465,6 @@ def _query_text(ctx: dict[str, Any]) -> str:
         return ""
 
 
-def _set_page_reply(ctx: dict[str, Any], parser: dict[str, Any]) -> dict[str, Any] | None:
-    """E3 (attribute-first asks, AC-1317): a bare "more" / "next" / "lagi" reply
-    under a carried `set_page` selection answers from the CARRY ALONE - no
-    resolver call runs, and for the two terminal arms below, no MCP call either.
-    `None` when this turn is not one of these, so every existing caller of
-    `run()` is unaffected.
-
-    Three arms:
-
-    * **the next page** - a `continue` exit whose `gate` is FABRICATED from the
-      carry (`compatible_entities` = the next slice of ids, `predicate.page` =
-      the bounds `fetch.output_structurer` renders "Showing X to Y" from and
-      `compile_state._set_page_carry` advances the offset from). The parser's
-      OWN `domain_hint` is overridden to the carry's - a bare "more" names no
-      domain of its own, and `run_fetch`'s tool pick reads it.
-    * **exhausted** (past the carried ids AND the true count): "That was all N
-      noun." - reuses the SAME `offer` exit mechanism the incoming/customer
-      PICKER already answers straight from its own `escalate_message`, with no
-      roster of its own to arm.
-    * **capped** (past the carried ids, but real qualifying products remain
-      beyond `answer.SET_PAGE_ID_CAP`): a "narrow the ask" reply, same
-      mechanism.
-    """
-    prev = _prev_variables(ctx)
-    carry = prev.get("last_result_set") if isinstance(prev, dict) else None
-    if not isinstance(prev, dict) or prev.get("selection_context") != "set_page":
-        return None
-    if not isinstance(carry, dict) or not carry:
-        return None
-
-    from app.services.chatbot.lanes.business import answer as answer_mod
-
-    if not answer_mod.is_more_reply(_query_text(ctx)):
-        return None
-
-    ids = list(carry.get("qualifying_ids") or [])
-    offset = int(carry.get("offset") or 0)
-    qualifying_total = int(carry.get("qualifying_total") or 0)
-    set_noun = jsc.js_string(carry.get("set_noun")) or "products"
-    require = carry.get("require") or {}
-    domain = carry.get("domain")
-
-    if offset >= len(ids):
-        message = (
-            answer_mod.build_set_page_narrow_message(set_noun)
-            if qualifying_total > len(ids)
-            else answer_mod.build_set_page_exhausted_message(qualifying_total, set_noun)
-        )
-        return exit_item(
-            {"escalate_message": message, "is_clarification": True},
-            exit_kind="offer",
-            fields={
-                "resolved": {},
-                # `set_page_terminal` (not `None`): the tail needs to SEE this
-                # turn ran, so it can positively CLEAR the set-page carry rather
-                # than silently no-op and re-arm the very state this reply just
-                # closed.
-                "gate": {"set_page_terminal": True},
-                "ctx_resolved": {},
-                "aggregate": None,
-                "tier_gate": None,
-            },
-        )
-
-    next_ids = ids[offset : offset + 5]
-    new_offset = offset + len(next_ids)
-    page_predicate: dict[str, Any] = {
-        "require": require,
-        "qualifying_total": qualifying_total,
-        "truncated": False,
-        "unrecognized_terms": [],
-        "class_labels": [],
-        "page": {
-            "start": offset + 1,
-            "end": new_offset,
-            "new_offset": new_offset,
-            "set_noun": set_noun,
-        },
-    }
-    # R29/AC-1354: the FIRST page's own scheme-narrowed certificate ids,
-    # carried straight through - `fetch.entity_ids_transformer` reads
-    # `predicate.certificate_ids` off THIS block exactly as it does off a
-    # real resolver call, so every later "more" page keeps narrowing to the
-    # same files. Absent when the carry never had them (a bare leg).
-    carried_certificate_ids = carry.get("certificate_ids")
-    if isinstance(carried_certificate_ids, list) and carried_certificate_ids:
-        page_predicate["certificate_ids"] = list(carried_certificate_ids)
-    gate_item: dict[str, Any] = {
-        "compatible_entities": [
-            {"uuid": pid, "entity_type": "product", "canonical_code": None} for pid in next_ids
-        ],
-        "gate_passed": True,
-        "predicate": page_predicate,
-    }
-    mutated_parser = {**parser, "domain_hint": domain}
-    mutated_ctx = {**ctx, "parse": {**(ctx.get("parse") or {}), "output": mutated_parser}}
-    item_out = {
-        **gate_item,
-        "ctx": {**mutated_ctx, "resolved": {}, "entities": None, "gate": gate_item},
-    }
-    # SEC-B1/AC-1333: a `tier_gate` dict carrying the FIRST page's own recomposed
-    # access_levels - never `None` - so `_fetch_semantic_input` reads it the same
-    # way it does off a real tier gate, instead of falling to the bare "more"
-    # parser output's own (empty) `access_levels` and silently dropping the tier
-    # filter from a promotion page.
-    page_tier_gate = {"access_levels_recomposed": list(carry.get("access_levels") or [])}
-    return exit_item(
-        item_out,
-        exit_kind="continue",
-        fields={
-            "resolved": {},
-            "gate": gate_item,
-            "ctx_resolved": item_out,
-            "aggregate": None,
-            "tier_gate": page_tier_gate,
-        },
-    )
-
-
 #: The entity hints whose value IS a code the customer typed, as opposed to a word that
 #: describes a class of them. `inbound_shipment` is here because the parser hands the SAME
 #: typed product code either hint ("srtwt7202-new" came back `product` on one live run and
@@ -659,8 +540,7 @@ def resolve_entity_body(
     (which a brand-qualified code can translate wrong), running effectively unrestricted
     rather than the contact's actual, single entitled tier. `tier_gate=None` (it never
     ran) or an empty recomposed list (nothing to state) both fall back to today's
-    behaviour unchanged - the `set_page` reply path keeps its own carry-based tiers and
-    never reaches this function at all.
+    behaviour unchanged.
     """
     parse_output = _parser_output(ctx)
     entities = parse_output.get("entities")
@@ -1030,14 +910,6 @@ def run(
             "this sub indexes `$('build-ctx').first().json.ctx`"
         )
     parser = _parser_output(ctx)
-
-    # E3 (attribute-first asks, AC-1317): a bare "more" reply under a carried
-    # `set_page` selection is answered from that carry alone, before anything
-    # else in this walk runs - in particular, before `resolve-entity`, so a
-    # "more" turn makes NO resolver call.
-    set_page = _set_page_reply(ctx, parser)
-    if set_page is not None:
-        return set_page
 
     aggregate: dict[str, Any] | None = None
     tier_gate_out: dict[str, Any] | None = None

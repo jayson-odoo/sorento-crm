@@ -363,6 +363,22 @@ def test_products_specs_render_as_keyed_fields_ranked_by_backend_order():
     assert out["spec_vocabulary"] == {"thickness": "Thickness", "wattage": "Wattage"}
 
 
+def test_products_spec_value_reads_the_crms_plain_words():
+    """PR #833 round 5 N4: a stored enum value ("cold_only") is shown in the plain words
+    the CRM sent as `display_value`, never as stored."""
+    out = env("crm_master_products_list", {
+        "data": [{
+            "product_code": "SRTWT5906",
+            "specs": [
+                {"key": "water_supply", "label": "Water supply", "value": "cold_only",
+                 "display_value": "Cold only", "rank_weight": 1.0},
+            ],
+        }],
+    })
+    [field] = [f for f in out["items"][0]["fields"] if f.get("key") == "spec:water_supply"]
+    assert field["value"] == "Cold only"
+
+
 def test_products_no_specs_key_no_vocabulary():
     out = env("crm_master_products_list", {"data": [{"product_code": "SRTWC8517"}]})
     assert "spec_vocabulary" not in out

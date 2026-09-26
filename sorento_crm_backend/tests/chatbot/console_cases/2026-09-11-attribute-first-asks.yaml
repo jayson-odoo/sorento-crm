@@ -1,0 +1,340 @@
+# Console cases for the attribute-first asks lane (PLAN-attribute-first-asks.md, AC-1325,
+# AC-1317, AC-1333, AC-1343, AC-1351, AC-1352). Counts are the prod copy of 2026-09-10 and
+# move with the data, so the expectations pin the SHAPE of the reply (the set header, the
+# clarify, the forward path), never a number.
+#
+# No paging (owner ruling, 26 Sep 2026): a set of up to 50 is listed in full under its
+# count; a longer one states the count and asks "How many should I show (up to 50)";
+# "more" pages nothing. No case below may expect "Showing".
+#
+# The contact has access levels (the promotion case needs one). Override with --contact.
+# Needs the parser's LLM key (read from ai_assistant_configs) and the MCP server on 8765.
+contact: "438930735"
+
+cases:
+  - name: a full code stays on the forward path (AC-1305)
+    text: "check stock srtwc286"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["Stock details found"]
+      reply_not_contains: ["products have stock.", "taps have stock.", "Showing"]
+
+  - name: an unknown class word clarifies with the nearest label (AC-1320)
+    # Was "which water tap has cert"; the owner ruled "water tap" IS a tap (26 Sep 2026),
+    # so the clarify is pinned with a word the vocabulary still does not know.
+    text: "which aqua tap has cert"
+    cold: true
+    expect:
+      reply_contains: ["I don't know 'aqua tap'", "Did you mean"]
+
+  # The owner's own four reverse asks (26 Sep 2026): "which water tap got stock which
+  # water tap got certificate which water basin ... got stock or got incoming".
+  - name: owner reverse ask, which water tap got stock
+    text: "which water tap got stock"
+    cold: true
+    expect:
+      reply_contains: ["taps have stock"]
+      reply_not_contains: ["I don't know"]
+      no_uuid: true
+
+  - name: owner reverse ask, which water tap got certificate
+    text: "which water tap got certificate"
+    cold: true
+    expect:
+      reply_contains: ["taps have certificates"]
+      reply_not_contains: ["I don't know", "Which kind of file"]
+      no_uuid: true
+
+  - name: owner reverse ask, which water basin got stock
+    text: "which water basin got stock"
+    cold: true
+    expect:
+      reply_contains: ["wash basins have stock"]
+      reply_not_contains: ["I don't know"]
+      no_uuid: true
+
+  - name: owner reverse ask, which basin got incoming
+    text: "which basin got incoming"
+    cold: true
+    expect:
+      reply_contains: ["wash basins have incoming stock"]
+      reply_not_contains: ["I don't know"]
+      no_uuid: true
+
+  - name: a class word scopes the set and the header counts it (AC-1306, AC-1316)
+    text: "which tap has cert"
+    cold: true
+    expect:
+      # 1,256 on the prod copy: past the list limit, so the count and the question.
+      reply_contains: ["taps have certificates", "How many should I show"]
+      reply_not_contains: ["Showing"]
+      no_uuid: true
+
+  - name: brand plus product_type describes a one-product set (AC-1327)
+    text: "which sorento bidet has cert"
+    cold: true
+    expect:
+      reply_contains: ["has certificates", "SRTWT5875"]
+      reply_not_contains: ["needs to be more specific"]
+
+  - name: stock leg with a class synonym (AC-1310)
+    text: "which basin got stock"
+    cold: true
+    expect:
+      reply_contains: ["wash basins have stock"]
+      reply_not_contains: ["Showing"]
+
+  - name: a register scheme word narrows the certificate leg (AC-1313, AC-1338)
+    text: "which item has PPS cert"
+    cold: true
+    expect:
+      reply_contains: ["have PPS certificates"]
+      reply_not_contains: ["I don't know"]
+
+  - name: an unknown document label clarifies as a document type (AC-1329)
+    text: "which basin has photo"
+    cold: true
+    expect:
+      reply_contains: ["as a document type", "Types I know"]
+
+  - name: the incoming leg (AC-1311)
+    text: "which sink has incoming"
+    cold: true
+    expect:
+      reply_contains: ["kitchen sinks have incoming stock"]
+
+  - name: a category-filed class counts and renders five (AC-1339, AC-1346)
+    text: "which bathroom accessory has stock"
+    cold: true
+    expect:
+      reply_contains: ["bathroom accessories have stock"]
+      reply_not_contains: ["a a match", "Couldn't find", "Showing"]
+
+  - name: a stock ask with spec words keeps working (R27, AC-1351, AC-1352)
+    text: "check stock water closet with s trap 250mm"
+    cold: true
+    expect:
+      reply_contains: ["water closets have stock"]
+      reply_not_contains: ["I don't know 'water closet trap'"]
+
+  - name: an incoming ask with spec words keeps working (R27, AC-1351)
+    text: "any incoming for water closet with p trap"
+    cold: true
+    expect:
+      reply_not_contains: ["I don't know 'water closet trap'"]
+
+  - name: a long set asks how many, the count lists that many, "more" pages nothing
+    cold: true
+    turns:
+      - text: "which tap has cert"
+        expect:
+          reply_contains: ["taps have certificates", "How many should I show"]
+      - text: "10"
+        expect:
+          reply_contains: ["taps have certificates. Here are the first 10."]
+      - text: "more"
+        expect:
+          reply_not_contains: ["Here are the first", "Showing"]
+
+  - name: a bare "10" answers the count question (reviewer S1, AC-1317c)
+    # The live parser's own reading of a bare count is what this case exists to observe;
+    # the engine reads the count off the text too, so the reply holds either way.
+    cold: true
+    turns:
+      - text: "which tap has cert"
+        expect:
+          reply_contains: ["taps have certificates", "How many should I show (up to 50)? Or ask again naming a brand or size."]
+      - text: "10"
+        expect:
+          reply_contains: ["taps have certificates. Here are the first 10."]
+          no_uuid: true
+
+  - name: a cert property word is the bare leg, never a scheme (reviewer B1)
+    text: "which tap has valid cert"
+    cold: true
+    expect:
+      reply_contains: ["taps have certificates"]
+      reply_not_contains: ["0 products have", "no valid certificates"]
+
+  - name: an unknown scheme names the schemes on file and lists nothing (reviewer B2, AC-1321)
+    text: "which tap has zzq cert"
+    cold: true
+    expect:
+      reply_contains: ["no zzq certificates", "Schemes on file:"]
+      reply_not_contains: ["have certificates.", "Did you mean"]
+
+  - name: a count named in the ask itself lists that many
+    text: "show 20 taps with cert"
+    cold: true
+    expect:
+      reply_contains: ["taps have certificates. Here are the first 20."]
+      no_uuid: true
+
+  - name: a same-domain clarify closes the question, so a later count lists nothing (AC-1343)
+    cold: true
+    turns:
+      - text: "which tap has cert"
+        expect:
+          reply_contains: ["How many should I show"]
+      - text: "which aqua tap has cert"
+        expect:
+          reply_contains: ["I don't know 'aqua tap'"]
+      - text: "10"
+        expect:
+          reply_not_contains: ["Here are the first 10", "Showing"]
+
+  - name: tiered promotion set, tier ask, then "more" pages nothing (AC-1333)
+    cold: true
+    turns:
+      - text: "any shower set on promo"
+        expect:
+          reply_contains: ["Which access level"]
+      - text: "1"
+        expect:
+          branch_kind: check_promotion
+          reply_contains: ["promotions for shower set"]
+      - text: "more"
+        expect:
+          reply_not_contains: ["Showing"]
+          no_uuid: true
+
+  # Owner hand test round 2 (26 Sep 2026, contact 487555417), W1 to W6. Run against a
+  # database where Sorento is the chatbot default brand (migration bcd_0001).
+  - name: owner turn 1, water basin is a wash basin and no code dump (W6)
+    text: "which water basin has stock"
+    cold: true
+    expect:
+      reply_contains: ["*Product type:* Wash basin", "wash basins have stock"]
+      reply_not_contains: ["*stock* for", "I don't know"]
+      no_uuid: true
+
+  - name: owner turn 5, the brand is honoured (W1, W2)
+    text: "whici sorento wash basin has stock"
+    cold: true
+    expect:
+      reply_contains: ["*Brand:* Sorento", "*Product type:* Wash basin", "wash basins have stock"]
+      reply_not_contains: ["products have stock", "(default)", "Other brands"]
+
+  - name: owner turns 9 then 10, the page keeps the brand set (W1, W4)
+    cold: true
+    turns:
+      - text: "which sorento wall hung basin has stock?"
+        expect:
+          reply_contains: ["*Brand:* Sorento", "*Product type:* Wash basin", "*Mounting:* Wall hung", "wash basins have stock"]
+          reply_not_contains: ["products have stock"]
+      - text: "10"
+        expect:
+          reply_contains: ["*Brand:* Sorento", "*Mounting:* Wall hung", "Here are the first 10."]
+          no_uuid: true
+
+  - name: owner turns 3 then 4, another N continues the list (W4)
+    cold: true
+    turns:
+      - text: "which wash basin has stock"
+        expect:
+          # Round 3 W4: no "(default)"; the other brands close the reply.
+          reply_contains: ["*Brand:* Sorento", "*Product type:* Wash basin", "Other brands with stock:", "Name one to see them."]
+          reply_not_contains: ["(default)"]
+      - text: "10"
+        expect:
+          reply_contains: ["Here are the first 10."]
+      - text: "can give another 40?"
+        expect:
+          reply_contains: ["Here are 11 to 50."]
+          reply_not_contains: ["more", "next"]
+
+  # Owner hand test of round 2 (26 Sep 13:07Z to 13:11Z, contact 487555417), round 3 fixes.
+  - name: round 3 owner turns 1 to 3, a count after a page continues the same set (W1, W2)
+    cold: true
+    turns:
+      - text: "which water closet has stock, p trap"
+        expect:
+          reply_contains: ["*Brand:* Sorento", "*Product type:* Water closet", "*Trap:* P trap", "water closets have stock", "How many should I show"]
+          reply_not_contains: ["(default)", "|"]
+      - text: "30"
+        expect:
+          reply_contains: ["Here are the first 30.", "*Total:*"]
+          reply_not_contains: ["|", "Stock summary", "*Product Code:*"]
+          no_uuid: true
+      - text: "10"
+        expect:
+          reply_contains: ["*Trap:* P trap", "Here are 31 to 40.", "*Total:*"]
+          reply_not_contains: ["|", "Stock summary", "*Product Code:*"]
+          no_uuid: true
+
+  - name: round 3 owner turn 4, a new class word after a set is a new certificate set (W3)
+    cold: true
+    turns:
+      - text: "which water closet has stock, p trap"
+        expect:
+          reply_contains: ["water closets have stock"]
+      - text: "30"
+        expect:
+          reply_contains: ["Here are the first 30."]
+      - text: "which basin has cert"
+        expect:
+          reply_contains: ["*Product type:* Wash basin", "wash basins have certificates"]
+          reply_not_contains: ["Product: ", "Water closet", "|"]
+
+  - name: round 3 owner turns 7 and 9, incoming lists read top to bottom (W1, W4)
+    text: "which bathtub has incoming"
+    cold: true
+    expect:
+      reply_contains: ["have incoming stock"]
+      reply_not_contains: ["|", "(default)"]
+
+  # Owner console test of round 3 (27 Sep 2026 00:03 to 00:07 MYT, contact 487555417), round 4
+  # R1 to R7. The eight exchanges in order, as the owner sent them.
+  - name: round 4 owner exchanges 1 to 8 (R1 to R7)
+    cold: true
+    turns:
+      - text: "any basin has stock"
+        expect:
+          reply_contains: ["*Brand:* Sorento\n*Product type:* Wash basin\n", "wash basins have stock", "Other brands with stock:"]
+      - text: "10"
+        expect:
+          reply_contains: ["Here are the first 10.", "*Total:*"]
+          reply_not_contains: ["*Product Code:*", "*Length:*", "*Width:*"]
+          no_uuid: true
+      - text: "any water closet p trap got stock"
+        expect:
+          reply_contains: ["*Product type:* Water closet", "*Trap:* P trap", "water closets have stock"]
+      - text: "5"
+        expect:
+          reply_contains: ["Here are the first 5.", "*Total:*"]
+          reply_not_contains: ["*Product Code:*"]
+      - text: "any gunmetal wash basin has incoming"
+        expect:
+          reply_contains: ["I looked for Finish or colour: Gunmetal among wash basins"]
+      - text: "any water tap basin"
+        expect:
+          reply_contains: ["I don't know 'water tap basin' as a product type. Did you mean"]
+      - text: "tap"
+        expect:
+          reply_contains: ["*Product type:* Tap", "taps have stock"]
+          reply_not_contains: ["Here are the matching products", "cold_only"]
+      - text: "any water clost t trap?"
+        expect:
+          reply_contains: ["I don't know 't trap' as a trap. I know P trap and S trap."]
+          reply_not_contains: ["s_trap", "Here are the matching products"]
+
+  # Reviewer pass at d6fa2b31 (round 5, B1): a plain product word before a head word is
+  # searched, never said back as an unknown value.
+  - name: round 5 B1 deck mounted bath mixer is searched
+    text: "any deck mounted bath mixer"
+    cold: true
+    expect:
+      reply_not_contains: ["I don't know 'deck mounted'"]
+
+  - name: round 5 B1 long spout basin tap is counted
+    text: "which long spout basin tap has stock"
+    cold: true
+    expect:
+      reply_not_contains: ["I don't know 'long spout'"]
+
+  - name: round 5 B1 grease trap is searched
+    text: "any grease trap"
+    cold: true
+    expect:
+      reply_not_contains: ["I don't know 'grease trap'"]

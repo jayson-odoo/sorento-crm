@@ -67,24 +67,14 @@ DOMAIN_BY_DOCUMENT: dict[str, str] = {
 }
 
 
-def _is_continuation(verdict: dict[str, Any]) -> bool:
-    """AC-1317: "show me the next page of the set you just counted".
+def _named_count(verdict: dict[str, Any]) -> int | None:
+    """The count this message named (`top_n`), or None."""
+    return contracts.named_count(verdict.get("top_n"))
 
-    The parser's own `continuation` boolean, read as-is - matching free-text `user_goal`
-    against a word list was still a text rule wearing the parser's clothes (captain
-    ruling, 16 Sep 2026) - AND a message that named no entity of its own. Measured: the
-    paging turn's own shape is `{message_type: "clarification", user_goal: "more",
-    continuation: true}` with an empty `entities`
-    (`test_rearch_s3_attribute_first.py::TestPagingByFive`), while the parser sets the
-    same boolean on any ordinary follow-up: "wc287" and "srtwc287", each a product entity
-    of its own typed after a counted answer, were both served the NEXT PAGE of it
-    ("5,783 taps have stock. Showing 6 to 10.", turns b383d402 / 2e7ca929, 17 Sep 2026).
-    A turn that names a new entity re-runs the ladder from the code tier, so it reads no
-    cursor and leaves none behind.
-    """
-    if verdict.get("continuation") is not True:
-        return False
-    return not any(
+
+def _names_a_subject(verdict: dict[str, Any]) -> bool:
+    """Did this message name an entity of its own? Then it is a new question."""
+    return any(
         isinstance(e, dict) and e.get("current_message") is not False
         for e in (verdict.get("entities") or [])
     )
@@ -1646,21 +1636,35 @@ def apply(
     # rather than from the guess itself. Measured red in 11 of the 13 supported domains
     # before the deletion; the other two (promotion, ideate) never reached it.
 
-    # A continuation pages the set the LAST answer described: same domain, same
-    # description, one page further on (AC-1317). It never re-narrows and never re-asks -
-    # the customer has already answered every question this set needed.
-    if _is_continuation(verdict) and focus.set_page:
-        carried = focus.set_page.get("set_key") or {}
-        domain = carried.get("domain")
+    # No paging (owner ruling, 26 Sep 2026). The one carried set is the one the LAST answer
+    # was too long to list, and the one message that reads it is the answer to its own
+    # question, "how many should I show?": a count (the parser's `top_n`) naming no new
+    # subject lists that many of the same set. It never re-narrows and never re-asks.
+    # Anything else - a "more", a new question - closes it; the engine re-arms it only
+    # when a fresh answer is too long again.
+    named_count = _named_count(verdict)
+    carried_set = dict(focus.set_page) if isinstance(focus.set_page, dict) else None
+    new_state.focus.set_page = None
+    # Round 4 R5: a clarify is answered on the very next turn or not at all; the engine
+    # re-arms it only when this turn asks another one.
+    new_state.focus.set_clarify = None
+    # W4 (owner hand test round 2): a set already LISTED in part (`shown` > 0) is carried
+    # too, and continues only on the customer's own "another N"
+    # (`turn_runtime.with_set_count_from_text` flags it); the bot never offers it.
+    if carried_set and int((carried_set.get("set_key") or {}).get("shown") or 0) > 0:
+        if not verdict.get("set_continue"):
+            carried_set = None
+    if carried_set and named_count and not _names_a_subject(verdict):
+        domain = (carried_set.get("set_key") or {}).get("domain")
         if domain:
-            trace.rules_fired.append("set_page_continuation")
+            trace.rules_fired.append("set_count_answered")
             return new_state, Plan(
                 domains=[domain],
                 fetch=[
                     FetchSpec(
                         domain=domain,
                         entities=[],
-                        filters={"set_page": dict(focus.set_page)},
+                        filters={"set_page": carried_set, "top_n": named_count},
                         date_window=None,
                     )
                 ],
@@ -1684,15 +1688,6 @@ def apply(
         # and only the first may override the resolver's own read of a typed code (D10).
         for spec in plan.fetch:
             spec.filters["outstanding"] = dict(trace.outstanding)
-
-    if plan.fetch and not any(isinstance(s.filters.get("set_page"), dict) for s in plan.fetch):
-        # A turn that fetches anything but the next page of the set closes the cursor.
-        # The cursor survives only the continuation branch above, which returns its own
-        # Plan, so reaching here at all means the ladder re-ran from the code tier and
-        # whatever page the last counted answer left behind is stale (AC-1317). The
-        # engine writes a fresh one after the fetch when the SPEC tier answered; this is
-        # the pure half, so a caller driving `apply()` alone does not ship a stale page.
-        new_state.focus.set_page = None
 
     if (
         (decision.kind == NEW_ASK or domain_in_message(verdict) is True)

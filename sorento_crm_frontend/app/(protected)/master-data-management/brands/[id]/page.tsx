@@ -41,6 +41,7 @@ interface Draft {
   is_active: boolean;
   access_levels: string[];
   flows_to_purchasing: boolean;
+  chatbot_weight: string;
 }
 
 const Empty = ({ children = 'Not set' }: { children?: string }) => (
@@ -139,6 +140,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
       is_active: brand.is_active,
       access_levels: brand.access_levels ?? [],
       flows_to_purchasing: brand.flows_to_purchasing,
+      chatbot_weight: String(brand.chatbot_weight ?? 0),
     });
     setEditing(true);
   };
@@ -159,6 +161,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
         is_active: draft.is_active,
         access_levels: draft.access_levels,
         flows_to_purchasing: draft.flows_to_purchasing,
+        chatbot_weight: Number(draft.chatbot_weight) || 0,
       },
     });
     cancelEdit();
@@ -168,6 +171,8 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
     !!draft &&
     draft.brand_code.trim().length > 0 &&
     draft.brand_name.trim().length > 0 &&
+    Number(draft.chatbot_weight) >= 0 &&
+    Number(draft.chatbot_weight) <= 9999 &&
     !update.isPending;
 
   const actions: RecordAction[] = [
@@ -311,6 +316,24 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
                     'Yes'
                   ) : (
                     'No'
+                  )}
+                </Field>
+
+                <Field label="Chatbot brand weight" htmlFor="brand-chatbot-weight">
+                  {editing && draft ? (
+                    <Input
+                      id="brand-chatbot-weight"
+                      type="number"
+                      min={0}
+                      max={9999}
+                      step={0.1}
+                      inputMode="decimal"
+                      className="w-32"
+                      value={draft.chatbot_weight}
+                      onChange={(e) => setDraft({ ...draft, chatbot_weight: e.target.value })}
+                    />
+                  ) : (
+                    String(brand.chatbot_weight ?? 0)
                   )}
                 </Field>
               </CardContent>

@@ -37,6 +37,8 @@ const BrandFormSchema = z.object({
   // False means every product on this brand is bought locally by CS and never
   // raises an Order Inquiry (PLAN-brand-flows-to-purchasing.md).
   flows_to_purchasing: z.boolean(),
+  // The chatbot's brand preference: higher weights are answered first (0 = none).
+  chatbot_weight: z.coerce.number().min(0, 'Enter 0 or more').max(9999, 'Enter 9999 or less'),
 });
 
 interface BrandFormDialogProps {
@@ -68,6 +70,7 @@ export default function BrandFormDialog({
       is_active: true,
       access_levels: [],
       flows_to_purchasing: true,
+      chatbot_weight: 0,
     },
   });
 
@@ -81,6 +84,7 @@ export default function BrandFormDialog({
           is_active: brand.is_active,
           access_levels: brand.access_levels ?? [],
           flows_to_purchasing: brand.flows_to_purchasing,
+          chatbot_weight: brand.chatbot_weight ?? 0,
         });
       } else if (copyFromBrand) {
         form.reset({
@@ -90,6 +94,8 @@ export default function BrandFormDialog({
           is_active: copyFromBrand.is_active,
           access_levels: copyFromBrand.access_levels ?? [],
           flows_to_purchasing: copyFromBrand.flows_to_purchasing,
+          // A copy never takes the preference of the brand it was copied from.
+          chatbot_weight: 0,
         });
       } else {
         form.reset({
@@ -99,6 +105,7 @@ export default function BrandFormDialog({
           is_active: true,
           access_levels: [],
           flows_to_purchasing: true,
+          chatbot_weight: 0,
         });
       }
     }
@@ -113,6 +120,7 @@ export default function BrandFormDialog({
         is_active: data.is_active,
         access_levels: data.access_levels ?? [],
         flows_to_purchasing: data.flows_to_purchasing,
+        chatbot_weight: data.chatbot_weight,
       };
 
       if (brandId) {
@@ -136,7 +144,9 @@ export default function BrandFormDialog({
           </DialogTitle>
         </DialogHeader>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          {/* noValidate: the zod schema says why a value is refused ("Enter 9999 or less");
+              the browser's own min/max check would stop the submit before it could. */}
+          <form noValidate onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <FormField
               control={form.control}
               name="brand_code"
@@ -253,6 +263,28 @@ export default function BrandFormDialog({
                       onCheckedChange={field.onChange}
                     />
                   </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="chatbot_weight"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Chatbot brand weight</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={9999}
+                      step={0.1}
+                      inputMode="decimal"
+                      className="w-32"
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
                 </FormItem>
               )}
             />

@@ -43,6 +43,7 @@ from app.services.chatbot.contracts import (
     SELF_CLOSING_BRANCH_KINDS,
     TURN_FAILURE_STAGES,
     Envelope,
+    named_count,
 )
 from app.services.chatbot.delegate import enabled_lanes_from
 from app.services.error_handler import AppException
@@ -1556,6 +1557,18 @@ def _run_stages(  # noqa: PLR0915
     # below is made against the CARRIED agent, not the default. No `session=` (reviewer
     # round 1, SHOULD-4): no writer ever produces a prior-turn agent nest to read.
     verdict = turn_runtime.with_routing_agent_default(verdict, pending=state_in.pending)
+    # Reviewer S1 on PR #833: the answer to "how many should I show?" must not rest on
+    # the parser filling `top_n` for a bare "10" - its prompt has no example of one, and
+    # its positional rule pulls a bare number toward `reference_positions`.
+    # Round 4 R5 on PR #833: the answer to an open clarify re-runs the ask it was about.
+    verdict = turn_runtime.with_clarify_answer(
+        verdict, latest_user_message, carried=state_in.focus.set_clarify
+    )
+    verdict = turn_runtime.with_set_count_from_text(
+        verdict, latest_user_message, carried=state_in.focus.set_page
+    )
+    # Round 3 W3 on PR #833: a class word of this message's own starts a new set.
+    verdict = turn_runtime.with_new_set_words(verdict)
 
     # -- access, C APPLY, D ROUTE ------------------------------------------- #
     stage[0] = "access"
@@ -1740,7 +1753,12 @@ def _run_stages(  # noqa: PLR0915
         answer_parse_output: dict[str, Any] = (ctx.get("parse") or {}).get("output") or {}
         # SF-1: a refused sales-report ask never reaches the resolver at all - no
         # `resolve_gate.run` call, no roster built from what it would have found.
-        if not sales_report_grant_refused and (plan.fetch or plan.ask is not None):
+        # W4 (owner hand test round 2): a page of a carried set is answered off the carry
+        # alone (`turn_runtime.page_the_set`). Re-resolving the carried class word without
+        # the set's predicate placed nothing ("wash basin" is no product code), and that
+        # resolver's own not-found exit turned the page into "Couldn't find: wash basin".
+        set_page_turn = bool(plan.fetch) and isinstance(plan.fetch[0].filters.get("set_page"), dict)
+        if not sales_report_grant_refused and not set_page_turn and (plan.fetch or plan.ask is not None):
             # The REAL branch this plan belongs to, the SAME function "D ROUTE" below
             # calls on the (possibly reconciled) plan - not a literal "business_query"
             # for every turn, so a promotion ask reaches `resolve_gate.run` at
@@ -1863,6 +1881,13 @@ def _run_stages(  # noqa: PLR0915
                     resolved_candidates,
                     frozenset(unplaced_tokens),
                 )
+            # Round 4 R5: a clarify this turn is about to ask keeps the ask, so its answer
+            # re-runs it (`turn_runtime.with_clarify_answer`).
+            clarify = turn_runtime.set_clarify_carry(
+                verdict, predicate, (resolver_payload or {}).get("resolved")
+            )
+            if clarify is not None:
+                state_out.focus.set_clarify = clarify
 
         # D ROUTE. Two facts outrank the plan and neither is IN one: a refused access
         # agent (contract 58, fail closed) and the stock-denial switch, which is decided
@@ -2459,22 +2484,50 @@ def _run_stages(  # noqa: PLR0915
                     raw=None,
                 )
             else:
-                # AC-1317: where the counted set got to, so "more" pages the SAME set
-                # next turn instead of counting it again from nothing.
+                # No paging (owner ruling, 26 Sep 2026). A counted set is remembered only
+                # when it was too long to list (more than `answer.SET_LIST_MAX`, no count
+                # named): the reply asked "how many should I show?", and the answer to
+                # that question lists that many of the same set (`turn/apply.py`'s
+                # `set_count_answered`). Every other turn leaves nothing carried.
                 #
-                # Written only for a SPEC-tier answer: the counted set is how that tier
-                # of the ONE product ladder renders, and a code-tier answer is a list,
-                # which leaves no page behind. `set_page_carry` refuses a set with no
-                # scope term of its own on top of that, so a "more" can never page the
-                # whole catalogue (turns 92d565a5 / b383d402 / 2e7ca929, 17 Sep 2026).
+                # Written only for a SPEC-tier answer: the counted set is how that tier of
+                # the ONE product ladder renders, and a code-tier answer is a list.
+                # `set_page_carry` refuses a set with no scope term of its own on top of
+                # that, so the recount can never read the whole catalogue (turns 92d565a5
+                # / b383d402 / 2e7ca929, 17 Sep 2026).
                 #
                 # Security B2 (re-check round): the carry records the ENTITLEMENT this
-                # page answered under, off the envelope's own `access_levels_used` (the
-                # recomposed list the tool call actually carried). The next "more"
-                # recounts the set by that, never by the parser's list, which a bare
-                # "more" leaves empty and which reads downstream as "no tier filter".
+                # answer counted under, off the envelope's own `access_levels_used` (the
+                # recomposed list the tool call actually carried). The recount uses that,
+                # never the parser's list, which a bare count leaves empty and which reads
+                # downstream as "no tier filter".
+                from app.services.chatbot.lanes.business import answer as business_answer
+
                 class_terms = turn_runtime.class_scope_terms(verdict)
-                if predicate is not None and plan.fetch and spec_tier:
+                qualifying = int((predicate or {}).get("qualifying_total") or 0)
+                asked = named_count(verdict.get("top_n"))
+                withheld = (
+                    predicate is not None
+                    and plan.fetch
+                    and spec_tier
+                    and qualifying > business_answer.SET_LIST_MAX
+                    and asked is None
+                )
+                # W4 (owner hand test round 2): a set listed only in part (the customer
+                # named fewer than qualify) is carried too, so their own "another N"
+                # continues it. The reply never offers that.
+                partly_listed = (
+                    predicate is not None
+                    and plan.fetch
+                    and spec_tier
+                    and asked is not None
+                    and min(asked, business_answer.SET_LIST_MAX) < qualifying
+                )
+                paged = bool(plan.fetch) and isinstance(plan.fetch[0].filters.get("set_page"), dict)
+                if paged:
+                    # A page of a carried set: the runner hands back where it stopped.
+                    state_out.focus.set_page = envelopes[0].get("set_carry") if envelopes else None
+                elif withheld or partly_listed:
                     state_out.focus.set_page = turn_runtime.set_page_carry(
                         predicate,
                         plan.fetch[0],
@@ -2482,10 +2535,9 @@ def _run_stages(  # noqa: PLR0915
                         access_levels=(
                             envelopes[0].get("access_levels_used") if envelopes else None
                         ),
+                        shown=0 if withheld else min(asked, business_answer.SET_LIST_MAX),
                     )
-                elif not any(isinstance(s.filters.get("set_page"), dict) for s in plan.fetch):
-                    # An answer that is not a counted set closes the page: the customer
-                    # has moved on, and "more" must not resume a set they left.
+                else:
                     state_out.focus.set_page = None
                 turn_trace.record(
                     "looked_up",

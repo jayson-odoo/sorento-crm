@@ -1595,11 +1595,29 @@ def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
 # it. Keep the two in lockstep by hand if the word list ever changes.
 _CERT_WORD_RE = re.compile(r"cert|ikram|span|sirim|bomba|ms\s?[0-9]|halal", re.IGNORECASE)
 
-# A COPY of `app.services.chatbot.lanes.business.answer.SET_PAGE_ID_CAP`, for the same
-# module-boundary reason `_CERT_WORD_RE` above is a copy: the "more" carry (E3, AC-1317)
-# pages off however many qualifying ids `resolve_product_set` is asked for, so this file
-# has to ask for at least this many rather than the ordinary LOOKUP page size.
-_SET_PAGE_ID_CAP = 200
+# A COPY of `app.services.chatbot.lanes.business.answer.SET_ID_CAP`, for the same
+# module-boundary reason `_CERT_WORD_RE` above is a copy: a counted set lists (up to
+# `answer.SET_LIST_MAX`) off however many qualifying ids `resolve_product_set` is asked
+# for, so this file has to ask for at least this many rather than the ordinary LOOKUP
+# page size.
+_SET_ID_CAP = 200
+
+
+def _stock_policy_for(db: Session, payload: "ResolveReferenceRequest"):
+    """The asking contact's stock visibility policy, or None when no contact is named.
+
+    Resolved through the same NULL-workspace fallback the spec policy uses below (SF-1),
+    so a contact with `workspace_id IS NULL` gets their real policy rather than none.
+    """
+    if not payload.contact_id:
+        return None
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+    from app.services.stock_visibility import resolve_policy
+
+    resolved = resolve_contact_with_null_workspace_fallback(
+        db, contact_id=payload.contact_id, space_id=payload.space_id
+    )
+    return resolve_policy(db, resolved or payload.contact_id, payload.space_id)
 
 
 def _strip_predicate_words(text: str, words: list[str] | None) -> str:
@@ -2670,6 +2688,22 @@ def resolve_reference_post(
         # free terms the caller sent, unchanged.
         query_text = _strip_predicate_words(payload.query or "", payload.predicate_words)
 
+        # R6 (round 4 on PR #833, "why it match s trap?"): a value the registry does not
+        # know ("t trap") is said back with the ones it does; the set is never counted
+        # with it dropped or read as its nearest neighbour.
+        from app.services.product_spec_search import unknown_spec_values
+
+        unknown = unknown_spec_values(db, " ".join([payload.query or "", *(payload.scope_terms or [])]))
+        if unknown:
+            result["predicate"] = {
+                "require": payload.require,
+                "qualifying_total": 0,
+                "truncated": False,
+                "unrecognized_terms": [u["said"] for u in unknown],
+                "unknown_values": unknown,
+            }
+            return _stamp_brand_on_products(db, result)
+
         # R14/AC-1338 (third console pass): a bare `{"certificate": True}`
         # require whose remainder still holds the scheme word (never split
         # off the attachment_type raw upstream - "which item has PPS cert"
@@ -2734,10 +2768,12 @@ def resolve_reference_post(
             else (None if payload.free_terms else _has_turn_free_terms(payload, result, query_text))
         )
 
-        # E3/AC-1317: the "more" carry pages by 5 off the QUALIFYING ids
-        # themselves, capped at `_SET_PAGE_ID_CAP` (200) - never the ordinary
-        # LOOKUP page size (`payload.limit`, 15), which would leave a
-        # 7-qualifying answer with only the first 5 to page through.
+        # The counted set lists off the QUALIFYING ids themselves, capped at
+        # `_SET_ID_CAP` (200) - never the ordinary LOOKUP page size
+        # (`payload.limit`, 15), which would cut a 40-product set that fits one
+        # message down to 15.
+        # Read BEFORE `_emit_spec_matches` adds the qualifying set to the resolutions.
+        lookup_ids = _collect_lookup_product_ids(result)
         outcome = resolve_product_set(
             db,
             # R14/AC-1338: the PROMOTED require (a bare `true` recovered a
@@ -2748,8 +2784,8 @@ def resolve_reference_post(
             specs=specs,
             free_terms=payload.free_terms,
             scope_terms=scope_terms,
-            limit=max(payload.limit or 0, _SET_PAGE_ID_CAP),
-            product_ids=_collect_lookup_product_ids(result) or None,
+            limit=max(payload.limit or 0, _SET_ID_CAP),
+            product_ids=lookup_ids or None,
             brand=brand,
             # SEC-S1/AC-1334: the promotion leg must see the caller's OWN tier,
             # not only the ordinary entity-resolution filter
@@ -2757,6 +2793,11 @@ def resolve_reference_post(
             # turn's qualifying_total must never count a tier-restricted
             # promotion the contact cannot see.
             access_levels=payload.access_levels,
+            # The stock leg counts only the locations the asking contact's own
+            # stock visibility policy allows, as the stock tool answers them.
+            stock_policy=_stock_policy_for(db, payload) if require.get("stock") else None,
+            # R1: no brand named -> the highest weighted brand's set first.
+            prefer_weighted_brand=True,
         )
         # One nested block, not top-level scalars: n8n item-mutation chains
         # persist top-level keys across nodes. And never inside `by_entity_type`,
@@ -2799,17 +2840,35 @@ def resolve_reference_post(
         # convention as `schemes_on_file`.
         if outcome.get("certificate_ids"):
             result["predicate"]["certificate_ids"] = outcome["certificate_ids"]
+        # W2/W1 (owner hand test round 2): what the set was identified as, in plain
+        # words, and its brand - present only when there is one to say.
+        if outcome.get("description"):
+            result["predicate"]["description"] = outcome["description"]
+        if outcome.get("brand"):
+            result["predicate"]["brand"] = outcome["brand"]
+            # The brand word IS placed: it scopes the set. Left in `unresolved_tokens`
+            # it closed a Sorento answer with "I could not find sorento."
+            brand_key = str(outcome["brand"]).strip().lower()
+            result["unresolved_tokens"] = [
+                t for t in (result.get("unresolved_tokens") or []) if str(t).strip().lower() != brand_key
+            ]
+        if outcome.get("row_labels"):
+            result["predicate"]["row_labels"] = outcome["row_labels"]
+        if outcome.get("other_brands"):
+            result["predicate"]["other_brands"] = outcome["other_brands"]
+        # R4 (round 4): what a zero set looked for and the count in its other values.
+        if outcome.get("near_miss"):
+            result["predicate"]["near_miss"] = outcome["near_miss"]
+        # W4: what a page of this set replays - the bound specs, the brand and the ids
+        # LOOKUP matched (the other half of the union) - so the page counts the same set.
+        if outcome["qualifying_total"]:
+            result["predicate"]["set_key"] = {
+                "specs": outcome.get("set_specs") or [],
+                "brand": outcome.get("brand"),
+                "brand_default": bool(outcome.get("brand_default")),
+                "product_ids": lookup_ids[:_SET_ID_CAP],
+            }
         _emit_spec_matches(result, outcome["candidates"], payload.query or "")
-        # R30/AC-1355: what this HAS turn's own bindings asked for (`specs`,
-        # class included) - the spec_fallback branch below already stamps
-        # this off `search_specs`' own `asked_for`; a HAS/require turn never
-        # runs that ranker call at all (`filter_specs` reads `specs` and
-        # `scope_terms` directly), so without this the Match line's own
-        # `spec_asked` intersection had nothing to read and stayed silent for
-        # every set answer, whatever its candidates matched.
-        result["spec_asked"] = [{"key": e.get("key"), "value": e.get("value")} for e in specs] + [
-            {"key": "class", "value": label} for label in (outcome.get("class_labels") or [])
-        ]
         # R2 only fires on a genuine HAS answer (qualifying_total > 0): the
         # existing zero-qualifying miss flow names its own candidate codes off
         # these SAME forward matches (F1's pre-existing "Couldn't find a bidet
@@ -2858,6 +2917,16 @@ def resolve_reference_post(
         # cannot change mid-request.
         registry_rows = active_registry(db)
         brands = brand_names(db)
+
+        # R6 (round 4 on PR #833): "any water clost t trap?" listed S trap water closets.
+        # A value the registry does not know is said back (`answer.unknown_values_sentence`),
+        # never searched for as its nearest neighbour, so no spec candidate is offered.
+        from app.services.product_spec_search import unknown_spec_values
+
+        unknown = unknown_spec_values(db, payload.query or "", registry_rows=registry_rows)
+        if unknown:
+            result["unknown_spec_values"] = unknown
+            return _stamp_brand_on_products(db, result)
 
         # The sentence is ALWAYS read - through the SAME helper the Product
         # Specifications preview page uses, which is why raw text "just works"

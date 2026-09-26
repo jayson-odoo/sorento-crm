@@ -1,6 +1,6 @@
 # PLAN - spec backward search (shape B: spec FILTER ∩ domain predicate)
 
-**Status:** In progress (S1)
+**Status:** Superseded 2026-09-10 by `documentation/plans/chatbot/PLAN-attribute-first-asks.md` (backend legs shipped; the n8n contract named below is obsolete, all business logic lives in the Python lane)
 **Branch:** `feat/spec-search-category-signal` (spec-search worktree)
 **Contract (authoritative):** `sorento_crm_n8n/n8n-workflows-init/plans/crm-ask-spec-backward-search.md`
 (CONVERGED 2026-08-11, two-session grill). This plan is the CRM build mirror; on conflict the

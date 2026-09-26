@@ -1182,3 +1182,63 @@ def test_a_size_with_no_unit_is_not_assumed_to_be_millimetres(db):
 
     thin = {e["key"]: e["value"] for e in resolve_terms_to_specs(db, ["thickness 8"])}
     assert thin.get("thickness") == 8.0, "a small measurement that is not an envelope is fine"
+
+
+# --------------------------------------------------------------------------- #
+# Attribute-first asks S1 - AC-1301, AC-1320 (PLAN-attribute-first-asks.md)     #
+# --------------------------------------------------------------------------- #
+
+
+def test_filter_specs_reports_a_phrase_that_names_no_set(db):
+    """AC-1301: "water tub" is a phrase whose content words are EACH known to the
+    catalogue's own vocabulary ("water" from the "Water Closet" synonym set, "tub" from
+    the "Bathtub" class synonyms) but which, as a two-word phrase, names no class, no
+    product_type and no brand. Today `filter_specs` reports this as an honest EMPTY list
+    (word-level alien check only) - the fix must report the phrase itself.
+
+    The example used to be "water tap"; the owner ruled on 26 Sep 2026 that "water tap"
+    IS a tap ("which water tap got stock"), so it is a Tap synonym now and this property
+    is pinned with a phrase that still names nothing.
+    """
+    from app.services.product_spec_search import _search_vocabulary, filter_specs
+
+    vocabulary = _search_vocabulary(db)
+    assert "water" in vocabulary, "precondition: 'water' alone is already known vocabulary"
+
+    verdict = filter_specs(db, free_terms=["water tub"])
+    assert verdict["clause"] is None
+    assert verdict["unrecognized_terms"] == ["water tub"]
+
+
+def test_content_words_drop_question_words(db):
+    """AC-1320 / work item A2: question words ("which", "what", "how", "many", ...) carry
+    no product meaning and must never reach the vocabulary check as if they were a
+    customer's own description - "which basin got stock" must not report "which" as an
+    unrecognised word.
+    """
+    from app.services.product_spec_search import _content_words
+
+    assert _content_words("which basin got stock") == ["basin", "stock"]
+
+    words = _content_words("how many basin")
+    assert "which" not in words
+    assert "what" not in words
+    assert "how" not in words
+    assert "many" not in words
+
+
+def test_content_words_drop_check_and_list():
+    """R9/A2 (console fix round 2): "check", "list" and "tell" name no product
+    attribute either - a customer's own imperative verb, not a description - and
+    must never reach the unrecognized-word check as if it were one. Measured
+    live: `unrecognized_terms: ["check"]` on a "check stock srtwc286" turn.
+
+    RED: `_PHRASE_STOPWORDS` carries the question words A2 already added
+    ("which", "what", "who", "where", "when", "how", "many") but not "check",
+    "checking", "list" or "tell" - `_content_words` still returns them.
+    """
+    from app.services.product_spec_search import _content_words
+
+    assert "check" not in _content_words("check stock srtwc286")
+    assert "list" not in _content_words("list the taps")
+    assert "tell" not in _content_words("tell me which basin")
