@@ -322,11 +322,13 @@ def test_b2_second_consume_of_the_same_otp_row_returns_false(rate_limit_cleanup)
 
 
 def test_b2_locked_number_is_429_without_ever_comparing_the_code(rate_limit_cleanup):
-    """RED reason (pre-fix): the lock check (`check_locked`) was a read-only
-    GET performed once, separately from the increment-on-miss
-    (`record_wrong_attempt`) - a lock existed, but nothing stopped the
-    compare from running first if the two Redis calls interleaved with a
-    parallel request."""
+    """Regression guard, not a red-before-fix case on its own: a number ALREADY
+    at the lock threshold (no race needed to get there) was refused without
+    comparing even pre-fix, because the old code's read-only `check_locked`
+    pre-check already caught this simple, non-concurrent case. Kept here
+    because B2's real fix (`reserve_verify_attempt` INCR-then-check) must
+    keep this exact behaviour - the two DB-level tests above are what were
+    actually red pre-fix for the RACE itself."""
     from app.services.queue_service import redis_conn
 
     with blank_session() as db:
@@ -440,10 +442,12 @@ def test_b3_password_change_is_refused_while_impersonating(impersonation_setup):
 
 
 def test_b3_normal_password_change_revokes_the_changed_users_own_sessions(impersonation_setup):
-    """RED reason (pre-fix): the revoke call used `get_actor_user_id`, which
-    (outside impersonation too) is a needless indirection for this route -
-    tightened to `current_user["id"]` directly, the user whose password just
-    changed. No impersonation here, so this is the ordinary path."""
+    """Regression guard, not red pre-fix: outside impersonation
+    `get_actor_user_id` already returned the same id as `current_user["id"]`,
+    so the ordinary path behaved identically before and after tightening the
+    revoke call to read `current_user["id"]` directly. Kept so that
+    simplification can't silently regress this path while fixing B3's actual
+    (impersonation-only) bug in the test above."""
     from app.models.user_session import UserSession
     from app.services.user_session_service import mint_session
 
