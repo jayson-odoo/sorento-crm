@@ -811,20 +811,22 @@ def test_unassigned_calendar_month(api):
 
 
 def test_do_golden_a_to_d(api):
+    """Each case gets its OWN agent: (a), (b)/(c) and (d) otherwise share one September period
+    and the same agent's September achievement sums every line in it, so (b)'s residual would
+    read 13,000 (its own 3,000 plus (a)'s whole 10,000) instead of the UAC's 3,000."""
     client, db, company_id = api
-    agent = _agent(db, "A")
     category = _category(db, company_id)
     product = _product(db, company_id, category.id)
     warehouse = _warehouse(db, company_id)
 
-    def new_line():
+    def new_line(agent):
         _, ln = _so_line(
             db, company_id, agent_id=agent.id, order_date=date(2026, 9, 20), line_total=Decimal("10000"),
             qty_ordered=100, qty_delivered=100, product_id=product.id,
         )
         return ln
 
-    def target_for(start, end):
+    def target_for(agent, start, end):
         return client.post(BASE, json={
             "subject_kind": "agent", "sales_agent_id": agent.id, "name": f"ZZT {start}", "metric": "amount",
             "basis": "delivered", "product_scope": "all", "start_date": start, "end_date": end,
@@ -836,17 +838,19 @@ def test_do_golden_a_to_d(api):
         return next(r for r in rows if r["target_id"] == target_id)["achieved_value"]
 
     # (a) no linked DO line: October counts 0, September keeps the whole 100 / RM 10,000.
-    line_a = new_line()
-    sep_a = target_for("2026-09-01", "2026-09-30")
-    oct_a = target_for("2026-10-01", "2026-10-31")
+    agent_a = _agent(db, "DOA")
+    line_a = new_line(agent_a)
+    sep_a = target_for(agent_a, "2026-09-01", "2026-09-30")
+    oct_a = target_for(agent_a, "2026-10-01", "2026-10-31")
     assert achieved(sep_a["id"], "2026-09-25") == 10000
     assert achieved(oct_a["id"], "2026-10-15") == 0
 
     # (b) DO of 40 on 5 Oct and 30 on 3 Nov: Oct 4000, Nov 3000, September's residual 3000.
-    line_b = new_line()
-    sep_b = target_for("2026-09-01", "2026-09-30")
-    oct_b = target_for("2026-10-01", "2026-10-31")
-    nov_b = target_for("2026-11-01", "2026-11-30")
+    agent_b = _agent(db, "DOB")
+    line_b = new_line(agent_b)
+    sep_b = target_for(agent_b, "2026-09-01", "2026-09-30")
+    oct_b = target_for(agent_b, "2026-10-01", "2026-10-31")
+    nov_b = target_for(agent_b, "2026-11-01", "2026-11-30")
     _do_line(db, company_id, product.id, warehouse.id, line_b.id, quantity=40, order_date=date(2026, 10, 5))
     do_nov_order, _do_nov_line = _do_line(db, company_id, product.id, warehouse.id, line_b.id, quantity=30, order_date=date(2026, 11, 3))
     assert achieved(oct_b["id"], "2026-10-15") == 4000
@@ -862,10 +866,11 @@ def test_do_golden_a_to_d(api):
     assert achieved(sep_b["id"], "2026-09-25") == 6000
 
     # (d) a fresh line: DO of 70 on 5 Oct, 50 on 3 Nov, on a line of 100 - never more than 100.
-    line_d = new_line()
-    sep_d = target_for("2026-09-01", "2026-09-30")
-    oct_d = target_for("2026-10-01", "2026-10-31")
-    nov_d = target_for("2026-11-01", "2026-11-30")
+    agent_d = _agent(db, "DOD")
+    line_d = new_line(agent_d)
+    sep_d = target_for(agent_d, "2026-09-01", "2026-09-30")
+    oct_d = target_for(agent_d, "2026-10-01", "2026-10-31")
+    nov_d = target_for(agent_d, "2026-11-01", "2026-11-30")
     _do_line(db, company_id, product.id, warehouse.id, line_d.id, quantity=70, order_date=date(2026, 10, 5))
     _do_line(db, company_id, product.id, warehouse.id, line_d.id, quantity=50, order_date=date(2026, 11, 3))
     assert achieved(oct_d["id"], "2026-10-15") == 7000

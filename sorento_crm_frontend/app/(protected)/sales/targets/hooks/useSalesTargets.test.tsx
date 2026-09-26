@@ -12,7 +12,7 @@
  */
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const service = vi.hoisted(() => ({
@@ -48,9 +48,8 @@ describe('useSalesTargets', () => {
       () => useSalesTargets({ on: '2026-10-15', subject: 'team' }),
       { wrapper },
     );
-    await act(async () => {});
     expect(service.getSalesTargets).toHaveBeenCalledWith({ on: '2026-10-15', subject: 'team' });
-    expect(result.current.data?.rows).toEqual([]);
+    await waitFor(() => expect(result.current.data?.rows).toEqual([]));
   });
 
   it('reads one target', async () => {

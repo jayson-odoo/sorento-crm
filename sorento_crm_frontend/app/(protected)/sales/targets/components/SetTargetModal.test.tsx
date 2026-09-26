@@ -6,7 +6,9 @@
  * Test surface the coder must match:
  *   - `SearchableSelect` mocked to a native `<select>` keyed by its `id`: `target-for`, `who`,
  *     `metric`, `counts`, `applies-to`, `split-unit` (S1-24).
- *   - Dates: `getByLabelText('Start date')`, `getByLabelText('End date')`.
+ *   - Dates: the shared `DateRangePicker` (`components/ui/date-range-picker.tsx`), mocked below
+ *     to capture its `{ from, to, onChange }` props - NOT two separate date inputs (S1-25). The
+ *     mock renders `data-testid="target-dates"`.
  *   - Split: `getByRole('switch', { name: 'Split' })`; once on, `getByLabelText('Every')` (a
  *     number input) and the unit select `split-unit`.
  *   - Figure: `getByLabelText(/target figure/i)`.
@@ -17,7 +19,40 @@
  */
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+
+// S1-25: the modal's date range is the SHARED `DateRangePicker`, one control, not two date
+// inputs. Captured props let the tests drive it exactly as its own component contract
+// (`components/ui/date-range-picker.tsx`) does: `onChange({ from, to })` as YYYY-MM-DD.
+const dateRangeProps = vi.hoisted(() => ({
+  current: null as null | {
+    from?: string | null;
+    to?: string | null;
+    onChange: (next: { from: string | null; to: string | null }) => void;
+  },
+}));
+vi.mock('@/components/ui/date-range-picker', () => ({
+  DateRangePicker: (props: {
+    from?: string | null;
+    to?: string | null;
+    onChange: (next: { from: string | null; to: string | null }) => void;
+    id?: string;
+    'aria-label'?: string;
+  }) => {
+    dateRangeProps.current = props;
+    return (
+      <div data-testid="target-dates" aria-label={props['aria-label']}>
+        <span data-testid="target-dates-from">{props.from ?? ''}</span>
+        <span data-testid="target-dates-to">{props.to ?? ''}</span>
+      </div>
+    );
+  },
+}));
+
+/** Drives the mocked `DateRangePicker` exactly as a real pick would: one `onChange({from,to})`. */
+function pickDateRange(from: string, to: string) {
+  act(() => dateRangeProps.current!.onChange({ from, to }));
+}
 
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
@@ -95,6 +130,7 @@ import SetTargetModal from './SetTargetModal';
 beforeEach(() => {
   save.mutateAsync.mockReset();
   save.mutateAsync.mockResolvedValue({ id: 'new' });
+  dateRangeProps.current = null;
 });
 
 describe('SetTargetModal', () => {
@@ -149,12 +185,18 @@ describe('SetTargetModal', () => {
     expect(screen.getByLabelText(/target figure.*per period/i)).toBeTruthy();
   });
 
+  it('renders the shared DateRangePicker for the dates, not two date inputs (S1-25)', () => {
+    render(<SetTargetModal open onOpenChange={() => {}} presetKind="agent" />);
+    expect(screen.getByTestId('target-dates')).toBeTruthy();
+    expect(screen.queryByLabelText('Start date')).toBeNull();
+    expect(screen.queryByLabelText('End date')).toBeNull();
+  });
+
   it('sends the S1-19 payload for an agent target', async () => {
     render(<SetTargetModal open onOpenChange={() => {}} presetKind="agent" />);
     fireEvent.change(screen.getByLabelText(/^who/i), { target: { value: 'a1' } });
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'North FY26 H2' } });
-    fireEvent.change(screen.getByLabelText('Start date'), { target: { value: '2026-10-01' } });
-    fireEvent.change(screen.getByLabelText('End date'), { target: { value: '2026-12-31' } });
+    pickDateRange('2026-10-01', '2026-12-31');
     fireEvent.change(screen.getByLabelText(/target figure/i), { target: { value: '120000' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
@@ -180,8 +222,7 @@ describe('SetTargetModal', () => {
     fireEvent.change(screen.getByLabelText('MEI - Tan Mei Ling figure'), { target: { value: '400' } });
     expect(within(screen.getByText(/team target/i).closest('div')!).getByText('1,000')).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText('Start date'), { target: { value: '2026-10-01' } });
-    fireEvent.change(screen.getByLabelText('End date'), { target: { value: '2026-10-31' } });
+    pickDateRange('2026-10-01', '2026-10-31');
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
     expect(save.mutateAsync).toHaveBeenCalledWith(

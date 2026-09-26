@@ -201,6 +201,10 @@ describe('SalesTeamDetail', () => {
   });
 
   it('renders a Team targets section FIRST, above Agents, with an empty state and Set target (S1, S6-13)', () => {
+    // Set target is gated on sales.targets.add (S1-18): the shared beforeEach only grants the
+    // team slugs, so this test grants the target one too to see the button, keeping a second
+    // assertion that it is absent without the slug.
+    perms.granted = new Set(['sales.teams.view', 'sales.teams.edit', 'sales.teams.delete', 'sales.targets.add']);
     render(<SalesTeamDetail id="north" />);
     const sections = screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'));
     expect(sections.indexOf('Team targets')).toBeGreaterThanOrEqual(0);
@@ -210,23 +214,39 @@ describe('SalesTeamDetail', () => {
     expect(within(teamTargets).getByRole('button', { name: /set target/i })).toBeTruthy();
   });
 
+  it('shows no Set target on Team targets without sales.targets.add', () => {
+    perms.granted = new Set(['sales.teams.view', 'sales.teams.edit', 'sales.teams.delete']);
+    render(<SalesTeamDetail id="north" />);
+    const teamTargets = screen.getByRole('region', { name: 'Team targets' });
+    expect(within(teamTargets).queryByRole('button', { name: /set target/i })).toBeNull();
+  });
+
   it('shows a team target line with its % and lists each agent\'s Target/Achieved/% (S1)', () => {
-    targetsHooks.useSalesTargets.mockReturnValue({
-      data: {
-        on: '2026-10-20',
-        rows: [
-          {
-            target_id: 'tt1', target_no: 'TGT-000001', name: 'North FY26 H2', subject_kind: 'team',
-            sales_agent_id: null, sales_team_id: 'north', subject_label: 'North', team_id: null,
-            team_name: null, left_on: null, members: [{ sales_agent_id: 'ali', label: 'ALI - Ali Hassan' }],
-            metric: 'amount', basis: 'ordered', product_scope: 'all', scope_labels: [],
-            period_id: 'p1', period_start: '2026-10-01', period_end: '2026-10-31', target_value: 1000,
-            achieved_value: 500, achieved_pct: 50, parent_target_id: null,
-          },
-        ],
-        unassigned_amount: 0, no_team_count: 0,
-      },
-      isLoading: false, isFetching: false, isError: false,
+    // The component makes TWO calls (subject: 'team' and subject: 'agent'); a single static
+    // mockReturnValue answers both with the same rows, so ALI's agent-level row never exists
+    // and the Agents section reads "No target". Answer each call on its own subject.
+    targetsHooks.useSalesTargets.mockImplementation(({ subject }: { subject: 'team' | 'agent' }) => {
+      const teamRow = {
+        target_id: 'tt1', target_no: 'TGT-000001', name: 'North FY26 H2', subject_kind: 'team',
+        sales_agent_id: null, sales_team_id: 'north', subject_label: 'North', team_id: null,
+        team_name: null, left_on: null, members: [{ sales_agent_id: 'ali', label: 'ALI - Ali Hassan' }],
+        metric: 'amount', basis: 'ordered', product_scope: 'all', scope_labels: [],
+        period_id: 'p1', period_start: '2026-10-01', period_end: '2026-10-31', target_value: 1000,
+        achieved_value: 500, achieved_pct: 50, parent_target_id: null,
+      };
+      const agentRow = {
+        ...teamRow, target_id: 'ta1', subject_kind: 'agent', sales_agent_id: 'ali',
+        sales_team_id: null, subject_label: 'ALI - Ali Hassan', team_id: 'north', team_name: 'North',
+        members: null, parent_target_id: 'tt1',
+      };
+      return {
+        data: {
+          on: '2026-10-20',
+          rows: subject === 'team' ? [teamRow] : [agentRow],
+          unassigned_amount: 0, no_team_count: 0,
+        },
+        isLoading: false, isFetching: false, isError: false,
+      };
     });
     render(<SalesTeamDetail id="north" />);
     const teamTargets = screen.getByRole('region', { name: 'Team targets' });

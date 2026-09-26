@@ -106,22 +106,22 @@ beforeEach(() => {
 });
 
 describe('SalesTargetsView', () => {
-  it('opens on the Teams tab, before Agents and Dealers (S1-22)', () => {
+  it('opens on the Teams tab, before Agents; no Dealers yet (S1-15 round 4, S7-2 ships it)', () => {
     withRows([row()]);
     render(<SalesTargetsView />);
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Teams', 'Agents']);
     const teams = screen.getByRole('tab', { name: 'Teams' });
     const agents = screen.getByRole('tab', { name: 'Agents' });
-    const dealers = screen.getByRole('tab', { name: 'Dealers' });
     expect(teams.getAttribute('aria-selected')).toBe('true');
     expect(agents).toBeTruthy();
-    expect(dealers).toBeTruthy();
   });
 
   it('shows Set target alone at the header, only for sales.targets.add (S1-18)', () => {
     withRows([row()]);
-    render(<SalesTargetsView />);
+    const first = render(<SalesTargetsView />);
     const actions = screen.getByTestId('header-actions');
     expect(within(actions).getByRole('button', { name: /set target/i })).toBeTruthy();
+    first.unmount();
 
     perms.granted = new Set(['sales.targets.view']);
     render(<SalesTargetsView />);

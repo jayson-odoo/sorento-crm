@@ -175,11 +175,16 @@ def _seed_sales_order_line(raw, company: str, product: str) -> tuple[str, str]:
 
 
 def _seed_do_line(raw, company: str, product: str, warehouse: str, sales_order_line_id: str) -> str:
+    # `orders` has several NOT NULL columns with only a Python-side ORM `default=`
+    # (kpi_warning, the four amount columns, synced_to_excel) - no `server_default`, so a raw
+    # SQL insert must state them itself.
     order = str(uuid.uuid4())
     raw.execute(
         sa.text(
-            "INSERT INTO orders (id, company_id, order_number, order_date, is_cancelled) "
-            "VALUES (:id, :c, :n, '2026-10-06', false)"
+            "INSERT INTO orders (id, company_id, order_number, order_date, is_cancelled, "
+            "kpi_warning, subtotal_amount, discount_amount, tax_amount, total_amount, "
+            "synced_to_excel) "
+            "VALUES (:id, :c, :n, '2026-10-06', false, false, 0, 0, 0, 0, false)"
         ),
         {"id": order, "c": company, "n": f"ZZT{order[:8]}"},
     )
