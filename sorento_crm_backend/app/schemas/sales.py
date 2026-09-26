@@ -1,6 +1,7 @@
 """Request and response shapes of the `sales` module (plan 3.7, 3.8; slices S6, S2)."""
 from __future__ import annotations
 
+import uuid as _uuid
 from datetime import date as DateType
 from datetime import datetime
 from decimal import Decimal
@@ -15,6 +16,25 @@ def _clean_name(value: Optional[str]) -> Optional[str]:
     cleaned = value.strip()
     if not cleaned:
         raise ValueError("Team name is required.")
+    return cleaned
+
+
+def _require_uuid(value: Optional[str]) -> Optional[str]:
+    """An id field is a UUID or the request is malformed - 422, not a 500 three calls
+    later when a raw-SQL-shaped string reaches a `::uuid` cast (Phase 3 fix S3)."""
+    if value is None:
+        return None
+    try:
+        _uuid.UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        raise ValueError("must be a valid id")
+    return value
+
+
+def _require_title(value: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError("Title is required.")
     return cleaned
 
 
@@ -122,7 +142,20 @@ class SalesTeamAgentOption(BaseModel):
 
 class SalesOpportunityLineInput(BaseModel):
     product_id: str
-    qty: Decimal = Field(..., gt=0)
+    qty: Decimal = Field(..., gt=0, max_digits=12, decimal_places=2)
+
+    @field_validator("product_id")
+    @classmethod
+    def _product_id(cls, value):
+        return _require_uuid(value)
+
+
+#: Shared bounds for both CRM and portal create/update bodies (Phase 3 fix S3): an
+#: unbounded `expected_amount`/`lines` list is a 500 or a silent truncation somewhere
+#: downstream, not a validation error where a caller can see and fix it.
+_AMOUNT_FIELD = Field(..., ge=0, max_digits=15, decimal_places=2)
+_AMOUNT_FIELD_OPTIONAL = Field(None, ge=0, max_digits=15, decimal_places=2)
+_LINES_FIELD = Field(None, max_length=100)
 
 
 class SalesOpportunityCreate(BaseModel):
@@ -130,51 +163,91 @@ class SalesOpportunityCreate(BaseModel):
     no `sales_agent_id`/`source`/`sales_order_id` fields, so those keys in a portal body
     are ignored rather than accepted (section 16)."""
 
-    title: str = Field(..., max_length=200)
-    expected_amount: Decimal
+    title: str = Field(..., min_length=1, max_length=200)
+    expected_amount: Decimal = _AMOUNT_FIELD
     expected_close_date: DateType
     customer_id: Optional[str] = None
-    prospect_name: Optional[str] = None
+    prospect_name: Optional[str] = Field(None, max_length=200)
     #: CRM only: stamped from the customer when omitted (S2-7).
     sales_agent_id: Optional[str] = None
-    lines: Optional[List[SalesOpportunityLineInput]] = None
+    lines: Optional[List[SalesOpportunityLineInput]] = _LINES_FIELD
+
+    @field_validator("title")
+    @classmethod
+    def _title(cls, value):
+        return _require_title(value)
+
+    @field_validator("customer_id", "sales_agent_id")
+    @classmethod
+    def _ids(cls, value):
+        return _require_uuid(value)
 
 
 class SalesOpportunityUpdate(BaseModel):
-    title: Optional[str] = Field(None, max_length=200)
-    expected_amount: Optional[Decimal] = None
+    title: Optional[str] = Field(None, min_length=1, max_length=200)
+    expected_amount: Optional[Decimal] = _AMOUNT_FIELD_OPTIONAL
     expected_close_date: Optional[DateType] = None
     customer_id: Optional[str] = None
-    prospect_name: Optional[str] = None
+    prospect_name: Optional[str] = Field(None, max_length=200)
     sales_agent_id: Optional[str] = None
     status_id: Optional[str] = None
-    lost_reason: Optional[str] = None
+    lost_reason: Optional[str] = Field(None, max_length=150)
     #: Won only; must be the same customer as the opportunity (S2-7).
     sales_order_id: Optional[str] = None
-    lines: Optional[List[SalesOpportunityLineInput]] = None
+    lines: Optional[List[SalesOpportunityLineInput]] = _LINES_FIELD
+
+    @field_validator("title")
+    @classmethod
+    def _title(cls, value):
+        return _require_title(value) if value is not None else value
+
+    @field_validator("customer_id", "sales_agent_id", "status_id", "sales_order_id")
+    @classmethod
+    def _ids(cls, value):
+        return _require_uuid(value)
 
 
 class PortalSalesOpportunityCreate(BaseModel):
     """No `sales_agent_id` (from the token only, S2-3), no `source`, no
     `sales_order_id` (only the CRM sends it, section 16)."""
 
-    title: str = Field(..., max_length=200)
-    expected_amount: Decimal
+    title: str = Field(..., min_length=1, max_length=200)
+    expected_amount: Decimal = _AMOUNT_FIELD
     expected_close_date: DateType
     customer_id: Optional[str] = None
-    prospect_name: Optional[str] = None
-    lines: Optional[List[SalesOpportunityLineInput]] = None
+    prospect_name: Optional[str] = Field(None, max_length=200)
+    lines: Optional[List[SalesOpportunityLineInput]] = _LINES_FIELD
+
+    @field_validator("title")
+    @classmethod
+    def _title(cls, value):
+        return _require_title(value)
+
+    @field_validator("customer_id")
+    @classmethod
+    def _ids(cls, value):
+        return _require_uuid(value)
 
 
 class PortalSalesOpportunityUpdate(BaseModel):
-    title: Optional[str] = Field(None, max_length=200)
-    expected_amount: Optional[Decimal] = None
+    title: Optional[str] = Field(None, min_length=1, max_length=200)
+    expected_amount: Optional[Decimal] = _AMOUNT_FIELD_OPTIONAL
     expected_close_date: Optional[DateType] = None
     customer_id: Optional[str] = None
-    prospect_name: Optional[str] = None
+    prospect_name: Optional[str] = Field(None, max_length=200)
     status_id: Optional[str] = None
-    lost_reason: Optional[str] = None
-    lines: Optional[List[SalesOpportunityLineInput]] = None
+    lost_reason: Optional[str] = Field(None, max_length=150)
+    lines: Optional[List[SalesOpportunityLineInput]] = _LINES_FIELD
+
+    @field_validator("title")
+    @classmethod
+    def _title(cls, value):
+        return _require_title(value) if value is not None else value
+
+    @field_validator("customer_id", "status_id")
+    @classmethod
+    def _ids(cls, value):
+        return _require_uuid(value)
 
 
 class SalesOpportunityLineResponse(BaseModel):
