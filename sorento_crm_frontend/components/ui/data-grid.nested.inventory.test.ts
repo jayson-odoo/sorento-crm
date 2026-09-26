@@ -41,15 +41,17 @@ const ROOTS = ['app', 'components'];
  * Only the two `StockDocumentsPanel` entries are a grid inside a grid. The rest
  * expand into a form, a hand-rolled `<table>` carve-out or a list, and are here
  * so the next one to become a grid is visible as a diff on this file.
+ *
+ * `POIntakeLinesGrid.tsx` (LineAnnotationPanel) is retired as of the F2 owner
+ * hand-test fix (25 Sep 2026, commit 7f64a3a6): the always-expanded note cards
+ * became a compact Flag-cell popover instead, so the row no longer uses
+ * `meta.expandedContent` / `getExpandedRowModel` at all. The popover holds no
+ * grid, so it is not a new site for the floating-surface scan below either.
  */
 const EXPANDED_CONTENT_SITES = new Map<string, string>([
   [
     'app/(protected)/procurement-management/packing-lists/components/SpoPlannerTable.tsx',
     'LocationSplitPanel - a form, no grid',
-  ],
-  [
-    'app/(protected)/project-sales/[projectId]/components/POIntakeLinesGrid.tsx',
-    'LineAnnotationPanel - annotation cards, no grid',
   ],
   [
     'app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx',

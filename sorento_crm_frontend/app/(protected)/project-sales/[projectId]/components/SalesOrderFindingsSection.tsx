@@ -199,7 +199,7 @@ function FindingRow({
             className="shrink-0"
             onClick={() => onAcknowledge(finding)}
           >
-            {tone === 'hard' ? 'Override with a reason' : 'Clear with a reason'}
+            Dismiss with a reason
           </Button>
         )}
       </div>

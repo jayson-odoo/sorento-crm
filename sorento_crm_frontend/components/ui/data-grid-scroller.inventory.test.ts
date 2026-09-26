@@ -34,18 +34,25 @@ const ROOTS = ['app', 'components'];
  * scan must not erase.
  */
 const EXEMPT = new Map<string, string>([
-  // A bounded-height viewport: the intake lines list is capped at
-  // `max-h-[calc(100vh-14rem)]` so the page keeps its own scroll. That is
-  // VERTICAL work the grid does not do, and the cap makes the wrapper a real
-  // scrollport rather than a shrink-fitting one.
-  [
-    'app/(protected)/project-sales/[projectId]/components/POIntakeLinesGrid.tsx',
-    'bounded-height viewport (max-h)',
-  ],
-  [
-    'app/(protected)/project-sales/[projectId]/components/POIntakeAnnotationsGrid.tsx',
-    'bounded-height viewport (max-h)',
-  ],
+  // A bounded-height viewport: capped at `max-h-[calc(100vh-14rem)]` so the
+  // page keeps its own scroll. That is VERTICAL work the grid does not do,
+  // and the cap makes the wrapper a real scrollport rather than a
+  // shrink-fitting one.
+  //
+  // `POIntakeLinesGrid.tsx` used to be here too, wrapping `DataGridTable` in
+  // a Radix `ScrollArea` for the same vertical-cap reason. That wrapper was
+  // the S1-05 anti-pattern itself: the `display: table` viewport it gave the
+  // table shrink-fit horizontally, so `data-grid-scroller` never measured an
+  // overflow and the Amount column clipped with no way to reach it (owner
+  // hand test, 25 Sep 2026, item 1). It now passes the same vertical budget
+  // through `tableLayout.scrollerMaxHeight` as a plain string instead, which
+  // is what `DataGridScroller` already reads a caller-supplied height off,
+  // so it needs no exemption here any more.
+  //
+  // `POIntakeAnnotationsGrid.tsx` was here for the same reason too, and is
+  // gone for a different one: owner hand test 25 Sep 2026, item 4 removed
+  // the grid it wrapped entirely (the Documents tab shows only the PDF now),
+  // so the file carries no `DataGridTable` and no `ScrollArea` any more.
   // Same: the panel is embedded in a complaint record and takes a caller-set
   // `maxHeightClassName`.
   [
@@ -185,14 +192,6 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
     // fulfilment board's cell breakdown the enclosing table is `CellStockTable`'s hand-rolled
     // `<table>` carve-out, not a DataGrid - so there is no grid context there to read.
     1,
-  ],
-  [
-    'app/(protected)/project-sales/[projectId]/components/POIntakeLinesGrid.tsx',
-    1, // bounded-height viewport (max-h) - same reason as its ScrollArea exemption above
-  ],
-  [
-    'app/(protected)/project-sales/[projectId]/components/POIntakeAnnotationsGrid.tsx',
-    1, // bounded-height viewport (max-h) - same reason as its ScrollArea exemption above
   ],
   [
     'app/(protected)/resource-management/attachments/components/AttachmentDetailModal.tsx',

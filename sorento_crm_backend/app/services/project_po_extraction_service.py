@@ -145,7 +145,7 @@ class ProjectPOExtractionService(
 
     def serialize_version(self, version: ProjectPOVersion) -> Dict[str, Any]:
         from app.models.resources import Attachment
-        from app.services.storage_router import resolve_signed_url
+        from app.services.storage_router import extract_key, get_backend, resolve_signed_url
 
         po = self.get_po(version.purchase_order_id)
         project = self.db.query(Project).filter(Project.id == po.project_id).first()
@@ -157,11 +157,19 @@ class ProjectPOExtractionService(
             if version.attachment_id
             else None
         )
+        # B1 (PR #1237 review): an attachment row can outlive its object (deleted or
+        # never landed in the bucket). Presigning a URL for a missing object hands the
+        # FE something that 404s inside an iframe it cannot see past - the R13 empty
+        # state only shows when this is None, so the object's existence has to gate it,
+        # not just the row's.
         document_url = (
             resolve_signed_url(
                 attachment.file_path, provider=attachment.storage_provider
             )
             if attachment is not None
+            and get_backend(attachment.storage_provider).file_exists(
+                extract_key(attachment.file_path)
+            )
             else None
         )
 

@@ -69,14 +69,14 @@ export function POIntakeDocumentViewer({
         page={page}
         onPageChange={onPageChange}
         pageCountHint={pageCount}
-        className={`h-[60vh] rounded-lg border border-border ${className ?? ''}`}
+        className={`min-h-0 rounded-lg border border-border ${className ?? ''}`}
       />
     );
   }
 
   return (
     <div
-      className={`flex min-w-0 flex-col rounded-lg border border-border ${className ?? ''}`}
+      className={`flex min-h-0 min-w-0 flex-col rounded-lg border border-border ${className ?? ''}`}
     >
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
         <div className="flex items-center gap-1">
@@ -118,18 +118,18 @@ export function POIntakeDocumentViewer({
 
       <div className="min-h-0 flex-1 bg-muted/30 p-2">
         {!source ? (
-          <div className="flex h-[45vh] flex-col items-center justify-center gap-2 rounded border border-dashed border-border px-6 text-center lg:h-full">
+          <div className="flex h-full flex-col items-center justify-center gap-2 rounded border border-dashed border-border px-6 text-center">
             <FileWarning className="size-5 text-muted-foreground" aria-hidden />
             <p className="text-sm font-medium">The scan is not available to preview</p>
             <p className="max-w-xs text-xs text-muted-foreground">
-              Upload the document again from the POs tab if you need it beside the lines.
+              Upload the document again from the POs tab if you need to see it.
             </p>
           </div>
         ) : (
           <img
             src={source}
             alt={`Purchase order page ${current}`}
-            className="h-[45vh] w-full rounded bg-white object-contain lg:h-full"
+            className="h-full w-full rounded bg-white object-contain"
           />
         )}
       </div>

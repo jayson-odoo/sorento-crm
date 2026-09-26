@@ -426,10 +426,16 @@ export function PipelineClient() {
       <RegisterProjectDialog open={registerOpen} onOpenChange={setRegisterOpen} />
 
       {startAction === 'upload-po' && (
-        <POIntakeUploadDialog onDone={() => setStartAction(null)} />
+        <POIntakeUploadDialog
+          onDone={() => setStartAction(null)}
+          pipelineListQuery={detailSearch}
+        />
       )}
       {startAction === 'upload-schedule' && (
-        <DeliveryScheduleUploadDialog onDone={() => setStartAction(null)} />
+        <DeliveryScheduleUploadDialog
+          onDone={() => setStartAction(null)}
+          pipelineListQuery={detailSearch}
+        />
       )}
     </div>
   );
