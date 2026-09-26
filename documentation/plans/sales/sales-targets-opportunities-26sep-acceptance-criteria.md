@@ -19,6 +19,15 @@ written to its recommendation. No criterion was deleted: an AC that a ruling cha
 id and text and gains a "Round 4" note saying what now applies; new ones are J14, S1-19 to
 S1-25, S2-15, S2-16, S3-6, S4-11, S5-15, S5-16, S6-12, S6-13 and the new slice S7 (dealer
 targets). **Build order after round 4: S6, S1, S7, S2, S3, S4, S5** (plan section 6).
+Round 5 (26 Sep): the owner's answers to R1 to R5 and T1 to T5 (PR #1260 comment, 06:09Z) are
+folded in as rulings marked "(Owner ruling 26 Sep 06:09, R# or T#)". No criterion was deleted: an
+AC a ruling changes keeps its id and text and gains a "Round 5" note; new ones are S1-26 to
+S1-29, S3-7, S4-12, S6-14 and S6-15. Round 5 questions V1 to V3 (plan section 14) may still
+adjust the ACs marked "(V#)"; each is written to its recommendation. Tables live in schema
+`sales` (plan 3.7 map; V3): where an AC names `sales_targets` and the like, the built name is
+`sales.targets`. **Every slice is built now, nothing deferred (T5). Waves: S6; then S1 beside
+S2; then S7, S4, S3 and S5 side by side, S5 merging last** (plan section 6, "Lanes after round
+5").
 
 Tags: `[BE]` pytest, `[FE]` vitest, `[E2E]` recorded agent-browser run (no new Playwright spec),
 `[T]` text or copy check. Every AC traces to a journey step (J1 to J12).
@@ -64,6 +73,22 @@ From the owner's second Lavish review, written against the round 2 mockup (PR #1
 - **N11, Owner ruling 26 Sep 06:01 (Lavish):** "what's this, products?": optional product lines with a quantity (S2-16, Q3).
 - **N12, Owner ruling 26 Sep 06:01 (Lavish):** "can this be configured at Internal Contacts page? so we got 1 page to set all things": a Sales updates tab on the contact's record (S5-15).
 - **N13, Owner ruling 26 Sep 06:01 (Lavish):** "what's this": Add suggested is explained in the plan (3.6) and dropped (S5-16).
+
+## Owner rulings 26 Sep 06:09, one line each
+
+From the owner's answers to rounds 2 and 3 (PR #1260 comment, 26 Sep 06:09Z, verbatim quotes).
+
+- **R1, Owner ruling 26 Sep 06:09:** "yeah correct": the portal form goes to Sorento's own dealer-channel sales agents first (S2-3, S2-4).
+- **R2, Owner ruling 26 Sep 06:09:** "yeah": an agent target, and each team member, counts every code with the same person label (S1-29).
+- **R3, Owner ruling 26 Sep 06:09:** "we will have DO integreation as soon as next Monday so by that time we will be able to know": delivered counts by DO date once DO lines are linked; by order date until then and for any quantity no linked DO explains (S1-26, V2).
+- **R4, Owner ruling 26 Sep 06:09:** "yeah": amounts stay tax inclusive (no change).
+- **R5, Owner ruling 26 Sep 06:09:** "yeah": higher rates pay above their threshold by default; "Highest rate on everything" is selectable on any target and built in S4 (S4-3, S4-4, S4-11).
+- **T1, Owner ruling 26 Sep 06:09:** "okay can": new sales team tables, not the core `teams` (S6).
+- **T2, Owner ruling 26 Sep 06:09:** "when we move agent to new team, only new order received in the new team is considred the ales of the new team right?": yes; membership is dated and a team counts each order by the membership in force on its date (S6-14, S6-15, V1).
+- **T3, Owner ruling 26 Sep 06:09:** "I can set individual on each agent and add up to team ah": a team target's figure is the sum of its agents' targets; no team-level override (S1-27, S1-28).
+- **T4, Owner ruling 26 Sep 06:09:** "yeap ok": team pool per period, never split (S4-10, S4-12).
+- **T5, Owner ruling 26 Sep 06:09:** "the point is we need to do it now and not backlog or defer": every slice now, thin lanes in parallel waves, nothing to the backlog.
+- **Owner question 26 Sep 06:09:** "are we doing this in a new schema and module called sales?": recommended yes to both, module `sales` and schema `sales` (plan 3.7, V3).
 
 ## Journey
 
@@ -151,6 +176,10 @@ WhatsApp message; the **dealer**, who may receive a WhatsApp message.
   (Round 4, N2, N5: Sales Teams follows the Users & Access > Teams concept: a list with search
   and **Add team**, one modal, and the team's own page. Teams ship first, before any target
   (S6); the Teams tab is the Targets landing (S1).)
+  (Round 5, Owner ruling 26 Sep 06:09, T2, T3: picking an agent who is in another team shows
+  **Moves on** (default today); orders dated from that day count for the new team and earlier
+  ones stay with the old team. A team target is set by typing each agent's figure in one form;
+  the team figure is their sum, shown read-only.)
 - **J14. Open a target** (round 4, Owner ruling 26 Sep 06:01 (Lavish), N3, N4, N5). From any
   target pill or row, the manager opens the target's own page: who it is for, what counts, the
   dates and split, one line per period with its figure and achievement, and the commission
@@ -180,6 +209,21 @@ WhatsApp message; the **dealer**, who may receive a WhatsApp message.
   now" (T2: current membership, not dated), each agent widened by R2 exactly as for an agent
   target. The team target's own metric, basis and scope apply. It equals the sum of what the same
   target would give on each member agent separately, and never counts an order twice.
+  Round 5 (Owner ruling 26 Sep 06:09, T2): "a member of the team **on the order's date**": a
+  `team_members` row for that agent and team with `valid_from` empty or on or before the order
+  date, and `valid_to` empty or on or after it. With no move in the period it still equals the
+  per-member sum.
+- **Delivered, by DO date** (round 5, Owner ruling 26 Sep 06:09, R3): for a sales order line in
+  scope, the delivered quantity in a period is (a) the sum of `order_lines.quantity` of
+  non-cancelled DOs (`orders.is_cancelled` false) linked to the line through
+  `order_lines.sales_order_line_id` whose `orders.order_date` (the DO date) is inside the period,
+  plus (b), only when the sales order's `order_date` is inside the period, the residual
+  `greatest(least(qty_delivered, qty_ordered) - all linked DO quantity, 0)`; the line's total
+  over all periods never exceeds `qty_ordered`. Amount = `round(line_total x quantity /
+  qty_ordered, 2)`. With no linked DO line this is exactly the round 2 figure above.
+- **Team target figure** (round 5, Owner ruling 26 Sep 06:09, T3): each team period's target is
+  the sum of the same-dated periods of the agent targets whose `parent_target_id` is that team
+  target.
 - **Stage probability** (Owner ruling 26 Sep, G5): the `win_probability` of the opportunity's
   status row; defaults New 10, Qualified 25, Proposal 50 (inactive), Negotiation 75, Won 100,
   Lost 0.
@@ -220,6 +264,7 @@ WhatsApp message; the **dealer**, who may receive a WhatsApp message.
   dated 30 Sep, one with `order_date` null, one with agent B) give exactly the sum of the
   non-cancelled October lines of agent A, for `ordered`; for `delivered` the same lines give the
   sum of their confirmed values, and a line with `qty_ordered = 0` adds 0.
+  Round 5 (R3): this holds when no DO line is linked; with linked DO lines, S1-26 applies.
 - **S1-8 [BE] (J1, G4)** Achievement golden set, quantity: `ordered` sums `qty_ordered`,
   `delivered` sums `least(qty_delivered, qty_ordered)` (a line over-delivered by AutoCount never
   counts more than ordered).
@@ -319,6 +364,37 @@ WhatsApp message; the **dealer**, who may receive a WhatsApp message.
   field labelled "for the whole range" or "per period" to match; its hint names the number of
   periods and the last one's dates. There is no "Runs for" field and no "One per quarter" choice.
 
+- **S1-26 [BE] (J1, Owner ruling 26 Sep 06:09, R3, V2)** Delivered by DO date, golden set, for
+  an agent target on October with `basis: "delivered"`. Seed one sales order dated 20 Sep
+  (outside October) with a line of 100 units, `line_total` 10,000, `qty_delivered` 100:
+  (a) no linked DO line: October counts 0 and the September period counts 100 units / RM
+  10,000 (the round 2 figure); (b) DO lines linked to it of 40 dated 5 Oct and 30 dated 3 Nov:
+  October counts 40 units / RM 4,000, November 30, and September keeps the residual 30 / RM
+  3,000; (c) the 3 Nov DO cancelled: November counts 0 and September's residual becomes 60;
+  (d) linked DO lines adding to 120 on a line of 100: never more than 100 across all periods.
+  An order line with a linked DO and a DO free-text salesman different from the order's agent
+  still counts for the order's agent. Amount and quantity metrics, agent, team and dealer
+  subjects all use this rule.
+- **S1-27 [BE][FE] (J2, J13, Owner ruling 26 Sep 06:09, T3)** `POST /sales/targets` with
+  `subject_kind: "team"` takes `agent_figures: [{sales_agent_id, target_value}]` for agents who
+  are members of the team at any day in the range (422 for anyone else) and creates the team
+  target plus one agent target per entry with `parent_target_id` set and the team's metric,
+  counts, products, dates and split copied. Each team period's `target_value` equals the sum
+  of its children's same-dated periods. In the Set target modal, "Target for: Team" shows an
+  **Agents** table (agent, figure) prefilled with the team's members, and a read-only **Team
+  target** total that updates as figures are typed; there is no editable team figure field.
+- **S1-28 [BE] (J3, J13, T3)** `PATCH` of a team target's period is 422 `TEAM_TARGET_IS_SUM`.
+  Changing a child's period figure, adding a child (Add figure for a member with none) or
+  deleting a child re-sums the team's periods in the same transaction. Editing the team
+  target's metric, counts, products, dates or split rewrites every child the same way; a
+  child's own metric, counts, products, dates and split are 422 to change directly. Deleting
+  the team target deletes its children as one deferred action whose countdown names the count.
+  A child keeps its figures when its agent moves to another team.
+- **S1-29 [BE] (J1, Owner ruling 26 Sep 06:09, R2)** An agent target on SEAN I counts orders
+  under SEAN I and SEAN III when both carry the person label "Sean", and only SEAN I's when
+  SEAN I has no label; a team with SEAN I as a member counts SEAN III's orders only inside
+  Sean's membership window.
+
 ## S2. Opportunities, logged by salespeople in the portal
 
 - **S2-1 [BE] (J6, Owner ruling 26 Sep, G5)** At startup the `sales_opportunity` status graph is
@@ -406,6 +482,9 @@ WhatsApp message; the **dealer**, who may receive a WhatsApp message.
 - **S3-6 [BE] (J9, N6, N7)** `pipeline_value` for a period row counts open opportunities whose
   `expected_close_date` is between `period_start` and `period_end`, both included; a split
   target's other periods do not share it.
+- **S3-7 [BE] (J9, J13, Owner ruling 26 Sep 06:09, T2)** A team row's `pipeline_value` counts an
+  open opportunity of agent A only when A is a member of the team on the opportunity's
+  `expected_close_date`.
 
 ## S4. Commission tiers
 
@@ -438,6 +517,12 @@ WhatsApp message; the **dealer**, who may receive a WhatsApp message.
 - **S4-11 [FE] (J10, Owner ruling 26 Sep 06:01 (Lavish), N9)** How tiers pay is a
   `SearchableSelect` with None, Higher rate above each threshold only, and Highest rate on
   everything, on the Set target modal and the target page; no segmented buttons.
+- **S4-12 [BE][FE] (J10, J13, Owner ruling 26 Sep 06:09, R5, T3, T4)** "Highest rate on
+  everything" (`retroactive`) is selectable on agent, team, child and dealer targets and ships
+  in S4 (S4-4's golden numbers). The team form has two tier tables: **Team pool tiers** on the
+  team target (computed on the summed team figure and the team's achieved) and **Agent tiers**,
+  copied to every child on save; a child's tiers can then be changed on its own page without
+  touching the others.
 
 ## S5. Per-contact WhatsApp broadcast
 
@@ -480,7 +565,7 @@ WhatsApp message; the **dealer**, who may receive a WhatsApp message.
   Round 4: starting from Internal Users, open a contact, then its Sales updates tab.
 - **S5-14 [BE][FE] (J11, J12, Owner ruling 26 Sep (Lavish), L2)** A `team` recipient takes an
   optional `sales_team_id`: set, it receives that team's target figures plus one line per member
-  agent; null, it receives every agent (the round 2 behaviour). A team recipient never receives
+  agent (round 5, T2: the agents who were members during the period shown); null, it receives every agent (the round 2 behaviour). A team recipient never receives
   another team's lines. The recipient modal shows a searchable team select, clearable, under
   "Follows: Team" (empty = "All agents").
 - **S5-15 [BE][FE][E2E] (J11, Owner ruling 26 Sep 06:01 (Lavish), N12)** A contact's record
@@ -514,6 +599,8 @@ S6-4 to S6-7 and S6-10 (team targets) build in S1's lane, and S6-12 and S6-13 ar
 - **S6-2 [BE] (J13, T2)** `PUT /sales/teams/{id}/members` with `{sales_agent_ids}` sets the member
   list; an agent who was in another team of the same company is moved (the response names the
   team they left); an agent is never in two teams of one company.
+  Round 5 (T2): "never in two teams" means never two memberships on the same day; the move is
+  dated (S6-14).
 - **S6-3 [BE] (J13)** `PATCH` renames or sets `is_active`; an inactive team gets no "No target" row
   and cannot be picked for a new target, and its existing targets still show. `DELETE` hard
   deletes the team, its memberships and its targets (with their periods, scope and tiers); the
@@ -521,6 +608,8 @@ S6-4 to S6-7 and S6-10 (team targets) build in S1's lane, and S6-12 and S6-13 ar
 - **S6-4 [BE] (J13, L2)** `POST /sales/targets` with `subject_kind: "team"` and `sales_team_id`
   creates a team target under every S1 rule (periods, scope, metric, basis); `team` without a
   team, or with an agent or customer id as well, is 422; an inactive team is 422.
+  Round 5 (T3): the payload carries `agent_figures` and the team figure is their sum (S1-27);
+  a `target_value` for the team itself is not accepted.
 - **S6-5 [BE] (J13, L2)** Team achievement golden set: team N with agents A and B; orders of A,
   B and C (not in N) in October. An amount-ordered team target counts exactly A's and B's
   non-cancelled October lines; a quantity-delivered, category-scoped team target counts A's and B's
@@ -529,6 +618,9 @@ S6-4 to S6-7 and S6-10 (team targets) build in S1's lane, and S6-12 and S6-13 ar
 - **S6-6 [BE] (J13, T2)** Moving B from team N to team S changes N's and S's achieved figures for
   every period, past ones included (current membership); an agent with no team counts for no team
   target.
+  Round 5 (Owner ruling 26 Sep 06:09, T2): reversed by the ruling. A move changes only orders
+  dated on or after the move date (S6-14); past periods keep their figures. The "no team counts
+  for no team target" part stands.
 - **S6-7 [BE] (J13)** `GET /sales/targets?month=2026-10-01&subject=team` returns one row per team
   target period covering October, with achieved and %, plus one `target_id: null` row per active
   team with no covering target. `GET /sales/targets?subject=agent&sales_team_id=...` returns only
@@ -552,6 +644,8 @@ S6-4 to S6-7 and S6-10 (team targets) build in S1's lane, and S6-12 and S6-13 ar
 - **S6-11 [E2E] (J13)** From `/`, Sales > Sales Teams; create "North" with two agents; move one
   agent to a second team; on Targets, set a team target for North from the header CTA; its
   achieved equals the sum of its agents' rows for the same basis; 1280 and 375.
+  Round 5 (T2, T3): the team target is set by typing each agent's figure (S1-27); the move shows
+  Moves on (S6-15).
 
 - **S6-12 [FE][E2E] (J13, Owner ruling 26 Sep 06:01 (Lavish), N2)** Sales > Sales Teams follows
   the Users & Access > Teams concept: `PageHeader` "Sales teams" with **Add team**, a search box,
@@ -569,6 +663,22 @@ S6-4 to S6-7 and S6-10 (team targets) build in S1's lane, and S6-12 and S6-13 ar
   S6 lane, before S1, the Team targets section is absent and the Agents rows show agent and code
   only.
 
+- **S6-14 [BE] (J13, Owner ruling 26 Sep 06:09, T2, V1)** `team_members` has `valid_from` and
+  `valid_to` (dates, both optional). `PUT /sales/teams/{id}/members` with `{sales_agent_ids,
+  moves_on}`: an agent in no team gets a row with `valid_from` empty (V1); an agent in another
+  team gets that row closed at `moves_on - 1` and a new row from `moves_on` (default today; a
+  future date is 422). An agent left out of the list gets `valid_to = today`, and the row stays.
+  One open membership per agent per company (unique), and no two memberships of one agent in
+  one company overlap (422). Golden set: A in N, moved to S on 15 Oct; A's orders of 10 Oct count
+  for N's October team target and not S's; 15 Oct and later count for S and not N; S6-5's equality
+  holds for any period with no move in it.
+- **S6-15 [FE][E2E] (J13, T2)** The team modal shows **Moves on** (a date, default today,
+  not clearable) only when a picked agent is in another team, with that team named on the
+  option. The team page's Agents section lists members on the Active on date; an agent who left
+  during the period shown keeps a muted line with a "Left 14 Oct" pill, so the team's achieved
+  figure is explained on screen. E2E: move an agent, see the pill, see the old team's past period
+  unchanged.
+
 ## S7. Dealer targets (built third, round 4)
 
 Split out of S1 by round 4 (plan section 4) so S1 stays thin. S1-11 and J5 build here.
@@ -581,6 +691,17 @@ Split out of S1 by round 4 (plan section 4) so S1 stays thin. S1-11 and J5 build
   with a searchable dealer select (code - name).
 - **S7-3 [E2E] (J5)** From `/`, Sales > Targets > Dealers; set a dealer target from the header;
   it shows one line; its page opens; 1280 and 375.
+
+## Round 5 (answers to R1 to R5 and T1 to T5) additions (nothing deleted)
+
+Every earlier AC stands with its id and text; round 5 appended "Round 5" notes to J13, the Team
+achieved value definition, S1-7, S5-14, S6-2, S6-4, S6-6 and S6-11, added the definitions
+"Delivered, by DO date" and "Team target figure", and added S1-26 to S1-29, S3-7, S4-12, S6-14
+and S6-15. S6-6's "past ones included" is reversed by T2 (its note says so); nothing is
+removed. Lanes after round 5 (T5, plan section 6): wave 1 **S6** builds S6-1 to S6-3, S6-8,
+S6-9, S6-12 to S6-15 and S1-17; wave 2 **S1** (the rest of S1 except S1-11, plus S1-26 to S1-29,
+S6-4 to S6-7 and S6-10) beside **S2**; wave 3 **S7**, **S4** (with S4-12), **S3** (with S3-7) and
+**S5** side by side, S5 merging last. Nothing is deferred.
 
 ## Round 4 (second Lavish review) additions (nothing deleted)
 
