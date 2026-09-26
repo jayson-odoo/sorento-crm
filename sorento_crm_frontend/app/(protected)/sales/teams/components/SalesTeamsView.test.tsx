@@ -59,6 +59,7 @@ function team(over: Partial<SalesTeamListItem> = {}): SalesTeamListItem {
     id: 'north',
     name: 'North',
     is_active: true,
+    leader_sales_agent_id: null,
     member_count: 2,
     members: [
       { sales_agent_id: 'ali', label: 'ALI - Ali Hassan' },
@@ -107,6 +108,22 @@ describe('SalesTeamsView', () => {
     const central = screen.getByText('Central').closest('tr')!;
     expect(within(central).getByText('Inactive')).toBeTruthy();
     expect(within(central).getByText('No agents')).toBeTruthy();
+  });
+
+  it('marks the leader\'s pill with a Leader tag and draws it first (W1)', () => {
+    withTeams([team({ leader_sales_agent_id: 'mei' })]);
+    render(<SalesTeamsView />);
+    const north = screen.getByText('North').closest('tr')!;
+    const pills = within(north).getAllByRole('button').filter((b) => b.textContent?.includes(' - '));
+    expect(pills[0].textContent).toBe('MEI - Tan Mei Ling (Leader)');
+    expect(within(north).queryByText('ALI - Ali Hassan (Leader)')).toBeNull();
+  });
+
+  it('tags no pill when the team has no leader', () => {
+    withTeams([team()]);
+    render(<SalesTeamsView />);
+    const north = screen.getByText('North').closest('tr')!;
+    expect(within(north).queryAllByText(/\(Leader\)/).length).toBe(0);
   });
 
   it('shows "No sales teams yet" with Add team when there are none', () => {

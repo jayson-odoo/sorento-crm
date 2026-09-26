@@ -62,6 +62,30 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
   ),
 }));
 
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: (props: {
+    id?: string;
+    value: string;
+    onChange: (v: string) => void;
+    options?: { value: string; label: string }[];
+    clearable?: boolean;
+  }) => (
+    <select
+      id={props.id}
+      data-clearable={props.clearable ? 'true' : 'false'}
+      value={props.value}
+      onChange={(e) => props.onChange(e.target.value)}
+    >
+      <option value="">No leader</option>
+      {(props.options ?? []).map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
 const perms = vi.hoisted(() => ({ granted: new Set<string>() }));
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => perms.granted.has(slug),
@@ -87,6 +111,8 @@ function detail(over: Partial<Detail> = {}): Detail {
     id: 'north',
     name: 'North',
     is_active: true,
+    leader_sales_agent_id: null,
+    leader_label: null,
     member_count: 2,
     on: '2026-10-20',
     members: [
@@ -208,7 +234,71 @@ describe('SalesTeamDetail', () => {
       is_active: true,
       sales_agent_ids: ['ali', 'sean'],
       moves_on: '2026-10-15',
+      leader_sales_agent_id: null,
     });
+  });
+
+  it('names the leader in the header and tags their row (W1)', () => {
+    hooks.useSalesTeam.mockReturnValue({
+      data: detail({ leader_sales_agent_id: 'mei', leader_label: 'MEI - Tan Mei Ling' }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<SalesTeamDetail id="north" />);
+    expect(screen.getByText('Leader: MEI - Tan Mei Ling')).toBeTruthy();
+    const agents = screen.getByRole('region', { name: 'Agents' });
+    const mei = within(agents).getByText('MEI - Tan Mei Ling').closest('li')!;
+    expect(within(mei).getByText('Leader')).toBeTruthy();
+    const ali = within(agents).getByText('ALI - Ali Hassan').closest('li')!;
+    expect(within(ali).queryByText('Leader')).toBeNull();
+  });
+
+  it('says "No leader" in the header when none is picked', () => {
+    render(<SalesTeamDetail id="north" />);
+    expect(screen.getByText('No leader')).toBeTruthy();
+  });
+
+  it('edits the leader in place, limited to the team\'s agents, and a new pick joins the team', async () => {
+    hooks.useSalesTeam.mockReturnValue({
+      data: detail({ leader_sales_agent_id: 'mei', leader_label: 'MEI - Tan Mei Ling' }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<SalesTeamDetail id="north" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+
+    const leader = screen.getByLabelText('Leader') as HTMLSelectElement;
+    expect(leader.value).toBe('mei');
+    expect(leader.dataset.clearable).toBe('true');
+    // The current agents only: not Kim, who left, and nobody outside the team.
+    expect(Array.from(leader.options).map((o) => o.value)).toEqual(['', 'ali', 'mei']);
+
+    fireEvent.click(screen.getByLabelText('RAJ - Raj Kumar (no team)'));
+    expect(Array.from(leader.options).map((o) => o.value)).toEqual(['', 'ali', 'mei', 'raj']);
+    fireEvent.change(leader, { target: { value: 'raj' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(save.mutateAsync.mock.calls[0][0]).toMatchObject({
+      sales_agent_ids: ['ali', 'mei', 'raj'],
+      leader_sales_agent_id: 'raj',
+    });
+  });
+
+  it('removing the leader in edit clears the leader', async () => {
+    hooks.useSalesTeam.mockReturnValue({
+      data: detail({ leader_sales_agent_id: 'mei', leader_label: 'MEI - Tan Mei Ling' }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<SalesTeamDetail id="north" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove MEI - Tan Mei Ling' }));
+    expect((screen.getByLabelText('Leader') as HTMLSelectElement).value).toBe('');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(save.mutateAsync.mock.calls[0][0].leader_sales_agent_id).toBeNull();
   });
 
   it('offers no Edit to a role without sales.teams.edit', () => {

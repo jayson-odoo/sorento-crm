@@ -38,6 +38,30 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
   ),
 }));
 
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: (props: {
+    id?: string;
+    value: string;
+    onChange: (v: string) => void;
+    options?: { value: string; label: string }[];
+    clearable?: boolean;
+  }) => (
+    <select
+      id={props.id}
+      data-clearable={props.clearable ? 'true' : 'false'}
+      value={props.value}
+      onChange={(e) => props.onChange(e.target.value)}
+    >
+      <option value="">No leader</option>
+      {(props.options ?? []).map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
 const save = vi.hoisted(() => ({ mutateAsync: vi.fn(), isPending: false }));
 vi.mock('../hooks/useSalesTeams', () => ({
   useSalesTeamAgentOptions: () => ({
@@ -92,6 +116,7 @@ describe('SalesTeamModal', () => {
       is_active: true,
       sales_agent_ids: ['sean'],
       moves_on: '2026-09-20',
+      leader_sales_agent_id: null,
     });
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   });
@@ -103,6 +128,43 @@ describe('SalesTeamModal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
     expect(save.mutateAsync.mock.calls[0][0].moves_on).toBeUndefined();
+  });
+
+  it('offers only the picked agents as Leader, clearable, and saves the leader (W1)', async () => {
+    render(<SalesTeamModal open onOpenChange={() => {}} />);
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'West' } });
+    const leader = screen.getByLabelText('Leader') as HTMLSelectElement;
+    expect(leader.dataset.clearable).toBe('true');
+    expect(Array.from(leader.options).map((o) => o.value)).toEqual(['']);
+
+    fireEvent.click(screen.getByLabelText('RAJ - Raj Kumar (no team)'));
+    fireEvent.click(screen.getByLabelText('SEAN I - Sean Lee (now in Central)'));
+    expect(Array.from(leader.options).map((o) => o.textContent)).toEqual([
+      'No leader',
+      'RAJ - Raj Kumar',
+      'SEAN I - Sean Lee',
+    ]);
+    fireEvent.change(leader, { target: { value: 'raj' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(save.mutateAsync.mock.calls[0][0]).toMatchObject({
+      sales_agent_ids: ['raj', 'sean'],
+      leader_sales_agent_id: 'raj',
+    });
+  });
+
+  it('clears the leader when that agent is unpicked', async () => {
+    render(<SalesTeamModal open onOpenChange={() => {}} />);
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'West' } });
+    fireEvent.click(screen.getByLabelText('RAJ - Raj Kumar (no team)'));
+    fireEvent.change(screen.getByLabelText('Leader'), { target: { value: 'raj' } });
+    fireEvent.click(screen.getByLabelText('RAJ - Raj Kumar (no team)'));
+    expect((screen.getByLabelText('Leader') as HTMLSelectElement).value).toBe('');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(save.mutateAsync.mock.calls[0][0].leader_sales_agent_id).toBeNull();
   });
 
   it('will not save a blank name', () => {

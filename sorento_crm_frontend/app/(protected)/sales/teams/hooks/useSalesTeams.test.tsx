@@ -62,4 +62,39 @@ describe('useSaveSalesTeam', () => {
     });
     expect(service.setSalesTeamMembers).not.toHaveBeenCalled();
   });
+
+  it('sends the leader on a create and on an edit, null clearing it (W1)', async () => {
+    const { result } = renderHook(() => useSaveSalesTeam(), { wrapper });
+    await act(() =>
+      result.current.mutateAsync({
+        teamId: null,
+        name: 'North',
+        is_active: true,
+        sales_agent_ids: ['a'],
+        leader_sales_agent_id: 'a',
+      }),
+    );
+    expect(service.createSalesTeam).toHaveBeenCalledWith({
+      name: 'North',
+      is_active: true,
+      sales_agent_ids: ['a'],
+      leader_sales_agent_id: 'a',
+    });
+
+    await act(() =>
+      result.current.mutateAsync({
+        teamId: 'north',
+        name: 'North',
+        is_active: true,
+        sales_agent_ids: ['a'],
+        leader_sales_agent_id: null,
+      }),
+    );
+    expect(service.updateSalesTeam).toHaveBeenCalledWith('north', {
+      name: 'North',
+      is_active: true,
+      sales_agent_ids: ['a'],
+      leader_sales_agent_id: null,
+    });
+  });
 });
