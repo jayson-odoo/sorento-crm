@@ -345,11 +345,15 @@ def unsearchable_brand_names(db: Session) -> set[str]:
     to be the Brand specification's `excluded_values`; that specification is gone
     (#1286, D3) and the flag lives on the brand itself.
     """
-    return {
-        str(name).strip().lower()
-        for (name,) in db.query(Brand.brand_name).filter(Brand.is_searchable.is_(False)).all()
-        if str(name or "").strip()
-    }
+    held_back: set[str] = set()
+    offered: set[str] = set()
+    for name, is_searchable in db.query(Brand.brand_name, Brand.is_searchable).all():
+        lowered = str(name or "").strip().lower()
+        if lowered:
+            (offered if is_searchable else held_back).add(lowered)
+    # A name some company in scope offers as a real brand is not held back: the same
+    # answer the understanding vocabulary gives (security review N1).
+    return held_back - offered
 
 
 def _brand_match_in_haystack(

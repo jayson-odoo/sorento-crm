@@ -261,6 +261,11 @@ def _brand_vocabulary(db: Session) -> ProductSpecRegistry | None:
             bucket.append(name)
     if not searchable:
         return None
+    # One name, one answer (security review N1): an all-companies caller can see one
+    # company's OTHERS as a placeholder and another's as a real brand. Offered wins, so
+    # a name is never both offered and held back.
+    offered = {name.lower() for name in searchable}
+    placeholders = [name for name in placeholders if name.lower() not in offered]
     return ProductSpecRegistry(
         spec_key=BRAND_KEY,
         label="Brand",

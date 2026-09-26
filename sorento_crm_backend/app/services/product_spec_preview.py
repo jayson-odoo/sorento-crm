@@ -232,6 +232,45 @@ def _run_job(job_id: str, spec_key: str, rules: list[dict], db: Session | None =
                 _RUNNING_JOB_ID = None
 
 
+# The message a save or a remove answers with while another catalogue read runs.
+CATALOGUE_READ_BUSY = (
+    "Products are still being updated from another change. Try again in a moment."
+)
+
+
+def begin_catalogue_read() -> str:
+    """Take the ONE catalogue-read slot for a save's re-read, or refuse with a 409.
+
+    A rule save, a rule remove and a preview each read the whole catalogue for one key,
+    and all three share the slot a preview already guards itself with (security review
+    S1, #1286): two at once would each hold a request thread for seconds and race to
+    write the same products. The slot is taken BEFORE anything is saved, so a refused
+    save stores nothing. Give the token back with `end_catalogue_read`.
+    """
+    from app.services.error_handler import AppException
+
+    global _RUNNING_JOB_ID
+    with _RUNNING_LOCK:
+        if _RUNNING_JOB_ID is not None:
+            raise AppException(
+                status_code=409,
+                message=CATALOGUE_READ_BUSY,
+                code="spec_catalogue_read_running",
+            )
+        token = f"save-{uuid.uuid4().hex[:12]}"
+        _RUNNING_JOB_ID = token
+    return token
+
+
+def end_catalogue_read(token: str | None) -> None:
+    global _RUNNING_JOB_ID
+    if token is None:
+        return
+    with _RUNNING_LOCK:
+        if _RUNNING_JOB_ID == token:
+            _RUNNING_JOB_ID = None
+
+
 def start(spec_key: str, rules: list[dict]) -> str:
     """Kick off a preview run. Returns the job id to poll.
 

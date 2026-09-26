@@ -86,6 +86,30 @@ const WRITTEN_IN_OPTIONS: { value: string; label: string }[] = [
 const toUpperList = (list: string[]) =>
   Array.from(new Set(list.map((w) => w.trim().toUpperCase()).filter(Boolean)));
 
+// Security review fix round (#1286, finding B1): the same three limits
+// `validate_rules` (`product_spec_rules.py`) refuses a rule for - a Words
+// phrase with more than one "..." backtracks catastrophically, so it is
+// capped client-side too, same wording as the server's refusal, minus its
+// "Rule {n}:" prefix (this modal edits one rule, so there is no n to name).
+const MAX_WORDS_PER_LIST = 20;
+const MAX_WORD_LENGTH = 60;
+
+/** Null while a list of words is within every limit; the message to show
+ *  under it otherwise. Applies to every list of words a rule can hold -
+ *  words, skip after, before, after, texts - the same as the server does. */
+function wordsListError(words: string[]): string | null {
+  if (words.length > MAX_WORDS_PER_LIST) {
+    return `Use at most ${MAX_WORDS_PER_LIST} words in a list.`;
+  }
+  for (const word of words) {
+    if (word.split('...').length - 1 > 1) return 'Use at most one ... in a phrase.';
+    if (word.length > MAX_WORD_LENGTH) {
+      return `Keep each word to ${MAX_WORD_LENGTH} characters or fewer.`;
+    }
+  }
+  return null;
+}
+
 /** The mutable form shape, one field per part across every kind (plan D5). */
 interface RuleDraft {
   kind: SpecRuleKind;
@@ -402,18 +426,34 @@ export function SpecRuleModal({
     value: string[],
     onChange: (next: string[]) => void,
     placeholder: string,
-  ) => (
-    <SearchableMultiSelect
-      value={value}
-      onChange={onChange}
-      options={wordChoices.map((w) => ({ value: w, label: w }))}
-      placeholder={placeholder}
-      emptyMessage="No words yet."
-      createOption={{
-        label: (query) => <span>Add &ldquo;{query.toUpperCase()}&rdquo;</span>,
-        onCreate: (query) => onChange(toUpperList([...value, query])),
-      }}
-    />
+  ) => {
+    const error = wordsListError(value);
+    return (
+      <div className="flex flex-col gap-1">
+        <SearchableMultiSelect
+          value={value}
+          onChange={onChange}
+          options={wordChoices.map((w) => ({ value: w, label: w }))}
+          placeholder={placeholder}
+          emptyMessage="No words yet."
+          createOption={{
+            label: (query) => <span>Add &ldquo;{query.toUpperCase()}&rdquo;</span>,
+            onCreate: (query) => onChange(toUpperList([...value, query])),
+          }}
+        />
+        {error && (
+          <p role="alert" className="text-xs text-destructive">
+            {error}
+          </p>
+        )}
+      </div>
+    );
+  };
+
+  // Every list of words the current draft holds, whichever kind is active -
+  // Save is refused if any one of them is over a limit, same as the server.
+  const hasWordsListError = [draft.words, draft.skip_after, draft.before, draft.after, draft.texts].some(
+    (list) => wordsListError(list) !== null,
   );
 
   const hideWhereToLook = draft.kind === 'code' || draft.kind === 'product';
@@ -432,6 +472,8 @@ export function SpecRuleModal({
       );
       return;
     }
+    // The button is already disabled for this - a defensive stop, not the primary guard.
+    if (hasWordsListError) return;
     const compiled = compileBuilder(builder);
     onSave({ builder, pattern: compiled.pattern }, editingIndex);
     onOpenChange(false);
@@ -668,7 +710,9 @@ export function SpecRuleModal({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={save}>Save rule</Button>
+          <Button onClick={save} disabled={hasWordsListError}>
+            Save rule
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

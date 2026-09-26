@@ -30,11 +30,23 @@ the registry and the API can all import it.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from functools import lru_cache
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 KINDS = ("words", "number", "size", "code", "product")
+# Limits a saved rule is held to (security review, #1286). Each "..." is a lazy
+# "anything in the same sentence" gap, and two or more of them in one phrase backtrack
+# catastrophically over a long description with no full stop (three segments took 8.8 s
+# over 4,900 characters). One gap is linear enough; the word counts bound the rest.
+MAX_GAPS_PER_PHRASE = 1
+MAX_WORDS_PER_LIST = 20
+MAX_WORD_LENGTH = 60
+_WORD_LISTS = ("words", "skip_after", "before", "after", "texts")
+_PHRASE_LISTS = ("words", "skip_after", "before", "after")
 LOOK_INS = ("any", "description", "flyer", "name")
 CODE_MATCHES = ("contains", "starts_with", "ends_with")
 FACTS = ("class", "name", "length", "width", "height")
@@ -255,6 +267,15 @@ def _size_read(compiled: dict, haystack: str):
     return _number(raw), match.group(0)
 
 
+def _too_many_gaps(builder: dict) -> bool:
+    return any(
+        str(phrase).count("...") > MAX_GAPS_PER_PHRASE
+        for part in _PHRASE_LISTS
+        for phrase in (builder.get(part) or [])
+        if isinstance(builder.get(part), list)
+    )
+
+
 def read_text(builder: dict, texts: dict[str, str], code: str, spec_key: str | None = None):
     """(value, evidence, which_text) for a words / number / size / code rule, or None.
 
@@ -279,6 +300,15 @@ def read_text(builder: dict, texts: dict[str, str], code: str, spec_key: str | N
                     return builder.get("value"), needle, "code"
             return None
         if kind not in {"words", "number", "size"}:
+            return None
+        if _too_many_gaps(builder):
+            # A row stored before save refused it must never hang derivation: it reads
+            # nothing, and says so once per read so the row can be found and fixed.
+            logger.warning(
+                "spec rule skipped: a phrase uses more than one ... and cannot be read "
+                "safely (%s)",
+                json.dumps(builder, default=str, sort_keys=True),
+            )
             return None
         if kind == "words" and not builder.get("words"):
             return None
@@ -470,6 +500,23 @@ def _value_for(raw, *, data_type: str, allowed: list[str], n: int):
     return value
 
 
+def _check_limits(builder: dict, n: int) -> None:
+    """The size limits a phrase list is held to, in plain words (security review, B1)."""
+    for part in _WORD_LISTS:
+        raw = builder.get(part)
+        words = [raw] if isinstance(raw, str) else list(raw or []) if isinstance(raw, list) else []
+        if len(words) > MAX_WORDS_PER_LIST:
+            raise _refuse(f"Rule {n}: use at most {MAX_WORDS_PER_LIST} words in a list.")
+        for word in words:
+            text_ = str(word or "")
+            if len(text_.strip()) > MAX_WORD_LENGTH:
+                raise _refuse(
+                    f"Rule {n}: keep each word to {MAX_WORD_LENGTH} characters or fewer."
+                )
+            if part in _PHRASE_LISTS and text_.count("...") > MAX_GAPS_PER_PHRASE:
+                raise _refuse(f"Rule {n}: use at most one ... in a phrase.")
+
+
 def validate_rules(
     rules,
     *,
@@ -497,6 +544,7 @@ def validate_rules(
         kind = builder.get("kind")
         if kind not in KINDS:
             raise _refuse(f"Rule {n}: pick a kind (Words, Number, Size, Code or Product).")
+        _check_limits(builder, n)
 
         if kind in {"words", "number", "size"}:
             look_in = builder.get("look_in")

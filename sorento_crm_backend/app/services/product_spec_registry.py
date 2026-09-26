@@ -1304,6 +1304,19 @@ def remove_rule(db: Session, spec_key: str, builder: dict) -> dict:
     words. A key still reading the shipped rules has them written to its column first:
     removing one is the moment the list becomes the business's own.
     """
+    from app.services import product_spec_preview
+
+    # The one catalogue-read slot a save and a preview share (security review S1): a
+    # remove parked while another read runs fails and reports so, rather than piling a
+    # second catalogue read onto a worker thread. Taken before anything changes.
+    token = product_spec_preview.begin_catalogue_read()
+    try:
+        return _remove_rule(db, spec_key, builder)
+    finally:
+        product_spec_preview.end_catalogue_read(token)
+
+
+def _remove_rule(db: Session, spec_key: str, builder: dict) -> dict:
     from app.services import product_spec_rederive
     from app.services.product_spec_rules import builder_identity
 

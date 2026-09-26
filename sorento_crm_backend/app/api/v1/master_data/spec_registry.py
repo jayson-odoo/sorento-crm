@@ -908,12 +908,19 @@ def update_spec_key(
     db: Session = Depends(get_db),
 ):
     """Edit calibration and extend vocabulary. Seed-owned vocabulary stays seed-owned."""
+    read_token = None
     try:
         row = db.query(ProductSpecRegistry).filter_by(spec_key=spec_key).first()
         if row is None:
             raise handle_not_found("Spec key", spec_key)
 
         fields = payload.model_dump(exclude_unset=True)
+        # A save that changes how this key is read re-reads its products before it
+        # answers, and only one catalogue read runs at a time (security review S1). The
+        # slot is taken here, before anything is changed, so a refused save stores
+        # nothing; it is given back in `finally`.
+        if {"derivation_rules", "applies_when", "max_value"} & set(fields):
+            read_token = product_spec_preview.begin_catalogue_read()
 
         # The stricter grant is required as soon as ANYTHING outside the vocabulary
         # fields is present - a mixed payload is held to the higher bar, or
@@ -1140,6 +1147,8 @@ def update_spec_key(
         if type(e).__name__ in {"AppException", "HTTPException"}:
             raise
         raise handle_internal_error(str(e))
+    finally:
+        product_spec_preview.end_catalogue_read(read_token)
 
 
 def _reading_changed(before: tuple, after: tuple) -> bool:
