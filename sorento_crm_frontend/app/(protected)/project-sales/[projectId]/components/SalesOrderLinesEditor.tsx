@@ -13,6 +13,12 @@ import {
   type InlineStaging,
 } from '../../_shared/components/InlineLineTable';
 import { multiplyMoney, sumMoney } from '../../_shared/lib/money';
+import {
+  buildFlagItems,
+  FINDING_SEVERITY_BADGE_VARIANT,
+  FINDING_SEVERITY_LABEL,
+  type FlagItem,
+} from '../../_shared/lib/findings';
 import type {
   ProjectSalesOrderFinding,
   ProjectSalesOrderLine,
@@ -81,11 +87,14 @@ export function salesOrderLineToDraft(line: ProjectSalesOrderLine): InlineDraft 
 export function SalesOrderLinesEditor({
   lines,
   findings = [],
+  flagItems,
   editing,
   reference,
 }: {
   lines: ProjectSalesOrderLine[];
   findings?: ProjectSalesOrderFinding[];
+  /** The read table's Flag items; absent, built from `findings` alone. */
+  flagItems?: FlagItem[];
   /** Absent, the table is a plain read: no inputs, no add row, nothing to press. */
   editing?: SalesOrderLinesEditing | null;
   /** Names the order in the row labels, so a screen reader hears which document it is. */
@@ -127,19 +136,20 @@ export function SalesOrderLinesEditor({
     }));
   }, []);
 
-  const findingsByLine = React.useMemo(() => {
-    const map = new Map<string, ProjectSalesOrderFinding[]>();
-    findings.forEach((finding) => {
-      if (!finding.line_id) return;
-      map.set(finding.line_id, [...(map.get(finding.line_id) ?? []), finding]);
+  /** The most severe open item per line: the read table's Flag pill, without its popover. */
+  const flagByLine = React.useMemo(() => {
+    const map = new Map<string, FlagItem>();
+    (flagItems ?? buildFlagItems(findings, [])).forEach((item) => {
+      if (!item.open || !item.lineId || map.has(item.lineId)) return;
+      map.set(item.lineId, item);
     });
     return map;
-  }, [findings]);
+  }, [findings, flagItems]);
 
   /**
    * The columns, in the printed order the read table uses: item number, what it is, how much,
    * what it comes to, when it is due, then where it came from. `SalesOrderLinesTable` declares
-   * the same eleven headers in the same order, and `SalesOrderLinesEditor.test.tsx` asserts
+   * the same twelve headers in the same order, and `SalesOrderLinesEditor.test.tsx` asserts
    * the two lists agree - the read view is what teaches somebody where a field is, so an edit
    * that reshuffled them would make every edit start with re-finding the cell.
    */
@@ -178,23 +188,20 @@ export function SalesOrderLinesEditor({
           }
           return { value: productId, label: 'Selected product' };
         },
-        annotate: (row) => {
-          if (!row?.line) return null;
-          const flagged = findingsByLine.get(row.line.id) ?? [];
-          // `acknowledged_at` is the backend's own gate; the name beside it is a display
-          // field that goes null when the acknowledger no longer resolves.
-          const blocking = flagged.some(
-            (finding) => finding.severity === 'hard' && !finding.acknowledged_at,
-          );
-          if (!blocking) return null;
+      },
+      {
+        key: 'flag',
+        header: 'Flag',
+        width: 190,
+        // Read-only while editing: a Dismiss writes at once, and an edit session writes
+        // nothing until Save. The pill still says which line holds Publish.
+        kind: 'derived',
+        derive: (_draft, _index, row) => {
+          const item = row?.line ? flagByLine.get(row.line.id) : undefined;
+          if (!item) return <span className="text-muted-foreground">-</span>;
           return (
-            <Badge
-              variant="destructive"
-              appearance="light"
-              size="sm"
-              className="mt-1 shrink-0"
-            >
-              Blocking
+            <Badge variant={FINDING_SEVERITY_BADGE_VARIANT[item.severity]} appearance="light" size="sm">
+              {FINDING_SEVERITY_LABEL[item.severity]}
             </Badge>
           );
         },
@@ -296,7 +303,7 @@ export function SalesOrderLinesEditor({
             : undefined,
       },
     ],
-    [fetchProducts, findingsByLine, uomOptions],
+    [fetchProducts, flagByLine, uomOptions],
   );
 
   const sortedLines = React.useMemo(

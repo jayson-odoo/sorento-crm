@@ -274,7 +274,7 @@ describe('SalesOrderLinesEditor, editing', () => {
       <SalesOrderLinesEditor lines={LINES} findings={[HARD]} editing={editing()} />,
     );
 
-    expect(screen.getByText('Blocking')).toBeInTheDocument();
+    expect(screen.getByText('Blocks publish')).toBeInTheDocument();
   });
 
   it('marks a line that has no product and no description', () => {
@@ -325,7 +325,6 @@ describe('the lines section keeps its chrome in both views', () => {
     read.unmount();
 
     const write = render(<SalesOrderLinesTable lines={LINES} editing={editing()} />);
-    expect(within(write.container).getByText('Lines')).toBeInTheDocument();
     expect(within(write.container).getByText('2 lines')).toBeInTheDocument();
   });
 });

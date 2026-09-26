@@ -11,7 +11,6 @@ import {
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { Check, ChevronDown, ChevronRight, CornerDownRight, GripVertical, X } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -24,11 +23,14 @@ import {
 } from '@/components/ui/data-grid-table-dnd-rows';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import type {
   ProjectSalesOrderFinding,
   ProjectSalesOrderLine,
 } from '../../_shared/types/projectSalesOrder.types';
+import { buildFlagItems, needsAttention, type FlagItem } from '../../_shared/lib/findings';
+import { SalesOrderFlagCell } from './SalesOrderFlagCell';
 import { formatMoney, formatQty, formatUnitPrice, isZeroMoney } from './SalesOrderMoney';
 import {
   SalesOrderLinesEditor,
@@ -91,7 +93,10 @@ export function groupExplodedLines(lines: ProjectSalesOrderLine[]): ExplodedLine
 }
 
 interface DisplayRow {
-  line: ProjectSalesOrderLine;
+  key: string;
+  /** Null on a finding-only row: a finding naming no line of this order (S7-3). */
+  line: ProjectSalesOrderLine | null;
+  items: FlagItem[];
   groupKey: string;
   isCompanion: boolean;
   companionCount: number;
@@ -111,12 +116,15 @@ function LinesSectionHeader({
   explodedSets,
   focused,
   onClearFocus,
+  leading,
   trailing,
 }: {
   lineCount: number;
   explodedSets: number;
   focused: boolean;
   onClearFocus?: () => void;
+  /** Stands where the count stands: the Need attention / All lines filter, when it applies. */
+  leading?: React.ReactNode;
   /** An extra header action beside "Show all lines" - the reorder toggle, for instance. */
   trailing?: React.ReactNode;
 }) {
@@ -124,14 +132,15 @@ function LinesSectionHeader({
     <CardHeader className="block space-y-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
-          <p className="text-sm font-medium">Lines</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          {leading ?? (
+          <p className="text-xs text-muted-foreground">
             {`${lineCount.toLocaleString()} line${lineCount === 1 ? '' : 's'}${
               explodedSets > 0
                 ? `, ${explodedSets} set${explodedSets === 1 ? '' : 's'} exploded`
                 : ''
             }`}
           </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {focused && (
@@ -147,6 +156,18 @@ function LinesSectionHeader({
   );
 }
 
+/** What a row is about: its product, or for a finding-only row the code the finding names. */
+function rowSubject(row: DisplayRow): string {
+  if (row.line) return row.line.product_code || 'Not resolved';
+  const detail = row.items[0]?.members[0]?.finding.detail_json ?? {};
+  const code = detail.product_code ?? detail.customer_code_raw;
+  return typeof code === 'string' && code ? code : '-';
+}
+
+function Dash() {
+  return <span className="text-muted-foreground">-</span>;
+}
+
 export interface SalesOrderLinesReorder {
   /** Only a draft's lines may move; the caller decides from the order's own status. */
   enabled: boolean;
@@ -156,6 +177,10 @@ export interface SalesOrderLinesReorder {
 export function SalesOrderLinesTable({
   lines,
   findings = [],
+  flagItems,
+  canDismiss = null,
+  onDismiss,
+  defaultNeedsAttention = false,
   focusLineId = null,
   onClearFocus,
   editing,
@@ -164,6 +189,16 @@ export function SalesOrderLinesTable({
 }: {
   lines: ProjectSalesOrderLine[];
   findings?: ProjectSalesOrderFinding[];
+  /**
+   * Every Flag item the page shows, the order's own findings and the schedule's (S7-3).
+   * Absent, it is built from `findings` alone.
+   */
+  flagItems?: FlagItem[];
+  /** Null while nothing may be dismissed from this table. */
+  canDismiss?: ((item: FlagItem) => boolean) | null;
+  onDismiss?: (item: FlagItem) => void;
+  /** Open on "Need attention" while anything needs it (owner lesson (c)). */
+  defaultNeedsAttention?: boolean;
   focusLineId?: string | null;
   onClearFocus?: () => void;
   /**
@@ -200,14 +235,58 @@ export function SalesOrderLinesTable({
 
   const groups = React.useMemo(() => groupExplodedLines(lines), [lines]);
 
-  const findingsByLine = React.useMemo(() => {
-    const map = new Map<string, ProjectSalesOrderFinding[]>();
-    findings.forEach((finding) => {
-      if (!finding.line_id) return;
-      map.set(finding.line_id, [...(map.get(finding.line_id) ?? []), finding]);
+  const items = React.useMemo(
+    () => flagItems ?? buildFlagItems(findings, []),
+    [findings, flagItems],
+  );
+
+  /** A line's items, and the items naming no line on this order, each a row of its own. */
+  const { itemsByLine, standaloneRows } = React.useMemo(() => {
+    const lineIds = new Set(lines.map((line) => line.id));
+    const byLine = new Map<string, FlagItem[]>();
+    const standalone: DisplayRow[] = [];
+    items.forEach((item) => {
+      if (item.lineId && lineIds.has(item.lineId)) {
+        byLine.set(item.lineId, [...(byLine.get(item.lineId) ?? []), item]);
+        return;
+      }
+      standalone.push({
+        key: `finding:${item.key}`,
+        line: null,
+        items: [item],
+        groupKey: `finding:${item.key}`,
+        isCompanion: false,
+        companionCount: 0,
+        sourcePoLineNo: null,
+      });
     });
-    return map;
-  }, [findings]);
+    return { itemsByLine: byLine, standaloneRows: standalone };
+  }, [items, lines]);
+
+  const attentionRows = React.useMemo<DisplayRow[]>(
+    () => [
+      ...standaloneRows.filter((row) => row.items.some(needsAttention)),
+      ...[...lines]
+        .sort((a, b) => a.line_no - b.line_no)
+        .map((line) => ({
+          key: line.id,
+          line,
+          items: itemsByLine.get(line.id) ?? [],
+          groupKey: line.id,
+          isCompanion: false,
+          companionCount: 0,
+          sourcePoLineNo: line.source_po_line_no ?? null,
+        }))
+        .filter((row) => row.items.some(needsAttention)),
+    ],
+    [itemsByLine, lines, standaloneRows],
+  );
+  const [attentionOnly, setAttentionOnly] = React.useState(defaultNeedsAttention);
+  // Nothing left to act on is not a filter worth keeping: the table falls back to every line.
+  const showingAttention = attentionOnly && attentionRows.length > 0;
+  React.useEffect(() => {
+    setPagination((current) => ({ ...current, pageIndex: 0 }));
+  }, [showingAttention]);
 
   const focusedGroupKey = React.useMemo(() => {
     if (!focusLineId) return null;
@@ -230,10 +309,13 @@ export function SalesOrderLinesTable({
   );
 
   const rows = React.useMemo<DisplayRow[]>(() => {
-    const out: DisplayRow[] = [];
+    if (showingAttention && !focusedGroupKey) return attentionRows;
+    const out: DisplayRow[] = focusedGroupKey ? [] : [...standaloneRows];
     visibleGroups.forEach((group) => {
       out.push({
+        key: group.parent.id,
         line: group.parent,
+        items: itemsByLine.get(group.parent.id) ?? [],
         groupKey: group.key,
         isCompanion: false,
         companionCount: group.companions.length,
@@ -242,7 +324,9 @@ export function SalesOrderLinesTable({
       if (collapsed[group.key]) return;
       group.companions.forEach((companion) => {
         out.push({
+          key: companion.id,
           line: companion,
+          items: itemsByLine.get(companion.id) ?? [],
           groupKey: group.key,
           isCompanion: true,
           companionCount: group.companions.length,
@@ -251,7 +335,15 @@ export function SalesOrderLinesTable({
       });
     });
     return out;
-  }, [collapsed, visibleGroups]);
+  }, [
+    attentionRows,
+    collapsed,
+    focusedGroupKey,
+    itemsByLine,
+    showingAttention,
+    standaloneRows,
+    visibleGroups,
+  ]);
 
   const columns = React.useMemo<ColumnDef<DisplayRow>[]>(
     () => [
@@ -260,9 +352,9 @@ export function SalesOrderLinesTable({
         header: ({ column }) => <DataGridColumnHeader title="#" column={column} />,
         cell: ({ row }) => (
           <span
-            className={`tabular-nums ${row.original.isCompanion ? 'text-muted-foreground' : ''}`}
+            className={`tabular-nums ${row.original.isCompanion || !row.original.line ? 'text-muted-foreground' : ''}`}
           >
-            {row.original.line.line_no}
+            {row.original.line?.line_no ?? '-'}
           </span>
         ),
         size: 70,
@@ -273,13 +365,7 @@ export function SalesOrderLinesTable({
         id: 'product_code',
         header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
         cell: ({ row }) => {
-          const code = row.original.line.product_code || 'Not resolved';
-          const flagged = findingsByLine.get(row.original.line.id) ?? [];
-          // `acknowledged_at` is the backend's own gate; the name is a display field that
-          // goes null when the acknowledger no longer resolves.
-          const blocking = flagged.some(
-            (finding) => finding.severity === 'hard' && !finding.acknowledged_at,
-          );
+          const code = rowSubject(row.original);
           return (
             <div className={`flex min-w-0 items-center gap-1 ${row.original.isCompanion ? 'pl-4' : ''}`}>
               {row.original.isCompanion && (
@@ -294,11 +380,6 @@ export function SalesOrderLinesTable({
               >
                 {code}
               </span>
-              {blocking && (
-                <Badge variant="destructive" appearance="light" size="sm" className="shrink-0">
-                  Blocking
-                </Badge>
-              )}
             </div>
           );
         },
@@ -307,10 +388,30 @@ export function SalesOrderLinesTable({
         meta: { headerTitle: 'Product', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
+        // Beside the product rather than at the far end, so it is on the first screen at
+        // 1280 and the first swipe at 375 (S7-3).
+        id: 'flag',
+        header: ({ column }) => <DataGridColumnHeader title="Flag" column={column} />,
+        cell: ({ row }) => (
+          <SalesOrderFlagCell
+            items={row.original.items}
+            label={row.original.line ? `line ${row.original.line.line_no}` : rowSubject(row.original)}
+            canDismiss={canDismiss}
+            onDismiss={(item) => onDismiss?.(item)}
+          />
+        ),
+        size: 190,
+        minSize: 120,
+        meta: { headerTitle: 'Flag', skeleton: <Skeleton className="h-4 w-20" /> },
+      },
+      {
         id: 'description',
         header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
         cell: ({ row }) => {
-          const text = row.original.line.description || '-';
+          // A finding-only row has no line to describe; the finding's own sentence stands in.
+          const text = row.original.line
+            ? row.original.line.description || '-'
+            : row.original.items[0]?.members[0]?.finding.detail || '-';
           return (
             <span className="block truncate" title={text}>
               {text}
@@ -324,11 +425,14 @@ export function SalesOrderLinesTable({
       {
         id: 'qty',
         header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
-        cell: ({ row }) => (
-          <span className="block truncate tabular-nums" title={row.original.line.qty}>
-            {formatQty(row.original.line.qty)}
-          </span>
-        ),
+        cell: ({ row }) =>
+          row.original.line ? (
+            <span className="block truncate tabular-nums" title={row.original.line.qty}>
+              {formatQty(row.original.line.qty)}
+            </span>
+          ) : (
+            <Dash />
+          ),
         size: 90,
         minSize: 70,
         meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
@@ -338,7 +442,7 @@ export function SalesOrderLinesTable({
         header: ({ column }) => <DataGridColumnHeader title="UOM" column={column} />,
         cell: ({ row }) => (
           <span className="block truncate text-muted-foreground">
-            {row.original.line.uom || '-'}
+            {row.original.line?.uom || '-'}
           </span>
         ),
         size: 80,
@@ -348,16 +452,20 @@ export function SalesOrderLinesTable({
       {
         id: 'unit_price',
         header: ({ column }) => <DataGridColumnHeader title="Unit price" column={column} />,
-        cell: ({ row }) => (
-          <span
-            className={`block truncate tabular-nums ${
-              isZeroMoney(row.original.line.unit_price) ? 'text-muted-foreground' : ''
-            }`}
-            title={row.original.line.unit_price}
-          >
-            {formatUnitPrice(row.original.line.unit_price)}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const line = row.original.line;
+          if (!line) return <Dash />;
+          return (
+            <span
+              className={`block truncate tabular-nums ${
+                isZeroMoney(line.unit_price) ? 'text-muted-foreground' : ''
+              }`}
+              title={line.unit_price}
+            >
+              {formatUnitPrice(line.unit_price)}
+            </span>
+          );
+        },
         size: 120,
         minSize: 90,
         meta: { headerTitle: 'Unit price', skeleton: <Skeleton className="h-4 w-16" /> },
@@ -366,6 +474,7 @@ export function SalesOrderLinesTable({
         id: 'amount',
         header: ({ column }) => <DataGridColumnHeader title="Amount" column={column} />,
         cell: ({ row }) => {
+          if (!row.original.line) return <Dash />;
           const value = formatMoney(row.original.line.amount);
           return (
             <span className="block truncate tabular-nums" title={value}>
@@ -380,14 +489,17 @@ export function SalesOrderLinesTable({
       {
         id: 'delivery_date',
         header: ({ column }) => <DataGridColumnHeader title="Delivery" column={column} />,
-        cell: ({ row }) =>
-          row.original.line.delivery_date ? (
+        cell: ({ row }) => {
+          const line = row.original.line;
+          if (!line) return <Dash />;
+          return line.delivery_date ? (
             <span className="block truncate tabular-nums">
-              {formatDateInMalaysia(row.original.line.delivery_date)}
+              {formatDateInMalaysia(line.delivery_date)}
             </span>
           ) : (
             <span className="text-muted-foreground">No date</span>
-          ),
+          );
+        },
         size: 120,
         minSize: 100,
         meta: { headerTitle: 'Delivery', skeleton: <Skeleton className="h-4 w-20" /> },
@@ -396,6 +508,7 @@ export function SalesOrderLinesTable({
         id: 'phase_label',
         header: ({ column }) => <DataGridColumnHeader title="Area" column={column} />,
         cell: ({ row }) => {
+          if (!row.original.line) return <Dash />;
           const text = row.original.line.phase_label || 'Unlabeled area';
           return (
             <span className="block truncate" title={text}>
@@ -423,7 +536,7 @@ export function SalesOrderLinesTable({
         id: 'stock_location',
         header: ({ column }) => <DataGridColumnHeader title="Stock location" column={column} />,
         cell: ({ row }) => {
-          const text = row.original.line.stock_location || '-';
+          const text = row.original.line?.stock_location || '-';
           return (
             <span className="block truncate text-muted-foreground" title={text}>
               {text}
@@ -435,14 +548,14 @@ export function SalesOrderLinesTable({
         meta: { headerTitle: 'Stock location', skeleton: <Skeleton className="h-4 w-24" /> },
       },
     ],
-    [findingsByLine],
+    [canDismiss, onDismiss],
   );
 
   const table = useReactTable({
     columns,
     data: rows,
     pageCount: Math.ceil(rows.length / pagination.pageSize) || 0,
-    getRowId: (row) => row.line.id,
+    getRowId: (row) => row.key,
     state: { pagination },
     onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
@@ -458,20 +571,22 @@ export function SalesOrderLinesTable({
       [...lines]
         .sort((a, b) => a.line_no - b.line_no)
         .map((line) => ({
+          key: line.id,
           line,
+          items: itemsByLine.get(line.id) ?? [],
           groupKey: line.id,
           isCompanion: false,
           companionCount: 0,
           sourcePoLineNo: line.source_po_line_no ?? null,
         })),
-    [lines],
+    [itemsByLine, lines],
   );
 
   const dragHandleColumn = React.useMemo<ColumnDef<DisplayRow>>(
     () => ({
       id: 'drag_handle',
       header: () => <span className="sr-only">Reorder</span>,
-      cell: ({ row }) => <DataGridTableDndRowHandle rowId={row.original.line.id} />,
+      cell: ({ row }) => <DataGridTableDndRowHandle rowId={row.original.key} />,
       size: 44,
       minSize: 44,
       meta: { headerTitle: 'Reorder', skeleton: <Skeleton className="size-7" /> },
@@ -486,7 +601,7 @@ export function SalesOrderLinesTable({
   const dragTable = useReactTable({
     columns: dragColumns,
     data: flatRows,
-    getRowId: (row) => row.line.id,
+    getRowId: (row) => row.key,
     getCoreRowModel: getCoreRowModel(),
     columnResizeMode: 'onChange',
   });
@@ -495,7 +610,7 @@ export function SalesOrderLinesTable({
     (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over || !reorder || active.id === over.id) return;
-      const ids = flatRows.map((row) => row.line.id);
+      const ids = flatRows.map((row) => row.key);
       const oldIndex = ids.indexOf(String(active.id));
       const newIndex = ids.indexOf(String(over.id));
       if (oldIndex === -1 || newIndex === -1) return;
@@ -562,6 +677,7 @@ export function SalesOrderLinesTable({
               <SalesOrderLinesEditor
                 lines={lines}
                 findings={findings}
+                flagItems={items}
                 editing={editing}
                 reference={reference}
               />
@@ -571,6 +687,24 @@ export function SalesOrderLinesTable({
       </div>
     );
   }
+
+  // Owner lesson (c): "Need attention" first, "All lines" beside it, each with its count.
+  const attentionToggle = (
+    <ToggleGroup
+      type="single"
+      variant="outline"
+      size="sm"
+      value={showingAttention ? 'attention' : 'all'}
+      onValueChange={(next) => next && setAttentionOnly(next === 'attention')}
+    >
+      <ToggleGroupItem value="attention" className="px-3">
+        {`Need attention (${attentionRows.length})`}
+      </ToggleGroupItem>
+      <ToggleGroupItem value="all" className="px-3">
+        {`All lines (${lines.length})`}
+      </ToggleGroupItem>
+    </ToggleGroup>
+  );
 
   const reorderToggle = reorderAvailable ? (
     <Button
@@ -629,7 +763,7 @@ export function SalesOrderLinesTable({
                 <ScrollArea>
                   <DataGridTableDndRows
                     handleDragEnd={handleRowDragEnd}
-                    dataIds={flatRows.map((row) => row.line.id)}
+                    dataIds={flatRows.map((row) => row.key)}
                   />
                   <ScrollBar orientation="horizontal" />
                 </ScrollArea>
@@ -642,7 +776,7 @@ export function SalesOrderLinesTable({
   }
 
   return (
-    <div ref={containerRef}>
+    <div ref={containerRef} className="min-w-0">
       <DataGrid
         table={table}
         recordCount={rows.length}
@@ -657,10 +791,11 @@ export function SalesOrderLinesTable({
             explodedSets={explodedSets}
             focused={Boolean(focusedGroupKey)}
             onClearFocus={onClearFocus}
+            leading={attentionRows.length > 0 ? attentionToggle : undefined}
             trailing={reorderToggle}
           />
 
-          <CardTable>
+          <CardTable className="min-w-0">
             {lines.length === 0 ? (
               <div className="px-6 py-10 text-center">
                 <h3 className="text-sm font-semibold">This draft has no lines</h3>

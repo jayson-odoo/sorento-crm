@@ -52,6 +52,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 }));
 
 import { SalesOrderLinesTable, groupExplodedLines } from './SalesOrderLinesTable';
+import { buildFlagItems } from '../../_shared/lib/findings';
 
 function line(overrides: Partial<ProjectSalesOrderLine>): ProjectSalesOrderLine {
   return {
@@ -227,12 +228,107 @@ describe('SalesOrderLinesTable', () => {
     renderTable({ findings });
 
     const row = screen.getByText('SRTWCX8608-RL').closest('tr') as HTMLElement;
-    expect(within(row).getByText('Blocking')).toBeInTheDocument();
+    expect(within(row).getByText('Blocks publish')).toBeInTheDocument();
   });
 
   it('says a draft with no lines has none instead of rendering an empty grid', () => {
     renderTable({ lines: [] });
 
     expect(screen.getByText('This draft has no lines')).toBeInTheDocument();
+  });
+});
+
+/**
+ * S7-3 and owner lessons (b) and (c): one table, a Flag cell per row that opens a popover,
+ * "Need attention" first with every blocking row in it, and a finding naming no line as a row
+ * of its own that says where it came from.
+ */
+describe('the Flag column and the Need attention filter (S7-3)', () => {
+  const HARD_ON_SEAT: ProjectSalesOrderFinding = {
+    id: 'f-seat',
+    severity: 'hard',
+    code: 'line_arithmetic',
+    detail: 'Line 7 does not add up.',
+    line_id: 'seat',
+    line_no: 7,
+  };
+  const SCHEDULE_OVER: ProjectSalesOrderFinding = {
+    id: 'f-sch',
+    severity: 'hard',
+    code: 'schedule_over',
+    detail: 'The schedule asks for 40 of ZZ900, which is not on this purchase order at all.',
+    detail_json: { product_code: 'ZZ900' },
+  };
+
+  function flagged() {
+    return buildFlagItems([HARD_ON_SEAT], [SCHEDULE_OVER]);
+  }
+
+  it('declares a Flag column beside the product', () => {
+    renderTable();
+    const headers = Array.from(document.querySelectorAll('thead th')).map((cell) =>
+      (cell.textContent ?? '').trim(),
+    );
+    expect(headers.slice(0, 3)).toEqual(['#', 'Product', 'Flag']);
+  });
+
+  it('opens on Need attention with its count, and All lines is one click away', () => {
+    renderTable({ flagItems: flagged(), defaultNeedsAttention: true });
+
+    expect(screen.getByRole('radio', { name: 'Need attention (2)' })).toHaveAttribute(
+      'data-state',
+      'on',
+    );
+    expect(screen.getByText('SRTWC8608-SC')).toBeInTheDocument();
+    expect(screen.getByText('ZZ900')).toBeInTheDocument();
+    expect(screen.queryByText('SRTWCY8608')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'All lines (4)' }));
+    expect(screen.getByText('SRTWCY8608')).toBeInTheDocument();
+  });
+
+  it('has no filter to offer once nothing needs attention', () => {
+    renderTable({ defaultNeedsAttention: true });
+    expect(screen.queryByRole('radio', { name: /Need attention/ })).not.toBeInTheDocument();
+    expect(screen.getByText('SRTWCY8608')).toBeInTheDocument();
+  });
+
+  it('draws a finding naming no line as its own row, naming the schedule as its source', () => {
+    renderTable({ flagItems: flagged(), canDismiss: () => true, onDismiss: vi.fn() });
+
+    const row = screen.getByText('ZZ900').closest('tr') as HTMLElement;
+    // No line number: the row is the finding, and the ADR 1e dash stands in the line's cells.
+    expect(row.querySelector('td')?.textContent).toBe('-');
+    fireEvent.click(within(row).getByRole('button', { name: /Blocks publish on ZZ900/ }));
+
+    const popover = screen.getByRole('dialog');
+    expect(within(popover).getByText('Schedule')).toBeInTheDocument();
+    expect(within(popover).getByText(SCHEDULE_OVER.detail)).toBeInTheDocument();
+  });
+
+  it('keeps a flagged row one line high: the finding sits in a popover with one Dismiss', () => {
+    const onDismiss = vi.fn();
+    renderTable({ flagItems: flagged(), canDismiss: () => true, onDismiss });
+
+    const row = screen.getByText('SRTWC8608-SC').closest('tr') as HTMLElement;
+    expect(within(row).queryByText(HARD_ON_SEAT.detail)).not.toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: 'Dismiss with a reason' })).toBeNull();
+
+    fireEvent.click(within(row).getByRole('button', { name: /Blocks publish on line 7/ }));
+    const popover = screen.getByRole('dialog');
+    expect(within(popover).getByText('Sales order')).toBeInTheDocument();
+    fireEvent.click(within(popover).getByRole('button', { name: 'Dismiss with a reason' }));
+
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(onDismiss.mock.calls[0][0].members[0].finding.id).toBe('f-seat');
+  });
+
+  it('offers no Dismiss where the caller allows none', () => {
+    renderTable({ flagItems: flagged(), canDismiss: null });
+    const row = screen.getByText('SRTWC8608-SC').closest('tr') as HTMLElement;
+    fireEvent.click(within(row).getByRole('button', { name: /Blocks publish on line 7/ }));
+    expect(
+      within(screen.getByRole('dialog')).queryByRole('button', { name: 'Dismiss with a reason' }),
+    ).toBeNull();
   });
 });
