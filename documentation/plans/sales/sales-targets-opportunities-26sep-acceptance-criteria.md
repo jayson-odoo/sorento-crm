@@ -92,6 +92,9 @@ a WhatsApp message.
   month when one exists.
 - **S1-9 [FE] (J1)** Achieved over target renders as a percentage with a bar; over 100% is shown
   in the success tone and the number is not capped.
+- **S1-11 [BE][FE] (J1, G2)** Orders in the month with a null `sales_agent_id` are totalled in one
+  "Unassigned" row at the foot of the Agents grid (no target, no actions), so unattributed sales
+  are visible rather than silently dropped.
 - **S1-10 [E2E] (J1, J2)** Sidebar Sales > Targets from `/`, set a target on one agent, reload,
   value persists; usable and unclipped at 1280 and 375.
 
