@@ -1729,3 +1729,108 @@ def test_detail_query_stays_fast_at_scale(api):
     elapsed = time.monotonic() - started
     assert res.status_code == 200, res.text
     assert elapsed < 1.5, f"detail took {elapsed:.2f}s for 3,600 SO lines / 7,200 DO lines"
+
+
+# --------------------------------------------------------------------------------------- #
+# Final review: three kill-test gaps (K2, K4, K6).
+# --------------------------------------------------------------------------------------- #
+
+
+def test_cancelled_do_does_not_use_up_the_cap(api):
+    """K2: a CANCELLED linked DO of 100 dated before a live linked DO of 40 must not count
+    against the running-sum cap (`prior`) the live DO is capped by. October counts the live
+    DO's 40 units (RM 4,000); the residual 60 units (RM 6,000) lands on the SO's own
+    September order-date period - the cancelled DO neither counts itself nor blocks the live
+    one from counting."""
+    client, db, company_id = api
+    agent = _agent(db, "K2")
+    category = _category(db, company_id)
+    product = _product(db, company_id, category.id)
+    warehouse = _warehouse(db, company_id)
+    _, line = _so_line(
+        db, company_id, agent_id=agent.id, order_date=date(2026, 9, 20), line_total=Decimal("10000"),
+        qty_ordered=100, qty_delivered=100, product_id=product.id,
+    )
+    # The cancelled DO is dated FIRST, so an uncapped `prior` would see its 100 units as
+    # already delivered and cap the live DO at 0.
+    _do_line(
+        db, company_id, product.id, warehouse.id, line.id, quantity=100, order_date=date(2026, 10, 1),
+        is_cancelled=True,
+    )
+    _do_line(db, company_id, product.id, warehouse.id, line.id, quantity=40, order_date=date(2026, 10, 5))
+
+    sep = client.post(BASE, json={
+        "subject_kind": "agent", "sales_agent_id": agent.id, "name": "ZZT Sep", "metric": "amount",
+        "basis": "delivered", "product_scope": "all", "start_date": "2026-09-01", "end_date": "2026-09-30",
+        "target_value": 0,
+    }).json()
+    oct_ = client.post(BASE, json={
+        "subject_kind": "agent", "sales_agent_id": agent.id, "name": "ZZT Oct", "metric": "amount",
+        "basis": "delivered", "product_scope": "all", "start_date": "2026-10-01", "end_date": "2026-10-31",
+        "target_value": 0,
+    }).json()
+
+    def achieved(target_id, on):
+        rows = client.get(BASE, params={"on": on, "subject": "agent"}).json()["rows"]
+        return next(r for r in rows if r["target_id"] == target_id)["achieved_value"]
+
+    assert achieved(oct_["id"], "2026-10-15") == 4000  # the live DO's 40 units, uncapped by the cancelled one
+    assert achieved(sep["id"], "2026-09-25") == 6000   # the residual: 100 - 40 delivered by DO
+
+
+def test_unhandled_error_answers_a_generic_500_never_the_raw_text(api):
+    """K4: a non-AppException error inside a targets route must never leak into the body -
+    not the exception text, not SQL, not a database driver name."""
+    from app.services.sales import target_service
+
+    client, db, _ = api
+    original = target_service.list_targets
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("secret SQL text")
+
+    target_service.list_targets = _boom
+    try:
+        res = client.get(BASE, params={"on": "2026-10-15", "subject": "agent"})
+    finally:
+        target_service.list_targets = original
+
+    assert res.status_code == 500, res.text
+    assert res.json()["message"] == "Something went wrong. Please try again."
+    assert "secret" not in res.text
+
+
+def test_shared_agent_target_excludes_other_companys_orders(api):
+    """K6: a shared agent (`company_id` NULL) holds an agent target in company A and also
+    appears on a sales order booked under company B, dated inside the period; A's achieved
+    must never include B's order."""
+    from app.models.company import Company
+
+    client, db, company_id = api
+    shared_agent = _agent(db, "SHARED")  # company_id None: a shared master row
+    category = _category(db, company_id)
+    product = _product(db, company_id, category.id)
+    _so_line(
+        db, company_id, agent_id=shared_agent.id, order_date=date(2026, 10, 5),
+        line_total=Decimal("100"), product_id=product.id,
+    )
+
+    other = Company(id=_uid(), name="ZZT Other Co", code=f"Z{_uid()[:6]}")
+    db.add(other)
+    db.flush()
+    with company_scope(db, None):
+        other_category = _category(db, other.id)
+        other_product = _product(db, other.id, other_category.id)
+        _so_line(
+            db, other.id, agent_id=shared_agent.id, order_date=date(2026, 10, 6),
+            line_total=Decimal("999"), product_id=other_product.id,
+        )
+
+    target = client.post(BASE, json={
+        "subject_kind": "agent", "sales_agent_id": shared_agent.id, "name": "ZZT Shared",
+        "metric": "amount", "basis": "ordered", "product_scope": "all",
+        "start_date": "2026-10-01", "end_date": "2026-10-31", "target_value": 0,
+    }).json()
+    rows = client.get(BASE, params={"on": "2026-10-15", "subject": "agent"}).json()["rows"]
+    row = next(r for r in rows if r["target_id"] == target["id"])
+    assert row["achieved_value"] == 100  # company A's own order only, never B's 999
