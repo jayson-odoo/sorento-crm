@@ -76,19 +76,22 @@ export function useCustomerOpportunities(customerId: string | null) {
 
 /**
  * One save shape for both the Log opportunity modal (no `id`: create) and the detail
- * page's in-place edit (`id`: patch) - the id is fixed per hook instance, so a caller's
- * `mutateAsync(payload)` sends exactly the fields the form collected, nothing wrapped
- * around it.
+ * page's in-place edit (`id`: patch) - same split as `useSaveSalesTeam`. The id travels
+ * IN the mutate payload rather than fixed per hook instance, so one hook instance can
+ * back a list of rows (or a modal reused across opens) without being re-created per id.
  */
-export function useSaveSalesOpportunity(id?: string | null) {
+export function useSaveSalesOpportunity() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: SalesOpportunitySavePayload): Promise<SalesOpportunityDetail> =>
+    mutationFn: ({
+      id,
+      ...payload
+    }: SalesOpportunitySavePayload & { id?: string }): Promise<SalesOpportunityDetail> =>
       id ? updateSalesOpportunity(id, payload) : createSalesOpportunity(payload),
-    onSuccess: () => {
+    onSuccess: (_opportunity, variables) => {
       queryClient.invalidateQueries({ queryKey: SALES_OPPORTUNITIES_KEY });
       queryClient.invalidateQueries({ queryKey: SALES_OPPORTUNITY_KEY });
-      toast.success(id ? 'Opportunity saved' : 'Opportunity logged');
+      toast.success(variables.id ? 'Opportunity saved' : 'Opportunity logged');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to save opportunity'),
   });

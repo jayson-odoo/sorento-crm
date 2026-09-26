@@ -35,7 +35,7 @@ const FALLBACK_LOST_REASONS: SearchableSelectOption[] = [
  */
 export default function SalesOpportunityDetail({ id }: { id: string }) {
   const { data: opportunity, isLoading, isError } = useSalesOpportunity(id);
-  const save = useSaveSalesOpportunity(id);
+  const save = useSaveSalesOpportunity();
 
   const [pending, setPending] = useState<SalesOpportunityTransition | null>(null);
   const [lostReason, setLostReason] = useState('');
@@ -93,6 +93,7 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
     if (pending.key === 'lost' && !lostReason) return;
     try {
       await save.mutateAsync({
+        id,
         status_id: pending.to_status_id,
         ...(pending.key === 'lost' ? { lost_reason: lostReason } : {}),
         ...(pending.key === 'won' && salesOrderId ? { sales_order_id: salesOrderId } : {}),
