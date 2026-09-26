@@ -17,6 +17,32 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+def _redact(value, needles: tuple):
+    """Replace every occurrence of each needle (e.g. an OTP code) with
+    ``******`` anywhere it appears in a string, recursing into dicts/lists.
+
+    Security round B1 (#1280): a signed-in user with no special permission
+    could read a sign-in or portal code straight back out of
+    ``GET /api/v1/integrations/logs`` (no permission gate on that route) and
+    use it to verify as the target - including an admin. The real Respond.io
+    send still gets the real code; only what lands in ``integration_logs``
+    is redacted.
+    """
+    if not needles:
+        return value
+    if isinstance(value, str):
+        out = value
+        for needle in needles:
+            if needle:
+                out = out.replace(needle, "******")
+        return out
+    if isinstance(value, dict):
+        return {k: _redact(v, needles) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact(v, needles) for v in value]
+    return value
+
+
 def _send_and_log(
     *,
     use_case: str,
@@ -30,6 +56,7 @@ def _send_and_log(
     sla_entity_type: str,
     extra_context_vars: Optional[dict] = None,
     emit_outbound_webhook: bool = True,
+    redact_values: tuple = (),
 ) -> dict:
     """Shared worker body: window-aware send, outbound webhook, integration log.
 
@@ -39,6 +66,14 @@ def _send_and_log(
     portal OTP code, which has no business-entity row to derive). Set
     ``emit_outbound_webhook=False`` for system messages (OTP) that should be
     logged in the Respond outbox but NOT mirrored into the CRM chat thread.
+
+    ``redact_values`` (security round B1, #1280): values - typically an OTP
+    code - replaced with ``******`` in ``request_payload``, ``response_payload``
+    and ``error_message`` before EITHER integration_log row (success or
+    failed) is written. The actual Respond.io send still carries the real
+    value; only the persisted, permission-gate-less outbox row is scrubbed.
+    A caller that needs the real code for local-dev debugging reads it from
+    the DEBUG log line below, never from the outbox.
     """
     from app.database import SessionLocal
     from app.schemas.integration import IntegrationLogCreate
@@ -51,6 +86,14 @@ def _send_and_log(
         build_context_vars,
         send_text_or_template,
     )
+
+    if redact_values:
+        # DEBUG only (never INFO/WARNING) - local dev's one way to read a
+        # redacted code back, since the outbox no longer carries it.
+        logger.debug(
+            "Respond.io send for %s %s carries redacted value(s): %s",
+            business_table, business_id, redact_values,
+        )
 
     db = SessionLocal()
     try:
@@ -121,9 +164,9 @@ def _send_and_log(
                     endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
                     http_method="POST",
                     status="success",
-                    response_payload=str(response)[:50000] if response else None,
+                    response_payload=_redact(str(response)[:50000], redact_values) if response else None,
                 ),
-                request_payload_dict=request_payload,
+                request_payload_dict=_redact(request_payload, redact_values),
             )
             return {
                 "business_id": business_id,
@@ -167,10 +210,10 @@ def _send_and_log(
                     http_method="POST",
                     status="failed",
                     status_code=resp_code,
-                    response_payload=resp_body,
-                    error_message=str(e),
+                    response_payload=_redact(resp_body, redact_values) if resp_body else resp_body,
+                    error_message=_redact(str(e), redact_values),
                 ),
-                request_payload_dict=request_payload,
+                request_payload_dict=_redact(request_payload, redact_values),
             )
             raise
     finally:
@@ -189,8 +232,12 @@ def send_portal_otp_respond_message(
     Logged in the Respond outbox (``integration_logs``, business_table
     ``portal_otp_codes``) like every other send - including a ``status='failed'``
     row when the send can't go out (e.g. local dev with no Respond.io
-    connectivity), whose ``request_payload`` carries the code so it can be read
-    back for testing. Not mirrored into the CRM chat thread (system message).
+    connectivity). The code itself is REDACTED from that row (security round
+    B1, #1280: this is the same ``portal_otp_codes`` row phone sign-in's
+    verify accepts, so a readable code here is a CRM account takeover, not
+    just a portal one) - for local dev, read it from the DEBUG log line
+    ``_send_and_log`` emits instead. Not mirrored into the CRM chat thread
+    (system message).
     """
     return _send_and_log(
         use_case="portal_otp",
@@ -204,6 +251,7 @@ def send_portal_otp_respond_message(
         sla_entity_type="",
         extra_context_vars={"otp_code": otp_code},
         emit_outbound_webhook=False,
+        redact_values=(otp_code,),
     )
 
 
@@ -222,6 +270,8 @@ def send_login_otp_respond_message(
     ``settings.phone_signin_otp_use_case``). Logged in the Respond outbox
     exactly like the portal's own OTP send (``business_table=
     'portal_otp_codes'``), and likewise not mirrored into the CRM chat thread.
+    The code itself is REDACTED from that row (security round B1, #1280) -
+    for local dev, read it from the DEBUG log line ``_send_and_log`` emits.
     """
     from app.config import settings
     from app.database import SessionLocal
@@ -249,6 +299,7 @@ def send_login_otp_respond_message(
         sla_entity_type="",
         extra_context_vars={"otp_code": otp_code},
         emit_outbound_webhook=False,
+        redact_values=(otp_code,),
     )
 
 

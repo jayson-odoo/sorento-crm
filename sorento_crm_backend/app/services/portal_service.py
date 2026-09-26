@@ -514,6 +514,8 @@ class PortalService:
         space_id: str,
         text_template: str,
         task,
+        *,
+        dispatch_inline: bool = False,
     ) -> PortalOtpCode:
         """Cooldown + daily-cap check, code creation and Respond.io dispatch.
 
@@ -523,6 +525,14 @@ class PortalService:
         ``AppException`` (400) on a cooldown/cap hit or an enqueue failure;
         phone sign-in swallows both (AC-21 never changes its 200 answer),
         the portal's own ``request_otp`` lets them surface as before.
+
+        ``dispatch_inline`` (security round S1, #1280): phone sign-in's
+        request-code route now enqueues ONE job for every number, known or
+        not (so enqueue timing carries no eligibility tell) - that job is
+        already running on the ``respond_io`` queue by the time it reaches
+        here, so it calls ``task`` directly instead of enqueuing a SECOND job.
+        The portal's own ``request_otp`` runs inside an HTTP request, not a
+        job, so it keeps the default (queue it).
         """
         # Rate-limit: at most one outstanding OTP per contact within cooldown.
         recent = (
