@@ -342,7 +342,34 @@ def test_ac_r4_6_the_file_is_the_same_query_as_the_text(db, queue, monkeypatch):
     assert params["channel"] == ["dealer"] and params["basis"] == ["delivered"]
     assert params["company"] == [DEFAULT_COMPANY_ID]
     assert params["period"] == {"kind": "custom", "from": "2025-01-01", "to": "2026-09-26"}
-    assert view["pivot"] == {"rows": "month_of_year", "cols": "year", "measures": ["sales_value"]}
+    # Month by year is the report's own year by month layout on its side: the file uses
+    # the PDF's orientation, with the VARIANCE row carrying the text's Difference column.
+    assert view["pivot"] == {"rows": "year", "cols": "month_of_year", "measures": ["sales_value"]}
+
+
+def test_ac_r4_6_the_files_figures_are_the_texts(db, queue, monkeypatch):
+    """Render the queued file and compare it with the text, figure for figure."""
+    from app.schemas.report import ReportViewConfig
+    from app.services.reports import engine, registry as reg
+
+    _sale(db, "100.00", date(2025, 1, 10))
+    _sale(db, "80.00", date(2025, 2, 10))
+    _sale(db, "60.00", date(2026, 1, 10))
+    contact = _contact(db)
+    _patch_wait(monkeypatch, _mark_ready(db))
+    with _client(db, _actor(db), [DEFAULT_COMPANY_ID]) as client:
+        body = client.get(ROUTE, params=_q(contact, date_to="2026-12-31")).json()
+    (fn, args, kwargs), = queue
+    _download_id, key, params, view, _user = args
+    data = engine.run_workbook(db, reg.get(key), params, ReportViewConfig.model_validate(view),
+                               company_grants=frozenset(kwargs["company_grants"]))
+    summary = data.blocks[0].summary if data.blocks else data.summary
+    by_label = {r["label"]: r["values"] for r in body["rows"]}
+    assert summary.cells["2025"]["01"]["sales_value"] == by_label["JAN"][0] == "100.00"
+    assert summary.cells["2026"]["01"]["sales_value"] == by_label["JAN"][1] == "60.00"
+    assert summary.variance_row["01"]["sales_value"] == by_label["JAN"][2] == "-40.00"
+    assert summary.variance_total["sales_value"] == body["totals"]["values"][2]
+    assert body["period"].endswith(reg.today_malaysia().strftime("%d/%m/%Y"))
 
 
 def test_ac_r4_1_one_figure_is_still_text_and_file(db, queue, monkeypatch):

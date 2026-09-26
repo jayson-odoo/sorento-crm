@@ -189,7 +189,7 @@ def test_ac_r2_3_a_definition_with_no_module_key_is_403(db):
     from tests import _report_fixture as fixture
 
     fixture.create_table(db)
-    definition = fixture.definition()
+    definition = fixture.definition(module_key=None)
     assert definition.module_key is None
     reg.register(definition)
     principal = _user(db, DEFAULT_COMPANY_ID)

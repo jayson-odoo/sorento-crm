@@ -2478,10 +2478,15 @@ def _sales_analysis_text(payload: dict) -> str:
     rows = payload.get("rows") or []
     totals = (payload.get("totals") or {}).get("values") or []
     if len(columns) == 1:
+        def _rm(value: Any) -> str:
+            # A month with no sales is "-", never "RM -".
+            text = _sales_figure(value)
+            return text if text == "-" else f"RM {text}"
+
         for row in rows:
             values = row.get("values") or [None]
-            lines.append(f"{row.get('label')}: RM {_sales_figure(values[0])}")
-        lines.append(f"Total: RM {_sales_figure(totals[0] if totals else None)}")
+            lines.append(f"{row.get('label')}: {_rm(values[0])}")
+        lines.append(f"Total: {_rm(totals[0] if totals else None)}")
     else:
         lines.append(f"{payload.get('rows_label') or 'Row'}: " + " | ".join(str(c) for c in columns))
         for row in rows:

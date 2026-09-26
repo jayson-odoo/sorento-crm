@@ -1,0 +1,11 @@
+console-check-1790414615  5 cases against http://127.0.0.1:8000  parser prompt: whatever the `production` label points at
+lane switches before: enabled=False lanes=[]
+lane switches for the run: enabled=True lanes=13
+PASS  S1 AC-S1-20 compare dealer sales 2025 vs 2026 by month: the whole table as text and the Excel branch=business_query  '*Sales, Sorento* Channel: Dealer Basis: Delivered (transferred to DO) Period: 01/01/2025 to 26/09/2026 Months: 12  Month'
+PASS  S1 AC-R4-1 total project sales this year: one figure, still text + file branch=business_query  '*Sales, Sorento* Channel: Project team Basis: Delivered (transferred to DO) Period: 01/01/2026 to 26/09/2026 Channels: 1'
+PASS  S1 AC-S1-21 a contact in both companies naming neither is asked, no file branch=business_query  '*Sales, Mocha* Channel: All channels Basis: Delivered (transferred to DO) Period: 01/01/2026 to 26/09/2026 Months: 12  J'
+PASS  S1 AC-S1-23 a dealer contact is refused, nothing fetched branch=business_query  'Sorry, I can only share sales figures for your own account. Sorry, I can only share sales figures for your own account.'
+PASS  S1 gate: a contact without the Sales report key is refused before any fetch branch=business_query  'Sales report is not enabled for your account. Sales report is not enabled for your account.'
+lane switches restored: enabled=False lanes=[]
+
+5 passed, 0 failed  (console-check-1790414615)

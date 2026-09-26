@@ -434,9 +434,16 @@ def _pivot_table(
 
     row = header + 1
     first_data = row
+    row_labels = pivot.row_value_labels or {}
     for row_value in pivot.row_values:
-        # As stored: the register is read by the people named in it.
-        _line(row, row_value, pivot.cells.get(row_value, {}), pivot.row_totals.get(row_value, {}))
+        # As stored (the register is read by the people named in it), unless the axis
+        # names its values ("01" is JAN).
+        _line(
+            row,
+            row_labels.get(row_value, row_value),
+            pivot.cells.get(row_value, {}),
+            pivot.row_totals.get(row_value, {}),
+        )
         row += 1
     last_data = row - 1
 

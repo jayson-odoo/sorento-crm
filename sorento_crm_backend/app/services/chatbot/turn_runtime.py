@@ -2739,7 +2739,8 @@ def envelope_of(
         # and its own order (the report's four header lines, and the same four above
         # the scope question). The composer's generic `*orders* for <code>:` line would
         # say it a second time, differently, above the answer.
-        "own_header": bool(fetched.get("outstanding_report")),
+        # The sales analysis prints its own header too (company, channel, basis, period).
+        "own_header": bool(fetched.get("outstanding_report") or fetched.get("own_header")),
         "outcome": fragment.get("outcome"),
         "tool": (fetched.get("tool") or {}).get("name") if isinstance(fetched.get("tool"), dict) else None,
         # The window this fetch ran with, already in the words the scope question uses

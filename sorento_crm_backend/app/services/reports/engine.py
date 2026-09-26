@@ -688,6 +688,9 @@ def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportPivotL
         key=layout.key,
         title=layout.title,
         row_dim=ReportPivotDimension(key=row_column.key, label=row_column.label),
+        row_value_labels=(
+            _value_labels(row_column, row_values) if row_column.fixed_values else None
+        ),
         col_dim=ReportPivotColumnDimension(
             key=col_column.key,
             label=col_column.label,

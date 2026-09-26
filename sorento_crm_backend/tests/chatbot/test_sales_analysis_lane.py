@@ -141,6 +141,10 @@ class TestTextAndFile:
         text = (result.reply or {}).get("text") or ""
         assert "Project team: RM 1,234.50" in text
         assert "Total: RM 1,234.50" in text
+        # Found by the console run: the answer states its own scope, so the order
+        # domain's generic header must not print above it.
+        assert text.startswith("*Sales, Sorento*"), text
+        assert "Customer: all customers" not in text and "Dates: all dates" not in text
         kinds = [a.get("kind") for a in (result.actions or [])]
         assert "send_attachments" in kinds, result.actions
 

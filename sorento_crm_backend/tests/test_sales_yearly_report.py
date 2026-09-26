@@ -389,6 +389,10 @@ def test_reviewer_b1_no_variance_unless_the_rows_are_the_years(db, definition, r
     texts = [v for v in _cells(book["SUMMARY"]) if isinstance(v, str)]
     assert "VARIANCE" not in texts
     assert "TOTAL" in texts
+    if rows == "month_of_year":
+        # a fixed row axis prints its labels, not its raw values
+        assert summary.row_value_labels["01"] == "JAN"
+        assert "JAN" in texts and "01" not in texts
 
 
 def test_the_sponsorship_workbook_keeps_its_month_sheets(db):

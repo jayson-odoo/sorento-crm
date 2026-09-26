@@ -92,6 +92,9 @@ class ReportPivotLayout(BaseModel):
     variance_row: Optional[Dict[str, Dict[str, str]]] = None
     variance_total: Optional[Dict[str, str]] = None
     variance_label: Optional[str] = None
+    # Display label per ROW value when the row axis names its values ("01" -> "JAN");
+    # absent otherwise, and the raw value is the label.
+    row_value_labels: Optional[Dict[str, str]] = None
     # "line" when the screen draws this table as a chart under it.
     chart: Optional[str] = None
     # The screen prints whole ringgit; the workbook keeps the sen.

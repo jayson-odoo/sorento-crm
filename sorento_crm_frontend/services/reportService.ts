@@ -154,6 +154,8 @@ export interface ReportPivotLayout {
   variance_row?: Record<string, Record<string, string>> | null;
   variance_total?: Record<string, string> | null;
   variance_label?: string | null;
+  /** Display label per ROW value when the row axis names its values ('01' -> 'JAN'). */
+  row_value_labels?: Record<string, string> | null;
   /** 'line': the screen draws this pivot as a line chart under the table. */
   chart?: 'line' | null;
   /** The screen prints whole ringgit (the workbook keeps the sen). */

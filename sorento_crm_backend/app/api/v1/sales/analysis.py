@@ -134,11 +134,7 @@ def _answer(result, *, company_name: str, channel: Optional[str], basis: str,
             )
         return values
 
-    row_labels = {}
-    if pivot.row_dim.key == "month_of_year":
-        from app.services.reports.datasets.sales_order_lines import MONTH_OF_YEAR
-
-        row_labels = dict(MONTH_OF_YEAR)
+    row_labels = pivot.row_value_labels or {}
     rows = [
         {
             "label": row_labels.get(value, value),
@@ -148,11 +144,17 @@ def _answer(result, *, company_name: str, channel: Optional[str], basis: str,
         for value in pivot.row_values
     ]
     total_count = len(rows)
+    rows_all = rows
     if n is not None:
         # Ranked by the row's own total, then its label: the top X rule (PR #1263).
         rows = sorted(rows, key=lambda r: (-Decimal(r["total"] or 0), r["label"]))[:n]
 
     totals = _cells(pivot.col_totals)
+    if difference:
+        # G5 (a): the total difference is the sum of the months the last year has, a year
+        # to date against the same months a year earlier - never the full year before it.
+        diffs = [r["values"][-1] for r in rows_all if r["values"][-1] is not None]
+        totals[-1] = _money(sum((Decimal(d) for d in diffs), Decimal(0))) if diffs else None
     channel_words = dict(CHANNELS)
     return {
         "status": "ready",
@@ -273,7 +275,11 @@ def _prepare(
     definition = reg.get(REPORT_KEY)
     today = reg.today_malaysia()
     start = date_from or date(today.year, 1, 1)
-    end = date_to or today
+    # "2025 vs 2026" asks through 31 December; the figures stop today, and the file's
+    # "AS AT" line must say the day it was made, not a day that has not come.
+    end = min(date_to or today, today)
+    if start > end:
+        raise _unprocessable("The period starts after today", "date_range_inverted")
     params = {
         "date_basis": "order_date",
         "period": {"kind": "custom", "from": start.isoformat(), "to": end.isoformat()},
@@ -288,6 +294,14 @@ def _prepare(
     })
     grant = frozenset({company_id})
     result = engine.run(db, definition, params, view, company_grants=grant)
+    # The file is the same query. A month-by-year ask is the report's OWN layout turned
+    # on its side, so the file uses that layout (years down, JAN to DEC across, and the
+    # VARIANCE row): the PDF's page, carrying both years and the difference the text
+    # prints, figure for figure (AC-R4-6).
+    file_view = view
+    if AXES[rows] == "month_of_year" and AXES[cols] == "year":
+        file_view = view.model_copy(update={"pivot": view.pivot.model_copy(
+            update={"rows": "year", "cols": "month_of_year"})})
     answer = _answer(
         result,
         company_name=companies[company_id][0],
@@ -318,7 +332,7 @@ def _prepare(
             download_id,
             REPORT_KEY,
             params,
-            view.model_dump(mode="json"),
+            file_view.model_dump(mode="json"),
             owner_user_id,
             queue_name=settings.report_export_queue,
             job_timeout=600,

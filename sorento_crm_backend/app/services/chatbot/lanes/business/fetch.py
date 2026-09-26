@@ -2139,8 +2139,13 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if jsc.js_string(ctx.get("tool") or "") == "crm_low_stock_report":
         return _low_stock_report_output(result)
     if jsc.js_string(ctx.get("tool") or "") == "crm_sales_analysis":
-        # The same envelope: the presenter's text and, when there is one, the Excel.
-        return _low_stock_report_output(result, fallback=_SALES_ANALYSIS_ERROR_TEXT)
+        # The same envelope: the presenter's text and, when there is one, the Excel. It
+        # states its own scope (company, channel, basis, period), so the order domain's
+        # generic Customer/Product/Dates header must not print above it.
+        return {
+            **_low_stock_report_output(result, fallback=_SALES_ANALYSIS_ERROR_TEXT),
+            "own_header": True,
+        }
     e = _extract_envelope(result)
     # Read once, for both the restricted-field drop below and the spec-visibility
     # drop (PLAN-spec-visibility-policy.md "Chatbot seam") - one contact, one

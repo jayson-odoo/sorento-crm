@@ -104,3 +104,13 @@ def test_an_error_body_is_one_plain_line():
     env = _envelope({"message": "Permission required", "code": "sales_report_not_enabled"})
     assert env["response"] == "Could not run the sales report right now."
     assert env["attachments"] == []
+
+
+def test_a_month_with_no_sales_reads_as_a_dash_not_rm_dash():
+    payload = dict(_sample("total"), columns=["2026"], rows=[
+        {"label": "SEP", "values": ["75428.55"], "total": "75428.55"},
+        {"label": "OCT", "values": [None], "total": None},
+    ])
+    text = _envelope(payload)["response"]
+    assert "SEP: RM 75,428.55" in text
+    assert "OCT: -" in text and "RM -" not in text

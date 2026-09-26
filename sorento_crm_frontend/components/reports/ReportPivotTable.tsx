@@ -111,7 +111,7 @@ export function ReportPivotTable({ layout }: { layout: ReportPivotLayout }) {
           {rowValues.map((rowValue) => (
             <TableRow key={rowValue}>
               <TableCell className={cn(PINNED_CELL, 'border-b border-border font-medium')}>
-                {rowValue}
+                {layout.row_value_labels?.[rowValue] ?? rowValue}
               </TableCell>
               {colDim.values.map((colValue) =>
                 measures.map((measure, index) => (
