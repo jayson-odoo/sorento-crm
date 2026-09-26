@@ -2,7 +2,6 @@
 
 import * as React from 'react';
 import { type ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { Badge } from '@/components/ui/badge';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
@@ -17,10 +16,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { DecisionTrailEntries } from '../../../_shared/components/DecisionTrailDialog';
-import {
-  useDecisionTrail,
-  useOrderInquiryHeaderCancelledRows,
-} from '../../../_shared/hooks/useOrderInquiry';
+import { useDecisionTrail } from '../../../_shared/hooks/useOrderInquiry';
 import {
   lineHistoryEntries,
   type LineHistoryEntry,
@@ -168,32 +164,21 @@ function titleOf(line: OrderInquiryLine): string {
 }
 
 export function OrderInquiryLineHistoryDialog({
-  inquiryId,
   line,
   onOpenChange,
   reserveEntries,
 }: {
-  inquiryId: string;
   line: OrderInquiryLine;
   onOpenChange: (open: boolean) => void;
   /** The line's reserve request history; `undefined` when the line has none, which drops
    * the Reserve tab (AC-ND-14). */
   reserveEntries?: OrderInquiryReserveHistoryEntry[];
 }) {
-  const cancelled = useOrderInquiryHeaderCancelledRows(inquiryId);
   const coreLineId = line.primary.core_line_id ?? null;
   const trail = useDecisionTrail(coreLineId);
-  const entries = React.useMemo(
-    () => lineHistoryEntries(line, cancelled.data ?? []),
-    [line, cancelled.data],
-  );
-  // Review S2: until the cancelled rows arrive (or when they fail), "No earlier rows"
-  // would be untrue, so the tab shows the load or the error instead.
-  let rowsBody: React.ReactNode;
-  if (cancelled.isLoading) rowsBody = <SectionSkeleton />;
-  else if (cancelled.isError) {
-    rowsBody = <p className="text-sm text-destructive">{cancelled.error.message}</p>;
-  } else rowsBody = <LineRowsGrid entries={entries} />;
+  // S2 (AC-ND-20): every row of the line, cancelled included, arrived with the Lines
+  // tab's one `include_history` fetch, so the dialog reads nothing of its own.
+  const entries = React.useMemo(() => lineHistoryEntries(line), [line]);
 
   return (
     <Dialog open onOpenChange={onOpenChange}>
@@ -212,7 +197,7 @@ export function OrderInquiryLineHistoryDialog({
               {reserveEntries ? <TabsTrigger value="reserve">Reserve</TabsTrigger> : null}
             </TabsList>
             <TabsContent value="rows" className="mt-0 min-w-0">
-              {rowsBody}
+              <LineRowsGrid entries={entries} />
             </TabsContent>
             <TabsContent value="decisions" className="mt-0">
               {coreLineId ? (

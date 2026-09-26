@@ -68,7 +68,6 @@ import {
   foldKeyOf,
   isLiveInquiryRow,
   reserveHistoryRowOf,
-  usedRowIdsToConfirm,
   type OrderInquiryLine,
 } from '../../../_shared/lib/orderInquiryLineFold';
 import type { CommitReservePayload } from '../../../_shared/services/orderInquiryReserveService';
@@ -555,11 +554,10 @@ export function OrderInquiryDetail({ id }: { id: string }) {
       : (header?.lines_to_confirm ?? 0) === 0;
 
   function runConfirm() {
-    // G6 (owner ruling 26 Sep): a ticked line's used rows still in `changed` are
-    // confirmed with it, so the header never waits on a row nobody can see.
-    const rowIds = [...selectedIds, ...usedRowIdsToConfirm(lines, selectedIds)];
+    // G6 (owner ruling 26 Sep): the ticked lines' live rows only; the server takes on
+    // each line's used rows still in `changed` in the same call (S1, AC-ND-24).
     acknowledge.mutate(
-      selectedIds.length > 0 ? { rowIds } : { filter: { inquiry_id: id } },
+      selectedIds.length > 0 ? { rowIds: selectedIds } : { filter: { inquiry_id: id } },
       { onSuccess: () => setRowSelection({}) },
     );
   }
@@ -971,7 +969,6 @@ export function OrderInquiryDetail({ id }: { id: string }) {
 
       {historyLine ? (
         <OrderInquiryLineHistoryDialog
-          inquiryId={id}
           line={historyLine}
           onOpenChange={(next) => {
             if (!next) setHistoryLine(null);

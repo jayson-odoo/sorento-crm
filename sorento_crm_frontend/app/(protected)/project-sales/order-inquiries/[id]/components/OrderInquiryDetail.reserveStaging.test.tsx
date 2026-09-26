@@ -227,7 +227,6 @@ vi.mock('../../../_shared/services/orderInquiryService', async (importOriginal) 
     ...actual,
     getOrderInquiryHeader: vi.fn(async () => HEADER),
     getOrderInquiryHeaderLines: vi.fn(async () => [PLAIN_ROW, REQUESTED_ROW, RESERVED_ROW, DECLINED_ROW]),
-    getOrderInquiryHeaderCancelledRows: vi.fn(async () => []),
     getOrderInquiryHeaderRelatedDocuments: vi.fn(async () => ({ purchase_orders: [], spos: [] })),
     listOrderInquiryHeaders: vi.fn(async () => ({ data: [], total: 0, page: 1, limit: 25 })),
     acknowledgeOrderInquiryRowsByFilter: vi.fn(async () => ({ acknowledged: 0, results: [] })),

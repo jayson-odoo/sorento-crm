@@ -571,11 +571,12 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    */
   line_no?: number | null;
   /**
-   * MOCK(S1), `PLAN-oi-no-double-count-25sep.md`: the sales order line's own quantity, the
-   * SO Qty column (owner ruling 26 Sep, G4). The server does not send it yet; S1 adds it,
-   * and until then `foldInquiryLines` reads SO Qty off the line's own rows instead.
+   * `PLAN-oi-no-double-count-25sep.md` S1 (AC-ND-21): the sales order line's own Qty and
+   * No., the numbers the sales order's Lines grid shows - the SO Qty column (owner ruling
+   * 26 Sep, G4). Null when the row names no sales order line.
    */
   so_line_qty?: string | null;
+  so_line_no?: number | null;
   /**
    * S6 (AC-B6-1/AC-B6-7): the CORE sales-order line's own id, which the backend resolves
    * server-side off the row's mirror line - never the mirror id itself, which this screen
@@ -603,6 +604,9 @@ export interface OrderInquiryWorklistParams {
    * payload (AC-CF-01).
    */
   inquiry_id?: string;
+  /** `PLAN-oi-no-double-count-25sep.md` S2 (AC-ND-20): cancelled rows too, for the OI
+   * detail's Lines tab and its History dialog. */
+  include_history?: boolean;
   /** `YYYY-MM`, the delivery month, which is the sheet tab. */
   delivery_month?: string;
   /** `YYYY-MM-DD`, the day the rows were raised, which is the per-day tab. */

@@ -11,7 +11,6 @@ import {
   exportOrderInquiryXlsx,
   getOrderInquiryHeader,
   getOrderInquiryHeaderLines,
-  getOrderInquiryHeaderCancelledRows,
   getOrderInquiryHeaderRelatedDocuments,
   getOrderInquiryPoCandidates,
   getOrderInquiryUploadJob,
@@ -145,23 +144,14 @@ export function useOrderInquiryHeaderDetail(id: string | undefined) {
   });
 }
 
-/** The Lines tab (AC-DP-03): every non-cancelled row this header raised. Phase 1 reads
- * the mock module; Phase 2 reuses the cross-project worklist's own `inquiry_id` filter
- * (see `orderInquiryService.ts`'s header section) so this hook's callers never change. */
+/** The Lines tab (AC-DP-03): every row this header raised, cancelled rows included since
+ * `PLAN-oi-no-double-count-25sep.md` S2 (`include_history`) - the tab folds them into
+ * their line's History. Reuses the cross-project worklist's own `inquiry_id` filter (see
+ * `orderInquiryService.ts`'s header section). */
 export function useOrderInquiryHeaderLines(id: string | undefined) {
   return useQuery({
     queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY, id],
     queryFn: () => getOrderInquiryHeaderLines(id as string),
-    enabled: Boolean(id),
-  });
-}
-
-/** The History dialog's cancelled rows (`PLAN-oi-no-double-count-25sep.md` S0), read
- * once per inquiry on first open. */
-export function useOrderInquiryHeaderCancelledRows(id: string | undefined) {
-  return useQuery({
-    queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY, id, 'cancelled'],
-    queryFn: () => getOrderInquiryHeaderCancelledRows(id as string),
     enabled: Boolean(id),
   });
 }

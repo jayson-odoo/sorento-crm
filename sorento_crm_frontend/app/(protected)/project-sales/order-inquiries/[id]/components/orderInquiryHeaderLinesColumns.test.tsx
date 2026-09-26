@@ -161,7 +161,7 @@ function LinesFooter({ rows }: { rows: OrderInquiryWorklistRow[] }) {
 describe('AC-B3-5: the Lines tab footers total the buy rows only', () => {
   it('excludes notice rows and cancelled rows from Qty, Taken and Remaining alike', () => {
     const buyRows = Array.from({ length: 10 }, (_unused, index) =>
-      linesRow({ id: `buy-${index}`, qty: '10', linked_qty: '4' }),
+      linesRow({ id: `buy-${index}`, qty: '10', linked_qty: '4', so_line_qty: '10' }),
     );
     render(
       <LinesFooter
@@ -182,7 +182,8 @@ describe('AC-B3-5: the Lines tab footers total the buy rows only', () => {
       />,
     );
 
-    // AC-ND-17 (owner ruling 26 Sep, G4): SO Qty (mocked off the rows) and Requested.
+    // AC-ND-17 (owner ruling 26 Sep, G4): SO Qty (the server's `so_line_qty`, S2) and
+    // Requested; the notice and cancelled rows name no sales order line Qty here.
     expect(screen.getByTestId('footer-so_qty')).toHaveTextContent(/^100$/);
     expect(screen.getByTestId('footer-requested')).toHaveTextContent(/^100$/);
     expect(screen.getByTestId('footer-taken')).toHaveTextContent(/^40$/);
@@ -680,8 +681,8 @@ describe('AC-ND-7 (owner ruling 26 Sep, G1): no Was / now on the line row', () =
   it('the #1248 line renders no Qty (i) Was trigger and no used pill', () => {
     const [lineRow] = toLineRows(
       foldInquiryLines([
-        linesRow({ id: 'used', core_line_id: 'cl-1', qty: '2', redirected_to_pool: true, ack_state: 'changed' }),
-        linesRow({ id: 'fresh', core_line_id: 'cl-1', qty: '5', previous_qty: '2', ack_state: 'changed' }),
+        linesRow({ id: 'used', core_line_id: 'cl-1', qty: '2', so_line_qty: '5', redirected_to_pool: true, ack_state: 'changed' }),
+        linesRow({ id: 'fresh', core_line_id: 'cl-1', qty: '5', so_line_qty: '5', previous_qty: '2', ack_state: 'changed' }),
       ]),
     );
     const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());

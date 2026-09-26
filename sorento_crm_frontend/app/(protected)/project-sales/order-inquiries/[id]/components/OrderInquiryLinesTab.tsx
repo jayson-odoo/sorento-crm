@@ -181,14 +181,10 @@ export function OrderInquiryLinesTab({
     }
   }
 
-  // Cancelled rows are hidden here, same as the worklist (S5) - they carry no
-  // instruction left to confirm or link, only a history the raise-cancel already told;
-  // the line's History dialog lists them (`PLAN-oi-no-double-count-25sep.md`, G1).
-  // S0 (owner ruling 26 Sep, G5): the rest fold into ONE row per sales order line.
-  const allLineRows = useMemo(
-    () => toLineRows(foldInquiryLines(lines.filter((line) => line.state !== 'cancelled'))),
-    [lines],
-  );
+  // S0 (owner ruling 26 Sep, G5): ONE row per sales order line. S2 (AC-ND-20): `lines`
+  // carries the header's cancelled rows too; the fold keeps them as their line's History
+  // (G1) and never renders a line for them alone.
+  const allLineRows = useMemo(() => toLineRows(foldInquiryLines(lines)), [lines]);
   const rows = useMemo(
     () => allLineRows.filter((lineRow) => lineMatchesStateFilter(lineOf(lineRow), stateFilter)),
     [allLineRows, stateFilter],
@@ -259,7 +255,7 @@ export function OrderInquiryLinesTab({
       isLoading={isLoading}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       emptyMessage={
-        lines.length === 0
+        allLineRows.length === 0
           ? 'Nothing was raised on this order inquiry.'
           : stateFilter.length > 0 && rows.length === 0
             ? 'No line matches the filter.'

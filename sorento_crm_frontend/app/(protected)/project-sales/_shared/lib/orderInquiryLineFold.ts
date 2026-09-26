@@ -1,4 +1,3 @@
-import { ackStateOf } from './orderInquiryAck';
 import { isInquiryBuyRow } from './orderInquiryWorklist';
 import type { OrderInquiryWorklistRow } from '../types/orderInquiry.types';
 
@@ -10,6 +9,10 @@ import type { OrderInquiryWorklistRow } from '../types/orderInquiry.types';
  *
  * A row is LIVE while `state != 'cancelled'` and it is not `redirected_to_pool`; every
  * other row of the line is history, read behind the line's one History icon (G1, G6).
+ *
+ * S2 (AC-ND-20): the rows are the Lines tab's one `include_history` fetch, cancelled rows
+ * included. A cancelled row is history on its line; a line only renders when at least one
+ * of its rows is not cancelled, the same rule the header list's Lines count reads (G10).
  */
 
 /** The four quantity columns (G4) plus how the line reads. */
@@ -17,8 +20,7 @@ export interface OrderInquiryLine {
   /** Stable grid row id: `line:<core_line_id>`, `so:<so_number>:<line_no>` or `row:<id>`. */
   key: string;
   lineNo: number | null;
-  /** Every row of the line the Lines fetch returned (live and used; cancelled rows are
-   * not in that fetch, the History dialog reads them separately). */
+  /** Every row of the line the Lines fetch returned: live, used and cancelled. */
   rows: OrderInquiryWorklistRow[];
   liveRows: OrderInquiryWorklistRow[];
   historyRows: OrderInquiryWorklistRow[];
@@ -34,9 +36,9 @@ export interface OrderInquiryLine {
   lineCancelled: boolean;
   /** Greyed on the grid: a cancelled line (G7) or one with nothing left to buy (O2). */
   muted: boolean;
-  soQty: number;
-  /** MOCK(S1): true while the payload carries no `so_line_qty`. */
-  soQtyMocked: boolean;
+  /** The sales order line's own Qty (`so_line_qty`); null when the line names no sales
+   * order line (L17). */
+  soQty: number | null;
   requested: number;
   taken: number;
   remaining: number;
@@ -126,15 +128,9 @@ function buildLine(key: string, rows: OrderInquiryWorklistRow[]): OrderInquiryLi
     liveRows,
   ).state;
 
-  // MOCK(S1): the worklist row carries no sales order line quantity yet
-  // (`PLAN-oi-no-double-count-25sep.md` S1 adds `so_line_qty`). Until it does, SO Qty
-  // reads what the line asked for - its live buy rows, else what its used rows held.
+  // AC-ND-4 (G4): the number the sales order's own Lines grid shows for the line.
   const soLineQty = rows.find((row) => row.so_line_qty != null)?.so_line_qty;
-  const usedAsked = historyRows
-    .filter((row) => isInquiryBuyRow(row.verb) && row.state !== 'cancelled')
-    .reduce((total, row) => total + num(row.qty), 0);
-  const soQtyMocked = soLineQty == null;
-  const soQty = soQtyMocked ? asked || usedAsked : num(soLineQty);
+  const soQty = soLineQty == null ? null : num(soLineQty);
 
   return {
     key,
@@ -148,7 +144,6 @@ function buildLine(key: string, rows: OrderInquiryWorklistRow[]): OrderInquiryLi
     lineCancelled,
     muted: lineCancelled || liveRows.length === 0,
     soQty,
-    soQtyMocked,
     requested,
     taken,
     remaining,
@@ -166,7 +161,9 @@ export function foldInquiryLines(rows: OrderInquiryWorklistRow[]): OrderInquiryL
     if (group) group.push(row);
     else groups.set(key, [row]);
   }
-  const lines = [...groups.entries()].map(([key, group]) => buildLine(key, group));
+  const lines = [...groups.entries()]
+    .filter(([, group]) => group.some((row) => row.state !== 'cancelled'))
+    .map(([key, group]) => buildLine(key, group));
   return lines
     .map((line, index) => ({ line, index }))
     .sort((a, b) => {
@@ -192,34 +189,11 @@ export function lineOf(row: OrderInquiryLineRow): OrderInquiryLine {
  * line, so the footer always tallies with the column above it. */
 export function lineFooterTotals(lines: OrderInquiryLine[]) {
   const counted = lines.filter((line) => !line.lineCancelled);
-  const soQty = counted.reduce((total, line) => total + line.soQty, 0);
+  const soQty = counted.reduce((total, line) => total + (line.soQty ?? 0), 0);
   const requested = counted.reduce((total, line) => total + line.requested, 0);
   const taken = counted.reduce((total, line) => total + line.taken, 0);
   const remaining = counted.reduce((total, line) => total + line.remaining, 0);
   return { soQty, requested, taken, remaining };
-}
-
-/**
- * G6 (owner ruling 26 Sep): confirming a line also confirms its used rows still in
- * `changed`, so the header never waits on a row nobody can see on the main grid.
- */
-export function usedRowIdsToConfirm(
-  rows: OrderInquiryWorklistRow[],
-  selectedRowIds: string[],
-): string[] {
-  if (selectedRowIds.length === 0) return [];
-  const selected = new Set(selectedRowIds);
-  const keys = new Set(rows.filter((row) => selected.has(row.id)).map(foldKeyOf));
-  return rows
-    .filter(
-      (row) =>
-        row.redirected_to_pool &&
-        row.state !== 'cancelled' &&
-        !selected.has(row.id) &&
-        ackStateOf(row) === 'changed' &&
-        keys.has(foldKeyOf(row)),
-    )
-    .map((row) => row.id);
 }
 
 export type LineHistoryWhat =
@@ -265,27 +239,19 @@ function newestFirst(a: OrderInquiryWorklistRow, b: OrderInquiryWorklistRow) {
 
 /**
  * The History dialog's Rows tab (AC-ND-15): the line's live rows first as Now, then every
- * retired row, newest first. `cancelledRows` is the inquiry's cancelled set (the Lines
- * fetch does not carry it); only this line's rows are kept. A Now row with a
- * `previous_qty` reads "Was <n>." before its note - the only place the Was / now story
- * shows (G1).
+ * retired row (used and cancelled, all already on the line since S2), newest first. A Now
+ * row with a `previous_qty` reads "Was <n>." before its note - the only place the Was /
+ * now story shows (G1).
  */
-export function lineHistoryEntries(
-  line: OrderInquiryLine,
-  cancelledRows: OrderInquiryWorklistRow[],
-): LineHistoryEntry[] {
-  const own = cancelledRows.filter(
-    (row) => foldKeyOf(row) === line.key && !line.rows.some((r) => r.id === row.id),
-  );
-  const lineRows = [...line.rows, ...own];
+export function lineHistoryEntries(line: OrderInquiryLine): LineHistoryEntry[] {
   const toEntry = (row: OrderInquiryWorklistRow): LineHistoryEntry => {
-    const what = whatOf(row, lineRows);
+    const what = whatOf(row, line.rows);
     const note = row.note ?? '';
     const was = what === 'Now' && row.previous_qty != null ? `Was ${num(row.previous_qty)}.` : '';
     return { row, what, why: [was, note].filter(Boolean).join(' ') };
   };
   const now = line.liveRows.filter((row) => !row.line_cancelled);
-  const retired = [...line.rows.filter((row) => !now.includes(row)), ...own].sort(newestFirst);
+  const retired = line.rows.filter((row) => !now.includes(row)).sort(newestFirst);
   return [...now.map(toEntry), ...retired.map(toEntry)];
 }
 

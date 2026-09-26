@@ -296,8 +296,7 @@ const QUANTITY_COLUMNS: {
   title: string;
   field: 'soQty' | 'requested' | 'taken' | 'remaining';
 }[] = [
-  // MOCK(S1): `soQty` reads `so_line_qty` once the server sends it; until then the fold
-  // derives it from the line's own rows (`orderInquiryLineFold.ts`).
+  // S2: `soQty` is the server's `so_line_qty`, the sales order grid's own Qty.
   { id: 'so_qty', title: 'SO Qty', field: 'soQty' },
   { id: 'requested', title: 'Requested', field: 'requested' },
   { id: 'taken', title: 'Taken', field: 'taken' },
@@ -421,11 +420,15 @@ export function useOrderInquiryHeaderLinesColumns({
           header: ({ column }) => <DataGridColumnHeader title={title} column={column} />,
           size: id === 'requested' || id === 'remaining' ? 120 : 100,
           meta: { headerTitle: title, skeleton: <Skeleton className="h-4 w-10" /> },
-          cell: ({ row }) => (
-            <span className="tabular-nums">
-              {formatInquiryQty(String(lineOf(row.original)[field]))}
-            </span>
-          ),
+          cell: ({ row }) => {
+            // A row that names no sales order line has no SO Qty (L17).
+            const value = lineOf(row.original)[field];
+            return (
+              <span className="tabular-nums">
+                {value == null ? '-' : formatInquiryQty(String(value))}
+              </span>
+            );
+          },
           footer: ({ table }) => (
             <LineFooter
               rows={table.getPrePaginationRowModel().rows.map((r) => r.original)}
