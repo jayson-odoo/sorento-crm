@@ -123,6 +123,26 @@ words the new engine read. The expected groups (plan D5):
 
 Anything outside those four groups is a defect to fix before merge. Output: _to paste_.
 
-What the cloud lane could measure: the parity test in `tests/test_product_spec_rule_engine.py`
-runs every real catalogue phrase the existing golden and derivation suites carry through both
-the old matcher and the new one. Its result is in the PR body.
+### 6.1 Measured in the cloud lane: the 2,000-product golden sample
+
+`tests/test_product_spec_rule_engine.py` derives every row of
+`tests/fixtures/spec_derivation_golden_sample.json` (2,000 real catalogue products) with the
+frozen legacy rules through a frozen copy of the old matcher, and with the new engine, and fails
+on any difference outside the groups below. Result after fix round 1:
+
+| Group | Products | Codes | Change |
+| --- | ---: | --- | --- |
+| Plan D5 group 2, Power needs a standalone number | 6 | SRTBK7004, SRTSA300HP, SRTWC7603HP, SRTWT6900HP, SRTWT9600HP, SRTWT9609HP-RG | a code's digits (7004, 300, 7603, 6900, 9600, 9609) no longer read as horsepower; now nothing |
+| Plan D5 group 3, a hyphen, a doubled space or no space between words | 32 | mounting counter top: BRBC22176W-1-ENG, BRBC22207W-1, BRBC22239W-1-ENG, BRBC2244W-8, CWB1086-CB, CWB1096-CB, SRTBRBC2244W-1-ENG, SRTWB1090-BW, SRTWB1096-NEW, SRTWB1278; under counter: AMS-CCASF513-1000410M0, BRBC22353W-ENG; wall hung: BRWTP69182BTC-ENG, CB1108ASS, CB2522SS, CB2532SS, CB2544SS, CB2546SS-BL, CB2550SS-FRG, CB6112SS, MLWT5128, MWB7620-A; floor standing: SRTWT4017, SRTWT51012-GY; bar_count: CB722-GM 2, CB766-GM 2, SRT770-GM 1; control type single lever: GRH-19577001; product type angle valve: GRH-19808001, GRH-29800000, SRTWT916SS-GM-DIY; basin tap: SRTWT5841-BL | nothing before, the value now |
+| Lane fix round 1, no hose length on a bathtub or jacuzzi | 3 | BRBTB25505W, BRBTB25505W-5, BRBTB25513W | 1500 before (a tub's length read as a hose), nothing now |
+| Plan D5 groups 1 and 4 | 0 | none in the sample | |
+
+Three differences outside the plan's groups were found on the way and fixed in the shipped
+rules rather than accepted: a two-decimal hose length on bathtubs (Only when class is not
+Bathtub, Jacuzzi, Bathtub and Jacuzzi), "(LENGTH-200MM)" (a new Length rule, number after
+LENGTH before MM; BRD314CP-2 200, BRD314CP-4 70, BRD314CP-4-ENG 54, BRD323BTC-ENG 400 still
+read), and "6086 BOWL ONLY" (bowl count capped at 9, so it is flagged, not stored).
+
+Save-time cost of the re-read on save, derive loop only over 23,000 in-memory rows: 1.0 s
+(Length), 1.3 s (Finish or colour), 1.6 s (Product class), 3.0 s (Type), against 14.2 s for
+every key. The paged database read comes on top.
