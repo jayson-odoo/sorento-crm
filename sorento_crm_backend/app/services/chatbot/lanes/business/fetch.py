@@ -1878,10 +1878,13 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
         has_result = envelope.get("has_result") is True
     else:
         # The render never happened (an MCP that returned the raw body, or a failure
-        # fallback). Nothing can be said about absence from a shape this function did
-        # not get, so the text stands and the turn is treated as an answer.
+        # fallback - #1262 slice 1, F2: a raised tool call's own error text, now that
+        # `call_tool` raises on `isError` instead of returning it as a string). A bare
+        # string here is never a rendered report, so it is never treated as a result -
+        # `has_result: True` for one is what let a tool-error string answer the miss
+        # lane and print "Error executing tool ..." verbatim.
         text = result if isinstance(result, str) else jsc.js_string(result)
-        has_result = bool(text.strip())
+        has_result = False
     offer = _outstanding_offer_from_text(text)
 
     outstanding_ask = (
@@ -1974,11 +1977,10 @@ def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
         text = jsc.js_string(envelope.get("response") or "")
         has_result = envelope.get("has_result") is True
     else:
-        # The render never happened (an MCP that returned the raw body, or a failure
-        # fallback). Nothing can be said about absence from a shape this function did
-        # not get, so the text stands and the turn is treated as an answer.
+        # Mirrors `_outstanding_report_output`'s own fix (#1262 slice 1, F2): a bare
+        # string here is never a rendered report, so it is never treated as a result.
         text = result if isinstance(result, str) else jsc.js_string(result)
-        has_result = bool(text.strip())
+        has_result = False
     offer = _outstanding_offer_from_text(text)
 
     outstanding_ask = (

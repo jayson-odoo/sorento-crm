@@ -289,7 +289,16 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         # `figures`/`_render_row` below is now a FALLBACK for an envelope that never
         # went through that lane at all (a unit test's own hand-built dict).
         lane_words = env.get("lane_text")
-        if isinstance(lane_words, str) and lane_words.strip():
+        # #1262 slice 1 (F2): `lane_text` is occasionally the raw text of a FAILED
+        # tool call ("Error executing tool crm_outstanding_report: ..."), fed back
+        # in by whichever lane last touched `outstanding_carried_*` (the T7/T9
+        # hijack the diagnosis transcript recorded) - this module has no way to
+        # tell that string apart from a real answer once it has reached
+        # `lane_text`, so it is caught by name, once, here, and answered with the
+        # SAME neutral line the `error` arm below already gives a broken fetch.
+        if isinstance(lane_words, str) and "Error executing tool" in lane_words:
+            block = header + "\n" + f"I could not fetch {label} just now, please try again."
+        elif isinstance(lane_words, str) and lane_words.strip():
             block = lane_words.strip()
             # Hand pass 12, Group H: a missed leg of a MULTI-domain ask must name
             # itself, never the bare fallback (`lanes/business/fetch.NO_RESULT_INTRO`,
