@@ -14,6 +14,9 @@
      row with +N pills, target and team form views, a plain date range, standard dropdowns, one
      customer-or-prospect search, product lines, per-contact settings on the contact record, no
      Add suggested).
+     Round 5 (26 Sep 2026): the owner's answers R1 to R5 and T1 to T5 (06:09Z): delivered by DO
+     date, dated team moves, a team target that is the sum of its agents' figures, "Highest rate
+     on everything" built now, and the sales module and schema.
      Figures are illustrative. Numbered pins map to the notes beside each frame. -->
 <style>
 :root{
@@ -131,12 +134,14 @@ tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
 .now td{background:var(--primary-soft)}
 .tabs span.co{padding:0 6px;color:#fff;border:0}
 .gone{text-decoration:line-through;color:var(--muted)}
+.co.r5{background:#0f766e}
+.ruling.r5{color:#0f766e}
 </style>
 </head>
 <body>
 <div class="doc">
-<h1>Sales targets (issue #1170), round 4</h1>
-<p class="sub">Round 4 folds in the owner's second Lavish review (26 Sep 2026 06:01Z, notes N1 to N13, written against the round 2 page). Pink pins marked N1 to N13 show where each note landed. The Targets screen now opens on a list of teams, every row is one line with extra items folded into a "+N" pill, and the details live on each team's and each target's own page (both drawn here). A target runs over a plain date range, every picker is our standard dropdown, the portal form infers customer or prospect from the search, "What they want" is product lines, and each contact's WhatsApp update settings sit on that contact's record. Earlier pins (1 to 28) keep their round 2 and round 3 meaning. Figures are made up; "today" is 15 Oct 2026.</p>
+<h1>Sales targets (issue #1170), round 5</h1>
+<p class="sub">Round 4 folds in the owner's second Lavish review (26 Sep 2026 06:01Z, notes N1 to N13, written against the round 2 page). Pink pins marked N1 to N13 show where each note landed. The Targets screen now opens on a list of teams, every row is one line with extra items folded into a "+N" pill, and the details live on each team's and each target's own page (both drawn here). A target runs over a plain date range, every picker is our standard dropdown, the portal form infers customer or prospect from the search, "What they want" is product lines, and each contact's WhatsApp update settings sit on that contact's record. Earlier pins (1 to 28) keep their round 2 and round 3 meaning. <b>Round 5</b> (the owner's answers of 26 Sep 06:09Z) adds green-labelled pins R3, R5, T2 and T3: a team target is the agents' figures added up (frame 3 and the new frame 7b), a move between teams has a date (frame 5), delivered counts by DO date (frame 7), and every lane is built now. Figures are made up; "today" is 15 Oct 2026.</p>
 
 <h2 class="frame-title">1. Targets landing: a list of teams, 1280 (S1, built after S6)</h2>
 <div class="layout">
@@ -159,7 +164,7 @@ tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
         <colgroup><col style="width:140px"><col style="width:190px"><col style="width:190px"><col style="width:110px"><col style="width:110px"><col style="width:70px"><col style="width:110px"><col style="width:100px"><col style="width:64px"></colgroup>
         <thead><tr><th>Team</th><th>Agents</th><th>Targets <span class="co n">N3</span> <span class="co n">N4</span></th><th class="n">Target</th><th class="n">Achieved</th><th>%</th><th class="n">Pipeline</th><th class="n">Team pool</th><th></th></tr></thead>
         <tbody>
-          <tr><td><b>North</b></td><td><span class="pill n">ALI - Ali Hassan</span><span class="pill more">+1</span></td><td><span class="pill">North FY26 H2</span><span class="pill more">+1</span></td><td class="n">RM 300,000</td><td class="n">RM 246,720</td><td><span class="badge">82%</span></td><td class="n">RM 53,500</td><td class="n">RM 2,467</td><td><span class="btn sm">&hellip;</span></td></tr>
+          <tr><td><b>North</b></td><td><span class="pill n">ALI - Ali Hassan</span><span class="pill more">+1</span></td><td><span class="pill">North FY26 H2</span><span class="pill more">+1</span></td><td class="n">RM 300,000 <span class="co n r5">T3</span></td><td class="n">RM 255,020</td><td><span class="badge">85%</span></td><td class="n">RM 53,500</td><td class="n">RM 2,550</td><td><span class="btn sm">&hellip;</span></td></tr>
           <tr><td><b>South</b></td><td><span class="pill n">WON - Wong Kah Wai</span></td><td class="muted">No target</td><td class="n muted">-</td><td class="n">RM 22,600</td><td class="muted">-</td><td class="n">RM 0</td><td class="n muted">-</td><td><span class="btn sm pri">Set</span></td></tr>
           <tr><td class="muted">No team</td><td><span class="pill n">RAJ - Raj Kumar</span></td><td class="muted">Open in Agents</td><td class="n muted">-</td><td class="n">RM 12,300</td><td class="muted">-</td><td class="n muted">-</td><td class="n muted">-</td><td></td></tr>
           <tr class="unassigned"><td>Unassigned</td><td class="muted">No agent on order</td><td></td><td class="n">-</td><td class="n">RM 6,540</td><td>-</td><td class="n">-</td><td class="n">-</td><td></td></tr>
@@ -173,6 +178,7 @@ tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
   <li><span class="co n">N5</span><div><b>Teams first.</b> The page opens on a list of teams with their targets. Click a team to see its agents and their targets (frame 3). There is no grouped, cascading list any more. Agents with no team are one "No team" line that opens the Agents tab filtered to them.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N5</span><span class="ref">J1 &middot; S1-22</span></div></li>
   <li><span class="co n">N3</span><div><b>Less on each row.</b> A target is named by its name only. Its number, dates and split are on the target's own page (frame 6).<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N3</span><span class="ref">S1-21</span></div></li>
   <li><span class="co n">N4</span><div><b>Every row is one line.</b> More agents or more targets fold into a "+N" pill, and clicking any pill lists them all. When a team has two targets, the figures are the first target's (amount first, then the one ending soonest), and the "+1" pill shows the other target with its %.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N4</span><span class="ref">S1-21 &middot; PillOverflow</span></div></li>
+  <li><span class="co n r5">T3</span><div><b>A team's target is its agents' figures added up.</b> North's RM 300,000 is Ali's 150,000 + Mei's 120,000 + Kim's 30,000, typed per agent in one form (frame 7b). There is no separate team figure to type or override.<span class="ruling r5">Owner ruling 26 Sep 06:09, T3</span><span class="ref">S1-27, S1-28 &middot; plan 3.8</span></div></li>
   <li><span class="co">21</span><div><b>Set target sits alone at the top right</b> on every tab. On this tab it opens the modal with "Target for: Team". "Active on" replaces the month picker, because a target can now be any range.<span class="ruling">Owner ruling 26 Sep (Lavish), L3</span><span class="ref">S1-18</span></div></li>
 </ol></div>
 </div>
@@ -183,7 +189,7 @@ tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
   <div class="m-head"><div class="m-row" style="align-items:center"><b style="font-size:17px">Sales targets</b><span class="btn sm pri">+ Set target</span></div>
     <div style="margin-top:8px"><span class="btn sm">Active on: 15 Oct 2026 &#9662;</span></div>
     <div class="tabs" style="margin:10px 0 0;gap:14px"><span class="on">Teams</span><span>Agents</span><span>Dealers</span></div></div>
-  <div class="m-line"><span class="nm"><b>North</b> <span class="pill">North FY26 H2</span><span class="pill more">+1</span></span><span class="badge">82%</span></div>
+  <div class="m-line"><span class="nm"><b>North</b> <span class="pill">North FY26 H2</span><span class="pill more">+1</span></span><span class="badge">85%</span></div>
   <div class="m-line"><span class="nm"><b>South</b> <span class="muted">No target</span></span><span class="btn sm pri">Set target</span></div>
   <div class="m-line"><span class="nm muted">No team &middot; 1 agent</span><span class="muted">&rsaquo;</span></div>
   <div class="m-line"><span class="nm muted"><i>Unassigned</i></span><span class="muted">RM 6,540</span></div>
@@ -197,7 +203,7 @@ tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
 <div class="layout">
 <div class="scroll"><div class="frame w1280"><div class="main">
   <div class="ph">
-    <div><h3>North <span class="badge ok">Active</span> <span class="co n">N5</span></h3><div class="meta-strip"><span>2 agents</span><span>Created 26 Sep 2026</span><span>Updated 30 Sep 2026</span></div></div>
+    <div><h3>North <span class="badge ok">Active</span> <span class="co n">N5</span></h3><div class="meta-strip"><span>2 agents</span><span>1 left this period</span><span>Created 26 Sep 2026</span><span>Updated 30 Sep 2026</span></div></div>
     <div class="toolbar" style="margin:0"><span class="btn">&lsaquo; Prev</span><span class="btn">Next &rsaquo;</span><span class="btn">Edit</span><span class="btn">&hellip;</span><span class="btn pri">+ Set target</span></div>
   </div>
   <div class="sec"><div class="sh">Team targets <span class="muted" style="font-weight:400">active on 15 Oct 2026</span></div>
@@ -205,7 +211,7 @@ tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
       <colgroup><col style="width:200px"><col style="width:170px"><col style="width:130px"><col style="width:120px"><col style="width:120px"><col style="width:80px"><col style="width:110px"><col style="width:50px"></colgroup>
       <thead><tr><th>Target</th><th>Measures</th><th>Ends</th><th class="n">Target</th><th class="n">Achieved</th><th>%</th><th class="n">Team pool</th><th></th></tr></thead>
       <tbody>
-        <tr><td>North FY26 H2</td><td><span class="pill">Amount</span><span class="pill more">+2</span></td><td>31 Mar 2027</td><td class="n">RM 300,000</td><td class="n">RM 246,720</td><td><span class="badge">82%</span></td><td class="n">RM 2,467</td><td><span class="btn sm">&hellip;</span></td></tr>
+        <tr><td>North FY26 H2</td><td><span class="pill">Amount</span><span class="pill more">+2</span></td><td>31 Mar 2027</td><td class="n">RM 300,000 <span class="co n r5">T3</span></td><td class="n">RM 255,020</td><td><span class="badge">85%</span></td><td class="n">RM 2,550</td><td><span class="btn sm">&hellip;</span></td></tr>
         <tr><td>North taps October</td><td><span class="pill">Quantity</span><span class="pill more">+2</span></td><td>31 Oct 2026</td><td class="n">400 units</td><td class="n">310 units</td><td><span class="badge">78%</span></td><td class="n muted">-</td><td><span class="btn sm">&hellip;</span></td></tr>
       </tbody>
     </table>
@@ -217,6 +223,7 @@ tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
       <tbody>
         <tr><td>ALI - Ali Hassan</td><td><span class="pill">FY26 H2</span><span class="pill more">+1</span></td><td class="n">RM 150,000</td><td class="n">RM 158,420</td><td><span class="badge ok">106%</span></td><td class="n">RM 12,500</td><td class="n">RM 3,837</td><td><span class="btn sm">&hellip;</span></td></tr>
         <tr><td>MEI - Tan Mei Ling</td><td><span class="pill">FY26 H2</span></td><td class="n">RM 120,000</td><td class="n">RM 88,300</td><td><span class="badge">74%</span></td><td class="n">RM 41,000</td><td class="n">RM 1,766</td><td><span class="btn sm">&hellip;</span></td></tr>
+        <tr class="muted"><td class="muted">KIM - Kim Tan <span class="badge warn">Left 14 Oct</span> <span class="co n r5">T2</span></td><td><span class="pill n">FY26 H2</span></td><td class="n muted">RM 30,000</td><td class="n muted">RM 19,100</td><td><span class="badge">64%</span></td><td class="n muted">-</td><td class="n muted">RM 382</td><td><span class="btn sm">&hellip;</span></td></tr>
       </tbody>
     </table>
   </div>
@@ -225,16 +232,18 @@ tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
   <div class="m-head"><div class="m-row" style="align-items:center"><b style="font-size:17px">North</b><span class="btn sm pri">+ Set target</span></div><div class="meta-strip"><span class="badge ok">Active</span><span>2 agents</span></div>
     <div style="display:flex;gap:6px;margin-top:8px"><span class="btn sm">&lsaquo;</span><span class="btn sm">&rsaquo;</span><span class="btn sm">Edit</span><span class="btn sm">&hellip;</span></div></div>
   <div class="m-line" style="background:#fafafa"><b>Team targets</b></div>
-  <div class="m-line"><span class="nm">North FY26 H2</span><span class="badge">82%</span></div>
+  <div class="m-line"><span class="nm">North FY26 H2</span><span class="badge">85%</span></div>
   <div class="m-line"><span class="nm">North taps October</span><span class="badge">78%</span></div>
   <div class="m-line" style="background:#fafafa"><b>Agents</b><span class="btn sm">+ Add agents</span></div>
   <div class="m-line"><span class="nm">ALI - Ali Hassan <span class="pill">FY26 H2</span><span class="pill more">+1</span></span><span class="badge ok">106%</span></div>
   <div class="m-line"><span class="nm">MEI - Tan Mei Ling <span class="pill">FY26 H2</span></span><span class="badge">74%</span></div>
+  <div class="m-line"><span class="nm muted">KIM - Kim Tan <span class="badge warn">Left 14 Oct</span></span><span class="badge">64%</span></div>
 </div>
 <div class="notes"><ol>
   <li><span class="co n">N5</span><div><b>The team's own page.</b> Its targets first, then its agents and each agent's targets, one line each. Click an agent or a target pill to open that target's page (frame 6). Set target here presets North. Edit changes the name in place and adds a remove control on each agent row; nothing moves. Prev and next go to the next team.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N5</span><span class="ref">J13 &middot; S6-13, S1-22</span></div></li>
   <li><span class="co n">N4</span><div><b>Measures fold into one pill.</b> "Amount +2" hides Ordered and All products; clicking the pill shows all three. Ali's "+1" is his Basins push target.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N4</span><span class="ref">S1-21</span></div></li>
-  <li><span class="co">23</span><div><b>A team achieves exactly what its agents' orders add up to.</b> RM 246,720 = Ali's RM 158,420 + Mei's RM 88,300, counted under the team target's own metric, basis and products.<span class="ruling">Owner ruling 26 Sep (Lavish), L2</span><span class="ref">S6-5</span></div></li>
+  <li><span class="co">23</span><div><b>A team achieves exactly what its agents' orders add up to.</b> <span class="gone">RM 246,720 = Ali's RM 158,420 + Mei's RM 88,300</span>. Round 5: RM 255,020 = Ali's RM 158,420 + Mei's RM 88,300 + Kim's RM 8,300 from 1 to 14 Oct, counted under the team target's own metric, basis and products.<span class="ruling">Owner ruling 26 Sep (Lavish), L2</span><span class="ref">S6-5</span></div></li>
+  <li><span class="co n r5">T2</span><div><b>A move has a date.</b> Kim moved to South on 15 Oct. North keeps Kim's orders up to 14 Oct (RM 8,300 of Kim's RM 19,100); South counts Kim's orders from 15 Oct. Kim's line stays here, muted with "Left 14 Oct", so North's figure is explained. Kim's own target (RM 30,000, set as part of North's) keeps its figure, so North's target is still RM 300,000.<span class="ruling r5">Owner ruling 26 Sep 06:09, T2, T3</span><span class="ref">S6-14, S6-15, S1-28</span></div></li>
   <li><span class="co">24</span><div><b>Empty states.</b> A team with no target shows "No team target" and Set target; a team with no agents shows "No agents in this team" and Add agents. Both sections always render.<span class="ref">S6-13 &middot; ADR product standards</span></div></li>
 </ol></div>
 </div>
@@ -287,6 +296,7 @@ tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
   <div class="f"><label>Agents</label><div class="dd"><span><span class="pill">ALI - Ali Hassan &times;</span><span class="pill">MEI - Tan Mei Ling &times;</span><span class="pill more">+1</span></span></div>
     <div class="menu"><div class="on">SEAN I - Sean Lee <span class="muted">(now in Central)</span></div><div>RAJ - Raj Kumar <span class="muted">(no team)</span></div></div>
     <div class="hint">Sean moves from Central to North when you save. An agent is in one team at a time.</div></div>
+  <div class="f"><label>Moves on <span class="co n r5">T2</span></label><div class="inp">15/10/2026</div><div class="hint">Sean's orders from this day count for North; earlier ones stay with Central.</div></div>
   <div class="f"><label>Active</label><div><span class="sw on"></span>Active</div></div>
   <div class="foot"><span class="btn">Cancel</span><span class="btn pri">Save</span></div>
 </div></div>
@@ -294,7 +304,8 @@ tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
   <li><span class="co n">N2</span><div><b>Built like our Users &amp; Access &gt; Teams page.</b> Same concept: a list with search and one button to add, one modal to create or edit, and a page per team (frame 3) listing its members with Add agents. It holds sales agents instead of CRM users, has no parent teams (no drag to nest), and uses the new sales teams table (round 3 T1).<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N2</span><span class="ref">J13 &middot; S6-12 &middot; plan 3.8</span></div></li>
   <li><span class="co n">N4</span><div><b>One line per team.</b> Five agents show as two pills and "+3".<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N4</span><span class="ref">S1-21</span></div></li>
   <li><span class="co n">N8</span><div><b>Agents is our standard multi-select dropdown,</b> each option labelled with the team the agent is in now.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N8</span><span class="ref">S6-12</span></div></li>
-  <li><span class="co">28</span><div><b>Moving an agent moves their history.</b> A team's figures follow who is in it now (round 3 T2).<span class="ref">S6-2, S6-6</span></div></li>
+  <li><span class="co">28</span><div><b><span class="gone">Moving an agent moves their history.</span></b> <span class="gone">A team's figures follow who is in it now (round 3 T2).</span><span class="ref">S6-2, S6-6</span></div></li>
+  <li><span class="co n r5">T2</span><div><b>Only orders after the move go to the new team.</b> "Moves on" appears when a picked agent is in another team, default today. Orders dated from that day count for North; earlier ones stay with Central. An agent's first team counts from the beginning (round 5 question V1).<span class="ruling r5">Owner ruling 26 Sep 06:09, T2</span><span class="ref">S6-14, S6-15</span></div></li>
 </ol></div>
 </div>
 
@@ -302,7 +313,7 @@ tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
 <div class="layout">
 <div class="scroll"><div class="frame w1280"><div class="main">
   <div class="ph">
-    <div><h3>TGT-000014 FY26 H2 <span class="co n">N5</span></h3><div class="meta-strip"><span>For <a>ALI - Ali Hassan</a> (North)</span><span>Created 26 Sep 2026</span><span>Updated 1 Oct 2026</span></div></div>
+    <div><h3>TGT-000014 FY26 H2 <span class="co n">N5</span></h3><div class="meta-strip"><span>For <a>ALI - Ali Hassan</a> (North)</span><span>Part of <a>North FY26 H2</a> <span class="co n r5">T3</span></span><span>Created 26 Sep 2026</span><span>Updated 1 Oct 2026</span></div></div>
     <div class="toolbar" style="margin:0"><span class="btn">&lsaquo; Prev</span><span class="btn">Next &rsaquo;</span><span class="btn">Duplicate</span><span class="btn">&hellip;</span><span class="btn pri">Edit</span></div>
   </div>
   <div class="sec"><div class="sh">Target</div><div class="sb kv"><div><div class="l">Target for</div>Agent</div><div><div class="l">Who</div>ALI - Ali Hassan</div><div><div class="l">Name</div>FY26 H2</div></div></div>
@@ -341,6 +352,7 @@ tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
 <div class="notes"><ol>
   <li><span class="co n">N5</span><div><b>The target's own page holds every detail</b> the list leaves out: number, subject, what counts, dates, each period's figure and result, and commission. Edit turns the same fields into inputs in place (December's RM 110,000 was edited here), in the same order. Duplicate starts a copy the day after this one ends. Delete is a countdown, no dialog.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N3, N4, N5</span><span class="ref">J14 &middot; S1-23</span></div></li>
   <li><span class="co n">N6</span><div><b>Dates are a plain range.</b> Start date and end date. Split is optional: here every 1 month, so each month has its own figure. With the split off there is one period, the whole range.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N6, N7</span><span class="ref">S1-19, S1-25 &middot; round 4 Q1</span></div></li>
+  <li><span class="co n r5">T3</span><div><b>Ali's figure is his line of North's target.</b> What counts, the dates and the split are set on North FY26 H2 and shown here read-only; Ali's figures (December's RM 110,000) and his commission tiers are his own and edited here.<span class="ruling r5">Owner ruling 26 Sep 06:09, T3</span><span class="ref">S1-28, S4-12</span></div></li>
   <li><span class="co n">N9</span><div><b>How tiers pay</b> is a standard dropdown (frame 7); here its chosen value is shown read-only.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N9</span><span class="ref">S4-11</span></div></li>
 </ol></div>
 </div>
@@ -356,7 +368,7 @@ tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
   <div class="f"><label>Name</label><div class="inp">Basins push</div></div>
   <div class="three">
     <div class="f"><label>Metric</label><div class="dd">Quantity</div></div>
-    <div class="f"><label>Counts</label><div class="dd">Delivered</div></div>
+    <div class="f"><label>Counts <span class="co n r5">R3</span></label><div class="dd">Delivered (by DO date)</div></div>
     <div class="f"><label>Applies to</label><div class="dd">Categories</div></div>
   </div>
   <div class="f"><label>Categories</label><div class="dd"><span><span class="pill">Basins &times;</span><span class="pill">Vanity cabinets &times;</span></span></div><div class="hint">Sub-categories are included.</div></div>
@@ -366,7 +378,7 @@ tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
   </div>
   <div class="f"><label>Target per period (units)</label><div class="inp">300</div><div class="hint">3 periods: 1 to 31 Oct, 1 to 30 Nov, 1 to 15 Dec. Each can be changed on the target's page.</div></div>
   <h5>Commission</h5>
-  <div class="f"><label>How tiers pay <span class="co n">N9</span></label><div class="dd">Higher rate above each threshold only</div>
+  <div class="f"><label>How tiers pay <span class="co n">N9</span> <span class="co n r5">R5</span></label><div class="dd">Higher rate above each threshold only</div>
     <div class="menu"><div>None</div><div class="on">Higher rate above each threshold only</div><div>Highest rate on everything</div></div></div>
   <table style="margin-bottom:8px">
     <colgroup><col><col><col><col style="width:40px"></colgroup>
@@ -380,8 +392,54 @@ tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
   <li><span class="co n">N8</span><div><b>Every choice is our standard dropdown</b> (the searchable select used across the CRM): Target for, who, Metric, Counts, Applies to and the split unit. No more button strips.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N8</span><span class="ref">S1-24</span></div></li>
   <li><span class="co n">N6</span><div><b>Just a date range.</b> Pick the first and last day. A week, a month, 2.5 months (as here) or a year are all the same field. "Starts" and "Runs for (months)" are gone.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N6</span><span class="ref">S1-19, S1-25</span></div></li>
   <li><span class="co n">N7</span><div><b>No fixed quarter.</b> "One per quarter" is gone. Split is off by default (one figure for the whole range). Turn it on only if you want a figure per week, per month or per any N days, weeks or months; the last period is cut at the end date (here 1 to 15 Dec). Round 4 Q1 asks whether you want this option at all.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N7</span><span class="ref">S1-19 &middot; Q1</span></div></li>
+  <li><span class="co n r5">R3</span><div><b>Delivered counts by DO date.</b> Once the DO integration (from Monday 28 Sep) links each delivery order line to its sales order line, a delivery counts in the period its DO is dated. Until then, and for anything AutoCount shows as delivered with no linked DO, it counts by the order date as before. Nothing to switch.<span class="ruling r5">Owner ruling 26 Sep 06:09, R3</span><span class="ref">S1-26 &middot; plan 3.2</span></div></li>
+  <li><span class="co n r5">R5</span><div><b>Both ways of paying a higher tier ship now.</b> "Higher rate above each threshold only" is the default; "Highest rate on everything" can be picked on any target.<span class="ruling r5">Owner ruling 26 Sep 06:09, R5, T5</span><span class="ref">S4-4, S4-12</span></div></li>
   <li><span class="co n">N9</span><div><b>How tiers pay is a dropdown</b> with the same three choices.<span class="ruling">Owner ruling 26 Sep 06:01 (Lavish), N9</span><span class="ref">S4-11</span></div></li>
   <li><span class="co">22</span><div><b>Opened from the header</b>, Target for is preset to the tab (Team on the landing); opened from a "No target" row or a team page, the subject is filled in and fixed.<span class="ruling">Owner ruling 26 Sep (Lavish), L2, L3</span><span class="ref">S1-18</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="frame-title">7b. Set target for a team: each agent's figure, added up (S1, round 5)</h2>
+<div class="layout">
+<div class="frame w640"><div class="modal">
+  <h4>Set target</h4>
+  <div class="two">
+    <div class="f"><label>Target for</label><div class="dd">Team</div></div>
+    <div class="f"><label>Sales team</label><div class="dd">North</div></div>
+  </div>
+  <div class="f"><label>Name</label><div class="inp">North FY26 H2</div></div>
+  <div class="three">
+    <div class="f"><label>Metric</label><div class="dd">Amount (RM)</div></div>
+    <div class="f"><label>Counts</label><div class="dd">Ordered</div></div>
+    <div class="f"><label>Applies to</label><div class="dd">All products</div></div>
+  </div>
+  <div class="two">
+    <div class="f"><label>Dates</label><div class="inp">01/10/2026 - 31/03/2027</div></div>
+    <div class="f"><label>Split</label><div style="display:flex;gap:6px;align-items:center"><span class="sw on"></span>every <span class="inp" style="width:52px;min-height:0;padding:5px 8px">1</span><span class="dd clear" style="flex:1">month</span></div></div>
+  </div>
+  <h5>Agents <span class="co n r5">T3</span></h5>
+  <table style="margin-bottom:6px">
+    <colgroup><col><col style="width:200px"></colgroup>
+    <thead><tr><th>Agent</th><th class="n">Target per period (RM)</th></tr></thead>
+    <tbody>
+      <tr><td>ALI - Ali Hassan</td><td class="n">150,000</td></tr>
+      <tr><td>MEI - Tan Mei Ling</td><td class="n">120,000</td></tr>
+      <tr><td>KIM - Kim Tan</td><td class="n">30,000</td></tr>
+    </tbody>
+  </table>
+  <div class="m-row" style="padding:8px 10px;background:var(--grey-soft);border-radius:6px"><b>Team target per period</b><b>RM 300,000</b></div>
+  <div class="hint">6 periods, 1 Oct 2026 to 31 Mar 2027.</div>
+  <h5>Commission</h5>
+  <div class="two">
+    <div class="f"><label>Team pool tiers</label><div class="dd">Higher rate above each threshold only</div></div>
+    <div class="f"><label>Agent tiers</label><div class="dd">Highest rate on everything</div></div>
+  </div>
+  <div class="foot"><span class="btn">Cancel</span><span class="btn pri">Save</span></div>
+</div></div>
+<div class="notes"><ol>
+  <li><span class="co n r5">T3</span><div><b>You type each agent's figure; the team's is their total.</b> Picking a team lists its agents with a figure each. The team target underneath adds them up as you type and cannot be typed over. Saving makes North's target plus one target per agent, all with the same dates, products and split. Recommended: no separate team figure, so the two can never disagree; a stretch goal above the total is a second team target.<span class="ruling r5">Owner ruling 26 Sep 06:09, T3</span><span class="ref">S1-27, S1-28 &middot; plan 3.8</span></div></li>
+  <li><span class="co n r5">T3</span><div><b>An agent who joins later</b> shows on North's page as "No figure yet" with Add figure, which adds to the total. Changing an agent's December figure on their own page changes North's December too.<span class="ruling r5">Owner ruling 26 Sep 06:09, T3</span><span class="ref">S1-28</span></div></li>
+  <li><span class="co n r5">R5</span><div><b>Two tier tables.</b> Team pool tiers pay the team's pool on the total (round 3 T4). Agent tiers are copied to each agent's target and can be changed per agent afterwards. Either can be "Highest rate on everything".<span class="ruling r5">Owner ruling 26 Sep 06:09, R5, T4</span><span class="ref">S4-12</span></div></li>
 </ol></div>
 </div>
 

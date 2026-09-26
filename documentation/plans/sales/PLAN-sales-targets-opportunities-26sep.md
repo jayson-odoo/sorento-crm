@@ -438,11 +438,13 @@ mapped AutoCount DOs onto these two tables
 - **The rule, one expression, no switch.** For each sales order line in scope:
   - **by DO:** the sum of linked, non-cancelled DO line quantities whose DO date is inside the
     period;
-  - **plus the residual:** `greatest(least(qty_delivered, qty_ordered) - all_linked_do_qty, 0)`,
+  - **plus the residual:** `greatest(least(qty_delivered, qty_ordered) - all_linked_do_qty, 0)`
+    (`all_linked_do_qty` = every non-cancelled linked DO line, whatever its date),
     the part AutoCount says has gone out but no linked DO line explains, counted by the sales
     order's `order_date` exactly as round 2 R3 did;
   - capped so the line's total across all periods never exceeds `qty_ordered` (the round 2
-    over-delivery rule, S1-8).
+    over-delivery rule, S1-8): linked DO quantities count in DO date order (a running sum over
+    the line's DO lines) until `qty_ordered` is reached, and the rest counts nowhere.
   - Amount = `round(line_total x counted_qty / qty_ordered, 2)`, 0 when `qty_ordered = 0`
     (unchanged).
 - **Interim, until DO data arrives.** With no linked DO lines, every line's DO sum is 0 and the

@@ -218,8 +218,9 @@ WhatsApp message; the **dealer**, who may receive a WhatsApp message.
   non-cancelled DOs (`orders.is_cancelled` false) linked to the line through
   `order_lines.sales_order_line_id` whose `orders.order_date` (the DO date) is inside the period,
   plus (b), only when the sales order's `order_date` is inside the period, the residual
-  `greatest(least(qty_delivered, qty_ordered) - all linked DO quantity, 0)`; the line's total
-  over all periods never exceeds `qty_ordered`. Amount = `round(line_total x quantity /
+  `greatest(least(qty_delivered, qty_ordered) - all linked non-cancelled DO quantity, 0)`; the
+  line's total over all periods never exceeds `qty_ordered` (linked DO quantities count in DO
+  date order until `qty_ordered` is reached, the rest counts nowhere). Amount = `round(line_total x quantity /
   qty_ordered, 2)`. With no linked DO line this is exactly the round 2 figure above.
 - **Team target figure** (round 5, Owner ruling 26 Sep 06:09, T3): each team period's target is
   the sum of the same-dated periods of the agent targets whose `parent_target_id` is that team
@@ -371,7 +372,8 @@ WhatsApp message; the **dealer**, who may receive a WhatsApp message.
   10,000 (the round 2 figure); (b) DO lines linked to it of 40 dated 5 Oct and 30 dated 3 Nov:
   October counts 40 units / RM 4,000, November 30, and September keeps the residual 30 / RM
   3,000; (c) the 3 Nov DO cancelled: November counts 0 and September's residual becomes 60;
-  (d) linked DO lines adding to 120 on a line of 100: never more than 100 across all periods.
+  (d) linked DO lines of 70 on 5 Oct and 50 on 3 Nov on a line of 100: October 70, November 30,
+  never more than 100 across all periods.
   An order line with a linked DO and a DO free-text salesman different from the order's agent
   still counts for the order's agent. Amount and quantity metrics, agent, team and dealer
   subjects all use this rule.
