@@ -50,6 +50,7 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
       is_active: true,
       access_levels: [],
       flows_to_purchasing: true,
+      is_searchable: true,
     },
     mode: 'onTouched',
   });
@@ -67,6 +68,7 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
         is_active: brand.is_active,
         access_levels: brand.access_levels ?? [],
         flows_to_purchasing: brand.flows_to_purchasing,
+        is_searchable: brand.is_searchable ?? true,
       });
     }
   }, [brand, isEditMode, form]);
@@ -84,6 +86,7 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
         is_active: data.is_active,
         access_levels: data.access_levels ?? [],
         flows_to_purchasing: data.flows_to_purchasing,
+        is_searchable: data.is_searchable,
       };
       
       if (isEditMode && brandId) {
@@ -96,7 +99,7 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
       } else {
         router.push('/master-data-management/brands');
       }
-    } catch (error) {
+    } catch {
       // Error is handled by the mutation hook
     }
   };
@@ -242,6 +245,30 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
                   <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
                     <div className="space-y-0.5">
                       <FormLabel className="text-base">Flows to purchasing</FormLabel>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="is_searchable"
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                    <div className="space-y-0.5">
+                      <FormLabel className="text-base">
+                        Customers can ask for this brand
+                      </FormLabel>
+                      <FormDescription>
+                        Off for a placeholder brand like Others or No logo, which nobody
+                        ever names in a search.
+                      </FormDescription>
                     </div>
                     <FormControl>
                       <Switch

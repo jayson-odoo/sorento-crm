@@ -26,14 +26,9 @@ import {
   patchWorklistRows,
   WORKLIST_KEY,
 } from '../../spec-verification/hooks/useSpecVerification';
-import {
-  SpecVerifyConflictError,
-  unverifySpec,
-  verifySpec,
-} from '../../spec-verification/services/specVerificationService';
+import { SpecVerifyConflictError, verifySpec } from '../../spec-verification/services/specVerificationService';
 import type {
   SpecVerificationWorklistResponse,
-  UnverifyBulkResult,
   VerifyBulkResult,
 } from '../../spec-verification/types/specVerification.types';
 
@@ -75,9 +70,9 @@ export interface UseProductSpecTableResult {
   refetch: () => void;
   /** Verify this code, echoing the hash the tab was rendered against (AC-D.4). */
   verify: () => void;
-  /** Withdraw the stamp. The tab asks first (AC-D.25). */
-  unverify: () => void;
-  /** A verify or an unverify is in flight. */
+  /** A verify is in flight. Unverify is a server-deferred action of its own
+   * (`spec_verification.unverify`, D7) - the tab wires `useDeferredAction`
+   * directly rather than routing it through this hook. */
   verificationBusy: boolean;
   setValue: (specKey: string, value: SpecScalar) => Promise<void>;
   tombstone: (specKey: string) => Promise<void>;
@@ -221,7 +216,7 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
    * together.
    */
   const patchWorklistRow = useCallback(
-    (result: VerifyBulkResult | UnverifyBulkResult) => {
+    (result: VerifyBulkResult) => {
       queryClient.setQueriesData<SpecVerificationWorklistResponse>(
         { queryKey: [WORKLIST_KEY] },
         (old) => patchWorklistRows(old, [result]),
@@ -248,18 +243,6 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
       }
       toast.error(error.message, { duration: 10_000 });
     },
-  });
-
-  const unverifyMutation = useMutation({
-    mutationFn: () => unverifySpec({ product_code: productCode }),
-    onSuccess: (result) => {
-      patchWorklistRow(result);
-      invalidateVerification();
-      toast.success(
-        result.outcome === 'unverified' ? 'Verification withdrawn' : 'Nothing to withdraw',
-      );
-    },
-    onError: (error: Error) => toast.error(error.message, { duration: 10_000 }),
   });
 
   const createKeyMutation = useMutation({
@@ -319,7 +302,6 @@ export function useProductSpecTable(productId: string): UseProductSpecTableResul
     },
     checkSimilarKey: (label) => getSimilarSpecKey(label),
     verify: () => verifyMutation.mutate(detailQuery.data?.values_hash ?? ''),
-    unverify: () => unverifyMutation.mutate(),
-    verificationBusy: verifyMutation.isPending || unverifyMutation.isPending,
+    verificationBusy: verifyMutation.isPending,
   };
 }

@@ -1105,6 +1105,63 @@ register(
     )
 )
 
+def _remove_spec_rule(db: Session, payload: dict):
+    from app.services.product_spec_registry import remove_rule
+
+    # Keyed by the spec key: the rule has no id of its own, so the payload carries the
+    # builder it is (#1286, D8: removing a rule is the way back from a mistake).
+    return remove_rule(db, _entity_id(payload), payload.get("builder") or {})
+
+
+def _remove_spec_value(db: Session, payload: dict):
+    from app.services.product_spec_registry import remove_value
+
+    return remove_value(db, _entity_id(payload), payload.get("value"))
+
+
+def _remove_spec_word(db: Session, payload: dict):
+    from app.services.product_spec_registry import remove_word
+
+    return remove_word(db, _entity_id(payload), payload.get("value"), payload.get("word"))
+
+
+# Reversible, all three: a rule, a choice or a word can be added back on the same
+# screen, and a shipped choice or word is only suppressed (D13). Parked against the
+# spec key; the entity type names the thing being removed as well, so a key's prefix is
+# one of its entity types like every other record action.
+register(
+    FormAction(
+        key="spec_rule.remove",
+        entity_types=("spec_key", "spec_rule"),
+        execute=_remove_spec_rule,
+        window=WINDOW_REVERSIBLE,
+        permission="master_data.spec_registry.edit",
+        label="Remove rule",
+    )
+)
+
+register(
+    FormAction(
+        key="spec_value.remove",
+        entity_types=("spec_key", "spec_value"),
+        execute=_remove_spec_value,
+        window=WINDOW_REVERSIBLE,
+        permission="master_data.spec_registry.edit",
+        label="Remove choice",
+    )
+)
+
+register(
+    FormAction(
+        key="spec_word.remove",
+        entity_types=("spec_key", "spec_word"),
+        execute=_remove_spec_word,
+        window=WINDOW_REVERSIBLE,
+        permission="master_data.spec_registry.edit",
+        label="Remove word",
+    )
+)
+
 register(
     FormAction(
         key="stock_visibility_policy.remove",

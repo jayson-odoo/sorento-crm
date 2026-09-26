@@ -180,7 +180,8 @@ def api():
         app.dependency_overrides.clear()
 
 
-_ONE_ROW = [{"match": "regex", "pattern": r"\((\d+)MM\)", "capture": 1}]
+# "The number between ( and MM" - a rule is its builder (#1286, D5).
+_ONE_ROW = [{"builder": {"kind": "number", "after": ["("], "before": ["MM"]}}]
 
 
 # --------------------------------------------------------------------------- #
@@ -199,7 +200,7 @@ def test_try_by_product_id_reads_every_row(api):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["description"] == "MARBLE TOP BASIN (800MM)"
-    assert body["reads"] == [{"index": 0, "value": 800, "evidence": "(800MM)"}]
+    assert body["reads"] == [{"index": 0, "value": 800, "evidence": "(800MM"}]
     assert body["winner_index"] == 0
 
 
@@ -216,7 +217,7 @@ def test_try_by_text_reads_the_pasted_text_not_a_product(api):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["description"] == "MARBLE TOP BASIN (800MM)"
-    assert body["reads"] == [{"index": 0, "value": 800, "evidence": "(800MM)"}]
+    assert body["reads"] == [{"index": 0, "value": 800, "evidence": "(800MM"}]
     assert body["winner_index"] == 0
 
 
@@ -229,8 +230,8 @@ def test_try_every_row_reads_nothing_when_nothing_matches(api):
         db, "WASH DOWN CLOSE COUPLED WATER CLOSET S-TRAP:300MM"
     )
     two_rows = [
-        {"match": "regex", "pattern": r"\((\d+)MM\)", "capture": 1},
-        {"match": "contains", "pattern": "RIMLESS", "value": True},
+        _ONE_ROW[0],
+        {"builder": {"kind": "words", "words": ["RIMLESS"], "value": True}},
     ]
 
     response = client.post(
@@ -246,7 +247,7 @@ def test_try_every_row_reads_nothing_when_nothing_matches(api):
 
 
 def test_try_a_from_field_row_reads_nothing_from_pasted_text(api):
-    """AC-B.1: pasted text has no product to read a `from_field` row from."""
+    """AC-B.1: pasted text has no product to read a Product rule from."""
     db, _as = api
     _as(_VIEWER)
     client = TestClient(app)
@@ -256,7 +257,7 @@ def test_try_a_from_field_row_reads_nothing_from_pasted_text(api):
         f"{_BASE}/zzt_length/try",
         json={
             "text": "MARBLE TOP BASIN (800MM)",
-            "rules": [{"match": "from_field", "pattern": "column:dimensions_length"}],
+            "rules": [{"builder": {"kind": "product", "fact": "length"}}],
         },
     )
     assert response.status_code == 200, response.text
@@ -318,7 +319,7 @@ def test_try_refuses_a_malformed_rule_naming_the_row(api):
 
     response = client.post(
         f"{_BASE}/zzt_length/try",
-        json={"text": "anything", "rules": [{"match": "not_a_kind", "pattern": "x"}]},
+        json={"text": "anything", "rules": [{"builder": {"kind": "not_a_kind"}}]},
     )
     assert response.status_code == 400, response.text
     assert "Rule 1" in response.json()["message"]
@@ -338,10 +339,8 @@ def test_try_422s_a_builder_pattern_mismatch_naming_the_row(api):
             "text": "anything",
             "rules": [
                 {
-                    "match": "regex",
                     "pattern": "this does not match the builder",
-                    "capture": 1,
-                    "builder": {"kind": "number_after", "word": "L"},
+                    "builder": {"kind": "number", "after": ["L"]},
                 }
             ],
         },
@@ -417,7 +416,7 @@ def test_preview_refuses_a_malformed_rule_naming_the_row(api):
 
     response = client.post(
         f"{_BASE}/zzt_length/preview",
-        json={"rules": [{"match": "not_a_kind", "pattern": "x"}]},
+        json={"rules": [{"builder": {"kind": "not_a_kind"}}]},
     )
     assert response.status_code == 400, response.text
     assert "Rule 1" in response.json()["message"]
@@ -445,7 +444,7 @@ def test_preview_enqueues_a_job_without_running_it_inline(api, monkeypatch):
     assert response.status_code == 200, response.text
     assert response.json() == {"jobId": "zzt-fake-job"}
     assert started["spec_key"] == "zzt_length"
-    assert started["rules"][0]["pattern"] == r"\((\d+)MM\)"
+    assert started["rules"] == [{"builder": {"kind": "number", "after": ["("], "before": ["MM"]}}]
 
 
 def test_preview_job_reports_pending_before_it_finishes(api, monkeypatch):

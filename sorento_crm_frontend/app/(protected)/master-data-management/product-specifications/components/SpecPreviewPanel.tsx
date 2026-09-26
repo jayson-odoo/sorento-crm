@@ -89,7 +89,7 @@ export default function SpecPreviewPanel({
     <div className="flex flex-col gap-2 rounded-md border bg-muted/10 p-3">
       <div className="flex items-center justify-between gap-2">
         <div className="text-xs uppercase tracking-wide text-muted-foreground">
-          Preview on catalogue
+          See what would change
         </div>
         <Button
           size="sm"
@@ -99,10 +99,10 @@ export default function SpecPreviewPanel({
         >
           {status === 'pending' ? (
             <>
-              <Loader2 className="size-3.5 animate-spin" /> Running...
+              <Loader2 className="size-3.5 animate-spin" /> Checking...
             </>
           ) : (
-            'Preview on catalogue'
+            'See what would change'
           )}
         </Button>
       </div>
@@ -149,7 +149,7 @@ export default function SpecPreviewPanel({
 
       {status === 'idle' && (
         <p className="text-xs text-muted-foreground">
-          Check how many products this ordering would change before saving it.
+          See how many products this rule would change before saving it.
         </p>
       )}
     </div>

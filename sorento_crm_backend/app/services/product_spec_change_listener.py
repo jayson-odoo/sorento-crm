@@ -70,6 +70,10 @@ DERIVATION_INPUTS = (
     "dimensions_length",
     "dimensions_width",
     "dimensions_height",
+    # Not a derivation input any more (the Brand specification is gone, #1286), but the
+    # rendered sentence search matches still leads with the brand field, so a re-brand
+    # has to re-render it.
+    "brand_id",
 )
 
 
@@ -194,7 +198,13 @@ def rederive_codes(codes: set[str]) -> None:
         return
     if len(codes) > INLINE_REDERIVE_LIMIT and _enqueue_rederive(codes):
         return
-    _rederive_inline(codes)
+    # `_rederive_inline` never raises on its own, but this runs inside a commit hook and
+    # from a save that already committed, so the promise is kept here as well: a
+    # post-commit side effect that raises would fail an operation that succeeded.
+    try:
+        _rederive_inline(codes)
+    except Exception:  # noqa: BLE001 - see above
+        logger.warning("spec re-derivation failed for %s", sorted(codes), exc_info=True)
 
 
 def register_product_spec_listeners() -> None:

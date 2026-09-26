@@ -2,20 +2,19 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
-import {
-  createSpecKey,
-  rereadCatalogue,
-  updateSpecKey,
-} from '../services/productSpecService';
-import type { SpecRegistryKey } from '../types/productSpec.types';
-import { CATALOGUE_STATUS_QUERY_KEY } from './useCatalogueStatusQuery';
+import { createSpecKey, updateSpecKey } from '../services/productSpecService';
+import type { SpecRegistryKey, SpecRegistryKeyUpdateResult } from '../types/productSpec.types';
 import { SPEC_REGISTRY_QUERY_KEY } from './useSpecRegistryQuery';
 
 /**
- * The registry mutations both routes need: create and reread from the list (S1),
- * update from the record page (S2). `update` is the low-level PATCH -
- * `useSpecKeyRecord` is what turns an edit session's draft into the one call B.2
- * promises.
+ * The registry mutations both routes need: create from the list (S1), update
+ * from the record page (S2). `update` is the low-level PATCH - `useSpecKeyRecord`
+ * is what turns an edit session's draft into the one call B.2 promises.
+ *
+ * No catalogue-wide reread here (D10, owner ruling 27 Sep 2026): saving a rule
+ * re-reads exactly the products it changes by itself, so nothing on screen ever
+ * presses one. `rereadCatalogue` in the service stays for support use only, with
+ * no button anywhere calling it.
  *
  * No `delete` here: B.6 runs Delete through the deferred-action engine
  * (`hooks/useDeferredAction`), the same pattern every other record's gear uses -
@@ -35,19 +34,8 @@ export function useSpecRegistryMutations() {
     },
   });
 
-  const reread = useMutation<{ status: string }, Error, void>({
-    mutationFn: () => rereadCatalogue(),
-    onSuccess: () => {
-      toast.success('Reading the catalogue again');
-      queryClient.invalidateQueries({ queryKey: CATALOGUE_STATUS_QUERY_KEY });
-    },
-    onError: (error) => {
-      toast.error(error.message || 'Could not start reading the catalogue');
-    },
-  });
-
   const update = useMutation<
-    SpecRegistryKey,
+    SpecRegistryKeyUpdateResult,
     Error,
     { specKey: string; body: Parameters<typeof updateSpecKey>[1] }
   >({
@@ -62,5 +50,5 @@ export function useSpecRegistryMutations() {
     },
   });
 
-  return { create, reread, update };
+  return { create, update };
 }

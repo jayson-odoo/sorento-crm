@@ -4,13 +4,13 @@
  * The Product Specifications record action set (D15): Delete.
  *
  * The gear (and the registry grid's row "..." menu, `SpecKeyRowActions`) is
- * ALWAYS present - both surfaces render the same one-item array. Delete itself is
- * disabled on a seed key (it ships with the product and would simply reappear on
- * the next deploy, so the backend refuses it too - B.1, B.6) and without
- * `master_data.spec_registry.delete`; no tooltip explains why, per the no-explanation
- * rule (A.2, D14, D15b). One hook, two surfaces: the record page's gear renders it
- * inline, next to Save/Cancel; the row menu renders the same array, with the
- * countdown in a toast instead - a row has nowhere to put one.
+ * ALWAYS present. Delete itself is left OUT of the array entirely on a built-in
+ * specification (it ships with the product and would simply reappear on the next
+ * deploy, so the backend refuses it too) and without `master_data.spec_registry.delete`
+ * (AC-S3.8) - a disabled row with no reason attached reads as broken, and there is no
+ * explanation to attach per the no-explanation rule. One hook, two surfaces: the
+ * record page's gear renders it inline, next to Save/Cancel; the row menu renders the
+ * same array, with the countdown in a toast instead - a row has nowhere to put one.
  */
 
 import { Trash2 } from 'lucide-react';
@@ -51,16 +51,22 @@ export function useSpecKeyActions(
     onCommitted: onDeleted,
   });
 
-  const actions: RecordAction[] = [
-    {
-      key: 'spec_key.delete',
-      label: 'Delete specification',
-      icon: Trash2,
-      kind: 'destructive',
-      disabled: !specKey || specKey.source !== 'user' || !canDelete || deletion.isPending,
-      run: deletion.start,
-    },
-  ];
+  // A built-in specification carries no Delete item at all (AC-S3.8): it ships with
+  // the product and would just reappear on the next deploy, so there is nothing this
+  // action could honestly offer.
+  const canDeleteThis = !!specKey && specKey.source === 'user' && canDelete;
+  const actions: RecordAction[] = canDeleteThis
+    ? [
+        {
+          key: 'spec_key.delete',
+          label: 'Delete specification',
+          icon: Trash2,
+          kind: 'destructive',
+          disabled: deletion.isPending,
+          run: deletion.start,
+        },
+      ]
+    : [];
 
   return { actions, dialogs: null, pending: deletion.countdown };
 }

@@ -24,6 +24,9 @@ export const BrandSchema = z.object({
   // False means every product on this brand is bought locally by CS and never
   // raises an Order Inquiry (PLAN-brand-flows-to-purchasing.md).
   flows_to_purchasing: z.boolean(),
+  // "Customers can ask for this brand" (S0, D3): default true; false for the
+  // placeholder brands OTHERS and NO LOGO, which record the absence of a brand.
+  is_searchable: z.boolean(),
 });
 
 export type BrandSchemaType = z.infer<typeof BrandSchema>;

@@ -25,9 +25,9 @@ import json
 import re
 from decimal import Decimal
 
-from sqlalchemy import and_, cast, func, literal, or_
+from sqlalchemy import and_, cast, func, literal, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.product import Brand, Product, ProductCategory, chat_searchable_products
 from app.models.product_spec import ProductSpecifications
@@ -64,6 +64,13 @@ MAX_CANDIDATES = 5
 # Below that a result is one weak trigram hit, which is how "flux capacitor" would
 # otherwise return a kitchen sink.
 RELEVANCE_FLOOR = 1.5
+
+
+# What a brand the customer named is worth. It was the removed Brand specification's
+# `rank_weight` (1.5): the brand is the product's own field now (#1286, D2), so the
+# weight lives here, beside the other defaults, rather than on a registry row.
+BRAND_RANK_WEIGHT = 1.5
+BRAND_KEY = "brand"
 
 
 # Inside the tolerance band, how much of the score closeness is allowed to decide.
@@ -331,41 +338,39 @@ def brand_names(db: Session) -> list[str]:
     ]
 
 
-# A placeholder brand word too generic to ever be an ask. "OTHERS" is how the
-# catalog records the ABSENCE of a brand on 1,956 products, and a customer writing
-# "others" means the English word, never that bucket - so it stays unbindable even
-# though the full name matches. "NO LOGO" is the opposite case: nobody says those
-# two words in that order by accident, so the full phrase IS an ask (F8).
-_UNBINDABLE_BRAND_NAMES: frozenset[str] = frozenset({"others"})
+def unsearchable_brand_names(db: Session) -> set[str]:
+    """Brand names customers never ask for (`brands.is_searchable` false), lower case.
+
+    OTHERS and NO LOGO are how the catalogue records the ABSENCE of a brand. They used
+    to be the Brand specification's `excluded_values`; that specification is gone
+    (#1286, D3) and the flag lives on the brand itself.
+    """
+    return {
+        str(name).strip().lower()
+        for (name,) in db.query(Brand.brand_name).filter(Brand.is_searchable.is_(False)).all()
+        if str(name or "").strip()
+    }
 
 
 def _brand_match_in_haystack(
-    haystack: str, registry_rows, names: list[str]
+    haystack: str, names: list[str], unsearchable: set[str]
 ) -> tuple[str | None, tuple[int, int] | None]:
     """The brand named in the customer's words, with the span that named it.
 
-    `excluded_values` on the registry row is how the catalog records the ABSENCE
-    of a brand (OTHERS, NO LOGO). Those values are never OFFERED to the
-    understanding model, but a customer who names one IN FULL is asking a real
-    question - "no logo kitchen sink" is a request for the unbranded range, and
-    answering it with silence was the gap. So an excluded value binds only on a
-    full-phrase, word-boundary match of a MULTI-WORD name; a single generic word
-    (OTHERS) never binds at all.
+    A brand customers never ask for (`is_searchable` false: OTHERS, NO LOGO) is never
+    OFFERED to the understanding model, but a customer who names one IN FULL is asking
+    a real question - "no logo kitchen sink" is a request for the unbranded range, and
+    answering it with silence was the gap. So such a brand binds only on a full-phrase,
+    word-boundary match of a MULTI-WORD name; a single generic word (OTHERS) never binds
+    at all, because a customer writing "others" means the English word.
 
     Longest name wins, for the same reason the synonym loop above prefers the
     longest phrase: a specific reading beats a generic one that is a substring of
     the same words.
     """
-    brand_row = next((row for row in registry_rows if row.spec_key == "brand"), None)
-    excluded = {
-        str(value).strip().lower()
-        for value in (getattr(brand_row, "excluded_values", None) or [])
-    }
     for name in sorted(names, key=len, reverse=True):
         lowered = name.lower()
-        if lowered in _UNBINDABLE_BRAND_NAMES:
-            continue
-        if lowered in excluded and " " not in lowered:
+        if lowered in unsearchable and " " not in lowered:
             continue
         match = re.search(rf"(?<!\w){re.escape(lowered)}(?!\w)", haystack)
         if match:
@@ -455,12 +460,12 @@ def resolve_terms_to_specs_with_spans(
             best[key] = (length, value)
 
     types = {row.spec_key: row.data_type for row in rows}
-    brand_binding: str | None = None
-    brand_span: tuple[int, int] | None = None
-    if "brand" not in best:
-        brand_binding, brand_span = _brand_match_in_haystack(
-            haystack, rows, brand_names(db) if brands is None else brands
-        )
+    # The product's own brand field, read from the Brands master (#1286, D2).
+    brand_binding, brand_span = _brand_match_in_haystack(
+        haystack,
+        brand_names(db) if brands is None else brands,
+        unsearchable_brand_names(db),
+    )
     spans: dict[str, list[tuple[int, int]]] = {}
     resolved: list[dict] = []
     for key, (_, value) in best.items():
@@ -478,15 +483,14 @@ def resolve_terms_to_specs_with_spans(
         # The winning value's own spans: where the customer SAID this.
         spans[key] = list(spoken_spans.get((key, best[key][1]), []))
 
-    # A brand is a brand. The registry's `brand` row ships with an empty synonym map,
-    # so "sorento" bound to nothing and the word was left to the code probes, which
-    # prefix-matched it into SORENTOBAG and SORENTO188 (live turn 12303509). The names
-    # are read from the `brands` table rather than hand-seeded into the registry, so a
-    # brand added tomorrow is understood the same day, spelled exactly as the catalog
-    # spells it - which is the spelling the derived `brand` values carry.
+    # A brand is a brand. Without this, "sorento" bound to nothing and the word was left
+    # to the code probes, which prefix-matched it into SORENTOBAG and SORENTO188 (live
+    # turn 12303509). The names are read from the `brands` table, so a brand added
+    # tomorrow is understood the same day, spelled exactly as the catalog spells it -
+    # which is the spelling the ranker compares against the product's own brand field.
     if brand_binding is not None:
-        resolved.append({"key": "brand", "value": brand_binding})
-        spans["brand"] = [brand_span] if brand_span else []
+        resolved.append({"key": BRAND_KEY, "value": brand_binding})
+        spans[BRAND_KEY] = [brand_span] if brand_span else []
 
     # Numbers the customer typed: "trap 200mm", "thickness 1.2mm", 'S trap 8"'.
     # A value stated in WORDS wins over one bound by proximity - "double bowl" is a
@@ -833,6 +837,16 @@ def filter_specs(
         # resolvers returned) exists because a value may be a LIST - two finishes
         # on one product - and `#>>` renders a list as its JSON text.
         lowered = [value.lower() for value in values]
+        if key == BRAND_KEY:
+            # The product's own brand field, never a stored value (#1286, D2 / R3).
+            key_clauses.append(
+                ProductSpecifications.product_id.in_(
+                    select(Product.id)
+                    .join(Brand, Brand.id == Product.brand_id)
+                    .where(func.lower(Brand.brand_name).in_(lowered))
+                )
+            )
+            continue
         scalar = func.lower(ProductSpecifications.values[key]["value"].astext).in_(lowered)
         contained = [
             ProductSpecifications.values[key]["value"].op("@>")(cast(literal(json.dumps(value)), JSONB))
@@ -958,6 +972,7 @@ def search_specs(
         if row.value_weights
     }
     weights = {row.spec_key: float(row.rank_weight or 1.0) for row in registry_rows}
+    weights[BRAND_KEY] = BRAND_RANK_WEIGHT
     # (tolerance, decay) per key, so a count is compared as a count and a millimetre as
     # a millimetre.
     match_windows = {
@@ -994,6 +1009,9 @@ def search_specs(
         .join(Product, Product.id == ProductSpecifications.product_id)
         .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
         .filter(Product.is_active.is_(True), chat_searchable_products())
+        # The brand is scored off the product's own field (#1286, D2); loaded with the
+        # row so it is not one query per candidate.
+        .options(joinedload(Product.brand))
     )
     if product_ids is not None:
         candidate_query = candidate_query.filter(
@@ -1008,7 +1026,15 @@ def search_specs(
 
     scored: list[dict] = []
     for spec_row, product, category in rows:
-        values = spec_row.values or {}
+        values = dict(spec_row.values or {})
+        # The brand is not a specification (#1286, D1): it is the product's own field,
+        # laid in beside the values so it is scored, preferred and returned exactly as
+        # the stored `brand` value used to be.
+        brand_name = (getattr(product.brand, "brand_name", None) or "").strip()
+        if brand_name:
+            values[BRAND_KEY] = {"value": brand_name}
+        else:
+            values.pop(BRAND_KEY, None)
         # Where each value was read from, so the flyer can outweigh the description.
         provenance = spec_row.provenance or {}
 

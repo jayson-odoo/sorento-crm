@@ -1,7 +1,7 @@
 /**
- * D15b - the record card is never editable: label, slug, type + source pills, unit
- * and Active are read-only facts in both modes. Editing them lives on the Header
- * tab (see `HeaderTab.test.tsx`).
+ * AC-S3.7 - the record card shows the label once (the page title carries it) and
+ * one type chip; no code name, no "Built in", no rule count, no "Unit None", no
+ * duplicate "Active", no Advanced.
  */
 import React from 'react';
 import { describe, it, expect } from 'vitest';
@@ -13,7 +13,7 @@ import type { SpecRegistryKey } from '../../types/productSpec.types';
 function seedRow(overrides: Partial<SpecRegistryKey> = {}): SpecRegistryKey {
   return {
     spec_key: 'finish',
-    label: 'Finish',
+    label: 'Finish or colour',
     data_type: 'enum',
     unit: null,
     allowed_values: ['chrome'],
@@ -24,7 +24,6 @@ function seedRow(overrides: Partial<SpecRegistryKey> = {}): SpecRegistryKey {
     value_weights: {},
     derivation_rules: [],
     effective_rules: [],
-    rules_are_default: true,
     applies_when: {},
     read_from: 'rules',
     rank_weight: 1,
@@ -52,37 +51,31 @@ function renderCard(row: SpecRegistryKey, mode: 'view' | 'edit') {
   );
 }
 
-describe('SpecKeyRecordCard - read-only in both modes (D15b)', () => {
-  it('view mode shows label, unit and Active as plain facts', () => {
-    const row = seedRow({ label: 'Finish', unit: 'mm', is_active: false });
+describe('SpecKeyRecordCard - one type chip, nothing else (AC-S3.7)', () => {
+  it('shows the type chip, and no label (the page title carries it)', () => {
+    const row = seedRow({ label: 'Finish or colour', data_type: 'enum' });
     renderCard(row, 'view');
 
-    expect(screen.getByText('Finish')).toBeInTheDocument();
-    expect(screen.getByText('mm')).toBeInTheDocument();
-    expect(screen.getByText('Inactive')).toBeInTheDocument();
-    expect(screen.queryByRole('switch')).not.toBeInTheDocument();
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(screen.getByText('List')).toBeInTheDocument();
+    expect(screen.queryByText('Finish or colour')).not.toBeInTheDocument();
   });
 
-  it('edit mode renders the SAME facts, not inputs - nothing on the card is editable', () => {
-    const row = seedRow({ label: 'Finish', unit: 'mm', is_active: true });
+  it('renders the same in edit mode - nothing on the card is editable', () => {
+    const row = seedRow({ is_active: true });
     renderCard(row, 'edit');
 
-    expect(screen.getByText('Finish')).toBeInTheDocument();
-    expect(screen.getByText('mm')).toBeInTheDocument();
-    // "Active" appears twice with the field on (the field's own label, and the
-    // badge's state text) - both read-only, neither an input.
-    expect(screen.getAllByText('Active')).toHaveLength(2);
     expect(screen.queryByRole('switch')).not.toBeInTheDocument();
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   });
 
-  it('shows the slug and the type/source pills', () => {
-    const row = seedRow({ spec_key: 'finish', data_type: 'enum', source: 'user' });
+  it('shows no code name, no source badge, no rule count, no duplicate Active', () => {
+    const row = seedRow({ spec_key: 'finish', source: 'user', is_active: true, unit: 'mm' });
     renderCard(row, 'view');
 
-    expect(screen.getByText('finish')).toBeInTheDocument();
-    expect(screen.getByText('Choice')).toBeInTheDocument();
-    expect(screen.getByText('User')).toBeInTheDocument();
+    expect(screen.queryByText('finish')).not.toBeInTheDocument();
+    expect(screen.queryByText('User')).not.toBeInTheDocument();
+    expect(screen.queryByText('Seed')).not.toBeInTheDocument();
+    expect(screen.queryByText('Active')).not.toBeInTheDocument();
+    expect(screen.queryByText(/unit/i)).not.toBeInTheDocument();
   });
 });

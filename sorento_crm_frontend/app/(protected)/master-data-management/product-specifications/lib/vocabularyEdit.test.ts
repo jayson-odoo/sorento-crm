@@ -21,7 +21,6 @@ function finish(overrides: Partial<SpecRegistryKey> = {}): SpecRegistryKey {
     value_weights: {},
     derivation_rules: [],
     effective_rules: [],
-    rules_are_default: true,
     synonyms: { black: ['black', 'matt black'], matte_black: ['matte black'] },
     applies_when: {},
     read_from: 'rules',

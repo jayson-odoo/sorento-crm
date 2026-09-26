@@ -46,6 +46,12 @@ from app.models.product_spec import (
     ProductSpecException,
     ProductSpecifications,
 )
+from app.services.product_spec_rules import (
+    builder_of,
+    gate_keys,
+    gate_passes,
+    read_text,
+)
 from app.services.product_spec_write import (
     authored_keys,
     lock_product_code,
@@ -226,47 +232,6 @@ FURNITURE_TOKENS: list[tuple[str, str]] = [
     ("TALL CABINET", "tall_cabinet"),
 ]
 
-# "2 IN 1", "3 IN 1", "4 IN 1" - how many pieces the furniture set has, and the only
-# thing separating SRTBF31513 from SRTBF11614 once both quote the same 580x460x400.
-PIECE_COUNT_RE = re.compile(r"\b(\d)\s*IN\s*1\b")
-
-# What a bin, a cistern or a tumbler holds. The flyer's page 16 sells dustbins as
-# "8 litre" and "12 litre" and nothing in the catalogue read it.
-# The bare "12L" form is where the real data is - 6L cisterns, 12L and 20L bins - but
-# the same letters end a product code (SRTKS1008L, CB F-809L). Requiring that no letter
-# or digit precede the number keeps the bins and drops the codes.
-CAPACITY_RE = re.compile(
-    r"(?<![A-Z0-9])(?<![A-Z]-)(\d+(?:\.\d+)?)\s*(?:LITRES?|LITERS?|LTR|L)\b"
-)
-# The imperial twin of capacity_litre: the flyer's drinkware is sold in ounces.
-CAPACITY_OZ_RE = re.compile(r"(?<![A-Z0-9])(\d+(?:\.\d+)?)\s*OZ\b", re.IGNORECASE)
-
-# Pumps are quoted in horsepower on 48 rows and kilowatts on 14; customers say HP.
-POWER_HP_RE = re.compile(r"(\d+(?:\.\d+)?)\s*HP\b")
-
-# "2-Ways", "3 WAYS": how many outlets the diverter feeds. NOT the same fact as
-# spray_functions - SRTWT9605-RG is a 2-way set with a 3-function hand shower, and
-# folding them together would answer "2 ways" with 3-function sets.
-WAY_COUNT_RE = re.compile(r"\b(\d)\s*-?\s*WAYS?\b")
-
-# A shower with a temperature valve - asked for by name, and 44 rows say so.
-THERMOSTATIC_RE = re.compile(r"\bTHERMOSTATIC\b")
-# A shower set on a height-adjustable rail, which is what "sliding" means here.
-SLIDING_RAIL_RE = re.compile(r"\bSLIDING\b")
-
-# A tall basin tap, sold as its own thing on 31 flyer cards and asked for by name.
-HIGH_BASIN_RE = re.compile(r"\bHIGH\s+BASIN\b")
-# Water filter built into the tap.
-FILTER_TAP_RE = re.compile(r"\bFILTER\s+TAP\b")
-# A kitchen tap whose head pulls out as a spray.
-PULL_OUT_SHOWER_RE = re.compile(r"\bPULL[\s-]?OUT\s+SHOWER\b")
-# The sink accessories the flyer sells the multifunction sinks on.
-CHOPPING_BOARD_RE = re.compile(r"\bCHOPPING\s+BOARD\b")
-DISH_RACK_RE = re.compile(r"\bDISH\s+RACK\b")
-# Stated on 40 cards as a selling point, and the opposite of has_overflow - a basin
-# sold WITHOUT one is a different product, not a missing fact.
-NO_OVERFLOW_RE = re.compile(r"\bW/?O\s+OVERFLOW\b|\bWITHOUT\s+OVERFLOW\b")
-SHOWER_UNION_RE = re.compile(r"\bSHOWER\s+UNION\b")
 
 # The steel a sink is made of. 304 vs 201 is the first question a kitchen-sink buyer
 # asks and the biggest price difference on the page: 705 descriptions say 304, 137 say
@@ -282,20 +247,6 @@ STEEL_GRADE_TOKENS: list[tuple[str, str]] = [
     ("201", "201"),  # 137
 ]
 
-# How many spray patterns a shower or bidet head offers. The flyer prints "3 Functions"
-# on 36 cards and a salesperson quotes it by number.
-FUNCTION_COUNT_RE = re.compile(r"\b(\d)\s*-?\s*FUNCTIONS?\b")
-
-# The hose that comes with a hand bidet or shower. Printed as "c/w 1.2m" on 41 cards;
-# customers ask for the length because it decides whether it reaches.
-HOSE_LENGTH_RE = re.compile(r"\b(\d(?:\.\d)?)\s*M\b(?=[^A-Z]|$)")
-
-# Mirror and furniture features the flyer sells on, each its own line on the card.
-FRAMELESS_RE = re.compile(r"\bFRAMELESS\b")
-LED_RE = re.compile(r"\bLED\b")
-HONEYCOMB_RE = re.compile(r"\bHONEYCOMB\b")
-SOFT_CLOSE_RE = re.compile(r"\bSOFT[\s-]?CLOS(?:E|ING)\b")
-DIVERTER_RE = re.compile(r"\bDIVERTER\b")
 
 # Cold-only or hot-and-cold. The single most common distinction on the flyer (878
 # descriptions say COLD TAP, 348 say MIXER) and the first thing a salesperson
@@ -307,9 +258,6 @@ WATER_SUPPLY_TOKENS: list[tuple[str, str]] = [
     ("MIXER", "mixer"),
 ]
 
-# A rim to clean or not. Printed on the flyer as its own selling point ("Washdown With
-# Rimless") and asked for by name.
-RIMLESS_RE = re.compile(r"\bRIMLESS\b")
 
 # Single or double towel bar - the flyer prints them as separate products and customers
 # ask for them by number, exactly as they do with sink bowls.
@@ -359,7 +307,7 @@ FLUSH_TOKENS: list[tuple[str, str]] = [
     ("WASHDOWN", "washdown"),
 ]
 
-# Spelled-out bowl counts. `<digit> BOWL` is handled separately by regex.
+# Spelled-out bowl counts. `<digit> BOWL` is its own Number rule after them.
 BOWL_WORDS: dict[str, int] = {
     "SINGLE": 1,
     "DOUBLE": 2,
@@ -523,29 +471,6 @@ FINISH_SUFFIXES: dict[str, str] = {
     "SC": "satin_chrome",
 }
 
-# Nouns that mean "a part of a product", not a product. Matched as the HEAD of the
-# phrase, never as a feature: a sink with a drainer board is still a sink.
-#
-
-# A basin sold "C/W BASIN SCREW" has a fixing screw; "WALL HUNG BASIN SCREW (10 X 140)"
-# IS the screw set. This key only
-# fires for the former, mirroring how has_drainer excludes a drainer sold as itself.
-_FIXING_SCREW_NOUN = "SCREW"
-# ...and "**W/O SCREW" says the opposite, which the bare noun read as a yes. That put
-# SRTWB890-MBL and SRTWB890 - the same basin, one with the screw and one without - on
-# identical spec profiles.
-FIXING_SCREW_RE = re.compile(r"(?<!W/O )(?<!WITHOUT )SCREW")
-
-# "S-TRAP 300MM" / "S-TRAP:250MM" / "( S- TRAP 250MM )" - the catalog is inconsistent
-# about the separator, so all three are matched. Independent of TRAP_TOKENS: a customer
-# who says "150mm S-trap" wants a specific pan, not just any S-trap.
-_TRAP_LENGTH_RE = re.compile(r"[SP]\s*-?\s*TRAP\s*[:,]?\s*(\d+(?:\.\d+)?)\s*MM")
-
-# All three phrasings describe the same thing: an automated, sensor/app-driven toilet.
-# "AUTO INDUCTION" appears without the word INTELLIGENT on 6 rows, so it is checked on
-# its own rather than folded into the INTELLIGENT-only case.
-_SMART_WC_RE = re.compile(r"INTELLIGENT|AUTO\s*INDUCTION|SMART\s*(?:TOILET|WC)")
-
 # No sanitaryware product is five metres in any direction. Real catalog data carries
 # separator typos ("540X440180MM" parses as 540 x 440180), and a dimension that absurd
 # would otherwise be indexed and ranked on. Out-of-range values are dropped and flagged
@@ -557,88 +482,10 @@ _SMART_WC_RE = re.compile(r"INTELLIGENT|AUTO\s*INDUCTION|SMART\s*(?:TOILET|WC)")
 # itself lives with the seed that plants it:
 # `product_spec_registry.DEFAULT_MM_MAX_VALUE`.
 
-# 2 to 4 numbers separated by x / X / *, with optional spaces and an optional unit.
-# Each number may be LABELLED and may carry its own unit, because the flyer writes
-# "L750 x W165 x H247mm" and "D L255xW125xH255mm" while the product master writes
-# "1500x750x630MM". 188 flyer cards use the labelled form and not one of them parsed, so
-# a grab bar printed its exact size on the card and still could not be found by it.
-_DIM_PART = r"(?:[LWHDlwhd]\s*)?(\d+(?:\.\d+)?)\s*(?:MM|mm)?"
-_DIM_RE = re.compile(
-    rf"{_DIM_PART}\s*[xX*]\s*{_DIM_PART}"
-    rf"(?:\s*[xX*]\s*{_DIM_PART})?"
-    rf"(?:\s*[xX*]\s*{_DIM_PART})?",
-)
-
-# "1 BOWL", "2BOWL", and the spelled-out "SINGLE BOWL" / "DOUBLE BOWL (...)". Only a
-# count immediately preceding the word is read; nothing is inferred from a length.
-_BOWL_DIGIT_RE = re.compile(r"(?<!\d)(\d)\s*BOWLS?\b")
-_BOWL_WORD_RE = re.compile(rf"\b({'|'.join(BOWL_WORDS)})\s+BOWLS?\b")
-
-
-def _find_token(haystack: str, table: list[tuple[str, str]]) -> tuple[str, str] | None:
-    """First (value, evidence) whose token appears literally. Order is precedence."""
-    for token, value in table:
-        if re.search(rf"(?<![A-Z]){re.escape(token)}(?![A-Z])", haystack):
-            return value, token
-    return None
-
-
-
-
-def _bowl_count(description: str) -> tuple[int, str] | None:
-    """(count, evidence) when the description states a bowl count, else None.
-
-    Both forms occur in the catalog and neither is dominant: `SINGLE BOWL` 42 rows,
-    `DOUBLE BOWL` 64, `<digit> BOWL` 8, out of 1,148 kitchen sinks. The other ~90% say
-    nothing about bowls at all. Returning None for those is the whole point - a double
-    bowl is not derivable from a 1000 mm length, and guessing it would put wrong
-    products in front of a customer who asked for a specific one.
-    """
-    match = _BOWL_WORD_RE.search(description)
-    if match:
-        return BOWL_WORDS[match.group(1)], match.group(0)
-    match = _BOWL_DIGIT_RE.search(description)
-    if match:
-        return int(match.group(1)), match.group(0)
-    return None
-
 
 def _number(raw: str) -> float | int:
     value = float(raw)
     return int(value) if value.is_integer() else value
-
-
-# A single stated size, for the rows that quote one number instead of LxWxH:
-# "MARBLE TOP BASIN (800MM)". Read as the length, which is the dimension people quote.
-_SINGLE_DIM_RE = re.compile(r"(?<![A-Z0-9X])(\d{2,4})\s*MM\b")
-
-
-def _dimensions(description: str) -> tuple[list[float | int], str] | None:
-    match = _DIM_RE.search(description or "")
-    if not match:
-        return None
-    numbers = [_number(g) for g in match.groups() if g is not None]
-    if len(numbers) < 2:
-        return None
-    return numbers, match.group(0)
-
-
-def _single_dimension(description: str) -> tuple[float | int, str] | None:
-    """The one size a row states when it does not state three.
-
-    Only consulted when the LxWxH form found nothing, so a compound size is never
-    reduced to its first number.
-
-    A trap length is not a size. "ONE PIECE TWISTER FLUSH WC (P-TRAP 180MM)" states the
-    trap outlet and nothing else, and reading its 180 as the length put a wrong Length on
-    889 water closets (843 spec rows carried 180 / 250 / 300 from this span) and made
-    every hand-entered length on them read as a conflict. The trap span is blanked
-    before the lone size is looked for; ``trap_length`` reads it separately.
-    """
-    match = _SINGLE_DIM_RE.search(_TRAP_LENGTH_RE.sub(" ", description or ""))
-    if not match:
-        return None
-    return _number(match.group(1)), match.group(0)
 
 
 class _Derivation:
@@ -668,232 +515,80 @@ class _Derivation:
 # the rule engine: HOW a key is read, as data
 # --------------------------------------------------------------------------- #
 #
-# The token tables above are now the SEED for `product_spec_registry.derivation_rules`,
-# not the thing the engine reads. They stay here because they are the shipped starting
-# point and the seed is built from them, which is what guarantees the first run after
-# this change derives identically. Everything after that is edited in the UI.
+# The token tables above are the SEED for `product_spec_registry.derivation_rules`, not
+# the thing the engine reads: the shipped rules are built from them, so the vocabulary
+# has one home. Everything after that is edited in the UI.
 #
-# A rule is `{match, pattern, value}` and the first one to match wins, so the order of
-# the list is its priority. The kinds, which is what the readers between them need and
-# no more:
+# A rule is `{"builder": {...}}` - a set of picks, one per part - and the first one that
+# reads something wins, so the order of the list is its priority (#1286, D5). The five
+# kinds and how they match are `product_spec_rules`; this module answers the one kind
+# that reads the PRODUCT RECORD rather than a string (`product`), because that needs
+# the product and its category.
 #
-#   contains     the pattern appears as whole words       "S/STEEL 304" -> stainless_steel
-#   ends_with    the pattern is the TRAILING noun        "SQUATTING PAN" -> Squatting Pan
-#   present      a regex matches; the value is a flag    "OVER\s*FLOW" -> true
-#   regex        a regex matches; capture a number       "(\d+)MM S-TRAP" -> 150
-#   code_suffix  the product code's last segment         "-BL" -> black
-#   from_field   the PRODUCT ROW, not its text           "column:dimensions_length" -> 800
-#   name_head    what the product name says it IS        "MIXER TAP WITH ..." -> Tap
-#
-# The last two are the readers that used to run before any rule did (#425). They read
-# the product record rather than a string, which is why they are kinds of their own
-# rather than patterns - and they are ordinary rows in the same ordered list, so the
-# screen that lists "how this is read" is now the whole truth about it.
-#
-# `source` limits a rule to one text: "description", "flyer", "size_text",
-# "class_tail", or "any" (the default). A rule that should only ever fire on marketing
-# copy can say so.
-_WORD_BOUNDED = {"present"}
-
-# Rules that read the product row itself. They take no text and never fire on pasted
-# marketing copy, where there is no product to read.
-_RECORD_KINDS = {"from_field", "name_head"}
-
 # A CODE rule belongs at the BOTTOM of a key's list - a code suffix is a convention, not
 # a statement, and a card saying "Golden Yellow" outranks `-GY` mapping to grey - but
 # that is the list's own order now rather than a phase behind it, and migration 450
 # moved the rows that sat above their text rules down to where they always ran.
 
+# The product facts that are one of the product master's own columns. Curated data,
+# which is why the shipped lists put them above the text, and why a disagreement with
+# the text is flagged (`column_conflict`, AC-A.4).
+_COLUMN_FACTS = {
+    "length": "dimensions_length",
+    "width": "dimensions_width",
+    "height": "dimensions_height",
+}
 
-def _rule_matches(
-    rule: dict, texts: dict[str, str], code: str, default_scope: str = "any"
-):
-    """(value, evidence, which_text) for a rule that fires, or None.
 
-    Never raises on a bad rule. These are edited by hand in a form, and one malformed
-    regex must not stop the catalog deriving - it is skipped and the next rule is tried.
-    """
-    kind = str(rule.get("match") or "contains").lower()
-    pattern = str(rule.get("pattern") or "")
-    if not pattern:
-        return None
-
-    scope = str(rule.get("source") or default_scope).lower()
-    if kind == "code_suffix":
-        if "-" not in code:
-            return None
-        if code.rsplit("-", 1)[1] != pattern.upper():
-            return None
-        return rule.get("value"), f"-{pattern.upper()}", "code"
-    # The code is the only place some facts are written down. `SRTSC` names a seat cover
-    # in every code that carries it, while the descriptions say "SEAT COVER", "COVER",
-    # or nothing recognisable - and there was no way to say so. `code_suffix` reads the
-    # finish after the last dash; nothing read the body of the code.
-    #
-    # Unbounded on purpose, unlike `contains` on prose: a product code is a dense string
-    # with no word breaks, so a letter boundary would never match.
-    if kind in {"code_contains", "code_starts_with"}:
-        needle = pattern.upper()
-        hit = code.startswith(needle) if kind == "code_starts_with" else needle in code
-        return (rule.get("value"), needle, "code") if hit else None
-
-    # Each rule reads ITS OWN text: the one it names, or the description and the flyer
-    # when it names none. Only one of those two ever holds anything - derivation reads a
-    # product and `propose_from_text` reads pasted copy - so a rule cannot silently
-    # answer from the wrong document, and the list stays a plain priority list.
-    names = [scope] if scope in texts else ["description", "flyer"]
-    for name in names:
-        haystack = texts.get(name, "")
-        if not haystack:
-            continue
-        try:
-            if kind == "contains":
-                # Bounded by letters, NOT a bare substring search. `SQ` -> square would
-                # otherwise fire on SQUATTING PAN, and `MIXER` on SHOWERMIXER: checked
-                # against the live catalog, plain `find()` changed 42 of 11,415 codes,
-                # some of them into nonsense. This is the shipped `_find_token`
-                # behaviour, and derivation must not change because its rules moved
-                # into a table.
-                if re.search(rf"(?<![A-Z]){re.escape(pattern.upper())}(?![A-Z])", haystack):
-                    return rule.get("value"), pattern.upper(), name
-            elif kind == "ends_with":
-                token = pattern.upper()
-                if haystack == token or haystack.endswith(" " + token):
-                    return rule.get("value"), token, name
-            elif kind == "present":
-                match = re.search(rf"(?<![A-Z]){pattern}(?![A-Z])", haystack)
-                if match:
-                    return rule.get("value", True), match.group(0), name
-            elif kind == "regex":
-                match = re.search(pattern, haystack)
-                if match:
-                    group = int(rule.get("capture") or 0)
-                    raw = match.group(group) if group else match.group(0)
-                    # An OPTIONAL group that did not participate is not a reading. The
-                    # size triple's third and fourth numbers are optional - a two-number
-                    # size has no height - and taking the group anyway asked `float`
-                    # to read None.
-                    if group and raw is None:
-                        continue
-                    value = _number(raw) if group else rule.get("value", True)
-                    # `scale` converts the captured number into the unit the catalog
-                    # stores. The flyer prints a hose as "1.2m" while every length here
-                    # is millimetres, and the ranker normalises a customer's "1.2m" to
-                    # 1200 - so storing 1.2 meant the stored value and the query could
-                    # never meet, and the mismatch scored a PENALTY against the very
-                    # product the customer asked for.
-                    scale = rule.get("scale")
-                    if scale and isinstance(value, (int, float)):
-                        value = value * float(scale)
-                        if float(value).is_integer():
-                            value = int(value)
-                    return value, match.group(0), name
-        except re.error:
-            continue
-    return None
+def _is_column_rule(builder: dict) -> bool:
+    return builder.get("kind") == "product" and builder.get("fact") in _COLUMN_FACTS
 
 
 def _record_read(rule: dict, product, category, spec_key: str):
-    """(value, evidence, origin) for a rule that reads the PRODUCT, not a string.
+    """(value, evidence, origin) for a Product rule, which reads the PRODUCT, not a string.
 
     These are the readers `derive()` used to run before it looked at any rule, and each
-    one is a row now (#425, AC-A.1):
+    one is a rule now (#425, AC-A.1):
 
-      * `from_field` `category` - the class the category is filed under. The weakest
-        class signal there is (a decode of a filing code), so it is marked `category`
-        rather than `derived`, and `_apply_scope` refuses to delete a spec on its say-so.
-      * `from_field` `brand` - the product's own brand row. 22,771 of 22,805 products
-        carry one, and reading the brand off the category prefix instead got 1,934 wrong.
-      * `from_field` `column:<column>` - a number in the product master. Curated data,
-        which is why the shipped lists put it above the text.
-      * `name_head` - what the product NAME says it is: the description with the code,
-        the dimensions, the parenthetical and everything the product comes WITH removed,
+      * `class` - the class the category is filed under. The weakest class signal there
+        is (a decode of a filing code), so it is marked `category` rather than
+        `derived`, and `_apply_scope` refuses to delete a spec on its say-so.
+      * `name` - what the product NAME says it is: the description with the code, the
+        dimensions, the parenthetical and everything the product comes WITH removed,
         read for its trailing noun. `MIXER TAP WITH PULL OUT SHOWER` is a tap.
+      * `length` / `width` / `height` - a number in the product master. Curated data,
+        which is why the shipped lists put it above the text.
 
     `None` whenever there is no product to read - the pasted-text pass has none, and a
     rule that reads the record must simply not fire there.
     """
     if product is None:
         return None
-    kind = str(rule.get("match") or "").lower()
-    pattern = str(rule.get("pattern") or "")
+    fact = builder_of(rule).get("fact")
 
-    if kind == "name_head":
+    if fact == "name":
         named = _class_from_description(
             product.description or "", (product.product_code or "").upper()
         )
         return (named[0], named[1], "field") if named else None
 
-    if pattern == "category":
+    if fact == "class":
         label = getattr(category, "class_label", None) if category is not None else None
         if not label:
             return None
         return label, (getattr(category, "category_code", "") or ""), "category"
 
-    if pattern == "brand":
-        name = (getattr(getattr(product, "brand", None), "brand_name", None) or "").strip()
-        return (name, f"brand={name}", "field") if name else None
-
-    if pattern.startswith("column:"):
-        # Named on the rule, so the row reads as the sentence it is ("from the product's
-        # `dimensions_length` column") and a key can be pointed at a different column
-        # without a deploy. Anything the products table does not have reads as nothing.
-        raw = getattr(product, pattern.split(":", 1)[1], None)
+    column = _COLUMN_FACTS.get(fact)
+    if column is not None:
+        raw = getattr(product, column, None)
         if raw is None:
             return None
         try:
             return _number(str(raw)), f"{spec_key}={raw}", "field"
         except (TypeError, ValueError):
-            # `_validate_rules` refuses a `column:` pattern outside the numeric
-            # whitelist at save time (B3), but a row written before that guard
-            # existed still has to derive without crashing the whole catalogue - a
-            # text column ("column:currency" -> "MYR") must read as nothing, not
-            # raise `float()` out of `derive()`.
             return None
 
     return None
-
-
-# Which text a key's rules read when the rule does not say. Everything reads the
-# description and the flyer; CLASS reads the cleaned tail, because a class rule is
-# answering "what IS this" and the raw description also lists what it comes with.
-_DEFAULT_SCOPE_BY_KEY = {"class": "class_tail"}
-
-
-def _gate_passes(rule: dict, held: dict) -> bool:
-    """Whether this rule applies to a product the derivation has read this far.
-
-    `applies_when` and its negative `unless`, both `{spec_key: [values]}`, compared
-    against what the SAME derivation has already produced. This is the round/square gate
-    (#425, AC-A.1): a round basin's stored columns are mis-keyed, so 407 is a diameter
-    and not a length, and the rows that read a length say `unless shape is round or
-    square` while the diameter row says `applies when` it is.
-
-    A gate the derivation cannot answer - no shape read at all, which is most of the
-    catalogue - leaves `unless` satisfied and `applies_when` unmet, which is exactly how
-    the hardcoded `if shape in ("round", "square")` behaved.
-    """
-    for field, wanted in (("applies_when", True), ("unless", False)):
-        gate = rule.get(field)
-        if not gate:
-            continue
-        for gate_key, permitted in gate.items():
-            value = held.get(gate_key)
-            allowed = {str(v).strip().lower() for v in (permitted or [])}
-            hit = value is not None and str(value).strip().lower() in allowed
-            if hit is not wanted:
-                return False
-    return True
-
-
-def _gate_keys(rules_by_key: dict[str, list[dict]]) -> set[str]:
-    """Keys some rule's gate reads, so they are derived before the rules that need them."""
-    keys: set[str] = set()
-    for rules in (rules_by_key or {}).values():
-        for rule in rules or []:
-            keys |= set(rule.get("applies_when") or {})
-            keys |= set(rule.get("unless") or {})
-    return keys
 
 
 def apply_rules(
@@ -912,24 +607,19 @@ def apply_rules(
     `explain` - one `{index, value, evidence}` per row of its list, in order (index
     0-based, aligned to `rules[index]`), with `value`/`evidence` null where the row
     does not fire - and `explain_winner_index`, the row that actually won. Try-it
-    (AC-B.1) is this and nothing else: the
-    same loop below, run once with a draft list substituted for one key, reading every
-    row instead of stopping at the first match. It changes nothing for a caller that
-    does not pass it - every added branch below is `and not is_explain`, so a normal
-    derive/derive_all run takes the same first-match path it always has.
+    (AC-B.1) is this and nothing else: the same loop below, run once with a draft list
+    substituted for one key, reading every row instead of stopping at the first match.
+    It changes nothing for a caller that does not pass it - every added branch below is
+    `and not is_explain`, so a normal derive/derive_all run takes the same first-match
+    path it always has.
 
     `{spec_key: {value, evidence, origin, column, text, flags}}`. `column` and `text` are
-    the readings a `from_field column:` row and the first text row made, kept whether or
-    not they won: a disagreement between the two is the `column_conflict` exception, and
-    it has to be raised whichever of them is on top (AC-A.4).
+    the readings a product length / width / height rule and the first text rule made,
+    kept whether or not they won: a disagreement between the two is the
+    `column_conflict` exception, and it has to be raised whichever of them is on top
+    (AC-A.4).
 
-    ORDER IS PRIORITY, across every kind, with no phase behind it. The engine used to
-    run every text rule before any code rule wherever the rows sat, so a list could not
-    be read as what it does: `class` held "code contains SRTSC -> Seat Cover" on top of
-    32 rules that all outranked it. That order is real - a code suffix is a convention,
-    not a statement, and `-GY` maps to grey while a card says "Golden Yellow" in words -
-    so migration 450 MOVES those rows to where they ran instead of keeping the phase
-    that made the screen wrong.
+    ORDER IS PRIORITY, across every kind, with no phase behind it.
 
     A number above the key's `max_value` is dropped and flagged rather than stored, and
     it stops the key: "540X440180MM" is a separator typo, and reading the next rule
@@ -941,16 +631,15 @@ def apply_rules(
     found: dict[str, dict] = {}
     values: dict[str, object] = {}
 
-    # A gate reads another key's value, so that key is derived first. `shape` decides
-    # whether 407 is a diameter or a length, and reading the dimensions before it would
-    # answer with whichever the dict happened to hold.
-    gates = _gate_keys(rules_by_key)
+    # An Only when reads another key's value, so that key is derived first. `shape`
+    # decides whether 407 is a diameter or a length, and reading the dimensions before
+    # it would answer with whichever the dict happened to hold.
+    gates = gate_keys(rules_by_key)
     ordered = [key for key in (rules_by_key or {}) if key in gates]
     ordered += [key for key in (rules_by_key or {}) if key not in gates]
 
     for key in ordered:
         rules = rules_by_key.get(key) or []
-        default_scope = _DEFAULT_SCOPE_BY_KEY.get(key, "any")
         is_explain = explain_key is not None and key == explain_key
         read: dict = {
             "value": None,
@@ -960,15 +649,11 @@ def apply_rules(
             "text": None,
             "flags": [],
         }
-        # Only a key with a column row can disagree with its column, and only that case
+        # Only a key with a column rule can disagree with its column, and only that case
         # needs the whole list read after a winner is found. Everything else stops at
         # the first match, as it always has. Try-it (`is_explain`) is the other case
         # that needs every row read, and it needs it for every rule kind.
-        wants_conflict = any(
-            str(rule.get("match")) == "from_field"
-            and str(rule.get("pattern") or "").startswith("column:")
-            for rule in rules
-        )
+        wants_conflict = any(_is_column_rule(builder_of(rule)) for rule in rules)
         # Keys a product may legitimately hold more than one of. SRTWT9605-RG is "Rose
         # Gold + Matt Black" - both true, and a customer asking for either is right.
         collected: list = []
@@ -976,27 +661,24 @@ def apply_rules(
         explain_rows: list[dict] = []
         explain_winner_index: int | None = None
 
-        # 0-based: this `index` aligns to `rules[index]`, which is how the frontend's
-        # `SpecRuleEditor` maps a read back onto its row (`reads[index]`). Unrelated to
-        # `_validate_rules`'s 1-based "Rule N" wording, which names a row in an error
-        # sentence rather than indexing into an array.
+        # 0-based: this `index` aligns to `rules[index]`, which is how the rules grid
+        # maps a read back onto its row (`reads[index]`). Unrelated to `validate_rules`'
+        # 1-based "Rule N" wording, which names a row in an error sentence.
         for index, rule in enumerate(rules):
             explain_row = None
             if is_explain:
                 explain_row = {"index": index, "value": None, "evidence": None}
                 explain_rows.append(explain_row)
 
-            kind = str(rule.get("match") or "contains").lower()
-            if not _gate_passes(rule, values):
+            builder = builder_of(rule)
+            if not gate_passes(builder, values):
                 continue
 
-            is_column = kind == "from_field" and str(
-                rule.get("pattern") or ""
-            ).startswith("column:")
-            if kind in _RECORD_KINDS:
+            is_column = _is_column_rule(builder)
+            if builder.get("kind") == "product":
                 hit = _record_read(rule, product, category, key)
             else:
-                hit = _rule_matches(rule, texts, code, default_scope)
+                hit = read_text(builder, texts, code, key)
             if hit is None or hit[0] is None:
                 continue
             value, evidence, origin = hit
@@ -1022,9 +704,8 @@ def apply_rules(
                 )
                 if explain_row is not None:
                     # An honest try-it row: the cap dropped this reading, so the
-                    # engine does not keep it. Leaving the raw number in `value`
-                    # told the person pressing Save this row won when it did not -
-                    # `evidence` still says what it found and why it was ignored.
+                    # engine does not keep it. `evidence` still says what it found and
+                    # why it was ignored.
                     explain_row["value"] = None
                     explain_row["evidence"] = f"{value} from {evidence} (above {cap}, ignored)"
                 if not is_explain:
@@ -1092,9 +773,10 @@ _MM_KEYS = {
     "hose_length",
 }
 
-# Texts that are the PRODUCT'S OWN account of itself. A rule reading one of these has
-# read the business's own record; a rule reading the flyer has read a leaflet.
-_OWN_TEXTS = {"description", "class_tail", "size_text"}
+# Where a rule reads the PRODUCT'S OWN account of itself: its description or its name. A
+# rule reading one of these has read the business's own record; a rule reading the
+# flyer has read a leaflet.
+_OWN_LOOK_INS = {"description", "name"}
 
 
 def description_first_keys(rules_by_key: dict[str, list[dict]] | None = None) -> frozenset[str]:
@@ -1102,13 +784,12 @@ def description_first_keys(rules_by_key: dict[str, list[dict]] | None = None) ->
 
     This was a hand-written list of six keys. It is computed now, because the readers it
     was describing are rules: a key is description-first when something in its list reads
-    the product's own record or its own description, so removing that row removes the
-    precedence with it rather than leaving a constant asserting a reader that no longer
-    runs. Same meaning, one place, and it moves when the rules move.
+    the product record (a Product rule) or only its own description or name, so removing
+    that rule removes the precedence with it rather than leaving a constant asserting a
+    reader that no longer runs. Same meaning, one place, and it moves when the rules move.
 
-    Class and brand join the six sizes, and that is the correction the list was hiding:
-    both are read off the product record, so a flyer that disagrees is a conflict for a
-    person to settle, not a value to apply silently.
+    Class joins the six sizes: it is read off the product record, so a flyer that
+    disagrees is a conflict for a person to settle, not a value to apply silently.
     """
     if rules_by_key is None:
         # Cached: `classify_spec_proposal` asks this per proposal, and a flyer batch is
@@ -1121,8 +802,8 @@ def description_first_keys(rules_by_key: dict[str, list[dict]] | None = None) ->
         key
         for key, rules in (rules_by_key or {}).items()
         if any(
-            str(rule.get("match")) in _RECORD_KINDS
-            or str(rule.get("source") or "") in _OWN_TEXTS
+            builder_of(rule).get("kind") == "product"
+            or builder_of(rule).get("look_in") in _OWN_LOOK_INS
             for rule in rules or []
         )
     )
@@ -1202,14 +883,9 @@ def derive(
         "description": description,
         "flyer": "",
         # What the product IS, with the code, dimensions, parentheticals and
-        # accompaniments removed. Only class rules read this by default.
+        # accompaniments removed: the text a rule reads when it looks in "the product
+        # name" (the default for class rules).
         "class_tail": class_text(product.description or "", code),
-        # The description with the trap span blanked out. A trap outlet is not a size:
-        # "ONE PIECE TWISTER FLUSH WC (P-TRAP 180MM)" states where the waste leaves and
-        # nothing else, and reading its 180 as the length put a wrong Length on 889
-        # water closets. The lone-size row reads this text; `trap_length` reads the span
-        # itself from the description, where it still is.
-        "size_text": _TRAP_LENGTH_RE.sub(" ", description),
     }
 
     if rules_by_key is None:
@@ -1336,7 +1012,7 @@ def try_read(
     `shape` still needs `shape` derived first, draft or not.
 
     Exactly one of `product`/`text` is expected: a product reads its own description,
-    code and fields; pasted text has none of those, so a `from_field` or `name_head`
+    code and fields; pasted text has none of those, so a Product
     row reads nothing from it - it plays the same role a flyer card does in
     `propose_from_text`, not the product's own description.
 
@@ -1359,11 +1035,10 @@ def try_read(
             "description": description,
             "flyer": "",
             "class_tail": class_text(product.description or "", code),
-            "size_text": _TRAP_LENGTH_RE.sub(" ", description),
         }
     else:
         code = ""
-        texts = {"description": "", "flyer": (text or "").upper(), "class_tail": "", "size_text": ""}
+        texts = {"description": "", "flyer": (text or "").upper(), "class_tail": ""}
 
     fired = apply_rules(
         rules_by_key,
@@ -1453,17 +1128,15 @@ def propose_from_text(
 
     code = (code or "").upper()
     texts = {
-        # There is no description here, and that is the point: a rule scoped to the
-        # product master must not fire on a leaflet somebody pasted. The same goes for
-        # the two texts derived FROM a description - a class tail and a trap-blanked
-        # size text - which is what keeps the size readers off a pasted card.
+        # There is no description here, and that is the point: a rule that looks in the
+        # description or the product name must not fire on a leaflet somebody pasted,
+        # which is what keeps the size readers off a pasted card.
         "description": "",
         "flyer": (text or "").upper(),
         "class_tail": "",
-        "size_text": "",
     }
-    # No product row, so the rules that read one (`from_field`, `name_head`) do not
-    # fire here at all: a leaflet says nothing about the product master's own columns.
+    # No product row, so Product rules do not fire here at all: a leaflet says nothing
+    # about the product master's own columns.
     fired = apply_rules(rules_by_key, texts, code, max_values=max_values)
 
     # Accumulated into the same shape `derive()` builds, so the SAME `_apply_scope`
@@ -1510,7 +1183,9 @@ def propose_from_text(
 # and the next catalogue run rewrites every row. That is the point - a flyer-only value
 # must not survive as a derived one - and it is why the runbook schedules a full
 # re-derive as its own step rather than leaving it to the nightly job.
-DERIVATION_VERSION = "27"
+# 28: rules are builders (#1286, D5) and the Brand specification is gone (D1), so every
+# code's fingerprint moves and the worker's start-up catch-up re-reads the catalogue.
+DERIVATION_VERSION = "28"
 
 
 def _input_hash(
@@ -1526,7 +1201,8 @@ def _input_hash(
         rules_fingerprint,
         product.product_code or "",
         product.description or "",
-        # `brand` is read off this column now, so a re-brand has to move the hash.
+        # The rendered sentence leads with the brand field, so a re-brand has to move
+        # the hash or the sentence would keep the old name.
         (getattr(product.brand, "brand_name", None) or ""),
         (category.category_code if category else "") or "",
         (category.class_label if category else "") or "",
@@ -1573,7 +1249,7 @@ def configured_rules(db: Session) -> dict[str, list[dict]]:
             rules[row.spec_key] = [
                 rule
                 for rule in rules[row.spec_key]
-                if str(rule.get("value", "")).strip() not in dropped
+                if str(builder_of(rule).get("value", "")).strip() not in dropped
             ]
     return rules
 
@@ -1676,26 +1352,10 @@ def derive_for_code(
         max_values=max_values,
     )
 
-    # Brand is the one spec that lives on the ROW while derivation is keyed on the CODE.
-    # Where two company copies of a model carry different brands (6 rows catalog-wide),
-    # one derivation cannot be right for both, so both get the chosen one and a human is
-    # told. Silence here would publish a wrong brand, which is the failure that made this
-    # column authoritative in the first place.
-    brands = {
-        (getattr(p.brand, "brand_name", None) or "").strip() for p, _ in rows
-    } - {""}
-    if len(brands) > 1:
-        result.flag(
-            "brand",
-            "company_copies_disagree",
-            proposed=result.values.get("brand", {}).get("value"),
-            stored=", ".join(sorted(brands)),
-        )
-
     # Two passes, because `status` depends on the exception set and the exception set
     # now depends on the merged provenance. A reviewer-confirmed value outranks
     # anything derivable, and the merge rule for that lives in one place.
-    merged: list[tuple[ProductSpecifications, dict, dict]] = []
+    merged: list[tuple[ProductSpecifications, dict, dict, str | None]] = []
     answered: set[str] = set()
     conflicts: list[dict] = []
     for row_product, _ in rows:
@@ -1707,7 +1367,11 @@ def derive_for_code(
         values, provenance, row_conflicts = merge_authored_over(
             result.values, result.provenance, spec.values, spec.provenance
         )
-        merged.append((spec, values, provenance))
+        # The sentence leads with each copy's OWN brand field. Brand is not a
+        # specification (#1286, D1), so two company copies filed under different brands
+        # are simply two sentences, and nothing derived can disagree about it.
+        brand = getattr(getattr(row_product, "brand", None), "brand_name", None)
+        merged.append((spec, values, provenance, brand))
         answered |= authored_keys(provenance)
         conflicts.extend(row_conflicts)
 
@@ -1741,15 +1405,16 @@ def derive_for_code(
     )
     # After the writes every copy holds a spec row, so the canonical copy is the lowest
     # product id outright - the same row `current_values_hash` reads back afterwards.
-    canonical_after_id = min(spec.product_id for spec, _, _ in merged)
+    canonical_after_id = min(spec.product_id for spec, _, _, _ in merged)
     after_values: dict = {}
-    for spec, values, provenance in merged:
+    for spec, values, provenance, brand in merged:
         write_spec_row(
             spec,
             values=values,
             provenance=provenance,
             has_exceptions=bool(exceptions),
             derived_hash=fingerprint,
+            brand=brand,
         )
         if spec.product_id == canonical_after_id:
             after_values = values

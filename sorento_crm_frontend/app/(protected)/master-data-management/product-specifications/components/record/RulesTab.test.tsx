@@ -1,21 +1,32 @@
 /**
- * AC-B.4, D16 - one Edit button per record page. Rules loses its "Using the
- * shipped rules" card and its own empty-state CTA; the record page's Edit button
- * is the only entry point.
+ * AC-S1.6, AC-S1.11, AC-S1.14 - How it is read: a structured grid, one row per
+ * rule, one column per part. No sentence anywhere, no "default"/"shipped" badge,
+ * no Advanced.
  */
 import React from 'react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+vi.mock('../../hooks/useSpecTryIt', () => ({
+  useSpecTryIt: () => ({ result: null, loading: false, error: null }),
+}));
+
 import { RulesTab } from './RulesTab';
-import type { SpecRegistryKey } from '../../types/productSpec.types';
+import type { SpecDerivationRule, SpecRegistryKey } from '../../types/productSpec.types';
+
+function withClient(children: React.ReactNode) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+}
 
 function baseRow(overrides: Partial<SpecRegistryKey> = {}): SpecRegistryKey {
   return {
     spec_key: 'finish',
-    label: 'Finish',
+    label: 'Finish or colour',
     data_type: 'enum',
     unit: null,
-    allowed_values: ['chrome'],
+    allowed_values: ['gunmetal'],
     synonyms: {},
     excluded_values: [],
     user_values: [],
@@ -23,7 +34,6 @@ function baseRow(overrides: Partial<SpecRegistryKey> = {}): SpecRegistryKey {
     value_weights: {},
     derivation_rules: [],
     effective_rules: [],
-    rules_are_default: true,
     applies_when: {},
     read_from: 'rules',
     rank_weight: 1,
@@ -38,25 +48,63 @@ function baseRow(overrides: Partial<SpecRegistryKey> = {}): SpecRegistryKey {
   } as SpecRegistryKey;
 }
 
-describe('RulesTab - no per-tab Edit (D16)', () => {
-  it('the shipped rules list plainly with their "default" pill - no banner, no button', () => {
-    const row = baseRow({
-      rules_are_default: true,
-      effective_rules: [{ match: 'contains', pattern: 'chrome', shipped: true }],
-    });
-    render(<RulesTab row={row} mode="view" draft={null} setDraft={() => {}} />);
+const gunmetalRule: SpecDerivationRule = {
+  builder: { kind: 'code', code_match: 'ends_with', texts: ['-GM'], value: 'gunmetal' },
+};
 
-    expect(screen.queryByText('Using the shipped rules')).not.toBeInTheDocument();
-    expect(screen.getByText('default')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Edit$/i })).not.toBeInTheDocument();
+describe('RulesTab - a structured grid, never a sentence (AC-S1.6, AC-S1.14)', () => {
+  it('renders the rule as labelled grid cells', () => {
+    const row = baseRow({ effective_rules: [gunmetalRule] });
+    render(withClient(<RulesTab row={row} registry={[row]} mode="view" draft={null} setDraft={() => {}} />));
+
+    expect(screen.getByText('Ends with: -GM')).toBeInTheDocument();
+    expect(screen.getByText('Gunmetal')).toBeInTheDocument();
+    expect(screen.queryByText(/^If /)).not.toBeInTheDocument();
   });
 
-  it('an empty key shows "No rules yet" with no CTA', () => {
+  it('renders no "default", "shipped" or "built in" badge, and no Advanced', () => {
+    const row = baseRow({ effective_rules: [gunmetalRule] });
+    render(withClient(<RulesTab row={row} registry={[row]} mode="view" draft={null} setDraft={() => {}} />));
+
+    expect(screen.queryByText('default')).not.toBeInTheDocument();
+    expect(screen.queryByText('shipped')).not.toBeInTheDocument();
+    expect(screen.queryByText(/built in/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/advanced/i)).not.toBeInTheDocument();
+  });
+
+  it('an empty key shows "No rules yet" with no CTA in view mode', () => {
     const row = baseRow({ effective_rules: [], derivation_rules: [] });
-    render(<RulesTab row={row} mode="view" draft={null} setDraft={() => {}} />);
+    render(withClient(<RulesTab row={row} registry={[row]} mode="view" draft={null} setDraft={() => {}} />));
 
     expect(screen.getByText('No rules yet')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Add rule/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Edit$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Add a rule/i })).not.toBeInTheDocument();
+  });
+
+  it('Add a rule is offered in edit mode only', () => {
+    const row = baseRow({ effective_rules: [gunmetalRule] });
+    render(
+      withClient(
+        <RulesTab
+          row={row}
+          registry={[row]}
+          mode="edit"
+          draft={{
+            label: row.label,
+            unit: '',
+            isActive: true,
+            maxValue: '',
+            liveValues: row.allowed_values,
+            droppedValues: [],
+            words: {},
+            droppedWords: {},
+            valueLabels: {},
+            rules: [gunmetalRule],
+          }}
+          setDraft={() => {}}
+        />,
+      ),
+    );
+
+    expect(screen.getByRole('button', { name: 'Add a rule' })).toBeInTheDocument();
   });
 });

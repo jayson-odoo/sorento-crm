@@ -19,12 +19,14 @@ why a key is weighted the way it is without redoing the work.
 """
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.models.product_spec import ProductSpecRegistry, ProductSpecSearchPolicy
+from app.services.product_spec_rules import builder_identity, builder_of, clean_builder
+from app.services.product_spec_rules import compile_builder as _compile_builder
+from app.services.product_spec_rules import fold_rules
 
 # Fields the seed owns. Anything not listed here is left alone once a row exists.
 _SEED_OWNED = (
@@ -152,371 +154,208 @@ SEED_RULE_MARKER = "_seed"
 DEFAULT_MM_MAX_VALUE = 5000
 
 
-def _rule_identity(rule: dict) -> tuple:
-    return (str(rule.get("match")), str(rule.get("pattern")), str(rule.get("value")))
+def _rule_identity(rule: dict) -> str:
+    """A rule's meaning, for telling a shipped rule from a person's: its builder."""
+    return builder_identity(builder_of(rule))
 
 
-# --------------------------------------------------------------------------- #
-# a rule as the sentence it reads (AC-A.7, AC-A.8)
-#
-# The editor picks a SENTENCE from a menu ("Number before `MM`"), fills its blanks, and
-# compiles it to the engine's own `match`/`pattern`/`capture`/`value` before it saves.
-# This is that compiler, server side. Both halves must produce the same fields for the
-# same sentence or the save is refused, so the pattern the engine runs is never
-# something the screen did not say.
-#
-# Ported line for line from `lib/ruleSentence.ts::compileBuilder`, escaping included:
-# Python's own `re.escape` also escapes `-`, `&`, `~`, `#` and whitespace, so using it
-# here would compile `Number between S-TRAP and MM` to a pattern the browser never
-# produces and refuse the save as a mismatch.
-# --------------------------------------------------------------------------- #
-_JS_REGEX_SPECIALS = re.compile(r"[.*+?^${}()|[\]\\]")
+# The compiler lives in `product_spec_rules`; re-exported here because this module is
+# where callers have always found it.
+compile_builder = _compile_builder
 
 
-def _escape(raw: str) -> str:
-    return _JS_REGEX_SPECIALS.sub(lambda match: "\\" + match.group(0), raw or "")
-
-
-def compile_builder(builder: dict) -> dict:
-    """The engine fields one sentence compiles to. Never raises on an odd sentence."""
-    kind = str((builder or {}).get("kind") or "")
-    word = _escape(str((builder or {}).get("word") or "").upper())
-    value = (builder or {}).get("value")
-    raw_word = str((builder or {}).get("word") or "")
-
-    if kind == "number_after":
-        return {"match": "regex", "pattern": rf"\b{word}\s*(\d+(?:\.\d+)?)", "capture": 1}
-    if kind == "number_before":
-        return {
-            "match": "regex",
-            "pattern": rf"(?<![A-Z0-9X])(\d+(?:\.\d+)?)\s*{word}\b",
-            "capture": 1,
-        }
-    if kind == "number_between":
-        start = _escape(str((builder or {}).get("from") or "").upper())
-        end = _escape(str((builder or {}).get("to") or "").upper())
-        return {
-            "match": "regex",
-            "pattern": rf"{start}\s*[:,]?\s*(\d+(?:\.\d+)?)\s*{end}",
-            "capture": 1,
-        }
-    if kind == "text_contains":
-        return {"match": "contains", "pattern": raw_word, "value": value if value is not None else ""}
-    if kind == "text_ends_with":
-        return {
-            "match": "ends_with",
-            "pattern": raw_word,
-            "value": value if value is not None else "",
-        }
-    if kind == "word_present":
-        return {"match": "present", "pattern": raw_word, "value": True}
-    if kind in {"code_contains", "code_starts_with"}:
-        return {"match": kind, "pattern": raw_word, "value": value if value is not None else ""}
-    if kind == "code_ends_with":
-        # The engine's kind for this is `code_suffix` - it predates the sentence menu.
-        return {
-            "match": "code_suffix",
-            "pattern": raw_word,
-            "value": value if value is not None else "",
-        }
-    if kind == "from_field":
-        return {"match": "from_field", "pattern": str((builder or {}).get("field") or "category")}
-    if kind == "size_triple":
-        from app.services import product_spec_derivation as d
-
-        position = (builder or {}).get("position")
-        return {
-            "match": "regex",
-            "pattern": d._DIM_RE.pattern,
-            "capture": int(position) if position else 1,
-        }
-    if kind == "name_head":
-        # Not a regex: the name head is the description with the code, the dimensions,
-        # the parenthetical and everything the product comes WITH removed, read for its
-        # trailing noun. `class_tail` is that text, and naming it here is what makes the
-        # row say which text it reads.
-        return {"match": "name_head", "pattern": "class_tail"}
-    return {"match": "regex", "pattern": ""}
-
-
-def _sentence_for(rule: dict) -> dict | None:
-    """The sentence a shipped rule reads as, where it has one.
-
-    A pattern whose text is not something a person would recognise as a phrase - a
-    regular expression with `\\s*` and character classes in it - has no sentence, and
-    inventing one would put a wrong plain-English reading on a live rule. Those rows
-    stay pattern rows and say so.
-    """
-    kind = str(rule.get("match") or "")
-    pattern = str(rule.get("pattern") or "")
-    speakable = bool(pattern) and bool(re.fullmatch(r"[A-Za-z0-9 &/'.\-]+", pattern))
-    if not speakable:
-        return None
-    if kind == "contains":
-        return {"kind": "text_contains", "word": pattern, "value": rule.get("value")}
-    if kind == "ends_with":
-        return {"kind": "text_ends_with", "word": pattern, "value": rule.get("value")}
-    if kind == "present":
-        return {"kind": "word_present", "word": pattern}
-    if kind == "code_suffix":
-        return {"kind": "code_ends_with", "word": pattern, "value": rule.get("value")}
-    if kind in {"code_contains", "code_starts_with"}:
-        return {"kind": kind, "word": pattern, "value": rule.get("value")}
-    return None
+# Classes a hose length is never read on (#1286): their "1.75M" is the product itself.
+_NO_HOSE_CLASSES = ("Bathtub", "Jacuzzi", "Bathtub and Jacuzzi")
 
 
 def _rules_from_shipped_tables() -> dict[str, list[dict]]:
-    """Today's hardcoded token tables, as rule rows.
+    """The shipped rules, as builders (#1286, D5).
 
-    Built FROM the tables rather than retyped, so the seeded rules cannot drift from
-    what the engine used to do - a transcription error here would be a silent
-    catalog-wide derivation change, and the whole point of this seed is that the first
-    run derives identically.
+    Built FROM the token tables in `product_spec_derivation` rather than retyped, so the
+    seeded rules cannot drift from the vocabulary the tables hold - a transcription
+    error here would be a silent catalogue-wide derivation change. The readers that
+    were regular expressions (a number before a word, a size, a flag word) are written
+    as the builder the appendix `rule-engine-built-in-rules.md` gives them; nobody reads
+    or edits a pattern any more.
+
+    Neighbouring Words rules with the same answer are folded into one rule with several
+    words, which is how the rules grid shows them: 268 rows become 202 rules over 49
+    specifications. Every rule carries `_seed`, which the seed repair reads.
 
     Imported inside the function: `product_spec_derivation` imports this module.
     """
     from app.services import product_spec_derivation as d
 
-    def contains(table) -> list[dict]:
-        return [{"match": "contains", "pattern": token, "value": value} for token, value in table]
+    def words(table, look_in: str = "any") -> list[dict]:
+        return [
+            {"kind": "words", "look_in": look_in, "words": [token], "value": value}
+            for token, value in table
+        ]
+
+    def flag(*phrases: str, **extra) -> list[dict]:
+        return [{"kind": "words", "look_in": "any", "words": list(phrases), "value": True, **extra}]
+
+    def number(**parts) -> list[dict]:
+        return [{"kind": "number", "look_in": "any", **parts}]
 
     # A round or square product's stored columns are MIS-KEYED, not merely different:
-    # `CONCRETE ROUND BASIN (407X120X10MM)` has 407 in `length` and it is a diameter.
-    # So the rows that read a length say "unless the shape is one of these" and the
-    # diameter row says "when it is" - the hardcoded `if shape in (...)` gate, as a
-    # condition on the rows it used to govern (AC-A.1).
-    round_or_square = {"shape": ["round", "square"]}
+    # `CONCRETE ROUND BASIN (407X120X10MM)` has 407 in `length` and it is a diameter. So
+    # the rules that read a length say "except when Shape is Round or Square" and the
+    # diameter rule says "only when" it is (AC-A.1).
+    def only_when_round(is_round: bool) -> dict:
+        return {"spec": "shape", "is": is_round, "values": ["round", "square"]}
 
-    def column(spec_key: str, name: str) -> dict:
-        return {
-            "match": "from_field",
-            "pattern": f"column:{name}",
-            "unless": round_or_square,
-            "builder": {"kind": "from_field", "field": f"column:{name}"},
-        }
+    def column(fact: str) -> dict:
+        return {"kind": "product", "fact": fact, "only_when": only_when_round(False)}
 
-    def size_triple(position: int, *, when_round: bool) -> dict:
-        row = {
-            "match": "regex",
-            "pattern": d._DIM_RE.pattern,
-            "capture": position,
-            # The product master's own text. Scoped, so the size block never reads a
-            # pasted flyer card - the flyer states its size in its own labelled rows,
-            # which are the `source: "flyer"` rules at the bottom of these lists.
-            "source": "description",
-            "builder": {"kind": "size_triple", "position": position},
-        }
-        row["applies_when" if when_round else "unless"] = round_or_square
-        return row
+    def size(pick, *, look_in: str = "description", when_round: bool | None = None) -> dict:
+        # The product master's own text: the size block never reads a pasted flyer
+        # card, which states its size in its own labelled rows (the `flyer` rules).
+        rule: dict = {"kind": "size", "look_in": look_in, "pick": pick}
+        if when_round is not None:
+            rule["only_when"] = only_when_round(when_round)
+        return rule
 
     rules: dict[str, list[dict]] = {
-        "material": contains(d.MATERIAL_TOKENS),
-        "mounting": contains(d.MOUNTING_TOKENS),
-        "control_type": contains(d.CONTROL_TOKENS),
-        "product_type": contains(d.PRODUCT_TYPE_TOKENS),
-        "water_supply": contains(d.WATER_SUPPLY_TOKENS),
-        "steel_grade": contains(d.STEEL_GRADE_TOKENS),
-        "furniture_type": contains(d.FURNITURE_TOKENS),
-        "way_count": [
-            {"match": "regex", "pattern": d.WAY_COUNT_RE.pattern, "capture": 1}
-        ],
-        "piece_count": [
-            {"match": "regex", "pattern": d.PIECE_COUNT_RE.pattern, "capture": 1}
-        ],
-        "capacity_oz": [
-            {"match": "regex", "pattern": d.CAPACITY_OZ_RE.pattern, "capture": 1, "unit": "oz"}
-        ],
-        "capacity_litre": [
-            {"match": "regex", "pattern": d.CAPACITY_RE.pattern, "capture": 1, "unit": "L"}
-        ],
-        "power_hp": [
-            {"match": "regex", "pattern": d.POWER_HP_RE.pattern, "capture": 1, "unit": "hp"}
-        ],
-        "is_thermostatic": [
-            {"match": "present", "pattern": d.THERMOSTATIC_RE.pattern, "value": True}
-        ],
-        "has_sliding_rail": [
-            {"match": "present", "pattern": d.SLIDING_RAIL_RE.pattern, "value": True}
-        ],
-        "is_high_basin": [{"match": "present", "pattern": d.HIGH_BASIN_RE.pattern, "value": True}],
-        "has_filter": [{"match": "present", "pattern": d.FILTER_TAP_RE.pattern, "value": True}],
-        "has_pull_out_shower": [
-            {"match": "present", "pattern": d.PULL_OUT_SHOWER_RE.pattern, "value": True}
-        ],
-        "has_chopping_board": [
-            {"match": "present", "pattern": d.CHOPPING_BOARD_RE.pattern, "value": True}
-        ],
-        "has_dish_rack": [{"match": "present", "pattern": d.DISH_RACK_RE.pattern, "value": True}],
-        "no_overflow": [{"match": "present", "pattern": d.NO_OVERFLOW_RE.pattern, "value": True}],
-        "has_shower_union": [
-            {"match": "present", "pattern": d.SHOWER_UNION_RE.pattern, "value": True}
-        ],
-        "spray_functions": [
-            {"match": "regex", "pattern": d.FUNCTION_COUNT_RE.pattern, "capture": 1}
-        ],
-        "hose_length": [
-            # Captured in metres off the card ("c/w 1.2m"), stored in millimetres like
-            # every other length, because that is the unit the ranker compares in.
-            {
-                "match": "regex",
-                "pattern": d.HOSE_LENGTH_RE.pattern,
-                "capture": 1,
-                "scale": 1000,
-                "unit": "mm",
-            }
-        ],
-        "is_frameless": [{"match": "present", "pattern": d.FRAMELESS_RE.pattern, "value": True}],
-        "has_led": [{"match": "present", "pattern": d.LED_RE.pattern, "value": True}],
-        "is_honeycomb": [{"match": "present", "pattern": d.HONEYCOMB_RE.pattern, "value": True}],
-        "is_soft_close": [{"match": "present", "pattern": d.SOFT_CLOSE_RE.pattern, "value": True}],
-        "has_diverter": [{"match": "present", "pattern": d.DIVERTER_RE.pattern, "value": True}],
-        "is_rimless": [{"match": "present", "pattern": d.RIMLESS_RE.pattern, "value": True}],
-        "bar_count": [
-            {"match": "contains", "pattern": token, "value": count}
-            for token, count in d.BAR_COUNT_TOKENS
-        ],
-        "spout_type": contains(d.SPOUT_TOKENS),
-        "trap_type": contains(d.TRAP_TOKENS),
-        "flush_type": contains(d.FLUSH_TOKENS),
-        "shape": contains(d.SHAPE_TOKENS),
-        # The nouns, then the two readers that used to run underneath them and appear
-        # on no screen. UNDER, not over: 20,697 of 23,063 live products sit in a
-        # category that carries a class, so a category row on top would re-class the
-        # catalogue on the strength of a filing code (#425, AC-A.1).
+        "material": words(d.MATERIAL_TOKENS),
+        "mounting": words(d.MOUNTING_TOKENS),
+        "control_type": words(d.CONTROL_TOKENS),
+        "product_type": words(d.PRODUCT_TYPE_TOKENS),
+        "water_supply": words(d.WATER_SUPPLY_TOKENS),
+        "steel_grade": words(d.STEEL_GRADE_TOKENS),
+        "furniture_type": words(d.FURNITURE_TOKENS),
+        # A count must stand on its own: "2-WAYS", "3 WAYS", and now "12 WAY" too.
+        "way_count": number(before=["WAY", "WAYS"]),
+        "piece_count": number(before=["IN 1"]),
+        "capacity_oz": number(before=["OZ"]),
+        # The bare "12L" form is where the real data is (6L cisterns, 12L and 20L bins),
+        # and the same letters end a product code (SRTKS1008L): a number touching a
+        # letter or digit in front is never read.
+        "capacity_litre": number(before=["L", "LTR", "LITRE", "LITRES", "LITER", "LITERS"]),
+        "power_hp": number(before=["HP"]),
+        "is_thermostatic": flag("THERMOSTATIC"),
+        # "Sliding" in this catalogue always means a height-adjustable shower rail.
+        "has_sliding_rail": flag("SLIDING"),
+        "is_high_basin": flag("HIGH BASIN"),
+        "has_filter": flag("FILTER TAP"),
+        "has_pull_out_shower": flag("PULL OUT SHOWER"),
+        "has_chopping_board": flag("CHOPPING BOARD"),
+        "has_dish_rack": flag("DISH RACK"),
+        "no_overflow": flag("W/O OVERFLOW", "WO OVERFLOW", "WITHOUT OVERFLOW"),
+        "has_shower_union": flag("SHOWER UNION"),
+        "spray_functions": number(before=["FUNCTION", "FUNCTIONS"]),
+        # Printed in metres off the card ("c/w 1.2m"), stored in millimetres like every
+        # other length, because that is the unit the ranker compares in.
+        # Not on a bathtub or jacuzzi: "BRAVAT 1.75M ... BATHTUB" is the tub's own length,
+        # and reading it as a 1750 mm hose was the parity run's finding (#1286). The
+        # values are the class labels as the class choices store them, the category's
+        # broader "Bathtub and Jacuzzi" included.
+        "hose_length": number(
+            before=["M"],
+            written_in="metres",
+            only_when={"spec": "class", "is": False, "values": list(_NO_HOSE_CLASSES)},
+        ),
+        "is_frameless": flag("FRAMELESS"),
+        "has_led": flag("LED"),
+        "is_honeycomb": flag("HONEYCOMB"),
+        "is_soft_close": flag("SOFT CLOSE", "SOFT CLOSING"),
+        "has_diverter": flag("DIVERTER"),
+        "is_rimless": flag("RIMLESS"),
+        "bar_count": words(d.BAR_COUNT_TOKENS),
+        "spout_type": words(d.SPOUT_TOKENS),
+        "trap_type": words(d.TRAP_TOKENS),
+        "flush_type": words(d.FLUSH_TOKENS),
+        "shape": words(d.SHAPE_TOKENS),
+        # The nouns at the END of the product name, then the two readers that used to
+        # run underneath them and appear on no screen. UNDER, not over: 20,697 of
+        # 23,063 live products sit in a category that carries a class, so a category
+        # rule on top would re-class the catalogue on a filing code (#425, AC-A.1).
         "class": [
-            {"match": "ends_with", "pattern": token, "value": value}
+            {"kind": "words", "look_in": "name", "words": [token], "at_end": True, "value": value}
             for token, value in d.CLASS_TAIL_TOKENS
-        ] + [
-            {"match": "name_head", "pattern": "class_tail", "builder": {"kind": "name_head"}},
-            {
-                "match": "from_field",
-                "pattern": "category",
-                "builder": {"kind": "from_field", "field": "category"},
-            },
-        ],
-        # Off the product's own brand row, and nowhere else. The category prefix
-        # (`SRT-KS` -> Sorento) is a decode of a code and got 1,934 rows wrong - every
-        # INFINITY, OTHERS and NO LOGO product was relabelled - so it is not a fallback
-        # here either. No brand is a better answer than a guessed one.
-        "brand": [
-            {
-                "match": "from_field",
-                "pattern": "brand",
-                "builder": {"kind": "from_field", "field": "brand"},
-            }
-        ],
-        # Finish was code-suffix ONLY, which meant a product whose code carries no
-        # suffix had no finish at all. The flyer prints it in words on 500+ cards
-        # ("Matt Black" 152, "Gunmetal" 103, "Chrome" 98, "Golden Yellow" 73), so the
-        # words go first and the suffix stays as the fallback. Longest first: "MATT
+        ]
+        + [{"kind": "product", "fact": "name"}, {"kind": "product", "fact": "class"}],
+        # Words first, then the code suffix as the fallback. Longest first: "MATT
         # BLACK" and "FULL ROSE GOLD" must beat "BLACK" and "GOLD".
-        "finish": [
-            {"match": "contains", "pattern": token, "value": value}
-            for token, value in d.FINISH_WORDS
-        ] + [
-            {"match": "code_suffix", "pattern": suffix, "value": value}
+        "finish": words(d.FINISH_WORDS)
+        + [
+            {"kind": "code", "code_match": "ends_with", "texts": [f"-{suffix}"], "value": value}
             for suffix, value in d.FINISH_SUFFIXES.items()
         ],
-        "trap_length": [
-            {"match": "regex", "pattern": d._TRAP_LENGTH_RE.pattern, "capture": 1, "unit": "mm"}
-        ],
-        # Was the one key with no rules at all: a hardcoded reader ran it, so the screen
-        # said "no rules yet, nothing will ever fill this in" beside 74 products that
-        # carried it, and there was no way to change how it was read. Word forms first,
-        # then the digit form, which is the order the hardcoded reader used.
+        # "S-TRAP 300MM" / "S-TRAP:250MM" / "( S- TRAP 250MM )".
+        "trap_length": number(after=["S TRAP", "P TRAP"], before=["MM"]),
+        # Word forms first, then the digit form: the order the old reader used.
         "bowl_count": [
-            {"match": "regex", "pattern": rf"\b{word}\s+BOWLS?\b", "value": count}
-            for word, count in d.BOWL_WORDS.items()
-        ] + [{"match": "regex", "pattern": d._BOWL_DIGIT_RE.pattern, "capture": 1}],
-        "is_smart": [{"match": "present", "pattern": d._SMART_WC_RE.pattern, "value": True}],
-        # The flyer prints a labelled size the description does not carry:
-        # "D: L680xW375xH770mm". 177 of 756 cards state one, and 96 products have no
-        # dimension in their own description at all - so without these the size a
-        # customer asks for exists on paper and nowhere the ranker can see.
-        #
-        # Scoped to the flyer because the description's own size is parsed by the
-        # measurement block, which also cross-checks the stored columns and flags a
-        # round product whose length is really a diameter. These fill the gap; they do
-        # not compete with it.
-        # R5, and the order the engine has always run: the product master's own column,
-        # then the size in its description, then a lone stated size, then the flyer.
-        "dim_length": [
-            column("dim_length", "dimensions_length"),
-            size_triple(1, when_round=False),
-            # The one size a row states when it does not state three: "MARBLE TOP BASIN
-            # (800MM)". A pattern row rather than the `number before MM` sentence,
-            # deliberately: that sentence compiles to `(\d+(?:\.\d+)?)`, which reads
-            # `CABANA GLASS SHELF 8MM` as an 8 mm long shelf - three live codes - so the
-            # shipped row keeps the two-to-four digit form the reader has always had.
             {
-                "match": "regex",
-                "pattern": d._SINGLE_DIM_RE.pattern,
-                "capture": 1,
-                "source": "size_text",
-                "unless": round_or_square,
+                "kind": "words",
+                "look_in": "any",
+                "words": [f"{word} BOWL", f"{word} BOWLS"],
+                "value": count,
+            }
+            for word, count in d.BOWL_WORDS.items()
+        ]
+        + number(before=["BOWL", "BOWLS"]),
+        "is_smart": flag("INTELLIGENT", "AUTO INDUCTION", "SMART TOILET", "SMART WC"),
+        # The order the engine has always run: the product master's own column, then the
+        # size in its description, then a lone stated size, then the flyer's labelled
+        # size ("D: L680xW375xH770mm" - 177 of 756 cards state one).
+        "dim_length": [
+            column("length"),
+            size(1, when_round=False),
+            # The one size a row states when it does not state three: "MARBLE TOP BASIN
+            # (800MM)". Not below 10, so `CABANA GLASS SHELF 8MM` is not an 8 mm long
+            # shelf, and never right after a trap: "(P-TRAP 180MM)" is where the waste
+            # leaves, and reading it as the length put a wrong Length on 889 WCs.
+            {
+                "kind": "number",
+                "look_in": "description",
+                "before": ["MM"],
+                "ignore_below": 10,
+                "skip_after": ["S TRAP", "P TRAP"],
+                "only_when": only_when_round(False),
             },
-            {"match": "regex", "pattern": r"L\s*(\d+(?:\.\d+)?)\s*[xX*]", "capture": 1,
-             "source": "flyer"},
+            # "BRAVAT SHOWER ARM (LENGTH-200MM)": a length stated in words. The lone size
+            # above never reads it, because a number touched by a letter across a hyphen
+            # is part of a code (#1286 parity run).
+            {
+                "kind": "number",
+                "look_in": "description",
+                "after": ["LENGTH"],
+                "before": ["MM"],
+                "only_when": only_when_round(False),
+            },
+            size("L", look_in="flyer"),
         ],
-        "dim_width": [
-            column("dim_width", "dimensions_width"),
-            size_triple(2, when_round=False),
-            {"match": "regex", "pattern": r"W\s*(\d+(?:\.\d+)?)\s*[xX*]", "capture": 1,
-             "source": "flyer"},
-        ],
-        "dim_height": [
-            column("dim_height", "dimensions_height"),
-            size_triple(3, when_round=False),
-            {"match": "regex", "pattern": r"H\s*(\d+(?:\.\d+)?)\s*(?:MM|mm)?", "capture": 1,
-             "source": "flyer"},
-        ],
+        "dim_width": [column("width"), size(2, when_round=False), size("W", look_in="flyer")],
+        "dim_height": [column("height"), size(3, when_round=False), size("H", look_in="flyer")],
         # Round and square products only, where the same three numbers mean something
         # else entirely: 407 across, 120 deep, 10 thick.
-        "diameter": [size_triple(1, when_round=True)],
-        "depth": [size_triple(2, when_round=True)],
-        "thickness": [
-            size_triple(4, when_round=False),
-            size_triple(3, when_round=True),
-        ],
+        "diameter": [size(1, when_round=True)],
+        "depth": [size(2, when_round=True)],
+        "thickness": [size(4, when_round=False), size(3, when_round=True)],
         # What the seat cover is made of. Only the flyer says it in words ("*PP Seat
-        # Cover"), and it is a real buying decision: PP is the cheap one, UF the heavy
-        # one. Measured 31 Aug 2026 (PLAN-flyer-family-proposals.md S1): of the 179
-        # `-UF` coded products, 1 (`SRTWC8088-RL-UF`) carries no description at all, so
-        # nothing above can read it - the code is the only fact left.
-        #
-        # The code row sits LAST, which is where it runs. Order is the whole of
-        # priority now (#447): the engine no longer runs every text rule ahead of every
-        # code rule, and migration 450 moved the existing code rows below their key's
-        # text rows for exactly this reason - a list has to read as what it does. A word
-        # beats a code convention, and a code convention beats nothing.
+        # Cover"); the code rule sits LAST, which is where it runs: a word beats a code
+        # convention, and a code convention beats nothing (#447).
         "seat_material": [
-            {"match": "regex", "pattern": r"\bPP\b[^.]*SEAT", "value": "pp", "source": "flyer"},
-            {"match": "regex", "pattern": r"\bUF\b[^.]*SEAT", "value": "uf", "source": "flyer"},
-            {"match": "regex", "pattern": r"UREA[^.]*SEAT", "value": "uf"},
-            {"match": "regex", "pattern": r"DUROPLAST", "value": "duroplast"},
-            {"match": "code_contains", "pattern": "-UF", "value": "uf"},
+            {"kind": "words", "look_in": "flyer", "words": ["PP ... SEAT"], "value": "pp"},
+            {"kind": "words", "look_in": "flyer", "words": ["UF ... SEAT"], "value": "uf"},
+            {"kind": "words", "look_in": "any", "words": ["UREA ... SEAT"], "value": "uf"},
+            {"kind": "words", "look_in": "any", "words": ["DUROPLAST"], "value": "duroplast"},
+            {"kind": "code", "code_match": "contains", "texts": ["-UF"], "value": "uf"},
         ],
-        "has_drainer": [{"match": "present", "pattern": "DRAINER", "value": True}],
-        "has_overflow": [{"match": "present", "pattern": r"OVER\s*FLOW", "value": True}],
-        "has_fixing_screw": [
-            {"match": "present", "pattern": d.FIXING_SCREW_RE.pattern, "value": True}
-        ],
+        "has_drainer": flag("DRAINER"),
+        # 137 write it joined, 5 split ("OVER FLOW"): the split form matches both.
+        "has_overflow": flag("OVER FLOW"),
+        # "C/W BASIN SCREW" has one; "**W/O SCREW" says the opposite.
+        "has_fixing_screw": flag("SCREW", skip_after=["W/O", "WITHOUT"]),
     }
-    # Stamped here, at the one place shipped rules are built, so every seeded rule is
-    # marked and a human's edit - which never passes through here - never is.
-    #
-    # The sentence is stamped in the same pass: a shipped row reads as prose on the
-    # screen exactly as a row somebody builds from the menu does, because it carries the
-    # same `builder`. A row whose pattern is a regular expression has no honest
-    # sentence and stays a pattern row.
-    for rows in rules.values():
-        for rule in rows:
-            rule[SEED_RULE_MARKER] = True
-            if "builder" not in rule:
-                sentence = _sentence_for(rule)
-                if sentence is not None:
-                    rule["builder"] = sentence
-    return rules
+    return {
+        key: [
+            {"builder": builder_of(rule), SEED_RULE_MARKER: True}
+            for rule in fold_rules([{"builder": clean_builder(b)} for b in builders])
+        ]
+        for key, builders in rules.items()
+    }
 
 
 def seed_derivation_rules(db: Session, *, commit: bool = False) -> dict:
@@ -580,22 +419,6 @@ SPEC_REGISTRY_SEED: list[dict] = [
         # signal available, so it carries the largest weight in the ranker.
         "measured_coverage": 11584,
         "rank_weight": 5.0,
-    },
-    {
-        "spec_key": "brand",
-        "label": "Brand",
-        "data_type": "enum",
-        "allowed_values": [],
-        "synonyms": {},
-        # OTHERS (1,956 products) and NO LOGO (651) are how the catalog records the
-        # ABSENCE of a brand. They are real values on real rows, so they cannot be
-        # deleted, but they are not something a customer asks for - and offered to the
-        # understanding model as options they became its bucket for any word it could
-        # not place ("interlignet wc" -> brand OTHERS). Not offered, not accepted.
-        "excluded_values": ["OTHERS", "NO LOGO"],
-        "measured_coverage": 11584,
-        # Rankable, never a filter: every brand in the master is Sorento-sellable.
-        "rank_weight": 1.5,
     },
     {
         "spec_key": "shape",
@@ -1263,6 +1086,10 @@ SPEC_REGISTRY_SEED: list[dict] = [
         # says it, it decides the answer. Weighted accordingly, and NULL elsewhere.
         "measured_coverage": 106,
         "rank_weight": 3.0,
+        # A count, so any number above this is a model number, not bowls: "MOCHA GLASS
+        # BASIN (650x420MM) 6086 BOWL ONLY" read 6086 bowls (#1286 parity run). Flagged
+        # and dropped like an implausible size, and editable like every cap.
+        "max_value": 9,
     },
     {
         "spec_key": "seat_material",
@@ -1394,49 +1221,42 @@ def seed_spec_registry(db: Session, *, commit: bool = False) -> dict:
                 setattr(row, field, value)
                 changed = True
 
-        # New SHIPPED rules are appended; existing rules are never touched or reordered.
+        # Shipped rules reach an install that already has rules, without undoing a
+        # person's order.
         #
-        # Without this, shipped vocabulary could never reach an install again. Migration
-        # 311i materialised every key's rules into the column, and `configured_rules`
-        # prefers the column over the shipped table - so adding 17 product types to the
-        # table moved the value list and changed nothing about what gets derived. The
-        # symptom is the worst kind: the screen lists `bidet` as a value, the catalogue
-        # has 715 bidets, and not one of them carries it.
+        # Without this, shipped vocabulary could never reach an install again: the
+        # column is preferred over the shipped table (`configured_rules`), so adding 17
+        # product types to the table moved the value list and changed nothing about what
+        # gets derived - the screen listed `bidet` and not one of 715 bidets carried it.
         #
-        # Appending is safe for first-match-wins because a new token is by definition
-        # not matched by the existing rules; anything needing to sit ABOVE an existing
-        # rule (a longer phrase beating a shorter one) has to be ordered by hand, which
-        # is what the rule editor is for.
+        # A rule is the seed's when its builder is one the seed ships (its identity),
+        # marker or not: a person's save drops `_seed`, and a shipped rule saved
+        # unchanged is still the shipped rule. When the stored list already holds every
+        # shipped rule and no rule the seed placed that it no longer ships, nothing
+        # shipped changed and the list is left EXACTLY as stored - order included,
+        # because order is priority and a person may have moved a row. Otherwise the
+        # person's own rules go first and the shipped list follows in shipped order, so
+        # a corrected shipped rule replaces the broken one instead of landing beside it.
         shipped_for_key = _rules_from_shipped_tables().get(key) or []
-        if shipped_for_key:
-            stored_rules = list(row.derivation_rules or [])
+        stored_rules = list(row.derivation_rules or [])
+        if shipped_for_key and stored_rules:
             wanted = {_rule_identity(r) for r in shipped_for_key}
-            # Rules the seed placed carry SEED_RULE_MARKER. That is what lets a later
-            # release CORRECT one: without it the seed could only ever append, so when
-            # `has_fixing_screw` was fixed to stop reading "W/O SCREW" as a yes, the
-            # corrected rule landed next to the broken one and the broken one still
-            # fired first. Anything without the marker is a human's and is left alone.
-            kept = [
+            stored_ids = {_rule_identity(r) for r in stored_rules}
+            retired = [
                 r
                 for r in stored_rules
-                if not r.get(SEED_RULE_MARKER) or _rule_identity(r) in wanted
+                if r.get(SEED_RULE_MARKER) and _rule_identity(r) not in wanted
             ]
-            # Seed rules go back in SHIPPED order, not the order they were added.
-            # Derivation is first-match-wins, so a more specific token added later
-            # ("DRAIN PIPE" before "BOTTLE TRAP") is inert if it is merely appended:
-            # "300MM DRAIN PIPE FOR 32MM BOTTLE TRAP" kept deriving the trap.
-            # A stored rule identical to one the seed ships IS the seed's, marker or
-            # not: rules written before the marker existed carry nothing, and treating
-            # them as a human's kept every shipped rule twice and in the wrong order.
-            human = [
-                r
-                for r in kept
-                if not r.get(SEED_RULE_MARKER) and _rule_identity(r) not in wanted
-            ]
-            merged = human + list(shipped_for_key)
-            if stored_rules and merged != stored_rules:
-                row.derivation_rules = merged
-                changed = True
+            if not (wanted <= stored_ids and not retired):
+                human = [
+                    r
+                    for r in stored_rules
+                    if not r.get(SEED_RULE_MARKER) and _rule_identity(r) not in wanted
+                ]
+                merged = human + list(shipped_for_key)
+                if merged != stored_rules:
+                    row.derivation_rules = merged
+                    changed = True
 
         if changed:
             updated += 1
@@ -1446,6 +1266,121 @@ def seed_spec_registry(db: Session, *, commit: bool = False) -> dict:
         db.commit()
 
     return {"created": created, "updated": updated}
+
+
+# --------------------------------------------------------------------------- #
+# removing one rule, one choice or one word (#1286, D7 / D13: deferred removes)
+#
+# Each is a record action (`record_actions`: `spec_rule.remove`, `spec_value.remove`,
+# `spec_word.remove`) that commits when its 5 s window lapses. They make exactly the
+# change the PATCH fields make, one item at a time, so a removal parked while somebody
+# else edits the same key cannot write back a list it read before their edit.
+# --------------------------------------------------------------------------- #
+def _registry_row_for_update(db: Session, spec_key: str) -> ProductSpecRegistry:
+    from app.services.error_handler import handle_not_found
+
+    row = (
+        db.query(ProductSpecRegistry)
+        .filter(ProductSpecRegistry.spec_key == spec_key)
+        .with_for_update()
+        .first()
+    )
+    if row is None:
+        raise handle_not_found("Spec key", spec_key)
+    return row
+
+
+def _gone(message: str):
+    from app.services.error_handler import AppException
+
+    return AppException(status_code=404, message=message, code="spec_registry_item_gone")
+
+
+def remove_rule(db: Session, spec_key: str, builder: dict) -> dict:
+    """Remove the first rule that reads what `builder` says, then re-read what changed.
+
+    Compared after the stored form's normalisation (`clean_builder`), so the rule the
+    screen shows and the rule stored are the same rule however the screen spelled its
+    words. A key still reading the shipped rules has them written to its column first:
+    removing one is the moment the list becomes the business's own.
+    """
+    from app.services import product_spec_rederive
+    from app.services.product_spec_rules import builder_identity
+
+    row = _registry_row_for_update(db, spec_key)
+    wanted = builder_identity(clean_builder(builder if isinstance(builder, dict) else {}))
+    rules = [
+        {"builder": builder_of(rule)}
+        for rule in (row.derivation_rules or _rules_from_shipped_tables().get(spec_key) or [])
+        if builder_of(rule)
+    ]
+    index = next(
+        (i for i, rule in enumerate(rules) if builder_identity(clean_builder(rule["builder"])) == wanted),
+        None,
+    )
+    if index is None:
+        raise _gone("That rule is no longer on this specification.")
+
+    fingerprint_before = product_spec_rederive.rules_fingerprint(db)
+    row.derivation_rules = rules[:index] + rules[index + 1 :]
+    db.commit()
+    updated = product_spec_rederive.reread_after_save(
+        db, spec_key, fingerprint_before=fingerprint_before
+    )
+    return {"spec_key": spec_key, "products_updated": updated}
+
+
+def remove_value(db: Session, spec_key: str, value: str) -> dict:
+    """Take one choice off a key: a staff-added one is dropped with its words and its
+    label; a shipped one is suppressed (the same effect as the PATCH's `user_values` and
+    `suppressed_values`), because the shipped list is the parser's contract."""
+    row = _registry_row_for_update(db, spec_key)
+    value = str(value or "").strip()
+    added = [str(v) for v in (row.user_values or [])]
+    shipped = [str(v) for v in (row.allowed_values or [])]
+
+    if value in added:
+        row.user_values = [v for v in added if v != value]
+        row.user_synonyms = {k: w for k, w in (row.user_synonyms or {}).items() if k != value}
+        row.value_labels = {k: w for k, w in (row.value_labels or {}).items() if k != value}
+    elif value in shipped:
+        suppressed = [str(v) for v in (row.suppressed_values or [])]
+        if value not in suppressed:
+            row.suppressed_values = [*suppressed, value]
+    else:
+        raise _gone("That choice is no longer on this specification.")
+
+    db.commit()
+    return {"spec_key": spec_key, "value": value}
+
+
+def remove_word(db: Session, spec_key: str, value: str, word: str) -> dict:
+    """Take one word off a choice (or off the key itself, `_self`): a staff-added word is
+    dropped, a shipped one is suppressed (the PATCH's `user_synonyms` and
+    `suppressed_synonyms`). Compared the way the words match: case and spacing folded."""
+    row = _registry_row_for_update(db, spec_key)
+    value = str(value or "").strip()
+    folded = normalise_vocabulary(word)
+    added = list((row.user_synonyms or {}).get(value) or [])
+    shipped = list((row.synonyms or {}).get(value) or [])
+
+    if any(normalise_vocabulary(w) == folded for w in added):
+        kept = [w for w in added if normalise_vocabulary(w) != folded]
+        words = {k: list(w) for k, w in (row.user_synonyms or {}).items() if k != value}
+        if kept:
+            words[value] = kept
+        row.user_synonyms = words
+    elif any(normalise_vocabulary(w) == folded for w in shipped):
+        suppressed = {k: list(w) for k, w in (row.suppressed_synonyms or {}).items()}
+        taken = suppressed.get(value) or []
+        if not any(normalise_vocabulary(w) == folded for w in taken):
+            suppressed[value] = [*taken, next(w for w in shipped if normalise_vocabulary(w) == folded)]
+        row.suppressed_synonyms = suppressed
+    else:
+        raise _gone("That word is no longer on this choice.")
+
+    db.commit()
+    return {"spec_key": spec_key, "value": value, "word": word}
 
 
 def delete_registry_key(db: Session, spec_key: str) -> None:
@@ -1617,14 +1552,17 @@ def shipped_scopes() -> dict[str, dict]:
 def shipped_max_values() -> dict[str, float]:
     """The plausibility cap each key ships with, for a caller with no database.
 
-    Millimetres only. A count, a capacity in litres and a horsepower have no such
-    number, and inventing one for them would drop real values.
+    Every millimetre key, plus a key whose seed entry names its own `max_value` (the
+    bowl count). A capacity in litres and a horsepower have no such number, and
+    inventing one for them would drop real values.
     """
-    return {
-        entry["spec_key"]: float(DEFAULT_MM_MAX_VALUE)
-        for entry in SPEC_REGISTRY_SEED
-        if entry.get("unit") == "mm"
-    }
+    caps: dict[str, float] = {}
+    for entry in SPEC_REGISTRY_SEED:
+        if entry.get("max_value") is not None:
+            caps[entry["spec_key"]] = float(entry["max_value"])
+        elif entry.get("unit") == "mm":
+            caps[entry["spec_key"]] = float(DEFAULT_MM_MAX_VALUE)
+    return caps
 
 
 def numeric_product_columns() -> set[str]:
@@ -1648,10 +1586,12 @@ def numeric_product_columns() -> set[str]:
 
 
 def from_field_choices() -> set[str]:
-    """Every pattern a `from_field` rule may carry: `category`, `brand`, or a numeric
-    `column:<name>`. `_validate_rules` refuses anything else at save time (B3); the
-    frontend's `FROM_FIELD_OPTIONS` offers the same set rather than a free-text box."""
-    return {"category", "brand"} | {
+    """Every pattern a `from_field` rule may carry: `category` or a numeric
+    `column:<name>`. `_validate_rules` refuses anything else at save time (B3).
+
+    `brand` is not one of them (#1286, D1): the product's brand field is the only brand,
+    and it is not a specification a rule can fill."""
+    return {"category"} | {
         f"column:{name}" for name in numeric_product_columns()
     }
 

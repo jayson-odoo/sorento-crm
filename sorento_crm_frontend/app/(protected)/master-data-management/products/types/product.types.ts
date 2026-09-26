@@ -171,6 +171,10 @@ export interface Brand {
   // A brand marked false is bought locally by CS and never raises an Order
   // Inquiry - PLAN-brand-flows-to-purchasing.md.
   flows_to_purchasing: boolean;
+  // Default true; false for the placeholder brands OTHERS and NO LOGO (S0,
+  // PLAN-product-specs-non-technical-26sep.md D3). Search and the understanding
+  // prompt skip a brand where this is false - nobody ever names OTHERS.
+  is_searchable?: boolean;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;

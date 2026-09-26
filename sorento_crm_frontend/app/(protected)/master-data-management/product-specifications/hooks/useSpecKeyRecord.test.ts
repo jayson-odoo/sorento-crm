@@ -21,6 +21,7 @@ vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
+import { toast } from '@/lib/toast';
 import { useSpecKeyRecord } from './useSpecKeyRecord';
 import type { SpecRegistryKey } from '../types/productSpec.types';
 
@@ -39,7 +40,6 @@ function finishWithASuppressedValue(): SpecRegistryKey {
     value_weights: {},
     derivation_rules: [],
     effective_rules: [],
-    rules_are_default: true,
     applies_when: {},
     read_from: 'rules',
     rank_weight: 1,
@@ -116,6 +116,32 @@ describe('useSpecKeyRecord', () => {
 
     const [, payload] = updateSpecKey.mock.calls[0];
     expect(payload.is_active).toBe(false);
+  });
+
+  it('AC-S1.16 - the toast reports how many products the save updated, never a re-read prompt', async () => {
+    const row = finishWithASuppressedValue();
+    updateSpecKey.mockResolvedValue({ ...row, products_updated: 14 });
+    const { result } = renderHook(() => useSpecKeyRecord(row), { wrapper });
+
+    act(() => result.current.edit());
+    await act(async () => {
+      await result.current.save();
+    });
+
+    expect(toast.success).toHaveBeenCalledWith('Saved. 14 products updated.');
+  });
+
+  it('AC-S1.16 - a save that changed nothing derived reports Saved with no count', async () => {
+    const row = finishWithASuppressedValue();
+    updateSpecKey.mockResolvedValue({ ...row, products_updated: 0 });
+    const { result } = renderHook(() => useSpecKeyRecord(row), { wrapper });
+
+    act(() => result.current.edit());
+    await act(async () => {
+      await result.current.save();
+    });
+
+    expect(toast.success).toHaveBeenCalledWith('Saved.');
   });
 
   it('drops back to view mode once the save resolves', async () => {

@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rules grid mockup</title>
+<!-- Issue #1286. Annotated mockup for the owner's Lavish review, not shipped code. Plain inline CSS
+     so it opens from a file. Plan: documentation/plans/products/PLAN-product-specs-non-technical-26sep.md
+     UAC: documentation/plans/products/product-specs-non-technical-acceptance-criteria.md
+     Round 3, 27 Sep 2026: owner's Lavish notes applied (no re-read, no Advanced, data grids).
+     Round 4 (final), 27 Sep 2026 00:45 MYT notes: structured grid, never sentences; no snake case;
+     the system's SearchableSelect and SearchableMultiSelect in every selector.
+     Screen: Master data > Product Specifications > Finish or colour > How it is read. -->
+<style>
+:root{
+  --bg:#f6f7f9; --card:#ffffff; --fg:#09090b; --muted:#71717a; --line:#e4e4e7; --line-soft:#f1f1f3;
+  --primary:#3b82f6; --primary-soft:#eff6ff;
+  --amber:#92400e; --amber-soft:#fef3c7; --green:#065f46; --green-soft:#d1fae5;
+  --blue:#1e40af; --blue-soft:#dbeafe; --grey-soft:#f4f4f5; --callout:#e11d74; --radius:8px;
+  --font:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1760px;margin:0 auto;padding:24px 16px 64px}
+.doc>h1{font-size:22px;margin:0 0 4px;letter-spacing:-.01em}
+.doc>.sub{color:var(--muted);margin:0 0 20px;max-width:900px}
+h2.frame-title{font-size:13px;margin:28px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.scroll{overflow-x:auto;max-width:100%;border-radius:12px}
+.frame{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden}
+.w1280{width:1280px}.w375{width:375px;flex:none}
+.notes{flex:1 1 360px;min-width:280px;max-width:560px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}
+.notes .ref{display:block;color:var(--muted);font-size:12px;margin-top:4px}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;width:20px;height:20px;border-radius:50%;background:var(--callout);color:#fff;font-size:11px;font-weight:700;vertical-align:middle}
+.shell{display:flex;min-height:640px}
+.side{width:232px;flex:none;border-right:1px solid var(--line);padding:16px 12px;background:#fcfcfd;font-size:13px}
+.side .brand{font-weight:700;font-size:16px;margin:0 8px 18px}
+.side .grp{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:14px 8px 6px}
+.side .it{padding:6px 8px;border-radius:6px;color:#3f3f46}
+.side .it.sub{padding-left:26px}
+.side .it.on{background:var(--primary-soft);color:var(--primary);font-weight:600}
+.topbar{height:52px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:0 20px;color:var(--muted);font-size:13px}
+.main{flex:1;min-width:0}
+.content{padding:20px 24px 28px}
+.phrow{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:flex-start;margin-bottom:16px}
+.phrow h1{font-size:20px;margin:0;letter-spacing:-.01em;font-weight:600}
+.crumbs{color:var(--muted);font-size:13px;margin-bottom:4px}
+.meta{color:var(--muted);font-size:13px;margin-top:4px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 12px;font:500 13px var(--font);color:var(--fg);white-space:nowrap}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+.btn.sm{padding:3px 9px;font-size:12px}
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:1px 9px 1px 7px;font-size:12px;font-weight:600;white-space:nowrap;background:var(--grey-soft);color:#3f3f46}
+.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.8}
+.pill.amber{background:var(--amber-soft);color:var(--amber)}
+.pill.green{background:var(--green-soft);color:var(--green)}
+.pill.blue{background:var(--blue-soft);color:var(--blue)}
+.chipt{display:inline-block;border:1px solid var(--line);border-radius:6px;padding:0 7px;font-size:12px;color:#3f3f46;background:#fff}
+.tabs{display:flex;gap:20px;border-bottom:1px solid var(--line);margin:0 0 16px;overflow-x:auto;white-space:nowrap}
+.tabs span{padding:8px 0;color:var(--muted);font-weight:500;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs span.on{color:var(--fg);border-bottom-color:var(--primary)}
+.grid{border:1px solid var(--line);border-radius:8px;overflow:hidden;font-size:13px}
+.grid table{border-collapse:collapse;width:100%;table-layout:fixed}
+.grid th{background:#fafafa;color:var(--muted);font-weight:500;text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.grid td{padding:9px 10px;border-bottom:1px solid var(--line-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+.grid td.num,.grid th.num{text-align:right;font-variant-numeric:tabular-nums}
+.grid tr:last-child td{border-bottom:0}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.search{flex:1 1 220px;border:1px solid var(--line);border-radius:6px;padding:6px 10px;color:var(--muted);font-size:13px;background:#fff}
+.card{border:1px solid var(--line);border-radius:10px;background:#fff;padding:16px}
+.field{margin-bottom:14px}
+.field .lbl{font-size:12px;color:var(--muted);margin-bottom:4px}
+.field .val{font-size:14px}
+.tok{display:inline-flex;align-items:center;gap:4px;background:var(--grey-soft);border-radius:6px;padding:1px 8px;font-size:12px;margin:0 4px 4px 0}
+.fields2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 24px}
+.adv{border:1px solid var(--line);border-radius:8px;background:#fafafa;margin-top:14px}
+.adv .hd{display:flex;align-items:center;gap:8px;padding:9px 12px;color:var(--muted);font-size:13px;font-weight:500}
+.adv .bd{border-top:1px solid var(--line);padding:10px 12px;font-size:12px;color:var(--muted)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.muted{color:var(--muted)}.small{font-size:12px}
+.rule{display:flex;gap:12px;align-items:flex-start;padding:12px;border:1px solid var(--line);border-radius:8px;margin-bottom:8px;background:#fff}
+.rule .n{color:var(--muted);font-variant-numeric:tabular-nums;width:18px;flex:none}
+.rule .s{flex:1;min-width:0}
+.drop{border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.10);background:#fff;width:260px;font-size:13px}
+.drop .q{border-bottom:1px solid var(--line);padding:7px 10px;color:var(--muted)}
+.drop .o{padding:7px 10px}.drop .o.sel{background:var(--primary-soft);color:var(--primary);font-weight:600}
+.drop .ft{border-top:1px solid var(--line);padding:7px 10px;color:var(--primary);font-size:12px}
+.strip{display:flex;align-items:center;gap:10px;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;padding:9px 12px;margin-bottom:14px}
+.phone .top{height:48px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 16px;font-weight:700}
+.phone .content{padding:14px 16px 20px}
+.stack{display:flex;flex-direction:column;gap:8px}
+.row375{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:#fff}
+.row375 .l{font-size:12px;color:var(--muted)}
+.row375 .v{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px}
+
+.modal{border:1px solid var(--line);border-radius:12px;background:#fff;box-shadow:0 12px 40px rgba(0,0,0,.14);width:640px;max-width:100%}
+.modal .mh{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);font-weight:600}
+.modal .mb{padding:16px 18px}
+.modal .mf{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--line)}
+.sentence{background:var(--primary-soft);color:#1e3a8a;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:14px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex-wrap:wrap}
+.seg span{padding:5px 12px;font-size:13px;border-right:1px solid var(--line);color:#3f3f46;background:#fff}
+.seg span:last-child{border-right:0}
+.seg span.on{background:var(--primary);color:#fff}
+.sel{display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);border-radius:6px;padding:6px 10px;font-size:13px;background:#fff;min-width:0}
+.tokbox{border:1px solid var(--line);border-radius:6px;padding:5px 6px 1px;background:#fff;min-height:34px}
+.tokbox .ph{color:var(--muted);font-size:12px;display:inline-block;padding:2px 4px}
+.chk{display:flex;align-items:center;gap:8px;font-size:13px;margin:4px 0}
+.chk i{width:14px;height:14px;border:1px solid #a1a1aa;border-radius:3px;display:inline-block;flex:none}
+.chk i.on{background:var(--primary);border-color:var(--primary)}
+.grip{color:#a1a1aa;cursor:grab;flex:none;width:12px;letter-spacing:-2px}
+.kinds{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.kcard{border:1px solid var(--line);border-radius:10px;background:#fff;padding:12px 14px;font-size:13px}
+.kcard h4{margin:0 0 8px;font-size:13px}
+.frm{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px 10px;align-items:center}
+.frm .k{color:var(--muted);font-size:12px}
+.hit{color:var(--green);font-weight:600}
+
+.sort{color:#a1a1aa;font-size:10px;margin-left:4px}
+.sort.on{color:var(--primary)}
+.grid td.editing{overflow:visible;background:#fff;box-shadow:inset 0 0 0 2px var(--primary)}
+.cellin{display:flex;align-items:center;justify-content:space-between;gap:6px;border:1px solid var(--primary);border-radius:4px;padding:2px 6px;background:#fff;font-size:13px;white-space:nowrap;overflow:hidden}
+.cellin .caret{display:inline-block;width:1px;height:14px;background:var(--fg);margin-left:1px;vertical-align:middle}
+.grid tr.add td{color:var(--primary);font-size:12px}
+.grid tr.removing td{background:#fff7ed;color:#9a3412}
+.grid tr.removing td b{text-decoration:line-through}
+.gridscroll{overflow-x:auto;max-width:100%}
+.w375 .grid{font-size:12px}
+.w375 .grid th,.w375 .grid td{padding:7px 8px}
+.foot{padding:8px 10px;color:var(--muted);font-size:12px;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.section{border:1px solid var(--line);border-radius:10px;background:#fff;padding:14px 16px;margin-top:14px}
+.section h3{margin:0 0 10px;font-size:14px;font-weight:600}
+.dim{position:relative}
+.dim::after{content:"";position:absolute;inset:0;background:rgba(9,9,11,.35)}
+.overlay{position:relative;margin-top:-330px;display:flex;justify-content:center;padding:0 24px 24px;z-index:2}
+
+/* Round 4: the system's own selectors, drawn to match components/common SearchableSelect and SearchableMultiSelect */
+.ss{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1px solid var(--line);border-radius:6px;padding:5px 10px;font-size:13px;background:#fff;min-width:0;min-height:32px}
+.ss .ch{color:var(--muted);font-size:11px;flex:none}
+.ss.open,.sms.open{border-color:var(--primary);box-shadow:0 0 0 3px rgba(59,130,246,.15)}
+.sms{display:flex;justify-content:space-between;align-items:center;gap:6px;border:1px solid var(--line);border-radius:6px;padding:3px 8px 3px 4px;background:#fff;min-height:32px;min-width:0}
+.sms .v{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
+.sms .v span{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);background:var(--grey-soft);border-radius:4px;padding:0 6px;font-size:12px;white-space:nowrap}
+.sms .ch{color:var(--muted);font-size:11px;flex:none}
+.cname{display:block;font:500 10px ui-monospace,SFMono-Regular,Menlo,monospace;color:#a1a1aa;margin-top:2px}
+.pop{border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);background:#fff;font-size:13px;min-width:240px;overflow:hidden}
+.pop .q{border-bottom:1px solid var(--line);padding:7px 10px;color:var(--fg)}
+.pop .q .ph{color:var(--muted)}
+.pop .o{display:flex;align-items:center;gap:8px;padding:6px 10px}
+.pop .o i{width:14px;height:14px;border:1px solid #a1a1aa;border-radius:3px;display:inline-block;flex:none}
+.pop .o i.on{background:var(--primary);border-color:var(--primary)}
+.pop .o.add{color:var(--primary);font-weight:600;border-bottom:1px solid var(--line-soft)}
+.pop .o.hl{background:var(--primary-soft)}
+.pop .o .ok{margin-left:auto;color:var(--primary)}
+.wf{display:block}
+.wf .x{display:block;font-size:12px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wf b{font-weight:500}
+.lb{color:var(--muted)}
+.grid td.tall{white-space:normal}
+.rowprev{margin-top:14px}
+.rowprev .cap{font-size:12px;color:var(--muted);margin-bottom:6px}
+.dl{display:grid;grid-template-columns:118px minmax(0,1fr);gap:4px 10px;font-size:12px;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.dl .k{color:var(--muted)}
+.kcard .rowprev .grid{font-size:12px}
+.kcard .rowprev .grid th,.kcard .rowprev .grid td{padding:6px 8px}
+.kcard .frm{grid-template-columns:118px minmax(0,1fr)}
+.frm .pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.4fr);gap:6px}
+.sbox{display:flex;gap:8px;align-items:center;border:1px solid var(--primary);border-radius:6px;padding:6px 10px;background:#fff;font-size:13px;box-shadow:0 0 0 3px rgba(59,130,246,.12)}
+.sbox .ic{color:var(--muted)}
+.answer{margin-top:8px;font-size:13px}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Mockup 6 of 6: How it is read, the rules tab (final)</h1>
+<p class="sub">Issue #1286, slice S1, round 4, final. The rules of a specification as a structured grid: one row per rule, one column per part (where to look, what to find, which value it sets). No rule is written as a sentence. Cells edit in place with the system's own dropdown and multi-select. Rows are the real built-in rules in the new form.</p>
+<h2 class="frame-title">1280 wide, Finish or colour: rule 4's words being edited in the multi-select, rule 6's value in the dropdown, rule 13 being removed</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="shell"><div class="side"><div class="brand">Sorento</div>
+<div class="grp">Master data</div><div class="it">Products</div><div class="it">Brands</div><div class="it">Categories</div><div class="it on">Product Specifications</div><div class="it">Spec Verification</div></div><div class="main"><div class="topbar">Search menu... &nbsp; Sorento SRT</div><div class="content"><div class="phrow"><div><div class="crumbs">Master data &rsaquo; Product Specifications &rsaquo; Finish or colour</div>
+<h1>Finish or colour &nbsp;<span class="chipt" style="vertical-align:middle">List</span></h1></div>
+<div class="actions"><span class="btn">&larr; Back to specifications</span><span class="btn ghost">&lsaquo; 9 of 52 &rsaquo;</span><span class="btn ghost" aria-label="More actions">&#9881;</span><span class="btn primary">Edit</span></div></div>
+<div class="tabs"><span>Details</span><span>Choices and words</span><span class="on">How it is read</span><span>Products</span></div>
+<div class="toolbar" style="justify-content:space-between"><span class="co">1</span> <div class="search" style="max-width:360px">Find a rule, a word or a value</div><span class="btn sm primary">+ Add a rule <span class="co">7</span></span></div>
+<div class="grid" style="overflow:visible"><table><colgroup><col style="width:8%"><col style="width:16%"><col style="width:9%"><col style="width:29%"><col style="width:14%"><col style="width:13%"><col style="width:11%"></colgroup><thead><tr><th>Order<span class="sort on">&#9650;</span></th><th>Where to look<span class="sort">&#8645;</span> <span class="co">2</span></th><th>Kind<span class="sort">&#8645;</span></th><th>What to find<span class="sort">&#8645;</span> <span class="co">3</span></th><th>Value it sets<span class="sort">&#8645;</span> <span class="co">4</span></th><th>Only when<span class="sort">&#8645;</span> <span class="co">5</span></th><th></th></tr></thead><tbody><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 1</td><td>Description or flyer</td><td>Words</td><td><span class="wf"><b>FULL ROSE GOLD, ROSE GOLD</b></span></td><td>Rose gold</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 2</td><td>Description or flyer</td><td>Words</td><td><span class="wf"><b>GOLDEN YELLOW</b></span></td><td>Golden yellow</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 3</td><td>Description or flyer</td><td>Words</td><td><span class="wf"><b>MATT BLACK</b></span></td><td>Black</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 4</td><td>Description or flyer</td><td>Words</td><td class="editing" style="position:relative"><span class="sms open"><span class="v"><span>GUN METAL &times;</span><span>GUNMETAL &times;</span></span><span class="ch">&#9662;</span></span><div class="pop" style="position:absolute;top:40px;left:6px;z-index:4;width:300px"><div class="q">GUN-METAL<span class="caret" style="display:inline-block;width:1px;height:13px;background:#09090b;vertical-align:middle"></span></div><div class="o add hl">+ Add &ldquo;GUN-METAL&rdquo;</div><div class="o"><i class="on"></i>GUN METAL</div><div class="o"><i class="on"></i>GUNMETAL</div><div class="o"><i></i>GUN GREY</div></div></td><td>Gunmetal</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 5</td><td>Description or flyer</td><td>Words</td><td><span class="wf"><b>BRUSHED NICKEL</b></span></td><td>Nickel</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 6</td><td>Description or flyer</td><td>Words</td><td><span class="wf"><b>CHROME</b></span></td><td style="position:relative;overflow:visible" class="editing"><span class="ss open"><span>Chrome</span><span class="ch">&#9662;</span></span></td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 7</td><td>Description or flyer</td><td>Words</td><td><span class="wf"><b>NICKEL</b></span></td><td>Nickel</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 8</td><td>Description or flyer</td><td>Words</td><td><span class="wf"><b>BLACK</b></span></td><td>Black</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 9</td><td>Description or flyer</td><td>Words</td><td><span class="wf"><b>WHITE</b></span></td><td>White</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 10</td><td>Description or flyer</td><td>Words</td><td><span class="wf"><b>GREY</b></span></td><td>Grey</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 11</td><td>Description or flyer</td><td>Words</td><td><span class="wf"><b>SATIN</b></span></td><td>Satin chrome</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 12</td><td>Product code</td><td>Code</td><td><span class="wf"><b>Ends with: -MBL</b></span></td><td>Black</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr class="removing"><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 13</td><td>Product code</td><td>Code</td><td><b>Ends with: -BL</b></td><td>Black</td><td class="muted">-</td><td><span class="small">4s</span> <span class="btn sm">Cancel</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 14</td><td>Product code</td><td>Code</td><td><span class="wf"><b>Ends with: -GM</b></span></td><td>Gunmetal</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 15</td><td>Product code</td><td>Code</td><td><span class="wf"><b>Ends with: -NL</b></span></td><td>Nickel</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 16</td><td>Product code</td><td>Code</td><td><span class="wf"><b>Ends with: -NK</b></span></td><td>Nickel</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 17</td><td>Product code</td><td>Code</td><td><span class="wf"><b>Ends with: -GY</b></span></td><td>Grey</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 18</td><td>Product code</td><td>Code</td><td><span class="wf"><b>Ends with: -RG</b></span></td><td>Rose gold</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 19</td><td>Product code</td><td>Code</td><td><span class="wf"><b>Ends with: -CR</b></span></td><td>Chrome</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 20</td><td>Product code</td><td>Code</td><td><span class="wf"><b>Ends with: -FRG</b></span></td><td>French gold</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 21</td><td>Product code</td><td>Code</td><td><span class="wf"><b>Ends with: -WH</b></span></td><td>White</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 22</td><td>Product code</td><td>Code</td><td><span class="wf"><b>Ends with: -SC</b></span></td><td>Satin chrome</td><td><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr></tbody></table><div class="foot"><span>22 rules. The first rule that finds something wins.</span><span>Columns</span></div></div><div style="height:40px"></div></div></div></div></div></div>
+<div class="notes"><ol><li><span class="co">1</span><div><b>Rules have their own tab, as a structured grid</b>Owner rulings, 27 Sep 2026: "rule should be in own tab ... basic and non technical" and "hmm can this be more structured?". One row per rule, in the order they run; drag the handle, or Move up / Move down in the row menu, while sorted by Order.<span class="ref">AC-S1.11, AC-S1.14, AC-S1.9; plan D14</span></div></li><li><span class="co">2</span><div><b>Where to look, and Kind</b>Each part of a rule is its own column. Kind is Words, Number, Size, Code or Product.<span class="ref">AC-S1.14; plan D5</span></div></li><li><span class="co">3</span><div><b>What to find: labelled values, never a sentence</b>Words read as a comma list. Other kinds read as labelled parts: "Before: MM", "Ends with: -GM", "1st number". Optional parts sit on a second line. Clicking the cell opens the system multi-select (rule 4): a new word is added from its search box as "+ Add".<span class="ref">AC-S1.14, AC-S1.18; plan D14, D16</span></div></li><li><span class="co">4</span><div><b>Value it sets: the system dropdown</b>Clicking the cell opens SearchableSelect over this specification's own choices (rule 6). Number, Size and Product rules read "The number it finds".<span class="ref">AC-S1.14, AC-S1.18; plan D16</span></div></li><li><span class="co">5</span><div><b>Only when</b>"Shape is not: Round, Square", or blank. Set in the rule form.<span class="ref">AC-S1.14; plan D5</span></div></li><li><span class="co">6</span><div><b>The same grid for every kind</b>Length's four real rules use Product, Size and Number: each still fits the same columns, no sentence.<span class="ref">AC-S1.14; plan D5</span></div></li><li><span class="co">7</span><div><b>Add a rule, or the pencil in the row menu</b>Opens the rule form (mockup 4): the same parts, each a system dropdown or multi-select.<span class="ref">AC-S1.7</span></div></li><li><span class="co">8</span><div><b>Nothing else on the tab</b>No Advanced, no pattern, no "Changed here", no "Put back the built-in rules", no re-read, no underscores in any value. Removing a rule is a 5 s countdown with Cancel (rule 13); saving updates the products it changes by itself.<span class="ref">AC-S1.10, AC-S1.16, AC-S1.17; plan D8, D10, D15</span></div></li></ol></div>
+</div>
+<h2 class="frame-title">1280 wide, Length: Product, Size and Number rules in the same columns <span class="co">6</span></h2>
+<div class="layout"><div class="scroll"><div class="frame w1280"><div class="shell"><div class="side"><div class="brand">Sorento</div>
+<div class="grp">Master data</div><div class="it">Products</div><div class="it">Brands</div><div class="it">Categories</div><div class="it on">Product Specifications</div><div class="it">Spec Verification</div></div><div class="main"><div class="topbar">Search menu... &nbsp; Sorento SRT</div><div class="content"><div class="phrow"><div><div class="crumbs">Master data &rsaquo; Product Specifications &rsaquo; Length</div>
+<h1>Length &nbsp;<span class="chipt" style="vertical-align:middle">Number (mm)</span></h1></div>
+<div class="actions"><span class="btn">&larr; Back to specifications</span><span class="btn ghost">&lsaquo; 31 of 52 &rsaquo;</span><span class="btn ghost" aria-label="More actions">&#9881;</span><span class="btn primary">Edit</span></div></div>
+<div class="tabs"><span>Details</span><span>Choices and words</span><span class="on">How it is read</span><span>Products</span></div>
+<div class="toolbar" style="justify-content:space-between"><div class="search" style="max-width:360px">Find a rule, a word or a value</div><span class="btn sm primary">+ Add a rule</span></div>
+<div class="grid"><table><colgroup><col style="width:8%"><col style="width:16%"><col style="width:9%"><col style="width:29%"><col style="width:14%"><col style="width:13%"><col style="width:11%"></colgroup><thead><tr><th>Order<span class="sort on">&#9650;</span></th><th>Where to look<span class="sort">&#8645;</span></th><th>Kind<span class="sort">&#8645;</span> <span class="co">6</span></th><th>What to find<span class="sort">&#8645;</span></th><th>Value it sets<span class="sort">&#8645;</span></th><th>Only when<span class="sort">&#8645;</span></th><th></th></tr></thead><tbody><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 1</td><td>The product</td><td>Product</td><td class="tall"><span class="wf"><b>The product&#39;s length</b></span></td><td class="tall">The number it finds</td><td class="tall">Shape is not: Round, Square</td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 2</td><td>Description only</td><td>Size</td><td class="tall"><span class="wf"><b>1st number</b><span class="x">From a size like 1500 x 750 x 630</span></span></td><td class="tall">The number it finds</td><td class="tall">Shape is not: Round, Square</td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 3</td><td>Description only</td><td>Number</td><td class="tall"><span class="wf"><b>Before: MM</b><span class="x">Skip after: S TRAP, P TRAP &middot; Ignore below: 10</span></span></td><td class="tall">The number it finds</td><td class="tall">Shape is not: Round, Square</td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr><tr><td><span class="grip" aria-label="Drag to reorder">&#8942;&#8942;</span> 4</td><td>Flyer only</td><td>Size</td><td class="tall"><span class="wf"><b>Labelled: L</b><span class="x">Like L750</span></span></td><td class="tall">The number it finds</td><td class="tall"><span class="muted">-</span></td><td class="muted"><span aria-label="Row actions">&#8943;</span></td></tr></tbody></table><div class="foot"><span>4 rules. The first rule that finds something wins.</span><span>Columns</span></div></div></div></div></div></div></div></div>
+<h2 class="frame-title">375 wide, Finish or colour rules grid <span class="co">8</span></h2>
+<div class="layout">
+<div class="frame w375 phone"><div class="top"><span>&#9776;</span><span>Specifications</span><span class="muted">&#8943;</span></div>
+<div class="content"><div class="crumbs">&larr; Back to specifications</div><h1 style="font-size:18px;margin:2px 0 6px">Finish or colour <span class="chipt">List</span></h1>
+<div class="tabs" style="gap:14px"><span>Details</span><span>Choices and words</span><span class="on">How it is read</span><span>Products</span></div><div class="toolbar"><div class="search">Find a rule</div><span class="btn primary sm">+ Add</span></div><div class="gridscroll"><div class="grid"><table><colgroup><col style="width:22%"><col style="width:46%"><col style="width:32%"></colgroup>
+<thead><tr><th>Order<span class="sort on">&#9650;</span></th><th>What to find<span class="sort">&#8645;</span></th><th>Value it sets</th></tr></thead><tbody><tr><td>1</td><td>FULL ROSE GOLD, ROSE GOLD<span class="small muted" style="display:block">Words &middot; Description or flyer</span></td><td>Rose gold</td></tr><tr><td>2</td><td>GOLDEN YELLOW<span class="small muted" style="display:block">Words &middot; Description or flyer</span></td><td>Golden yellow</td></tr><tr><td>3</td><td>MATT BLACK<span class="small muted" style="display:block">Words &middot; Description or flyer</span></td><td>Black</td></tr><tr><td>4</td><td>GUN METAL, GUNMETAL<span class="small muted" style="display:block">Words &middot; Description or flyer</span></td><td>Gunmetal</td></tr><tr><td>5</td><td>BRUSHED NICKEL<span class="small muted" style="display:block">Words &middot; Description or flyer</span></td><td>Nickel</td></tr><tr><td>6</td><td>CHROME<span class="small muted" style="display:block">Words &middot; Description or flyer</span></td><td>Chrome</td></tr><tr><td>12</td><td>Ends with: -MBL<span class="small muted" style="display:block">Code &middot; Product code</span></td><td>Black</td></tr></tbody></table><div class="foot"><span>7 of 22 shown</span><span>Swipe for Only when</span></div></div></div></div></div>
+</div>
+</div>
+</body>
+</html>

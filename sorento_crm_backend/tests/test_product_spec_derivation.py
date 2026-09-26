@@ -174,47 +174,57 @@ def test_what_a_product_comes_with_does_not_name_its_class(db):
     assert _value(db, "ZZT-KT-1", "class") == "Tap"
 
 
+def _sentence(db, code: str, company_id=None) -> str:
+    query = (
+        db.query(ProductSpecifications.rendered_text)
+        .join(Product, Product.id == ProductSpecifications.product_id)
+        .filter(Product.product_code == code)
+    )
+    if company_id is not None:
+        query = query.filter(Product.company_id == company_id)
+    return query.scalar() or ""
+
+
+# Brand is not a specification any more (#1286, D1): the product's own brand field is the
+# only brand. It is never stored in `values`; the sentence search matches still leads with
+# it, read off the product row.
 def test_class_comes_from_the_category_and_brand_from_the_product(db):
     _product(db, "ZZT-KS-1", "SORENTO S/STEEL KITCHEN SINK", brand="brand")
     derive_for_code(db, "ZZT-KS-1")
 
     assert _value(db, "ZZT-KS-1", "class") == "Kitchen Sink"
-    assert _value(db, "ZZT-KS-1", "brand") == "Sorento"
+    assert "brand" not in _specs(db, "ZZT-KS-1")
+    assert _sentence(db, "ZZT-KS-1").startswith("Sorento kitchen sink")
 
 
 def test_the_products_own_brand_beats_the_category_prefix(db):
     """`SRT-KS` decodes to Sorento; the product says OTHERS. Curated data wins.
 
     Reading brand off the prefix mislabelled 1,934 of 20,515 live rows - every
-    INFINITY, OTHERS and NO LOGO product was published as Sorento or Cabana, and four
-    brands the prefix cannot spell at all were unreachable by a brand search.
+    INFINITY, OTHERS and NO LOGO product was published as Sorento or Cabana.
     """
     _product(db, "ZZT-KS-BRAND", "S/STEEL KITCHEN SINK", brand="brand_other")
     derive_for_code(db, "ZZT-KS-BRAND")
 
-    assert _value(db, "ZZT-KS-BRAND", "brand") == "OTHERS"
+    assert _sentence(db, "ZZT-KS-BRAND").startswith("Others kitchen sink")
     assert _value(db, "ZZT-KS-BRAND", "class") == "Kitchen Sink", "class still comes off the category"
 
 
 def test_a_product_with_no_brand_gets_no_brand(db):
-    """34 live rows. The prefix is not used as a fallback.
-
-    It is the same decode that mislabelled 1,934 rows, and it spells brands its own way
-    ("Sorento" against the brands table's "SORENTO"), which would put two spellings of
-    one brand into an open vocabulary and split the ranker's evidence between them.
-    """
+    """34 live rows. The prefix is not used as a fallback."""
     _product(db, "ZZT-KS-NOBRAND", "S/STEEL KITCHEN SINK")
     derive_for_code(db, "ZZT-KS-NOBRAND")
 
-    assert _value(db, "ZZT-KS-NOBRAND", "brand") is None
+    assert "brand" not in _specs(db, "ZZT-KS-NOBRAND")
+    assert _sentence(db, "ZZT-KS-NOBRAND").startswith("Kitchen Sink")
     assert _value(db, "ZZT-KS-NOBRAND", "class") == "Kitchen Sink"
 
 
-def test_company_copies_with_different_brands_are_flagged(db):
-    """One derivation per CODE, but brand lives on the ROW. 6 live rows disagree.
+def test_company_copies_with_different_brands_each_lead_with_their_own(db):
+    """One derivation per CODE, but brand lives on the ROW (6 live rows disagree).
 
-    Both copies get the chosen brand, so one of them is wrong; the exception is the only
-    thing that says so.
+    Brand is not a specification, so there is nothing derived to disagree about and no
+    exception is raised: each copy's sentence simply leads with its own brand field.
     """
     _product(db, "ZZT-KS-SPLIT", "S/STEEL KITCHEN SINK", brand="brand")
     _product(
@@ -224,25 +234,32 @@ def test_company_copies_with_different_brands_are_flagged(db):
         brand="brand_other",
         company_id=_REFS["company2"],
     )
-    # All-companies scope, same as the batch job: that is what makes both copies
-    # visible to one derivation, and therefore what makes the disagreement detectable.
     with company_scope(db, None):
         derive_for_code(db, "ZZT-KS-SPLIT")
 
-        assert "company_copies_disagree" in _exceptions(db, "ZZT-KS-SPLIT")
+        assert "company_copies_disagree" not in _exceptions(db, "ZZT-KS-SPLIT")
+        assert _sentence(db, "ZZT-KS-SPLIT", _REFS["company2"]).startswith("Others")
+        sentences = {
+            text
+            for (text,) in db.query(ProductSpecifications.rendered_text)
+            .join(Product, Product.id == ProductSpecifications.product_id)
+            .filter(Product.product_code == "ZZT-KS-SPLIT")
+            .all()
+        }
+        assert {text.split(" ")[0] for text in sentences} == {"Sorento", "Others"}
 
 
 def test_a_rebrand_re_derives(db):
-    """The hash gates the whole catalog run; a brand it ignores is a silent stale row."""
+    """The hash gates the whole catalog run; a brand it ignores is a stale sentence."""
     row = _product(db, "ZZT-KS-REBRAND", "S/STEEL KITCHEN SINK", brand="brand_other")
     derive_for_code(db, "ZZT-KS-REBRAND")
-    assert _value(db, "ZZT-KS-REBRAND", "brand") == "OTHERS"
+    assert _sentence(db, "ZZT-KS-REBRAND").startswith("Others")
 
     row.brand_id = _REFS["brand"]
     db.flush()
     derive_for_code(db, "ZZT-KS-REBRAND")
 
-    assert _value(db, "ZZT-KS-REBRAND", "brand") == "Sorento"
+    assert _sentence(db, "ZZT-KS-REBRAND").startswith("Sorento")
 
 
 # --------------------------------------------------------------------------- #
@@ -850,6 +867,11 @@ def test_an_ordinary_wc_is_not_flagged_smart(db):
 # --------------------------------------------------------------------------- #
 # configurable rules + the flyer as a second source (#102)
 # --------------------------------------------------------------------------- #
+def _words(word: str, value, **extra) -> dict:
+    """One Words rule, the stored shape (#1286: a rule is its builder)."""
+    return {"builder": {"kind": "words", "words": [word], "value": value, **extra}}
+
+
 def test_a_configured_rule_derives_a_value_the_shipped_tables_never_had(db):
     """The point of the whole exercise: a new spec without a deploy."""
     _product(db, "ZZT-RULE-1", "SORENTO KITCHEN SINK WITH NANO COATING", brand="brand")
@@ -857,7 +879,7 @@ def test_a_configured_rule_derives_a_value_the_shipped_tables_never_had(db):
     derive_for_code(
         db,
         "ZZT-RULE-1",
-        rules_by_key={"material": [{"match": "contains", "pattern": "NANO COATING", "value": "nano"}]},
+        rules_by_key={"material": [_words("NANO COATING", "nano")]},
     )
 
     assert _value(db, "ZZT-RULE-1", "material") == "nano"
@@ -872,8 +894,8 @@ def test_rule_order_is_priority(db):
         "ZZT-RULE-2",
         rules_by_key={
             "material": [
-                {"match": "contains", "pattern": "STAINLESS STEEL", "value": "stainless_steel"},
-                {"match": "contains", "pattern": "STEEL", "value": "steel"},
+                _words("STAINLESS STEEL", "stainless_steel"),
+                _words("STEEL", "steel"),
             ]
         },
     )
@@ -891,7 +913,7 @@ def test_a_contains_rule_matches_whole_words_only(db):
     _product(db, "ZZT-RULE-3", "SORENTO SQUATTING PAN ZZT-RULE-3", brand="brand")
 
     derive_for_code(
-        db, "ZZT-RULE-3", rules_by_key={"shape": [{"match": "contains", "pattern": "SQ", "value": "square"}]}
+        db, "ZZT-RULE-3", rules_by_key={"shape": [_words("SQ", "square")]}
     )
 
     assert _value(db, "ZZT-RULE-3", "shape") is None
@@ -921,7 +943,7 @@ def test_editing_a_rule_re_derives_rather_than_reporting_skipped(db):
     result = derive_for_code(
         db,
         "ZZT-RULE-4",
-        rules_by_key={"material": [{"match": "contains", "pattern": "NANO COATING", "value": "nano"}]},
+        rules_by_key={"material": [_words("NANO COATING", "nano")]},
     )
 
     assert result["skipped"] == 0, "a changed rule must not look like nothing changed"
@@ -929,7 +951,8 @@ def test_editing_a_rule_re_derives_rather_than_reporting_skipped(db):
 
 
 def test_a_broken_rule_does_not_stop_the_catalog_deriving(db):
-    # Rules are typed by hand. One bad regex must cost that rule, not the run.
+    # Rules are edited by hand. One rule the engine cannot run must cost that rule, not
+    # the run: an unknown kind, and a stored rule still in the pre-builder shape.
     _product(db, "ZZT-RULE-5", "SORENTO S/STEEL KITCHEN SINK", brand="brand")
 
     derive_for_code(
@@ -937,8 +960,9 @@ def test_a_broken_rule_does_not_stop_the_catalog_deriving(db):
         "ZZT-RULE-5",
         rules_by_key={
             "material": [
+                {"builder": {"kind": "regex", "pattern": "([unclosed"}},
                 {"match": "regex", "pattern": "([unclosed", "capture": 1},
-                {"match": "contains", "pattern": "S/STEEL", "value": "stainless_steel"},
+                _words("S/STEEL", "stainless_steel"),
             ]
         },
     )
@@ -996,25 +1020,24 @@ def test_the_code_suffix_still_answers_when_no_text_does(db):
 # no rule on the page that could have read it. They are ordinary rows now.
 # --------------------------------------------------------------------------- #
 def _rows(spec_key: str) -> list[tuple]:
-    """The shipped rules for a key, as (match, capture, gate, builder kind)."""
+    """The shipped rules for a key, as (kind, look_in, pick or fact, Only when)."""
     from app.services.product_spec_derivation import shipped_rules
 
     out = []
     for rule in shipped_rules().get(spec_key) or []:
+        builder = rule["builder"]
+        only_when = builder.get("only_when")
         gate = (
-            ("unless", tuple(sorted(rule["unless"].get("shape", []))))
-            if rule.get("unless")
-            else ("when", tuple(sorted(rule["applies_when"].get("shape", []))))
-            if rule.get("applies_when")
+            ("when" if only_when["is"] else "unless", tuple(sorted(only_when["values"])))
+            if only_when
             else None
         )
         out.append(
             (
-                rule.get("match"),
-                rule.get("capture"),
-                rule.get("source"),
+                builder["kind"],
+                builder.get("look_in"),
+                builder.get("pick", builder.get("fact")),
                 gate,
-                (rule.get("builder") or {}).get("kind"),
             )
         )
     return out
@@ -1026,64 +1049,64 @@ ROUND = ("round", "square")
 def test_the_column_the_size_triple_and_the_lone_size_are_shipped_rules(db):
     """AC-A.1 - dim_length, in the order the engine has always run them.
 
-    R5: the column, then `L x W x H`, then the lone size, then anything anybody adds.
+    R5: the column, then `L x W x H`, then the lone size, then "LENGTH ... MM", then the
+    flyer's labelled size.
     """
     assert _rows("dim_length") == [
-        ("from_field", None, None, ("unless", ROUND), "from_field"),
-        ("regex", 1, "description", ("unless", ROUND), "size_triple"),
-        # The lone size is a pattern row, not a `number before MM` sentence: the
-        # sentence compiles to `(\d+(?:\.\d+)?)`, which reads `GLASS SHELF 8MM` as an
-        # 8 mm long shelf. Three live codes, so the shipped row keeps the 2-to-4 digit
-        # form it has always had and the screen shows it as a pattern.
-        ("regex", 1, "size_text", ("unless", ROUND), None),
-        ("regex", 1, "flyer", None, None),
+        ("product", None, "length", ("unless", ROUND)),
+        ("size", "description", 1, ("unless", ROUND)),
+        # The lone size is a Number rule that ignores anything below 10 (`GLASS SHELF
+        # 8MM` is not an 8 mm long shelf) and skips a number right after a trap.
+        ("number", "description", None, ("unless", ROUND)),
+        # "(LENGTH-200MM)": a length stated in words (#1286 fix round 1).
+        ("number", "description", None, ("unless", ROUND)),
+        ("size", "flyer", "L", None),
     ]
-    from app.services.product_spec_derivation import _DIM_RE, _SINGLE_DIM_RE, shipped_rules
+    from app.services.product_spec_derivation import shipped_rules
 
-    rules = shipped_rules()["dim_length"]
-    assert rules[0]["pattern"] == "column:dimensions_length"
-    assert rules[1]["pattern"] == _DIM_RE.pattern
-    assert rules[2]["pattern"] == _SINGLE_DIM_RE.pattern
+    lone = shipped_rules()["dim_length"][2]["builder"]
+    assert lone["before"] == ["MM"]
+    assert lone["ignore_below"] == 10
+    assert lone["skip_after"] == ["S TRAP", "P TRAP"]
 
 
 def test_the_width_height_thickness_and_diameter_readers_are_shipped_rules(db):
     assert _rows("dim_width") == [
-        ("from_field", None, None, ("unless", ROUND), "from_field"),
-        ("regex", 2, "description", ("unless", ROUND), "size_triple"),
-        ("regex", 1, "flyer", None, None),
+        ("product", None, "width", ("unless", ROUND)),
+        ("size", "description", 2, ("unless", ROUND)),
+        ("size", "flyer", "W", None),
     ]
     assert _rows("dim_height") == [
-        ("from_field", None, None, ("unless", ROUND), "from_field"),
-        ("regex", 3, "description", ("unless", ROUND), "size_triple"),
-        ("regex", 1, "flyer", None, None),
+        ("product", None, "height", ("unless", ROUND)),
+        ("size", "description", 3, ("unless", ROUND)),
+        ("size", "flyer", "H", None),
     ]
     # A round product's columns are mis-keyed, so 407 is a diameter and the second and
     # third numbers are its depth and thickness - never a width and a height.
-    assert _rows("diameter") == [("regex", 1, "description", ("when", ROUND), "size_triple")]
-    assert _rows("depth") == [("regex", 2, "description", ("when", ROUND), "size_triple")]
+    assert _rows("diameter") == [("size", "description", 1, ("when", ROUND))]
+    assert _rows("depth") == [("size", "description", 2, ("when", ROUND))]
     assert _rows("thickness") == [
-        ("regex", 4, "description", ("unless", ROUND), "size_triple"),
-        ("regex", 3, "description", ("when", ROUND), "size_triple"),
+        ("size", "description", 4, ("unless", ROUND)),
+        ("size", "description", 3, ("when", ROUND)),
     ]
 
 
-def test_the_class_and_brand_readers_are_shipped_rules(db):
+def test_the_class_readers_are_shipped_rules_and_brand_is_not_a_specification(db):
     """The name head and the category sit UNDER the noun rows, which is where they ran.
 
     Order matters more here than anywhere else. 20,697 of 23,063 live products sit in a
     category carrying a class, so a category row above the name head would re-class the
-    whole catalogue on the strength of a filing code.
+    whole catalogue on the strength of a filing code. Brand has no rules at all (#1286,
+    D1): it is the product's own field.
     """
     class_rows = _rows("class")
-    assert {row[0] for row in class_rows[:-2]} == {"ends_with"}
-    assert class_rows[-2] == ("name_head", None, None, None, "name_head")
-    assert class_rows[-1] == ("from_field", None, None, None, "from_field")
-    assert _rows("brand") == [("from_field", None, None, None, "from_field")]
+    assert {row[0] for row in class_rows[:-2]} == {"words"}
+    assert class_rows[-2] == ("product", None, "name", None)
+    assert class_rows[-1] == ("product", None, "class", None)
 
     from app.services.product_spec_derivation import shipped_rules
 
-    assert shipped_rules()["class"][-1]["pattern"] == "category"
-    assert shipped_rules()["brand"][0]["pattern"] == "brand"
+    assert "brand" not in shipped_rules()
 
 
 def test_removing_the_lone_size_rule_removes_the_reader(db):
@@ -1094,7 +1117,7 @@ def test_removing_the_lone_size_rule_removes_the_reader(db):
     kept = [
         rule
         for rule in shipped_rules()["dim_length"]
-        if not (rule.get("source") == "size_text")
+        if rule["builder"]["kind"] != "number"
     ]
 
     derive_for_code(db, "ZZT-A3-1", rules_by_key={"dim_length": kept})
@@ -1107,7 +1130,7 @@ def test_removing_the_category_rule_leaves_the_class_to_the_name_head(db):
 
     # An SRT-KS category (Kitchen Sink) on a product whose name says squatting pan.
     _product(db, "ZZT-A3-2", "SORENTO SQUATTING PAN ZZT-A3-2", brand="brand")
-    kept = [rule for rule in shipped_rules()["class"] if rule["match"] != "from_field"]
+    kept = [rule for rule in shipped_rules()["class"] if rule["builder"].get("fact") != "class"]
 
     derive_for_code(db, "ZZT-A3-2", rules_by_key={"class": kept})
 
@@ -1118,17 +1141,9 @@ def test_removing_the_category_rule_leaves_the_class_to_the_name_head(db):
     derive_for_code(
         db,
         "ZZT-A3-3",
-        rules_by_key={"class": [r for r in kept if r["match"] != "name_head"]},
+        rules_by_key={"class": [r for r in kept if r["builder"].get("fact") != "name"]},
     )
     assert _value(db, "ZZT-A3-3", "class") is None
-
-
-def test_removing_the_brand_rule_removes_the_brand(db):
-    _product(db, "ZZT-A3-4", "SORENTO S/STEEL KITCHEN SINK ZZT-A3-4", brand="brand")
-
-    derive_for_code(db, "ZZT-A3-4", rules_by_key={"brand": []})
-
-    assert _value(db, "ZZT-A3-4", "brand") is None
 
 
 def test_order_is_priority_across_the_column_and_the_text(db):
@@ -1148,8 +1163,8 @@ def test_order_is_priority_across_the_column_and_the_text(db):
         length=Decimal("700"),
     )
     shipped = shipped_rules()["dim_length"]
-    column = [rule for rule in shipped if rule["match"] == "from_field"]
-    text = [rule for rule in shipped if rule["match"] != "from_field"]
+    column = [rule for rule in shipped if rule["builder"]["kind"] == "product"]
+    text = [rule for rule in shipped if rule["builder"]["kind"] != "product"]
 
     derive_for_code(db, "ZZT-A4-1", rules_by_key={"dim_length": text + column})
 
@@ -1239,161 +1254,77 @@ def test_a_lone_size_above_the_cap_is_dropped_and_flagged(db):
 
 
 # --------------------------------------------------------------------------- #
-# B3 - `from_field column:<name>` on a non-numeric column reads nothing rather
+# B3 - a Product rule naming a fact the engine does not know reads nothing rather
 # than crashing derivation for the whole catalogue.
 #
-# `_validate_rules` refuses this shape at save time now, so a NEW rule cannot carry
-# it - but a row written before that guard existed (or one that reaches `derive()`
-# through any other path) must still fail SAFE.
+# `validate_rules` refuses this shape at save time, so a NEW rule cannot carry it - but
+# a row that reaches `derive()` through any other path must still fail SAFE.
 # --------------------------------------------------------------------------- #
-def test_a_from_field_row_on_a_text_column_reads_nothing_and_does_not_raise(db):
+def test_a_product_rule_on_an_unknown_fact_reads_nothing_and_does_not_raise(db):
     _product(db, "ZZT-B3-1", "SORENTO KITCHEN SINK ZZT-B3-1", brand="brand")
 
-    # `currency` is a real `Product` column and it is text ("MYR"), not a number -
-    # `_number(str(raw))` used to be an unguarded `float()`.
     result = derive_for_code(
         db,
         "ZZT-B3-1",
-        rules_by_key={"zzt_bad_field": [{"match": "from_field", "pattern": "column:currency"}]},
+        rules_by_key={"zzt_bad_field": [{"builder": {"kind": "product", "fact": "currency"}}]},
     )
 
     assert result["exceptions"] == 0, "one bad row must not raise out of derive()"
     assert _value(db, "ZZT-B3-1", "zzt_bad_field") is None
 
 
-def test_from_field_choices_is_the_numeric_product_columns_plus_category_and_brand(db):
-    """The whitelist `_validate_rules` enforces (B3, `spec_registry_bad_rule`) - the
-    HTTP-level refusal is `test_a_from_field_rule_naming_a_text_column_is_refused` in
-    `tests/test_spec_registry_pr2_routes.py`; this pins the whitelist itself against
-    the live `Product` model."""
+def test_from_field_choices_is_the_numeric_product_columns_plus_category(db):
+    """The whitelist of product-record readers. Brand is not one of them (#1286, D1)."""
     from app.services.product_spec_registry import from_field_choices, numeric_product_columns
 
     assert "column:currency" not in from_field_choices()
     assert "currency" not in numeric_product_columns()
     assert "column:dimensions_length" in from_field_choices()
     assert "dimensions_length" in numeric_product_columns()
+    assert "brand" not in from_field_choices()
 
 
 # --------------------------------------------------------------------------- #
-# AC-A.8 - the sentence kinds compile to exactly one engine rule each
+# AC-S1.1 - each kind reads what its builder says (#1286, D5)
 #
-# The editor builds rules from sentences and compiles them client-side; the server
-# recompiles the same sentence and refuses a mismatch. Both compilers are pinned to
-# this table, so "Number before MM" cannot mean two different patterns on the two
-# sides of the wire.
+# The builder is the whole rule; `read_text` compiles it and reads the text. Pinned
+# against real catalogue phrases, one per kind and option.
 # --------------------------------------------------------------------------- #
-_SENTENCES = [
-    (
-        {"kind": "number_after", "word": "L"},
-        {"match": "regex", "pattern": r"\bL\s*(\d+(?:\.\d+)?)", "capture": 1},
-        "SORENTO SINK L 300 X 200",
-        300,
-    ),
-    (
-        {"kind": "number_before", "word": "MM"},
-        {
-            "match": "regex",
-            "pattern": r"(?<![A-Z0-9X])(\d+(?:\.\d+)?)\s*MM\b",
-            "capture": 1,
-        },
-        "MARBLE TOP BASIN (800MM)",
-        800,
-    ),
-    (
-        {"kind": "number_between", "from": "S-TRAP", "to": "MM"},
-        {
-            "match": "regex",
-            "pattern": r"S-TRAP\s*[:,]?\s*(\d+(?:\.\d+)?)\s*MM",
-            "capture": 1,
-        },
-        "ONE PIECE WC (S-TRAP 300MM)",
-        300,
-    ),
-    (
-        {"kind": "text_contains", "word": "RIMLESS", "value": True},
-        {"match": "contains", "pattern": "RIMLESS", "value": True},
-        "SORENTO RIMLESS WC",
-        True,
-    ),
-    (
-        {"kind": "text_ends_with", "word": "SQUATTING PAN", "value": "Squatting Pan"},
-        {"match": "ends_with", "pattern": "SQUATTING PAN", "value": "Squatting Pan"},
-        "SORENTO SQUATTING PAN",
-        "Squatting Pan",
-    ),
-    (
-        {"kind": "word_present", "word": "THERMOSTATIC"},
-        {"match": "present", "pattern": "THERMOSTATIC", "value": True},
-        "SHOWER SET THERMOSTATIC",
-        True,
-    ),
-    (
-        {"kind": "code_contains", "word": "SRTSC", "value": "Seat Cover"},
-        {"match": "code_contains", "pattern": "SRTSC", "value": "Seat Cover"},
-        None,
-        "Seat Cover",
-    ),
-    (
-        {"kind": "code_starts_with", "word": "SRT", "value": "Sorento"},
-        {"match": "code_starts_with", "pattern": "SRT", "value": "Sorento"},
-        None,
-        "Sorento",
-    ),
-    (
-        {"kind": "code_ends_with", "word": "UF", "value": "uf"},
-        {"match": "code_suffix", "pattern": "UF", "value": "uf"},
-        None,
-        "uf",
-    ),
-    (
-        {"kind": "from_field", "field": "brand"},
-        {"match": "from_field", "pattern": "brand"},
-        None,
-        None,
-    ),
-    (
-        {"kind": "size_triple", "position": 2},
-        {"match": "regex", "pattern": None, "capture": 2},
-        "SORENTO SINK 800X400X200MM",
-        400,
-    ),
-    (
-        {"kind": "name_head", "field": None},
-        {"match": "name_head", "pattern": "class_tail"},
-        None,
-        None,
-    ),
+_BUILDERS = [
+    ({"kind": "number", "after": ["L"]}, "SORENTO SINK L 300 X 200", 300),
+    ({"kind": "number", "before": ["MM"]}, "MARBLE TOP BASIN (800MM)", 800),
+    ({"kind": "number", "after": ["S-TRAP"], "before": ["MM"]}, "ONE PIECE WC (S-TRAP 300MM)", 300),
+    ({"kind": "words", "words": ["RIMLESS"], "value": True}, "SORENTO RIMLESS WC", True),
+    ({"kind": "words", "words": ["THERMOSTATIC"], "value": True}, "SHOWER SET THERMOSTATIC", True),
+    ({"kind": "size", "pick": 2}, "SORENTO SINK 800X400X200MM", 400),
+    ({"kind": "code", "code_match": "contains", "texts": ["SRTSC"], "value": "Seat Cover"}, None, "Seat Cover"),
+    ({"kind": "code", "code_match": "starts_with", "texts": ["SRT"], "value": "Sorento"}, None, "Sorento"),
+    ({"kind": "code", "code_match": "ends_with", "texts": ["-UF"], "value": "uf"}, None, "uf"),
 ]
 
 
-@pytest.mark.parametrize("builder,expected,text,reads", _SENTENCES)
-def test_a_sentence_compiles_to_one_engine_rule(builder, expected, text, reads):
-    from app.services.product_spec_derivation import _DIM_RE, _rule_matches
-    from app.services.product_spec_registry import compile_builder
+@pytest.mark.parametrize("builder,text,reads", _BUILDERS)
+def test_a_builder_reads_what_it_says(builder, text, reads):
+    from app.services.product_spec_rules import read_text
 
-    compiled = compile_builder(builder)
-    if expected["pattern"] is None:
-        expected = {**expected, "pattern": _DIM_RE.pattern}
-    for field, value in expected.items():
-        assert compiled.get(field) == value, f"{builder['kind']}.{field}"
-
-    if text is None:
-        return
-    texts = {"description": text.upper(), "flyer": "", "class_tail": "", "size_text": text.upper()}
-    hit = _rule_matches(compiled, texts, "SRTSC1234-UF")
-    assert hit is not None, f"{builder['kind']} read nothing from {text!r}"
+    upper = (text or "").upper()
+    texts = {"description": upper, "flyer": "", "class_tail": ""}
+    hit = read_text(builder, texts, "SRTSC1234-UF")
+    assert hit is not None, f"{builder} read nothing from {text!r}"
     assert hit[0] == reads
 
 
-def test_a_code_sentence_reads_the_code(db):
-    from app.services.product_spec_derivation import _rule_matches
-    from app.services.product_spec_registry import compile_builder
+def test_an_at_end_words_rule_reads_the_product_name(db):
+    from app.services.product_spec_rules import read_text
 
-    texts = {"description": "", "flyer": "", "class_tail": "", "size_text": ""}
-    for builder, reads in (
-        ({"kind": "code_contains", "word": "SRTSC", "value": "Seat Cover"}, "Seat Cover"),
-        ({"kind": "code_starts_with", "word": "SRT", "value": "Sorento"}, "Sorento"),
-        ({"kind": "code_ends_with", "word": "UF", "value": "uf"}, "uf"),
-    ):
-        hit = _rule_matches(compile_builder(builder), texts, "SRTSC1234-UF")
-        assert hit is not None and hit[0] == reads, builder["kind"]
+    builder = {
+        "kind": "words",
+        "look_in": "name",
+        "words": ["SQUATTING PAN"],
+        "at_end": True,
+        "value": "Squatting Pan",
+    }
+    texts = {"description": "", "flyer": "", "class_tail": "SORENTO SQUATTING PAN"}
+    assert read_text(builder, texts, "")[0] == "Squatting Pan"
+    texts["class_tail"] = "SORENTO SQUATTING PAN COVER"
+    assert read_text(builder, texts, "") is None

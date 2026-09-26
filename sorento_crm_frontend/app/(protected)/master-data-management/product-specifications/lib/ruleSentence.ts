@@ -1,249 +1,284 @@
+import { readableValue } from '@/lib/spec-readable';
 import type {
-  SpecDerivationRule,
+  SpecCompiledRule,
   SpecRuleBuilder,
+  SpecRuleCodeMatch,
+  SpecRuleLookIn,
+  SpecRuleProductFact,
+  SpecRuleSizePick,
+  SpecRegistryKey,
 } from '../types/productSpec.types';
 
 /**
- * A derivation rule as a sentence a merchandiser can check.
+ * The rule engine's compiler, mirrored from `app/services/product_spec_rules.py`
+ * (contract `CONTRACT-product-specs-rule-engine.md`, sections 1-2.1) EXACTLY: every
+ * pattern string here has to be valid in both Python `re` and JavaScript `RegExp`, and
+ * the two compilers are pinned against one shared fixture of the shipped rules so a
+ * drift on either side fails a test rather than a live save.
  *
- * The editor showed rules as raw fields: a dropdown reading "Pattern, capture a number"
- * next to `\bSINGLE\s+BOWLS?\b`. That is the engine's own notation, and it asks the
- * person least equipped to read regular expressions to verify the thing the whole
- * catalogue depends on. The rule is unchanged - only how it is read.
+ * A rule is its `builder` and nothing else (contract 1): nobody types or sees a
+ * regular expression. `ruleCells` below turns a builder into the labelled parts the
+ * rules grid renders - never a sentence (owner ruling, 27 Sep 2026, "hmm can this be
+ * more structured?").
  */
+
+const escapeToken = (token: string) => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
- * A regular expression as the words it actually looks for.
- *
- * Deliberately partial: it undoes the handful of constructs the shipped rules use
- * (\b, \s+, ?, character classes for digits) and gives up on anything else rather than
- * mistranslating it. `null` means "show the pattern as it is" - an honest fallback,
- * where a wrong plain-English reading of a live rule would not be.
+ * One phrase, upper-cased: split on "..." into segments ("anything in between, in the
+ * same sentence"), each segment split on runs of spaces/hyphens into tokens (a space,
+ * a hyphen or nothing all match between them), each segment bounded by letters only
+ * so "LED" never matches inside "SEALED".
  */
-export function plainPattern(pattern: string): string | null {
-  if (!pattern) return null;
-  // Anything with alternation, lookaround, or nested groups is beyond this: those
-  // rules are genuinely for someone who writes regular expressions.
-  if (/[|()[\]{}^$]/.test(pattern.replace(/\\[dsw]/gi, ''))) return null;
-
-  const plain = pattern
-    .replace(/\\b|\\m|\\M/g, '') // word boundaries: implied by "whole words"
-    .replace(/\\s\+|\\s\*/g, ' ') // any gap: just a space
-    .replace(/\\[.\-/]/g, (m) => m[1]) // escaped punctuation
-    .replace(/\\d\+?/g, 'a number')
-    .trim();
-
-  // A trailing optional letter ("BOWLS?") reads as the plural it is.
-  const readable = plain.replace(/([A-Za-z])\?/g, '($1)');
-  return /^[A-Za-z0-9 .\-/()]+$/.test(readable) ? readable : null;
+function compilePhrase(phrase: string): string {
+  const segments = phrase
+    .toUpperCase()
+    .split('...')
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  const compiledSegments = segments.map((segment) => {
+    const tokens = segment.split(/[\s-]+/).filter(Boolean).map(escapeToken);
+    return `(?<![A-Z])${tokens.join('[\\s\\-]*')}(?![A-Z])`;
+  });
+  return compiledSegments.join('[^.]*?');
 }
 
-/** What a rule does, in one sentence. */
-export function ruleSentence(rule: SpecDerivationRule, label: string): string {
-  const shown = plainPattern(rule.pattern) ?? rule.pattern;
-  const where =
-    rule.source === 'flyer'
-      ? 'the flyer card'
-      : rule.source === 'description'
-        ? 'the description'
-        : 'the description or flyer';
-  const answer =
-    rule.value === true
-      ? 'yes'
-      : rule.value === false
-        ? 'no'
-        : rule.value === undefined || rule.value === ''
-          ? 'the number it finds'
-          : String(rule.value);
+/** `(?:P1|P2|...)`, in the order given. */
+function compileAlternation(phrases: string[]): string {
+  return `(?:${phrases.map(compilePhrase).join('|')})`;
+}
 
-  switch (rule.match) {
-    case 'contains':
-      return `If ${where} contains “${shown}”, ${label} is ${answer}.`;
-    case 'ends_with':
-      return `If ${where} ends with “${shown}”, ${label} is ${answer}.`;
-    case 'present':
-      return `If “${shown}” appears in ${where} at all, ${label} is yes.`;
-    case 'regex':
-      // A pattern rule does one of two jobs and they read very differently. With a
-      // `value` it is a condition like any other; only a `capture` pulls a number out
-      // of the text. Saying "read the number out of SINGLE BOWL(S)" about a rule that
-      // simply answers 1 describes something that does not happen.
-      return rule.capture !== undefined && rule.value === undefined
-        ? `Read ${label} out of ${where} where it says “${shown}”.`
-        : `If ${where} matches “${shown}”, ${label} is ${answer}.`;
-    case 'code_contains':
-      return `If the product code contains “${shown}”, ${label} is ${answer}.`;
-    case 'code_starts_with':
-      return `If the product code starts with “${shown}”, ${label} is ${answer}.`;
-    case 'code_suffix':
-      return `If the product code ends in “${shown}”, ${label} is ${answer}.`;
-    // The two readers that used to run before any rule did (#425): the product's own
-    // row rather than its text. A shipped row always carries a `builder`, so
-    // `builderSentence` below is what actually renders these in the editor - this is
-    // the fallback for the same row shown as a raw pattern (Advanced -> Edit pattern).
-    case 'from_field':
-      return `${fromFieldSentence(rule.pattern)}.`;
-    case 'name_head':
-      return `${label} comes from the product name head.`;
+const STANDALONE_NUMBER = '(\\d+(?:\\.\\d+)?)';
+/** A number read BEFORE a word must stand on its own (never the 1008 in SRTKS1008L). */
+const NUMBER_GUARD = '(?<![A-Z0-9.])(?<![A-Z0-9]-)';
+
+/** `words` pattern: the alternation, with `\s*$` appended when `at_end`. */
+function compileWordsPattern(words: string[], atEnd?: boolean): string {
+  return `${compileAlternation(words)}${atEnd ? '\\s*$' : ''}`;
+}
+
+/** `number` pattern: before / after / between, per contract section 2. */
+function compileNumberPattern(before: string[], after: string[]): string {
+  const hasBefore = before.length > 0;
+  const hasAfter = after.length > 0;
+  const w = hasBefore ? compileAlternation(before) : '';
+  const a = hasAfter ? compileAlternation(after) : '';
+  if (hasAfter && hasBefore) {
+    return `${a}[\\s\\-:,]*${STANDALONE_NUMBER}[\\s\\-]*${w}(?![A-Z])`;
+  }
+  if (hasAfter) {
+    return `${a}[\\s\\-:,]*${STANDALONE_NUMBER}`;
+  }
+  return `${NUMBER_GUARD}${STANDALONE_NUMBER}[\\s\\-]*${w}(?![A-Z])`;
+}
+
+const SIZE_PART = '(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?';
+/** The size regex, 2 to 4 labelled-or-not parts (contract section 2). */
+export const SIZE_PATTERN =
+  `${SIZE_PART}\\s*[X*]\\s*${SIZE_PART}` +
+  `(?:\\s*[X*]\\s*${SIZE_PART})?` +
+  `(?:\\s*[X*]\\s*${SIZE_PART})?`;
+
+/** `skip_after`: searched against the text before a hit; a match skips that hit. */
+function compileSkip(skipAfter: string[] | undefined): string | null {
+  if (!skipAfter || skipAfter.length === 0) return null;
+  return `(?<![A-Z])${compileAlternation(skipAfter)}[\\s\\-:,(]*$`;
+}
+
+const WRITTEN_IN_SCALE: Record<'centimetres' | 'metres', number> = {
+  centimetres: 10,
+  metres: 1000,
+};
+
+/** `compile_builder(builder)` - what the engine and Try it run (contract 2.1). */
+export function compileBuilder(builder: SpecRuleBuilder): SpecCompiledRule {
+  const base: SpecCompiledRule = {
+    kind: builder.kind,
+    scope: null,
+    pattern: null,
+    capture: null,
+    skip: null,
+    scale: null,
+    min: null,
+    pick: null,
+    code_match: null,
+    texts: null,
+    fact: null,
+  };
+
+  switch (builder.kind) {
+    case 'words':
+      return {
+        ...base,
+        // `scope` is `look_in`, or null when absent - the caller (or the server's
+        // own default) decides what an absent look_in means for this spec (contract
+        // 1.1: "name" for Product class, "any" for everything else).
+        scope: builder.look_in ?? null,
+        pattern: compileWordsPattern(builder.words ?? [], builder.at_end),
+        skip: compileSkip(builder.skip_after),
+      };
+    case 'number':
+      return {
+        ...base,
+        scope: builder.look_in ?? null,
+        pattern: compileNumberPattern(builder.before ?? [], builder.after ?? []),
+        capture: 1,
+        skip: compileSkip(builder.skip_after),
+        scale: builder.written_in ? WRITTEN_IN_SCALE[builder.written_in] : null,
+        min: builder.ignore_below ?? null,
+      };
+    case 'size':
+      return {
+        ...base,
+        scope: builder.look_in ?? null,
+        pattern: SIZE_PATTERN,
+        pick: builder.pick,
+      };
+    case 'code':
+      return {
+        ...base,
+        scope: 'code',
+        code_match: builder.code_match,
+        texts: (builder.texts ?? []).map((t) => t.toUpperCase()),
+      };
+    case 'product':
+      return {
+        ...base,
+        scope: 'product',
+        fact: builder.fact,
+      };
     default:
-      return `${label}: ${rule.match} “${shown}”.`;
+      return base;
   }
 }
 
-/**
- * The sentence-builder layer.
- *
- * `ruleSentence` above reads an engine rule (match/pattern/capture/value) back as
- * English - the one-way translation a pattern row still needs. A `builder` row runs the
- * other direction: the kind menu picks a sentence FIRST, blanks get filled in, and
- * `compileBuilder` turns that into the same engine fields. One compiler, so the
- * pattern Advanced shows for a builder row is exactly what saving it sends.
- *
- * `from_field` and `name_head` read the product record, or run a multi-step text
- * transform, rather than matching a regex - so they compile to kinds of their own and
- * their `pattern` names what they read (`brand`, `column:dimensions_length`,
- * `class_tail`). The server compiles the same fields from the same sentence and refuses
- * a save where the two disagree, so nothing here may be illustrative.
- */
+// --- The rules grid's cells (D14): labelled parts, never a sentence -------------
 
-const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const LOOK_IN_LABEL: Record<SpecRuleLookIn, string> = {
+  any: 'Description or flyer',
+  description: 'Description only',
+  flyer: 'Flyer only',
+  name: 'The product name',
+};
 
-/** Mirrors `_DIM_RE` in `product_spec_derivation.py`: 2-4 numbers separated by x/X/*,
- *  each optionally labelled (L/W/H/D) and optionally carrying its own "mm". */
-const DIM_PART = '(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?';
-export const DIM_TRIPLE_PATTERN =
-  `${DIM_PART}\\s*[xX*]\\s*${DIM_PART}` +
-  `(?:\\s*[xX*]\\s*${DIM_PART})?` +
-  `(?:\\s*[xX*]\\s*${DIM_PART})?`;
+const CODE_MATCH_LABEL: Record<SpecRuleCodeMatch, string> = {
+  contains: 'Contains',
+  starts_with: 'Starts with',
+  ends_with: 'Ends with',
+};
 
-/** builder -> the engine fields it compiles to. What gets saved and what try-it runs. */
-export function compileBuilder(
-  builder: SpecRuleBuilder,
-): Pick<SpecDerivationRule, 'match' | 'pattern' | 'capture' | 'value'> {
-  const word = escapeRegex((builder.word ?? '').toUpperCase());
+const PRODUCT_FACT_LABEL: Record<SpecRuleProductFact, string> = {
+  class: "The product's category's class",
+  name: "What the product's name says it is",
+  length: "The product's length",
+  width: "The product's width",
+  height: "The product's height",
+};
+
+function sizePickLabel(pick: SpecRuleSizePick): string {
+  if (pick === 'L' || pick === 'W' || pick === 'H') return `Labelled: ${pick}`;
+  const suffix = pick === 1 ? 'st' : pick === 2 ? 'nd' : pick === 3 ? 'rd' : 'th';
+  return `${pick}${suffix} number`;
+}
+
+/** "Where to look" cell (AC-S1.14): Code and Product rules read their own place. */
+export function whereToLookCell(builder: SpecRuleBuilder, specKey?: string): string {
+  if (builder.kind === 'code') return 'Product code';
+  if (builder.kind === 'product') return 'The product';
+  const fallback: SpecRuleLookIn = specKey === 'class' ? 'name' : 'any';
+  return LOOK_IN_LABEL[builder.look_in ?? fallback];
+}
+
+const KIND_LABEL: Record<SpecRuleBuilder['kind'], string> = {
+  words: 'Words',
+  number: 'Number',
+  size: 'Size',
+  code: 'Code',
+  product: 'Product',
+};
+
+export function kindCell(builder: SpecRuleBuilder): string {
+  return KIND_LABEL[builder.kind];
+}
+
+/** "What to find" cell: the primary line and any optional second-line parts. */
+export function whatToFindCell(builder: SpecRuleBuilder): { primary: string; secondary: string[] } {
   switch (builder.kind) {
-    case 'number_after':
-      return {
-        match: 'regex',
-        pattern: `\\b${word}\\s*(\\d+(?:\\.\\d+)?)`,
-        capture: 1,
-      };
-    case 'number_before':
-      return {
-        match: 'regex',
-        pattern: `(?<![A-Z0-9X])(\\d+(?:\\.\\d+)?)\\s*${word}\\b`,
-        capture: 1,
-      };
-    case 'number_between': {
-      const from = escapeRegex((builder.from ?? '').toUpperCase());
-      const to = escapeRegex((builder.to ?? '').toUpperCase());
-      return {
-        match: 'regex',
-        pattern: `${from}\\s*[:,]?\\s*(\\d+(?:\\.\\d+)?)\\s*${to}`,
-        capture: 1,
-      };
+    case 'words': {
+      const secondary: string[] = [];
+      if (builder.at_end) secondary.push('Only at the end');
+      if (builder.skip_after?.length) secondary.push(`Skip after: ${builder.skip_after.join(', ')}`);
+      return { primary: builder.words.join(', '), secondary };
     }
-    case 'text_contains':
+    case 'number': {
+      const parts: string[] = [];
+      if (builder.after?.length) parts.push(`After: ${builder.after.join(', ')}`);
+      if (builder.before?.length) parts.push(`Before: ${builder.before.join(', ')}`);
+      const secondary: string[] = [];
+      if (builder.skip_after?.length) secondary.push(`Skip after: ${builder.skip_after.join(', ')}`);
+      if (builder.written_in) secondary.push(`Written in: ${builder.written_in}`);
+      if (builder.ignore_below !== undefined && builder.ignore_below !== null) {
+        secondary.push(`Ignore below: ${builder.ignore_below}`);
+      }
+      return { primary: parts.join(' · '), secondary };
+    }
+    case 'size':
+      return { primary: sizePickLabel(builder.pick), secondary: [] };
+    case 'code':
       return {
-        match: 'contains',
-        pattern: builder.word ?? '',
-        value: builder.value ?? '',
+        primary: `${CODE_MATCH_LABEL[builder.code_match]}: ${builder.texts.join(', ')}`,
+        secondary: [],
       };
-    case 'text_ends_with':
-      return {
-        match: 'ends_with',
-        pattern: builder.word ?? '',
-        value: builder.value ?? '',
-      };
-    case 'word_present':
-      return { match: 'present', pattern: builder.word ?? '', value: true };
-    case 'code_contains':
-      return {
-        match: 'code_contains',
-        pattern: builder.word ?? '',
-        value: builder.value ?? '',
-      };
-    case 'code_starts_with':
-      return {
-        match: 'code_starts_with',
-        pattern: builder.word ?? '',
-        value: builder.value ?? '',
-      };
-    case 'code_ends_with':
-      // The engine's kind for this is `code_suffix` - it predates the sentence menu.
-      return {
-        match: 'code_suffix',
-        pattern: builder.word ?? '',
-        value: builder.value ?? '',
-      };
-    case 'from_field':
-      return { match: 'from_field', pattern: builder.field || 'category' };
-    case 'size_triple':
-      return {
-        match: 'regex',
-        pattern: DIM_TRIPLE_PATTERN,
-        capture: builder.position ?? 1,
-      };
-    case 'name_head':
-      // A kind of its own, not a regex: the engine strips the code, the size, the
-      // parenthetical and the "WITH"/"C/W"/"FOR" tail and then reads the trailing
-      // noun off what is left. `class_tail` is that text. The server compiles the
-      // same two fields and refuses a row where the two compilers disagree, so this
-      // has to be what it runs rather than something illustrative.
-      return { match: 'name_head', pattern: 'class_tail' };
+    case 'product':
+      return { primary: PRODUCT_FACT_LABEL[builder.fact], secondary: [] };
     default:
-      return { match: 'regex', pattern: '' };
+      return { primary: '', secondary: [] };
   }
 }
 
-function ordinal(n: number): string {
-  const suffixes = ['th', 'st', 'nd', 'rd'];
-  const v = n % 100;
-  return `${n}${suffixes[(v - 20) % 10] ?? suffixes[v] ?? suffixes[0]}`;
-}
-
-function fromFieldSentence(field?: string): string {
-  if (!field) return "From the product's own field";
-  if (field === 'category') return "From the product's category";
-  if (field === 'brand') return "From the product's brand field";
-  if (field.startsWith('column:'))
-    return `From the product's \`${field.slice(7)}\` column`;
-  return `From the product's ${field}`;
-}
-
-/** A builder as the sentence it reads, blanks filled in. What the row shows. */
-export function builderSentence(builder: SpecRuleBuilder): string {
-  const word = builder.word || '...';
-  const value =
-    builder.value === undefined || builder.value === ''
-      ? '...'
-      : String(builder.value);
-  switch (builder.kind) {
-    case 'number_after':
-      return `Number after the word \`${word}\``;
-    case 'number_before':
-      return `Number before \`${word}\``;
-    case 'number_between':
-      return `Number between \`${builder.from || '...'}\` and \`${builder.to || '...'}\``;
-    case 'text_contains':
-      return `Text contains \`${word}\` → ${value}`;
-    case 'text_ends_with':
-      return `Text ends with \`${word}\` → ${value}`;
-    case 'word_present':
-      return `Word \`${word}\` is present → yes`;
-    case 'code_contains':
-      return `Code contains \`${word}\` → ${value}`;
-    case 'code_starts_with':
-      return `Code starts with \`${word}\` → ${value}`;
-    case 'code_ends_with':
-      return `Code ends with \`${word}\` → ${value}`;
-    case 'from_field':
-      return fromFieldSentence(builder.field);
-    case 'size_triple':
-      return `Size from \`L x W x H\`, take the ${ordinal(builder.position ?? 1)} number`;
-    case 'name_head':
-      return 'Product name head (text before the first bracket or WITH)';
-    default:
-      return 'Unrecognised rule';
+/** "Value it sets" cell: the spec's own choice label, or "The number it finds". */
+export function valueItSetsCell(builder: SpecRuleBuilder, spec?: SpecRegistryKey): string {
+  if (builder.kind === 'number' || builder.kind === 'size' || builder.kind === 'product') {
+    return 'The number it finds';
   }
+  const value = builder.value;
+  if (value === true) return 'Yes';
+  if (value === false) return 'No';
+  return readableValue(value, undefined, spec?.value_labels);
+}
+
+/** "Only when" cell: "Shape is not: Round, Square", or blank. */
+export function onlyWhenCell(
+  builder: SpecRuleBuilder,
+  lookupSpec?: (specKey: string) => SpecRegistryKey | undefined,
+): string {
+  const onlyWhen = builder.only_when;
+  if (!onlyWhen) return '';
+  const other = lookupSpec?.(onlyWhen.spec);
+  const label = other?.label ?? onlyWhen.spec;
+  const values = onlyWhen.values
+    .map((value) => readableValue(value, undefined, other?.value_labels))
+    .join(', ');
+  return `${label} is${onlyWhen.is === false ? ' not' : ''}: ${values}`;
+}
+
+/** Every rules-grid column for one rule, in one call (D14). */
+export function ruleCells(
+  builder: SpecRuleBuilder,
+  spec?: SpecRegistryKey,
+  lookupSpec?: (specKey: string) => SpecRegistryKey | undefined,
+): {
+  whereToLook: string;
+  kind: string;
+  whatToFind: { primary: string; secondary: string[] };
+  valueItSets: string;
+  onlyWhen: string;
+} {
+  return {
+    whereToLook: whereToLookCell(builder, spec?.spec_key),
+    kind: kindCell(builder),
+    whatToFind: whatToFindCell(builder),
+    valueItSets: valueItSetsCell(builder, spec),
+    onlyWhen: onlyWhenCell(builder, lookupSpec),
+  };
 }

@@ -1,0 +1,5337 @@
+[
+  {
+    "spec_key": "material",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "STAINLESS STEEL",
+        "S/STEEL",
+        "STAINLESS"
+      ],
+      "value": "stainless_steel"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])STAINLESS[\\s\\-]*STEEL(?![A-Z])|(?<![A-Z])S/STEEL(?![A-Z])|(?<![A-Z])STAINLESS(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "material",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "TEMPERED GLASS"
+      ],
+      "value": "glass"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])TEMPERED[\\s\\-]*GLASS(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "material",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "CERAMIC",
+        "PORCELAIN"
+      ],
+      "value": "ceramic"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])CERAMIC(?![A-Z])|(?<![A-Z])PORCELAIN(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "material",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "ACRYLIC"
+      ],
+      "value": "acrylic"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])ACRYLIC(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "material",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "GLASS"
+      ],
+      "value": "glass"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])GLASS(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "material",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "BRASS"
+      ],
+      "value": "brass"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])BRASS(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "material",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "PVC"
+      ],
+      "value": "pvc"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])PVC(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "material",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "ABS"
+      ],
+      "value": "abs"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])ABS(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "material",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "NANOGRAIN"
+      ],
+      "value": "nanograin"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])NANOGRAIN(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "material",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "GRANITE"
+      ],
+      "value": "granite"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])GRANITE(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "material",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "MARBLE"
+      ],
+      "value": "marble"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])MARBLE(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "mounting",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "TABLE TOP",
+        "TABLETOP"
+      ],
+      "value": "counter_top"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])TABLE[\\s\\-]*TOP(?![A-Z])|(?<![A-Z])TABLETOP(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "mounting",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "WALL HUNG",
+        "WALL MOUNTED",
+        "WALL MOUNT"
+      ],
+      "value": "wall_hung"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])WALL[\\s\\-]*HUNG(?![A-Z])|(?<![A-Z])WALL[\\s\\-]*MOUNTED(?![A-Z])|(?<![A-Z])WALL[\\s\\-]*MOUNT(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "mounting",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "FLOOR STANDING",
+        "FLOOR MOUNTED",
+        "FREE STANDING"
+      ],
+      "value": "floor_standing"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])FLOOR[\\s\\-]*STANDING(?![A-Z])|(?<![A-Z])FLOOR[\\s\\-]*MOUNTED(?![A-Z])|(?<![A-Z])FREE[\\s\\-]*STANDING(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "mounting",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "UNDER COUNTER",
+        "UNDERMOUNT",
+        "UNDER MOUNT"
+      ],
+      "value": "under_counter"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])UNDER[\\s\\-]*COUNTER(?![A-Z])|(?<![A-Z])UNDERMOUNT(?![A-Z])|(?<![A-Z])UNDER[\\s\\-]*MOUNT(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "mounting",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "COUNTER TOP",
+        "COUNTERTOP",
+        "ABOVE COUNTER",
+        "TOP MOUNT"
+      ],
+      "value": "counter_top"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])COUNTER[\\s\\-]*TOP(?![A-Z])|(?<![A-Z])COUNTERTOP(?![A-Z])|(?<![A-Z])ABOVE[\\s\\-]*COUNTER(?![A-Z])|(?<![A-Z])TOP[\\s\\-]*MOUNT(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "mounting",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "PILLAR MOUNTED",
+        "PILLAR MOUNT",
+        "PILLAR"
+      ],
+      "value": "pillar_mounted"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])PILLAR[\\s\\-]*MOUNTED(?![A-Z])|(?<![A-Z])PILLAR[\\s\\-]*MOUNT(?![A-Z])|(?<![A-Z])PILLAR(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "mounting",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SEMI RECESSED",
+        "SEMI-RECESSED"
+      ],
+      "value": "semi_recessed"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SEMI[\\s\\-]*RECESSED(?![A-Z])|(?<![A-Z])SEMI[\\s\\-]*RECESSED(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "mounting",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "CONCEALED"
+      ],
+      "value": "concealed"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])CONCEALED(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "mounting",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "EXPOSED"
+      ],
+      "value": "exposed"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])EXPOSED(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "mounting",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "PEDESTAL"
+      ],
+      "value": "pedestal"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])PEDESTAL(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "control_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SINGLE LEVER",
+        "SINGLE HANDLE"
+      ],
+      "value": "single_lever"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SINGLE[\\s\\-]*LEVER(?![A-Z])|(?<![A-Z])SINGLE[\\s\\-]*HANDLE(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "control_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SELF CLOSING",
+        "SELF-CLOSING"
+      ],
+      "value": "self_closing"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SELF[\\s\\-]*CLOSING(?![A-Z])|(?<![A-Z])SELF[\\s\\-]*CLOSING(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "control_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SENSOR"
+      ],
+      "value": "sensor"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SENSOR(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "control_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "TWO WAY",
+        "2 WAY"
+      ],
+      "value": "two_way"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])TWO[\\s\\-]*WAY(?![A-Z])|(?<![A-Z])2[\\s\\-]*WAY(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SEAT COVER",
+        "TOILET SEAT"
+      ],
+      "value": "toilet_seat"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SEAT[\\s\\-]*COVER(?![A-Z])|(?<![A-Z])TOILET[\\s\\-]*SEAT(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "URINAL"
+      ],
+      "value": "urinal"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])URINAL(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "TOILET BRUSH"
+      ],
+      "value": "toilet_brush"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])TOILET[\\s\\-]*BRUSH(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SQUATTING PAN",
+        "SQUAT PAN"
+      ],
+      "value": "squatting_pan"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SQUATTING[\\s\\-]*PAN(?![A-Z])|(?<![A-Z])SQUAT[\\s\\-]*PAN(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "TOWEL RING"
+      ],
+      "value": "towel_ring"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])TOWEL[\\s\\-]*RING(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "DUSTBIN",
+        "WASTE BIN"
+      ],
+      "value": "dustbin"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])DUSTBIN(?![A-Z])|(?<![A-Z])WASTE[\\s\\-]*BIN(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "BASIN COLD TAP",
+        "BASIN HOT TAP"
+      ],
+      "value": "basin_tap"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])BASIN[\\s\\-]*COLD[\\s\\-]*TAP(?![A-Z])|(?<![A-Z])BASIN[\\s\\-]*HOT[\\s\\-]*TAP(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "DRAIN PIPE"
+      ],
+      "value": "drain_pipe"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])DRAIN[\\s\\-]*PIPE(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "STOP COCK",
+        "STOPCOCK"
+      ],
+      "value": "stop_cock"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])STOP[\\s\\-]*COCK(?![A-Z])|(?<![A-Z])STOPCOCK(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SHOWER SEAT"
+      ],
+      "value": "shower_seat"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SHOWER[\\s\\-]*SEAT(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "HANDRAIL",
+        "HAND RAIL"
+      ],
+      "value": "handrail"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])HANDRAIL(?![A-Z])|(?<![A-Z])HAND[\\s\\-]*RAIL(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "BOTTLE TRAP"
+      ],
+      "value": "bottle_trap"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])BOTTLE[\\s\\-]*TRAP(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "CABINET HINGES",
+        "HINGES",
+        "HINGE"
+      ],
+      "value": "hinge"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])CABINET[\\s\\-]*HINGES(?![A-Z])|(?<![A-Z])HINGES(?![A-Z])|(?<![A-Z])HINGE(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "PRESSURE PUMP",
+        "BOOSTER PUMP",
+        "WATER PUMP"
+      ],
+      "value": "water_pump"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])PRESSURE[\\s\\-]*PUMP(?![A-Z])|(?<![A-Z])BOOSTER[\\s\\-]*PUMP(?![A-Z])|(?<![A-Z])WATER[\\s\\-]*PUMP(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "STOP VALVE"
+      ],
+      "value": "angle_valve"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])STOP[\\s\\-]*VALVE(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SOAP HOLDER",
+        "SOAP DISH"
+      ],
+      "value": "soap_dispenser"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SOAP[\\s\\-]*HOLDER(?![A-Z])|(?<![A-Z])SOAP[\\s\\-]*DISH(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "FLOOR DRAIN"
+      ],
+      "value": "floor_grating"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])FLOOR[\\s\\-]*DRAIN(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "CORNER SHELF"
+      ],
+      "value": "corner_basket"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])CORNER[\\s\\-]*SHELF(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "TOWEL RACK"
+      ],
+      "value": "towel_bar"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])TOWEL[\\s\\-]*RACK(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "GLASS SHELF"
+      ],
+      "value": "towel_shelf"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])GLASS[\\s\\-]*SHELF(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "ANGLE VALVE"
+      ],
+      "value": "angle_valve"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])ANGLE[\\s\\-]*VALVE(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "HOSE BIB TAP",
+        "BIB TAP"
+      ],
+      "value": "bib_tap"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])HOSE[\\s\\-]*BIB[\\s\\-]*TAP(?![A-Z])|(?<![A-Z])BIB[\\s\\-]*TAP(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "BASIN TAP"
+      ],
+      "value": "basin_tap"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])BASIN[\\s\\-]*TAP(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SINK TAP",
+        "KITCHEN TAP"
+      ],
+      "value": "kitchen_tap"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SINK[\\s\\-]*TAP(?![A-Z])|(?<![A-Z])KITCHEN[\\s\\-]*TAP(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SHOWER TAP"
+      ],
+      "value": "shower_tap"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SHOWER[\\s\\-]*TAP(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "MIXER TAP",
+        "MIXER"
+      ],
+      "value": "mixer_tap"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])MIXER[\\s\\-]*TAP(?![A-Z])|(?<![A-Z])MIXER(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "HAND SHOWER"
+      ],
+      "value": "hand_shower"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])HAND[\\s\\-]*SHOWER(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "RAIN SHOWER"
+      ],
+      "value": "rain_shower"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])RAIN[\\s\\-]*SHOWER(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SHOWER SET"
+      ],
+      "value": "shower_set"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SHOWER[\\s\\-]*SET(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SHOWER HEAD"
+      ],
+      "value": "shower_head"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SHOWER[\\s\\-]*HEAD(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "CLOSE-COUPLED",
+        "CLOSE COUPLED"
+      ],
+      "value": "close_coupled"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])CLOSE[\\s\\-]*COUPLED(?![A-Z])|(?<![A-Z])CLOSE[\\s\\-]*COUPLED(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "ONE PIECE",
+        "ONE-PIECE"
+      ],
+      "value": "one_piece"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])ONE[\\s\\-]*PIECE(?![A-Z])|(?<![A-Z])ONE[\\s\\-]*PIECE(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "ART BASIN"
+      ],
+      "value": "art_basin"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])ART[\\s\\-]*BASIN(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "MIRROR CABINET"
+      ],
+      "value": "mirror_cabinet"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])MIRROR[\\s\\-]*CABINET(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "POP UP WASTE",
+        "POP-UP WASTE",
+        "POPUP WASTE"
+      ],
+      "value": "pop_up_waste"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])POP[\\s\\-]*UP[\\s\\-]*WASTE(?![A-Z])|(?<![A-Z])POP[\\s\\-]*UP[\\s\\-]*WASTE(?![A-Z])|(?<![A-Z])POPUP[\\s\\-]*WASTE(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "TOWEL SHELF"
+      ],
+      "value": "towel_shelf"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])TOWEL[\\s\\-]*SHELF(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "TOWEL BAR",
+        "TOWEL RACK"
+      ],
+      "value": "towel_bar"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])TOWEL[\\s\\-]*BAR(?![A-Z])|(?<![A-Z])TOWEL[\\s\\-]*RACK(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "HOOK BAR"
+      ],
+      "value": "hook_bar"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])HOOK[\\s\\-]*BAR(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "ROBE HOOK"
+      ],
+      "value": "robe_hook"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])ROBE[\\s\\-]*HOOK(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "CORNER BASKET",
+        "CORNER RACK"
+      ],
+      "value": "corner_basket"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])CORNER[\\s\\-]*BASKET(?![A-Z])|(?<![A-Z])CORNER[\\s\\-]*RACK(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "PAPER HOLDER"
+      ],
+      "value": "paper_holder"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])PAPER[\\s\\-]*HOLDER(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "GRAB BAR"
+      ],
+      "value": "grab_bar"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])GRAB[\\s\\-]*BAR(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SOAP DISPENSER"
+      ],
+      "value": "soap_dispenser"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SOAP[\\s\\-]*DISPENSER(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "FLEXIBLE HOSE"
+      ],
+      "value": "flexible_hose"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])FLEXIBLE[\\s\\-]*HOSE(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "FLUSH VALVE"
+      ],
+      "value": "flush_valve"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])FLUSH[\\s\\-]*VALVE(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "FLOOR GRATING"
+      ],
+      "value": "floor_grating"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])FLOOR[\\s\\-]*GRATING(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "FLOOR TRAP"
+      ],
+      "value": "floor_trap"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])FLOOR[\\s\\-]*TRAP(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "CISTERN"
+      ],
+      "value": "cistern"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])CISTERN(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "TUMBLER"
+      ],
+      "value": "tumbler"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])TUMBLER(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "MIRROR"
+      ],
+      "value": "mirror"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])MIRROR(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "product_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "BIDET"
+      ],
+      "value": "bidet"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])BIDET(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "water_supply",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "COLD TAP"
+      ],
+      "value": "cold_only"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])COLD[\\s\\-]*TAP(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "water_supply",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "MIXER TAP",
+        "MIXER"
+      ],
+      "value": "mixer"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])MIXER[\\s\\-]*TAP(?![A-Z])|(?<![A-Z])MIXER(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "steel_grade",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "S/STEEL 304",
+        "SUS304",
+        "SUS 304",
+        "STAINLESS STEEL 304",
+        "304"
+      ],
+      "value": "304"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])S/STEEL[\\s\\-]*304(?![A-Z])|(?<![A-Z])SUS304(?![A-Z])|(?<![A-Z])SUS[\\s\\-]*304(?![A-Z])|(?<![A-Z])STAINLESS[\\s\\-]*STEEL[\\s\\-]*304(?![A-Z])|(?<![A-Z])304(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "steel_grade",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SUS201",
+        "S/STEEL 201",
+        "201"
+      ],
+      "value": "201"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SUS201(?![A-Z])|(?<![A-Z])S/STEEL[\\s\\-]*201(?![A-Z])|(?<![A-Z])201(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "furniture_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "BASIN CABINET"
+      ],
+      "value": "basin_cabinet"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])BASIN[\\s\\-]*CABINET(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "furniture_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SIDE CABINET"
+      ],
+      "value": "side_cabinet"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SIDE[\\s\\-]*CABINET(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "furniture_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "TALL CABINET"
+      ],
+      "value": "tall_cabinet"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])TALL[\\s\\-]*CABINET(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "way_count",
+    "builder": {
+      "kind": "number",
+      "look_in": "any",
+      "before": [
+        "WAY",
+        "WAYS"
+      ]
+    },
+    "compiled": {
+      "kind": "number",
+      "scope": "any",
+      "pattern": "(?<![A-Z0-9.])(?<![A-Z0-9]-)(\\d+(?:\\.\\d+)?)[\\s\\-]*(?:(?<![A-Z])WAY(?![A-Z])|(?<![A-Z])WAYS(?![A-Z]))(?![A-Z])",
+      "capture": 1,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "piece_count",
+    "builder": {
+      "kind": "number",
+      "look_in": "any",
+      "before": [
+        "IN 1"
+      ]
+    },
+    "compiled": {
+      "kind": "number",
+      "scope": "any",
+      "pattern": "(?<![A-Z0-9.])(?<![A-Z0-9]-)(\\d+(?:\\.\\d+)?)[\\s\\-]*(?:(?<![A-Z])IN[\\s\\-]*1(?![A-Z]))(?![A-Z])",
+      "capture": 1,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "capacity_oz",
+    "builder": {
+      "kind": "number",
+      "look_in": "any",
+      "before": [
+        "OZ"
+      ]
+    },
+    "compiled": {
+      "kind": "number",
+      "scope": "any",
+      "pattern": "(?<![A-Z0-9.])(?<![A-Z0-9]-)(\\d+(?:\\.\\d+)?)[\\s\\-]*(?:(?<![A-Z])OZ(?![A-Z]))(?![A-Z])",
+      "capture": 1,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "capacity_litre",
+    "builder": {
+      "kind": "number",
+      "look_in": "any",
+      "before": [
+        "L",
+        "LTR",
+        "LITRE",
+        "LITRES",
+        "LITER",
+        "LITERS"
+      ]
+    },
+    "compiled": {
+      "kind": "number",
+      "scope": "any",
+      "pattern": "(?<![A-Z0-9.])(?<![A-Z0-9]-)(\\d+(?:\\.\\d+)?)[\\s\\-]*(?:(?<![A-Z])L(?![A-Z])|(?<![A-Z])LTR(?![A-Z])|(?<![A-Z])LITRE(?![A-Z])|(?<![A-Z])LITRES(?![A-Z])|(?<![A-Z])LITER(?![A-Z])|(?<![A-Z])LITERS(?![A-Z]))(?![A-Z])",
+      "capture": 1,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "power_hp",
+    "builder": {
+      "kind": "number",
+      "look_in": "any",
+      "before": [
+        "HP"
+      ]
+    },
+    "compiled": {
+      "kind": "number",
+      "scope": "any",
+      "pattern": "(?<![A-Z0-9.])(?<![A-Z0-9]-)(\\d+(?:\\.\\d+)?)[\\s\\-]*(?:(?<![A-Z])HP(?![A-Z]))(?![A-Z])",
+      "capture": 1,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "is_thermostatic",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "THERMOSTATIC"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])THERMOSTATIC(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "has_sliding_rail",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SLIDING"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SLIDING(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "is_high_basin",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "HIGH BASIN"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])HIGH[\\s\\-]*BASIN(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "has_filter",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "FILTER TAP"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])FILTER[\\s\\-]*TAP(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "has_pull_out_shower",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "PULL OUT SHOWER"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])PULL[\\s\\-]*OUT[\\s\\-]*SHOWER(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "has_chopping_board",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "CHOPPING BOARD"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])CHOPPING[\\s\\-]*BOARD(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "has_dish_rack",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "DISH RACK"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])DISH[\\s\\-]*RACK(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "no_overflow",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "W/O OVERFLOW",
+        "WO OVERFLOW",
+        "WITHOUT OVERFLOW"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])W/O[\\s\\-]*OVERFLOW(?![A-Z])|(?<![A-Z])WO[\\s\\-]*OVERFLOW(?![A-Z])|(?<![A-Z])WITHOUT[\\s\\-]*OVERFLOW(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "has_shower_union",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SHOWER UNION"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SHOWER[\\s\\-]*UNION(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "spray_functions",
+    "builder": {
+      "kind": "number",
+      "look_in": "any",
+      "before": [
+        "FUNCTION",
+        "FUNCTIONS"
+      ]
+    },
+    "compiled": {
+      "kind": "number",
+      "scope": "any",
+      "pattern": "(?<![A-Z0-9.])(?<![A-Z0-9]-)(\\d+(?:\\.\\d+)?)[\\s\\-]*(?:(?<![A-Z])FUNCTION(?![A-Z])|(?<![A-Z])FUNCTIONS(?![A-Z]))(?![A-Z])",
+      "capture": 1,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "hose_length",
+    "builder": {
+      "kind": "number",
+      "look_in": "any",
+      "before": [
+        "M"
+      ],
+      "written_in": "metres",
+      "only_when": {
+        "spec": "class",
+        "is": false,
+        "values": [
+          "Bathtub",
+          "Jacuzzi",
+          "Bathtub and Jacuzzi"
+        ]
+      }
+    },
+    "compiled": {
+      "kind": "number",
+      "scope": "any",
+      "pattern": "(?<![A-Z0-9.])(?<![A-Z0-9]-)(\\d+(?:\\.\\d+)?)[\\s\\-]*(?:(?<![A-Z])M(?![A-Z]))(?![A-Z])",
+      "capture": 1,
+      "skip": null,
+      "scale": 1000,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "is_frameless",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "FRAMELESS"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])FRAMELESS(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "has_led",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "LED"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])LED(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "is_honeycomb",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "HONEYCOMB"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])HONEYCOMB(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "is_soft_close",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SOFT CLOSE",
+        "SOFT CLOSING"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SOFT[\\s\\-]*CLOSE(?![A-Z])|(?<![A-Z])SOFT[\\s\\-]*CLOSING(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "has_diverter",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "DIVERTER"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])DIVERTER(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "is_rimless",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "RIMLESS"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])RIMLESS(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "bar_count",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "DOUBLE TOWEL"
+      ],
+      "value": 2
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])DOUBLE[\\s\\-]*TOWEL(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "bar_count",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SINGLE TOWEL"
+      ],
+      "value": 1
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SINGLE[\\s\\-]*TOWEL(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "spout_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "WATERFALL"
+      ],
+      "value": "waterfall"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])WATERFALL(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "spout_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "DOUBLE FLEXIBLE SPOUT"
+      ],
+      "value": "double_flexible"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])DOUBLE[\\s\\-]*FLEXIBLE[\\s\\-]*SPOUT(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "spout_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "FLEXIBLE HEAD",
+        "FLEXIBLE HOSE",
+        "FLEXIBLE"
+      ],
+      "value": "flexible"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])FLEXIBLE[\\s\\-]*HEAD(?![A-Z])|(?<![A-Z])FLEXIBLE[\\s\\-]*HOSE(?![A-Z])|(?<![A-Z])FLEXIBLE(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "spout_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "PULL OUT",
+        "PULL-OUT"
+      ],
+      "value": "pull_out"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])PULL[\\s\\-]*OUT(?![A-Z])|(?<![A-Z])PULL[\\s\\-]*OUT(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "spout_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SWIVEL"
+      ],
+      "value": "swivel"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SWIVEL(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "spout_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "GOOSENECK"
+      ],
+      "value": "gooseneck"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])GOOSENECK(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "trap_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "P-TRAP",
+        "P TRAP"
+      ],
+      "value": "p_trap"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])P[\\s\\-]*TRAP(?![A-Z])|(?<![A-Z])P[\\s\\-]*TRAP(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "trap_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "S-TRAP",
+        "S TRAP"
+      ],
+      "value": "s_trap"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])S[\\s\\-]*TRAP(?![A-Z])|(?<![A-Z])S[\\s\\-]*TRAP(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "flush_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SIPHONIC",
+        "SYPHONIC"
+      ],
+      "value": "siphonic"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SIPHONIC(?![A-Z])|(?<![A-Z])SYPHONIC(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "flush_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "TWISTER FLUSHING",
+        "TWISTER FLUSH",
+        "TWISTER"
+      ],
+      "value": "twister"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])TWISTER[\\s\\-]*FLUSHING(?![A-Z])|(?<![A-Z])TWISTER[\\s\\-]*FLUSH(?![A-Z])|(?<![A-Z])TWISTER(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "flush_type",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "WASH-DOWN",
+        "WASH DOWN",
+        "WASHDOWN"
+      ],
+      "value": "washdown"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])WASH[\\s\\-]*DOWN(?![A-Z])|(?<![A-Z])WASH[\\s\\-]*DOWN(?![A-Z])|(?<![A-Z])WASHDOWN(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "shape",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "RECTANGULAR"
+      ],
+      "value": "rectangular"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])RECTANGULAR(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "shape",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "ROUND"
+      ],
+      "value": "round"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])ROUND(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "shape",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SQUARE"
+      ],
+      "value": "square"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SQUARE(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "shape",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "OVAL",
+        "ELLIPSE"
+      ],
+      "value": "oval"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])OVAL(?![A-Z])|(?<![A-Z])ELLIPSE(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "shape",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SQ"
+      ],
+      "value": "square"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SQ(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "MIRROR CABINET",
+        "VANITY CABINET"
+      ],
+      "at_end": true,
+      "value": "Bathroom Furniture"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])MIRROR[\\s\\-]*CABINET(?![A-Z])|(?<![A-Z])VANITY[\\s\\-]*CABINET(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "CLOTHES HANGER"
+      ],
+      "at_end": true,
+      "value": "Cloth Hanger"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])CLOTHES[\\s\\-]*HANGER(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "SQUATTING PAN"
+      ],
+      "at_end": true,
+      "value": "Squatting Pan"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])SQUATTING[\\s\\-]*PAN(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "FLEXIBLE HOSE"
+      ],
+      "at_end": true,
+      "value": "Flexible Hose"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])FLEXIBLE[\\s\\-]*HOSE(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "SQUATING PAN"
+      ],
+      "at_end": true,
+      "value": "Squatting Pan"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])SQUATING[\\s\\-]*PAN(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "WATER CLOSET"
+      ],
+      "at_end": true,
+      "value": "Water Closet"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])WATER[\\s\\-]*CLOSET(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "KITCHEN SINK",
+        "GRANITE SINK"
+      ],
+      "at_end": true,
+      "value": "Kitchen Sink"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])KITCHEN[\\s\\-]*SINK(?![A-Z])|(?<![A-Z])GRANITE[\\s\\-]*SINK(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "CLOTH HANGER"
+      ],
+      "at_end": true,
+      "value": "Cloth Hanger"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])CLOTH[\\s\\-]*HANGER(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "KITCHEN TAP"
+      ],
+      "at_end": true,
+      "value": "Tap"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])KITCHEN[\\s\\-]*TAP(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "HAND SHOWER",
+        "RAIN SHOWER",
+        "SHOWER HEAD"
+      ],
+      "at_end": true,
+      "value": "Shower"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])HAND[\\s\\-]*SHOWER(?![A-Z])|(?<![A-Z])RAIN[\\s\\-]*SHOWER(?![A-Z])|(?<![A-Z])SHOWER[\\s\\-]*HEAD(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "WASH BASIN"
+      ],
+      "at_end": true,
+      "value": "Wash Basin"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])WASH[\\s\\-]*BASIN(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "SHOWER SET"
+      ],
+      "at_end": true,
+      "value": "Shower"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])SHOWER[\\s\\-]*SET(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "ART BASIN"
+      ],
+      "at_end": true,
+      "value": "Wash Basin"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])ART[\\s\\-]*BASIN(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "BASIN TAP",
+        "MIXER TAP"
+      ],
+      "at_end": true,
+      "value": "Tap"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])BASIN[\\s\\-]*TAP(?![A-Z])|(?<![A-Z])MIXER[\\s\\-]*TAP(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "BATH TUB",
+        "BATHTUB"
+      ],
+      "at_end": true,
+      "value": "Bathtub"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])BATH[\\s\\-]*TUB(?![A-Z])|(?<![A-Z])BATHTUB(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "JACUZZI"
+      ],
+      "at_end": true,
+      "value": "Jacuzzi"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])JACUZZI(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "BIB TAP"
+      ],
+      "at_end": true,
+      "value": "Tap"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])BIB[\\s\\-]*TAP(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "TOILET"
+      ],
+      "at_end": true,
+      "value": "Water Closet"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])TOILET(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "URINAL"
+      ],
+      "at_end": true,
+      "value": "Urinal"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])URINAL(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "FAUCET"
+      ],
+      "at_end": true,
+      "value": "Tap"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])FAUCET(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "SHOWER"
+      ],
+      "at_end": true,
+      "value": "Shower"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])SHOWER(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "BASIN"
+      ],
+      "at_end": true,
+      "value": "Wash Basin"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])BASIN(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "MIXER",
+        "TAP"
+      ],
+      "at_end": true,
+      "value": "Tap"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])MIXER(?![A-Z])|(?<![A-Z])TAP(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "words",
+      "look_in": "name",
+      "words": [
+        "WC"
+      ],
+      "at_end": true,
+      "value": "Water Closet"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "name",
+      "pattern": "(?:(?<![A-Z])WC(?![A-Z]))\\s*$",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "product",
+      "fact": "name"
+    },
+    "compiled": {
+      "kind": "product",
+      "scope": "product",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": "name"
+    }
+  },
+  {
+    "spec_key": "class",
+    "builder": {
+      "kind": "product",
+      "fact": "class"
+    },
+    "compiled": {
+      "kind": "product",
+      "scope": "product",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": "class"
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "FULL ROSE GOLD",
+        "ROSE GOLD"
+      ],
+      "value": "rose_gold"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])FULL[\\s\\-]*ROSE[\\s\\-]*GOLD(?![A-Z])|(?<![A-Z])ROSE[\\s\\-]*GOLD(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "GOLDEN YELLOW"
+      ],
+      "value": "golden_yellow"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])GOLDEN[\\s\\-]*YELLOW(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "MATT BLACK"
+      ],
+      "value": "black"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])MATT[\\s\\-]*BLACK(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "GUN METAL",
+        "GUNMETAL"
+      ],
+      "value": "gunmetal"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])GUN[\\s\\-]*METAL(?![A-Z])|(?<![A-Z])GUNMETAL(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "BRUSHED NICKEL"
+      ],
+      "value": "nickel"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])BRUSHED[\\s\\-]*NICKEL(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "CHROME"
+      ],
+      "value": "chrome"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])CHROME(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "NICKEL"
+      ],
+      "value": "nickel"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])NICKEL(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "BLACK"
+      ],
+      "value": "black"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])BLACK(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "WHITE"
+      ],
+      "value": "white"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])WHITE(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "GREY"
+      ],
+      "value": "grey"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])GREY(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SATIN"
+      ],
+      "value": "satin_chrome"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SATIN(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "code",
+      "code_match": "ends_with",
+      "texts": [
+        "-MBL"
+      ],
+      "value": "black"
+    },
+    "compiled": {
+      "kind": "code",
+      "scope": "code",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": "ends_with",
+      "texts": [
+        "-MBL"
+      ],
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "code",
+      "code_match": "ends_with",
+      "texts": [
+        "-BL"
+      ],
+      "value": "black"
+    },
+    "compiled": {
+      "kind": "code",
+      "scope": "code",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": "ends_with",
+      "texts": [
+        "-BL"
+      ],
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "code",
+      "code_match": "ends_with",
+      "texts": [
+        "-GM"
+      ],
+      "value": "gunmetal"
+    },
+    "compiled": {
+      "kind": "code",
+      "scope": "code",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": "ends_with",
+      "texts": [
+        "-GM"
+      ],
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "code",
+      "code_match": "ends_with",
+      "texts": [
+        "-NL"
+      ],
+      "value": "nickel"
+    },
+    "compiled": {
+      "kind": "code",
+      "scope": "code",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": "ends_with",
+      "texts": [
+        "-NL"
+      ],
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "code",
+      "code_match": "ends_with",
+      "texts": [
+        "-NK"
+      ],
+      "value": "nickel"
+    },
+    "compiled": {
+      "kind": "code",
+      "scope": "code",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": "ends_with",
+      "texts": [
+        "-NK"
+      ],
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "code",
+      "code_match": "ends_with",
+      "texts": [
+        "-GY"
+      ],
+      "value": "grey"
+    },
+    "compiled": {
+      "kind": "code",
+      "scope": "code",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": "ends_with",
+      "texts": [
+        "-GY"
+      ],
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "code",
+      "code_match": "ends_with",
+      "texts": [
+        "-RG"
+      ],
+      "value": "rose_gold"
+    },
+    "compiled": {
+      "kind": "code",
+      "scope": "code",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": "ends_with",
+      "texts": [
+        "-RG"
+      ],
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "code",
+      "code_match": "ends_with",
+      "texts": [
+        "-CR"
+      ],
+      "value": "chrome"
+    },
+    "compiled": {
+      "kind": "code",
+      "scope": "code",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": "ends_with",
+      "texts": [
+        "-CR"
+      ],
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "code",
+      "code_match": "ends_with",
+      "texts": [
+        "-FRG"
+      ],
+      "value": "french_gold"
+    },
+    "compiled": {
+      "kind": "code",
+      "scope": "code",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": "ends_with",
+      "texts": [
+        "-FRG"
+      ],
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "code",
+      "code_match": "ends_with",
+      "texts": [
+        "-WH"
+      ],
+      "value": "white"
+    },
+    "compiled": {
+      "kind": "code",
+      "scope": "code",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": "ends_with",
+      "texts": [
+        "-WH"
+      ],
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "code",
+      "code_match": "ends_with",
+      "texts": [
+        "-SC"
+      ],
+      "value": "satin_chrome"
+    },
+    "compiled": {
+      "kind": "code",
+      "scope": "code",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": "ends_with",
+      "texts": [
+        "-SC"
+      ],
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "trap_length",
+    "builder": {
+      "kind": "number",
+      "look_in": "any",
+      "before": [
+        "MM"
+      ],
+      "after": [
+        "S TRAP",
+        "P TRAP"
+      ]
+    },
+    "compiled": {
+      "kind": "number",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])S[\\s\\-]*TRAP(?![A-Z])|(?<![A-Z])P[\\s\\-]*TRAP(?![A-Z]))[\\s\\-:,]*(\\d+(?:\\.\\d+)?)[\\s\\-]*(?:(?<![A-Z])MM(?![A-Z]))(?![A-Z])",
+      "capture": 1,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "bowl_count",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SINGLE BOWL",
+        "SINGLE BOWLS"
+      ],
+      "value": 1
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SINGLE[\\s\\-]*BOWL(?![A-Z])|(?<![A-Z])SINGLE[\\s\\-]*BOWLS(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "bowl_count",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "DOUBLE BOWL",
+        "DOUBLE BOWLS"
+      ],
+      "value": 2
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])DOUBLE[\\s\\-]*BOWL(?![A-Z])|(?<![A-Z])DOUBLE[\\s\\-]*BOWLS(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "bowl_count",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "TRIPLE BOWL",
+        "TRIPLE BOWLS"
+      ],
+      "value": 3
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])TRIPLE[\\s\\-]*BOWL(?![A-Z])|(?<![A-Z])TRIPLE[\\s\\-]*BOWLS(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "bowl_count",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "ONE BOWL",
+        "ONE BOWLS"
+      ],
+      "value": 1
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])ONE[\\s\\-]*BOWL(?![A-Z])|(?<![A-Z])ONE[\\s\\-]*BOWLS(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "bowl_count",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "TWO BOWL",
+        "TWO BOWLS"
+      ],
+      "value": 2
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])TWO[\\s\\-]*BOWL(?![A-Z])|(?<![A-Z])TWO[\\s\\-]*BOWLS(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "bowl_count",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "THREE BOWL",
+        "THREE BOWLS"
+      ],
+      "value": 3
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])THREE[\\s\\-]*BOWL(?![A-Z])|(?<![A-Z])THREE[\\s\\-]*BOWLS(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "bowl_count",
+    "builder": {
+      "kind": "number",
+      "look_in": "any",
+      "before": [
+        "BOWL",
+        "BOWLS"
+      ]
+    },
+    "compiled": {
+      "kind": "number",
+      "scope": "any",
+      "pattern": "(?<![A-Z0-9.])(?<![A-Z0-9]-)(\\d+(?:\\.\\d+)?)[\\s\\-]*(?:(?<![A-Z])BOWL(?![A-Z])|(?<![A-Z])BOWLS(?![A-Z]))(?![A-Z])",
+      "capture": 1,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "is_smart",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "INTELLIGENT",
+        "AUTO INDUCTION",
+        "SMART TOILET",
+        "SMART WC"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])INTELLIGENT(?![A-Z])|(?<![A-Z])AUTO[\\s\\-]*INDUCTION(?![A-Z])|(?<![A-Z])SMART[\\s\\-]*TOILET(?![A-Z])|(?<![A-Z])SMART[\\s\\-]*WC(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "dim_length",
+    "builder": {
+      "kind": "product",
+      "fact": "length",
+      "only_when": {
+        "spec": "shape",
+        "is": false,
+        "values": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    "compiled": {
+      "kind": "product",
+      "scope": "product",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": "length"
+    }
+  },
+  {
+    "spec_key": "dim_length",
+    "builder": {
+      "kind": "size",
+      "look_in": "description",
+      "pick": 1,
+      "only_when": {
+        "spec": "shape",
+        "is": false,
+        "values": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    "compiled": {
+      "kind": "size",
+      "scope": "description",
+      "pattern": "(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": 1,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "dim_length",
+    "builder": {
+      "kind": "number",
+      "look_in": "description",
+      "before": [
+        "MM"
+      ],
+      "ignore_below": 10,
+      "skip_after": [
+        "S TRAP",
+        "P TRAP"
+      ],
+      "only_when": {
+        "spec": "shape",
+        "is": false,
+        "values": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    "compiled": {
+      "kind": "number",
+      "scope": "description",
+      "pattern": "(?<![A-Z0-9.])(?<![A-Z0-9]-)(\\d+(?:\\.\\d+)?)[\\s\\-]*(?:(?<![A-Z])MM(?![A-Z]))(?![A-Z])",
+      "capture": 1,
+      "skip": "(?<![A-Z])(?:(?<![A-Z])S[\\s\\-]*TRAP(?![A-Z])|(?<![A-Z])P[\\s\\-]*TRAP(?![A-Z]))[\\s\\-:,(]*$",
+      "scale": null,
+      "min": 10,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "dim_length",
+    "builder": {
+      "kind": "number",
+      "look_in": "description",
+      "before": [
+        "MM"
+      ],
+      "after": [
+        "LENGTH"
+      ],
+      "only_when": {
+        "spec": "shape",
+        "is": false,
+        "values": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    "compiled": {
+      "kind": "number",
+      "scope": "description",
+      "pattern": "(?:(?<![A-Z])LENGTH(?![A-Z]))[\\s\\-:,]*(\\d+(?:\\.\\d+)?)[\\s\\-]*(?:(?<![A-Z])MM(?![A-Z]))(?![A-Z])",
+      "capture": 1,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "dim_length",
+    "builder": {
+      "kind": "size",
+      "look_in": "flyer",
+      "pick": "L"
+    },
+    "compiled": {
+      "kind": "size",
+      "scope": "flyer",
+      "pattern": "(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": "L",
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "dim_width",
+    "builder": {
+      "kind": "product",
+      "fact": "width",
+      "only_when": {
+        "spec": "shape",
+        "is": false,
+        "values": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    "compiled": {
+      "kind": "product",
+      "scope": "product",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": "width"
+    }
+  },
+  {
+    "spec_key": "dim_width",
+    "builder": {
+      "kind": "size",
+      "look_in": "description",
+      "pick": 2,
+      "only_when": {
+        "spec": "shape",
+        "is": false,
+        "values": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    "compiled": {
+      "kind": "size",
+      "scope": "description",
+      "pattern": "(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": 2,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "dim_width",
+    "builder": {
+      "kind": "size",
+      "look_in": "flyer",
+      "pick": "W"
+    },
+    "compiled": {
+      "kind": "size",
+      "scope": "flyer",
+      "pattern": "(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": "W",
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "dim_height",
+    "builder": {
+      "kind": "product",
+      "fact": "height",
+      "only_when": {
+        "spec": "shape",
+        "is": false,
+        "values": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    "compiled": {
+      "kind": "product",
+      "scope": "product",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": "height"
+    }
+  },
+  {
+    "spec_key": "dim_height",
+    "builder": {
+      "kind": "size",
+      "look_in": "description",
+      "pick": 3,
+      "only_when": {
+        "spec": "shape",
+        "is": false,
+        "values": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    "compiled": {
+      "kind": "size",
+      "scope": "description",
+      "pattern": "(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": 3,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "dim_height",
+    "builder": {
+      "kind": "size",
+      "look_in": "flyer",
+      "pick": "H"
+    },
+    "compiled": {
+      "kind": "size",
+      "scope": "flyer",
+      "pattern": "(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": "H",
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "diameter",
+    "builder": {
+      "kind": "size",
+      "look_in": "description",
+      "pick": 1,
+      "only_when": {
+        "spec": "shape",
+        "is": true,
+        "values": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    "compiled": {
+      "kind": "size",
+      "scope": "description",
+      "pattern": "(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": 1,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "depth",
+    "builder": {
+      "kind": "size",
+      "look_in": "description",
+      "pick": 2,
+      "only_when": {
+        "spec": "shape",
+        "is": true,
+        "values": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    "compiled": {
+      "kind": "size",
+      "scope": "description",
+      "pattern": "(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": 2,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "thickness",
+    "builder": {
+      "kind": "size",
+      "look_in": "description",
+      "pick": 4,
+      "only_when": {
+        "spec": "shape",
+        "is": false,
+        "values": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    "compiled": {
+      "kind": "size",
+      "scope": "description",
+      "pattern": "(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": 4,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "thickness",
+    "builder": {
+      "kind": "size",
+      "look_in": "description",
+      "pick": 3,
+      "only_when": {
+        "spec": "shape",
+        "is": true,
+        "values": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    "compiled": {
+      "kind": "size",
+      "scope": "description",
+      "pattern": "(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": 3,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "seat_material",
+    "builder": {
+      "kind": "words",
+      "look_in": "flyer",
+      "words": [
+        "PP ... SEAT"
+      ],
+      "value": "pp"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "flyer",
+      "pattern": "(?:(?<![A-Z])PP(?![A-Z])[^.]*?(?<![A-Z])SEAT(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "seat_material",
+    "builder": {
+      "kind": "words",
+      "look_in": "flyer",
+      "words": [
+        "UF ... SEAT"
+      ],
+      "value": "uf"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "flyer",
+      "pattern": "(?:(?<![A-Z])UF(?![A-Z])[^.]*?(?<![A-Z])SEAT(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "seat_material",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "UREA ... SEAT"
+      ],
+      "value": "uf"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])UREA(?![A-Z])[^.]*?(?<![A-Z])SEAT(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "seat_material",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "DUROPLAST"
+      ],
+      "value": "duroplast"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])DUROPLAST(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "seat_material",
+    "builder": {
+      "kind": "code",
+      "code_match": "contains",
+      "texts": [
+        "-UF"
+      ],
+      "value": "uf"
+    },
+    "compiled": {
+      "kind": "code",
+      "scope": "code",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": "contains",
+      "texts": [
+        "-UF"
+      ],
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "has_drainer",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "DRAINER"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])DRAINER(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "has_overflow",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "OVER FLOW"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])OVER[\\s\\-]*FLOW(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "has_fixing_screw",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "SCREW"
+      ],
+      "skip_after": [
+        "W/O",
+        "WITHOUT"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])SCREW(?![A-Z]))",
+      "capture": null,
+      "skip": "(?<![A-Z])(?:(?<![A-Z])W/O(?![A-Z])|(?<![A-Z])WITHOUT(?![A-Z]))[\\s\\-:,(]*$",
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "words",
+      "look_in": "any",
+      "words": [
+        "GUNMETAL",
+        "GUN METAL"
+      ],
+      "value": "gunmetal"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "any",
+      "pattern": "(?:(?<![A-Z])GUNMETAL(?![A-Z])|(?<![A-Z])GUN[\\s\\-]*METAL(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "words",
+      "look_in": "flyer",
+      "words": [
+        "BRUSHED GOLD"
+      ],
+      "value": "french_gold"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "flyer",
+      "pattern": "(?:(?<![A-Z])BRUSHED[\\s\\-]*GOLD(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "is_soft_close",
+    "builder": {
+      "kind": "words",
+      "words": [
+        "SOFT-CLOSE"
+      ],
+      "value": true
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": null,
+      "pattern": "(?:(?<![A-Z])SOFT[\\s\\-]*CLOSE(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "material",
+    "builder": {
+      "kind": "words",
+      "look_in": "description",
+      "words": [
+        "S/STEEL (304)",
+        "SUS.304+"
+      ],
+      "value": "stainless_steel"
+    },
+    "compiled": {
+      "kind": "words",
+      "scope": "description",
+      "pattern": "(?:(?<![A-Z])S/STEEL[\\s\\-]*\\(304\\)(?![A-Z])|(?<![A-Z])SUS\\.304\\+(?![A-Z]))",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "dim_length",
+    "builder": {
+      "kind": "number",
+      "look_in": "description",
+      "after": [
+        "LENGTH"
+      ]
+    },
+    "compiled": {
+      "kind": "number",
+      "scope": "description",
+      "pattern": "(?:(?<![A-Z])LENGTH(?![A-Z]))[\\s\\-:,]*(\\d+(?:\\.\\d+)?)",
+      "capture": 1,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "dim_length",
+    "builder": {
+      "kind": "number",
+      "look_in": "any",
+      "before": [
+        "CM"
+      ],
+      "written_in": "centimetres"
+    },
+    "compiled": {
+      "kind": "number",
+      "scope": "any",
+      "pattern": "(?<![A-Z0-9.])(?<![A-Z0-9]-)(\\d+(?:\\.\\d+)?)[\\s\\-]*(?:(?<![A-Z])CM(?![A-Z]))(?![A-Z])",
+      "capture": 1,
+      "skip": null,
+      "scale": 10,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "dim_width",
+    "builder": {
+      "kind": "size",
+      "look_in": "any",
+      "pick": 2
+    },
+    "compiled": {
+      "kind": "size",
+      "scope": "any",
+      "pattern": "(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": 2,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "code",
+      "code_match": "starts_with",
+      "texts": [
+        "SRTSC",
+        "srtwc"
+      ],
+      "value": "chrome"
+    },
+    "compiled": {
+      "kind": "code",
+      "scope": "code",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": "starts_with",
+      "texts": [
+        "SRTSC",
+        "SRTWC"
+      ],
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "finish",
+    "builder": {
+      "kind": "code",
+      "code_match": "contains",
+      "texts": [
+        "-GM-"
+      ],
+      "value": "gunmetal"
+    },
+    "compiled": {
+      "kind": "code",
+      "scope": "code",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": "contains",
+      "texts": [
+        "-GM-"
+      ],
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "diameter",
+    "builder": {
+      "kind": "size",
+      "look_in": "description",
+      "pick": 1,
+      "only_when": {
+        "spec": "shape",
+        "is": true,
+        "values": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    "compiled": {
+      "kind": "size",
+      "scope": "description",
+      "pattern": "(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?(?:\\s*[X*]\\s*(?:([LWHD])\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM)?)?",
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": 1,
+      "code_match": null,
+      "texts": null,
+      "fact": null
+    }
+  },
+  {
+    "spec_key": "dim_width",
+    "builder": {
+      "kind": "product",
+      "fact": "width"
+    },
+    "compiled": {
+      "kind": "product",
+      "scope": "product",
+      "pattern": null,
+      "capture": null,
+      "skip": null,
+      "scale": null,
+      "min": null,
+      "pick": null,
+      "code_match": null,
+      "texts": null,
+      "fact": "width"
+    }
+  }
+]

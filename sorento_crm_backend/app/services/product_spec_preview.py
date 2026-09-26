@@ -58,26 +58,53 @@ def get(job_id: str) -> dict | None:
         return dict(state) if state is not None else None
 
 
-def _compare(db: Session, spec_key: str, rules: list[dict]) -> dict:
+def _reading_keys(
+    spec_key: str, rules_by_key: dict[str, list[dict]], scopes_by_key: dict[str, dict]
+) -> set[str]:
+    """The keys whose rules decide `spec_key`: itself, and every key its Only when or its
+    scope reads, followed through. Everything else in the catalogue's rules cannot move
+    this key's value, so it is not run - which is what lets a save compare the whole
+    catalogue for one key inside the request."""
+    from app.services.product_spec_rules import gate_keys
+
+    wanted: set[str] = set()
+    pending = [spec_key]
+    while pending:
+        key = pending.pop()
+        if key in wanted:
+            continue
+        wanted.add(key)
+        pending.extend(gate_keys({key: rules_by_key.get(key) or []}))
+        pending.extend((scopes_by_key.get(key) or {}).keys())
+    return wanted
+
+
+def readings_for_key(
+    db: Session,
+    spec_key: str,
+    *,
+    rules_by_key: dict[str, list[dict]],
+    scopes_by_key: dict[str, dict],
+    max_values: dict[str, float],
+):
+    """Every active product's stored `spec_key` value beside what the given rules read,
+    as `{"code", "before", "after"}` - the one comparison both "See what would change"
+    (a draft) and a saved rule's re-read (AC-S1.16, D10) make, so the products a save
+    re-reads are exactly the ones the preview counted as changing (`before != after`).
+
+    A person's own answer is skipped: it is not derived, so no rule can change it
+    (AUTHORED_SOURCES, product_spec_write). Yields one entry per product row, so a code
+    held by two companies can appear twice.
+    """
     import sqlalchemy as sa
     from app.models.base import company_scope
     from app.models.product import Product, ProductCategory
     from app.models.product_spec import ProductSpecifications
-    from app.services.product_spec_derivation import (
-        configured_max_values,
-        configured_rules,
-        configured_scopes,
-        derive,
-    )
+    from app.services.product_spec_derivation import derive
     from app.services.product_spec_write import AUTHORED_SOURCES
 
-    rules_by_key = dict(configured_rules(db))
-    rules_by_key[spec_key] = rules
-    scopes_by_key = configured_scopes(db)
-    max_values = configured_max_values(db)
-
-    changed = added = removed = unchanged = 0
-    sample: list[dict] = []
+    keys = _reading_keys(spec_key, rules_by_key, scopes_by_key)
+    reading_rules = {key: rules_by_key[key] for key in rules_by_key if key in keys}
 
     # ALL-COMPANIES, same reason `derive_product_specs` runs under it: a product code
     # exists once per company, and a session with no scope set sees NONE of them
@@ -114,11 +141,6 @@ def _compare(db: Session, spec_key: str, rules: list[dict]) -> dict:
             for product, category, spec in page:
                 existing_values = (spec.values if spec else {}) or {}
                 existing_provenance = (spec.provenance if spec else {}) or {}
-
-                # A person's own answer is not derived, so a draft rule cannot
-                # "change" it - counting it either way would report a number nobody
-                # could act on: saving the draft will not touch this row
-                # (AUTHORED_SOURCES, product_spec_write).
                 provenance = existing_provenance.get(spec_key) or {}
                 if provenance.get("source") in AUTHORED_SOURCES:
                     continue
@@ -126,31 +148,51 @@ def _compare(db: Session, spec_key: str, rules: list[dict]) -> dict:
                 out = derive(
                     product,
                     category,
-                    rules_by_key=rules_by_key,
+                    rules_by_key=reading_rules,
                     scopes_by_key=scopes_by_key,
                     max_values=max_values,
                 )
                 after = (out.values.get(spec_key) or {}).get("value")
                 before = (existing_values.get(spec_key) or {}).get("value")
-
-                if before == after:
-                    unchanged += 1
-                    continue
-                if before is None:
-                    added += 1
-                elif after is None:
-                    removed += 1
-                else:
-                    changed += 1
-                if len(sample) < 20:
-                    sample.append(
-                        {"code": product.product_code, "before": before, "after": after}
-                    )
+                yield {"code": product.product_code, "before": before, "after": after}
 
             last_product = page[-1][0]
             cursor = (last_product.product_code, last_product.id)
             if len(page) < _PAGE_SIZE:
                 break
+
+
+def _compare(db: Session, spec_key: str, rules: list[dict]) -> dict:
+    from app.services.product_spec_derivation import (
+        configured_max_values,
+        configured_rules,
+        configured_scopes,
+    )
+
+    rules_by_key = dict(configured_rules(db))
+    rules_by_key[spec_key] = rules
+
+    changed = added = removed = unchanged = 0
+    sample: list[dict] = []
+    for row in readings_for_key(
+        db,
+        spec_key,
+        rules_by_key=rules_by_key,
+        scopes_by_key=configured_scopes(db),
+        max_values=configured_max_values(db),
+    ):
+        before, after = row["before"], row["after"]
+        if before == after:
+            unchanged += 1
+            continue
+        if before is None:
+            added += 1
+        elif after is None:
+            removed += 1
+        else:
+            changed += 1
+        if len(sample) < 20:
+            sample.append(row)
 
     return {
         "changed": changed,

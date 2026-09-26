@@ -176,6 +176,7 @@ import type {
   ProductSpecDetail,
   SpecPreviewResult,
   SpecRegistryKey,
+  SpecRegistryKeyUpdateResult,
 } from '../types/productSpec.types';
 
 /**
@@ -404,7 +405,7 @@ export async function updateSpecKey(
      * redesign). Trimmed and validated server-side; an empty label drops the key. */
     value_labels?: Record<string, string>;
   },
-): Promise<SpecRegistryKey> {
+): Promise<SpecRegistryKeyUpdateResult> {
   const response = await apiFetch(
     `/api/v1/master-data/spec-registry/${specKey}`,
     {

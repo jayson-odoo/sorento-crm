@@ -41,7 +41,8 @@ from sqlalchemy.orm import Session
 # resolves to. Not referenced in this module by design; do not prune it.
 from app.config import settings  # noqa: F401
 from app.models.ai_assistant import AIAssistantUsageLog
-from app.models.product_spec import ProductSpecifications
+from app.models.product import Brand
+from app.models.product_spec import ProductSpecifications, ProductSpecRegistry
 from app.services.ai_prompt_registry import agent_model, get_prompt
 from app.services.llm_provider import get_provider, resolve_api_key, resolve_model
 # The keys a product may hold more than one of. Imported rather than restated: the set
@@ -54,6 +55,7 @@ from app.services.product_spec_registry import (
     merged_synonyms,
 )
 from app.services.product_spec_search import (
+    BRAND_KEY,
     NEGATOR_WORDS,
     SELF_SYNONYM_KEY,
     normalise_quantity,
@@ -222,7 +224,51 @@ def _vocabulary(db: Session) -> tuple[list[dict], dict[str, Any], dict[str, list
         described.append(entry)
         index[row.spec_key] = row
 
+    # The brand is the product's own field, not a specification (#1286, D1), but a
+    # customer names one and the model has to be able to say so. So it is offered as a
+    # synthetic entry over the Brands master: the names customers can ask for
+    # (`is_searchable`), and the placeholders (OTHERS, NO LOGO) held back as excluded so
+    # `_coerce` refuses them if the model produces one anyway. A transient row, never
+    # added to the session.
+    brands = _brand_vocabulary(db)
+    if brands is not None:
+        described.append(
+            {
+                "spec_key": BRAND_KEY,
+                "means": brands.label,
+                "type": brands.data_type,
+                # Capped like any open vocabulary: a prompt is not a catalogue dump.
+                # The index keeps every name, so a reply naming one still validates.
+                "allowed_values": list(brands.allowed_values)[:_OPEN_VOCABULARY_LIMIT],
+            }
+        )
+        index[BRAND_KEY] = brands
+        open_values[BRAND_KEY] = list(brands.allowed_values)
+
     return described, index, open_values
+
+
+def _brand_vocabulary(db: Session) -> ProductSpecRegistry | None:
+    """The Brands master as a transient `brand` vocabulary row, or None when empty."""
+    searchable: list[str] = []
+    placeholders: list[str] = []
+    for name, is_searchable in db.query(Brand.brand_name, Brand.is_searchable).all():
+        name = str(name or "").strip()
+        if not name:
+            continue
+        bucket = searchable if is_searchable else placeholders
+        if name not in bucket:
+            bucket.append(name)
+    if not searchable:
+        return None
+    return ProductSpecRegistry(
+        spec_key=BRAND_KEY,
+        label="Brand",
+        data_type="enum",
+        allowed_values=sorted(searchable),
+        excluded_values=sorted(placeholders),
+        synonyms={},
+    )
 
 
 def _coerce(row, value: Any, open_values: list[str] | None = None) -> Any | None:

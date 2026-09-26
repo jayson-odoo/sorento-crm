@@ -80,11 +80,16 @@ def db():
         )
         uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code="ZZT-PCS", uom_name="Piece")
         sorento = Brand(id=str(uuid.uuid4()), brand_code="ZZT-SRT", brand_name="SORENTO")
-        # The two placeholders the registry marks `excluded_values`: one is a full
-        # two-word phrase a customer can genuinely say, the other is a single
-        # generic word (F8).
-        no_logo = Brand(id=str(uuid.uuid4()), brand_code="ZZT-NL", brand_name="NO LOGO")
-        others = Brand(id=str(uuid.uuid4()), brand_code="ZZT-OT", brand_name="OTHERS")
+        # The two placeholder brands: one is a full two-word phrase a customer can
+        # genuinely say, the other is a single generic word (F8).
+        # Seeded not searchable, as migration spec_0001 does: the brand's own flag is
+        # what keeps a placeholder brand out of a single-word bind now (#1286, D3).
+        no_logo = Brand(
+            id=str(uuid.uuid4()), brand_code="ZZT-NL", brand_name="NO LOGO", is_searchable=False
+        )
+        others = Brand(
+            id=str(uuid.uuid4()), brand_code="ZZT-OT", brand_name="OTHERS", is_searchable=False
+        )
         s.add_all([cat, uom, sorento, no_logo, others])
         s.flush()
         backfill_category_signals(s)
