@@ -339,3 +339,19 @@ def test_the_dealer_did_you_mean_list_is_numbered():
         quantity=10,
     )
     assert text == "Couldn't find ELP3753. Did you mean:\n1. ELP3754\n2. ELP3756"
+
+
+def test_a_correction_flag_beside_a_bare_position_is_still_the_quantity():
+    """The parser sets `correction` on "how about 100?", so it never reopens the list."""
+    console = _owner_run(
+        verdict(reference_positions=[2], correction=True, entities=[]),
+        verdict(demand_qty=3, entities=[]),
+    )
+    assert console.transcript[7] == f"-> SRTWC286-SH x 2: {TOO_BIG}"
+
+
+def test_the_stock_task_addendum_teaches_the_bare_number_and_the_new_pick():
+    from app.services.chatbot_parser_prompt import STOCK_TASK_ADDENDUM
+
+    assert "It is NEVER a position on a" in STOCK_TASK_ADDENDUM
+    assert '"no, the 2nd one"' in STOCK_TASK_ADDENDUM

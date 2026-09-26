@@ -2893,6 +2893,7 @@ def _stock_ask_reply(
             if isinstance(e, dict) and e.get("current_message") is True
         ],
         demand_qty=verdict.get("demand_qty"),
+        picked_from=getattr(getattr(fetch_plan, "trace", None), "spent_pick_options", None),
     )
     state_out.focus.tasks = reply.tasks
     if not reply.text or [spec.domain for spec in fetch_plan.fetch] != ["inventory"]:

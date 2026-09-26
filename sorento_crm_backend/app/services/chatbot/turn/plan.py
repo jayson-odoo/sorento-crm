@@ -74,6 +74,11 @@ class Trace:
     # `turn/route.py`, which keeps the turn on the task's own arm although nothing is
     # being fetched, and `engine.py`, which composes it as the whole reply.
     task_question: str | None = None
+    # Owner hand test 26 Sep, round 3: the which-one options a stock pick offered, when
+    # this turn spent it (`apply._spend_stock_pick`). One reader, `engine.
+    # _stock_ask_reply`, which keeps them on the stock task the reply opens, so a later
+    # "no, the 2nd one" can pick again from the same list.
+    spent_pick_options: list[dict[str, Any]] | None = None
 
 
 @dataclass

@@ -553,7 +553,11 @@ def _answer_pending(state: State, decision: Decision, trace: Trace):
         if decision.answers and decision.why == "affirmative" and len(pending.options) == 1:
             decision = replace(decision, positions=(pending.options[0].get("position"),))
             trace.rules_fired.append("stock_pick_yes")
-        elif decision.declined or (decision.negated and not decision.entities):
+        elif not decision.positions and (
+            decision.declined or (decision.negated and not decision.entities)
+        ):
+            # A "no" that also names a position ("no, the 2nd one") is a pick, not a
+            # decline.
             trace.rules_fired.append("stock_pick_declined")
             trace.task_question = task_mod.REFER_TO_SALESMAN
             focus.domains = ["inventory"]
@@ -1674,6 +1678,98 @@ def _did_you_mean_keeps_quantity(focus: Focus, verdict: dict[str, Any], trace: T
     trace.rules_fired.append("did_you_mean_keeps_quantity")
 
 
+def _one_product_stock_task(focus: Focus) -> Any:
+    """The stock check about ONE product that is still asking its quantity or has just
+    been answered, or None."""
+    for task in focus.tasks or ():
+        if (
+            task.kind == "stock_qty"
+            and task.status in (task_mod.OPEN, task_mod.ANSWERED)
+            and len(task.slots) == 1
+        ):
+            return task
+    return None
+
+
+def _lone_position(verdict: dict[str, Any]) -> int | None:
+    """The one position this message names and nothing else beside it: no quantity, no
+    product of its own, no proceed and no reset."""
+    raw = verdict.get("reference_positions")
+    positions = [
+        int(p) for p in (raw if isinstance(raw, list) else [])
+        if isinstance(p, (int, float)) and not isinstance(p, bool)
+    ]
+    if len(positions) != 1 or positions[0] < 1:
+        return None
+    if (
+        _message_states_a_quantity(verdict)
+        or _names_a_product(verdict)
+        or verdict.get("proceed_anyway") is True
+        or verdict.get("topic_reset") is True
+    ):
+        return None
+    return positions[0]
+
+
+def _picks_again(verdict: dict[str, Any]) -> bool:
+    """The parser's own signal that a position is a NEW pick off an earlier list and not
+    a number: a "no" turning down the product just answered ("no, the 2nd one").
+    `correction` is not one - the parser sets it on "how about 100?" too."""
+    escalation = verdict.get("escalation") or {}
+    return verdict.get("is_affirmative") is False or escalation.get("escalation_declined") is True
+
+
+def _bare_position_is_the_quantity(state: State, verdict: dict[str, Any], trace: Trace) -> None:
+    """Owner ruling 26 Sep 2026 (round 3 hand test, ruling 2): once the which-one pick is
+    spent and the stock check is about one product, a bare number is that product's
+    quantity - a revision when it was already answered ("2" after SRTWC286-SH x 10 is
+    SRTWC286-SH x 2), the answer when it is still asked. Never a pick from the old list.
+
+    The live parser read "2" as `reference_positions: [2]` (the list is still in the
+    conversation), and with no open question a position answers nothing: the turn fell
+    through as a CARRY, re-fetched the carried product with no quantity, and the stock
+    tool asked "How many units of SRTWC286-SH?" again. Written onto `demand_qty` here,
+    before any reader, the same way `_normalise_demand_qty` settles its own two shapes.
+    """
+    if state.pending is not None or _picks_again(verdict):
+        return
+    if _one_product_stock_task(state.focus) is None:
+        return
+    position = _lone_position(verdict)
+    if position is None:
+        return
+    verdict["demand_qty"] = position
+    verdict["reference_positions"] = []
+    trace.rules_fired.append("bare_number_is_the_quantity")
+
+
+def _reopened_pick(state: State, verdict: dict[str, Any], trace: Trace) -> State:
+    """"no, the 2nd one" after a product picked off a which-one list: the list is asked
+    again, carrying the quantity already given, and this message answers it. The pick
+    was spent when its product was fetched (`_spend_stock_pick`); its options ride on
+    the stock task (`Task.picked_from`) for exactly this."""
+    if state.pending is not None or not _picks_again(verdict):
+        return state
+    task = _one_product_stock_task(state.focus)
+    if task is None or not task.picked_from or _lone_position(verdict) is None:
+        return state
+    (slot,) = task.slots
+    pick = pending_ask(
+        "product_pick",
+        [dict(o) for o in task.picked_from],
+        asked_at_turn=state.turn_no,
+        payload={
+            "domain": "inventory",
+            "domains": ["inventory"],
+            "stock_pick": True,
+            "count": len(task.picked_from),
+            "stock_qty": _stated_quantity(slot.value),
+        },
+    )
+    trace.rules_fired.append("stock_pick_reopened")
+    return replace(state, pending=pick)
+
+
 def _stock_pick(pending: Any) -> bool:
     """Is the open question a stock pick (owner hand test 26 Sep, slice 2 and F1): the
     which-one question `turn/task.py::after_reply` asks over a product family, or the
@@ -1751,6 +1847,7 @@ def _spend_stock_pick(
     if _stock_pick(new_state.pending):
         new_state.pending = None
     trace.rules_fired.append("stock_pick_spent")
+    trace.spent_pick_options = [dict(o) for o in asked.options if isinstance(o, dict)]
     quantity = _stated_quantity(asked.payload.get("stock_qty"))
     if quantity is None or _message_states_a_quantity(verdict):
         return
@@ -1778,6 +1875,11 @@ def apply(
     could not place (`turn_runtime.unplaced_tokens`, folded). It is read at one seam
     only: a roster is never built out of a word that matched nothing."""
     trace = Trace()
+    # Owner hand test 26 Sep, round 3: what a lone position means once the which-one
+    # pick is spent - a new pick off the same list when the parser says so ("no, the
+    # 2nd one"), else the product's quantity. Both before any reader.
+    state = _reopened_pick(state, verdict, trace)
+    _bare_position_is_the_quantity(state, verdict, trace)
     # Ported from PR #1118 (not merged), D13: before ANY reader - the task step, the
     # focus rules, the narrowing and the fetch all see one shape for "how many of this
     # product".

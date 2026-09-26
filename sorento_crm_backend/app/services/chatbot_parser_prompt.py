@@ -194,6 +194,12 @@ never a product code.
     "100 pula?" -> entities [], demand_qty 100, correction true
   - "how about SRTKT1631SS?" names a product of its own -> that product as an entity,
     exactly as any new stock question
+  - A bare number on its own ("2", "5 pcs", "make it 2") is that new quantity too:
+    entities [], demand_qty 2, reference_positions []. It is NEVER a position on a
+    list an earlier reply printed - that list has been answered.
+  - Turning down the product just answered and picking another off that list says
+    so: "no, the 2nd one", "not that one, number 2" -> reference_positions [2],
+    is_affirmative false, demand_qty null.
 """
 
 
