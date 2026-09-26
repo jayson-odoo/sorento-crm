@@ -574,3 +574,55 @@ def test_w5_a_page_of_the_default_brand_set_keeps_the_default(chat, sorento_defa
         f"Brand: {_display(world['sorento'].brand_name)} (default), Product type: Wash basin. 5 wash basins have stock."
     ), page
     assert set(_listed(page, world)) <= _codes(world["srt_basins"][:3] + world["srt_wall"]), page
+
+
+# --------------------------------------------------------------------------- #
+# W6: "water basin" is a wash basin; codes are never dumped in one line          #
+# --------------------------------------------------------------------------- #
+
+
+def test_w6_water_basin_is_a_wash_basin_even_where_the_category_lacks_the_word(chat, world):
+    """Owner turn 1. The owner's local database converges through `create_all`, so
+    migration 511's appended "water basin" synonym may never have reached its categories;
+    the class word must still read as Wash Basin."""
+    from sqlalchemy import text as sa_text
+
+    db = world["db"]
+    db.execute(
+        sa_text(
+            "UPDATE product_categories SET search_synonyms = search_synonyms - 'water basin' "
+            "WHERE class_label = 'Wash Basin'"
+        )
+    )
+    db.commit()
+
+    text = chat.say(
+        "which water basin has stock",
+        _stock_verdict([{"raw": "water basin", "hint": "product_type"}], "which water basin has stock"),
+    )
+    assert text.splitlines()[0] == "Product type: Wash basin. 8 wash basins have stock.", text
+    assert _codes_in(text, world) == _codes(world["srt_basins"][:3] + world["srt_wall"] + world["mch_basins"] + world["mch_wall"]), text
+
+
+def test_w6_a_long_subject_list_is_counted_never_dumped_as_one_line_of_codes():
+    """Owner turn 1 answered "*stock* for BRBC22102W, BRBC22108W-1A, ..." - one giant line."""
+    from tests.chatbot.test_rearch_s3_compose_data import _compose, _domain_row, _envelope, _policy
+
+    row = _domain_row("inventory", narrowing={"product": "list_all"})
+    row["label"] = "stock"
+    codes = [f"BRBC2210{i}W" for i in range(12)]
+
+    answer = _compose([_envelope("inventory", entities=codes)], policy=_policy(row))
+
+    first = answer.text.splitlines()[0]
+    assert first == "*stock* for 12 products:", answer.text
+    assert codes[5] not in first, answer.text
+
+
+def test_w6_a_short_subject_list_still_names_its_codes():
+    from tests.chatbot.test_rearch_s3_compose_data import _compose, _domain_row, _envelope, _policy
+
+    row = _domain_row("inventory", narrowing={"product": "list_all"})
+    row["label"] = "stock"
+    answer = _compose([_envelope("inventory", entities=["MSK11C", "MSK11C-BL-DIY"])], policy=_policy(row))
+    assert answer.text.startswith("*stock* for MSK11C, MSK11C-BL-DIY:"), answer.text
