@@ -244,28 +244,27 @@ def ledger_envelope(my_envelope: dict[str, Any], earlier: Earlier) -> dict[str, 
 def previous_turn_on_earlier_day(
     db: Session, *, contact_respond_id: str, turn_id: str, is_test: bool, now: datetime
 ) -> bool:
-    """Did this contact's previous turn start on an earlier local day than this one?
+    """Was the focus left by a turn that finished on an earlier local day than today?
 
-    The focus is written by the previous turn, so when that turn was yesterday, whatever
-    the focus holds was named yesterday or before. No previous turn means the age is
-    unknown, and the focus is left alone.
+    The focus is written when a turn finishes, so the last FINISHED turn is the one that
+    left it. Read by finish, not by arrival: an earlier-sent photo answered inside this
+    very turn (above) arrived after it but finished just now, and the focus it left is
+    today's. No finished turn means the age is unknown, and the focus is left alone.
     """
-    me = db.query(ChatbotTurn.started_at).filter(ChatbotTurn.id == turn_id).first()
-    mine = (me[0] if me is not None else None) or now
     previous = (
-        db.query(ChatbotTurn.started_at)
+        db.query(ChatbotTurn.finished_at)
         .filter(
             ChatbotTurn.contact_respond_id == contact_respond_id,
             ChatbotTurn.is_test.is_(bool(is_test)),
             ChatbotTurn.id != turn_id,
-            ChatbotTurn.started_at < mine,
+            ChatbotTurn.finished_at.isnot(None),
         )
-        .order_by(ChatbotTurn.started_at.desc())
+        .order_by(ChatbotTurn.finished_at.desc())
         .first()
     )
     if previous is None or previous[0] is None:
         return False
-    return previous[0].astimezone(_LOCAL_TZ).date() < mine.astimezone(_LOCAL_TZ).date()
+    return previous[0].astimezone(_LOCAL_TZ).date() < now.astimezone(_LOCAL_TZ).date()
 
 
 def is_bare_ask(verdict: dict[str, Any]) -> bool:

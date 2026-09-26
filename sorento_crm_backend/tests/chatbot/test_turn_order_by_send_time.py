@@ -247,6 +247,11 @@ def _turn_for(session_factory, contact_id: int, message_id: str) -> ChatbotTurn 
     )
 
 
+def _stale_focus_fired(session_factory, contact_id: int, message_id: str) -> bool:
+    row = _turn_for(session_factory, contact_id, message_id)
+    return any(entry.get("kind") == "stale_focus" for entry in (row.trace or []))
+
+
 def _texts(actions: list[dict[str, Any]]) -> list[str]:
     return [str(a.get("text") or "") for a in actions if a.get("kind") == "send_message"]
 
@@ -259,6 +264,9 @@ class TestPhotoStillInN8nMediaIntake:
     ):
         contact_id = _fresh_contact_id()
         _seed_contact(session_factory, contact_id, focus_codes=YESTERDAY_CODES)
+        # Turn 377 was yesterday: the stale-focus guard must still let "Stock" read the
+        # photo's products, because the photo's turn (today) ran just before it.
+        _seed_previous_turn(session_factory, contact_id, days_ago=1)
         _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
         _seed_settings(session_factory, media_sync_wait_seconds=5)
         media_pipeline.set_result(PHOTO_RESULT)
@@ -289,6 +297,10 @@ class TestPhotoStillInN8nMediaIntake:
         texts = _texts(result.actions)
         assert len(texts) >= 2, texts
         assert "M210-GM" in texts[0], f"the photo's reply is sent first: {texts}"
+        # The photo's turn finished today, so the focus "Stock" reads is today's: the
+        # stale-focus guard must not drop the photo's products. (Its reply in this blank
+        # database is still the no-placed-subject ask, because no M-code exists here.)
+        assert not _stale_focus_fired(session_factory, contact_id, STOCK_MESSAGE_ID)
 
     def test_the_photos_own_late_delivery_is_a_duplicate_and_sends_nothing(
         self, session_factory, stub_access, media_pipeline, monkeypatch
@@ -473,6 +485,7 @@ class TestStaleFocusOnABareDomainWord:
         assert "give me a product code" in texts.lower(), (
             f"it asks for the product, as it does with no subject at all: {texts!r}"
         )
+        assert _stale_focus_fired(session_factory, contact_id, STOCK_MESSAGE_ID)
 
     def test_bare_stock_on_a_focus_named_today_still_answers_it(
         self, session_factory, stub_access, monkeypatch
@@ -531,6 +544,7 @@ class TestOrderingOnTheWaitingRequest:
                 _stock_envelope(contact_id), session_factory=session_factory
             )
 
+        _seed_previous_turn(session_factory, contact_id, days_ago=1)
         self._ordering_on(monkeypatch, contact_id=contact_id, while_waiting=_stock_holds_the_slot)
 
         waiting = engine_mod.run_turn(self._photo_as_text(contact_id), session_factory=session_factory)
