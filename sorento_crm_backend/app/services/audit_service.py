@@ -647,11 +647,19 @@ def _company_from_parent(session: Session, conn: Any, cls: type, values: Optiona
     cache_key = (target.fullname, str(fk_value))
     if cache_key not in cache:
         company = None
+        parent_cls = _class_for_table(target)
+        # A parent already loaded in this session answers without a query.
+        if parent_cls is not None and target_col.primary_key and len(inspect(parent_cls).primary_key) == 1:
+            key = inspect(parent_cls).identity_key_from_primary_key((fk_value,))
+            loaded = session.identity_map.get(key)
+            if loaded is not None:
+                company = inspect(loaded).dict.get("company_id")
         # A parent created in this same flush is not in the database yet.
-        for obj in list(session.new):
-            if getattr(obj, "__table__", None) is target and str(getattr(obj, target_col.key, None)) == str(fk_value):
-                company = _company_id_for_new(obj)
-                break
+        if company is None:
+            for obj in list(session.new):
+                if getattr(obj, "__table__", None) is target and str(getattr(obj, target_col.key, None)) == str(fk_value):
+                    company = _company_id_for_new(obj)
+                    break
         if company is None:
             company = conn.execute(select(target.c.company_id).where(target_col == fk_value)).scalar()
         cache[cache_key] = str(company) if company is not None else None
@@ -684,10 +692,11 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
             continue
         cls = obj.__class__
         entity_type = _audit_entity_type(cls)
-        entity_id = _entity_id_str(obj) or _apply_python_pk_default(obj)
+        entity_id = _entity_id_str(obj)
         if not entity_id:
-            # A DB-generated key (serial / identity): known only after the INSERT, so the
-            # CREATE row is written in after_flush instead.
+            # No key yet: a column default (Python-side ``uuid4`` runs only at INSERT) or a
+            # DB-generated one. Known after the INSERT, so the CREATE row is written in
+            # after_flush instead. Main dropped these CREATE rows silently.
             if entity_type not in skip_types:
                 session.info.setdefault("audit_pending_new", []).append(obj)
             continue
@@ -784,29 +793,9 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
         session.info.pop("audit_pending", None)
 
 
-def _apply_python_pk_default(obj: Any) -> str:
-    """Give a new object its primary key now, from the column's Python-side default.
-
-    SQLAlchemy only runs ``default=lambda: str(uuid.uuid4())`` at INSERT time, so a new row
-    whose code never set ``id`` reached this listener with no id and its CREATE was silently
-    dropped. Running the same default here is exactly what the INSERT would have done.
-    """
-    mapper = inspect(obj).mapper
-    if len(mapper.primary_key) != 1:
-        return ""
-    column = mapper.primary_key[0]
-    default = column.default
-    if default is None or not (default.is_scalar or default.is_callable):
-        return ""
-    value = default.arg(None) if default.is_callable else default.arg
-    if value is None:
-        return ""
-    setattr(obj, mapper.get_property_by_column(column).key, value)
-    return str(value)
-
-
 def _session_after_flush(session: Session, _flush_context: Any) -> None:
-    """Write CREATE rows for DB-generated keys (see before_flush); clear the pending list."""
+    """Write CREATE rows for rows whose key was unknown before the INSERT (see before_flush);
+    clear the pending list."""
     session.info.pop("audit_pending", None)
     pending_new = session.info.pop("audit_pending_new", None)
     if not pending_new:
