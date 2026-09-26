@@ -1,7 +1,7 @@
 # UAC - Portal journey round 8: verify card, landing toolbar, price tag request sections
 
 Plan: `documentation/plans/portal/PLAN-portal-price-tag-journey-r8.md`
-Status: PR #861 open; round 3 verified 13 Sep 2026
+Status: Merged in #861 (13 Sep 2026)
 
 ## Journey
 
