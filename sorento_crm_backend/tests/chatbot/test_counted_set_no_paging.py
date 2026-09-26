@@ -161,6 +161,10 @@ def test_every_leg_past_the_list_limit_states_the_count_and_asks(require):
     assert "too many to list in one message" in header, header
     assert "How many should I show (up to 50)" in header, header
     assert "brand" in header, header
+    # Reviewer S2 on PR #833: only the wired path is offered - a full re-ask, never a
+    # bare narrowing reply the carry does not read.
+    assert header.endswith("How many should I show (up to 50)? Or ask again naming a brand or size."), header
+    assert "narrow it to" not in header, header
     assert "Showing" not in header
 
 

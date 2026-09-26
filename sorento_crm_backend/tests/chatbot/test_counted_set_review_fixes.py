@@ -127,6 +127,62 @@ def test_an_unknown_scheme_as_an_attachment_type_entity_clarifies_too(
     assert calls == [], calls
 
 
+def test_an_unknown_scheme_on_a_class_word_no_code_carries_still_names_the_schemes(
+    session_factory, stub_parser, stub_access, monkeypatch
+):
+    """"water tap" reaches the Tap class through its synonym and matches no product code,
+    so the described set is the ONLY scope the turn has. A zero there is a miss to name,
+    never "I need at least one filter"."""
+    from tests.chatbot.test_lane_require import _certificate_for
+
+    db = session_factory()
+    taps, _basins = _seed_taps_and_basins(db, taps=2, basins=0)
+    for tap in taps:
+        _certificate_for(db, product_id=tap.id)
+    db.commit()
+    calls: list[dict[str, Any]] = []
+    engine_mod, contact_id = _wired(session_factory, monkeypatch, db, _row_capped(db, calls, default_rows=50))
+    stub_parser(
+        _verdict(
+            domain="product_attachment",
+            intent="check_product_attachment",
+            attribute="zzq cert",
+            class_word="water tap",
+            goal="which water tap has zzq cert",
+        )
+    )
+    stub_access()
+
+    text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which water tap has zzq cert")
+
+    assert "no zzq certificates" in text and "Schemes on file:" in text, text
+    assert "I need at least one filter" not in text, text
+    assert calls == [], calls
+
+
+def test_an_honest_zero_names_the_set_and_fetches_nothing(session_factory, stub_parser, stub_access, monkeypatch):
+    """AC-1319 as a whole turn: taps exist, none holds a certificate. The miss names the
+    set and the predicate; it never says "0 taps have certificates." over a fetched list."""
+    from tests.chatbot.test_lane_require import _seed_category_and_uom, _seed_registry, _tap_product
+
+    db = session_factory()
+    category_id, uom_id = _seed_category_and_uom(db)
+    _seed_registry(db)
+    for _ in range(3):
+        _tap_product(db, category_id=category_id, uom_id=uom_id)
+    db.commit()
+    calls: list[dict[str, Any]] = []
+    engine_mod, contact_id = _wired(session_factory, monkeypatch, db, _row_capped(db, calls, default_rows=50))
+    stub_parser(_tap_cert_verdict())
+    stub_access()
+
+    text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap has cert")
+
+    assert "with a certificate" in text, text
+    assert "have certificates." not in text and "has certificates." not in text, text
+    assert calls == [], calls
+
+
 # --------------------------------------------------------------------------- #
 # B3: the header counts what the rows show. The tool caps ROWS, so a listed    #
 # set asks for enough rows, and when the tool still cuts it short the header   #
@@ -266,13 +322,13 @@ def test_the_recount_after_how_many_keeps_the_dealers_stock_visibility(
     stub_access()
     first = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap got stock")
     assert first.startswith("2 taps have stock."), first
-    assert calls == [], calls
+    before = len(calls)
 
     stub_parser(_bare_verdict(top_n=1, continuation=True, user_goal="show 1"))
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=2, text="1")
 
     assert text.startswith("2 taps have stock. Here are the first 1."), text
-    asked = {pid for c in calls for pid in (c["args"].get("product_ids") or [])}
+    asked = {pid for c in calls[before:] for pid in (c["args"].get("product_ids") or [])}
     assert taps[1].id not in asked, asked
     assert asked <= {taps[0].id, taps[2].id} and len(asked) == 1, asked
 
@@ -290,3 +346,93 @@ def test_an_availability_row_is_numbered_with_its_product_code(
     listed = sorted([taps[0].product_code, taps[2].product_code])
     assert f"1. {listed[0]}" in lines, text
     assert f"2. {listed[1]}" in lines, text
+
+
+# --------------------------------------------------------------------------- #
+# S1: the answer to "how many should I show?" does not rest on the parser      #
+# filling `top_n` for a bare "10".                                             #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "parser_reads",
+    [
+        {"top_n": None, "reference_positions": []},
+        {"top_n": None, "reference_positions": [3]},
+    ],
+    ids=["parser_null", "parser_reads_a_position"],
+)
+def test_a_bare_count_answers_the_question_whatever_the_parser_made_of_it(
+    session_factory, stub_parser, stub_access, seven_taps, monkeypatch, parser_reads
+):
+    from app.services.chatbot.lanes.business import answer
+
+    monkeypatch.setattr(answer, "SET_LIST_MAX", 5)
+    engine_mod, codes, calls, contact_id = seven_taps
+    stub_parser(_tap_cert_verdict())
+    stub_access()
+    _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap has cert")
+    before = len(calls)
+
+    stub_parser(_bare_verdict(message_type="casual", user_goal="3", **parser_reads))
+    text = _turn(engine_mod, session_factory, contact_id=contact_id, n=2, text="3")
+
+    assert text.startswith("7 taps have certificates. Here are the first 3."), text
+    assert len(_s4_codes_in(text)) == 3, text
+    assert len(calls) == before + 1 and len(calls[-1]["args"]["product_ids"]) == 3, calls
+
+
+@pytest.mark.parametrize(
+    "message, count",
+    [("10", 10), ("show 10", 10), ("10 please", 10), ("the first 10", 10), ("top 20", 20), ("Show me 5.", 5)],
+)
+def test_a_bare_count_message_is_read_as_the_count_while_the_question_is_open(message, count):
+    from app.services.chatbot.turn_runtime import with_set_count_from_text
+
+    out = with_set_count_from_text({"top_n": None, "reference_positions": [10]}, message, carried={"set_key": {}})
+    assert out["top_n"] == count and out["reference_positions"] == []
+
+
+@pytest.mark.parametrize(
+    "verdict, message, carried",
+    [
+        ({"top_n": None}, "10", None),
+        ({"top_n": None}, "which basin has 10 cert", {"set_key": {}}),
+        ({"top_n": None}, "0", {"set_key": {}}),
+        ({"top_n": 4}, "10", {"set_key": {}}),
+        (
+            {"top_n": None, "entities": [{"raw": "SRT10", "current_message": True}]},
+            "10",
+            {"set_key": {}},
+        ),
+    ],
+    ids=["no_question_open", "not_only_a_count", "zero", "parser_named_one", "names_a_subject"],
+)
+def test_anything_but_a_bare_count_is_left_to_the_parser(verdict, message, carried):
+    from app.services.chatbot.turn_runtime import with_set_count_from_text
+
+    assert with_set_count_from_text(verdict, message, carried=carried) == verdict
+
+
+# --------------------------------------------------------------------------- #
+# N2: one reading of "a count was named" in the engine, apply and fetch.        #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("bad_count", [0, True], ids=["zero", "true"])
+def test_a_count_that_names_nothing_still_arms_the_question(
+    session_factory, stub_parser, stub_access, seven_taps, monkeypatch, bad_count
+):
+    from app.services.chatbot.lanes.business import answer
+
+    monkeypatch.setattr(answer, "SET_LIST_MAX", 5)
+    engine_mod, codes, calls, contact_id = seven_taps
+    stub_parser(_tap_cert_verdict(top_n=bad_count))
+    stub_access()
+    first = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap has cert")
+    assert "How many should I show (up to 5)" in first, first
+
+    stub_parser(_bare_verdict(top_n=3, continuation=True, user_goal="show 3"))
+    text = _turn(engine_mod, session_factory, contact_id=contact_id, n=2, text="3")
+
+    assert text.startswith("7 taps have certificates. Here are the first 3."), text
