@@ -222,7 +222,13 @@ Dependencies: S-1 first; S0 blocks S1, S2 and #1280's auth slice; S1 and S2 in p
 
 ## Measurement (before the default-on flip merges)
 
-Run on the production copy and paste the result into this plan:
+The full gate is `documentation/plans/audit/measure-s0.sql` (review B3 at 7a56073f): today's
+volume, then the projected volume under default-on from two estimators (write counters since the
+stats reset, an upper bound; `created_at` / `updated_at` over 30 days, a lower bound), and a
+verdict against the 10x rule. Read-only, temp tables only. Run it on the production copy with
+`psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f documentation/plans/audit/measure-s0.sql` and paste
+the result here. On CI's database (seed rows only) it runs clean and says nothing about volume.
+The three baseline queries, for reference:
 
 ```sql
 SELECT date_trunc('day', changed_at) AS day, count(*)
