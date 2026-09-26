@@ -164,11 +164,16 @@ def api(world):
     Almost every CRM test needs a `new`/`won`/`lost` graph to create against, so the seed runs
     once here rather than being repeated in every test.
     """
+    from app.services.audit_service import register_audit_listeners
     from app.services.sales import sales_seed_service
 
     db, company_id = world
     sales_seed_service.run(db)
     db.flush()
+    # A bare `TestClient(app)` (no `with`) never runs the app's startup event, so the
+    # audit listener is not registered unless something else in this run already did -
+    # same reasoning `test_board_undo_last_confirm.py` documents at its own call site.
+    register_audit_listeners()
     client, originals = _client(db, ALL)
     try:
         yield client, db, company_id

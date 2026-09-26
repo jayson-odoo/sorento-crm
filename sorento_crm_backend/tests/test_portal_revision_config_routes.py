@@ -43,12 +43,16 @@ CONFIG_KEYS = {
 # AC-R6: price_tag_request is a fifth GRANTABLE_PORTAL_FORM_TYPES row (the
 # route lists placeholders from that tuple, not the narrower SUPPORTED_TYPES
 # the generic submissions CRUD uses - see app/api/v1/forms/revision_configs.py).
+# sales_opportunity (plan S2) is a sixth: it has no revision engine wiring of its
+# own yet, so its row is a disabled placeholder nobody's code reads - same shape
+# a brand-new grantable kind always starts in, before anything targets it.
 PORTAL_TYPES = {
     "complaint",
     "stock_inquiry",
     "purchase_request",
     "sponsorship_form",
     "price_tag_request",
+    "sales_opportunity",
 }
 
 

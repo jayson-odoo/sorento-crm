@@ -93,7 +93,7 @@ def test_get_with_no_access_types_and_no_override_is_all_false(monkeypatch):
 
         assert response.status_code == 200, response.text
         forms = response.json()["forms"]
-        assert len(forms) == 5
+        assert len(forms) == len(GRANTABLE_PORTAL_FORM_TYPES)
         assert [row["form_type"] for row in forms] == list(GRANTABLE_PORTAL_FORM_TYPES)
         for kind in _BASE_KINDS:
             row = _row(forms, kind)
@@ -136,7 +136,9 @@ def test_put_enables_with_no_inheritance_and_resolver_sees_it(monkeypatch):
 
         assert response.status_code == 200, response.text
         forms = response.json()["forms"]
-        assert len(forms) == 5, "GRANTABLE_PORTAL_FORM_TYPES, not just the gated one"
+        assert len(forms) == len(GRANTABLE_PORTAL_FORM_TYPES), (
+            "GRANTABLE_PORTAL_FORM_TYPES, not just the gated one"
+        )
         row = _row(forms, "price_tag_request")
         assert row["override"] is True
         assert row["effective"] is True
@@ -192,7 +194,9 @@ def test_put_null_deletes_the_override_row_back_to_inherit(monkeypatch):
 
         assert response.status_code == 200, response.text
         forms = response.json()["forms"]
-        assert len(forms) == 5, "GRANTABLE_PORTAL_FORM_TYPES, not just the gated one"
+        assert len(forms) == len(GRANTABLE_PORTAL_FORM_TYPES), (
+            "GRANTABLE_PORTAL_FORM_TYPES, not just the gated one"
+        )
         row = _row(forms, "price_tag_request")
         assert row["override"] is None
         assert row["effective"] is False
@@ -225,7 +229,9 @@ def test_put_same_form_type_twice_in_one_request_last_wins(monkeypatch):
 
         assert response.status_code == 200, response.text
         forms = response.json()["forms"]
-        assert len(forms) == 5, "GRANTABLE_PORTAL_FORM_TYPES, not just the gated one"
+        assert len(forms) == len(GRANTABLE_PORTAL_FORM_TYPES), (
+            "GRANTABLE_PORTAL_FORM_TYPES, not just the gated one"
+        )
         row = _row(forms, "price_tag_request")
         assert row["override"] is None
         assert row["effective"] is False
@@ -245,7 +251,7 @@ def test_get_and_put_ask_for_the_right_permission_slugs(monkeypatch):
 
         get_response = client.get(BASE.format(contact_id=contact.id))
         assert get_response.status_code == 200, get_response.text
-        assert len(get_response.json()["forms"]) == 5, (
+        assert len(get_response.json()["forms"]) == len(GRANTABLE_PORTAL_FORM_TYPES), (
             "GRANTABLE_PORTAL_FORM_TYPES, not just the gated one"
         )
         assert "user_management.contacts.view" in slugs
