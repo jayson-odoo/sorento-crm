@@ -130,7 +130,8 @@ def test_a_multi_product_ask_is_not_a_family():
     )
     assert reply.pick is None
     assert [s.label for s in reply.tasks[0].slots] == ["ELP3754", "SRTKT1631SS"]
-    assert reply.text == "How many units do you need for ELP3754 and SRTKT1631SS?"
+    # Round 6, ruling 2: point form, one numbered line per product.
+    assert reply.text == "How many units for each?\n1. ELP3754 - \n2. SRTKT1631SS - "
 
 
 def test_no_availability_block_leaves_everything_alone():

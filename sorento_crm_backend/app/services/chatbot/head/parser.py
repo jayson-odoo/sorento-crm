@@ -56,9 +56,17 @@ class ParserError(RuntimeError):
 
     usage: dict[str, Any]
 
-    def __init__(self, *args: object, usage: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        *args: object,
+        usage: dict[str, Any] | None = None,
+        rate_limited: bool = False,
+    ) -> None:
         super().__init__(*args)
         self.usage = usage or {}
+        # PR #1247 round 6, ruling 3: every attempt was refused with a 429, so the
+        # dealer is told `llm_call.RATE_LIMITED_REPLY`, not the generic parser error.
+        self.rate_limited = rate_limited
 
 
 @dataclass(frozen=True)
@@ -614,22 +622,26 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
     NOTHING here touches the database. That is the rule the capacity section states and
     the reason `ParserConfig` exists.
     """
-    from app.services.llm_provider import get_provider
+    from app.services.chatbot import llm_call
 
     messages = [
         {"role": "system", "content": config.system_prompt},
         {"role": "user", "content": user_block},
     ]
     try:
-        provider = get_provider(config.provider, config.api_key, config.model)
-        result = provider.chat(
+        # A rate limit is waited out inside the call (PR #1247 round 6, ruling 3).
+        result = llm_call.chat(
+            config.provider,
+            config.api_key,
+            config.model,
             messages,
             temperature=0.0,
-            model=config.model,
             max_tokens=PARSER_MAX_TOKENS,
             json_schema=PARSE_OUTPUT_JSON_SCHEMA,
             json_schema_name=PARSE_OUTPUT_SCHEMA_NAME,
         )
+    except llm_call.RateLimited as exc:
+        raise ParserError(f"parser provider call failed: {exc}", rate_limited=True) from exc
     except Exception as exc:  # noqa: BLE001 - provider/transport failure is a failed stage
         raise ParserError(f"parser provider call failed: {exc}") from exc
 

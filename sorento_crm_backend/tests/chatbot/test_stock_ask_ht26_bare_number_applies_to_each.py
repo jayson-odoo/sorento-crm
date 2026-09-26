@@ -5,8 +5,8 @@ Owner ruling 26 Sep (F2): "okay" to the scout's question - over an open task wit
 several products still owed, in a real multi-product ask (not a family), should a bare
 number mean the same quantity for all? Orchestrator reading: yes, and the reply names
 each product with that quantity (the backend's R14 line per product, "<P> x <Q>: ...").
-A family never opens a task any more (slice 2); a family task written before that keeps
-re-asking rather than checking every variant at once.
+A family opens a task only when the dealer picks "all" of it, and one number then
+applies to every line too (round 6).
 """
 from __future__ import annotations
 
@@ -63,22 +63,18 @@ def test_similar_codes_are_two_products_not_a_family():
     }
 
 
-def test_a_family_task_written_before_slice_two_still_re_asks():
-    """T2's own state: the ten-slot SRTWC286-SH* task and "88"."""
+def test_a_family_task_takes_one_number_for_all_too():
+    """T2's own state: the ten-slot SRTWC286-SH* task and "88". Round 6 (owner console
+    test of round 4, "they can just say one number like 10 to apply to all"): a family
+    task is what "all" over a which-one list opens, and one number fills every line.
+    Before round 6 this state re-asked."""
     task = _open(*ht.SRTWC286_FAMILY)
     state2, plan = apply(
         ht.state(Focus(tasks=(task,), domains=["inventory"])),
         verdict(demand_qty=88, entities=[]),
         build_policy(),
     )
-    assert plan.fetch == []
-    (kept,) = state2.focus.tasks
-    assert all(s.value is None for s in kept.slots)
-
-
-def test_family_detection():
-    assert task_mod._is_family(ht.SRTWC286_FAMILY)
-    assert task_mod._is_family(["SRTWC286-SH-BK", "SRTWC286-SH-BL"])
-    assert task_mod._is_family(["CB313-NL", "CB313-L"])
-    assert not task_mod._is_family(["ELP3754", "SRTKT1631SS"])
-    assert not task_mod._is_family(["ELP3754", "ELP3756"])
+    spec = ht.inventory_specs(plan)[0]
+    assert spec.filters.get("requested_quantities") == {
+        ht.uuid_of(code): 88 for code in ht.SRTWC286_FAMILY
+    }

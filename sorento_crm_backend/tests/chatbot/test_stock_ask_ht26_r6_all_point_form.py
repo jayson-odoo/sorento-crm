@@ -97,7 +97,7 @@ def test_all_opens_one_point_form_question_for_every_product(reading):
 
 def test_the_point_form_question_has_no_em_or_en_dash():
     text = _after_all().transcript[-1]
-    assert "—" not in text and "–" not in text
+    assert chr(0x2014) not in text and chr(0x2013) not in text
     assert all(line.endswith(" - ") for line in text.splitlines()[1:])
 
 

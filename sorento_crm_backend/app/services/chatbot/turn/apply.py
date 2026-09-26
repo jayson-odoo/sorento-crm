@@ -1678,15 +1678,16 @@ def _did_you_mean_keeps_quantity(focus: Focus, verdict: dict[str, Any], trace: T
     trace.rules_fired.append("did_you_mean_keeps_quantity")
 
 
-def _one_product_stock_task(focus: Focus) -> Any:
-    """The stock check about ONE product that is still asking its quantity or has just
-    been answered, or None."""
+def _stock_task_owed_a_number(focus: Focus) -> Any:
+    """The stock check a bare number is for, or None: one still asking its quantities
+    (any number of products - round 6, "one number like 10 to apply to all"), or a
+    one-product check just answered (the number revises it, round 5)."""
     for task in focus.tasks or ():
-        if (
-            task.kind == "stock_qty"
-            and task.status in (task_mod.OPEN, task_mod.ANSWERED)
-            and len(task.slots) == 1
-        ):
+        if task.kind != "stock_qty":
+            continue
+        if task.status == task_mod.OPEN and task.slots:
+            return task
+        if task.status == task_mod.ANSWERED and len(task.slots) == 1:
             return task
     return None
 
@@ -1714,7 +1715,8 @@ def _lone_position(verdict: dict[str, Any]) -> int | None:
 def _bare_position_is_the_quantity(state: State, verdict: dict[str, Any], trace: Trace) -> None:
     """Owner ruling 26 Sep 2026 (round 3 hand test, ruling 2): once the which-one pick is
     spent and the stock check is about one product, a bare number is that product's
-    quantity - a revision when it was already answered ("2" after SRTWC286-SH x 10 is
+    quantity (round 6: over the point-form question for several products it is every
+    product's, and "10" is never its tenth line) - a revision when it was already answered ("2" after SRTWC286-SH x 10 is
     SRTWC286-SH x 2), the answer when it is still asked. Never a pick from the old list:
     the picker is not sticky (owner ruling 26 Sep ~08:25Z, round 5), so once one product
     is picked the list is closed and forgotten, and a "no" beside the number ("no, 2")
@@ -1728,7 +1730,7 @@ def _bare_position_is_the_quantity(state: State, verdict: dict[str, Any], trace:
     """
     if state.pending is not None:
         return
-    if _one_product_stock_task(state.focus) is None:
+    if _stock_task_owed_a_number(state.focus) is None:
         return
     position = _lone_position(verdict)
     if position is None:

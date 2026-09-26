@@ -67,8 +67,9 @@ def test_naming_two_of_the_task_keeps_both_in_task_order():
     )
     (task,) = state2.focus.tasks
     assert [s.label for s in task.slots] == ["SRTWC286-SH-UF", "SRTWC286-SH-GD"]
+    # Round 6, ruling 2: point form, one numbered line per product.
     assert plan.trace.task_question == (
-        "How many units do you need for SRTWC286-SH-UF and SRTWC286-SH-GD?"
+        "How many units for each?\n1. SRTWC286-SH-UF - \n2. SRTWC286-SH-GD - "
     )
 
 

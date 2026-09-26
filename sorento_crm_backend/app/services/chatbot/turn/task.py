@@ -41,6 +41,14 @@ ANSWERED = "answered"
 #: escalation offer. `dealer_stock.py` holds the rest of that rule.
 REFER_TO_SALESMAN = "Please refer to your salesman."
 
+#: PR #1247 round 6 (owner console test of round 4): the verdict key a numbered-lines
+#: reply ("1. 10, 2. 5") rides on, {slot key: quantity}. `head/fast_path.py` writes it;
+#: the parser never does. Keyed by the slot's own key, so nothing is resolved again.
+SLOT_QUANTITIES = "slot_quantities"
+
+#: The header of the point-form question (round 6, ruling 2).
+EACH_QUESTION = "How many units for each?"
+
 
 @dataclass(frozen=True)
 class Slot:
@@ -147,25 +155,17 @@ def _only_task_slots(
     return True
 
 
-def _is_family(labels: list[str]) -> bool:
-    """Are these one product family - every code the shared stem itself or the stem plus
-    a "-" variant suffix (SRTWC286-SH, SRTWC286-SH-UF, SRTWC286-SH-150, ...)? Two codes
-    that merely share leading characters (ELP3754, ELP3756) are two products."""
-    codes = [label.strip().casefold() for label in labels if isinstance(label, str)]
-    if len(codes) < 2:
-        return False
-    stem = codes[0]
-    for code in codes[1:]:
-        while not code.startswith(stem):
-            stem = stem[:-1]
-    while stem:
-        stem = stem.rstrip("-")
-        if all(code == stem or code.startswith(stem + "-") for code in codes):
-            return True
-        # Back to the previous "-" boundary: SRTWC286-SH-BK and SRTWC286-SH-BL share
-        # "srtwc286-sh-b", and their family stem is "srtwc286-sh".
-        stem = stem[: stem.rfind("-")] if "-" in stem else ""
-    return False
+def _slot_quantities(verdict: dict[str, Any]) -> dict[str, int]:
+    """The numbered-lines reading (`SLOT_QUANTITIES`), as {slot key: int}."""
+    raw = verdict.get(SLOT_QUANTITIES)
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, int] = {}
+    for key, value in raw.items():
+        quantity = _number(value)
+        if isinstance(key, str) and key.strip() and quantity is not None:
+            out[key] = quantity
+    return out
 
 
 def _named_slots(task: "Task", verdict: dict[str, Any]) -> tuple["Slot", ...]:
@@ -231,6 +231,8 @@ class StockQtyTask:
     def claims(self, verdict: dict[str, Any]) -> bool:
         if verdict.get("proceed_anyway") is True:
             return True
+        if _slot_quantities(verdict):
+            return True
         for entity in verdict.get("entities") or []:
             if isinstance(entity, dict) and _number(entity.get("quantity")) is not None:
                 return True
@@ -250,6 +252,9 @@ class StockQtyTask:
                 continue
             for code in _entity_codes(entity):
                 by_code[code] = quantity
+        # Round 6: numbered lines, already matched to their slots by key.
+        for key, quantity in _slot_quantities(verdict).items():
+            by_code[key.strip().casefold()] = quantity
         for i, slot in enumerate(slots):
             for code in (slot.key, slot.label):
                 if not isinstance(code, str):
@@ -281,18 +286,12 @@ class StockQtyTask:
             if bare is not None:
                 index = slots.index(still_missing[0])
                 slots[index] = replace(still_missing[0], value=bare)
-        elif (
-            still_missing
-            and bare is not None
-            and not by_code
-            and not verdict.get("entities")
-            and not _is_family([slot.label for slot in task.slots])
-        ):
+        elif still_missing and bare is not None and not by_code and not verdict.get("entities"):
             # Owner ruling 26 Sep 2026 (hand test F2, "okay"): one bare number after a
-            # question about several products - a real multi-product ask, not a family
-            # - applies to each product still owed. A family ("which one of these?")
-            # never reaches here as a task any more (slice 2); one written before that
-            # still re-asks rather than checking ten variants at once.
+            # question about several products applies to each product still owed.
+            # Round 6 (owner console test of round 4, "they can just say one number
+            # like 10 to apply to all"): a family the dealer picked "all" of is such a
+            # question too - the only way a family reaches here as a task (slice 2).
             slots = [replace(slot, value=bare) if slot.value is None else slot for slot in slots]
         return replace(task, slots=tuple(slots))
 
@@ -346,16 +345,19 @@ class StockQtyTask:
         missing = [slot.label for slot in self.missing(task)]
         if not missing:
             return None
-        noted = [
-            f"{slot.label} x {slot.value}" for slot in task.slots if slot.value is not None
-        ]
-        if len(missing) == 1 and not noted:
+        if len(task.slots) == 1:
             # Owner hand test 26 Sep, slice 2: one product, one question, named.
             return f"How many units of {missing[0]}?"
-        question = f"How many units do you need for {_named(missing)}?"
-        if not noted:
-            return question
-        return f"Noted: {_listed(noted)}. {question}"
+        # Round 6, ruling 2 (owner console test of round 4): point form, one numbered
+        # line per product ending " - " for the dealer to fill, what is noted already
+        # filled in. The numbers stay put, so "1. 10, 2. 5" always means these lines.
+        # Every slot is listed (at most `MAX_SLOTS`, SEC-S2): a line not printed is a
+        # line the dealer cannot fill.
+        lines = [
+            f"{i}. {slot.label} - {'' if slot.value is None else slot.value}"
+            for i, slot in enumerate(task.slots, 1)
+        ]
+        return "\n".join([EACH_QUESTION, *lines])
 
     def hint(self, task: Task) -> str:
         """The line the parser reads."""

@@ -161,6 +161,7 @@ def test_the_parser_names_a_final_rate_limit(monkeypatch, slept):
     assert caught.value.rate_limited is True
 
 
+@pytest.mark.real_casual_llm
 def test_the_clarifier_call_goes_through_the_wrapper(monkeypatch, slept):
     provider = Provider(fail=1, content='{"response": "You are welcome"}')
     _install(monkeypatch, provider)
@@ -171,6 +172,7 @@ def test_the_clarifier_call_goes_through_the_wrapper(monkeypatch, slept):
     assert provider.calls == 2
 
 
+@pytest.mark.real_casual_llm
 def test_the_clarifier_raises_its_own_rate_limited_error(monkeypatch, slept):
     _install(monkeypatch, Provider(fail=99))
     config = casual.ClarifierConfig(
@@ -182,16 +184,17 @@ def test_the_clarifier_raises_its_own_rate_limited_error(monkeypatch, slept):
 
 def test_no_chatbot_module_calls_a_provider_outside_the_wrapper():
     """ONE wrapper: every `provider.chat(` in the chatbot package is inside `llm_call`."""
+    import re
     from pathlib import Path
 
     import app.services.chatbot as package
 
     root = Path(package.__file__).parent
+    call = re.compile(r"get_provider\(|(?<!llm_call)\.chat\(")
     offenders = [
         str(path.relative_to(root))
         for path in root.rglob("*.py")
-        if path.name != "llm_call.py"
-        and ("get_provider(" in path.read_text() or ".chat(" in path.read_text())
+        if path.name != "llm_call.py" and call.search(path.read_text())
     ]
     assert offenders == []
 
@@ -238,7 +241,7 @@ def test_a_clarifier_rate_limit_replies_with_the_plain_sentence(
 
 
 def test_the_rate_limited_reply_has_no_dashes():
-    assert "—" not in llm_call.RATE_LIMITED_REPLY and "–" not in llm_call.RATE_LIMITED_REPLY
+    assert chr(0x2014) not in llm_call.RATE_LIMITED_REPLY and chr(0x2013) not in llm_call.RATE_LIMITED_REPLY
 
 
 # --------------------------------------------------------------------------- #
