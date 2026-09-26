@@ -1567,6 +1567,13 @@ def _narrow_and_plan(
     return Plan(domains=list(domains), fetch=fetch, ask=ask, denied=denied, trace=trace)
 
 
+def _is_the_bare_quantity(entity: Any, bare: int) -> bool:
+    if not isinstance(entity, dict) or entity.get("confident") is not False:
+        return False
+    raw = entity.get("raw")
+    return isinstance(raw, str) and raw.strip().isdigit() and int(raw.strip()) == bare
+
+
 def _normalise_demand_qty(verdict: dict[str, Any]) -> None:
     """D13, ported from PR #1118 (not merged), review round 9 (finding 5): one
     statement, one shape.
@@ -1587,6 +1594,15 @@ def _normalise_demand_qty(verdict: dict[str, Any]) -> None:
     bare = _stated_quantity(verdict.get("demand_qty"))
     if bare is None:
         return
+    raw_entities = verdict.get("entities")
+    if isinstance(raw_entities, list):
+        # Owner hand test 26 Sep, slice 5 (T8): "how about 100?" parsed as demand_qty
+        # 100 AND a product entity "100" the parser was not confident of, and the spec
+        # tier then matched four products to it. A not-confident entity that is only
+        # the digits of this message's own quantity IS that quantity, not a product.
+        kept = [e for e in raw_entities if not _is_the_bare_quantity(e, bare)]
+        if len(kept) != len(raw_entities):
+            verdict["entities"] = kept
     products = [
         e
         for e in (verdict.get("entities") or [])

@@ -32,6 +32,10 @@ from app.services.chatbot.turn.plan import FetchSpec
 
 OPEN = "open"
 PARKED = "parked"
+#: Owner hand test 26 Sep, slice 5: the stock check the last reply ANSWERED, kept so a
+#: follow-up can revise it ("how about 100?"). It asks nothing and claims nothing but
+#: that revision; the next new ask closes it.
+ANSWERED = "answered"
 
 
 @dataclass(frozen=True)
@@ -317,6 +321,13 @@ class StockQtyTask:
 
     def hint(self, task: Task) -> str:
         """The line the parser reads."""
+        if task.status == ANSWERED:
+            answered = [
+                f"{slot.label} x {slot.value}"
+                for slot in task.slots
+                if slot.value is not None
+            ]
+            return f"Last answered: {_listed(answered)}."
         parts = [f"Open task: {self.label}."]
         noted = [
             f"{slot.label} x {slot.value}" for slot in task.slots if slot.value is not None
@@ -385,7 +396,7 @@ def task_from_wire(raw: Any) -> Task | None:
     return Task(
         kind=str(raw["kind"]),
         domain=str(raw.get("domain") or ""),
-        status=status if status in (OPEN, PARKED) else OPEN,
+        status=status if status in (OPEN, PARKED, ANSWERED) else OPEN,
         opened_at_turn=raw.get("opened_at_turn") or 0,
         touched_at_turn=raw.get("touched_at_turn") or 0,
         slots=tuple(slots),
@@ -446,7 +457,7 @@ def run(
         closed: list[str] = []
         for task in tasks:
             aimed_here = not named_domain or task.domain == named_domain
-            if aimed_here:
+            if aimed_here or task.status == ANSWERED:
                 closed.append(task.kind)
                 rules.append(f"task_closed_on_reset_{task.kind}")
                 continue
@@ -463,7 +474,8 @@ def run(
     claimed = [
         task
         for task in tasks
-        if TASK_KINDS.get(task.kind) is not None
+        if task.status != ANSWERED
+        and TASK_KINDS.get(task.kind) is not None
         and TASK_KINDS[task.kind].claims(verdict)
         and _only_task_slots(task, verdict, allow_quantities=True)
     ]
@@ -478,6 +490,20 @@ def run(
         impl = TASK_KINDS.get(task.kind)
         if impl is None:
             out.append(task)
+            continue
+        if task.status == ANSWERED:
+            revised = _revised(task, verdict, turn_no)
+            if revised is not None and fetch is None:
+                # Owner hand test 26 Sep, slice 5 (T8, T13): "how about 100?" after
+                # SRTGV332-DIY x 20 was answered is the same product at a new quantity.
+                out.append(revised)
+                rules.append(f"task_revised_{task.kind}")
+                fetch = impl.to_fetch(revised)
+                fetch_domain = revised.domain
+            elif decision_kind == "new_ask":
+                rules.append(f"task_answered_closed_{task.kind}")
+            else:
+                out.append(task)
             continue
         if claimed and task is claimed[0]:
             # (2) fill: the value goes to the kind that claims it, whatever the
@@ -561,6 +587,35 @@ def run(
         question_domain=question_domain if question else None,
         parked_kinds=tuple(parked_kinds),
         rules=tuple(rules),
+    )
+
+
+def _revised(task: Task, verdict: dict[str, Any], turn_no: int) -> Task | None:
+    """The answered one-product check at the bare number this message states, or None.
+
+    One product only: "how about 100?" after a two-product answer does not say which
+    one it means. A message that names a product of its own, or states a quantity
+    beside one, is a stock ask of its own and is answered as one."""
+    if len(task.slots) != 1:
+        return None
+    bare = _number(verdict.get("demand_qty"))
+    if bare is None:
+        return None
+    for entity in verdict.get("entities") or []:
+        if not isinstance(entity, dict):
+            continue
+        if _number(entity.get("quantity")) is not None:
+            return None
+        if entity.get("hint") in (None, "product") and not _only_task_slots(
+            task, {"entities": [entity]}
+        ):
+            return None
+    (slot,) = task.slots
+    return replace(
+        task,
+        status=OPEN,
+        touched_at_turn=turn_no,
+        slots=(replace(slot, value=bare),),
     )
 
 
@@ -795,8 +850,7 @@ def _rebuilt(
     when it opened).
     """
     others = tuple(task for task in tasks if task.kind != "stock_qty")
-    if not any(row.get("needs_quantity") is True for row in block):
-        return others
+    answered = not any(row.get("needs_quantity") is True for row in block)
 
     existing = next((task for task in tasks if task.kind == "stock_qty"), None)
     if existing is None and not named_products:
@@ -823,12 +877,17 @@ def _rebuilt(
     slots = slots[:MAX_SLOTS]
     if not slots:
         return others
+    if answered and any(slot.value is None for slot in slots):
+        # An answered entry with no quantity on it has nothing to revise.
+        return others
     opened = existing.opened_at_turn if existing is not None else turn_no
     return others + (
         Task(
             kind="stock_qty",
             domain="inventory",
-            status=OPEN,
+            # Owner hand test 26 Sep, slice 5: an answered check is KEPT, as what the
+            # last reply answered, so "how about 100?" has something to revise.
+            status=ANSWERED if answered else OPEN,
             opened_at_turn=opened,
             touched_at_turn=turn_no,
             slots=tuple(slots),

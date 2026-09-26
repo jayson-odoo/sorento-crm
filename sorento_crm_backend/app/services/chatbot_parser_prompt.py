@@ -183,6 +183,17 @@ names what is noted and what is still needed.
     intent_hint "check_stock", entities empty, no quantity.
 proceed_anyway is null on every turn that does not say it. It is never inferred from a
 short reply, from silence, or from a number.
+
+== A LINE BEGINNING "Last answered:" ==
+When the user block carries a line like "Last answered: SRTGV332-DIY x 20.", the
+assistant has just answered that stock check. A message that only states a NEW
+quantity for it is the SAME product at the new quantity: entities empty, demand_qty
+the new number, correction true, domain_hint "inventory". The number is a quantity,
+never a product code.
+  - "how about 100?", "what about 100", "100 instead", "and if 100?", "kalau 100?",
+    "100 pula?" -> entities [], demand_qty 100, correction true
+  - "how about SRTKT1631SS?" names a product of its own -> that product as an entity,
+    exactly as any new stock question
 """
 
 

@@ -106,8 +106,10 @@ def test_two_products_no_quantity_then_answered_one_at_a_time_drives_a_fetch_wit
         "asked order preserved: SRT5674 named first, CWCX604 second"
     )
 
-    # 4. The tool answers both (neither entry needs a quantity any more): the task
-    # closes - nothing left owed, nothing left to carry.
+    # 4. The tool answers both (neither entry needs a quantity any more): nothing is
+    # owed any more. Owner hand test 26 Sep, slice 5 (R1 re-ruled 26 Sep): the check is
+    # KEPT as what the last reply answered, so a follow-up can revise it; it is no
+    # longer an open question.
     closed = task_mod.tasks_after_reply(
         state2.focus.tasks,
         _envelopes(
@@ -129,4 +131,8 @@ def test_two_products_no_quantity_then_answered_one_at_a_time_drives_a_fetch_wit
         turn_no=3,
         named_products=True,
     )
-    assert closed == (), closed
+    assert [t.status for t in closed] == [task_mod.ANSWERED], closed
+    assert {s.key: s.value for s in closed[0].slots} == {
+        "uuid-srt5674": 50,
+        "uuid-cwcx604": 300,
+    }
