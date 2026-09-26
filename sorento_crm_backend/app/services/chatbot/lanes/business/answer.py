@@ -33,6 +33,7 @@ from typing import Any, Literal
 
 from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business.fetch import DATE_PARAMS, space_id_or_default
+from app.services.product_spec_registry import SPEC_ACRONYMS
 
 # The did-you-mean helpers the JS carries in BOTH bodies with a "keep in lockstep" note.
 # `miss_suggest` owns them because that is where their node lives; this file imports them
@@ -2784,8 +2785,9 @@ def near_miss_sentence(near: Any, require: dict[str, Any]) -> str:
     value = jsc.js_string(jsc.get(near, "value")).strip()
     with_what = _predicate_phrase(require)
     has_what = _header_predicate_phrase(require)
-    # An acronym value keeps its capitals ("No PVC wash basins"; PR #833 round 5 N2).
-    named = value if value.isupper() else value.lower()
+    # An acronym keeps its capitals, word by word ("No PVC pipe wash basins"; PR #833
+    # round 5 N2, round 6 N-r5-2).
+    named = " ".join(w if w.isupper() or w.lower() in SPEC_ACRONYMS else w.lower() for w in value.split())
     said = f"No {named} {noun} with {with_what} (I looked for {label}: {value} among {noun})."
     total = int(jsc.get(near, "other_total") or 0)
     if not total:

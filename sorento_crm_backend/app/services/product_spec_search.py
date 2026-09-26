@@ -759,13 +759,16 @@ def _in_value_position(modifier: str, known: set[str]) -> bool:
 
 def _names_a_product(db: Session, phrase: str) -> bool:
     """Round 5 B1: a phrase some active product carries in its name or description is a
-    product name, never an unknown value; the search runs for it."""
-    pattern = f"%{phrase}%"
+    product name, never an unknown value; the search runs for it.
+
+    Round 6 B1-r5 (reviewer pass at 34cb4697): whole words only (`\\m` / `\\M`). A bare
+    substring let "Basket Trap" name "t trap" and undo the owner's exchange 8."""
+    pattern = rf"\m{re.escape(phrase)}\M"
     hit = (
         db.query(Product.id)
         .filter(
             Product.is_active.is_(True),
-            or_(Product.product_name.ilike(pattern), Product.description.ilike(pattern)),
+            or_(Product.product_name.op("~*")(pattern), Product.description.op("~*")(pattern)),
         )
         .first()
     )

@@ -167,6 +167,11 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
     cancelEdit();
   };
 
+  // Round 6 N-r5-1: the dialog's own words (zod in BrandFormDialog), under the input.
+  const weight = draft ? Number(draft.chatbot_weight) : 0;
+  const weightError =
+    weight < 0 ? 'Enter 0 or more' : weight > 9999 ? 'Enter 9999 or less' : null;
+
   const canSave =
     !!draft &&
     draft.brand_code.trim().length > 0 &&
@@ -321,17 +326,23 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
 
                 <Field label="Chatbot brand weight" htmlFor="brand-chatbot-weight">
                   {editing && draft ? (
-                    <Input
-                      id="brand-chatbot-weight"
-                      type="number"
-                      min={0}
-                      max={9999}
-                      step={0.1}
-                      inputMode="decimal"
-                      className="w-32"
-                      value={draft.chatbot_weight}
-                      onChange={(e) => setDraft({ ...draft, chatbot_weight: e.target.value })}
-                    />
+                    <div className="grid gap-1.5">
+                      <Input
+                        id="brand-chatbot-weight"
+                        type="number"
+                        min={0}
+                        max={9999}
+                        step={0.1}
+                        inputMode="decimal"
+                        className="w-32"
+                        aria-invalid={weightError ? true : undefined}
+                        value={draft.chatbot_weight}
+                        onChange={(e) => setDraft({ ...draft, chatbot_weight: e.target.value })}
+                      />
+                      {weightError && (
+                        <p className="text-xs font-normal text-destructive">{weightError}</p>
+                      )}
+                    </div>
                   ) : (
                     String(brand.chatbot_weight ?? 0)
                   )}

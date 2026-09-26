@@ -325,16 +325,36 @@ cases:
     text: "any deck mounted bath mixer"
     cold: true
     expect:
-      reply_not_contains: ["I don't know 'deck mounted'"]
+      reply_not_contains: ["I don't know"]
 
   - name: round 5 B1 long spout basin tap is counted
     text: "which long spout basin tap has stock"
     cold: true
     expect:
-      reply_not_contains: ["I don't know 'long spout'"]
+      reply_not_contains: ["I don't know"]
 
   - name: round 5 B1 grease trap is searched
     text: "any grease trap"
     cold: true
     expect:
-      reply_not_contains: ["I don't know 'grease trap'"]
+      reply_not_contains: ["I don't know"]
+
+  # Reviewer pass at 34cb4697 (round 6, N-r5-3): the other three of the six phrases, and
+  # every case above refuses ANY dead end ("I don't know"), not only its own phrase.
+  - name: round 6 N-r5-3 ceiling mounted shower is searched
+    text: "ceiling mounted shower"
+    cold: true
+    expect:
+      reply_not_contains: ["I don't know"]
+
+  - name: round 6 N-r5-3 rain shower ceiling mount is searched
+    text: "rain shower ceiling mount"
+    cold: true
+    expect:
+      reply_not_contains: ["I don't know"]
+
+  - name: round 6 N-r5-3 click clack waste is searched
+    text: "any click clack waste"
+    cold: true
+    expect:
+      reply_not_contains: ["I don't know"]
