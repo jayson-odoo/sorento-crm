@@ -1,0 +1,39 @@
+{
+  "status": "ready",
+  "report": "Sales",
+  "company": "Sorento",
+  "channel": "Project team",
+  "basis": "Delivered (transferred to DO)",
+  "period": "01/01/2026 to 26/09/2026",
+  "rows_label": "Channel",
+  "cols_label": "Year",
+  "count_label": "Channels",
+  "columns": [
+    "2026"
+  ],
+  "rows": [
+    {
+      "label": "Project team",
+      "values": [
+        "1234567.50"
+      ],
+      "total": "1234567.50"
+    }
+  ],
+  "totals": {
+    "values": [
+      "1234567.50"
+    ],
+    "total": "1234567.50"
+  },
+  "total_count": 1,
+  "attachments": [
+    {
+      "url": "https://cdn.example.com/exports/report-xlsx/x/Yearly comparison-01-01-2025 TO 26-09-2026.xlsx",
+      "filename": "Yearly comparison-01-01-2025 TO 26-09-2026.xlsx",
+      "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "attachmentType": "file"
+    }
+  ],
+  "download_id": "9a7c5e11-2b3d-4f56-8899-aabbccddeeff"
+}

@@ -40,6 +40,7 @@ REPORT = reg.register(
         key=KEY,
         title="Sponsorship report",
         permission=PERMISSION,
+        module_key="procurement",
         dataset=ds.DATASET,
         params=(
             reg.DateBasisParam(key="date_basis", label="Date basis", default="approved_at"),

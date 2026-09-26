@@ -1,0 +1,4444 @@
+{
+ "sponsorship_empty": {
+  "APR'25": {
+   "cells": [
+    [
+     "A2",
+     "SORENTO SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SPONSORSHIP",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2025-04-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "PROJECT SALES",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "PS NO:",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "SALES AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "CUSTOMER NAME",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "PROJECT TITLE",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "SPONSHER PROJECT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "H6",
+     "EXPECTED YEAR OF DELIVERY",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2025",
+     true,
+     "General"
+    ],
+    [
+     "I7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "J7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "K7",
+     "2028",
+     true,
+     "General"
+    ],
+    [
+     "E8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:K2",
+    "A3:K3",
+    "A4:K4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:G7",
+    "H6:K6"
+   ]
+  },
+  "AUG'25": {
+   "cells": [
+    [
+     "A2",
+     "SORENTO SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SPONSORSHIP",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2025-08-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "PROJECT SALES",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "PS NO:",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "SALES AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "CUSTOMER NAME",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "PROJECT TITLE",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "SPONSHER PROJECT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "H6",
+     "EXPECTED YEAR OF DELIVERY",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2025",
+     true,
+     "General"
+    ],
+    [
+     "I7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "J7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "K7",
+     "2028",
+     true,
+     "General"
+    ],
+    [
+     "E8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:K2",
+    "A3:K3",
+    "A4:K4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:G7",
+    "H6:K6"
+   ]
+  },
+  "DEC'25": {
+   "cells": [
+    [
+     "A2",
+     "SORENTO SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SPONSORSHIP",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2025-12-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "PROJECT SALES",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "PS NO:",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "SALES AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "CUSTOMER NAME",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "PROJECT TITLE",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "SPONSHER PROJECT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "H6",
+     "EXPECTED YEAR OF DELIVERY",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2025",
+     true,
+     "General"
+    ],
+    [
+     "I7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "J7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "K7",
+     "2028",
+     true,
+     "General"
+    ],
+    [
+     "E8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:K2",
+    "A3:K3",
+    "A4:K4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:G7",
+    "H6:K6"
+   ]
+  },
+  "FEB'25": {
+   "cells": [
+    [
+     "A2",
+     "SORENTO SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SPONSORSHIP",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2025-02-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "PROJECT SALES",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "PS NO:",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "SALES AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "CUSTOMER NAME",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "PROJECT TITLE",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "SPONSHER PROJECT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "H6",
+     "EXPECTED YEAR OF DELIVERY",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2025",
+     true,
+     "General"
+    ],
+    [
+     "I7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "J7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "K7",
+     "2028",
+     true,
+     "General"
+    ],
+    [
+     "E8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:K2",
+    "A3:K3",
+    "A4:K4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:G7",
+    "H6:K6"
+   ]
+  },
+  "JAN'25": {
+   "cells": [
+    [
+     "A2",
+     "SORENTO SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SPONSORSHIP",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2025-01-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "PROJECT SALES",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "PS NO:",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "SALES AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "CUSTOMER NAME",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "PROJECT TITLE",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "SPONSHER PROJECT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "H6",
+     "EXPECTED YEAR OF DELIVERY",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2025",
+     true,
+     "General"
+    ],
+    [
+     "I7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "J7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "K7",
+     "2028",
+     true,
+     "General"
+    ],
+    [
+     "E8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:K2",
+    "A3:K3",
+    "A4:K4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:G7",
+    "H6:K6"
+   ]
+  },
+  "JUL'25": {
+   "cells": [
+    [
+     "A2",
+     "SORENTO SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SPONSORSHIP",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2025-07-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "PROJECT SALES",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "PS NO:",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "SALES AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "CUSTOMER NAME",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "PROJECT TITLE",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "SPONSHER PROJECT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "H6",
+     "EXPECTED YEAR OF DELIVERY",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2025",
+     true,
+     "General"
+    ],
+    [
+     "I7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "J7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "K7",
+     "2028",
+     true,
+     "General"
+    ],
+    [
+     "E8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:K2",
+    "A3:K3",
+    "A4:K4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:G7",
+    "H6:K6"
+   ]
+  },
+  "JUN'25": {
+   "cells": [
+    [
+     "A2",
+     "SORENTO SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SPONSORSHIP",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2025-06-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "PROJECT SALES",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "PS NO:",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "SALES AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "CUSTOMER NAME",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "PROJECT TITLE",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "SPONSHER PROJECT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "H6",
+     "EXPECTED YEAR OF DELIVERY",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2025",
+     true,
+     "General"
+    ],
+    [
+     "I7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "J7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "K7",
+     "2028",
+     true,
+     "General"
+    ],
+    [
+     "E8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:K2",
+    "A3:K3",
+    "A4:K4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:G7",
+    "H6:K6"
+   ]
+  },
+  "MAR'25": {
+   "cells": [
+    [
+     "A2",
+     "SORENTO SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SPONSORSHIP",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2025-03-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "PROJECT SALES",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "PS NO:",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "SALES AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "CUSTOMER NAME",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "PROJECT TITLE",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "SPONSHER PROJECT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "H6",
+     "EXPECTED YEAR OF DELIVERY",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2025",
+     true,
+     "General"
+    ],
+    [
+     "I7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "J7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "K7",
+     "2028",
+     true,
+     "General"
+    ],
+    [
+     "E8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:K2",
+    "A3:K3",
+    "A4:K4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:G7",
+    "H6:K6"
+   ]
+  },
+  "MAY'25": {
+   "cells": [
+    [
+     "A2",
+     "SORENTO SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SPONSORSHIP",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2025-05-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "PROJECT SALES",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "PS NO:",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "SALES AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "CUSTOMER NAME",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "PROJECT TITLE",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "SPONSHER PROJECT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "H6",
+     "EXPECTED YEAR OF DELIVERY",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2025",
+     true,
+     "General"
+    ],
+    [
+     "I7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "J7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "K7",
+     "2028",
+     true,
+     "General"
+    ],
+    [
+     "E8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:K2",
+    "A3:K3",
+    "A4:K4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:G7",
+    "H6:K6"
+   ]
+  },
+  "NOV'25": {
+   "cells": [
+    [
+     "A2",
+     "SORENTO SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SPONSORSHIP",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2025-11-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "PROJECT SALES",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "PS NO:",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "SALES AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "CUSTOMER NAME",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "PROJECT TITLE",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "SPONSHER PROJECT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "H6",
+     "EXPECTED YEAR OF DELIVERY",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2025",
+     true,
+     "General"
+    ],
+    [
+     "I7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "J7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "K7",
+     "2028",
+     true,
+     "General"
+    ],
+    [
+     "E8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:K2",
+    "A3:K3",
+    "A4:K4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:G7",
+    "H6:K6"
+   ]
+  },
+  "OCT'25": {
+   "cells": [
+    [
+     "A2",
+     "SORENTO SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SPONSORSHIP",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2025-10-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "PROJECT SALES",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "PS NO:",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "SALES AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "CUSTOMER NAME",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "PROJECT TITLE",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "SPONSHER PROJECT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "H6",
+     "EXPECTED YEAR OF DELIVERY",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2025",
+     true,
+     "General"
+    ],
+    [
+     "I7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "J7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "K7",
+     "2028",
+     true,
+     "General"
+    ],
+    [
+     "E8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:K2",
+    "A3:K3",
+    "A4:K4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:G7",
+    "H6:K6"
+   ]
+  },
+  "SEP'25": {
+   "cells": [
+    [
+     "A2",
+     "SORENTO SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SPONSORSHIP",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2025-09-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "PROJECT SALES",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "PS NO:",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "SALES AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "CUSTOMER NAME",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "PROJECT TITLE",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "SPONSHER PROJECT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "H6",
+     "EXPECTED YEAR OF DELIVERY",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2025",
+     true,
+     "General"
+    ],
+    [
+     "I7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "J7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "K7",
+     "2028",
+     true,
+     "General"
+    ],
+    [
+     "E8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:K2",
+    "A3:K3",
+    "A4:K4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:G7",
+    "H6:K6"
+   ]
+  },
+  "SUMMARY": {
+   "cells": [
+    [
+     "A2",
+     "SORENTO SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SPONSORSHIP",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "Jan'25 to Dec'25",
+     true,
+     "General"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "PROJECT SALES",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "SALES AGENT",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "JAN'25",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "FEB'25",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "MAR'25",
+     true,
+     "General"
+    ],
+    [
+     "H6",
+     "APR'25",
+     true,
+     "General"
+    ],
+    [
+     "J6",
+     "MAY'25",
+     true,
+     "General"
+    ],
+    [
+     "L6",
+     "JUN'25",
+     true,
+     "General"
+    ],
+    [
+     "N6",
+     "JUL'25",
+     true,
+     "General"
+    ],
+    [
+     "P6",
+     "AUG'25",
+     true,
+     "General"
+    ],
+    [
+     "R6",
+     "SEP'25",
+     true,
+     "General"
+    ],
+    [
+     "T6",
+     "OCT'25",
+     true,
+     "General"
+    ],
+    [
+     "V6",
+     "NOV'25",
+     true,
+     "General"
+    ],
+    [
+     "X6",
+     "DEC'25",
+     true,
+     "General"
+    ],
+    [
+     "Z6",
+     "TOTAL VALUE (BY SALESMAN)",
+     true,
+     "General"
+    ],
+    [
+     "B7",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "C7",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "D7",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "E7",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "F7",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "G7",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "I7",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "J7",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "K7",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "L7",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "M7",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "N7",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "O7",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "P7",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "Q7",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "R7",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "S7",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "T7",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "U7",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "V7",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "W7",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "X7",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "Y7",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "Z7",
+     "PROJECT VALUE",
+     true,
+     "General"
+    ],
+    [
+     "AA7",
+     "SAMPLE PRICE",
+     true,
+     "General"
+    ],
+    [
+     "A8",
+     "TOTAL SALES",
+     true,
+     "General"
+    ],
+    [
+     "B8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "C8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "D8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "E8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "F8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "G8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "H8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "I8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "J8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "K8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "L8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "M8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "N8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "O8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "P8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "Q8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "R8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "S8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "T8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "U8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "V8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "W8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "X8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "Y8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "Z8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "AA8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "A10",
+     "GRAND TOTAL PROJECT VALUE JAN-DEC'25",
+     true,
+     "General"
+    ],
+    [
+     "C10",
+     "-",
+     true,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "A11",
+     "GRAND TOTAL SAMPLE PRICE JAN-DEC'25",
+     true,
+     "General"
+    ],
+    [
+     "C11",
+     "-",
+     true,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ]
+   ],
+   "merged": [
+    "A10:B10",
+    "A11:B11",
+    "A2:AA2",
+    "A3:AA3",
+    "A4:AA4",
+    "A5:B5",
+    "A6:A7",
+    "B6:C6",
+    "D6:E6",
+    "F6:G6",
+    "H6:I6",
+    "J6:K6",
+    "L6:M6",
+    "N6:O6",
+    "P6:Q6",
+    "R6:S6",
+    "T6:U6",
+    "V6:W6",
+    "X6:Y6",
+    "Z6:AA6"
+   ]
+  }
+ },
+ "synthetic": {
+  "APR'26": {
+   "cells": [
+    [
+     "A2",
+     "ZZT SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SCRATCH ORDERS",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2026-04-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "Scratch",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "ORDER NO",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "REGION",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "MONTH",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "DELIVERY YEAR",
+     true,
+     "General"
+    ],
+    [
+     "I6",
+     "BOOKED ON",
+     true,
+     "General"
+    ],
+    [
+     "G7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "D8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:I2",
+    "A3:I3",
+    "A4:I4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:H6",
+    "I6:I7"
+   ]
+  },
+  "AUG'26": {
+   "cells": [
+    [
+     "A2",
+     "ZZT SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SCRATCH ORDERS",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2026-08-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "Scratch",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "ORDER NO",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "REGION",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "MONTH",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "DELIVERY YEAR",
+     true,
+     "General"
+    ],
+    [
+     "I6",
+     "BOOKED ON",
+     true,
+     "General"
+    ],
+    [
+     "G7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "D8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:I2",
+    "A3:I3",
+    "A4:I4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:H6",
+    "I6:I7"
+   ]
+  },
+  "DEC'26": {
+   "cells": [
+    [
+     "A2",
+     "ZZT SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SCRATCH ORDERS",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2026-12-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "Scratch",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "ORDER NO",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "REGION",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "MONTH",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "DELIVERY YEAR",
+     true,
+     "General"
+    ],
+    [
+     "I6",
+     "BOOKED ON",
+     true,
+     "General"
+    ],
+    [
+     "G7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "D8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:I2",
+    "A3:I3",
+    "A4:I4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:H6",
+    "I6:I7"
+   ]
+  },
+  "FEB'26": {
+   "cells": [
+    [
+     "A2",
+     "ZZT SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SCRATCH ORDERS",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2026-02-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "Scratch",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "ORDER NO",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "REGION",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "MONTH",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "DELIVERY YEAR",
+     true,
+     "General"
+    ],
+    [
+     "I6",
+     "BOOKED ON",
+     true,
+     "General"
+    ],
+    [
+     "G7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "D8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:I2",
+    "A3:I3",
+    "A4:I4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:H6",
+    "I6:I7"
+   ]
+  },
+  "JAN'26": {
+   "cells": [
+    [
+     "A2",
+     "ZZT SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SCRATCH ORDERS",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2026-01-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "Scratch",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "ORDER NO",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "REGION",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "MONTH",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "DELIVERY YEAR",
+     true,
+     "General"
+    ],
+    [
+     "I6",
+     "BOOKED ON",
+     true,
+     "General"
+    ],
+    [
+     "G7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "A8",
+     "Z-001",
+     false,
+     "General"
+    ],
+    [
+     "B8",
+     "Alice",
+     false,
+     "General"
+    ],
+    [
+     "C8",
+     "North",
+     false,
+     "General"
+    ],
+    [
+     "D8",
+     "2026-01",
+     false,
+     "General"
+    ],
+    [
+     "E8",
+     "1000",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "F8",
+     "10.5",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "G8",
+     "X",
+     false,
+     "General"
+    ],
+    [
+     "I8",
+     "2026-01-10 00:00:00",
+     false,
+     "DD/MM/YYYY"
+    ],
+    [
+     "A9",
+     "Z-002",
+     false,
+     "General"
+    ],
+    [
+     "B9",
+     "Alice",
+     false,
+     "General"
+    ],
+    [
+     "C9",
+     "North",
+     false,
+     "General"
+    ],
+    [
+     "D9",
+     "2026-01",
+     false,
+     "General"
+    ],
+    [
+     "E9",
+     "250.25",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "F9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "G9",
+     "X",
+     false,
+     "General"
+    ],
+    [
+     "I9",
+     "2026-01-25 00:00:00",
+     false,
+     "DD/MM/YYYY"
+    ],
+    [
+     "D10",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ],
+    [
+     "E10",
+     "1250.25",
+     true,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "F10",
+     "10.5",
+     true,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ]
+   ],
+   "merged": [
+    "A2:I2",
+    "A3:I3",
+    "A4:I4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:H6",
+    "I6:I7"
+   ]
+  },
+  "JUL'26": {
+   "cells": [
+    [
+     "A2",
+     "ZZT SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SCRATCH ORDERS",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2026-07-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "Scratch",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "ORDER NO",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "REGION",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "MONTH",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "DELIVERY YEAR",
+     true,
+     "General"
+    ],
+    [
+     "I6",
+     "BOOKED ON",
+     true,
+     "General"
+    ],
+    [
+     "G7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "D8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:I2",
+    "A3:I3",
+    "A4:I4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:H6",
+    "I6:I7"
+   ]
+  },
+  "JUN'26": {
+   "cells": [
+    [
+     "A2",
+     "ZZT SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SCRATCH ORDERS",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2026-06-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "Scratch",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "ORDER NO",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "REGION",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "MONTH",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "DELIVERY YEAR",
+     true,
+     "General"
+    ],
+    [
+     "I6",
+     "BOOKED ON",
+     true,
+     "General"
+    ],
+    [
+     "G7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "D8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:I2",
+    "A3:I3",
+    "A4:I4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:H6",
+    "I6:I7"
+   ]
+  },
+  "MAR'26": {
+   "cells": [
+    [
+     "A2",
+     "ZZT SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SCRATCH ORDERS",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2026-03-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "Scratch",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "ORDER NO",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "REGION",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "MONTH",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "DELIVERY YEAR",
+     true,
+     "General"
+    ],
+    [
+     "I6",
+     "BOOKED ON",
+     true,
+     "General"
+    ],
+    [
+     "G7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "A8",
+     "Z-003",
+     false,
+     "General"
+    ],
+    [
+     "B8",
+     "Alice",
+     false,
+     "General"
+    ],
+    [
+     "C8",
+     "South",
+     false,
+     "General"
+    ],
+    [
+     "D8",
+     "2026-03",
+     false,
+     "General"
+    ],
+    [
+     "E8",
+     "400",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "F8",
+     "20",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "H8",
+     "X",
+     false,
+     "General"
+    ],
+    [
+     "I8",
+     "2026-03-04 00:00:00",
+     false,
+     "DD/MM/YYYY"
+    ],
+    [
+     "A9",
+     "Z-004",
+     false,
+     "General"
+    ],
+    [
+     "B9",
+     "Bob",
+     false,
+     "General"
+    ],
+    [
+     "C9",
+     "South",
+     false,
+     "General"
+    ],
+    [
+     "D9",
+     "2026-03",
+     false,
+     "General"
+    ],
+    [
+     "E9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "F9",
+     "5",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "H9",
+     "X",
+     false,
+     "General"
+    ],
+    [
+     "I9",
+     "2026-03-18 00:00:00",
+     false,
+     "DD/MM/YYYY"
+    ],
+    [
+     "D10",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ],
+    [
+     "E10",
+     "400",
+     true,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "F10",
+     "25",
+     true,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ]
+   ],
+   "merged": [
+    "A2:I2",
+    "A3:I3",
+    "A4:I4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:H6",
+    "I6:I7"
+   ]
+  },
+  "MAY'26": {
+   "cells": [
+    [
+     "A2",
+     "ZZT SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SCRATCH ORDERS",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2026-05-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "Scratch",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "ORDER NO",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "REGION",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "MONTH",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "DELIVERY YEAR",
+     true,
+     "General"
+    ],
+    [
+     "I6",
+     "BOOKED ON",
+     true,
+     "General"
+    ],
+    [
+     "G7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "D8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:I2",
+    "A3:I3",
+    "A4:I4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:H6",
+    "I6:I7"
+   ]
+  },
+  "NOV'26": {
+   "cells": [
+    [
+     "A2",
+     "ZZT SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SCRATCH ORDERS",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2026-11-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "Scratch",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "ORDER NO",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "REGION",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "MONTH",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "DELIVERY YEAR",
+     true,
+     "General"
+    ],
+    [
+     "I6",
+     "BOOKED ON",
+     true,
+     "General"
+    ],
+    [
+     "G7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "A8",
+     "Z-005",
+     false,
+     "General"
+    ],
+    [
+     "B8",
+     "Bob",
+     false,
+     "General"
+    ],
+    [
+     "C8",
+     "North",
+     false,
+     "General"
+    ],
+    [
+     "D8",
+     "2026-11",
+     false,
+     "General"
+    ],
+    [
+     "E8",
+     "99.99",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "F8",
+     "1.01",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "I8",
+     "2026-11-30 00:00:00",
+     false,
+     "DD/MM/YYYY"
+    ],
+    [
+     "D9",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ],
+    [
+     "E9",
+     "99.99",
+     true,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "F9",
+     "1.01",
+     true,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ]
+   ],
+   "merged": [
+    "A2:I2",
+    "A3:I3",
+    "A4:I4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:H6",
+    "I6:I7"
+   ]
+  },
+  "OCT'26": {
+   "cells": [
+    [
+     "A2",
+     "ZZT SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SCRATCH ORDERS",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2026-10-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "Scratch",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "ORDER NO",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "REGION",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "MONTH",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "DELIVERY YEAR",
+     true,
+     "General"
+    ],
+    [
+     "I6",
+     "BOOKED ON",
+     true,
+     "General"
+    ],
+    [
+     "G7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "D8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:I2",
+    "A3:I3",
+    "A4:I4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:H6",
+    "I6:I7"
+   ]
+  },
+  "SEP'26": {
+   "cells": [
+    [
+     "A2",
+     "ZZT SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SCRATCH ORDERS",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "2026-09-01 00:00:00",
+     true,
+     "mmm-yy"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "Scratch",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "ORDER NO",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "AGENT",
+     true,
+     "General"
+    ],
+    [
+     "C6",
+     "REGION",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "MONTH",
+     true,
+     "General"
+    ],
+    [
+     "E6",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "G6",
+     "DELIVERY YEAR",
+     true,
+     "General"
+    ],
+    [
+     "I6",
+     "BOOKED ON",
+     true,
+     "General"
+    ],
+    [
+     "G7",
+     "2026",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "2027",
+     true,
+     "General"
+    ],
+    [
+     "D8",
+     "GRAND TOTAL",
+     true,
+     "General"
+    ]
+   ],
+   "merged": [
+    "A2:I2",
+    "A3:I3",
+    "A4:I4",
+    "A5:B5",
+    "A6:A7",
+    "B6:B7",
+    "C6:C7",
+    "D6:D7",
+    "E6:E7",
+    "F6:F7",
+    "G6:H6",
+    "I6:I7"
+   ]
+  },
+  "SUMMARY": {
+   "cells": [
+    [
+     "A2",
+     "ZZT SDN BHD",
+     true,
+     "General"
+    ],
+    [
+     "A3",
+     "SCRATCH ORDERS",
+     true,
+     "General"
+    ],
+    [
+     "A4",
+     "Jan'26 to Dec'26",
+     true,
+     "General"
+    ],
+    [
+     "A5",
+     "DEPARTMENT:",
+     true,
+     "General"
+    ],
+    [
+     "C5",
+     "Scratch",
+     false,
+     "General"
+    ],
+    [
+     "A6",
+     "AGENT",
+     true,
+     "General"
+    ],
+    [
+     "B6",
+     "JAN'26",
+     true,
+     "General"
+    ],
+    [
+     "D6",
+     "FEB'26",
+     true,
+     "General"
+    ],
+    [
+     "F6",
+     "MAR'26",
+     true,
+     "General"
+    ],
+    [
+     "H6",
+     "APR'26",
+     true,
+     "General"
+    ],
+    [
+     "J6",
+     "MAY'26",
+     true,
+     "General"
+    ],
+    [
+     "L6",
+     "JUN'26",
+     true,
+     "General"
+    ],
+    [
+     "N6",
+     "JUL'26",
+     true,
+     "General"
+    ],
+    [
+     "P6",
+     "AUG'26",
+     true,
+     "General"
+    ],
+    [
+     "R6",
+     "SEP'26",
+     true,
+     "General"
+    ],
+    [
+     "T6",
+     "OCT'26",
+     true,
+     "General"
+    ],
+    [
+     "V6",
+     "NOV'26",
+     true,
+     "General"
+    ],
+    [
+     "X6",
+     "DEC'26",
+     true,
+     "General"
+    ],
+    [
+     "Z6",
+     "TOTAL",
+     true,
+     "General"
+    ],
+    [
+     "B7",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "C7",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "D7",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "E7",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "F7",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "G7",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "H7",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "I7",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "J7",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "K7",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "L7",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "M7",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "N7",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "O7",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "P7",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "Q7",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "R7",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "S7",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "T7",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "U7",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "V7",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "W7",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "X7",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "Y7",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "Z7",
+     "AMOUNT",
+     true,
+     "General"
+    ],
+    [
+     "AA7",
+     "FEE",
+     true,
+     "General"
+    ],
+    [
+     "A8",
+     "Alice",
+     false,
+     "General"
+    ],
+    [
+     "B8",
+     "1250.25",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "C8",
+     "10.5",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "D8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "E8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "F8",
+     "400",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "G8",
+     "20",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "H8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "I8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "J8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "K8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "L8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "M8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "N8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "O8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "P8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "Q8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "R8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "S8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "T8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "U8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "V8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "W8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "X8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "Y8",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "Z8",
+     "1650.25",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "AA8",
+     "30.5",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "A9",
+     "Bob",
+     false,
+     "General"
+    ],
+    [
+     "B9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "C9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "D9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "E9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "F9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "G9",
+     "5",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "H9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "I9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "J9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "K9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "L9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "M9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "N9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "O9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "P9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "Q9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "R9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "S9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "T9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "U9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "V9",
+     "99.99",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "W9",
+     "1.01",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "X9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "Y9",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "Z9",
+     "99.99",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "AA9",
+     "6.01",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "A10",
+     "TOTAL",
+     true,
+     "General"
+    ],
+    [
+     "B10",
+     "1250.25",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "C10",
+     "10.5",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "D10",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "E10",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "F10",
+     "400",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "G10",
+     "25",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "H10",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "I10",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "J10",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "K10",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "L10",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "M10",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "N10",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "O10",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "P10",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "Q10",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "R10",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "S10",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "T10",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "U10",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "V10",
+     "99.99",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "W10",
+     "1.01",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "X10",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "Y10",
+     "-",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "Z10",
+     "1750.24",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "AA10",
+     "36.51",
+     false,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "A12",
+     "GRAND TOTAL AMOUNT JAN-DEC'26",
+     true,
+     "General"
+    ],
+    [
+     "C12",
+     "1750.24",
+     true,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ],
+    [
+     "A13",
+     "GRAND TOTAL FEE JAN-DEC'26",
+     true,
+     "General"
+    ],
+    [
+     "C13",
+     "36.51",
+     true,
+     "_-\"RM\"* #,##0.00_-;-\"RM\"* #,##0.00_-;_-\"RM\"* \"-\"??_-;_-@_-"
+    ]
+   ],
+   "merged": [
+    "A12:B12",
+    "A13:B13",
+    "A2:AA2",
+    "A3:AA3",
+    "A4:AA4",
+    "A5:B5",
+    "A6:A7",
+    "B6:C6",
+    "D6:E6",
+    "F6:G6",
+    "H6:I6",
+    "J6:K6",
+    "L6:M6",
+    "N6:O6",
+    "P6:Q6",
+    "R6:S6",
+    "T6:U6",
+    "V6:W6",
+    "X6:Y6",
+    "Z6:AA6"
+   ]
+  }
+ }
+}

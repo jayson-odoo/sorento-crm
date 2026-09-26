@@ -33,7 +33,9 @@ describe.each([
     const group = salesGroup(menu);
     expect(group).toBeDefined();
     expect(group!.moduleKey).toBeUndefined();
-    expect(group!.children).toEqual([
+    // The retail sales reports (#1267) append their own items after these two, in
+    // MENU_SIDEBAR only; config/menu.sales.test.ts pins them.
+    expect(group!.children!.slice(0, 2)).toEqual([
       {
         title: 'Sales Teams',
         path: '/sales/teams',
@@ -72,6 +74,10 @@ describe('filterMenuByModule - Sales group', () => {
 
   it('shows Sales Teams once the sales module is installed', () => {
     const [kept] = filterMenuByModule([group], new Set(['base', 'product', 'sales']));
-    expect(kept.children!.map((c) => c.title)).toEqual(['Sales Teams', 'Sales Agents']);
+    expect(kept.children!.map((c) => c.title)).toEqual([
+      'Sales Teams',
+      'Sales Agents',
+      'Yearly comparison',
+    ]);
   });
 });

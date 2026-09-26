@@ -150,6 +150,9 @@ export function ReportFilterBar({
     <div className="flex flex-wrap items-end gap-3">
       {params.map((param) => {
         if (param.kind === 'date_basis') {
+          // One basis is no choice: a select offering a single value is noise on the bar
+          // (the sales reports date by the order date only). The value still travels.
+          if (param.options.length < 2) return null;
           const value = typeof values[param.key] === 'string' ? (values[param.key] as string) : param.default;
           return (
             <div key={param.key} className="w-full sm:w-48">

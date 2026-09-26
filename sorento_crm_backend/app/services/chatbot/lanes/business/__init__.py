@@ -68,6 +68,8 @@ _SALES_REPORT_GRANT = "sales_orders.sales_report"
 #: of `fetch.SO_NOT_ENABLED_MESSAGE` / `LOW_STOCK_NOT_ENABLED_MESSAGE` above, a
 #: literal for the same reason: one wording, in one place.
 SALES_REPORT_NOT_ENABLED_MESSAGE = "Sales report is not enabled for your account."
+#: PLAN-retail-sales-reports-26sep S1: the sales analysis tool, gated by the SAME key.
+_SALES_ANALYSIS_TOOL = "crm_sales_analysis"
 
 #: PLAN-low-stock-report S6 (AC-62/AC-64). The intent that overrides the inventory domain's
 #: default tool pick, the tool it picks, and the per-contact key that gates it - all three
@@ -461,6 +463,36 @@ def _sales_report_not_enabled() -> dict[str, Any]:
     }
 
 
+def _sales_analysis_axis_unsupported(group_by: str) -> dict[str, Any]:
+    """A sales analysis asked by an axis it cannot draw (customer, product, ...): ONE line
+    naming the axes it can, no figure and no fetch (`_sales_report_not_enabled`'s shape)."""
+    structured: dict[str, Any] = {
+        "response": (
+            f"I can't break sales down by {group_by} yet. "
+            "I can show them by month, by year or by channel."
+        ),
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": True,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        "outstanding_report": True,
+    }
+    item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
+    return {
+        "kind": "result",
+        "_fetch_arm": item["_fetch_arm"],
+        "delegate": DELEGATE,
+        "delegate_payload": {"fetch": item},
+        "fetch": item,
+    }
+
+
 def _outstanding_detail_reoffer(
     filters: dict[str, Any], rows: list[dict[str, Any]], *, kind: str = "outstanding_detail"
 ) -> dict[str, Any]:
@@ -591,6 +623,12 @@ def run_until_exit(
         jsc.js_string(parse_output_peek.get("order_status") or "") == "sales_report"
         and _SALES_REPORT_GRANT not in granted_peek
     )
+    # PLAN-retail-sales-reports-26sep S1: a sales ANALYSIS ask names no product or
+    # customer to resolve (a company, a channel, a period), so resolve+gate has nothing to
+    # do and would exit `not_found`; `run_fetch` gates and answers it.
+    sales_analysis_ask = (
+        jsc.js_string(parse_output_peek.get("order_status") or "") == "sales_analysis"
+    )
     if (
         isinstance(parse_output_peek.get("outstanding_reask_filters"), dict)
         or isinstance(parse_output_peek.get("outstanding_detail_reask"), dict)
@@ -599,6 +637,7 @@ def run_until_exit(
         or jsc.truthy(parse_output_peek.get("outstanding_offer_declined"))
         or carried_subject_answer
         or sales_report_ungranted
+        or sales_analysis_ask
     ):
         return {
             "delegate": DELEGATE,
@@ -685,6 +724,10 @@ def _fetch_semantic_input(
         # channel value, never the message text - passed straight through to
         # `crm_sales_report`'s own `channel` param.
         "sales_channel": parse_output.get("sales_channel"),
+        # PLAN-retail-sales-reports-26sep S1: the sales analysis's basis (ordered |
+        # delivered) and the company the contact named, straight to the tool's params.
+        "sales_basis": parse_output.get("sales_basis"),
+        "sales_company": parse_output.get("sales_company"),
         # R-B3 (reviewer finding, Phase 3 fix round): the sales_report_detail
         # offer's stored channel, restored by `head/output_exchange.py::
         # _apply_outstanding_pending` - `fetch.py` reads this ONLY when THIS
@@ -1206,7 +1249,7 @@ def run_fetch(
     # is what still answers the refusal on that path, and is the SECOND line of
     # defence (mirrors `DOMAIN_GRANT_REQUIRED`'s own trace shape above) for a
     # re-entry path that calls `run_fetch` directly (this module's own tests).
-    if order_status_raw == "sales_report":
+    if order_status_raw in ("sales_report", "sales_analysis"):
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
@@ -1280,6 +1323,19 @@ def run_fetch(
             so_refused = order_status_raw != "outstanding"
         semantic_input["outstanding_scope"] = scope
         semantic_input["outstanding_so_refused"] = so_refused
+    elif order_status_raw == "sales_analysis":
+        # PLAN-retail-sales-reports-26sep S1: a sales ANALYSIS (a company's sales by
+        # month, by year, by channel) is the reports kernel's own query, answered as the
+        # whole table in text and the same query as an Excel (Owner ruling 26 Sep 07:16
+        # Q2). An override like the two reports beside it, never `tools[0]`; the grant
+        # was checked above, before anything was fetched.
+        group_by = jsc.js_string(parse_output.get("group_by") or "")
+        if group_by and group_by not in fetch_mod.SALES_ANALYSIS_GROUP_BY:
+            # Review round 2 S1: "sales by customer" is not answered with a by-channel
+            # table and no word that the ask was changed; it is said, and nothing fetched.
+            return _sales_analysis_axis_unsupported(group_by)
+        tool_name = _SALES_ANALYSIS_TOOL
+        tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_analysis_override"}}
     elif (
         domain == "order"
         and (has_product or has_customer or carried_subject)

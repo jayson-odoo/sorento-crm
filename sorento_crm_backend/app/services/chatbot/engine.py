@@ -1706,7 +1706,8 @@ def _run_stages(  # noqa: PLR0915
         from app.services.chatbot.lanes.business import _SALES_REPORT_GRANT
 
         sales_report_grant_refused = (
-            jsc.js_string(parsed_output.get("order_status") or "").strip() == "sales_report"
+            jsc.js_string(parsed_output.get("order_status") or "").strip()
+            in ("sales_report", "sales_analysis")
             and _SALES_REPORT_GRANT not in set(access.get("attributes") or [])
         )
         if sales_report_grant_refused:

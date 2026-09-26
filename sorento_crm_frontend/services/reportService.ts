@@ -8,10 +8,11 @@
  * API CONTRACT (live since S3; the S1 mock is deleted)
  * ===================================================================================
  *
- * All routes are mounted under `require_module_enabled_with_api_key("procurement")`
- * and gated on the report's own permission slug (sponsorship:
- * `procurement.sponsorship_forms.report`). Publishing a view additionally needs
- * `reports.views.publish`.
+ * Every route is gated on the report's own permission slug (sponsorship:
+ * `procurement.sponsorship_forms.report`; the sales reports: `sales.reports.view`) AND
+ * on the module the definition names (403 when that module is disabled). Publishing a
+ * view additionally needs `reports.views.publish`. A company-scoped report (the sales
+ * reports) reads the one company its Company filter names, inside the caller's grant.
  *
  *   GET  /api/v1/reports
  *        -> { "reports": [{ "key", "title", "permission" }] }   catalog, permission-filtered
@@ -116,6 +117,9 @@ export interface ReportDetailLayout {
   rows: ReportRow[];
   /** measure key -> decimal string. A measure with nothing to total is absent. */
   totals: Record<string, string>;
+  /** True when the run had more lines than the sync cap and the report truncates rather
+   *  than refuses: `rows` are the newest ones, `totals` are still the whole set's. */
+  truncated?: boolean;
 }
 
 export interface ReportPivotDimension {
@@ -145,6 +149,27 @@ export interface ReportPivotLayout {
   row_totals: Record<string, Record<string, string>>;
   col_totals: Record<string, Record<string, string>>;
   grand_total: Record<string, string>;
+  /** The VARIANCE row (the last row minus the one before, per column), sparse like
+   *  `cells`; absent when the report declares none. Computed by the engine. */
+  variance_row?: Record<string, Record<string, string>> | null;
+  variance_total?: Record<string, string> | null;
+  variance_label?: string | null;
+  /** Display label per ROW value when the row axis names its values ('01' -> 'JAN'). */
+  row_value_labels?: Record<string, string> | null;
+  /** 'line': the screen draws this pivot as a line chart under the table. */
+  chart?: 'line' | null;
+  /** The screen prints whole ringgit (the workbook keeps the sen). */
+  whole_units?: boolean;
+  /** False when the column-totals row means nothing (years added to years). */
+  show_column_totals?: boolean;
+}
+
+/** One block of a split summary: the pivot for one value of the report's split filter
+ *  (the Yearly comparison's DEALER and PROJECT TEAM). */
+export interface ReportBlock {
+  key: string;
+  title: string;
+  summary: ReportPivotLayout;
 }
 
 /**
@@ -158,7 +183,11 @@ export interface ReportResult {
   layouts: {
     detail: ReportDetailLayout;
     summary: ReportPivotLayout;
+    /** One per chosen value of the report's split filter; absent when it does not split. */
+    blocks?: ReportBlock[] | null;
   };
+  /** A line printed under the filter bar (the basis of a sales report). */
+  note?: string | null;
 }
 
 export type ReportPeriod =
@@ -231,6 +260,8 @@ export interface ReportMeta {
   /** True when the caller holds `reports.views.publish`. Publish + Set as default are
    *  ABSENT without it, never disabled. */
   can_publish: boolean;
+  /** The tab the screen opens on. */
+  opens_on?: 'detail' | 'summary';
 }
 
 export interface ReportExportResult {

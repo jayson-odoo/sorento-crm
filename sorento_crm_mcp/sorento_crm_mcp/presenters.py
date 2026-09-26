@@ -57,6 +57,7 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_outstanding_report",
         "crm_low_stock_report",
         "crm_sales_report",
+        "crm_sales_analysis",
     }
 )
 
@@ -1586,6 +1587,11 @@ def present_response(tool_name: str, raw: str) -> str:
     if tool_name == "crm_low_stock_report":
         return json.dumps(_low_stock_envelope(data))
 
+    # The same bypass again: the sales analysis answers a table AND a file (or a question,
+    # or a refusal), never a row collection (PLAN-retail-sales-reports-26sep R4.2).
+    if tool_name == "crm_sales_analysis":
+        return json.dumps(_sales_analysis_envelope(data))
+
     rows = data.get("data")
     if not isinstance(rows, list):
         rows = [] if rows is None else ([rows] if isinstance(rows, dict) else [])
@@ -2426,4 +2432,86 @@ def _sales_report_envelope(report: dict) -> dict:
         "result_type": "sales_report",
         "response": _sales_report(report),
         "has_result": isinstance(months, list) and len(months) > 0,
+    }
+
+
+
+# --------------------------------------------------------------------------------------
+# crm_sales_analysis (PLAN-retail-sales-reports-26sep S1; Owner ruling 26 Sep 07:16 Q2,
+# "always text + file, no cutoff").
+#
+# The text IS the answer: a header (report and company, channel, basis, period, the row
+# count), one line per row, then the totals line - every row, whatever the count (n8n
+# chunks a long message). One value column reads `label: RM a`; two or more read
+# `label: a | b | c` under a line naming the columns (Q9 (a): every column on every line).
+# A negative prints in brackets, an empty cell "-". The Excel of the same query rides in
+# `attachments`; when it is still being built the text ends "The Excel follows here." and
+# the worker pushes it. A question or a refusal is one line and no file (AC-R4-3).
+# --------------------------------------------------------------------------------------
+
+_SALES_ANALYSIS_PENDING = "The Excel follows here."
+_SALES_ANALYSIS_FILE_FAILED = "Could not build the sales report Excel right now."
+_SALES_ANALYSIS_ERROR = "Could not run the sales report right now."
+
+
+def _sales_figure(value: Any) -> str:
+    if value is None or value == "":
+        return "-"
+    try:
+        amount = Decimal(str(value))
+    except Exception:  # noqa: BLE001 - a value the route never sends; print it as is
+        return str(value)
+    text = f"{abs(amount):,.2f}"
+    return f"({text})" if amount < 0 else text
+
+
+def _sales_analysis_text(payload: dict) -> str:
+    lines = [
+        f"*{payload.get('report') or 'Sales'}, {payload.get('company') or ''}*".replace(", *", "*"),
+        f"Channel: {payload.get('channel') or 'All channels'}",
+        f"Basis: {payload.get('basis') or ''}",
+        f"Period: {payload.get('period') or ''}",
+        f"{payload.get('count_label') or 'Rows'}: {payload.get('total_count', 0)}",
+        "",
+    ]
+    columns = payload.get("columns") or []
+    rows = payload.get("rows") or []
+    totals = (payload.get("totals") or {}).get("values") or []
+    if len(columns) == 1:
+        def _rm(value: Any) -> str:
+            # A month with no sales is "-", never "RM -".
+            text = _sales_figure(value)
+            return text if text == "-" else f"RM {text}"
+
+        for row in rows:
+            values = row.get("values") or [None]
+            lines.append(f"{row.get('label')}: {_rm(values[0])}")
+        lines.append(f"Total: {_rm(totals[0] if totals else None)}")
+    else:
+        lines.append(f"{payload.get('rows_label') or 'Row'}: " + " | ".join(str(c) for c in columns))
+        for row in rows:
+            lines.append(
+                f"{row.get('label')}: " + " | ".join(_sales_figure(v) for v in row.get("values") or [])
+            )
+        lines.append("Total: " + " | ".join(_sales_figure(v) for v in totals))
+    return "\n".join(lines)
+
+
+def _sales_analysis_envelope(payload: dict) -> dict:
+    status = payload.get("status")
+    envelope = {"result_type": "sales_analysis", "attachments": [], "has_result": True}
+    if status in ("clarify", "refused", "busy"):
+        return {**envelope, "response": str(payload.get("message") or _SALES_ANALYSIS_ERROR)}
+    if status not in ("ready", "pending", "error") or not isinstance(payload.get("rows"), list):
+        return {**envelope, "response": _SALES_ANALYSIS_ERROR}
+    text = _sales_analysis_text(payload)
+    if status == "pending":
+        return {**envelope, "response": f"{text}\n\n{_SALES_ANALYSIS_PENDING}"}
+    if status == "error":
+        return {**envelope, "response": f"{text}\n\n{_SALES_ANALYSIS_FILE_FAILED}"}
+    attachments = payload.get("attachments")
+    return {
+        **envelope,
+        "response": text,
+        "attachments": attachments if isinstance(attachments, list) else [],
     }

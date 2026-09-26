@@ -33,6 +33,8 @@ TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {
     # before it creates anything and answers 422 without the pair, so both ids have to
     # be no-default arguments or the LLM reads them as optional and skips them.
     "crm_low_stock_report": ("contact_id", "space_id"),
+    # The sales analysis is per contact too: their company, their key, their chat.
+    "crm_sales_analysis": ("contact_id", "space_id"),
 }
 
 # Parent-relation tools: meaningless without a parent entity UUID.

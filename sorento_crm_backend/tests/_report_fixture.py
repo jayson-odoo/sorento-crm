@@ -139,7 +139,7 @@ def dataset(scope: str = "none"):
     )
 
 
-def definition(for_dataset=None):
+def definition(for_dataset=None, module_key="zzt_reports"):
     from app.services.reports import registry as reg
 
     t = table_clause()
@@ -186,6 +186,9 @@ def definition(for_dataset=None):
             "pivot": {"rows": "agent", "cols": "month", "measures": ["amount", "fee"]},
         },
         workbook=reg.WorkbookSpec(company_name="ZZT Sdn Bhd", department="Scratch"),
+        # Every report names the module that owns it; the routes refuse one that does not
+        # (PLAN-retail-sales-reports-26sep 5.3, extension 1).
+        module_key=module_key,
     )
 
 

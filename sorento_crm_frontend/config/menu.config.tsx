@@ -96,6 +96,13 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'master_data.sales_agents.view',
         moduleKey: 'product',
       },
+      {
+        // PLAN-retail-sales-reports-26sep 5.4. The Sales report item lands with S2.
+        title: 'Yearly comparison',
+        path: '/sales/yearly-comparison',
+        permission: 'sales.reports.view',
+        moduleKey: 'sales',
+      },
     ],
   },
   {
