@@ -12,6 +12,8 @@ export interface SalesTeamListItem {
   id: string;
   name: string;
   is_active: boolean;
+  /** One of `members` (W1), or null when the team has no leader. */
+  leader_sales_agent_id: string | null;
   member_count: number;
   members: SalesTeamAgentRef[];
   created_at: string | null;
@@ -42,6 +44,9 @@ export interface SalesTeamDetail {
   id: string;
   name: string;
   is_active: boolean;
+  /** The leader now, one of the team's agents (W1); null when none is picked. */
+  leader_sales_agent_id: string | null;
+  leader_label: string | null;
   /** Members on the date shown, not counting those who left. */
   member_count: number;
   on: string;
@@ -67,6 +72,8 @@ export interface SalesTeamCreatePayload {
   is_active?: boolean;
   /** `YYYY-MM-DD`; the day a picked agent from another team starts counting here. */
   moves_on?: string;
+  /** One of the agents; one not in `sales_agent_ids` joins the team (W1). */
+  leader_sales_agent_id?: string | null;
 }
 
 export interface SalesTeamUpdatePayload {
@@ -75,6 +82,8 @@ export interface SalesTeamUpdatePayload {
   /** Sent together with the name so the team page's save is one transaction. */
   sales_agent_ids?: string[];
   moves_on?: string;
+  /** Sent: set the leader, null clearing it. Left out: the leader stays (W1). */
+  leader_sales_agent_id?: string | null;
 }
 
 export interface SalesTeamMembersPayload {
@@ -89,4 +98,5 @@ export interface SalesTeamSaveInput {
   is_active: boolean;
   sales_agent_ids: string[];
   moves_on?: string;
+  leader_sales_agent_id?: string | null;
 }

@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { todayMalaysiaYyyyMmDd } from '@/lib/helpers';
 import { useSalesTeamAgentOptions, useSaveSalesTeam } from '../hooks/useSalesTeams';
 import { agentOptionLabel, agentsMovingIn } from '../lib/moves';
@@ -23,7 +24,9 @@ import { agentOptionLabel, agentsMovingIn } from '../lib/moves';
  * The Add team modal (UAC S6-12, owner ruling 26 Sep 06:01 (Lavish), N2): Name,
  * Agents (the standard multi-select of active agents, each option saying which team the agent
  * is in now, N8), Active. Moves on appears only when a picked agent is in another team
- * (S6-15, T2): a date, today by default, never later than today, never empty.
+ * (S6-15, T2): a date, today by default, never later than today, never empty. Leader
+ * (owner ruling 26 Sep ~13:25Z, W1) offers only the picked agents, and clears when its agent
+ * is unpicked.
  * Editing a team is in place on its page (S6-13), not here.
  */
 export default function SalesTeamModal({
@@ -39,6 +42,7 @@ export default function SalesTeamModal({
 
   const [name, setName] = useState('');
   const [agentIds, setAgentIds] = useState<string[]>([]);
+  const [leaderId, setLeaderId] = useState('');
   const [isActive, setIsActive] = useState(true);
   const [movesOn, setMovesOn] = useState(todayMalaysiaYyyyMmDd());
 
@@ -46,6 +50,7 @@ export default function SalesTeamModal({
     if (!open) return;
     setName('');
     setAgentIds([]);
+    setLeaderId('');
     setIsActive(true);
     setMovesOn(todayMalaysiaYyyyMmDd());
   }, [open]);
@@ -54,6 +59,18 @@ export default function SalesTeamModal({
     () => options.map((o) => ({ value: o.id, label: agentOptionLabel(o, teamId) })),
     [options],
   );
+  const leaderOptions = useMemo(
+    () =>
+      agentIds.flatMap((agentId) => {
+        const option = options.find((o) => o.id === agentId);
+        return option ? [{ value: option.id, label: option.label }] : [];
+      }),
+    [agentIds, options],
+  );
+  const pickAgents = (ids: string[]) => {
+    setAgentIds(ids);
+    if (!ids.includes(leaderId)) setLeaderId('');
+  };
   const moving = agentsMovingIn(agentIds, options, teamId);
   const today = todayMalaysiaYyyyMmDd();
   const canSave = name.trim().length > 0 && (moving.length === 0 || !!movesOn) && !save.isPending;
@@ -68,6 +85,7 @@ export default function SalesTeamModal({
         is_active: isActive,
         sales_agent_ids: agentIds,
         ...(moving.length ? { moves_on: movesOn } : {}),
+        leader_sales_agent_id: leaderId || null,
       });
       onOpenChange(false);
     } catch {
@@ -98,10 +116,23 @@ export default function SalesTeamModal({
               <SearchableMultiSelect
                 id="sales-team-agents"
                 value={agentIds}
-                onChange={setAgentIds}
+                onChange={pickAgents}
                 options={selectOptions}
                 placeholder="Pick agents"
                 emptyMessage="No active sales agents."
+                wrapOptions
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="sales-team-leader">Leader</Label>
+              <SearchableSelect
+                id="sales-team-leader"
+                value={leaderId}
+                onChange={setLeaderId}
+                options={leaderOptions}
+                placeholder="No leader"
+                emptyMessage="Pick agents first."
+                clearable
                 wrapOptions
               />
             </div>

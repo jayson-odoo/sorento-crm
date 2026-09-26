@@ -13,6 +13,7 @@ import { Switch } from '@/components/ui/switch';
 import DetailActions from '@/components/common/DetailActions';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateInMalaysia, todayMalaysiaYyyyMmDd } from '@/lib/helpers';
 import {
@@ -37,6 +38,11 @@ import type { SalesTeamDetail as Detail } from '../../types/salesTeam.types';
  * One section in this lane, always rendered: **Agents**. The Team targets section, and each
  * agent's targets on their row, arrive with S1. An agent who left this month keeps a muted
  * line with a "Left 14 Oct" pill, so the team's figure for the month is explained on screen.
+ * Each agent is one line, however often they left and came back (owner ruling 26 Sep ~13:05Z).
+ *
+ * The leader (owner ruling 26 Sep ~13:25Z, W1) is named on its own line under the team name,
+ * and their row carries a "Leader" tag. In edit that line becomes the Leader picker, offering
+ * the agents kept and added in this session only; removing the leader clears it.
  */
 export function SalesTeamDetail({ id }: { id: string }) {
   const router = useRouter();
@@ -53,6 +59,7 @@ export function SalesTeamDetail({ id }: { id: string }) {
   const [isActive, setIsActive] = useState(true);
   const [keptIds, setKeptIds] = useState<string[]>([]);
   const [addIds, setAddIds] = useState<string[]>([]);
+  const [leaderId, setLeaderId] = useState('');
   const [movesOn, setMovesOn] = useState(todayMalaysiaYyyyMmDd());
   const { data: options = [] } = useSalesTeamAgentOptions(isEditing);
 
@@ -64,8 +71,18 @@ export function SalesTeamDetail({ id }: { id: string }) {
     setIsActive(current.is_active);
     setKeptIds(current.members.filter((m) => !m.left).map((m) => m.sales_agent_id));
     setAddIds([]);
+    setLeaderId(current.leader_sales_agent_id ?? '');
     setMovesOn(todayMalaysiaYyyyMmDd());
     setIsEditing(true);
+  };
+
+  const removeAgent = (agentId: string) => {
+    setKeptIds((ids) => ids.filter((i) => i !== agentId));
+    if (leaderId === agentId) setLeaderId('');
+  };
+  const pickAddIds = (ids: string[]) => {
+    setAddIds(ids);
+    if (!keptIds.includes(leaderId) && !ids.includes(leaderId)) setLeaderId('');
   };
 
   const addOptions = useMemo(
@@ -76,6 +93,16 @@ export function SalesTeamDetail({ id }: { id: string }) {
     [options, keptIds, id],
   );
   const moving = agentsMovingIn(addIds, options, id);
+  const leaderOptions = useMemo(
+    () =>
+      [...keptIds, ...addIds].flatMap((agentId) => {
+        const label =
+          team?.members.find((m) => m.sales_agent_id === agentId)?.label ??
+          options.find((o) => o.id === agentId)?.label;
+        return label ? [{ value: agentId, label }] : [];
+      }),
+    [keptIds, addIds, team, options],
+  );
 
   if (isLoading) {
     return (
@@ -112,6 +139,7 @@ export function SalesTeamDetail({ id }: { id: string }) {
         is_active: isActive,
         sales_agent_ids: [...keptIds, ...addIds],
         ...(moving.length ? { moves_on: movesOn } : {}),
+        leader_sales_agent_id: leaderId || null,
       });
       setIsEditing(false);
     } catch {
@@ -163,6 +191,28 @@ export function SalesTeamDetail({ id }: { id: string }) {
                   </Badge>
                 )}
               </div>
+              {isEditing ? (
+                <div className="flex flex-col gap-1">
+                  <Label htmlFor="sales-team-edit-leader" className="text-xs text-muted-foreground">
+                    Leader
+                  </Label>
+                  <SearchableSelect
+                    id="sales-team-edit-leader"
+                    value={leaderId}
+                    onChange={setLeaderId}
+                    options={leaderOptions}
+                    placeholder="No leader"
+                    emptyMessage="No agents in this team."
+                    clearable
+                    wrapOptions
+                    className="w-64 max-w-full"
+                  />
+                </div>
+              ) : (
+                <div className="truncate text-sm" title={team.leader_label ?? undefined}>
+                  {team.leader_label ? `Leader: ${team.leader_label}` : 'No leader'}
+                </div>
+              )}
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                 <span>{agentCount}</span>
                 {left.length ? <span>{`${left.length} left this month`}</span> : null}
@@ -228,7 +278,7 @@ export function SalesTeamDetail({ id }: { id: string }) {
                 <SearchableMultiSelect
                   id="sales-team-add-agents"
                   value={addIds}
-                  onChange={setAddIds}
+                  onChange={pickAddIds}
                   options={addOptions}
                   placeholder="Pick agents"
                   emptyMessage="No other active sales agents."
@@ -266,8 +316,15 @@ export function SalesTeamDetail({ id }: { id: string }) {
             <ul className="flex flex-col divide-y rounded-lg border">
               {shownActive.map((m) => (
                 <li key={m.sales_agent_id} className="flex min-w-0 items-center justify-between gap-2 px-3 py-2">
-                  <span className="truncate text-sm" title={m.label}>
-                    {m.label}
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-sm" title={m.label}>
+                      {m.label}
+                    </span>
+                    {m.sales_agent_id === (isEditing ? leaderId : team.leader_sales_agent_id) ? (
+                      <Badge variant="primary" appearance="light" size="sm">
+                        Leader
+                      </Badge>
+                    ) : null}
                   </span>
                   {isEditing ? (
                     <Button
@@ -275,7 +332,7 @@ export function SalesTeamDetail({ id }: { id: string }) {
                       size="sm"
                       mode="icon"
                       aria-label={`Remove ${m.label}`}
-                      onClick={() => setKeptIds((ids) => ids.filter((i) => i !== m.sales_agent_id))}
+                      onClick={() => removeAgent(m.sales_agent_id)}
                     >
                       <X className="size-4" />
                     </Button>

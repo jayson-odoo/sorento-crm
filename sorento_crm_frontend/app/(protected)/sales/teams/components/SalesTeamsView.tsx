@@ -26,12 +26,23 @@ import SalesTeamModal from './SalesTeamModal';
  * Sales > Sales Teams (UAC S6-9, S6-12), on the Users & Access > Teams concept (owner ruling
  * 26 Sep 06:01 (Lavish), N2): the header's one primary action is Add team, the card holds the
  * search, and the list is a DataGrid with one line per team (N4): name, agents as pills with
- * "+N", the Active badge. The whole row opens the team page. No tree and no drag nesting:
+ * "+N", the Active badge. The leader's pill comes first and reads "(Leader)" (W1): a word,
+ * not an icon, so it needs no legend. The whole row opens the team page. No tree and no drag nesting:
  * sales teams have no parent. "Targets now" arrives with S1.
  *
  * Unpaged on purpose: a company has a handful of teams, and the team page steps through
  * this same in-memory list for prev/next.
  */
+/** The team's agents as pills, the leader first and tagged (W1). */
+function agentPills(team: SalesTeamListItem) {
+  const leader = team.members.filter((m) => m.sales_agent_id === team.leader_sales_agent_id);
+  const others = team.members.filter((m) => m.sales_agent_id !== team.leader_sales_agent_id);
+  return [
+    ...leader.map((m) => ({ key: m.sales_agent_id, label: `${m.label} (Leader)` })),
+    ...others.map((m) => ({ key: m.sales_agent_id, label: m.label })),
+  ];
+}
+
 export default function SalesTeamsView() {
   const canAdd = useHasPermission('sales.teams.add');
   const [modalOpen, setModalOpen] = useState(false);
@@ -76,7 +87,7 @@ export default function SalesTeamsView() {
           row.original.members.length ? (
             <PillOverflow
               ariaLabel={`Agents in ${row.original.name}`}
-              items={row.original.members.map((m) => ({ key: m.sales_agent_id, label: m.label }))}
+              items={agentPills(row.original)}
               renderPopover={(items) => (
                 <ul className="flex flex-col gap-1 text-sm">
                   {items.map((i) => (

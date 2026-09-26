@@ -48,17 +48,17 @@ export function useSaveSalesTeam() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: SalesTeamSaveInput): Promise<SalesTeamDetail> => {
-      const { teamId, name, is_active, sales_agent_ids, moves_on } = input;
+      const { teamId, name, is_active, sales_agent_ids, moves_on, leader_sales_agent_id } = input;
+      const extra = {
+        ...(moves_on ? { moves_on } : {}),
+        // null is sent: it clears the leader (W1).
+        ...(leader_sales_agent_id !== undefined ? { leader_sales_agent_id } : {}),
+      };
       if (!teamId) {
-        return createSalesTeam({ name, is_active, sales_agent_ids, ...(moves_on ? { moves_on } : {}) });
+        return createSalesTeam({ name, is_active, sales_agent_ids, ...extra });
       }
       // One PATCH, one transaction: a refused rename cannot leave the agents half-saved.
-      return updateSalesTeam(teamId, {
-        name,
-        is_active,
-        sales_agent_ids,
-        ...(moves_on ? { moves_on } : {}),
-      });
+      return updateSalesTeam(teamId, { name, is_active, sales_agent_ids, ...extra });
     },
     onSuccess: (team, input) => {
       queryClient.invalidateQueries({ queryKey: SALES_TEAMS_KEY });
