@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 
 
@@ -52,15 +52,6 @@ class SetPasswordRequest(BaseModel):
 
     current_password: str | None = None
     new_password: str = Field(..., min_length=8)
-
-    @field_validator("new_password")
-    @classmethod
-    def _new_password_fits_bcrypt(cls, v: str) -> str:
-        # Note fix (security round, #1280): bcrypt truncates/raises past 72
-        # BYTES - without this, a longer password 500s instead of a clean 422.
-        if len(v.encode("utf-8")) > 72:
-            raise ValueError("Password must be 72 bytes or fewer.")
-        return v
 
 
 class SignupRequest(BaseModel):
