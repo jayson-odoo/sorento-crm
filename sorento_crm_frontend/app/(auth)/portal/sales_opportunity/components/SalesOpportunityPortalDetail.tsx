@@ -137,9 +137,10 @@ export function SalesOpportunityPortalDetail({ id }: { id: string }) {
             <div className="flex flex-col gap-3 rounded-lg border p-3">
               {pending.key === 'lost' ? (
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="Lost reason">Lost reason</Label>
+                  <Label htmlFor="portal-opportunity-lost-reason">Lost reason</Label>
                   <SearchableSelect
-                    id="Lost reason"
+                    id="portal-opportunity-lost-reason"
+                    aria-label="Lost reason"
                     value={lostReason}
                     onChange={setLostReason}
                     options={FALLBACK_LOST_REASONS}

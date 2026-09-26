@@ -209,9 +209,10 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
             <div className="flex flex-col gap-3 rounded-lg border p-3">
               {pending.key === 'lost' ? (
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="Lost reason">Lost reason</Label>
+                  <Label htmlFor="opportunity-lost-reason">Lost reason</Label>
                   <SearchableSelect
-                    id="Lost reason"
+                    id="opportunity-lost-reason"
+                    aria-label="Lost reason"
                     value={lostReason}
                     onChange={setLostReason}
                     options={FALLBACK_LOST_REASONS}
@@ -222,9 +223,10 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
               ) : null}
               {pending.key === 'won' ? (
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="Sales order">Sales order (optional)</Label>
+                  <Label htmlFor="opportunity-sales-order">Sales order (optional)</Label>
                   <SearchableSelect
-                    id="Sales order"
+                    id="opportunity-sales-order"
+                    aria-label="Sales order"
                     value={salesOrderId}
                     onChange={setSalesOrderId}
                     options={salesOrderOptions}

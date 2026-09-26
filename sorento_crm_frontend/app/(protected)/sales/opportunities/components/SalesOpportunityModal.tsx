@@ -200,9 +200,10 @@ export default function SalesOpportunityModal({
         <form onSubmit={submit} className="flex flex-col gap-4">
           <DialogBody className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="Customer or prospect">Customer or prospect</Label>
+              <Label htmlFor="opportunity-customer">Customer or prospect</Label>
               <SearchableSelect
-                id="Customer or prospect"
+                id="opportunity-customer"
+                aria-label="Customer or prospect"
                 value={customerOrProspect}
                 onChange={setCustomerOrProspect}
                 options={customerOptions}
