@@ -286,6 +286,40 @@ describe('Confirm label / disabled follow the ticked scope (AC-DP-05, S5)', () =
     expect([...sent].sort()).toEqual(['row-a', 'row-b']);
   });
 
+  // PR #1266 fix round W1 (owner, 26 Sep 2026: "i just realized after we click confirm,
+  // at the line level can't really see it is confirmed, can we have an icon here to show
+  // it is confirmed?"). Confirm already invalidates the header lines query
+  // (`useOrderInquiry.ts`'s `invalidate()`), so the refetched row is what should carry
+  // the mark - no page reload involved.
+  it("W1: the line's check appears right after Confirm, without a reload", async () => {
+    const rowAwaiting = {
+      ...LINKED_LINE,
+      id: 'row-w1',
+      item_code: 'ZZT-W1',
+      core_line_id: 'cl-w1',
+      line_no: 1,
+      ack_state: 'awaiting',
+    } as OrderInquiryWorklistRow;
+    const rowAcknowledged = {
+      ...rowAwaiting,
+      ack_state: 'acknowledged',
+      acknowledged_by_name: 'Aisyah',
+      acknowledged_at: '2026-09-26T11:20:00Z',
+    } as OrderInquiryWorklistRow;
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce([rowAwaiting]);
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce([rowAcknowledged]);
+
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+    expect(screen.queryByTestId('line-confirmed-mark')).not.toBeInTheDocument();
+
+    fireEvent.click(await screen.findByLabelText('Select ZZT-W1'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm (1)' }));
+
+    const mark = await screen.findByTestId('line-confirmed-mark');
+    expect(mark.getAttribute('aria-label')).toContain('Confirmed by Aisyah');
+  });
+
   it('is disabled on a Completed header with nothing ticked', async () => {
     mockGetOrderInquiryHeader.mockResolvedValue({
       ...HEADER,

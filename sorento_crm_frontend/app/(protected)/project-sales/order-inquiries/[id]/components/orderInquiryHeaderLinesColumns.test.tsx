@@ -46,6 +46,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 
 import { useOrderInquiryHeaderLinesColumns } from './orderInquiryHeaderLinesColumns';
 import { foldInquiryLines, toLineRows } from '../../../_shared/lib/orderInquiryLineFold';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
 
 function renderWithClient(node: React.ReactElement) {
@@ -736,6 +737,81 @@ describe('AC-ND-7 (owner ruling 26 Sep, G1): no Was / now on the line row', () =
     const [lineRow] = toLineRows(foldInquiryLines([linesRow({ id: 'c', core_line_id: 'cl-5', line_cancelled: true })]));
     const { container } = render(<>{cellOf('verb', lineRow)}</>);
     expect(container.textContent).toBe('-');
+  });
+});
+
+/**
+ * PR #1266 fix round W1 (owner, 26 Sep 2026: "i just realized after we click confirm, at
+ * the line level can't really see it is confirmed, can we have an icon here to show it is
+ * confirmed?"). A new `confirmation` column sits between Product and SO Qty.
+ */
+describe('W1 line confirmation column', () => {
+  function confirmationCell(lineRow: OrderInquiryWorklistRow) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const column = result.current.find(
+      (c) => (c as { id?: string }).id === 'confirmation',
+    ) as { cell: (context: unknown) => React.ReactNode } | undefined;
+    expect(column).toBeDefined();
+    return column!.cell({ row: { original: lineRow } });
+  }
+
+  it('W1: a fully confirmed line shows the check with Confirmed by <name> on <date>', () => {
+    const [lineRow] = toLineRows(
+      foldInquiryLines([
+        linesRow({
+          id: 'a',
+          core_line_id: 'cl-w1',
+          ack_state: 'acknowledged',
+          acknowledged_by_name: 'Aisyah',
+          acknowledged_at: '2026-09-26T11:20:00Z',
+        }),
+      ]),
+    );
+    render(<>{confirmationCell(lineRow)}</>);
+    const expectedLabel = `Confirmed by Aisyah on ${formatDateInMalaysia('2026-09-26T11:20:00Z')}`;
+    const mark = screen.getByTestId('line-confirmed-mark');
+    expect(mark).toHaveAttribute('aria-label', expectedLabel);
+    expect(mark).toHaveAttribute('title', expectedLabel);
+    expect(screen.queryByTestId('line-partly-confirmed-mark')).not.toBeInTheDocument();
+  });
+
+  it('W1: a partly confirmed line shows the half-state mark reading n of m', () => {
+    const [lineRow] = toLineRows(
+      foldInquiryLines([
+        linesRow({ id: 'a', core_line_id: 'cl-w2', ack_state: 'acknowledged' }),
+        linesRow({ id: 'b', core_line_id: 'cl-w2', ack_state: 'awaiting' }),
+      ]),
+    );
+    render(<>{confirmationCell(lineRow)}</>);
+    const mark = screen.getByTestId('line-partly-confirmed-mark');
+    expect(mark).toHaveAttribute('aria-label', '1 of 2 rows confirmed');
+    expect(mark).toHaveAttribute('title', '1 of 2 rows confirmed');
+    expect(screen.queryByTestId('line-confirmed-mark')).not.toBeInTheDocument();
+  });
+
+  it('W1: a line with nothing to confirm shows no mark', () => {
+    const [lineRow] = toLineRows(
+      foldInquiryLines([linesRow({ id: 'a', core_line_id: 'cl-w3', ack_state: 'awaiting' })]),
+    );
+    render(<>{confirmationCell(lineRow)}</>);
+    expect(screen.queryByTestId('line-confirmed-mark')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('line-partly-confirmed-mark')).not.toBeInTheDocument();
+  });
+
+  it('W1: the column sits between Product and SO Qty and does not sort', () => {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const ids = result.current.map((column) => (column as { id?: string; accessorKey?: string }).id ?? (column as { accessorKey?: string }).accessorKey);
+    const productIndex = ids.indexOf('item_code');
+    const confirmationIndex = ids.indexOf('confirmation');
+    const soQtyIndex = ids.indexOf('so_qty');
+    expect(productIndex).toBeGreaterThanOrEqual(0);
+    expect(confirmationIndex).toBe(productIndex + 1);
+    expect(soQtyIndex).toBe(confirmationIndex + 1);
+    const confirmationColumn = result.current.find(
+      (c) => (c as { id?: string }).id === 'confirmation',
+    ) as { enableSorting?: boolean; size?: number } | undefined;
+    expect(confirmationColumn?.enableSorting).toBe(false);
+    expect(confirmationColumn?.size ?? 0).toBeLessThanOrEqual(48);
   });
 });
 

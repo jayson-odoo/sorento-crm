@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import {
   foldInquiryLines,
   foldKeyOf,
+  lineConfirmationOf,
   lineFooterTotals,
   lineHistoryEntries,
   reserveHistoryRowOf,
@@ -325,5 +326,92 @@ describe('S4 (AC-ND-14): the Reserve tab follows whichever live row carries the 
       row({ id: 'd', core_line_id: 'cl-6', reserve_state: 'reserved', redirected_to_pool: true }),
     ]);
     expect(reserveHistoryRowOf(usedOnly)).toBeNull();
+  });
+});
+
+/**
+ * PR #1266 fix round W1 (owner, 26 Sep 2026: "i just realized after we click confirm, at
+ * the line level can't really see it is confirmed, can we have an icon here to show it is
+ * confirmed?"). Counted rows = the line's live rows minus any rejected row; a cancelled
+ * line always reads none.
+ */
+describe('W1 line confirmation', () => {
+  it('W1: a line whose every live row is acknowledged reads confirmed, by its latest confirmer', () => {
+    const [line] = foldInquiryLines([
+      row({
+        id: 'a',
+        core_line_id: 'cl-1',
+        line_no: 1,
+        ack_state: 'acknowledged',
+        acknowledged_by_name: 'Aisyah',
+        acknowledged_at: '2026-09-26T09:00:00Z',
+      }),
+      row({
+        id: 'b',
+        core_line_id: 'cl-1',
+        line_no: 1,
+        ack_state: 'acknowledged',
+        acknowledged_by_name: 'Nurain',
+        acknowledged_at: '2026-09-26T11:00:00Z',
+      }),
+      // A used (history) row sitting in `changed` must not stop the line reading confirmed.
+      row({
+        id: 'used',
+        core_line_id: 'cl-1',
+        line_no: 1,
+        redirected_to_pool: true,
+        ack_state: 'changed',
+      }),
+      // A cancelled row sitting in `awaiting` must not stop the line reading confirmed either.
+      row({
+        id: 'old',
+        core_line_id: 'cl-1',
+        line_no: 1,
+        state: 'cancelled',
+        ack_state: 'awaiting',
+      }),
+    ]);
+    expect(lineConfirmationOf(line)).toEqual({ kind: 'confirmed', by: 'Nurain', at: '2026-09-26T11:00:00Z' });
+  });
+
+  it('W1: a line with some live rows acknowledged reads n of m', () => {
+    const [line] = foldInquiryLines([
+      row({ id: 'a', core_line_id: 'cl-2', line_no: 2, ack_state: 'acknowledged' }),
+      row({ id: 'b', core_line_id: 'cl-2', line_no: 2, ack_state: 'awaiting' }),
+      row({ id: 'c', core_line_id: 'cl-2', line_no: 2, ack_state: 'changed' }),
+    ]);
+    expect(lineConfirmationOf(line)).toEqual({ kind: 'partly', confirmed: 1, total: 3 });
+  });
+
+  it('W1: nothing to confirm reads none', () => {
+    const [everyAwaiting] = foldInquiryLines([
+      row({ id: 'a', core_line_id: 'cl-3', line_no: 3, ack_state: 'awaiting' }),
+      row({ id: 'b', core_line_id: 'cl-3', line_no: 3, ack_state: 'awaiting' }),
+    ]);
+    expect(lineConfirmationOf(everyAwaiting)).toEqual({ kind: 'none' });
+
+    const [cancelledLine] = foldInquiryLines([
+      row({
+        id: 'c',
+        core_line_id: 'cl-4',
+        line_no: 4,
+        line_cancelled: true,
+        ack_state: 'acknowledged',
+      }),
+    ]);
+    expect(lineConfirmationOf(cancelledLine)).toEqual({ kind: 'none' });
+
+    const [onlyRejected] = foldInquiryLines([
+      row({ id: 'd', core_line_id: 'cl-5', line_no: 5, ack_state: 'rejected' }),
+    ]);
+    expect(lineConfirmationOf(onlyRejected)).toEqual({ kind: 'none' });
+
+    // A rejected row is left out of n of m entirely: 1 acked + 1 rejected reads confirmed,
+    // not "1 of 2".
+    const [rejectedLeftOut] = foldInquiryLines([
+      row({ id: 'e', core_line_id: 'cl-6', line_no: 6, ack_state: 'acknowledged', acknowledged_by_name: 'Aisyah', acknowledged_at: '2026-09-26T09:00:00Z' }),
+      row({ id: 'f', core_line_id: 'cl-6', line_no: 6, ack_state: 'rejected' }),
+    ]);
+    expect(lineConfirmationOf(rejectedLeftOut)).toEqual({ kind: 'confirmed', by: 'Aisyah', at: '2026-09-26T09:00:00Z' });
   });
 });
