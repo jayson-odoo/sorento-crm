@@ -102,17 +102,58 @@ class AuditLog(Base):
     )
 
 
-# Append-only, enforced by Postgres. Any UPDATE, DELETE or TRUNCATE raises unless the
-# transaction ran ``SET LOCAL sorento.audit_maintenance = 'on'`` (the retention job, a scrub
-# migration). SET LOCAL only, inside an explicit transaction: a plain session-level SET would
-# leave a pooled connection in bypass mode for every later request. Migration aud_0001_audit_standard_s0 installs it on existing databases; this hook
+# Append-only, enforced by Postgres. Any UPDATE, DELETE or TRUNCATE raises, with one way
+# through: the transaction ran ``SET LOCAL sorento.audit_maintenance = 'on'`` AND the current
+# role is a member of ``sorento_audit_maintainer`` (a NOLOGIN role; with no such role, only a
+# superuser). Anyone can SET a custom setting, so the flag alone is only a statement of intent;
+# the role is what the application's own login does not have (review S1 at 7a56073f). The
+# retention job and scrub migrations run as a maintainer; a DBA grants the role to that login.
+# SET LOCAL, inside an explicit transaction: a session-level SET would leave a pooled
+# connection in bypass mode.
+#
+# What this is: a guard against application code, and an application login, editing history.
+# What it is NOT, and the bypasses that remain (documented, not closed, in S0):
+#   1. the table's OWNER can ``ALTER TABLE audit_logs DISABLE TRIGGER`` or drop the trigger;
+#      in a single-role deployment the app login is the owner;
+#   2. a superuser can ``SET session_replication_role = replica``, which skips triggers;
+#   3. a superuser is a member of every role, so it passes the maintainer check.
+# Closing 1 needs the table owned by a migration role and ``REVOKE UPDATE, DELETE, TRUNCATE``
+# from the app login (an owner decision, PLAN-audit-standard-26sep.md 7.1).
+#
+# Migration aud_0001_audit_standard_s0 installs this on existing databases; the hook below
 # installs it wherever ``create_all`` builds the table (CI's bootstrap_env, the blank test
 # schema), so the two cannot drift.
+MAINTAINER_ROLE = "sorento_audit_maintainer"
+ENSURE_MAINTAINER_ROLE_SQL = """
+DO $do$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sorento_audit_maintainer') THEN
+        BEGIN
+            CREATE ROLE sorento_audit_maintainer NOLOGIN;
+        EXCEPTION
+            WHEN insufficient_privilege THEN
+                RAISE NOTICE 'sorento_audit_maintainer not created (needs CREATEROLE): only a superuser can maintain audit_logs';
+            WHEN duplicate_object OR unique_violation THEN
+                NULL;
+        END;
+    END IF;
+END
+$do$
+"""
 APPEND_ONLY_FUNCTION_SQL = """
 CREATE OR REPLACE FUNCTION {schema}audit_logs_append_only() RETURNS trigger
 LANGUAGE plpgsql AS $$
+DECLARE
+    maintainer boolean := false;
 BEGIN
     IF coalesce(current_setting('sorento.audit_maintenance', true), '') = 'on' THEN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sorento_audit_maintainer') THEN
+            maintainer := pg_has_role(current_user, 'sorento_audit_maintainer', 'MEMBER');
+        ELSE
+            maintainer := coalesce((SELECT rolsuper FROM pg_roles WHERE rolname = current_user), false);
+        END IF;
+    END IF;
+    IF maintainer THEN
         IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
         IF TG_OP = 'UPDATE' THEN RETURN NEW; END IF;
         RETURN NULL;
@@ -135,6 +176,7 @@ def _install_append_only_trigger(target, connection, **kw):  # noqa: ANN001
     translate = connection.get_execution_options().get("schema_translate_map") or {}
     schema = translate.get(target.schema)
     prefix = f'"{schema}".' if schema else ""
+    connection.execute(text(ENSURE_MAINTAINER_ROLE_SQL))
     # text(), not exec_driver_sql: the RAISE format's `%` would read as a DBAPI placeholder.
     connection.execute(text(APPEND_ONLY_FUNCTION_SQL.format(schema=prefix)))
     for statement in APPEND_ONLY_TRIGGERS_SQL:

@@ -19,8 +19,9 @@ why" about any record, days or months after the fact.
    one, and the reason when one was given.
 4. The admin can follow "everything in this request" and "everything this action caused",
    including the job it queued, because they share a request id and a correlation id.
-5. The admin ends holding a trail they can trust: nobody, including the application itself, can
-   edit or delete it outside the retention job.
+5. The admin ends holding a trail they can trust: the application, and the application's own
+   database login, cannot edit or delete it outside the retention job. The table's owner and a
+   DBA still can (plan 7.1 names the three bypasses); closing those needs a second role.
 
 ## S0 acceptance criteria
 

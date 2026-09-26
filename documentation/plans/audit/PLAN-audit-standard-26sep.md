@@ -73,15 +73,30 @@ Unchanged: `trace_id` IS the request id (one per HTTP request or job run), now l
 one new value, `EVENT`, for a side effect that changed no row (a download, a send, a login).
 
 **Append-only is enforced by Postgres.** A `BEFORE UPDATE OR DELETE` row trigger and a
-`BEFORE TRUNCATE` statement trigger raise unless the transaction has run
-`SET LOCAL sorento.audit_maintenance = 'on'`. The migration creates it for existing databases; an
-`after_create` DDL hook on the model creates it wherever `create_all` builds the table (CI
-bootstrap, the blank test schema), so the two cannot drift (lesson 90). The retention job (S3) and
-any scrub migration set the flag. Module purge stops deleting audit rows.
+`BEFORE TRUNCATE` statement trigger raise, with one way through: the transaction has run
+`SET LOCAL sorento.audit_maintenance = 'on'` AND the current role is a member of the NOLOGIN role
+`sorento_audit_maintainer` (with no such role, only a superuser). Any login can SET a custom
+setting, so at 7a56073f the app role could set the flag itself and rewrite history (review S1,
+probed as a NOSUPERUSER owner); the role check is what the app login does not have. The migration
+creates the role when its login may (else it notes that only a superuser can maintain the table)
+and the trigger for existing databases; an `after_create` DDL hook on the model creates both
+wherever `create_all` builds the table (CI bootstrap, the blank test schema), so the two cannot
+drift (lesson 90). The retention job (S3) and any scrub migration run as a maintainer with the
+flag set. Module purge stops deleting audit rows.
 
-Decision on the "application role" wording in the report: this deployment runs one database role,
-so a second role is machinery for a problem we do not have; the `SET LOCAL` flag is the report's
-own named alternative. Trigger to revisit: a second writer role appears.
+What the trigger is: a guard against application code, and the application login, editing
+history. What it is not: tamper-proof against the table's owner or a DBA. The bypasses that
+remain, named so nobody reads the trigger as more than it is:
+
+1. The table's OWNER can `ALTER TABLE audit_logs DISABLE TRIGGER ...` or drop the trigger. In a
+   single-role deployment the app login is the owner.
+2. A superuser can `SET session_replication_role = replica`, which skips triggers.
+3. A superuser is a member of every role, so it passes the maintainer check.
+
+Closing 1 needs the table owned by a migration role and `REVOKE UPDATE, DELETE, TRUNCATE ON
+audit_logs` from the app login: a second role, which this deployment does not run today. Trigger to
+revisit: a second writer role appears, or the owner rules the trail must hold against its own
+login (grill question 14).
 
 ### 7.2 Emission: one hook, one decorator, no per-endpoint code
 

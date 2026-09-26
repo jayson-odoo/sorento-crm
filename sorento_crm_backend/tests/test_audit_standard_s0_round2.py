@@ -125,3 +125,61 @@ class TestB1Grandchildren:
             if _reaches_company(table, frozenset({table.name}), 4) and audit_service._company_fk(cls) is None:
                 missed.append(table.name)
         assert missed == []
+
+
+# --- S1: the maintenance flag has no effect for the app role ---------------------------
+
+
+class TestS1FlagNotForTheAppRole:
+    """Probed as a NOSUPERUSER role with plain DML grants on audit_logs: the shape of the
+    application's own login. At 7a56073f it could set the flag itself and rewrite history."""
+
+    def _as_app_role(self, db):
+        from sqlalchemy import text
+
+        role = f"s0_app_probe_{uuid.uuid4().hex[:10]}"
+        schema = db.execute(text("SELECT current_schema()")).scalar()
+        db.execute(text(f'CREATE ROLE "{role}" NOSUPERUSER NOLOGIN'))  # rolled back with the test
+        db.execute(text(f'GRANT USAGE ON SCHEMA "{schema}" TO "{role}"'))
+        db.execute(text(f'GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON "{schema}".audit_logs TO "{role}"'))
+        row_id = str(uuid.uuid4())
+        db.execute(
+            text("INSERT INTO audit_logs (id, entity_type, entity_id, action) VALUES (:i, 'probe', :e, 'EVENT')"),
+            {"i": row_id, "e": row_id},
+        )
+        return role, row_id
+
+    @pytest.mark.parametrize(
+        "statement",
+        [
+            "UPDATE audit_logs SET description = 'rewritten' WHERE id = :i",
+            "DELETE FROM audit_logs WHERE id = :i",
+        ],
+    )
+    @pytest.mark.parametrize("scope", ["LOCAL", "SESSION"])
+    def test_s1_the_app_role_cannot_use_the_flag(self, db, statement, scope):
+        from sqlalchemy import text
+        from sqlalchemy.exc import DBAPIError
+
+        role, row_id = self._as_app_role(db)
+        nested = db.begin_nested()
+        try:
+            db.execute(text(f'SET LOCAL ROLE "{role}"'))
+            db.execute(text(f"SET {scope} sorento.audit_maintenance = 'on'"))
+            with pytest.raises(DBAPIError, match="append-only"):
+                db.execute(text(statement), {"i": row_id})
+        finally:
+            nested.rollback()
+            db.execute(text("RESET sorento.audit_maintenance"))
+        (row,) = db.execute(text("SELECT description FROM audit_logs WHERE id = :i"), {"i": row_id}).all()
+        assert row.description is None
+
+    def test_s1_a_maintainer_still_can(self, db):
+        """A member of the maintenance role (here the superuser CI connects as) with the flag
+        set is the one way through: the retention job and scrub migrations."""
+        from sqlalchemy import text
+
+        _role, row_id = self._as_app_role(db)
+        db.execute(text("SET LOCAL sorento.audit_maintenance = 'on'"))
+        db.execute(text("DELETE FROM audit_logs WHERE id = :i"), {"i": row_id})
+        assert db.execute(text("SELECT count(*) FROM audit_logs WHERE id = :i"), {"i": row_id}).scalar() == 0

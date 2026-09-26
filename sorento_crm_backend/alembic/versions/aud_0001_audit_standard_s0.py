@@ -15,8 +15,12 @@ now, we must do the right thing now" - evolve `audit_logs` in place, no second t
 3. `changed_at` defaults to `clock_timestamp()` instead of `now()`: now() is the transaction's
    start, so every row one request wrote shared a timestamp and history order was random.
 4. Append-only: UPDATE, DELETE and TRUNCATE raise unless the transaction ran
-   `SET LOCAL sorento.audit_maintenance = 'on'`. The DDL is frozen here (a migration keeps
-   meaning what it meant when it ran); `app.models.audit` carries the same text for create_all.
+   `SET LOCAL sorento.audit_maintenance = 'on'` AS a member of the NOLOGIN role
+   `sorento_audit_maintainer` (created here when the migration role may; with no such role,
+   only a superuser). The app login is not a member, so it cannot use the flag (review S1).
+   The role is left in place on downgrade: roles are cluster-wide and may hold grants. The
+   DDL is frozen here (a migration keeps meaning what it meant when it ran);
+   `app.models.audit` carries the same text for create_all.
 
 Any later migration that rewrites audit rows (the S-1 password scrub) must run
 `SET LOCAL sorento.audit_maintenance = 'on'` first.
@@ -31,11 +35,36 @@ Create Date: 2026-09-26
 import sqlalchemy as sa
 from alembic import op
 
+ENSURE_MAINTAINER_ROLE_SQL = """
+DO $do$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sorento_audit_maintainer') THEN
+        BEGIN
+            CREATE ROLE sorento_audit_maintainer NOLOGIN;
+        EXCEPTION
+            WHEN insufficient_privilege THEN
+                RAISE NOTICE 'sorento_audit_maintainer not created (needs CREATEROLE): only a superuser can maintain audit_logs';
+            WHEN duplicate_object OR unique_violation THEN
+                NULL;
+        END;
+    END IF;
+END
+$do$
+"""
 APPEND_ONLY_FUNCTION_SQL = """
 CREATE OR REPLACE FUNCTION audit_logs_append_only() RETURNS trigger
 LANGUAGE plpgsql AS $$
+DECLARE
+    maintainer boolean := false;
 BEGIN
     IF coalesce(current_setting('sorento.audit_maintenance', true), '') = 'on' THEN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sorento_audit_maintainer') THEN
+            maintainer := pg_has_role(current_user, 'sorento_audit_maintainer', 'MEMBER');
+        ELSE
+            maintainer := coalesce((SELECT rolsuper FROM pg_roles WHERE rolname = current_user), false);
+        END IF;
+    END IF;
+    IF maintainer THEN
         IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
         IF TG_OP = 'UPDATE' THEN RETURN NEW; END IF;
         RETURN NULL;
@@ -81,6 +110,7 @@ def upgrade() -> None:
     op.execute(f"ALTER TABLE audit_logs ADD CONSTRAINT audit_logs_action_check CHECK (action IN {_NEW_ALLOWED})")
     op.execute("ALTER TABLE audit_logs ALTER COLUMN changed_at SET DEFAULT clock_timestamp()")
 
+    op.execute(ENSURE_MAINTAINER_ROLE_SQL)
     op.execute(APPEND_ONLY_FUNCTION_SQL)
     for statement in APPEND_ONLY_TRIGGERS_SQL:
         op.execute(statement)
