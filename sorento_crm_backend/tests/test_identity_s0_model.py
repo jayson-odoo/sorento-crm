@@ -471,6 +471,25 @@ def test_create_losing_the_email_race_to_the_unique_index_is_409_email_taken(api
     assert "Race Winner" in str(body.get("message") or "")
 
 
+def test_invite_losing_the_email_race_to_the_unique_index_is_409_email_taken(api_client, monkeypatch):
+    from app.services.user_service import UserService
+
+    client, db, _admin = api_client
+    stem = unique_code("irace")
+    db.add(User(id=str(uuid.uuid4()), email=f"{stem}@example.com", name="Invite Race Winner", status="ACTIVE"))
+    db.commit()
+    monkeypatch.setattr(UserService, "_check_email_free", lambda self, email, exclude_user_id: None)
+
+    resp = client.post(
+        "/api/v1/user-management/users/invite", json={"email": f"{stem}@EXAMPLE.COM", "name": "Invite Race Loser"}
+    )
+
+    assert resp.status_code == 409, resp.text
+    body = resp.json()
+    assert body.get("code") == "EMAIL_TAKEN", body
+    assert "Invite Race Winner" in str(body.get("message") or "")
+
+
 def test_update_losing_the_contact_race_to_the_unique_index_is_409_contact_already_linked(api_client, monkeypatch):
     from app.services.user_service import UserService
 
