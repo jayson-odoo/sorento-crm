@@ -1,0 +1,188 @@
+"""S1 (#1267): the business lane picks `crm_sales_analysis` for a sales analysis ask and
+sends the text AND the Excel.
+
+UAC: AC-S1-20 (the args of "compare dealer sales 2025 vs 2026 by month"), AC-S1-22 (no
+period said = this calendar year, printed), AC-R4-1 (text + one attachment on the turn),
+AC-R4-3 (the refusal carries none), AC-R4-5 (no `reply_format` key; nothing in the words
+changes the format), plus the gate (`sales_orders.sales_report`, total denial before any
+fetch) and the parser contract (`order_status "sales_analysis"`, `group_by` month/year,
+`sales_basis`, `sales_company`).
+
+Built on the harness `test_sales_report_lane.py` imports from `test_outstanding_lane.py`.
+"""
+from __future__ import annotations
+
+import json
+from datetime import date
+from typing import Any
+
+import pytest
+
+from app.services.chatbot.lanes.business.services import FetchServices
+from tests.chatbot.test_outstanding_lane import (
+    _capturing_mcp,
+    _present_response,
+    _qf,
+    _run_turn,
+    _seed_contact,
+)
+
+TOOL = "crm_sales_analysis"
+GRANT = "sales_orders.sales_report"
+ATT = {
+    "url": "https://cdn.test.invalid/exports/report-xlsx/x/Yearly comparison-2026.xlsx",
+    "filename": "Yearly comparison-2026.xlsx",
+    "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "attachmentType": "file",
+}
+ROUTE_HIT: dict[str, Any] = {
+    "status": "ready", "report": "Sales", "company": "Sorento", "channel": "Project team",
+    "basis": "Delivered (transferred to DO)", "period": "01/01/2026 to 26/09/2026",
+    "rows_label": "Channel", "cols_label": "Year", "count_label": "Channels",
+    "columns": ["2026"],
+    "rows": [{"label": "Project team", "values": ["1234.50"], "total": "1234.50"}],
+    "totals": {"values": ["1234.50"], "total": "1234.50"},
+    "total_count": 1, "attachments": [ATT],
+}
+
+
+def _rendered(payload=ROUTE_HIT) -> str:
+    return _present_response()(TOOL, json.dumps(payload))
+
+
+def _payload(*, attributes=(GRANT,), **qf):
+    return {
+        "gate": {"compatible_entities": []},
+        "tier_gate": None,
+        "ctx": {
+            "parse": {"output": _qf(order_status="sales_analysis", entities=[], **qf)},
+            "contact": {"id": 437264483},
+            "access": {"attributes": list(attributes)},
+        },
+    }
+
+
+def _args(session_factory, **qf) -> tuple[str, dict[str, Any]]:
+    from app.services.chatbot.lanes.business import run_fetch
+
+    call, captured = _capturing_mcp(_rendered())
+    run_fetch(_payload(**qf), services=FetchServices(mcp_call=call))
+    assert captured, "no MCP tool was ever called"
+    return captured[0]
+
+
+class TestToolPickAndArgs:
+    def test_ac_s1_20_compare_by_month_asks_month_by_year_for_the_years_named(self, session_factory):
+        name, args = _args(
+            session_factory, group_by="month", sales_channel="dealer",
+            date_filter_start="2025-01-01", date_filter_end="2026-12-31",
+        )
+        assert name == TOOL
+        assert args["rows"] == "month" and args["cols"] == "year"
+        assert args["channel"] == "dealer"
+        assert args["date_from"] == "2025-01-01" and args["date_to"] == "2026-12-31"
+        assert args["basis"] == "delivered"  # G1: the default
+        assert "contact_id" in args and "space_id" in args
+        assert "reply_format" not in args and "deliver" not in args
+
+    def test_a_total_asks_channel_by_year(self, session_factory):
+        _name, args = _args(session_factory, sales_channel="project")
+        assert args["rows"] == "channel" and args["cols"] == "year"
+        assert args["channel"] == "project"
+
+    def test_ac_s1_22_no_period_said_is_this_calendar_year(self, session_factory):
+        from app.services.reports.registry import today_malaysia
+
+        _name, args = _args(session_factory)
+        today = today_malaysia()
+        assert args["date_from"] == date(today.year, 1, 1).isoformat()
+        assert args["date_to"] == today.isoformat()
+
+    def test_basis_and_company_come_from_the_parser(self, session_factory):
+        _name, args = _args(session_factory, sales_basis="ordered", sales_company="Mocha")
+        assert args["basis"] == "ordered"
+        assert args["company"] == "Mocha"
+
+    def test_the_outstanding_and_sales_report_picks_are_untouched(self, session_factory):
+        from app.services.chatbot.lanes.business import run_fetch
+
+        call, captured = _capturing_mcp(_rendered())
+        payload = _payload()
+        payload["ctx"]["parse"]["output"]["order_status"] = "outstanding"
+        run_fetch(payload, services=FetchServices(mcp_call=call))
+        assert not captured or captured[0][0] != TOOL
+
+
+class TestGate:
+    def test_no_key_denies_before_any_fetch(self, session_factory, monkeypatch):
+        _seed_contact(session_factory, variables={})
+        result, captured = _run_turn(
+            session_factory, monkeypatch,
+            qf=_qf(order_status="sales_analysis", entities=[]),
+            text_body="total project sales this year", msg_id="ZZT-sa-no-key-1",
+            attributes=[],
+        )
+        assert captured == []
+        assert ((result.reply or {}).get("text") or "").strip() == (
+            "Sales report is not enabled for your account."
+        )
+
+
+class TestTextAndFile:
+    def test_ac_r4_1_the_turn_sends_the_text_and_the_file(self, session_factory, monkeypatch):
+        _seed_contact(session_factory, variables={})
+        result, captured = _run_turn(
+            session_factory, monkeypatch,
+            qf=_qf(order_status="sales_analysis", entities=[], sales_channel="project"),
+            text_body="total project sales this year", msg_id="ZZT-sa-hit-1",
+            attributes=[GRANT], mcp_response=_rendered(),
+        )
+        assert [c[0] for c in captured] == [TOOL]
+        text = (result.reply or {}).get("text") or ""
+        assert "Project team: RM 1,234.50" in text
+        assert "Total: RM 1,234.50" in text
+        kinds = [a.get("kind") for a in (result.actions or [])]
+        assert "send_attachments" in kinds, result.actions
+
+    def test_ac_r4_3_a_clarify_answer_sends_no_file(self, session_factory, monkeypatch):
+        _seed_contact(session_factory, variables={})
+        result, _captured = _run_turn(
+            session_factory, monkeypatch,
+            qf=_qf(order_status="sales_analysis", entities=[]),
+            text_body="sales this year", msg_id="ZZT-sa-clarify-1",
+            attributes=[GRANT],
+            mcp_response=_rendered({"status": "clarify", "message": "Sorento or Mocha?"}),
+        )
+        assert "Sorento or Mocha?" in ((result.reply or {}).get("text") or "")
+        kinds = [a.get("kind") for a in (result.actions or [])]
+        assert "send_attachments" not in kinds
+
+
+class TestParserContract:
+    def test_the_schema_declares_the_new_keys_and_group_by_values(self):
+        from app.services.chatbot.head.parser import PARSE_OUTPUT_JSON_SCHEMA, TOLERATED_ABSENT
+
+        props = PARSE_OUTPUT_JSON_SCHEMA["properties"]
+        assert {"month", "year"} <= set(props["group_by"]["enum"])
+        assert props["sales_basis"]["enum"] == ["ordered", "delivered", None]
+        assert "sales_company" in props
+        required = set(PARSE_OUTPUT_JSON_SCHEMA["required"])
+        assert {"sales_basis", "sales_company"} <= required
+        assert {"sales_basis", "sales_company"} <= TOLERATED_ABSENT
+        assert "reply_format" not in props
+
+    def test_the_prompt_teaches_sales_analysis(self):
+        from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT
+
+        assert 'order_status "sales_analysis"' in SEMANTIC_PARSER_PROMPT
+        assert '"sales_basis"' in SEMANTIC_PARSER_PROMPT
+        assert '"sales_company"' in SEMANTIC_PARSER_PROMPT
+        assert "reply_format" not in SEMANTIC_PARSER_PROMPT
+
+    @pytest.mark.parametrize("key", ["sales_basis", "sales_company"])
+    def test_the_keys_reach_the_fetch_semantic_input(self, key):
+        import inspect
+
+        from app.services.chatbot.lanes.business import _fetch_semantic_input
+
+        assert key in inspect.getsource(_fetch_semantic_input)
