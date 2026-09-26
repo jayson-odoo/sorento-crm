@@ -32,7 +32,12 @@ function layout(scale: number, count = 3, viewWidth = 700): PageBox[] {
 }
 
 /** The document point (page index + page units at scale 1) under a cursor. */
-function pointUnder(pages: PageBox[], scroll: { left: number; top: number }, cursor: { x: number; y: number }, scale: number) {
+function pointUnder(
+  pages: PageBox[],
+  scroll: { left: number; top: number },
+  cursor: { x: number; y: number },
+  scale: number,
+) {
   const x = scroll.left + cursor.x;
   const y = scroll.top + cursor.y;
   const index = pages.findIndex((p) => y < p.top + p.height);
@@ -76,12 +81,19 @@ describe('captureAnchor', () => {
 });
 
 describe('anchoredScroll', () => {
-  function zoomAround(from: number, to: number, scroll: { left: number; top: number }) {
+  function zoomAround(
+    from: number,
+    to: number,
+    scroll: { left: number; top: number },
+  ) {
     const cursor = { x: 420, y: 230 };
     const before = layout(from);
     const was = pointUnder(before, scroll, cursor, from);
 
-    const anchor = captureAnchor(before, { x: scroll.left + cursor.x, y: scroll.top + cursor.y });
+    const anchor = captureAnchor(before, {
+      x: scroll.left + cursor.x,
+      y: scroll.top + cursor.y,
+    });
     const after = layout(to);
     const next = anchoredScroll(after[anchor!.index], anchor!, cursor);
     return { was, now: pointUnder(after, next, cursor, to) };
@@ -91,25 +103,34 @@ describe('anchoredScroll', () => {
     [1, 2],
     [0.8, 3.1],
     [1.25, 1.5],
-  ])('zooming in %s -> %s keeps the point under the cursor where it was', (from, to) => {
-    const { was, now } = zoomAround(from, to, { left: from > 1 ? 120 : 0, top: 900 });
+  ])(
+    'zooming in %s -> %s keeps the point under the cursor where it was',
+    (from, to) => {
+      const { was, now } = zoomAround(from, to, {
+        left: from > 1 ? 120 : 0,
+        top: 900,
+      });
 
-    expect(now.index).toBe(was.index);
-    expect(now.u).toBeCloseTo(was.u, 6);
-    expect(now.v).toBeCloseTo(was.v, 6);
-  });
+      expect(now.index).toBe(was.index);
+      expect(now.u).toBeCloseTo(was.u, 6);
+      expect(now.v).toBeCloseTo(was.v, 6);
+    },
+  );
 
   it.each([
     [2, 1],
     [2.5, 0.5],
-  ])('zooming out %s -> %s keeps the line under the cursor where it was', (from, to) => {
-    // Across, the page may now be narrower than the view and simply centres, so only the
-    // vertical position can (and must) hold.
-    const { was, now } = zoomAround(from, to, { left: 120, top: 2400 });
+  ])(
+    'zooming out %s -> %s keeps the line under the cursor where it was',
+    (from, to) => {
+      // Across, the page may now be narrower than the view and simply centres, so only the
+      // vertical position can (and must) hold.
+      const { was, now } = zoomAround(from, to, { left: 120, top: 2400 });
 
-    expect(now.index).toBe(was.index);
-    expect(now.v).toBeCloseTo(was.v, 6);
-  });
+      expect(now.index).toBe(was.index);
+      expect(now.v).toBeCloseTo(was.v, 6);
+    },
+  );
 
   it('never asks for a negative scroll offset', () => {
     const pages = layout(1);

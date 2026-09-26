@@ -17,7 +17,9 @@ import {
 
 const page = (...items: (string | [string, true])[]) =>
   buildPageIndex(
-    items.map((item) => (Array.isArray(item) ? { str: item[0], hasEOL: true } : { str: item })),
+    items.map((item) =>
+      Array.isArray(item) ? { str: item[0], hasEOL: true } : { str: item },
+    ),
   );
 
 describe('buildPageIndex', () => {
@@ -58,7 +60,9 @@ describe('findMatches', () => {
   });
 
   it('matches across items and across a line break', () => {
-    expect(findMatches(pages, 'sorento sdn')).toEqual([{ page: 3, start: 14, end: 25 }]);
+    expect(findMatches(pages, 'sorento sdn')).toEqual([
+      { page: 3, start: 14, end: 25 },
+    ]);
     expect(findMatches(pages, 'for sorento')).toHaveLength(1);
   });
 
@@ -159,7 +163,10 @@ describe('paintHighlights', () => {
     ]);
 
     const marks = divs[0].querySelectorAll('.highlight');
-    expect(Array.from(marks).map((m) => m.textContent)).toEqual(['Sorento', 'sorento']);
+    expect(Array.from(marks).map((m) => m.textContent)).toEqual([
+      'Sorento',
+      'sorento',
+    ]);
     expect(marks[1]).toHaveClass('selected');
     expect(selected).toBe(marks[1]);
     // The span's text is unchanged, so the layer still selects and copies the same way.
@@ -171,7 +178,9 @@ describe('paintHighlights', () => {
     const divs = spans(...strs);
     paintHighlights(divs, strs, [{ item: 0, from: 0, to: 5, selected: true }]);
 
-    const selected = paintHighlights(divs, strs, [{ item: 1, from: 0, to: 2, selected: false }]);
+    const selected = paintHighlights(divs, strs, [
+      { item: 1, from: 0, to: 2, selected: false },
+    ]);
 
     expect(divs[0].querySelector('.highlight')).toBeNull();
     expect(divs[0].textContent).toBe('alpha');
