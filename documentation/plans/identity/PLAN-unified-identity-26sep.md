@@ -324,8 +324,8 @@ behaviour the owner asked for. The trigger that would justify it is named in sec
   `apiToken` exactly as email login does. Everything downstream of the token (company context,
   roles, 401 sign-out, device list, force-logout, revocation on password change) works unchanged.
 - **Lifetime:** phone and portal sessions are 30-day rolling, the same as "remember me" today
-  (Q15 folded into Q7's answer: the portal's 30-day sliding token is what these people are used
-  to). Email sessions keep their remember-me choice.
+  (Q15: the portal's 30-day sliding token is what these people are used to). Email sessions keep
+  their remember-me choice.
 - **The portal reads the same session.** Portal pages obtain the `apiToken` from
   `/api/auth/token` and send `Authorization: Bearer`. `get_portal_token` becomes
   `get_portal_principal`, returning the same three things every portal route reads today
@@ -465,3 +465,165 @@ agent -> contact -> user already exists and is one join.
 - **Company grants** for provisioned users copy the contact's companies; a contact in no company
   gives a user with no grants, which scopes to zero rows (fail closed, as the portal does today)
   and appears in S4 as "Needs attention: no company".
+
+## 8. The audit actor contract (for #1281)
+
+This section is the contract #1281's analysis builds on. It says what every audited action
+carries once S0 ships; which modules and functions must be audited at all is #1281's scope, not
+this plan's.
+
+### 8.1 Fields on every `audit_logs` row (AC-08)
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `actor_type` | text, NOT NULL for new rows (nullable column, backfilled `legacy`) | `user`, `integration`, `worker`, `scheduler`, `public_link`, `system` |
+| `user_id` | existing | the effective actor (the user the action is attributed to); for a worker job, the user who enqueued it |
+| `real_user_id` | new, nullable | the person actually at the keyboard: the impersonating admin, else equal to `user_id` |
+| `auth_method` | new, nullable | `password`, `phone_otp`, `portal_link`, `portal_token` (legacy, until AC-36 ends it), `api_key`, `impersonation` |
+| `session_id` | new, nullable | `user_sessions.id` (never the token) |
+| `integration_id` | new, nullable | the `integrations` row behind an API key |
+| `contact_id` | existing | the actor's linked contact (derived from the user when a user acts; set directly for a contact-only action such as a chatbot turn) |
+| `job_id` | new, nullable | the RQ job id or scheduler task name |
+| `ip_address`, `trace_id`, `company_id` | existing | unchanged |
+| `user_agent` | new, nullable | truncated to 512 characters |
+
+How each actor kind fills it:
+
+| Actor | `actor_type` | `user_id` | `real_user_id` | `auth_method` | other |
+| --- | --- | --- | --- | --- | --- |
+| Staff / salesperson / portal user, signed in | `user` | self | self | session's method | `session_id`, `contact_id` if linked |
+| Admin impersonating a user | `user` | target | admin | `impersonation` | `session_id` of the admin |
+| Admin "view as contact" | `user` | the contact's user if any, else NULL | admin | `impersonation` | `contact_id` = contact (AC-11) |
+| Legacy portal token (until expiry) | `user` if the contact has a user, else `public_link` | contact's user or NULL | same | `portal_token` | `contact_id` |
+| Integration (n8n, MCP, AutoCount) | `integration` | act-as user | act-as user | `api_key` | `integration_id`; MCP's `X-Tool-Name` goes into `description` |
+| RQ job | `worker` | enqueuing user or NULL | enqueuing real user | NULL | `job_id` |
+| Scheduler tick | `scheduler` | NULL | NULL | NULL | `job_id` = task name |
+| Anonymous public link (quotation sign, approval, onboarding intake) | `public_link` | NULL | NULL | NULL | the free-text name/email stays in `description` |
+| Migration / backfill | `system` | NULL | NULL | NULL | `description` names the migration |
+
+### 8.2 How it is stamped (S0)
+
+- `app/audit_context.py` gains the new fields; the session dependencies set them where they set
+  the user today (`app/dependencies.py:222,273,306`), the API-key path sets `integration`, the
+  portal principal sets its own.
+- **Jobs carry their actor:** `enqueue` helpers pass `actor = {user_id, real_user_id, trace_id}`
+  in the job meta, and one RQ job wrapper (the worker's `perform_job` hook) sets the audit context
+  from it with `actor_type = worker`; scheduler handlers set `scheduler`. One place each, not per
+  task.
+- **The two suspected gaps are tested first** (AC-11, AC-12): a red test for each, then the fix
+  (for the sync dependency: set the context in an async wrapper, or store the actor in
+  `db.info` the way the portal contact already is, whichever the test proves works).
+- **Impersonation** stops rewriting four column names by hand: `real_user_id` on the audit row
+  says who was at the keyboard, and the `*_by` columns keep the effective user, which is what the
+  screen shows today.
+- **`api_call_log.actor`** (always NULL today) is filled with `user_id` and `integration_id` from
+  the same context, so the API log and the audit log agree.
+
+### 8.3 Rules for new code (added to PR-CHECKLIST in S0)
+
+- A new "who did this" column is `<verb>_by_user_id`, String FK to `users.id` ON DELETE SET NULL.
+  Never contact-typed, never a Respond.io agent id, never a name or an email.
+- An action a contact takes without a user (chatbot turn, WhatsApp ingest) is recorded against the
+  contact and, when the contact has a user, that user too; display resolves contact -> user.
+- The ~150 existing actor columns are **not** migrated by this plan. #1281 decides, per module,
+  which get a `*_by_user_id` counterpart; the contact -> user link this plan creates is what makes
+  that backfill a join.
+- **Display:** the audit screens render `actor_type` and `auth_method` as words (AC-13): "Aisyah
+  (phone)", "Nurain on behalf of Aisyah", "Integration: n8n as Ops Bot", "Background job for
+  Aisyah", "Scheduled: daily reorder run", "Public link". `legacy` rows render as today.
+
+## 9. Migration path: zero downtime, no re-registration
+
+Deploys are blue/green: the new container runs `alembic upgrade head` while the old image still
+serves (`documentation/plans/portal/PLAN-portal-forms-market-segment.md` D4 is the precedent), so
+every migration here is **expand only**, and every contract step is its own later release.
+
+### 9.1 Pre-flight queries (S0, run on the prod copy, results pasted into the S0 PR)
+
+1. Case-duplicate emails: `SELECT lower(email), count(*) FROM users GROUP BY 1 HAVING count(*) > 1`.
+2. Contacts claimed by more than one user:
+   `SELECT respond_contact_id, count(*) FROM users WHERE respond_contact_id IS NOT NULL GROUP BY 1 HAVING count(*) > 1`.
+3. Users whose `contact_number` matches exactly one contact but are unlinked (the backfill set).
+4. Salesperson contacts by rule (6.1), split into: already linked, phone matches one user, phone
+   matches a user linked elsewhere, no match (the S3 creation set).
+5. Portal contacts with a live token and no user (the population AC-35 will create lazily), and
+   contacts whose tokens span more than one `space_id` (the S2 space-derivation risk, section 11).
+6. Every reader of `users.email` that would fail on NULL (code grep, listed in the PR).
+
+A non-empty result for 1 or 2 stops S0 and goes to the owner as a list of names; nothing is
+merged or unlinked automatically.
+
+### 9.2 Releases
+
+| Release | Expand (migration) | Code | Old image safe because |
+| --- | --- | --- | --- |
+| S0 | `users.email` DROP NOT NULL + check (email or phone); unique `lower(email)` index created concurrently beside the old one; unique partial index on `users.respond_contact_id`; `users.phone_verified_at`; `user_sessions.auth_method` (nullable, backfilled `password`); audit columns (nullable); roles `salesperson`, `portal_user` seeded, protected, empty; link backfill (9.1 query 3) | audit stamping; email lowercased on write | no row has a NULL email yet; new columns are nullable and ignored by the old image |
+| S1 | none | phone request / verify routes; NextAuth `phone-otp` provider; sign-in page | additive routes |
+| S2 | none | portal principal from the user session; verify card signs in; legacy tokens stop sliding | the old image still resolves `X-Portal-Token`, and no token is revoked |
+| S3 | salesperson backfill (data only, re-runnable) | provisioning hooks; `salesperson` role sync | new users have NULL email, which the old image's readers were guarded for in S0 |
+| S4 | none | admin screens | additive screens |
+| Contract (S2 + 30 days, its own small PR) | drop the old case-sensitive email index | remove `X-Portal-Token` support except impersonation tokens | every legacy token has expired (AC-36) |
+
+- **No re-registration** (AC-06): staff keep email + password; portal contacts keep their link and
+  their code (the user is created behind the verify step); salespeople find a user already made.
+- **No forced sign-out** at any release: existing `user_sessions` rows stay valid; existing portal
+  tokens stay valid until natural expiry.
+- **Rollback:** every release is additive; rolling back the image leaves unused columns and
+  extra `user_sessions` rows (the old image reads them as ordinary sessions, which they are).
+
+## 10. Slices, each with its definition of done and UAC ids
+
+Order is S0 -> S1 -> S2 -> S3 -> S4; S1 and S3 can run in parallel after S0 (S3 does not need
+phone sign-in to create users; the users just cannot sign in until S1). One lane per slice, one
+PR per lane; this plan rides in the S0 PR. Every slice runs the full track and
+`security-reviewer` (AC-62).
+
+### S0 Identity model, migration, audit fields
+
+- Scope: section 4.1, 9.1, the S0 row of 9.2, section 8 in full, CLAUDE.md corrections (Prisma
+  gone, staff tokens are opaque sessions, the `system` principal is replaced by integrations).
+- UAC: AC-01 to AC-13, AC-60, AC-62.
+- Done when: pre-flight results in the PR and clean (or owner-ruled); migration applies on a clone
+  of the prod copy and the previous image's suite passes against it (AC-05); red-then-green tests
+  for AC-11 and AC-12 committed; audit screens show actor words at 375px and 1280px; every
+  `users.email` reader guarded with a test; single alembic head.
+
+### S1 Phone sign-in
+
+- Scope: sections 4.2, 4.3 (session part), 5.1, 5.3 (password and lost-phone parts).
+- UAC: AC-20 to AC-28.
+- First task: read the approved `portal_otp` WhatsApp template's text; if it names the portal, ask
+  the owner whether it may be reused for CRM sign-in or a `login_otp` template must be approved
+  first (Meta approval lead time is the slice's longest pole).
+- Done when: a staff user and a phone-only user each sign in by code through the real worker and a
+  real WhatsApp send on the lane stack; enumeration tests green; browser evidence at 375px (keyboard
+  open) and 1280px.
+
+### S2 Portal on the unified session
+
+- Scope: sections 4.3 (portal part), 5.2, the S2 row of 9.2.
+- UAC: AC-30 to AC-39.
+- First task: confirm whether NextAuth's `SessionProvider` wraps the `(auth)` group today; if not,
+  mount it for `/portal` only.
+- Done when: every portal form kind proven identical under both principals (AC-31); a contact with
+  no user signs in from an old WhatsApp link and lands on the same home with a new user behind it;
+  a salesperson with a CRM role moves portal -> CRM -> portal with one sign-in; legacy token
+  sliding off; evidence at both widths.
+
+### S3 Counterpart users for salesperson contacts
+
+- Scope: sections 6 and 7.
+- UAC: AC-40 to AC-47.
+- Done when: the backfill runs on a clone with its created / linked / reported counts in the PR
+  matching pre-flight query 4; re-run creates nothing; sync hooks tested from both sources
+  (segment, sales agent); roles verified empty after the grant sweep; the sales agent docstring and
+  the 24 Sep plan carry the supersession note.
+
+### S4 Admin screens
+
+- Scope: section 4.2 admin parts, AC-50 to AC-55; Users list filter and column, user Sign-in
+  section, contact User account section, Salesperson accounts view.
+- UAC: AC-50 to AC-55, AC-61.
+- Done when: each screen reached by sidebar clicks from `/`, every state (loading, empty, error,
+  needs attention) seen at 375px and 1280px; Unlink is a deferred action; the view permission is
+  swept onto existing roles.
