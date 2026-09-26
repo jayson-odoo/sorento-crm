@@ -24,9 +24,13 @@ export default function SalesOpportunityPortalList() {
   const [items, setItems] = useState<PortalSalesOpportunity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  // Phase 3 fix2 nit: bumped by Retry to re-run the effect below, the same shape
+  // `SalesOpportunityPortalDetail`'s own Retry uses.
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
     setError(false);
     listPortalSalesOpportunities()
       .then((data) => {
@@ -41,7 +45,7 @@ export default function SalesOpportunityPortalList() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadToken]);
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 px-3 pb-8 pt-4">
@@ -65,8 +69,11 @@ export default function SalesOpportunityPortalList() {
         </div>
       ) : error ? (
         <Card>
-          <CardContent className="py-8 text-center text-sm text-destructive">
-            Failed to load opportunities.
+          <CardContent className="flex flex-col items-center gap-3 py-8 text-center text-sm">
+            <span className="text-destructive">Failed to load opportunities.</span>
+            <Button variant="outline" size="sm" onClick={() => setReloadToken((n) => n + 1)}>
+              Retry
+            </Button>
           </CardContent>
         </Card>
       ) : items.length === 0 ? (
@@ -92,7 +99,7 @@ export default function SalesOpportunityPortalList() {
                 <CardContent className="flex flex-col gap-1 py-3">
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-sm font-medium">{item.title}</span>
-                    <Badge appearance="light" size="sm">
+                    <Badge status={item.stage_key} appearance="light" size="sm">
                       {item.stage_label}
                     </Badge>
                   </div>

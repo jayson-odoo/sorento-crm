@@ -15,6 +15,9 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
+// Same fuller mock `SalesOpportunityPortalForm.test.tsx` uses (Phase 3 fix2 should-fix 5): a
+// typed keystroke fires `onChange` with no item, a click on a listed option fires it WITH one -
+// the in-place "Customer or prospect" edit needs both to exercise a real switch.
 vi.mock('../../components/AsyncCombobox', () => ({
   AsyncCombobox: (props: {
     id?: string;
@@ -24,13 +27,39 @@ vi.mock('../../components/AsyncCombobox', () => ({
     optionValue: (o: any) => string;
     optionLabel: (o: any) => string;
     placeholder?: string;
-  }) => (
-    <input
-      aria-label={props.placeholder ?? props.id ?? 'search'}
-      value={props.value}
-      readOnly
-    />
-  ),
+  }) => {
+    const [query, setQuery] = React.useState(props.value);
+    const [options, setOptions] = React.useState<any[]>([]);
+    React.useEffect(() => {
+      props.fetchOptions(query).then(setOptions);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [query]);
+    return (
+      <div>
+        <input
+          aria-label={props.placeholder ?? props.id ?? 'search'}
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            props.onChange(e.target.value);
+          }}
+        />
+        <ul>
+          {options.map((o, i) => (
+            <li key={i}>
+              <button
+                type="button"
+                disabled={o.disabled}
+                onClick={() => props.onChange(props.optionValue(o), o)}
+              >
+                {props.optionLabel(o)}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  },
 }));
 
 vi.mock('@/components/common/SearchableSelect', () => ({
@@ -61,6 +90,8 @@ const service = vi.hoisted(() => ({
   getPortalSalesOpportunity: vi.fn(),
   updatePortalSalesOpportunity: vi.fn(),
   getPortalOpportunityMeta: vi.fn(),
+  getPortalCustomerOptions: vi.fn(),
+  getPortalProductOptions: vi.fn(),
 }));
 vi.mock('../../lib/sales-opportunity-service', () => service);
 
@@ -106,6 +137,8 @@ beforeEach(() => {
       { value: 'competitor', label: 'Competitor' },
     ],
   });
+  service.getPortalCustomerOptions.mockResolvedValue({ items: [], prospect: null, blocked: null });
+  service.getPortalProductOptions.mockResolvedValue([{ id: 'p1', code: 'ZZT-001', name: 'ZZT Basin' }]);
 });
 
 describe('SalesOpportunityPortalDetail', () => {
@@ -276,5 +309,84 @@ describe('SalesOpportunityPortalDetail', () => {
     render(<SalesOpportunityPortalDetail id="opp-1" />);
     await screen.findByText('OPP-000001');
     expect(screen.queryByRole('button', { name: /^edit$/i })).toBeNull();
+  });
+
+  it('fix2 should-fix 5: Edit keeps the SAME view - the Products card stays, its rows become editable in place', async () => {
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    await screen.findByText('OPP-000001');
+    // Read view: Products section lists the line as plain text.
+    expect(screen.getByText('Products')).toBeTruthy();
+    expect(screen.getByText('ZZT-001')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    // Still one page, not a second component swapped in: Products is still there,
+    // now with an Add product control - the CRM detail's own in-place edit shape.
+    expect(screen.getByText('Products')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /add product/i })).toBeTruthy();
+  });
+
+  it('fix2 should-fix 5: the opportunity number and stage badge stay visible while editing (read-only meta)', async () => {
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    await screen.findByText('OPP-000001');
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    expect(screen.getByText('OPP-000001')).toBeTruthy();
+    expect(screen.getByText('New')).toBeTruthy();
+  });
+
+  it('fix2 should-fix 3: the stage pill colours from stage_key', async () => {
+    service.getPortalSalesOpportunity.mockResolvedValue(
+      detail({ outcome: 'lost', stage_key: 'lost', stage_label: 'Lost', available_transitions: [] }),
+    );
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    const badge = await screen.findByText('Lost');
+    expect(badge.className).toMatch(/--color-destructive-soft/);
+  });
+
+  it('fix2 B-new: switching a prospect-backed opportunity to a customer sends customer_id and an explicit prospect_name: null', async () => {
+    service.getPortalCustomerOptions.mockResolvedValue({
+      items: [{ customer_id: 'cust-2', customer_code: 'C2', customer_name: 'ZZT New Customer' }],
+      prospect: null,
+      blocked: null,
+    });
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    await screen.findByText('OPP-000001');
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.change(screen.getByLabelText(/customer or prospect/i), {
+      target: { value: 'ZZT New' },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'C2 - ZZT New Customer' }));
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(service.updatePortalSalesOpportunity).toHaveBeenCalledTimes(1));
+    const payload = service.updatePortalSalesOpportunity.mock.calls[0][1];
+    expect(payload.customer_id).toBe('cust-2');
+    expect(payload.prospect_name).toBeNull();
+  });
+
+  it('fix2 B-new: switching a customer-backed opportunity to a prospect sends prospect_name and an explicit customer_id: null', async () => {
+    service.getPortalSalesOpportunity.mockResolvedValue(
+      detail({ customer_id: 'cust-1', customer_name: 'ZZT Dealer', prospect_name: null }),
+    );
+    service.getPortalCustomerOptions.mockResolvedValue({
+      items: [],
+      prospect: { name: 'ZZT New Prospect' },
+      blocked: null,
+    });
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    await screen.findByText('OPP-000001');
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.change(screen.getByLabelText(/customer or prospect/i), {
+      target: { value: 'ZZT New Prospect' },
+    });
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Add "ZZT New Prospect" as a new prospect' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(service.updatePortalSalesOpportunity).toHaveBeenCalledTimes(1));
+    const payload = service.updatePortalSalesOpportunity.mock.calls[0][1];
+    expect(payload.prospect_name).toBe('ZZT New Prospect');
+    expect(payload.customer_id).toBeNull();
   });
 });

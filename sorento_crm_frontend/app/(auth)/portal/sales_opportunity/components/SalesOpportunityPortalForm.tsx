@@ -1,114 +1,48 @@
 'use client';
 
 import { useState } from 'react';
-import { LoaderCircleIcon, Plus, Trash2 } from 'lucide-react';
+import { LoaderCircleIcon, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from '@/lib/toast';
 import { AsyncCombobox } from '../../components/AsyncCombobox';
+import { createPortalSalesOpportunity } from '../../lib/sales-opportunity-service';
 import {
-  createPortalSalesOpportunity,
-  getPortalCustomerOptions,
-  getPortalProductOptions,
-  updatePortalSalesOpportunity,
-  type PortalProductOption,
-  type PortalSalesOpportunity,
-} from '../../lib/sales-opportunity-service';
-
-const PROSPECT_PREFIX = 'prospect:';
-const BLOCKED_ID = '__blocked__';
-
-interface CustomerComboOption {
-  id: string;
-  label: string;
-  disabled?: boolean;
-  customerId?: string;
-  prospectName?: string;
-}
-
-interface LineDraft {
-  key: string;
-  productId: string;
-  productLabel: string;
-  qty: string;
-}
-
-let lineKeySeq = 0;
-function nextLineKey(): string {
-  lineKeySeq += 1;
-  return `line-${lineKeySeq}`;
-}
+  type CustomerComboOption,
+  fetchCustomerOrProspectOptions,
+} from '../lib/customerOrProspect';
+import { PortalOpportunityLineRow, nextLineKey, type LineDraft } from './PortalOpportunityLineRow';
 
 /**
- * The portal Sales Opportunity form (UAC S2-10, S2-15, S2-16; plan 3.5, N10, N11).
+ * The portal Sales Opportunity CREATE form (UAC S2-10, S2-15, S2-16; plan 3.5, N10, N11).
  *
  * The same "Customer or prospect" search and Products table contract as the CRM modal, over
  * the portal's own service and `AsyncCombobox` (the complaint form's product-line pattern).
  * No agent field anywhere - the agent comes from the token, never the form.
  *
- * Phase 3 fix B3: also the portal detail's edit surface. `initial` seeds every field from the
- * opportunity being edited and switches `submit` from create to
- * `updatePortalSalesOpportunity` - `lines` is sent as the WHOLE replacement set either way,
- * never a diff, so a removed row does not need its own delete call.
+ * Edit lives on `SalesOpportunityPortalDetail` itself, in place (Phase 3 fix2 should-fix 5) -
+ * this component is create-only; an earlier round routed Edit through a second instance of it
+ * with `initial`/`onSaved` props, which swapped the whole read view for the create form
+ * instead of turning its own fields into inputs. Reverted.
  */
 export default function SalesOpportunityPortalForm({
   onCreated,
-  onSaved,
-  onCancel,
-  initial,
 }: {
   /** Called with the new opportunity's id once the server confirms it - the caller (the
    *  `new` page) owns navigating away, so this component stays router-agnostic and testable
    *  without mocking `next/navigation`. */
   onCreated?: (id: string) => void;
-  /** Edit mode only: called once the server confirms the save. */
-  onSaved?: () => void;
-  /** Edit mode only: back to the read-only view without saving. */
-  onCancel?: () => void;
-  /** Present -> edit mode: every field seeds from this opportunity and Save PATCHes it. */
-  initial?: PortalSalesOpportunity;
 }) {
-  const isEdit = !!initial;
-  const [customerValue, setCustomerValue] = useState(
-    initial ? (initial.customer_name ?? initial.prospect_name ?? '') : '',
-  );
-  const [customerId, setCustomerId] = useState<string | undefined>(initial?.customer_id ?? undefined);
-  const [prospectName, setProspectName] = useState<string | undefined>(
-    initial?.customer_id ? undefined : (initial?.prospect_name ?? undefined),
-  );
-  const [title, setTitle] = useState(initial?.title ?? '');
-  const [expectedAmount, setExpectedAmount] = useState(initial?.expected_amount ?? '');
-  const [expectedCloseDate, setExpectedCloseDate] = useState(initial?.expected_close_date ?? '');
-  const [lines, setLines] = useState<LineDraft[]>(
-    (initial?.lines ?? []).map((line) => ({
-      key: nextLineKey(),
-      productId: line.product_id,
-      productLabel: `${line.product_code ?? ''} - ${line.product_name ?? ''}`,
-      qty: String(line.qty),
-    })),
-  );
+  const [customerValue, setCustomerValue] = useState('');
+  const [customerId, setCustomerId] = useState<string | undefined>();
+  const [prospectName, setProspectName] = useState<string | undefined>();
+  const [title, setTitle] = useState('');
+  const [expectedAmount, setExpectedAmount] = useState('');
+  const [expectedCloseDate, setExpectedCloseDate] = useState('');
+  const [lines, setLines] = useState<LineDraft[]>([]);
   const [saving, setSaving] = useState(false);
-
-  const fetchCustomerOptions = async (q: string): Promise<CustomerComboOption[]> => {
-    const result = await getPortalCustomerOptions(q);
-    const options: CustomerComboOption[] = result.items.map((item) => ({
-      id: item.customer_id,
-      label: `${item.customer_code} - ${item.customer_name}`,
-      customerId: item.customer_id,
-    }));
-    if (result.blocked) {
-      options.push({ id: BLOCKED_ID, label: result.blocked.message, disabled: true });
-    } else if (result.prospect) {
-      options.push({
-        id: `${PROSPECT_PREFIX}${result.prospect.name}`,
-        label: `Add "${result.prospect.name}" as a new prospect`,
-        prospectName: result.prospect.name,
-      });
-    }
-    return options;
-  };
 
   const handleCustomerChange = (value: string, item?: CustomerComboOption) => {
     setCustomerValue(value);
@@ -146,22 +80,14 @@ export default function SalesOpportunityPortalForm({
       expected_amount: expectedAmount,
       expected_close_date: expectedCloseDate,
       ...(prospectName ? { prospect_name: prospectName } : { customer_id: customerId }),
-      // The whole set, always - never a diff. A removed row needs no delete call of its
-      // own; the server replaces every line with exactly what is sent (Phase 3 fix B3).
       lines: lines
         .filter((l) => l.productId)
         .map((l) => ({ product_id: l.productId, qty: Number(l.qty) || 0 })),
     };
     try {
-      if (isEdit && initial) {
-        await updatePortalSalesOpportunity(initial.id, payload);
-        toast.success('Opportunity saved');
-        onSaved?.();
-      } else {
-        const created = await createPortalSalesOpportunity(payload);
-        toast.success('Opportunity logged');
-        onCreated?.(created.id);
-      }
+      const created = await createPortalSalesOpportunity(payload);
+      toast.success('Opportunity logged');
+      onCreated?.(created.id);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save the opportunity.');
     } finally {
@@ -173,7 +99,7 @@ export default function SalesOpportunityPortalForm({
     <form onSubmit={submit} className="mx-auto flex w-full max-w-lg flex-col gap-4 px-3 py-4">
       <Card>
         <CardHeader>
-          <CardTitle>{isEdit ? 'Edit sales opportunity' : 'Log a sales opportunity'}</CardTitle>
+          <CardTitle>Log a sales opportunity</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
@@ -182,7 +108,7 @@ export default function SalesOpportunityPortalForm({
               id="customer-or-prospect"
               value={customerValue}
               onChange={handleCustomerChange}
-              fetchOptions={fetchCustomerOptions}
+              fetchOptions={fetchCustomerOrProspectOptions}
               optionValue={(o) => o.id}
               optionLabel={(o) => o.label}
               optionDisabled={(o) => !!o.disabled}
@@ -235,46 +161,12 @@ export default function SalesOpportunityPortalForm({
             <p className="text-sm text-muted-foreground">No products yet</p>
           ) : (
             lines.map((line) => (
-              <div key={line.key} className="flex items-end gap-2">
-                <div className="flex-1 flex flex-col gap-1.5">
-                  <Label htmlFor={`product-${line.key}`}>Product</Label>
-                  <AsyncCombobox<PortalProductOption>
-                    id={`product-${line.key}`}
-                    value={line.productLabel}
-                    onChange={(_v, item) =>
-                      updateLine(line.key, {
-                        productId: item?.id ?? '',
-                        productLabel: item ? `${item.code} - ${item.name ?? ''}` : '',
-                      })
-                    }
-                    fetchOptions={(q) => getPortalProductOptions(q)}
-                    optionValue={(o) => o.code}
-                    optionLabel={(o) => `${o.code} - ${o.name ?? ''}`}
-                    placeholder="Search products..."
-                  />
-                </div>
-                <div className="w-20 flex flex-col gap-1.5">
-                  <Label htmlFor={`qty-${line.key}`}>Qty</Label>
-                  <Input
-                    id={`qty-${line.key}`}
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    value={line.qty}
-                    onChange={(e) => updateLine(line.key, { qty: e.target.value })}
-                  />
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  aria-label="Remove product"
-                  onClick={() => removeLine(line.key)}
-                >
-                  <Trash2 className="size-4" />
-                  Remove
-                </Button>
-              </div>
+              <PortalOpportunityLineRow
+                key={line.key}
+                line={line}
+                onChange={(patch) => updateLine(line.key, patch)}
+                onRemove={() => removeLine(line.key)}
+              />
             ))
           )}
         </CardContent>
@@ -285,11 +177,6 @@ export default function SalesOpportunityPortalForm({
           {saving ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
           Save
         </Button>
-        {isEdit ? (
-          <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>
-            Cancel
-          </Button>
-        ) : null}
       </div>
     </form>
   );

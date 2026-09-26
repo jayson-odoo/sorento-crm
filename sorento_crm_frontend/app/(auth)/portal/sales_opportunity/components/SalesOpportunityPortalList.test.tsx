@@ -88,4 +88,23 @@ describe('SalesOpportunityPortalList', () => {
     render(<SalesOpportunityPortalList />);
     await screen.findByText(/failed to load/i);
   });
+
+  it('fix2 nit: the error state offers Retry, which reloads the list', async () => {
+    service.listPortalSalesOpportunities.mockRejectedValueOnce(new Error('network down'));
+    service.listPortalSalesOpportunities.mockResolvedValueOnce(ROWS);
+    const { fireEvent } = await import('@testing-library/react');
+    render(<SalesOpportunityPortalList />);
+    await screen.findByText(/failed to load/i);
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+    await screen.findByText('OPP-000001');
+  });
+
+  it('fix2 3: the Stage pill colours from stage_key', async () => {
+    service.listPortalSalesOpportunities.mockResolvedValue([
+      { ...ROWS[0], stage_key: 'lost', stage_label: 'Lost' },
+    ]);
+    render(<SalesOpportunityPortalList />);
+    const badge = await screen.findByText('Lost');
+    expect(badge.className).toMatch(/--color-destructive-soft/);
+  });
 });
