@@ -131,7 +131,7 @@ describe('useSpecKeyRecord', () => {
     expect(toast.success).toHaveBeenCalledWith('Saved. 14 products updated.');
   });
 
-  it('AC-S1.16 - a save that changed nothing derived reports Saved with no count', async () => {
+  it('fix round 3, D2 - a save that changed nothing derived still names the count, "Saved. 0 products updated."', async () => {
     const row = finishWithASuppressedValue();
     updateSpecKey.mockResolvedValue({ ...row, products_updated: 0 });
     const { result } = renderHook(() => useSpecKeyRecord(row), { wrapper });
@@ -141,7 +141,7 @@ describe('useSpecKeyRecord', () => {
       await result.current.save();
     });
 
-    expect(toast.success).toHaveBeenCalledWith('Saved.');
+    expect(toast.success).toHaveBeenCalledWith('Saved. 0 products updated.');
   });
 
   it('drops back to view mode once the save resolves', async () => {

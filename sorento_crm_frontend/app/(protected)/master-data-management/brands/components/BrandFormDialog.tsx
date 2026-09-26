@@ -37,6 +37,10 @@ const BrandFormSchema = z.object({
   // False means every product on this brand is bought locally by CS and never
   // raises an Order Inquiry (PLAN-brand-flows-to-purchasing.md).
   flows_to_purchasing: z.boolean(),
+  // "Customers can ask for this brand" (S0, D3, fix round 3 D4): default true;
+  // false for the placeholder brands OTHERS and NO LOGO, which record the
+  // absence of a brand rather than name a real one.
+  is_searchable: z.boolean(),
 });
 
 interface BrandFormDialogProps {
@@ -68,6 +72,7 @@ export default function BrandFormDialog({
       is_active: true,
       access_levels: [],
       flows_to_purchasing: true,
+      is_searchable: true,
     },
   });
 
@@ -81,6 +86,7 @@ export default function BrandFormDialog({
           is_active: brand.is_active,
           access_levels: brand.access_levels ?? [],
           flows_to_purchasing: brand.flows_to_purchasing,
+          is_searchable: brand.is_searchable ?? true,
         });
       } else if (copyFromBrand) {
         form.reset({
@@ -90,6 +96,7 @@ export default function BrandFormDialog({
           is_active: copyFromBrand.is_active,
           access_levels: copyFromBrand.access_levels ?? [],
           flows_to_purchasing: copyFromBrand.flows_to_purchasing,
+          is_searchable: copyFromBrand.is_searchable ?? true,
         });
       } else {
         form.reset({
@@ -99,6 +106,7 @@ export default function BrandFormDialog({
           is_active: true,
           access_levels: [],
           flows_to_purchasing: true,
+          is_searchable: true,
         });
       }
     }
@@ -113,6 +121,7 @@ export default function BrandFormDialog({
         is_active: data.is_active,
         access_levels: data.access_levels ?? [],
         flows_to_purchasing: data.flows_to_purchasing,
+        is_searchable: data.is_searchable,
       };
 
       if (brandId) {
@@ -122,7 +131,7 @@ export default function BrandFormDialog({
       }
       onOpenChange(false);
       form.reset();
-    } catch (error) {
+    } catch {
       // Error handled by mutation
     }
   };
@@ -246,6 +255,28 @@ export default function BrandFormDialog({
                 <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
                   <div className="space-y-0.5">
                     <FormLabel className="text-base">Flows to purchasing</FormLabel>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="is_searchable"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                  <div className="space-y-0.5">
+                    <FormLabel className="text-base">Customers can ask for this brand</FormLabel>
+                    <FormDescription>
+                      Off for a placeholder brand like Others or No logo, which nobody
+                      ever names in a search.
+                    </FormDescription>
                   </div>
                   <FormControl>
                     <Switch

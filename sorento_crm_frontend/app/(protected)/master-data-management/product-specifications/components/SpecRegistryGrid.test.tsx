@@ -41,6 +41,14 @@ vi.mock('../services/productSpecService', () => ({
   getKeysForProduct: (...a: unknown[]) => getKeysForProduct(...a),
 }));
 
+// D5 (fix round 3): "Product class" reads its Choices count off the category
+// master, not `allowed_values.length` - see the SpecRegistryGrid.classChoices
+// test below.
+const getProductClassLabels = vi.fn().mockResolvedValue([]);
+vi.mock('../../product-categories/services/categoryService', () => ({
+  getProductClassLabels: (...a: unknown[]) => getProductClassLabels(...a),
+}));
+
 import { toast } from '@/lib/toast';
 import { SpecRegistryGrid } from './SpecRegistryGrid';
 
@@ -101,6 +109,8 @@ beforeEach(() => {
   getSpecRegistry.mockReset();
   getKeysForProduct.mockReset();
   getSpecRegistry.mockResolvedValue({ keys: ROWS });
+  getProductClassLabels.mockReset();
+  getProductClassLabels.mockResolvedValue([]);
   bulkDeletionRun.mockReset();
   vi.mocked(toast.warning).mockReset();
   Element.prototype.scrollIntoView = vi.fn();
@@ -269,5 +279,39 @@ describe('SpecRegistryGrid - bulk delete skips seed rows (D14)', () => {
 
     expect(bulkDeletionRun).not.toHaveBeenCalled();
     expect(toast.warning).toHaveBeenCalledWith('1 skipped (shipped with the product)');
+  });
+});
+
+describe('SpecRegistryGrid - Product class Choices (AC-S3.3, fix round 3 D5)', () => {
+  const CLASS_ROW = baseKey({
+    spec_key: 'class',
+    label: 'Product class',
+    data_type: 'enum',
+    allowed_values: [],
+    measured_coverage: 11584,
+  });
+
+  it('reads the category master\'s distinct class label count, never 0 from an empty allowed_values', async () => {
+    getSpecRegistry.mockResolvedValue({ keys: [CLASS_ROW] });
+    getProductClassLabels.mockResolvedValue([
+      'Water Closet',
+      'Kitchen Sink',
+      'Basin Mixer',
+      'Urinal',
+    ]);
+
+    renderGrid();
+
+    const row = (await screen.findByText('Product class')).closest('tr')!;
+    await waitFor(() => expect(row.textContent).toContain('4'));
+  });
+
+  it('a specification with real choices still reads allowed_values.length, unaffected', async () => {
+    getProductClassLabels.mockResolvedValue(['Water Closet', 'Kitchen Sink']);
+    renderGrid();
+
+    const row = (await screen.findByText('Finish')).closest('tr')!;
+    // `baseKey()`'s own allowed_values: ['chrome', 'black'].
+    expect(row.textContent).toContain('2');
   });
 });

@@ -4,7 +4,7 @@
  * chips, no cards, no `_self` row, no "user"/"Seed" badge, no code name (D13;
  * owner ruling 27 Sep 2026, "this should be tabulated with data grid").
  */
-import React, { useState } from 'react';
+import React, { Profiler, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -201,5 +201,105 @@ describe('ValuesAndWordsTab - a Number specification has no choices (review V8)'
     expect(
       screen.getByText('Numbers have no choices. Other names for this specification are on Details.'),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * D1 (CRITICAL, fix round 3, agent-browser evidence) - entering/leaving edit mode,
+ * or an inline word-cell edit, pegged the renderer forever with no console error:
+ * `choices` (and the `words`/`droppedValues`/`valueLabels` view-mode fallbacks
+ * feeding it) were rebuilt fresh on every render and fed into `useReactTable`'s
+ * `data` - `getSortedRowModel`'s own recompute calls `table._autoResetPageIndex()`
+ * on every miss, which sets pagination state (a fresh object even when the value
+ * is unchanged) unconditionally, which React always re-renders for, which rebuilds
+ * the unstable array again (`data-grid.stable-data.inventory.test.ts`'s own finding,
+ * M5 run 2 - "nothing is thrown and nothing is logged").
+ *
+ * A `Profiler` around the tab counts commits directly, rather than a `waitFor`
+ * timeout - the real bug is a synchronous microtask storm that starves the event
+ * loop, so a time-based assertion could never fire either; if this ever regresses,
+ * the fairest thing this test can do is hang exactly the way the browser did,
+ * which is still a loud CI failure.
+ */
+/** A thin, controllable stand-in for the record page: real `mode`/`draft` state
+ *  (the same shape `useSpecKeyRecord` holds), `test-enter-edit`/`test-cancel`
+ *  buttons standing for the record page's own Edit/Cancel, and a `Profiler`
+ *  around the tab under test so the count is COMMITS, not test assertions. */
+function CountingHarness({
+  row,
+  initialMode,
+  onRender,
+}: {
+  row: SpecRegistryKey;
+  initialMode: 'view' | 'edit';
+  onRender: () => void;
+}) {
+  const [mode, setMode] = useState<'view' | 'edit'>(initialMode);
+  const [draft, setDraftState] = useState<SpecKeyDraft | null>(
+    initialMode === 'edit' ? projectSpecKeyDraft(row) : null,
+  );
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          setMode('edit');
+          setDraftState(projectSpecKeyDraft(row));
+        }}
+      >
+        test-enter-edit
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setMode('view');
+          setDraftState(null);
+        }}
+      >
+        test-cancel
+      </button>
+      <Profiler id="values-and-words" onRender={onRender}>
+        <ValuesAndWordsTab
+          row={row}
+          mode={mode}
+          draft={draft}
+          setDraft={(updater) => setDraftState((current) => (current ? updater(current) : current))}
+          onEnterEdit={() => {}}
+        />
+      </Profiler>
+    </div>
+  );
+}
+
+describe('D1 (fix round 3) - toggling edit mode settles, never an unbounded render loop', () => {
+  it('entering edit, an inline word-cell edit, and Cancel each add only a few renders', () => {
+    let renderCount = 0;
+    render(
+      withClient(
+        <CountingHarness row={finishOrColour()} initialMode="view" onRender={() => (renderCount += 1)} />,
+      ),
+    );
+    const afterMount = renderCount;
+
+    // Edit, pressed on the record page - this tab goes from `draft=null` to a real draft.
+    fireEvent.click(screen.getByText('test-enter-edit'));
+    const afterEdit = renderCount;
+    expect(afterEdit - afterMount).toBeLessThan(10);
+
+    // An inline word-cell edit, entirely inside edit mode.
+    fireEvent.click(screen.getByText('chrome, silver'));
+    const afterCellOpen = renderCount;
+    expect(afterCellOpen - afterEdit).toBeLessThan(10);
+
+    fireEvent.change(screen.getByDisplayValue('chrome, silver'), {
+      target: { value: 'chrome, silver, gm' },
+    });
+    fireEvent.blur(screen.getByDisplayValue('chrome, silver, gm'));
+    const afterCellCommit = renderCount;
+    expect(afterCellCommit - afterCellOpen).toBeLessThan(10);
+
+    // Cancel - back to view mode, draft dropped.
+    fireEvent.click(screen.getByText('test-cancel'));
+    expect(renderCount - afterCellCommit).toBeLessThan(10);
   });
 });

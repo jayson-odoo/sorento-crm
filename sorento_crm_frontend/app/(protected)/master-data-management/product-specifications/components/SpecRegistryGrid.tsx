@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import { MessageSquareText, Plus, Trash2, X } from 'lucide-react';
 import {
   getCoreRowModel,
@@ -30,6 +31,7 @@ import { AddSpecificationDialog } from './AddSpecificationDialog';
 import { TryPhraseDialog } from './TryPhraseDialog';
 import { useKeysForProductQuery } from '../hooks/useKeysForProductQuery';
 import { SPEC_REGISTRY_QUERY_KEY, useSpecRegistryQuery } from '../hooks/useSpecRegistryQuery';
+import { getProductClassLabels } from '../../product-categories/services/categoryService';
 import { filterSpecKeys } from '../lib/specRegistryFilter';
 import { specTypeLabel } from '../lib/specTypeLabel';
 import type { SpecRegistryKey } from '../types/productSpec.types';
@@ -59,6 +61,18 @@ export function SpecRegistryGrid() {
   } = useDebouncedSearch();
   const { matchedCode, keys: productKeys, loading: probeLoading } =
     useKeysForProductQuery(debouncedFilter);
+
+  // AC-S3.3, fix round 3 D5: "Product class" is the one OPEN-vocabulary specification -
+  // the seed comment on it is explicit ("sourced from product_categories.class_label,
+  // which grows"), so its own `allowed_values` stays empty and the Choices column has
+  // nothing to count there. Read the count from the category master directly, the SAME
+  // existing endpoint System Settings' guarded-classes picker already reads
+  // (`getProductClassLabels`) - not a new one.
+  const { data: classLabels } = useQuery({
+    queryKey: ['product-class-labels'],
+    queryFn: () => getProductClassLabels(),
+    staleTime: 5 * 60 * 1000,
+  });
 
   // A matched product wins over word matching: the reader asked about a code, so
   // the answer is that code's specifications, not every key whose wording happens
@@ -117,7 +131,8 @@ export function SpecRegistryGrid() {
       },
       {
         id: 'values',
-        accessorFn: (row) => row.allowed_values.length,
+        accessorFn: (row) =>
+          row.spec_key === 'class' ? classLabels?.length ?? 0 : row.allowed_values.length,
         header: ({ column }) => <DataGridColumnHeader title="Choices" column={column} />,
         size: 90,
         enableSorting: false,
@@ -126,6 +141,12 @@ export function SpecRegistryGrid() {
           // AC-S3.3: a number or a yes/no key has no choices to count.
           if (row.original.data_type === 'numeric' || row.original.data_type === 'boolean') {
             return <span className="text-muted-foreground">-</span>;
+          }
+          // Product class is the one open-vocabulary list (AC-S3.3, D5): its count is
+          // the category master's own distinct class label count, read above, never
+          // `allowed_values.length` - the registry seeds it empty on purpose.
+          if (row.original.spec_key === 'class') {
+            return <span className="tabular-nums">{classLabels?.length ?? 0}</span>;
           }
           return <span className="tabular-nums">{row.original.allowed_values.length}</span>;
         },
@@ -197,7 +218,7 @@ export function SpecRegistryGrid() {
         enableResizing: false,
       },
     ],
-    [],
+    [classLabels],
   );
 
   // Code, Rules and Built in start hidden (AC-S3.1) - the column chooser (already

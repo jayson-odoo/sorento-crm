@@ -203,12 +203,12 @@ export function useSpecKeyRecord(row: SpecRegistryKey | undefined): UseSpecKeyRe
               }
             : old,
       );
-      // AC-S1.16, D10: the save already re-read exactly the products it changed;
-      // there is nothing left to press, so the toast reports the count and stops.
+      // AC-S1.16, D10 (fix round 3, D2): the save already re-read exactly the
+      // products it changed; there is nothing left to press, so the toast reports
+      // the count and stops - every time, "Saved. 0 products updated." included,
+      // never a bare "Saved." that leaves the reader guessing whether it re-read.
       toast.success(
-        updated.products_updated > 0
-          ? `Saved. ${updated.products_updated} product${updated.products_updated === 1 ? '' : 's'} updated.`
-          : 'Saved.',
+        `Saved. ${updated.products_updated} product${updated.products_updated === 1 ? '' : 's'} updated.`,
       );
       setDraftState(null);
       setMode('view');
