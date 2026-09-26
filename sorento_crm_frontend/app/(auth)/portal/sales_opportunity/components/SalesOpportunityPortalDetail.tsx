@@ -28,6 +28,7 @@ import {
   updatePortalSalesOpportunity,
   type PortalSalesOpportunity,
 } from '../../lib/sales-opportunity-service';
+import SalesOpportunityPortalForm from './SalesOpportunityPortalForm';
 
 export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
   const [opportunity, setOpportunity] = useState<PortalSalesOpportunity | null>(null);
@@ -38,6 +39,7 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
   const [pendingToStatusId, setPendingToStatusId] = useState<string | null>(null);
   const [lostReason, setLostReason] = useState('');
   const [saving, setSaving] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -90,6 +92,9 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
 
   const lines = opportunity.lines ?? [];
   const transitions = opportunity.available_transitions ?? [];
+  // N7 (Phase 3): once closed, the server rejects every field edit with 422
+  // OPPORTUNITY_CLOSED - Edit has no reason to appear once that door is shut.
+  const canEditFields = opportunity.outcome === 'open';
 
   const applyStatus = async (toStatusId: string, extra?: { lost_reason: string }) => {
     setSaving(true);
@@ -142,64 +147,91 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
         </Link>
       </Button>
 
-      <Card>
-        <CardContent className="flex flex-col gap-2 py-4">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-sm font-semibold">{opportunity.title}</span>
-            <Badge
-              variant={
-                opportunity.outcome === 'lost'
-                  ? 'destructive'
-                  : opportunity.outcome === 'won'
-                    ? 'success'
-                    : 'primary'
-              }
-              appearance="light"
-            >
-              {opportunity.stage_label}
-            </Badge>
-          </div>
-          <span className="text-xs text-muted-foreground">
-            <span>{opportunity.opportunity_no}</span> &middot;{' '}
-            <span>{opportunity.customer_name ?? opportunity.prospect_name ?? '-'}</span>
-          </span>
-          <div className="flex items-center justify-between text-sm">
-            <span>{formatCurrency(opportunity.expected_amount)}</span>
-            <span>{formatDate(opportunity.expected_close_date)}</span>
-          </div>
-          {/* Browser pass defect 1: the detail never surfaced WHY a Lost opportunity was
-              lost, once it already was one - the reason only ever showed during the
-              confirm step that set it. */}
-          {opportunity.outcome === 'lost' && opportunity.lost_reason_label ? (
-            <p className="text-sm text-muted-foreground">
-              Lost reason: <span className="font-medium text-foreground">{opportunity.lost_reason_label}</span>
-            </p>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent className="flex flex-col gap-3 py-4">
-          <span className="text-sm font-semibold">Products</span>
-          {lines.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No products yet</p>
-          ) : (
-            <ul className="flex flex-col divide-y rounded-lg border">
-              {lines.map((line) => (
-                <li
-                  key={line.id ?? line.product_id}
-                  className="flex items-center justify-between gap-2 px-3 py-2 text-sm"
+      {isEditing ? (
+        // Phase 3 fix B3: reuse the same form the "new" page uses, in edit mode - title,
+        // customer or prospect, amount, close date and lines all become the create form's
+        // own inputs rather than a second copy of them.
+        <SalesOpportunityPortalForm
+          initial={opportunity}
+          onSaved={() => {
+            setIsEditing(false);
+            load();
+          }}
+          onCancel={() => setIsEditing(false)}
+        />
+      ) : (
+        <>
+          <Card>
+            <CardContent className="flex flex-col gap-2 py-4">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-semibold">{opportunity.title}</span>
+                <Badge
+                  variant={
+                    opportunity.outcome === 'lost'
+                      ? 'destructive'
+                      : opportunity.outcome === 'won'
+                        ? 'success'
+                        : 'primary'
+                  }
+                  appearance="light"
                 >
-                  <span className="min-w-0 flex-1 truncate">
-                    <span>{line.product_code}</span> - <span>{line.product_name}</span>
-                  </span>
-                  <span className="text-muted-foreground">{line.qty}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+                  {opportunity.stage_label}
+                </Badge>
+              </div>
+              <span className="text-xs text-muted-foreground">
+                <span>{opportunity.opportunity_no}</span> &middot;{' '}
+                <span>{opportunity.customer_name ?? opportunity.prospect_name ?? '-'}</span>
+              </span>
+              <div className="flex items-center justify-between text-sm">
+                <span>{formatCurrency(opportunity.expected_amount)}</span>
+                <span>{formatDate(opportunity.expected_close_date)}</span>
+              </div>
+              {/* Browser pass defect 1: the detail never surfaced WHY a Lost opportunity was
+                  lost, once it already was one - the reason only ever showed during the
+                  confirm step that set it. */}
+              {opportunity.outcome === 'lost' && opportunity.lost_reason_label ? (
+                <p className="text-sm text-muted-foreground">
+                  Lost reason: <span className="font-medium text-foreground">{opportunity.lost_reason_label}</span>
+                </p>
+              ) : null}
+              {canEditFields ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="self-start"
+                  onClick={() => setIsEditing(true)}
+                >
+                  Edit
+                </Button>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="flex flex-col gap-3 py-4">
+              <span className="text-sm font-semibold">Products</span>
+              {lines.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No products yet</p>
+              ) : (
+                <ul className="flex flex-col divide-y rounded-lg border">
+                  {lines.map((line) => (
+                    <li
+                      key={line.id ?? line.product_id}
+                      className="flex items-center justify-between gap-2 px-3 py-2 text-sm"
+                    >
+                      <span className="min-w-0 flex-1 truncate">
+                        <span>{line.product_code}</span> - <span>{line.product_name}</span>
+                      </span>
+                      <span className="text-muted-foreground">{line.qty}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      )}
 
       <Card>
         <CardContent className="flex flex-col gap-3 py-4">
@@ -214,7 +246,7 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
                   type="button"
                   variant={pendingKey && pendingToStatusId === t.to_status_id ? 'primary' : 'outline'}
                   size="sm"
-                  disabled={saving}
+                  disabled={saving || isEditing}
                   onClick={() => handleStageClick(t.key, t.to_status_id)}
                 >
                   {saving && pendingToStatusId === t.to_status_id ? (

@@ -12,7 +12,9 @@ import {
   createPortalSalesOpportunity,
   getPortalCustomerOptions,
   getPortalProductOptions,
+  updatePortalSalesOpportunity,
   type PortalProductOption,
+  type PortalSalesOpportunity,
 } from '../../lib/sales-opportunity-service';
 
 const PROSPECT_PREFIX = 'prospect:';
@@ -45,22 +47,48 @@ function nextLineKey(): string {
  * The same "Customer or prospect" search and Products table contract as the CRM modal, over
  * the portal's own service and `AsyncCombobox` (the complaint form's product-line pattern).
  * No agent field anywhere - the agent comes from the token, never the form.
+ *
+ * Phase 3 fix B3: also the portal detail's edit surface. `initial` seeds every field from the
+ * opportunity being edited and switches `submit` from create to
+ * `updatePortalSalesOpportunity` - `lines` is sent as the WHOLE replacement set either way,
+ * never a diff, so a removed row does not need its own delete call.
  */
 export default function SalesOpportunityPortalForm({
   onCreated,
+  onSaved,
+  onCancel,
+  initial,
 }: {
   /** Called with the new opportunity's id once the server confirms it - the caller (the
    *  `new` page) owns navigating away, so this component stays router-agnostic and testable
    *  without mocking `next/navigation`. */
   onCreated?: (id: string) => void;
+  /** Edit mode only: called once the server confirms the save. */
+  onSaved?: () => void;
+  /** Edit mode only: back to the read-only view without saving. */
+  onCancel?: () => void;
+  /** Present -> edit mode: every field seeds from this opportunity and Save PATCHes it. */
+  initial?: PortalSalesOpportunity;
 }) {
-  const [customerValue, setCustomerValue] = useState('');
-  const [customerId, setCustomerId] = useState<string | undefined>();
-  const [prospectName, setProspectName] = useState<string | undefined>();
-  const [title, setTitle] = useState('');
-  const [expectedAmount, setExpectedAmount] = useState('');
-  const [expectedCloseDate, setExpectedCloseDate] = useState('');
-  const [lines, setLines] = useState<LineDraft[]>([]);
+  const isEdit = !!initial;
+  const [customerValue, setCustomerValue] = useState(
+    initial ? (initial.customer_name ?? initial.prospect_name ?? '') : '',
+  );
+  const [customerId, setCustomerId] = useState<string | undefined>(initial?.customer_id ?? undefined);
+  const [prospectName, setProspectName] = useState<string | undefined>(
+    initial?.customer_id ? undefined : (initial?.prospect_name ?? undefined),
+  );
+  const [title, setTitle] = useState(initial?.title ?? '');
+  const [expectedAmount, setExpectedAmount] = useState(initial?.expected_amount ?? '');
+  const [expectedCloseDate, setExpectedCloseDate] = useState(initial?.expected_close_date ?? '');
+  const [lines, setLines] = useState<LineDraft[]>(
+    (initial?.lines ?? []).map((line) => ({
+      key: nextLineKey(),
+      productId: line.product_id,
+      productLabel: `${line.product_code ?? ''} - ${line.product_name ?? ''}`,
+      qty: String(line.qty),
+    })),
+  );
   const [saving, setSaving] = useState(false);
 
   const fetchCustomerOptions = async (q: string): Promise<CustomerComboOption[]> => {
@@ -113,20 +141,29 @@ export default function SalesOpportunityPortalForm({
     event.preventDefault();
     if (!canSave) return;
     setSaving(true);
+    const payload = {
+      title: title.trim(),
+      expected_amount: expectedAmount,
+      expected_close_date: expectedCloseDate,
+      ...(prospectName ? { prospect_name: prospectName } : { customer_id: customerId }),
+      // The whole set, always - never a diff. A removed row needs no delete call of its
+      // own; the server replaces every line with exactly what is sent (Phase 3 fix B3).
+      lines: lines
+        .filter((l) => l.productId)
+        .map((l) => ({ product_id: l.productId, qty: Number(l.qty) || 0 })),
+    };
     try {
-      const created = await createPortalSalesOpportunity({
-        title: title.trim(),
-        expected_amount: expectedAmount,
-        expected_close_date: expectedCloseDate,
-        ...(prospectName ? { prospect_name: prospectName } : { customer_id: customerId }),
-        lines: lines
-          .filter((l) => l.productId)
-          .map((l) => ({ product_id: l.productId, qty: Number(l.qty) || 0 })),
-      });
-      toast.success('Opportunity logged');
-      onCreated?.(created.id);
+      if (isEdit && initial) {
+        await updatePortalSalesOpportunity(initial.id, payload);
+        toast.success('Opportunity saved');
+        onSaved?.();
+      } else {
+        const created = await createPortalSalesOpportunity(payload);
+        toast.success('Opportunity logged');
+        onCreated?.(created.id);
+      }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to log the opportunity.');
+      toast.error(err instanceof Error ? err.message : 'Failed to save the opportunity.');
     } finally {
       setSaving(false);
     }
@@ -136,7 +173,7 @@ export default function SalesOpportunityPortalForm({
     <form onSubmit={submit} className="mx-auto flex w-full max-w-lg flex-col gap-4 px-3 py-4">
       <Card>
         <CardHeader>
-          <CardTitle>Log a sales opportunity</CardTitle>
+          <CardTitle>{isEdit ? 'Edit sales opportunity' : 'Log a sales opportunity'}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
@@ -243,10 +280,17 @@ export default function SalesOpportunityPortalForm({
         </CardContent>
       </Card>
 
-      <Button type="submit" disabled={!canSave}>
-        {saving ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
-        Save
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button type="submit" disabled={!canSave}>
+          {saving ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
+          Save
+        </Button>
+        {isEdit ? (
+          <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>
+            Cancel
+          </Button>
+        ) : null}
+      </div>
     </form>
   );
 }

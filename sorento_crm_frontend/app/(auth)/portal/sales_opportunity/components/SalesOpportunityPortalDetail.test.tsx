@@ -236,4 +236,45 @@ describe('SalesOpportunityPortalDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: /retry/i }));
     await screen.findByText('OPP-000001');
   });
+
+  it('fix B3: Edit reveals the same form pre-filled with the opportunity', async () => {
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    await screen.findByText('OPP-000001');
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('ZZT Deal');
+    expect((screen.getByLabelText('Expected amount') as HTMLInputElement).value).toBe('1000.00');
+  });
+
+  it('fix B3: saving an edit PATCHes the opportunity and returns to the view', async () => {
+    service.updatePortalSalesOpportunity.mockResolvedValue(detail({ title: 'ZZT Deal Renamed' }));
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    await screen.findByText('OPP-000001');
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'ZZT Deal Renamed' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(service.updatePortalSalesOpportunity).toHaveBeenCalledTimes(1));
+    expect(service.updatePortalSalesOpportunity.mock.calls[0][0]).toBe('opp-1');
+    expect(service.updatePortalSalesOpportunity.mock.calls[0][1].title).toBe('ZZT Deal Renamed');
+    await waitFor(() => expect(screen.queryByLabelText('Title')).toBeNull());
+  });
+
+  it('fix B3: Cancel returns to the view without saving', async () => {
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    await screen.findByText('OPP-000001');
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    expect(screen.queryByLabelText('Title')).toBeNull();
+    expect(service.updatePortalSalesOpportunity).not.toHaveBeenCalled();
+    expect(screen.getByText('ZZT Deal')).toBeTruthy();
+  });
+
+  it('fix B3: no Edit once the opportunity is closed (N7)', async () => {
+    service.getPortalSalesOpportunity.mockResolvedValue(
+      detail({ outcome: 'won', stage_key: 'won', available_transitions: [] }),
+    );
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    await screen.findByText('OPP-000001');
+    expect(screen.queryByRole('button', { name: /^edit$/i })).toBeNull();
+  });
 });
