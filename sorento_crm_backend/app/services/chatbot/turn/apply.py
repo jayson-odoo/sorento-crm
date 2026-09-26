@@ -502,13 +502,28 @@ def _answer_outstanding(
         trace.outstanding = {"kind": pending.kind, "scope": decision.scope, "detail": None}
         return focus, pending, None, True
 
-    if decision.kind == NEW_ASK and decision.why in (
-        "names_its_own_entity",
-        # #1262 slice 4 (F3), AC-S4-2: `decide()`'s own T6-half reading - a message
-        # naming ANOTHER domain, no entity at all, closes the offer exactly like a
-        # message that names its own entity does (owner ruling, hand pass 3 T6 half).
-        "domain_switch",
-    ):
+    if decision.kind == NEW_ASK and decision.why == "domain_switch":
+        # #1262 slice 4 (F3), AC-S4-2, fix lane round 3 B2: a message naming ANOTHER
+        # domain and no entity ("got eta") closes the offer, and is answered as that
+        # domain's ask over the CARRIED subject - "lists the ETA rows for the carried
+        # products" (journey step 4). The focus keeps its products, customers,
+        # warehouse and brand; an axis it has lost is filled from the offer's own
+        # filters, as an answer would settle it. Only the dead question's own axes go:
+        # the document, the status, the window and the sales channel it was asked over.
+        trace.rules_fired.append("outstanding_pending_dropped")
+        from_offer = replace(focus, products=[], customers=[], warehouse=[], outstanding_brand_ids=[])
+        _settle_question_subject(from_offer, pending, None if focus.products else trace)
+        focus.products = focus.products or from_offer.products
+        focus.customers = focus.customers or from_offer.customers
+        focus.warehouse = focus.warehouse or from_offer.warehouse
+        focus.outstanding_brand_ids = focus.outstanding_brand_ids or from_offer.outstanding_brand_ids
+        focus.document = []
+        focus.status = None
+        focus.date_window = None
+        focus.sales_channel = None
+        return focus, None, None, False
+
+    if decision.kind == NEW_ASK and decision.why == "names_its_own_entity":
         trace.rules_fired.append("outstanding_pending_dropped")
         _drop_question_subject(focus, pending)
         return focus, None, None, False

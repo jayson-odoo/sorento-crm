@@ -297,3 +297,162 @@ def test_console_cases_carry_t5_under_the_open_offer() -> None:
     assert "\n" in photo["text"] and "outstanding" not in photo["text"].lower(), photo
     assert photo["expect"].get("parser", {}).get("domain_in_message") is False, photo
     assert "Incoming" in photo["expect"].get("reply_not_contains", []), photo
+
+
+# --------------------------------------------------------------------------- #
+# Fix lane round 3, B2 (reviewer pass round 2 at b219a730): AC-S4-2 and journey step
+# 4 - "got eta" is answered as an incoming ask over the CARRIED focus. The
+# `domain_switch` arm ran `_drop_question_subject`, which cleared the very products
+# and customer the offer was about, so T6 called `crm_incoming_stock_list` with no
+# product filter and replied "Could not find incoming.". The test above builds an
+# offer with no filters, so it could not see this.
+# --------------------------------------------------------------------------- #
+
+_B2_CUSTOMER_UUID = "44444444-4444-4444-4444-444444444444"
+_B2_WINDOW = {"mode": "range", "start": "2026-01-01", "end": "2026-09-26"}
+
+
+def _offer_with_filters(kind: str) -> Pending:
+    return Pending(
+        kind=kind,
+        expects=None,
+        options=[],
+        team=None,
+        payload={
+            "domain": "order",
+            "filters": {
+                "product_code": "SRTBF 11502",
+                "product_codes": ["SRTBF 11502", "SRTBF 11503"],
+                "customer_ids": [_B2_CUSTOMER_UUID],
+                "scope": "both",
+                "date_filter_start": _B2_WINDOW["start"],
+                "date_filter_end": _B2_WINDOW["end"],
+            },
+        },
+        asked_at_turn=1,
+    )
+
+
+def _settled_focus() -> Focus:
+    """The focus as T5's refinement leaves it: the offer's own subject settled."""
+    return Focus(
+        products=[
+            {"raw": c, "hint": "product", "canonical_code": c, "current_message": False}
+            for c in ("SRTBF 11502", "SRTBF 11503")
+        ],
+        customers=[{"uuid": _B2_CUSTOMER_UUID, "hint": "customer", "current_message": False}],
+        domains=["order"],
+        document=["sales_order", "delivery_order"],
+        status="outstanding",
+        date_window=dict(_B2_WINDOW),
+    )
+
+
+def _assert_t6_keeps_the_subject(state2) -> None:
+    assert state2.pending is None, state2.pending
+    assert state2.focus.domains == ["incoming"], state2.focus.domains
+    codes = [p.get("canonical_code") or p.get("raw") for p in state2.focus.products]
+    assert codes == ["SRTBF 11502", "SRTBF 11503"], (
+        f"'got eta' is asked about the products just sent - the domain switch must "
+        f"keep them (AC-S4-2, journey step 4): {state2.focus.products!r}"
+    )
+    assert [c.get("uuid") for c in state2.focus.customers] == [_B2_CUSTOMER_UUID], (
+        f"the customer is part of the standing subject too: {state2.focus.customers!r}"
+    )
+    # The dead question's own axes go with it.
+    assert state2.focus.status is None, state2.focus.status
+    assert state2.focus.document == [], state2.focus.document
+    assert state2.focus.date_window is None, state2.focus.date_window
+
+
+def test_b2_t6_domain_switch_keeps_the_carried_subject_on_the_scope_question() -> None:
+    from app.services.chatbot.turn.apply import apply
+
+    state = State(focus=_settled_focus(), pending=_offer_with_filters("outstanding_scope"), profile=Profile())
+    v = verdict(entities=[], domain_in_message=True, domain_hint="incoming")
+    state2, _plan = apply(state, v, build_policy())
+    _assert_t6_keeps_the_subject(state2)
+
+
+def test_b2_t6_domain_switch_keeps_the_carried_subject_on_the_detail_offer() -> None:
+    from app.services.chatbot.turn.apply import apply
+
+    state = State(focus=_settled_focus(), pending=_offer_with_filters("outstanding_detail"), profile=Profile())
+    v = verdict(entities=[], domain_in_message=True, domain_hint="incoming")
+    state2, _plan = apply(state, v, build_policy())
+    _assert_t6_keeps_the_subject(state2)
+
+
+def test_b2_t6_domain_switch_settles_the_offer_subject_when_focus_lost_it() -> None:
+    """The reviewer's apply probe: the offer's filters carry the subject even when the
+    focus it rode in on does not (an empty focus). The switch answers over the offer's
+    own subject, never over nothing."""
+    from app.services.chatbot.turn.apply import apply
+
+    state = State(focus=Focus(), pending=_offer_with_filters("outstanding_scope"), profile=Profile())
+    v = verdict(entities=[], domain_in_message=True, domain_hint="incoming")
+    state2, _plan = apply(state, v, build_policy())
+    _assert_t6_keeps_the_subject(state2)
+
+
+def test_b2_new_ask_naming_its_own_entity_still_drops_the_old_subject() -> None:
+    """Guard: R17 is untouched for a message that names its OWN subject - the old
+    question's product and customer still die with it (reviewer N2 of an earlier
+    round)."""
+    from app.services.chatbot.turn.apply import apply
+
+    state = State(focus=_settled_focus(), pending=_offer_with_filters("outstanding_scope"), profile=Profile())
+    v = verdict(
+        entities=[entity("M210-GM", hint="product")], domain_in_message=True, domain_hint="incoming"
+    )
+    state2, _plan = apply(state, v, build_policy())
+    codes = [p.get("canonical_code") or p.get("raw") for p in state2.focus.products]
+    assert "SRTBF 11502" not in codes, state2.focus.products
+    assert state2.focus.customers == [], state2.focus.customers
+
+
+class TestB2EngineT6SendsTheCarriedProductsToIncoming:
+    """Engine level: an outstanding ask over two products arms the scope question,
+    then "got eta" calls the incoming tool with BOTH product ids."""
+
+    P1 = ("SRTBF11502", "aaaaaaaa-1111-aaaa-1111-aaaaaaaaaaaa")
+    P2 = ("SRTBF11503", "aaaaaaaa-2222-aaaa-2222-aaaaaaaaaaaa")
+
+    def test_got_eta_calls_incoming_with_both_products(self, session_factory, monkeypatch) -> None:
+        from tests.chatbot.test_outstanding_lane import _qf, _run_turn, _seed_contact, _session_of
+
+        _seed_contact(session_factory, variables={})
+        matches = {
+            code: {"uuid": uid, "entity_type": "product", "canonical_code": code}
+            for code, uid in (self.P1, self.P2)
+        }
+        qf1 = _qf(
+            order_status="outstanding",
+            entities=[
+                {"raw": code, "hint": "product", "canonical_code": None, "current_message": True, "confident": True}
+                for code, _ in (self.P1, self.P2)
+            ],
+        )
+        _result, captured1 = _run_turn(
+            session_factory, monkeypatch,
+            qf=qf1, text_body="outstanding SRTBF11502 SRTBF11503", msg_id="ZZT-b2-t6-1",
+            attributes=["sales_orders.outstanding"], matches=matches,
+        )
+        assert captured1 == [], f"the bare outstanding ask arms the scope question first: {captured1}"
+        assert (_session_of(session_factory).get("open_question") or {}).get("kind") == "outstanding_scope"
+
+        qf2 = _qf(
+            domain_hint="incoming", intent_hint="check_incoming", entities=[], domain_in_message=True,
+        )
+        result, captured2 = _run_turn(
+            session_factory, monkeypatch,
+            qf=qf2, text_body="got eta", msg_id="ZZT-b2-t6-2",
+            attributes=["sales_orders.outstanding"], matches=matches,
+            mcp_response={"has_result": False, "items": []},
+        )
+        incoming = [(n, a) for n, a in captured2 if n == "crm_incoming_stock_list"]
+        assert incoming, f"'got eta' must be answered as an incoming ask: {captured2} / {result.reply!r}"
+        _, args = incoming[0]
+        assert set(args.get("product_ids") or []) == {self.P1[1], self.P2[1]}, (
+            f"'got eta' is asked about the products just sent, never the whole book: {args}"
+        )
