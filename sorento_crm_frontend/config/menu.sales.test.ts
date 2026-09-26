@@ -22,10 +22,13 @@ describe('Sales menu', () => {
     expect(group).toBeGreaterThan(heading);
     expect(group).toBeLessThan(next);
     const sales = MENU_SIDEBAR[group];
-    expect(sales.moduleKey).toBe('sales');
+    // One Sales group, shared with #1260: the group has no moduleKey, each child carries
+    // the module that owns its route.
+    expect(MENU_SIDEBAR.filter((i) => !i.heading && i.title === 'Sales')).toHaveLength(1);
     const item = sales.children?.find((c) => c.title === 'Yearly comparison');
     expect(item?.path).toBe('/sales/yearly-comparison');
     expect(item?.permission).toBe('sales.reports.view');
+    expect(item?.moduleKey).toBe('sales');
   });
 
   it('maps /sales to the sales module', () => {

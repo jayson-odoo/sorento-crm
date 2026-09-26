@@ -2,17 +2,18 @@
 the chatbot's `crm_sales_analysis` wiring.
 
 PLAN-retail-sales-reports-26sep R4.3 / R5.4 (Owner ruling 26 Sep 07:16 Q5: "we need a sales
-schema and a sales module"). This is the lane that creates the module (#1260 S6 has not
-landed), so it:
+schema and a sales module"). #1260 S6 landed first: ``sales_0001_teams`` (this revision's
+ancestor) already creates the schema, the teams tables and the catalog row, dormant. So this
+revision:
 
-1. runs ``CREATE SCHEMA IF NOT EXISTS sales``. The plan puts NO table in it (R5.4); #1260's
-   tables will. Idempotent, so #1260's own migration repeating it is a no-op, whichever
-   lands first (AC-R4-8). ``alembic/env.py`` needs no change: it includes the schemas the
+1. runs ``CREATE SCHEMA IF NOT EXISTS sales``, a no-op after ``sales_0001_teams`` (AC-R4-8).
+   The plan puts NO table in it (R5.4); #1260's teams tables are the only ones there. ``alembic/env.py`` needs no change: it includes the schemas the
    models declare, and a schema with no model is filtered out of autogenerate.
 2. seeds ``sales.reports.view`` and grants it to admin and superadmin (PRINCIPLES DoD 3);
    every other role through the role editor (#1260 3.7).
-3. registers the module in ``app_modules_catalog`` and ENABLES it for every tenant that
-   already has ``order`` enabled. Precedent (scm, dealer_kit) shipped dormant; this one is
+3. registers the module in ``app_modules_catalog`` (``ON CONFLICT DO NOTHING``, so the row
+   ``sales_0001_teams`` wrote stands) and ENABLES it for every tenant that already has
+   ``order`` enabled. Precedent (scm, dealer_kit) shipped dormant; this one is
    not, because the owner asked to use these reports now and a dormant module hides the
    menu item from every non-admin with no error to read. Disabling it on the App Store
    screen is unchanged.
@@ -24,7 +25,7 @@ landed), so it:
    2026: the deploy ships the config).
 
 Revision ID: sales_s1_reports_module
-Revises: sb3_company_stock_push_at
+Revises: sales_0002_team_leader
 """
 import importlib.util
 import logging
@@ -39,7 +40,7 @@ from sqlalchemy.orm import Session
 from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 
 revision = "sales_s1_reports_module"
-down_revision = "sb3_company_stock_push_at"
+down_revision = "sales_0002_team_leader"
 branch_labels = None
 depends_on = None
 
@@ -97,8 +98,9 @@ def seed_rbac_and_module(bind) -> None:
         ),
         {
             "id": str(uuid.uuid4()),
-            "desc": "Sales reports over the sales orders, and sales targets and teams.",
-            "deps": '["base", "order"]',
+            # The same values `sales_0001_teams` writes, which normally owns the row.
+            "desc": "Sales teams, targets with live achievement, opportunities and WhatsApp updates.",
+            "deps": '["base", "product", "order"]',
         },
     )
     bind.execute(
@@ -201,8 +203,9 @@ def downgrade() -> None:
                 session.commit()
     finally:
         session.close()
+    # Back to the dormant module `sales_0001_teams` left. The catalog row is that
+    # revision's, so its own downgrade removes it, not this one.
     bind.execute(sa.text("DELETE FROM tenant_modules WHERE module_key = 'sales'"))
-    bind.execute(sa.text("DELETE FROM app_modules_catalog WHERE module_key = 'sales'"))
     bind.execute(
         sa.text(
             "DELETE FROM user_role_permissions WHERE permission_id IN "
@@ -211,5 +214,5 @@ def downgrade() -> None:
         {"s": SLUG},
     )
     bind.execute(sa.text("DELETE FROM user_permissions WHERE slug = :s"), {"s": SLUG})
-    # The schema is left in place: #1260's tables may live in it, and a purge never drops a
-    # schema (ADR-0011). It is empty from this plan.
+    # The schema is left in place: #1260's tables live in it, and a purge never drops a
+    # schema (ADR-0011). This plan adds no table to it.

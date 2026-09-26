@@ -1,6 +1,5 @@
 import {
   AlertCircle,
-  ChartLine,
   Award,
   Badge,
   Bell,
@@ -78,6 +77,35 @@ export const MENU_SIDEBAR: MenuConfig = [
 
   { heading: 'SALES' },
   {
+    // Sales module (plan 3.7, UAC S1-17, owner rulings 26 Sep (Lavish) L1 and
+    // 26 Sep 06:01 (Lavish) N1). No group-level moduleKey: each child carries the module
+    // that owns its route, so Sales Agents (module `product`, path unchanged) stays visible
+    // when `sales` is switched off. Targets and Opportunities join with their own lanes.
+    title: 'Sales',
+    icon: TrendingUp,
+    children: [
+      {
+        title: 'Sales Teams',
+        path: '/sales/teams',
+        permission: 'sales.teams.view',
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Sales Agents',
+        path: '/master-data-management/sales-agents',
+        permission: 'master_data.sales_agents.view',
+        moduleKey: 'product',
+      },
+      {
+        // PLAN-retail-sales-reports-26sep 5.4. The Sales report item lands with S2.
+        title: 'Yearly comparison',
+        path: '/sales/yearly-comparison',
+        permission: 'sales.reports.view',
+        moduleKey: 'sales',
+      },
+    ],
+  },
+  {
     title: 'Project Sales',
     icon: Building2,
     moduleKey: 'projects',
@@ -136,21 +164,6 @@ export const MENU_SIDEBAR: MenuConfig = [
             permission: 'projects.types.view',
           },
         ],
-      },
-    ],
-  },
-  {
-    // The `sales` module (PLAN-retail-sales-reports-26sep 5.4; shared with #1260, whose
-    // Targets, Opportunities, Sales Teams and Sales Agents join this group). The Sales
-    // report item lands with S2.
-    title: 'Sales',
-    icon: ChartLine,
-    moduleKey: 'sales',
-    children: [
-      {
-        title: 'Yearly comparison',
-        path: '/sales/yearly-comparison',
-        permission: 'sales.reports.view',
       },
     ],
   },
@@ -706,11 +719,6 @@ export const MENU_SIDEBAR: MenuConfig = [
             title: 'Teams',
             path: '/user-management/teams',
             permission: 'user_management.teams.view',
-          },
-          {
-            title: 'Sales Agents',
-            path: '/master-data-management/sales-agents',
-            permission: 'master_data.sales_agents.view',
           },
           {
             title: 'Onboarding Requests',
@@ -1575,11 +1583,6 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/user-management/market-segments',
       },
       {
-        title: 'Sales Agents',
-        path: '/master-data-management/sales-agents',
-        permission: 'master_data.sales_agents.view',
-      },
-      {
         title: 'Account',
         path: '/user-management/account',
       },
@@ -1844,6 +1847,28 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Stock Transfers',
         path: '/inventory-management/stock-transfers',
         permission: 'inventory.stock_transfers.view',
+      },
+    ],
+  },
+  {
+    // Sales module (plan 3.7, UAC S1-17, owner rulings 26 Sep (Lavish) L1 and
+    // 26 Sep 06:01 (Lavish) N1). No group-level moduleKey: each child carries the module
+    // that owns its route, so Sales Agents (module `product`, path unchanged) stays visible
+    // when `sales` is switched off. Targets and Opportunities join with their own lanes.
+    title: 'Sales',
+    icon: TrendingUp,
+    children: [
+      {
+        title: 'Sales Teams',
+        path: '/sales/teams',
+        permission: 'sales.teams.view',
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Sales Agents',
+        path: '/master-data-management/sales-agents',
+        permission: 'master_data.sales_agents.view',
+        moduleKey: 'product',
       },
     ],
   },

@@ -127,11 +127,12 @@ _RAW: Dict[str, dict] = {
     "sales": {
         "display_name": "Sales",
         "description": (
-            "Sales reports (Yearly comparison, Sales report) over the sales orders, and the "
-            "sales targets and teams of #1260. Owns the `sales` Postgres schema."
+            "Sales teams, targets with live achievement, opportunities and WhatsApp updates; "
+            "the sales reports (Yearly comparison, Sales report) over the sales orders."
         ),
-        # `order` owns the sales orders the reports read.
-        "dependencies": ["base", "order"],
+        # `product` for the sales agents master, `order` for the sales orders targets count
+        # and the reports read.
+        "dependencies": ["base", "product", "order"],
     },
     "projects": {
         "display_name": "Project sales",

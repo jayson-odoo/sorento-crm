@@ -93,16 +93,17 @@ def test_the_slug_is_in_the_permission_registry():
     assert SLUG in slugs
 
 
-def test_ac_r4_10_the_purge_file_ships_empty_and_no_model_lives_in_sales():
+def test_ac_r4_10_this_plan_adds_no_table_to_the_purge_file_or_the_sales_schema():
     import json
 
     from app.database import Base
 
+    # #1260 S6 owns the only tables in `sales` (the teams); this plan adds none (AC-R5-11).
+    s6_tables = {"sales.teams", "sales.team_members"}
     purge = Path(__file__).resolve().parents[2] / "sorento_crm_frontend" / "modules" / "sales" / "purge_tables.json"
-    assert json.loads(purge.read_text()) == {"moduleKey": "sales", "tables": []}
-    in_sales = [t.fullname for t in Base.metadata.tables.values() if t.schema == "sales"]
-    # AC-R5-11: this plan adds no table; any later one must sit in `sales` (none yet).
-    assert in_sales == []
+    assert set(json.loads(purge.read_text())["tables"]) == s6_tables
+    in_sales = {t.fullname for t in Base.metadata.tables.values() if t.schema == "sales"}
+    assert in_sales == s6_tables
     new_public = [t.fullname for t in Base.metadata.tables.values()
                   if t.name.startswith("sales_report") or t.name.startswith("report_subscription")]
     assert new_public == []
@@ -135,7 +136,7 @@ def test_ac_r4_8_upgrade_creates_the_schema_grants_the_slug_and_enables_the_modu
     with blank_session() as db:
         _seed_roles_and_order_domain(db)
         _run(db, module)
-        _run(db, module)  # idempotent: a second run (after #1260's) is a no-op
+        _run(db, module)  # idempotent: a second run is a no-op
 
         schemas = {r[0] for r in db.execute(sa.text("SELECT nspname FROM pg_namespace"))}
         assert "sales" in schemas
