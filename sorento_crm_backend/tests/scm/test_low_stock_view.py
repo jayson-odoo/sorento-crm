@@ -344,10 +344,11 @@ def test_view_route_run_id_omitted_uses_newest_completed_run(scm_app):
     app, db = _client(scm_app, "purchasing")
     older_id = _seed_run(db)
     newer_id = _seed_run(db)
+    # Far-future start times, so no run already in a shared local database outranks them.
     db.execute(text("UPDATE scm.reorder_run SET started_at = :t WHERE id = :id"),
-               {"t": datetime(2026, 9, 1, 8, 0, 0), "id": older_id})
+               {"t": datetime(2099, 9, 1, 8, 0, 0), "id": older_id})
     db.execute(text("UPDATE scm.reorder_run SET started_at = :t WHERE id = :id"),
-               {"t": datetime(2026, 9, 10, 8, 0, 0), "id": newer_id})
+               {"t": datetime(2099, 9, 10, 8, 0, 0), "id": newer_id})
     older = db.get(ReorderRun, older_id)
     newer = db.get(ReorderRun, newer_id)
     for stem in ("OLDA", "OLDB", "OLDC"):
