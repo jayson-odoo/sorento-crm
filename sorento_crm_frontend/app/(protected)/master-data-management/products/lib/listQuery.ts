@@ -26,6 +26,9 @@ export type ProductsListParams = DataGridApiFetchParams & {
   discontinued_batch_id?: string;
   /** The brand slice of a discontinued batch, when the recipient is scoped. */
   discontinued_brand_ids?: string;
+  /** "Discontinued at" range (issue #1287), YYYY-MM-DD, Malaysia calendar day inclusive. */
+  discontinued_from?: string;
+  discontinued_to?: string;
   advancedFilter?: ListQueryFilterGroup | null;
 };
 
@@ -43,6 +46,8 @@ export function productsListQueryKey(params: ProductsListParams): QueryKey {
     params.advancedFilter,
     params.discontinued_batch_id,
     params.discontinued_brand_ids,
+    params.discontinued_from,
+    params.discontinued_to,
   ];
 }
 
@@ -65,6 +70,8 @@ export function fetchProductsPage(
       brand_id: params.brand_id,
       product_status:
         params.status && params.status !== 'all' ? params.status : undefined,
+      discontinued_from: params.discontinued_from,
+      discontinued_to: params.discontinued_to,
     });
   }
 
@@ -82,6 +89,10 @@ export function fetchProductsPage(
     ...(params.discontinued_batch_id
       ? { discontinued_batch_id: params.discontinued_batch_id }
       : {}),
+    ...(params.discontinued_from
+      ? { discontinued_from: params.discontinued_from }
+      : {}),
+    ...(params.discontinued_to ? { discontinued_to: params.discontinued_to } : {}),
   });
 }
 
@@ -107,6 +118,8 @@ export function productsListParamsFromUrl(
     discontinued_batch_id: f.discontinued_batch_id,
     // The deep link's brand slice IS the `brand_id` param when a batch is named.
     discontinued_brand_ids: f.discontinued_batch_id ? f.brand_id : undefined,
+    discontinued_from: f.discontinued_from,
+    discontinued_to: f.discontinued_to,
     advancedFilter:
       decodeAdvancedFilter<ListQueryFilterGroup>(f.advFilter) ?? undefined,
   };

@@ -23,7 +23,7 @@ import {
   MessageSquare,
   CloudDownload,
 } from 'lucide-react';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { ProductTypeBadge } from './ProductTypeBadge';
 import { Button } from '@/components/ui/button';
@@ -36,6 +36,8 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Label } from '@/components/ui/label';
+import { DateRangePicker, parseIsoDate } from '@/components/ui/date-range-picker';
 import { useProductFilters } from '../hooks/useProductFilters';
 import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-category-select-query';
 import { useBrandSelectQuery } from '../../shared/hooks/use-brand-select-query';
@@ -80,6 +82,15 @@ const PRODUCT_IMPORT_COLUMNS: ColumnOption[] = [
   { key: 'Is Active', label: 'Is Active', selected: true },
 ];
 
+/** `2026-09-26` -> `26 Sep 26` (chip), the shared `DateRangePicker`'s own ISO
+ *  parser reused rather than a second one (same pattern as StockDebtClient's
+ *  `formatDateChip`). */
+function formatDateChip(value: string): string {
+  const date = parseIsoDate(value);
+  if (!date) return value;
+  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' });
+}
+
 const ProductsList = () => {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -118,6 +129,10 @@ const ProductsList = () => {
   const [selectedVariantFilter, setSelectedVariantFilter] = useState<
     'base' | 'variant' | 'all'
   >('all');
+  // "Discontinued at" range (issue #1287), YYYY-MM-DD or null (`DateRangePicker`'s
+  // own contract).
+  const [discontinuedFrom, setDiscontinuedFrom] = useState<string | null>(null);
+  const [discontinuedTo, setDiscontinuedTo] = useState<string | null>(null);
 
   const {
     setCategoryId,
@@ -181,6 +196,8 @@ const ProductsList = () => {
       setStatus(status === 'active' ? true : status === 'inactive' ? false : undefined);
       const variant = state.filters.variant_filter;
       setSelectedVariantFilter(variant === 'base' || variant === 'variant' ? variant : 'all');
+      setDiscontinuedFrom(state.filters.discontinued_from ?? null);
+      setDiscontinuedTo(state.filters.discontinued_to ?? null);
       setAdvancedFilter(
         decodeAdvancedFilter<ListQueryFilterGroup>(state.filters.advFilter),
       );
@@ -217,6 +234,8 @@ const ProductsList = () => {
       variant_filter: selectedVariantFilter,
       discontinued_batch_id: discontinuedBatchId,
       discontinued_brand_ids: discontinuedBrandIds,
+      discontinued_from: discontinuedFrom ?? undefined,
+      discontinued_to: discontinuedTo ?? undefined,
       advancedFilter: advancedFilter ?? undefined,
     }),
     [
@@ -229,6 +248,8 @@ const ProductsList = () => {
       selectedVariantFilter,
       discontinuedBatchId,
       discontinuedBrandIds,
+      discontinuedFrom,
+      discontinuedTo,
       advancedFilter,
     ],
   );
@@ -265,12 +286,26 @@ const ProductsList = () => {
     setPagination({ ...pagination, pageIndex: 0 });
   };
 
+  const handleDiscontinuedRangeChange = (next: { from: string | null; to: string | null }) => {
+    setDiscontinuedFrom(next.from);
+    setDiscontinuedTo(next.to);
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  };
+
+  const handleClearDiscontinuedRange = () => {
+    setDiscontinuedFrom(null);
+    setDiscontinuedTo(null);
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  };
+
   const handleClearFilters = () => {
     clearFilters();
     setSelectedCategory(null);
     setSelectedBrand(null);
     setSelectedStatus('all');
     setSelectedVariantFilter('all');
+    setDiscontinuedFrom(null);
+    setDiscontinuedTo(null);
     setAdvancedFilter(null);
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   };
@@ -299,6 +334,8 @@ const ProductsList = () => {
         variant_filter:
           selectedVariantFilter !== 'all' ? selectedVariantFilter : undefined,
         discontinued_batch_id: discontinuedBatchId,
+        discontinued_from: discontinuedFrom ?? undefined,
+        discontinued_to: discontinuedTo ?? undefined,
         advFilter: encodeAdvancedFilter(advancedFilter),
       },
     );
@@ -593,6 +630,28 @@ const ProductsList = () => {
         enableHiding: true,
       },
       {
+        accessorKey: 'discontinued_at',
+        id: 'discontinued_at',
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            title="Discontinued at"
+            visibility={true}
+            column={column}
+          />
+        ),
+        cell: ({ row }) => {
+          const value = row.original.discontinued_at;
+          return <div className="text-sm">{value ? formatDateInMalaysia(value) : ''}</div>;
+        },
+        size: 140,
+        meta: {
+          headerTitle: 'Discontinued at',
+          skeleton: <Skeleton className="h-4 w-20" />,
+        },
+        enableSorting: true,
+        enableHiding: true,
+      },
+      {
         accessorKey: 'is_searchable',
         id: 'is_searchable',
         header: ({ column }) => (
@@ -759,7 +818,18 @@ const ProductsList = () => {
     (selectedCategory && selectedCategory !== 'all' ? 1 : 0) +
     (selectedBrand && selectedBrand !== 'all' ? 1 : 0) +
     (selectedStatus && selectedStatus !== 'all' ? 1 : 0) +
-    (selectedVariantFilter && selectedVariantFilter !== 'all' ? 1 : 0);
+    (selectedVariantFilter && selectedVariantFilter !== 'all' ? 1 : 0) +
+    (discontinuedFrom || discontinuedTo ? 1 : 0);
+
+  // "Discontinued: 1 Sep 26 - 26 Sep 26" both ends, "from X" / "to Y" one end.
+  const discontinuedChipLabel =
+    discontinuedFrom && discontinuedTo
+      ? `Discontinued: ${formatDateChip(discontinuedFrom)} - ${formatDateChip(discontinuedTo)}`
+      : discontinuedFrom
+        ? `Discontinued: from ${formatDateChip(discontinuedFrom)}`
+        : discontinuedTo
+          ? `Discontinued: to ${formatDateChip(discontinuedTo)}`
+          : null;
 
   const getExportPayload = () => ({
     filter: advancedFilter ?? undefined,
@@ -767,6 +837,8 @@ const ProductsList = () => {
     category_id: selectedCategory && selectedCategory !== 'all' ? selectedCategory : undefined,
     brand_id: selectedBrand && selectedBrand !== 'all' ? selectedBrand : undefined,
     product_status: selectedStatus && selectedStatus !== 'all' ? selectedStatus : undefined,
+    discontinued_from: discontinuedFrom ?? undefined,
+    discontinued_to: discontinuedTo ?? undefined,
   });
 
   // The one offer this listing makes, in both places it belongs: the
@@ -824,6 +896,9 @@ const ProductsList = () => {
               kind: 'custom',
               active: simpleFiltersActiveCount > 0,
               activeCount: simpleFiltersActiveCount,
+              activeSummary: discontinuedChipLabel
+                ? { label: discontinuedChipLabel, onClear: handleClearDiscontinuedRange }
+                : undefined,
               content: (
                 <div className="space-y-3">
                   <SearchableSelect
@@ -870,6 +945,15 @@ const ProductsList = () => {
                       { value: 'variant', label: 'Variants only' },
                     ]}
                   />
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">Discontinued between</Label>
+                    <DateRangePicker
+                      from={discontinuedFrom}
+                      to={discontinuedTo}
+                      onChange={handleDiscontinuedRangeChange}
+                      aria-label="Discontinued between"
+                    />
+                  </div>
                   {(hasActiveFilters || simpleFiltersActiveCount > 0) && (
                     <Button variant="outline" size="sm" onClick={handleClearFilters} className="w-full">
                       Clear Filters
