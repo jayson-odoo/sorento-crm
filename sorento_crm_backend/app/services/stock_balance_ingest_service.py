@@ -106,9 +106,6 @@ WARN_WAREHOUSE_INACTIVE = "warehouse_inactive"
 #: `exc.orig.pgcode` (never `str(exc)` - see `integrity_conflict_errors`'s own
 #: docstring in `master_ingest_service` for why).
 _UNIQUE_VIOLATION_PGCODE = "23505"
-#: `app/models/inventory.py::Stock.__table_args__` - the ONLY constraint an
-#: insert on this table can violate through this service's own write path.
-_STOCK_PAIR_CONSTRAINT = "uq_stock_product_id_warehouse_id"
 
 #: Fix round 1 (security S1): Postgres `Integer` (int4) tops out at
 #: 2,147,483,647 - the `stock.quantity_on_hand` column's own type. A qty
@@ -141,16 +138,19 @@ class _StockBalanceRecord(BaseModel):
 
 
 def _is_stock_pair_conflict(exc: IntegrityError) -> bool:
-    """Whether `exc` is the specific race `uq_stock_product_id_warehouse_id`
-    catches - any OTHER `IntegrityError` (a different constraint, a
-    non-unique-violation pgcode) is not this service's to retry around."""
+    """Whether `exc` is the insert race this service knows how to retry
+    around. Matches on pgcode alone (fix round 2, reviewer N-a) - not a
+    specific constraint name: production's own copy of `uq_stock_product_id_
+    warehouse_id` (`sb2_stock_pair_unique.py`) did not always carry that
+    exact name, and the only OTHER unique key the create branch's own INSERT
+    can violate is the primary key, which is server-generated per record and
+    therefore never actually collides in practice. A unique-violation pgcode
+    on this specific statement can only mean this pair's own unique key,
+    whatever it is named on the database this code happens to be running
+    against."""
     orig = getattr(exc, "orig", None)
     pgcode = getattr(orig, "pgcode", None)
-    if pgcode != _UNIQUE_VIOLATION_PGCODE:
-        return False
-    diag = getattr(orig, "diag", None)
-    constraint = getattr(diag, "constraint_name", None) if diag else None
-    return constraint == _STOCK_PAIR_CONSTRAINT
+    return pgcode == _UNIQUE_VIOLATION_PGCODE
 
 
 class StockBalanceIngestService:

@@ -1182,6 +1182,139 @@ class TestMigrationGrantAC18:
         assert after == before, "nothing to grant to, so nothing new was granted"
 
 
+class TestMigrationSb2StockPairUniqueFixRound2:
+    """Fix round 2: `sb2_stock_pair_unique.py` creates
+    `uq_stock_product_id_warehouse_id` when absent, and refuses (never
+    dedupes) when a duplicate `(product_id, warehouse_id)` pair already
+    exists. Same `apply()`-driven, real-connection-with-rollback substrate as
+    `TestMigrationGrantAC18` above and `test_migration_brands_grant.py`:
+    `CREATE`/`DROP INDEX` are transactional DDL in Postgres, so the `bind`
+    fixture's own rollback restores the index this test drops - no manual
+    restore needed."""
+
+    _MIG_PATH = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "alembic",
+        "versions",
+        "sb2_stock_pair_unique.py",
+    )
+    _INDEX_NAME = "uq_stock_product_id_warehouse_id"
+
+    def _load_migration(self):
+        if not os.path.exists(self._MIG_PATH):
+            pytest.fail(
+                f"expected migration module at {self._MIG_PATH} (tester's "
+                "assumed revision id - update _MIG_PATH here if the coder "
+                "named it differently) with module-level apply(conn)/revert(conn)"
+            )
+        spec = importlib.util.spec_from_file_location(
+            "mig_sb2_stock_pair_unique", self._MIG_PATH
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    @pytest.fixture()
+    def bind(self):
+        """A connection whose every write is discarded - same reason
+        `TestMigrationGrantAC18::bind` gives, and doubly true here: dropping
+        a real unique index on the database this whole suite runs against
+        must never survive past this one test."""
+        connection = engine.connect()
+        transaction = connection.begin()
+        try:
+            yield connection
+        finally:
+            transaction.rollback()
+            connection.close()
+
+    def _index_exists(self, bind) -> bool:
+        # `pg_indexes` lists every schema at once, unlike an ordinary table
+        # reference - this suite's OWN `blank_session()` scratch schema
+        # carries a same-named copy (built by `create_all` off the same ORM
+        # model), so an unqualified check here would find that one even
+        # after this test drops the REAL, `public` one. `bind` is a plain
+        # `engine.connect()` with no `search_path` override (see this
+        # class's own `bind` fixture docstring), so every DDL/DML statement
+        # this test issues already targets `public` alone - only the CHECK
+        # needs the explicit schema filter to match.
+        return (
+            bind.execute(
+                text(
+                    "SELECT 1 FROM pg_indexes WHERE indexname = :name AND schemaname = 'public'"
+                ),
+                {"name": self._INDEX_NAME},
+            ).first()
+            is not None
+        )
+
+    def _seed_duplicate_pair(self, bind) -> None:
+        """Two `stock` rows sharing one `(product_id, warehouse_id)` pair -
+        via the ORM, bound to THIS test's own connection/transaction, so the
+        migration's own raw-SQL duplicate count (issued on the same `bind`)
+        sees them without a commit."""
+        from sqlalchemy.orm import Session
+
+        from app.models.company import Company
+        from app.models.inventory import Stock, Warehouse
+        from app.models.product import Product, ProductCategory, UnitOfMeasure
+
+        session = Session(bind=bind, join_transaction_mode="create_savepoint")
+        suffix = uuid.uuid4().hex[:8]
+        company = Company(id=str(uuid.uuid4()), name=f"{MARKER} dup co", code=f"ZSD{suffix}")
+        category = ProductCategory(category_code=unique_code(MARKER), category_name="c")
+        uom = UnitOfMeasure(uom_code=unique_code(MARKER), uom_name="u")
+        session.add_all([company, category, uom])
+        session.flush()
+        warehouse = Warehouse(
+            warehouse_code=unique_code(MARKER), warehouse_name="w", is_active=True,
+            company_id=company.id,
+        )
+        product = Product(
+            product_code=unique_code(MARKER), product_name="p", category_id=category.id,
+            base_uom_id=uom.id, list_price=1, company_id=company.id,
+        )
+        session.add_all([warehouse, product])
+        session.flush()
+        session.add(Stock(product_id=product.id, warehouse_id=warehouse.id, company_id=company.id, quantity_on_hand=1))
+        session.add(Stock(product_id=product.id, warehouse_id=warehouse.id, company_id=company.id, quantity_on_hand=2))
+        session.flush()
+
+    def test_apply_creates_the_index_when_absent(self, bind):
+        assert self._index_exists(bind), (
+            "expected the ORM-declared index to already exist on this database"
+        )
+        bind.execute(text(f"DROP INDEX {self._INDEX_NAME}"))
+        assert not self._index_exists(bind)
+
+        mig = self._load_migration()
+        mig.apply(bind)
+
+        assert self._index_exists(bind)
+
+    def test_apply_is_idempotent(self, bind):
+        mig = self._load_migration()
+        mig.apply(bind)
+        mig.apply(bind)
+        assert self._index_exists(bind)
+
+    def test_apply_raises_on_a_seeded_duplicate_pair(self, bind):
+        bind.execute(text(f"DROP INDEX {self._INDEX_NAME}"))
+        self._seed_duplicate_pair(bind)
+
+        mig = self._load_migration()
+        with pytest.raises(RuntimeError, match="product_id, warehouse_id"):
+            mig.apply(bind)
+
+        assert not self._index_exists(bind), "must not create the index when it refused"
+
+    def test_downgrade_is_a_no_op(self, bind):
+        assert self._index_exists(bind)
+        mig = self._load_migration()
+        mig.revert(bind)  # must not raise
+        assert self._index_exists(bind), "downgrade must not drop the model-declared index"
+
+
 # =================================================================== AC-SB-19
 class TestReadBackAC19:
     def test_read_returns_records_and_not_found(self, env):
