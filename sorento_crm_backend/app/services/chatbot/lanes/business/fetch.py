@@ -1932,7 +1932,13 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
         else None
     )
     return {
-        "response": text,
+        # Review round (26 Sep 2026), SF1: `has_result: False` alone did not stop
+        # `turn/compose.py` printing this same bare string VERBATIM whenever it rode
+        # in on `lane_text` (only the literal substring "Error executing tool" was
+        # ever stripped, AC-S1-3's own narrow fix) - a bare, non-envelope string is
+        # NEVER a rendered report, so it must never reach `response` either, the
+        # same "never treated as a result" rule `has_result` already states above.
+        "response": text if "response" in envelope else "",
         "response_intro": None,
         "answers": [],
         "attachments": [],
@@ -2028,7 +2034,11 @@ def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
         else None
     )
     return {
-        "response": text,
+        # Mirrors `_outstanding_report_output`'s own SF1 fix (review round, 26 Sep
+        # 2026): a bare, non-envelope string is never a rendered report, so it must
+        # never reach `response` either - only "Error executing tool" ever got
+        # stripped downstream, so any other unrendered string rode through verbatim.
+        "response": text if "response" in envelope else "",
         "response_intro": None,
         "answers": [],
         "attachments": [],
