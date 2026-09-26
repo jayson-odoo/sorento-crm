@@ -1,7 +1,7 @@
 # PLAN: retail sales reports, one query layer for the report screens and the chatbot (#1267)
 
 Status: draft, pre-grill (26 Sep 2026). Grill questions G1 to G10 are in section 9 and posted on
-the docs PR as one comment. Track: full for S1 to S5 (a new permission slug in S1, a migration and
+the docs PR #1269 as comment 5843859424. Track: full for S1 to S5 (a new permission slug in S1, a migration and
 a changed external ingest field in S3, a new chatbot tool in S1). S0 is a measurement with no code.
 Nothing built.
 Domain: sales. Classification: **CORE extension of `order_management`** (no new module key). The
