@@ -2657,6 +2657,42 @@ def domain_denial_text(db: Session, domain: str) -> str | None:
         return None
 
 
+#: #1262 slice 6 (F6a): the exact shape `answer.build_set_header` emits ("0 products
+#: have incoming stock.", "10 taps have PPS certificates. Showing 5."). `turn/
+#: compose.py` may not call `re.` itself (`turn` package purity,
+#: `test_turn_package_never_calls_re_dot_or_reads_dot_text`), so the match lives here
+#: and compose imports the plain function below.
+_COUNTED_SET_HEADER_LINE = re.compile(r"^\d[\d,]*\s+\S+\s+(?:has|have)\s+.+\.(?:\s+Showing\s+\d+\.)?$")
+
+
+def is_counted_set_header_line(text: str) -> bool:
+    """`turn/compose.py`'s own guard, one layer down: a `lane_text` first line that
+    matches `build_set_header`'s shape - used ONLY when `header_override` is itself
+    falsy (a real counted-set answer keeps its header exactly as today)."""
+    return bool(_COUNTED_SET_HEADER_LINE.match(text.strip()))
+
+
+def _lane_text_without_withheld_header(
+    text: Any, set_header: Any, *, counted_set: bool
+) -> Any:
+    """#1262 slice 6 (F6a): `header_override` (below) is already withheld when
+    `counted_set` is False - this is the SAME withholding for the other carrier.
+    `lanes/business/fetch.py`'s report builder bakes the identical `set_header`
+    string as the FIRST line of `response`/`lane_text` whenever a predicate rode
+    on the ctx, with no `counted_set` check of its own ("got eta" over carried
+    products counted 0 against the leftover word "eta" and printed "0 products
+    have incoming stock." above the real ETA rows). Stripped by exact prefix, off
+    the same `set_header` string `header_override` itself is built from - never a
+    guess at the header's shape.
+    """
+    if counted_set or not isinstance(text, str) or not isinstance(set_header, str):
+        return text
+    prefix = set_header.strip()
+    if prefix and text.startswith(prefix):
+        return text[len(prefix) :].lstrip("\n")
+    return text
+
+
 def envelope_of(
     fragment: dict[str, Any],
     spec: FetchSpec,
@@ -2716,7 +2752,11 @@ def envelope_of(
         # (#930's grammar, contract 102); this is what a tool with no rows to render -
         # a report, a refusal, a miss suggestion - has to say instead. A refused domain
         # says contract 7's registered sentence.
-        "lane_text": denial_text if refused else fetched.get("response"),
+        "lane_text": _lane_text_without_withheld_header(
+            denial_text if refused else fetched.get("response"),
+            fetched.get("set_header"),
+            counted_set=counted_set,
+        ),
         # A counted-set answer's own header ("10 taps have certificates. Showing
         # 5.", AC-1316/AC-1317) - unlike `lane_text` this travels ALONGSIDE rows, not
         # instead of them: the composer still renders `figures` through its own
