@@ -215,8 +215,10 @@ def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str
     5. `stated_brand` - a brand the customer named when no roster was involved at all;
     6. `none`.
 
-    **`focus_product` (#865) outranks rungs 4 to 6** and is applied after this function,
-    by `_apply_focus_brand`, because it needs a seam and this function is pure: the brand
+    **`focus_product` (#865) outranks rungs 4 and 6, never rung 5** and is applied after
+    this function, by `_apply_focus_brand`, because it needs a seam and this function is
+    pure. Rung 5 is this turn's own `query_brands`, the customer's explicit brand word, and
+    it wins over a product carried in focus (fix round 2, S1). The focus rung is the brand
     of the product the escalation is about, read off the product row. It is not a carry
     that can go stale: the focus product itself drops on a topic reset or a newer product
     (`turn/apply.py::_focus_rules`), and the brand is re-read from the row every time.
@@ -719,9 +721,11 @@ def _apply_focus_brand(context_item: dict[str, Any], services: Any) -> dict[str,
     previous turn left in focus. Nothing here decides when that carry ends; the focus
     rules already drop it on a topic reset or a newer product.
 
-    It outranks the offer carry and a bare brand word (rungs 4 to 6 of
-    `escalation_context`), and never the three roster arms above them, whose brand is a
-    SPECIFIC row the customer was shown. A product with no brand row, products that
+    It outranks the offer carry and `none` (rungs 4 and 6 of `escalation_context`). It
+    never outranks `stated_brand` (rung 5), the brand the customer named on THIS turn:
+    "I need the Mocha catalogue, escalate to marketing" after a SORENTO spec answer is a
+    Mocha escalation (fix round 2, S1). Nor the three roster arms above them, whose brand
+    is a SPECIFIC row the customer was shown. A product with no brand row, products that
     disagree on the brand, a bundle without the seam, or a read that raises leave the item
     exactly as `escalation_context` built it: the escalation is real whether or not the
     brand can be named.
@@ -748,8 +752,9 @@ def _apply_focus_brand(context_item: dict[str, Any], services: Any) -> dict[str,
 
 # The `escalation_context` outcomes the focus product's brand replaces (#865). The roster
 # arms (`picked_member`, `company_pick`, the `prior_state*` / `multi_company_unpicked`
-# family) are a specific row the customer was shown and keep their own brand.
-_FOCUS_OUTRANKS = frozenset({"carried_brand", "stated_brand", "none"})
+# family) are a specific row the customer was shown and keep their own brand, and
+# `stated_brand` is the customer's own word on this turn (fix round 2, S1).
+_FOCUS_OUTRANKS = frozenset({"carried_brand", "none"})
 
 
 def _routing_record(

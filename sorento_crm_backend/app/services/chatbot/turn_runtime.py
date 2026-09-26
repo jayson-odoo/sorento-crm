@@ -96,6 +96,11 @@ class TurnContext:
     # `turn/compose.py::compose` so a freshly minted `team_pick`/roster re-arm can
     # stamp `payload["brand_code"]` beside the agent it already stamps.
     routing_brand: str | None = None
+    # #865 (fix round 2, N2): the focus product's brand, as a thunk, for a turn whose
+    # resolver never ran (a SETTLED focus product is not re-resolved). A thunk so the
+    # products x brands read runs only when compose actually mints a `team_pick`; read
+    # through `turn/compose.py::_routing_brand`, never directly.
+    focus_brand: Callable[[], str | None] | None = None
 
 
 # --------------------------------------------------------------------------- #

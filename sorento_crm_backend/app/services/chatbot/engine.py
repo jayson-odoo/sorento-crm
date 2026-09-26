@@ -2169,19 +2169,18 @@ def _run_stages(  # noqa: PLR0915
                 # reads - `lanes/business/gate.py::run_gate`'s own `routing_brand`.
                 # `jsc.get` never raises on a non-dict `gate`, same contract as every
                 # other reader of this payload.
-                routing_brand=(
-                    jsc.get(
-                        resolver_payload.get("gate") if isinstance(resolver_payload, dict) else None,
-                        "routing_brand",
-                    )
-                    # No resolver ran at all (the focus product is settled, so it is not
-                    # re-resolved): `_team_pick_question` still takes the focus product's
-                    # brand (#865 sibling), the same read `_focus_brand_payload` makes.
-                    or (
-                        _focus_brand(db, state_out.focus)
-                        if not isinstance(resolver_payload, dict)
-                        else None
-                    )
+                routing_brand=jsc.get(
+                    resolver_payload.get("gate") if isinstance(resolver_payload, dict) else None,
+                    "routing_brand",
+                ),
+                # No resolver ran at all (the focus product is settled, so it is not
+                # re-resolved): `_team_pick_question` still takes the focus product's
+                # brand (#865 sibling), the same read `_focus_brand_payload` makes. A
+                # thunk, so the read runs only when compose mints (fix round 2, N2).
+                focus_brand=(
+                    (lambda: _focus_brand(db, state_out.focus))
+                    if not isinstance(resolver_payload, dict)
+                    else None
                 ),
             )
             # Will `answer_bridge.answer_for` (R4/R5) answer this turn's miss? ONE
@@ -2303,7 +2302,14 @@ def _run_stages(  # noqa: PLR0915
                         # No resolver ran (the focus product is settled, so "eta" after
                         # a product answer re-resolves nothing): the miss still mints its
                         # offer with the focus product's brand (#865 sibling).
-                        resolver_payload or _focus_brand_payload(db, state_out.focus),
+                        # Read only when the bridge will answer a miss, so a hit never
+                        # pays for it (fix round 2, N2).
+                        resolver_payload
+                        or (
+                            _focus_brand_payload(db, state_out.focus)
+                            if answer_bridge.answers_a_miss({}, envelopes[0])
+                            else {}
+                        ),
                         envelope=envelopes[0],
                         parser=answer_parse_output,
                         ctx=ctx,

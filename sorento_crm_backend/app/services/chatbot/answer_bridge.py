@@ -1415,35 +1415,13 @@ def _apply_crossdomain_render(
     return merged_text if isinstance(merged_text, str) and merged_text else text
 
 
-def answer_for(
-    payload: dict[str, Any] | None,
-    *,
-    envelope: dict[str, Any] | None,
-    parser: dict[str, Any] | None,
-    ctx: Any,
-    canned: Any,
-    services: AnswerServices,
-    db: Any,
-    asked_at_turn: int | None,
-    roster_caps: Mapping[str, int] | None = None,
-    crossdomain_ladder: Mapping[str, Any] | None = None,
-    turn_id: str | None = None,
-    trace: Any = None,
-    dry_run: bool = True,
-    carried_pending: Any = None,
-) -> turn_compose.Answer | None:
-    """The MISS seam (R4): `None` outside its own two triggers (see module docstring),
-    so a hit, an `access_denied` refusal, an infrastructure error and a multi-domain plan
-    all fall through to the caller's own fallback (`turn/compose.py`, or R5's own hit
-    arm).
-
-    `carried_pending` is `state.pending` as `apply()` left it, BEFORE this miss's own
-    question overwrites it (`engine.py`'s own `state_out.pending`) - the same value
-    `turn/compose.py::compose`'s identical carried-roster check reads. Optional and
-    `None` on every caller that predates hand pass 9 (a missing carry just means the
-    roster-preservation rule below never fires, same as before it existed)."""
-    if not isinstance(payload, dict):
-        return None
+def _miss_triggers(
+    payload: dict[str, Any], envelope: dict[str, Any] | None
+) -> tuple[Any, Any, tuple[bool, bool, bool]]:
+    """`(raw_fragment, fetch_item, (via_resolver_exit, via_error_fragment,
+    via_fetched_empty))`: `answer_for`'s three triggers, read off the payload and the
+    envelope alone. Shared with `answers_a_miss`, so the engine can ask BEFORE it builds
+    anything the miss would need (#865 fix round 2, N2)."""
     raw_fragment = envelope.get("raw_fragment") if isinstance(envelope, dict) else None
     fragment_outcome = raw_fragment.get("outcome") if isinstance(raw_fragment, dict) else None
     fetch_item = None
@@ -1475,6 +1453,48 @@ def answer_for(
         and raw_fragment.get("kind") == "result"
         and isinstance(fetch_item, Mapping)
         and not fetch_item.get("has_result")
+    )
+    return raw_fragment, fetch_item, (via_resolver_exit, via_error_fragment, via_fetched_empty)
+
+
+def answers_a_miss(payload: dict[str, Any], envelope: dict[str, Any] | None) -> bool:
+    """Will `answer_for` answer this envelope as a miss? Its own trigger rule, nothing
+    else: the engine reads the focus product's brand for a resolver-less miss only when
+    this is true, so a hit never pays for that read (#865 fix round 2, N2)."""
+    return any(_miss_triggers(payload, envelope)[2])
+
+
+def answer_for(
+    payload: dict[str, Any] | None,
+    *,
+    envelope: dict[str, Any] | None,
+    parser: dict[str, Any] | None,
+    ctx: Any,
+    canned: Any,
+    services: AnswerServices,
+    db: Any,
+    asked_at_turn: int | None,
+    roster_caps: Mapping[str, int] | None = None,
+    crossdomain_ladder: Mapping[str, Any] | None = None,
+    turn_id: str | None = None,
+    trace: Any = None,
+    dry_run: bool = True,
+    carried_pending: Any = None,
+) -> turn_compose.Answer | None:
+    """The MISS seam (R4): `None` outside its own two triggers (see module docstring),
+    so a hit, an `access_denied` refusal, an infrastructure error and a multi-domain plan
+    all fall through to the caller's own fallback (`turn/compose.py`, or R5's own hit
+    arm).
+
+    `carried_pending` is `state.pending` as `apply()` left it, BEFORE this miss's own
+    question overwrites it (`engine.py`'s own `state_out.pending`) - the same value
+    `turn/compose.py::compose`'s identical carried-roster check reads. Optional and
+    `None` on every caller that predates hand pass 9 (a missing carry just means the
+    roster-preservation rule below never fires, same as before it existed)."""
+    if not isinstance(payload, dict):
+        return None
+    raw_fragment, fetch_item, (via_resolver_exit, via_error_fragment, via_fetched_empty) = (
+        _miss_triggers(payload, envelope)
     )
     if not (via_resolver_exit or via_error_fragment or via_fetched_empty):
         return None

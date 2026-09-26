@@ -499,6 +499,133 @@ class TestTheCarryEndsOnATopicResetOrANewerProduct:
         assert calls[0]["response"].get("assignee_name") == "ZZT Kia Yee", calls[0]["response"]
 
 
+class TestAStatedBrandOutranksTheFocusProduct:
+    def test_a_mocha_catalogue_escalation_after_a_sorento_spec_answer_draws_the_mocha_member(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        """Round 2, S1 (reviewer pass at df577453): turn 1 answers a SORENTO spec, turn 2
+        says "I need the Mocha catalogue, escalate to marketing" (`query_brands: ["mocha"]`,
+        no entities). The customer's explicit brand on THIS turn is the `stated_brand` rung,
+        which works on main; the product carried from turn 1 must not outrank it."""
+        _seed_product_with_brand(session_factory, code="SRTKS8650A", brand_code="SORENTO")
+        _seed_marketing_product_team(session_factory)
+        _run_spec_hit(
+            session_factory, monkeypatch, stub_parser, stub_access, phone="+60000865010", code="SRTKS8650A"
+        )
+
+        stub_parser(_escalate_to_marketing_verdict(query_brands=["mocha"]))
+        calls = _capture_real_next_assignee(monkeypatch)
+        _capture_sla(monkeypatch)
+        turn2 = engine_mod.run_turn(
+            _envelope_for("ZZT-msg-865-mocha", "I need the Mocha catalogue, escalate to marketing"),
+            session_factory=session_factory,
+        )
+
+        assert turn2.branch_kind == "out_of_scope", turn2.branch_kind
+        assert len(calls) == 1, calls
+        assert calls[0]["body"]["brand_code"] == "mocha", (
+            f"the customer named Mocha on this turn; a SORENTO product carried from the "
+            f"previous turn must not outrank it: {calls[0]['body']!r}"
+        )
+        assert calls[0]["response"].get("assignee_name") == "ZZT Kia Yee", calls[0]["response"]
+        routing = _looked_up_routing(session_factory, turn2.turn_id)
+        assert routing["routing_source"] == "stated_brand", routing
+
+
+class TestTheDryRunPreviewsTheSameBrand:
+    def test_24sep_replay_as_a_console_dry_run_previews_the_sorento_member(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        """Round 2, S2 (kill test K9 at df577453): the console runs dry (`is_test`), and
+        `_preview_routing` must apply the same focus-brand rung as the live draw, or the
+        preview the owner checks drifts from the draw it previews."""
+        _seed_product_with_brand(session_factory, code="SRTKS8650A", brand_code="SORENTO")
+        _seed_marketing_product_team(session_factory)
+        _run_spec_hit(
+            session_factory, monkeypatch, stub_parser, stub_access, phone="+60000865011", code="SRTKS8650A"
+        )
+
+        stub_parser(_escalate_to_marketing_verdict())
+        calls = _capture_real_next_assignee(monkeypatch)
+        sla = _capture_sla(monkeypatch)
+        envelope = _envelope_for("ZZT-msg-865-dry", "Please esculate to Marketing")
+        envelope.is_test = True
+        assert envelope.dry_run is True
+        turn2 = engine_mod.run_turn(envelope, session_factory=session_factory)
+
+        assert turn2.branch_kind == "out_of_scope", turn2.branch_kind
+        assert len(calls) == 1, calls
+        assert calls[0]["body"].get("preview") is True, calls[0]["body"]
+        assert calls[0]["body"]["brand_code"] == "sorento", calls[0]["body"]
+        assert calls[0]["response"].get("assignee_name") == "ZZT Tay Zhi Yang", calls[0]["response"]
+        assert sla == [], "a dry run writes no SLA row"
+        routing = _looked_up_routing(session_factory, turn2.turn_id)
+        assert routing["brand_code"] == "sorento", routing
+        assert routing["routing_source"] == "focus_product", routing
+        assert routing["cursor_key"] == "~b:sorento", routing
+
+
+class TestTheFocusBrandIsReadOnlyWhenAnOfferIsMinted:
+    def test_a_hit_turn_over_a_settled_product_never_reads_the_focus_brand(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        """Round 2, N2: the products x brands read feeds only a minted `team_pick`. A turn
+        over a settled focus product that is answered (a HIT) mints nothing, so the read
+        must not run at all."""
+        _seed_settled_focus(session_factory, monkeypatch, stub_access, phone="+60000865012")
+        _stub_product_card(monkeypatch)
+        reads: list[Any] = []
+        real = engine_mod._focus_brand
+
+        def counting(db: Any, focus: Any) -> Any:
+            reads.append(focus)
+            return real(db, focus)
+
+        monkeypatch.setattr(engine_mod, "_focus_brand", counting)
+        stub_parser(
+            verdict(
+                message_type="business_query",
+                domain_hint="master_products",
+                intent_hint="check_product",
+                entities=[],
+                routing={"suggested_team": "purchasing", "suggested_agent": "purchasing"},
+            )
+        )
+        turn = engine_mod.run_turn(
+            _envelope_for("ZZT-msg-865-hit", "what grade is it?"), session_factory=session_factory
+        )
+
+        assert turn.branch_kind == "business_query", turn.branch_kind
+        assert _session_vars(session_factory).get("open_question") is None
+        assert reads == [], f"no offer was minted, so the focus brand must not be read: {len(reads)}"
+
+    def test_the_fanned_out_miss_reads_it_once_when_it_mints(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        _seed_settled_focus(session_factory, monkeypatch, stub_access, phone="+60000865013")
+        reads: list[Any] = []
+        real = engine_mod._focus_brand
+
+        def counting(db: Any, focus: Any) -> Any:
+            reads.append(focus)
+            return real(db, focus)
+
+        monkeypatch.setattr(engine_mod, "_focus_brand", counting)
+        stub_parser(
+            verdict(
+                asks=[{"domain": "inventory"}, {"domain": "incoming"}],
+                domain_hint=None,
+                intent_hint=None,
+                entities=[],
+                routing={"suggested_team": "purchasing", "suggested_agent": "incoming_stock_enquiries"},
+            )
+        )
+        engine_mod.run_turn(_envelope_for("ZZT-msg-865-fan2", "stock and eta?"), session_factory=session_factory)
+
+        assert (_session_vars(session_factory).get("open_question") or {}).get("kind") == "team_pick"
+        assert len(reads) == 1, len(reads)
+
+
 # --------------------------------------------------------------------------- #
 # 5. Contract 129: the five-key session wire shape is unchanged.
 # --------------------------------------------------------------------------- #
@@ -562,13 +689,28 @@ class TestApplyFocusBrand:
     def _item(self, source: str, brand: Any = None) -> dict[str, Any]:
         return {"routing_source": source, "brand_code": brand, "focus_products": self.FOCUS}
 
-    def test_it_replaces_none_carried_and_stated(self) -> None:
+    def test_it_replaces_none_and_the_offer_carry(self) -> None:
         from app.services.chatbot.lanes.escalation import _apply_focus_brand
 
-        for source, before in (("none", None), ("carried_brand", "mocha"), ("stated_brand", "mocha")):
+        for source, before in (("none", None), ("carried_brand", "mocha")):
             out = _apply_focus_brand(self._item(source, before), _Seams("SORENTO"))
             assert out["brand_code"] == "sorento", (source, out)
             assert out["routing_source"] == "focus_product", (source, out)
+
+    def test_a_brand_the_customer_stated_this_turn_keeps_its_own_brand(self) -> None:
+        """Round 2, S1: `stated_brand` is this turn's own `query_brands`, the customer's
+        explicit word. The focus product, named this turn or carried, never outranks it."""
+        from app.services.chatbot.lanes.escalation import _apply_focus_brand
+
+        for current in (False, True):
+            seams = _Seams("sorento")
+            item = {
+                "routing_source": "stated_brand",
+                "brand_code": "mocha",
+                "focus_products": [{**self.FOCUS[0], "current_message": current}],
+            }
+            assert _apply_focus_brand(item, seams) == item, current
+            assert seams.asked == [], current
 
     def test_a_roster_arm_keeps_its_own_brand(self) -> None:
         from app.services.chatbot.lanes.escalation import _apply_focus_brand
@@ -608,5 +750,25 @@ class TestFocusProductBrandRead:
             bad = [{"uuid": "not-a-uuid", "raw": "ZZT865-SRT", "hint": "product"}]
             assert focus_product_brand(db, bad) == "sorento"
             assert focus_product_brand(db, []) is None
+        finally:
+            db.close()
+
+    def test_a_settled_entry_matches_by_its_uuid_alone(self, session_factory) -> None:
+        """Round 2, N1: a settled focus entry names its row by `uuid`. When its `raw` is
+        not the product code and it carries no `canonical_code`, the uuid alone must still
+        find the row, or the settled product would lose its brand."""
+        from app.models.product import Product
+        from app.services.chatbot.lanes.escalation_services import focus_product_brand
+
+        _seed_product_with_brand(session_factory, code="ZZT865-UID", brand_code="SORENTO")
+        db = _db(session_factory)
+        try:
+            product_id = db.query(Product.id).filter(Product.product_code == "ZZT865-UID").scalar()
+            settled = [
+                {"uuid": str(product_id), "raw": "the kitchen sink", "canonical_code": None, "hint": "product"}
+            ]
+            assert focus_product_brand(db, settled) == "sorento"
+            no_code = [{"uuid": str(product_id).upper(), "hint": "product"}]
+            assert focus_product_brand(db, no_code) == "sorento"
         finally:
             db.close()
