@@ -64,3 +64,19 @@ def test_description_states_the_required_metric_and_the_no_cutoff_rule() -> None
     assert "rank_by" in text and "REQUIRED" in text
     assert "total_count" in text
     assert chr(0x2013) not in text and chr(0x2014) not in text
+
+
+def test_no_number_named_steers_to_count_only() -> None:
+    """Reviewer N1 (PR #1273): with no number named the agent asks for the count
+    (`count_only=true`), never the whole ranked book (#1263 N1: about 13k rows and
+    1 MB for a full year)."""
+    description = _spec().description
+    assert "OMIT it when the customer named no number" not in description
+    assert "count_only=true" in description
+    assert "never omit `n` to pull every row" in description
+
+
+def test_rows_are_described_code_only() -> None:
+    """Owner ruling 26 Sep ~07:40Z: a ranked row carries no name."""
+    description = _spec().description
+    assert "rank, code, name" not in description

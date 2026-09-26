@@ -17,42 +17,36 @@
     {
       "rank": 1,
       "code": "KS",
-      "name": "KITCHEN SINK",
       "quantity": 4210,
       "amount": 612300.0
     },
     {
       "rank": 2,
       "code": "WC",
-      "name": "WATER CLOSET",
       "quantity": 1830,
       "amount": 498120.0
     },
     {
       "rank": 3,
       "code": "BM",
-      "name": "BASIN MIXER",
       "quantity": 2960,
       "amount": 301450.75
     },
     {
       "rank": 4,
       "code": "KT",
-      "name": "KITCHEN TAP",
       "quantity": 3105,
       "amount": 210980.0
     },
     {
       "rank": 5,
       "code": "ACC",
-      "name": null,
       "quantity": 7400,
       "amount": 0
     },
     {
       "rank": 6,
       "code": null,
-      "name": null,
       "quantity": 120,
       "amount": 3600.0
     }

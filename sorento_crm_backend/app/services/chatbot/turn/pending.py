@@ -114,7 +114,8 @@ def top_selling_pick(
     """The top X ranking's printed lines as a sticky pick list (`top_selling_pick`).
 
     `result_set` is `presenters._top_selling_envelope`'s own, one `{idx, label, code,
-    name, entity_type}` row per printed line, `idx` the printed rank. The option shape is
+    entity_type}` row per printed line (no name: owner ruling 26 Sep ~07:40Z, so the
+    option's `name` stays None), `idx` the printed rank. The option shape is
     the roster one `turn/narrow.py::_options` builds, so every reader of a customer or
     product roster reads this one unchanged. `status` / `domain` send a pick back to the
     ranking that printed the list (AC-1704's carry), `filters` is what re-runs it. The

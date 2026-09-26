@@ -25,15 +25,15 @@ import pytest
 from tests.chatbot._turn_helpers import build_policy, entity, verdict
 
 _ITEMS_RESULT_SET = [
-    {"idx": 1, "label": "SRTWT7445", "code": "SRTWT7445", "name": "Kitchen Sink 2 Bowl", "entity_type": "product"},
-    {"idx": 2, "label": "SRTKT39SS", "code": "SRTKT39SS", "name": "Kitchen Tap", "entity_type": "product"},
-    {"idx": 3, "label": "SRTBS1020", "code": "SRTBS1020", "name": "Basin Mixer", "entity_type": "product"},
-    {"idx": 4, "label": "SRTSH2201", "code": "SRTSH2201", "name": "Shower Set", "entity_type": "product"},
-    {"idx": 5, "label": "SRTWC5501", "code": "SRTWC5501", "name": None, "entity_type": "product"},
+    {"idx": 1, "label": "SRTWT7445", "code": "SRTWT7445", "entity_type": "product"},
+    {"idx": 2, "label": "SRTKT39SS", "code": "SRTKT39SS", "entity_type": "product"},
+    {"idx": 3, "label": "SRTBS1020", "code": "SRTBS1020", "entity_type": "product"},
+    {"idx": 4, "label": "SRTSH2201", "code": "SRTSH2201", "entity_type": "product"},
+    {"idx": 5, "label": "SRTWC5501", "code": "SRTWC5501", "entity_type": "product"},
 ]
 _CATEGORY_RESULT_SET = [
-    {"idx": 1, "label": "KITCHEN SINK", "code": "KS", "name": "KITCHEN SINK", "entity_type": "category"},
-    {"idx": 2, "label": "WATER CLOSET", "code": "WC", "name": "WATER CLOSET", "entity_type": "category"},
+    {"idx": 1, "label": "KS", "code": "KS", "entity_type": "category"},
+    {"idx": 2, "label": "WC", "code": "WC", "entity_type": "category"},
 ]
 _FILTERS = {"tool": "crm_top_selling_report", "rank_by": "quantity", "basis": "delivered"}
 
@@ -72,7 +72,7 @@ def test_arms_one_option_per_printed_row_numbered_by_rank():
         (4, "SRTSH2201", "SRTSH2201"),
         (5, "SRTWC5501", "SRTWC5501"),
     ]
-    assert pending.options[1]["name"] == "Kitchen Tap"
+    assert pending.options[1]["name"] is None, "code only: the pick row carries no name"
     assert pending.options[1]["entity_type"] == "product"
     # A pick goes back to the ask that printed the list (contract 121 / AC-1704's
     # `status` carry), and the stored filters re-run it.
@@ -124,10 +124,13 @@ def test_a_typed_code_picks_that_row():
     assert state.pending is not None and state.pending.answered_positions == [2]
 
 
-def test_a_typed_category_name_picks_that_row():
+def test_a_typed_category_code_picks_that_row():
+    """The printed label is the category CODE (owner ruling 26 Sep ~07:40Z, code only),
+    so the code the line printed is what a typed answer matches (UAC AC-1966 as
+    amended in S4). A category NAME no longer picks: the list never printed it."""
     v = verdict(
         message_type="business_query",
-        entities=[entity("water closet", hint="category", canonical_code="")],
+        entities=[entity("WC", hint="category", canonical_code="")],
     )
     state = _decide(v, pending=_armed(_CATEGORY_RESULT_SET))
     assert state.pending is not None and state.pending.answered_positions == [2]

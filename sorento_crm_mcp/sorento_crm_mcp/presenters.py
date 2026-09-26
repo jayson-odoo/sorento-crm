@@ -2640,15 +2640,15 @@ def _top_selling(report: dict) -> str:
 
 def _top_selling_pick_row(row: dict, *, category: bool) -> dict:
     """One printed line as a pick row (owner, PR #1258 05:32Z: the list behaves like
-    the customer and product pickers). The `{idx, label, code, name, entity_type}`
-    shape every roster row already uses; `idx` is the printed rank so a later "2"
-    means line 2, and the label is the code the line printed, which is what a typed
-    answer matches exactly (`turn/decide._positions_by_label`)."""
+    the customer and product pickers). The `{idx, label, code, entity_type}` roster
+    shape with no `name` (owner ruling 26 Sep ~07:40Z: code only, and the route sends
+    none); `idx` is the printed rank so a later "2" means line 2, and the label is the
+    code the line printed, which is what a typed answer matches exactly
+    (`turn/decide._positions_by_label`)."""
     return {
         "idx": row.get("rank"),
         "label": _top_selling_code(row),
         "code": row.get("code"),
-        "name": row.get("name"),
         "entity_type": "category" if category else "product",
     }
 

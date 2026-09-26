@@ -338,6 +338,7 @@ DATE_PARAM_TOOLS: set[str] = {
     "crm_outstanding_report",
     "crm_sales_report",
     "crm_low_stock_report",
+    "crm_top_selling_report",
 }
 
 # --------------------------------------------------------------------------- #

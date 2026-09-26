@@ -419,6 +419,23 @@ def test_count_only_keeps_a_single_row(client, db):
     assert _codes(body) == ["ZZTCNT-ONE"]
 
 
+def test_count_only_asks_the_service_for_one_row(client, db, monkeypatch):
+    """Reviewer kill R4 (PR #1273): `count_only` reads the count off ONE row, never the
+    whole ranked book (#1263 N1). Output-equivalent otherwise, so pin the call."""
+    import app.services.sales_report_service as service
+
+    seen: list = []
+    real = service.top_selling
+
+    def _spy(*args, **kwargs):
+        seen.append(kwargs.get("n"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(service, "top_selling", _spy)
+    _get(client, rank_by="quantity", count_only="true")
+    assert seen == [1]
+
+
 def test_count_only_with_no_sales_is_an_empty_miss(client, db):
     body = _get(client, rank_by="quantity", count_only="true").json()
     assert body["total_count"] == 0

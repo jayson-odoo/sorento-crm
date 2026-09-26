@@ -63,7 +63,7 @@ CATEGORY_CODES = ["KS", "WC", "BM"]
 
 def _rows(codes: list[str]) -> list[dict[str, Any]]:
     return [
-        {"rank": i, "code": code, "name": f"Name of {code}", "quantity": 100 - i, "amount": 1000.0 - i}
+        {"rank": i, "code": code, "quantity": 100 - i, "amount": 1000.0 - i}
         for i, code in enumerate(codes, start=1)
     ]
 
@@ -102,7 +102,7 @@ def _fake_route(args: dict[str, Any], *, codes: list[str] | None = None, refuse:
         body["detail"] = (
             {
                 "code": hit[0]["code"],
-                "name": hit[0]["name"],
+                "name": f"Name of {hit[0]['code']}",
                 "by_customer": [{"customer_name": CUSTOMER_NAME, "quantity": 5, "amount": 50.0}],
                 "by_month": [{"month": "2026-03", "quantity": 5, "amount": 50.0}],
             }
@@ -247,6 +247,13 @@ class TestToolPick:
         from app.services.chatbot.lanes.business import fetch as fetch_mod
 
         assert fetch_mod.DATE_PARAMS[TOOL] == ("date_from", "date_to")
+
+    def test_the_tool_is_in_the_policy_date_param_tools(self) -> None:
+        """Reviewer N2 (PR #1273), plan S4 point 2: the policy's `DATE_PARAM_TOOLS`
+        mirrors `fetch.DATE_PARAMS`, so the order domain's `takes_date_filter` counts it."""
+        from app.services.chatbot.turn import policy_rows
+
+        assert TOOL in policy_rows.DATE_PARAM_TOOLS
 
 
 # --------------------------------------------------------------------------- #

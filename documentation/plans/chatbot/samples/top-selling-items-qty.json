@@ -17,35 +17,30 @@
     {
       "rank": 1,
       "code": "SRTWT7445",
-      "name": "Kitchen Sink 2 Bowl",
       "quantity": 1240,
       "amount": 86400.0
     },
     {
       "rank": 2,
       "code": "SRTKT39SS",
-      "name": "Kitchen Tap",
       "quantity": 980,
       "amount": 31200.0
     },
     {
       "rank": 3,
       "code": "SRTBS1020",
-      "name": "Basin Mixer",
       "quantity": 875,
       "amount": 52500.5
     },
     {
       "rank": 4,
       "code": "SRTSH2201",
-      "name": "Shower Set",
       "quantity": 640,
       "amount": 19840.0
     },
     {
       "rank": 5,
       "code": "SRTWC5501",
-      "name": null,
       "quantity": 512,
       "amount": 143360.0
     }

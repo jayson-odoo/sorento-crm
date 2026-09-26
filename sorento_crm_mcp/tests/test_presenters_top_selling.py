@@ -273,8 +273,8 @@ def test_detail_offer_on_category_hit():
 # --------------------------------------------------------------------------
 # Owner, PR #1258 (26 Sep 2026 05:32Z): the ranked list is a list of choices that
 # behaves like the customer and product pickers. The envelope carries one
-# `result_set` row per PRINTED line, in the `{idx, label, code, name, entity_type}`
-# shape every other roster row uses, so the lane arms a sticky `top_selling_pick`
+# `result_set` row per PRINTED line, in the `{idx, label, code, entity_type}`
+# roster shape (no name: owner ruling 26 Sep ~07:40Z), so the lane arms a sticky `top_selling_pick`
 # (backend `turn/pending.py`) and a later "2" or a name resolves against it.
 # --------------------------------------------------------------------------
 
@@ -282,12 +282,22 @@ def test_detail_offer_on_category_hit():
 def test_envelope_carries_one_pick_row_per_printed_item():
     envelope = _top_selling_envelope(_mock("items-qty"))
     assert envelope["result_set"] == [
-        {"idx": 1, "label": "SRTWT7445", "code": "SRTWT7445", "name": "Kitchen Sink 2 Bowl", "entity_type": "product"},
-        {"idx": 2, "label": "SRTKT39SS", "code": "SRTKT39SS", "name": "Kitchen Tap", "entity_type": "product"},
-        {"idx": 3, "label": "SRTBS1020", "code": "SRTBS1020", "name": "Basin Mixer", "entity_type": "product"},
-        {"idx": 4, "label": "SRTSH2201", "code": "SRTSH2201", "name": "Shower Set", "entity_type": "product"},
-        {"idx": 5, "label": "SRTWC5501", "code": "SRTWC5501", "name": None, "entity_type": "product"},
+        {"idx": 1, "label": "SRTWT7445", "code": "SRTWT7445", "entity_type": "product"},
+        {"idx": 2, "label": "SRTKT39SS", "code": "SRTKT39SS", "entity_type": "product"},
+        {"idx": 3, "label": "SRTBS1020", "code": "SRTBS1020", "entity_type": "product"},
+        {"idx": 4, "label": "SRTSH2201", "code": "SRTSH2201", "entity_type": "product"},
+        {"idx": 5, "label": "SRTWC5501", "code": "SRTWC5501", "entity_type": "product"},
     ]
+
+
+def test_pick_rows_carry_no_name_key():
+    """Owner ruling 26 Sep ~07:40Z (reviewer B1, PR #1273): the route sends no name on
+    a ranked row, so the pick row the session stores carries none either, even when a
+    stale body still has one."""
+    body = _mock("items-qty")
+    body["rows"][0]["name"] = "Kitchen Sink 2 Bowl"
+    for row in _top_selling_envelope(body)["result_set"]:
+        assert "name" not in row, row
 
 
 def test_envelope_pick_rows_at_category_grain_use_the_printed_code():

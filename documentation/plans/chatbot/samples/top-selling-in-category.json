@@ -17,21 +17,18 @@
     {
       "rank": 1,
       "code": "SRTWT7445",
-      "name": "Kitchen Sink 2 Bowl",
       "quantity": 1240,
       "amount": 86400.0
     },
     {
       "rank": 2,
       "code": "SRTWT7446",
-      "name": "Kitchen Sink 1 Bowl",
       "quantity": 760,
       "amount": 41800.0
     },
     {
       "rank": 3,
       "code": "SRTWT8120",
-      "name": "Undermount Sink",
       "quantity": 315,
       "amount": 28350.0
     }
