@@ -42,8 +42,11 @@ ANSWERED = "answered"
 REFER_TO_SALESMAN = "Please refer to your salesman."
 
 #: PR #1247 round 6 (owner console test of round 4): the verdict key a numbered-lines
-#: reply ("1. 10, 2. 5") rides on, {slot key: quantity}. `head/fast_path.py` writes it;
-#: the parser never does. Keyed by the slot's own key, so nothing is resolved again.
+#: reply ("1. 10, 2. 5") may ride on, {slot key: quantity}. Keyed by the slot's own key,
+#: so nothing is resolved again. Round 7: the fast path that wrote it is gone and the
+#: live parser's schema does not declare it, so today only a recorded or harness verdict
+#: carries it; the parser's own reading is mapped onto the lines by
+#: `apply._numbered_lines_are_the_products`.
 SLOT_QUANTITIES = "slot_quantities"
 
 #: The header of the point-form question (round 6, ruling 2).
@@ -369,6 +372,16 @@ class StockQtyTask:
             ]
             return f"Last answered: {_listed(answered)}."
         parts = [f"Open task: {self.label}."]
+        if len(task.slots) > 1:
+            # PR #1247 round 7 (W2): the point-form question's own lines, so the parser
+            # can name the product of a reply by line number ("1. 10, 2. 5"). They carry
+            # what is noted and what is owed, so the two lines below are not repeated.
+            lines = "; ".join(
+                f"{i}. {slot.label} - {'' if slot.value is None else slot.value}".rstrip()
+                for i, slot in enumerate(task.slots, 1)
+            )
+            parts.append(f"Asked as numbered lines, a blank quantity still owed: {lines}.")
+            return " ".join(parts)
         noted = [
             f"{slot.label} x {slot.value}" for slot in task.slots if slot.value is not None
         ]

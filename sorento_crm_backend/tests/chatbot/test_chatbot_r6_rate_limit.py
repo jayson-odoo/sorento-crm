@@ -11,27 +11,25 @@ Rulings:
    retried with backoff inside the turn, and on final failure the reply is one short
    plain sentence. ONE wrapper for every model call the chatbot makes in a turn
    (`chatbot/llm_call.py`): the parser, its recall re-parse, and the clarifier.
-4. Small talk ("tia", "thanks", "ok") takes a fast path with no parser call, so it
-   cannot be rate limited.
+Ruling 4 (a small-talk fast path) was DROPPED by the owner on 26 Sep ~08:33Z ("the tia
+is a typo of tiga so it supposed to pass through parser"); its tests went with it in
+round 7 (`test_stock_ask_ht26_r7_every_turn_parsed.py` holds the "tia" replay).
 
 Nothing here reaches a real model: the provider is a stub that raises the OpenAI SDK's
 own `RateLimitError` shape (`status_code` 429 and the SDK's message text).
 """
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import Any
 
 import pytest
 
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot import llm_call
-from app.services.chatbot.head import fast_path
 from app.services.chatbot.head import parser as parser_mod
 from app.services.chatbot.lanes import casual
 from app.services.llm_provider import ChatResult
 
-from tests.chatbot import _ht26_fixtures as ht
 from tests.chatbot.test_s4_casual_lane import low_signal_enabled  # noqa: F401 - fixture
 from tests.chatbot.test_engine import (  # noqa: F401 - fixtures used by name
     CONTACT_ID,
@@ -199,6 +197,20 @@ def test_no_chatbot_module_calls_a_provider_outside_the_wrapper():
     assert offenders == []
 
 
+def _message(text: str) -> dict[str, Any]:
+    return {
+        "event_type": "message.received",
+        "contact": {"id": CONTACT_ID},
+        "message": {
+            "messageId": f"ZZT-msg-{abs(hash(text))}",
+            "contactId": CONTACT_ID,
+            "channelId": "whatsapp",
+            "traffic": "incoming",
+            "message": {"type": "text", "text": text},
+        },
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Ruling 3, at the turn: the dealer reads one plain sentence
 # --------------------------------------------------------------------------- #
@@ -242,90 +254,3 @@ def test_a_clarifier_rate_limit_replies_with_the_plain_sentence(
 
 def test_the_rate_limited_reply_has_no_dashes():
     assert chr(0x2014) not in llm_call.RATE_LIMITED_REPLY and chr(0x2013) not in llm_call.RATE_LIMITED_REPLY
-
-
-# --------------------------------------------------------------------------- #
-# Ruling 4: small talk takes the fast path, with no model call at all
-# --------------------------------------------------------------------------- #
-
-
-def _message(text: str) -> dict[str, Any]:
-    return {
-        "event_type": "message.received",
-        "contact": {"id": CONTACT_ID},
-        "message": {
-            "messageId": f"ZZT-msg-{abs(hash(text))}",
-            "contactId": CONTACT_ID,
-            "channelId": "whatsapp",
-            "traffic": "incoming",
-            "message": {"type": "text", "text": text},
-        },
-    }
-
-
-@pytest.mark.parametrize(
-    "text, reply",
-    [
-        ("tia", fast_path.THANKS_REPLY),
-        ("TIA", fast_path.THANKS_REPLY),
-        ("thanks", fast_path.THANKS_REPLY),
-        ("thank you!", fast_path.THANKS_REPLY),
-        ("tq", fast_path.THANKS_REPLY),
-        ("ok thanks", fast_path.THANKS_REPLY),
-        ("terima kasih", fast_path.THANKS_REPLY),
-        ("ok", fast_path.ACK_REPLY),
-        ("okay", fast_path.ACK_REPLY),
-        ("noted", fast_path.ACK_REPLY),
-        ("ok noted.", fast_path.ACK_REPLY),
-    ],
-)
-def test_small_talk_is_read_without_the_parser(text, reply):
-    read = fast_path.read(text, ht.state(availability_only=True, turn_no=3))
-    assert read is not None and read.kind == "small_talk"
-    assert read.reply == reply
-    parser_mod.assert_emission(read.verdict)
-    assert read.verdict["message_type"] == "casual"
-
-
-@pytest.mark.parametrize(
-    "text",
-    ["ok check stock SRTWC286", "thanks, and SRTWC286?", "hi", "okay how about 10", "tia 10"],
-)
-def test_anything_more_than_small_talk_goes_to_the_parser(text):
-    assert fast_path.read(text, ht.state(availability_only=True, turn_no=3)) is None
-
-
-def test_an_ok_under_an_open_question_is_an_answer_and_goes_to_the_parser():
-    """"ok" under "Did you mean ELP3754?" is a yes; only the parser may read it."""
-    from app.services.chatbot.turn import pending as turn_pending
-
-    state = ht.state(availability_only=True, turn_no=3)
-    asked = turn_pending.ask(
-        "product_pick",
-        [{"position": 1, "label": "ELP3754", "uuid": "u1", "entity_type": "product"}],
-        asked_at_turn=3,
-        payload={"stock_pick": True},
-    )
-    assert fast_path.read("ok", replace(state, pending=asked)) is None
-    assert fast_path.read("tia", replace(state, pending=asked)).kind == "small_talk"
-
-
-def test_tia_at_the_turn_calls_neither_the_parser_nor_the_clarifier(
-    session_factory, seeded, stub_parser, stub_access, monkeypatch, low_signal_enabled
-):
-    def no_parser(block):
-        raise AssertionError("small talk must not call the parser")
-
-    stub_parser(on_call=no_parser)
-    stub_access()
-
-    def no_clarifier(*args, **kwargs):
-        raise AssertionError("small talk must not call the clarifier")
-
-    monkeypatch.setattr(casual, "call_clarifier", no_clarifier)
-    monkeypatch.setattr(casual, "resolve_clarifier_config", no_clarifier)
-    result = engine_mod.run_turn(_envelope(message=_message("tia")), session_factory=session_factory)
-    assert result.reply["text"] == fast_path.THANKS_REPLY
-    assert result.branch_kind == "low_signal"
-    row = _turn_row(session_factory, result.turn_id)
-    assert row.status == "done", row.error

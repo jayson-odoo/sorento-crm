@@ -110,7 +110,7 @@ def _one_product_question_state() -> dict[str, Any]:
 
 
 def test_tia_under_the_open_quantity_question_is_parsed_never_small_talk(
-    session_factory, seeded, stub_parser, stub_access
+    session_factory, seeded, stub_parser, stub_access, monkeypatch
 ):
     """The owner's replay: "tia" (a typo of "tiga", three) under "How many units of
     SRTWC286-SH?" goes to the parser, and the parser's reading (demand_qty 3) is what
@@ -127,6 +127,17 @@ def test_tia_under_the_open_quantity_question_is_parsed_never_small_talk(
         on_call=blocks.append,
     )
     stub_access()
+    import json
+
+    from app.services.ai_assistant_service import MCPRuntimeClient
+
+    tools: list[tuple[str, dict[str, Any]]] = []
+
+    def _tool(self, tool_name, args):
+        tools.append((tool_name, args))
+        return json.dumps({"stock_availability": []})
+
+    monkeypatch.setattr(MCPRuntimeClient, "call_tool", _tool)
     result = engine_mod.run_turn(
         _envelope(
             is_test=True,
@@ -138,9 +149,11 @@ def test_tia_under_the_open_quantity_question_is_parsed_never_small_talk(
     assert len(blocks) == 1, "the parser must read every message, 'tia' included"
     assert "tia" in blocks[0]
     assert (result.reply or {}).get("text") != WELCOME
-    focus = (result.session_vars or {}).get("focus") or {}
-    (task,) = [t for t in focus.get("tasks") or [] if t.get("kind") == "stock_qty"]
-    assert [slot["value"] for slot in task["slots"]] == [3]
+    # The parser's "tiga" is the quantity the stock check is fetched at.
+    uuid = ht.product_rows("SRTWC286-SH")[0]["uuid"]
+    stock = [args for name, args in tools if name == "crm_inventory_stock_balance_list"]
+    assert stock, tools
+    assert json.loads(stock[0]["requested_quantities"]) == {uuid: 3}
 
 
 def test_tia_on_its_own_is_parsed_too(session_factory, seeded, stub_parser, stub_access):
@@ -212,9 +225,15 @@ def test_every_line_at_once_from_the_parser_answers_the_check():
 
 def test_a_line_number_off_the_list_is_not_a_line():
     """"11. 4" over a ten-line question names no line; nothing is filled from it."""
+    from app.services.chatbot.turn.apply import _numbered_lines_are_the_products
+    from app.services.chatbot.turn.plan import Trace
+
     console = _after_all()
-    text = console.say("11. 4", verdict(entities=[_entity("11", 4)]))
-    assert "SRTWC286-SH - 4" not in text
+    parsed = verdict(entities=[_entity("1", 10), _entity("11", 4)])
+    trace = Trace()
+    _numbered_lines_are_the_products(console.state, parsed, trace)
+    assert "numbered_lines_are_the_products" not in trace.rules_fired
+    assert [e["raw"] for e in parsed["entities"]] == ["1", "11"], "nothing half-mapped"
 
 
 def test_the_open_question_hint_prints_its_lines_for_the_parser():

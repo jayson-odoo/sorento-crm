@@ -46,7 +46,7 @@ from app.services.chatbot.contracts import (
 )
 from app.services.chatbot.delegate import enabled_lanes_from
 from app.services.error_handler import AppException
-from app.services.chatbot.head import fast_path, parser
+from app.services.chatbot.head import parser
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
@@ -1431,15 +1431,10 @@ def _run_stages(  # noqa: PLR0915
     )
     # G6: a dry run may supply the emission instead of paying for it.
     parser_bypassed = dry_run and "mock_reformulator_output" in harness_present
-    # PR #1247 round 6 (rulings 2 and 4): small talk, and a quantity for the open stock
-    # question, are read from the message's shape with no model call at all.
-    fast = None if parser_bypassed else fast_path.read(latest_user_message, state_in)
     parse_started = time.perf_counter()
     try:
         if parser_bypassed:
             parser_raw = _harness_value(envelope, "mock_reformulator_output")
-        elif fast is not None:
-            parser_raw = parser.ParsedOutput(fast.verdict)
         else:
             parser_raw = parser.parse(parser_config, user_block)
         # Empty on a bypassed parse: no call, no spend to record.
@@ -1547,11 +1542,6 @@ def _run_stages(  # noqa: PLR0915
             "A test envelope supplied the parser's answer, so no model was asked; "
             "everything after this point ran normally."
             if parser_bypassed
-            else (
-                f"Read without the parser ({fast.kind}): the message's shape alone says "
-                "what it means, so no model was asked."
-            )
-            if fast is not None
             else "The parser is the only step that reads the customer's words; everything after it works on structured state."
         ),
         facts={
@@ -1562,7 +1552,6 @@ def _run_stages(  # noqa: PLR0915
             "prompt_version": parser_config.prompt_version,
             "tokens": int(parser_usage.get("total_tokens") or 0),
             "parser_bypassed": parser_bypassed,
-            "fast_path": fast.kind if fast is not None else None,
             "recalled_frames": len(recalled),
             # D17: WHICH options the parser was shown, on the record.
             "open_question_options": pending_options,
@@ -1993,10 +1982,7 @@ def _run_stages(  # noqa: PLR0915
         clarifier_prompt: dict[str, Any] | None = None
         clarifier_config: Any = None
         clarifier_setup_error: str | None = None
-        small_talk_reply = (
-            fast.reply if fast is not None and fast.kind == "small_talk" else None
-        )
-        if branch_kind == "low_signal" and completes_here and small_talk_reply is None:
+        if branch_kind == "low_signal" and completes_here:
             try:
                 resolved_for_prompt = casual.resolve_for_prompt(db, ctx=ctx)
                 clarifier_prompt = casual.construct_user_prompt(ctx, resolved_for_prompt)
@@ -2827,7 +2813,6 @@ def _run_stages(  # noqa: PLR0915
             clarifier_config=clarifier_config,
             setup_error=clarifier_setup_error,
             state=state_out,
-            small_talk_reply=small_talk_reply,
         )
 
     return TurnResult(
@@ -3541,12 +3526,8 @@ def _run_casual_lane(
     clarifier_config: Any,
     setup_error: str | None = None,
     state: Any = None,
-    small_talk_reply: str | None = None,
 ) -> TurnResult:
     """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
-
-    `small_talk_reply` is the fast path's fixed answer to "tia" / "thanks" / "ok" (PR
-    #1247 round 6, ruling 4): said as it is, with no clarifier call.
 
     Split out of `_run_stages` so the "no DB session across LLM I/O" rule is visible in the
     signature rather than in a comment: this function takes a `session_factory`, never a
@@ -3569,9 +3550,7 @@ def _run_casual_lane(
     # a success, close the row `done`, and leave `error` as "" - a turn that failed,
     # recorded as fine, with nothing on the trace screen to say otherwise.
     failed: str | None = setup_error
-    if small_talk_reply is not None:
-        text = small_talk_reply
-    elif failed is not None:
+    if failed is not None:
         # SETUP failure (the resolver, the registry, the AI config, the API key). The
         # customer gets a FIXED sentence, never `str(exc)`: these messages carry provider
         # detail and configuration names, and none of that belongs in a WhatsApp reply.
@@ -3615,8 +3594,6 @@ def _run_casual_lane(
         summary=(
             _casual_failure_summary(failed, setup_error)
             if failed is not None
-            else "Small talk, answered with a fixed reply and no model call."
-            if small_talk_reply is not None
             else "The clarifier wrote small talk or one clarifying question."
         ),
         why=(

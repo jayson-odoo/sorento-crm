@@ -1740,6 +1740,92 @@ def _bare_position_is_the_quantity(state: State, verdict: dict[str, Any], trace:
     trace.rules_fired.append("bare_number_is_the_quantity")
 
 
+def _open_point_form_task(focus: Focus) -> Any:
+    """The stock check still asking its point-form question (two or more lines), or
+    None."""
+    for task in focus.tasks or ():
+        if task.kind == "stock_qty" and task.status == task_mod.OPEN and len(task.slots) > 1:
+            return task
+    return None
+
+
+def _codes_named(entity: dict[str, Any]) -> set[str]:
+    return {
+        value.strip().casefold()
+        for value in (entity.get("canonical_code"), entity.get("raw"), entity.get("uuid"))
+        if isinstance(value, str) and value.strip()
+    }
+
+
+def _line_number(entity: dict[str, Any]) -> int | None:
+    """The line number an entity carries as its whole text ("1", "2.", "3)"), or None.
+    A structured field of the parser's answer, not the message."""
+    for name in ("raw", "canonical_code"):
+        value = entity.get(name)
+        if isinstance(value, str):
+            digits = value.strip().rstrip(".)").strip()
+            if digits.isascii() and digits.isdigit() and len(digits) <= 2:
+                return int(digits)
+    return None
+
+
+def _numbered_lines_are_the_products(state: State, verdict: dict[str, Any], trace: Trace) -> None:
+    """PR #1247 round 7 (W2): a numbered-lines reply ("1. 10, 2. 5") to the open
+    point-form question, as the PARSER read it, is those lines' products at those
+    quantities. Round 6 read the lines off the message's shape with no parser; the owner
+    dropped that (26 Sep ~08:33Z, every message goes through the parser), so this maps
+    the parser's own reading onto the question's lines. Two readings are mapped:
+
+    * the entities keep the dealer's line numbers as their text (raw "1", quantity 10);
+    * the line numbers came back as `reference_positions` [1, 2], beside as many
+      entities that carry the quantities and name no product of the list.
+
+    An entity that names a product of the list is already that line and is left as it
+    is (`StockQtyTask.fill` matches it by code). A line number off the list maps
+    nothing, and then nothing in this message is rewritten.
+    """
+    if state.pending is not None:
+        return
+    task = _open_point_form_task(state.focus)
+    if task is None:
+        return
+    slots = list(task.slots)
+    known = {
+        value.strip().casefold()
+        for slot in slots
+        for value in (slot.key, slot.label)
+        if isinstance(value, str) and value.strip()
+    }
+    unnamed = [
+        entity
+        for entity in verdict.get("entities") or []
+        if isinstance(entity, dict)
+        and _stated_quantity(entity.get("quantity")) is not None
+        and not (_codes_named(entity) & known)
+    ]
+    if not unnamed:
+        return
+    raw_positions = verdict.get("reference_positions")
+    positions = [
+        int(p) for p in (raw_positions if isinstance(raw_positions, list) else [])
+        if isinstance(p, (int, float)) and not isinstance(p, bool)
+    ]
+    if positions and len(positions) == len(unnamed):
+        pairs = list(zip(positions, unnamed))
+    else:
+        pairs = [(_line_number(entity), entity) for entity in unnamed]
+    if any(line is None or not 1 <= line <= len(slots) for line, _ in pairs):
+        return
+    if len({line for line, _ in pairs}) != len(pairs):
+        return
+    for line, entity in pairs:
+        label = slots[line - 1].label
+        entity.update(raw=label, canonical_code=label, hint="product", current_message=True)
+    if positions:
+        verdict["reference_positions"] = []
+    trace.rules_fired.append("numbered_lines_are_the_products")
+
+
 def _stock_pick(pending: Any) -> bool:
     """Is the open question a stock pick (owner hand test 26 Sep, slice 2 and F1): the
     which-one question `turn/task.py::after_reply` asks over a product family, or the
@@ -1848,6 +1934,9 @@ def apply(
     # sticky"): once the which-one pick is spent, a lone position is the product's
     # quantity, never a pick. Before any reader.
     _bare_position_is_the_quantity(state, verdict, trace)
+    # PR #1247 round 7: "1. 10, 2. 5" as the parser read it, onto the open question's
+    # lines, before any reader matches a code.
+    _numbered_lines_are_the_products(state, verdict, trace)
     # Ported from PR #1118 (not merged), D13: before ANY reader - the task step, the
     # focus rules, the narrowing and the fetch all see one shape for "how many of this
     # product".
