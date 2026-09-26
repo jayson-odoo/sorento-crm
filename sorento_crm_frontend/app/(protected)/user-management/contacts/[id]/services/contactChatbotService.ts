@@ -9,8 +9,7 @@
  * 4 (profile facts) and 5 (HTTP contract).
  *
  * ---------------------------------------------------------------------------
- * THE CONTRACT (the first two routes are REAL, S0 landed; the rest are still the
- * PHASE-1 MOCK markers below, pending S2)
+ * THE CONTRACT (every route below is real - S0 landed the first two, S2 the rest)
  * ---------------------------------------------------------------------------
  *
  * GET  /api/v1/user-management/contacts/{id}                       -> RespondContact
@@ -58,7 +57,11 @@ export type ChatbotFactSource = 'crm' | 'tallied' | 'stated' | 'staff';
 export interface ContactChatbotFact {
   key: string;
   label: string;
-  value: string | null;
+  /** The stored raw value (`"ms"`, `["SRTWB1455"]`) - fed straight back into an
+   * in-place edit, no label reverse-mapping (contract section 5). */
+  value: string | string[] | null;
+  /** The grid's own printable label (`"Malay"`, `"SRTWB1455, M486-75-BL"`). */
+  display: string | null;
   source: ChatbotFactSource;
   /** ISO date, or null for a fact read live from the CRM (contract section 5). */
   last_seen: string | null;
@@ -124,281 +127,6 @@ export interface ContactChatbotMemory {
   };
 }
 
-/* ============================================================================
- * PHASE-1 MOCK: swap for apiFetch in Phase 2, once `chatbot_profile.facts` and the
- * dedicated memory/facts routes exist (contract section 5) - the S0 migration and
- * `GET/PUT .../chatbot`'s own `chatbot_memory_level` already landed, so
- * `getContactChatbotProfile`/`saveContactChatbotProfile` above are real; only the
- * facts grid, conversations and open orders below still read this in-memory record.
- * One in-memory record per contact id, seeded with the round 3 mockup's sample (Tan
- * Wei Liang / Chin Chun Trading, CC001).
- *
- * KNOWN, TEMPORARY seam: `level.own`/`level.system_default` below (read by "What the
- * bot knows") are still this mock's own state, independent of the REAL
- * `chatbot_memory_level` the settings card now saves - the two can disagree in this
- * lane until S2's memory GET reads the same `respond_contacts` row the settings PUT
- * now writes.
- * ========================================================================== */
-
-interface MockFactEntry {
-  value: string | string[];
-  source: ChatbotFactSource;
-  lastSeen: string | null;
-}
-
-type FactKind = 'readonly' | ChatbotVocabularyKind;
-
-interface FactCatalogEntry {
-  key: string;
-  label: string;
-  kind: FactKind;
-  options?: { value: string; label: string }[];
-  maxLength?: number | null;
-}
-
-/** Contract section 4's field table, minus `customer` and `salesperson` (read-only, no
- * staff input - excluded from `vocabulary`, added to `facts` directly from the mock's
- * CRM-side sample). */
-const FACT_CATALOG: FactCatalogEntry[] = [
-  {
-    key: 'segment',
-    label: 'Segment',
-    kind: 'choice',
-    options: [
-      { value: 'dealer', label: 'Dealer' },
-      { value: 'project', label: 'Project' },
-      { value: 'end_user', label: 'End user' },
-    ],
-  },
-  {
-    key: 'language',
-    label: 'Language',
-    kind: 'choice',
-    options: [
-      { value: 'en', label: 'English' },
-      { value: 'ms', label: 'Malay' },
-      { value: 'zh', label: 'Chinese' },
-    ],
-  },
-  {
-    key: 'role',
-    label: 'Role',
-    kind: 'choice',
-    options: [
-      { value: 'purchaser', label: 'Purchaser' },
-      { value: 'owner', label: 'Owner' },
-      { value: 'sales', label: 'Sales' },
-      { value: 'site_supervisor', label: 'Site supervisor' },
-      { value: 'other', label: 'Other' },
-    ],
-  },
-  { key: 'usual_products', label: 'Usual products', kind: 'multi' },
-  { key: 'usual_brands', label: 'Usual brands', kind: 'multi' },
-  { key: 'usual_sites', label: 'Usual sites', kind: 'multi' },
-  { key: 'project', label: 'Project', kind: 'text', maxLength: 60 },
-  { key: 'about', label: 'About', kind: 'text', maxLength: 200 },
-  { key: 'note', label: 'Note', kind: 'text', maxLength: 200 },
-];
-
-function catalogEntry(key: string): FactCatalogEntry | undefined {
-  return FACT_CATALOG.find((entry) => entry.key === key);
-}
-
-interface MockContactState {
-  profile: ContactChatbotProfile;
-  systemDefaultLevel: ChatbotMemoryLevel;
-  customerName: string;
-  customerLink: string;
-  facts: Record<string, MockFactEntry>;
-  episodesCurrent: ContactChatbotEpisodeCurrent | null;
-  episodeRows: ContactChatbotEpisodeRow[];
-  openOrders: ContactChatbotOpenOrderRow[];
-}
-
-function seedState(): MockContactState {
-  return {
-    profile: {
-      chatbot_memory_level: 'full',
-      tier: 'dealer',
-      default_ledgers: [],
-      stock_allowed: true,
-      notify_salesman: true,
-      packing_list_allowed: false,
-    },
-    systemDefaultLevel: 'off',
-    customerName: 'Chin Chun Trading',
-    customerLink: '/order-management/customers/cc001',
-    facts: {
-      segment: { value: 'dealer', source: 'crm', lastSeen: null },
-      role: { value: 'purchaser', source: 'stated', lastSeen: '2026-09-26' },
-      language: { value: 'ms', source: 'stated', lastSeen: '2026-09-26' },
-      usual_products: { value: ['SRTWB1455', 'M486-75-BL'], source: 'tallied', lastSeen: '2026-09-25' },
-      usual_sites: { value: ['Kuching'], source: 'tallied', lastSeen: '2026-09-25' },
-      project: { value: 'Aurora Residences block B', source: 'stated', lastSeen: '2026-09-24' },
-      about: { value: ['Runs 3 shops in Kuching and Sibu'], source: 'stated', lastSeen: '2026-09-22' },
-      note: { value: 'Prefers PDF quotes', source: 'staff', lastSeen: '2026-09-20' },
-    },
-    episodesCurrent: {
-      turn_count: 2,
-      first_turn_id: 'ZZT-turn-current',
-      started_at: '2026-09-26T02:00:00',
-      summary: 'stock SRTWB1455; and in kuching?',
-      domains: ['stock'],
-    },
-    episodeRows: [
-      {
-        id: 'ep-1',
-        date: '2026-09-25T02:10:00',
-        domains: ['stock', 'incoming'],
-        summary:
-          'stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.',
-        turn_count: 5,
-        close_reason: 'topic_switch',
-        first_turn_id: 'ZZT-turn-ep-1',
-      },
-      {
-        id: 'ep-2',
-        date: '2026-09-23T09:40:00',
-        domains: ['orders'],
-        summary: 'outstanding DO for CC001 Chin Chun Trading (answered).',
-        turn_count: 3,
-        close_reason: 'topic_switch',
-        first_turn_id: 'ZZT-turn-ep-2',
-      },
-      {
-        id: 'ep-3',
-        date: '2026-09-19T14:05:00',
-        domains: ['stock'],
-        summary: 'stock M483-BL (answered); small talk.',
-        turn_count: 4,
-        close_reason: 'topic_switch',
-        first_turn_id: 'ZZT-turn-ep-3',
-      },
-    ],
-    openOrders: [
-      {
-        document: 'SO-2409-0112',
-        kind: 'sales_order',
-        status: 'Confirmed',
-        summary: '3 lines',
-        date: '2026-09-18',
-        href: '/scm/sales-orders/so-2409-0112',
-      },
-      {
-        document: 'DO-2409-0087',
-        kind: 'delivery_order',
-        status: 'Outstanding',
-        summary: '2 lines to Kuching',
-        date: '2026-09-20',
-        href: '/scm/delivery-orders/do-2409-0087',
-      },
-    ],
-  };
-}
-
-const MOCK_STATE = new Map<string, MockContactState>();
-
-function stateFor(contactId: string): MockContactState {
-  let state = MOCK_STATE.get(contactId);
-  if (!state) {
-    state = seedState();
-    MOCK_STATE.set(contactId, state);
-  }
-  return state;
-}
-
-function optionLabel(entry: FactCatalogEntry, raw: string): string {
-  return entry.options?.find((option) => option.value === raw)?.label ?? raw;
-}
-
-function displayValue(entry: FactCatalogEntry, raw: string | string[]): string {
-  return Array.isArray(raw)
-    ? raw.map((item) => optionLabel(entry, item)).join(', ')
-    : optionLabel(entry, raw);
-}
-
-function buildFacts(state: MockContactState): ContactChatbotFact[] {
-  const rows: ContactChatbotFact[] = [
-    {
-      key: 'customer',
-      label: 'Customer',
-      value: `${state.customerName} (CC001)`,
-      source: 'crm',
-      last_seen: null,
-      editable: false,
-      link: state.customerLink,
-    },
-  ];
-
-  const segment = state.facts.segment;
-  const segmentEntry = catalogEntry('segment')!;
-  rows.push({
-    key: 'segment',
-    label: 'Segment',
-    value: segment ? displayValue(segmentEntry, segment.value) : null,
-    source: segment?.source ?? 'crm',
-    last_seen: segment?.lastSeen ?? null,
-    editable: true,
-  });
-
-  rows.push({
-    key: 'salesperson',
-    label: 'Salesperson',
-    value: 'Aina Rahman',
-    source: 'crm',
-    last_seen: null,
-    editable: false,
-  });
-
-  for (const entry of FACT_CATALOG) {
-    if (entry.key === 'segment') continue;
-    const fact = state.facts[entry.key];
-    // One entry per key that actually has a value (contract section 4) - a vocabulary
-    // key nobody has learned/said/set yet is offered only through "+ Add".
-    if (!fact) continue;
-    rows.push({
-      key: entry.key,
-      label: entry.label,
-      value: displayValue(entry, fact.value),
-      source: fact.source,
-      last_seen: fact.lastSeen,
-      editable: true,
-    });
-  }
-
-  return rows;
-}
-
-function buildVocabulary(): ContactChatbotVocabularyEntry[] {
-  return FACT_CATALOG.map((entry) => ({
-    key: entry.key,
-    label: entry.label,
-    kind: entry.kind as ChatbotVocabularyKind,
-    options: entry.options ? entry.options.map((option) => ({ ...option })) : null,
-    max_length: entry.maxLength ?? null,
-  }));
-}
-
-function toMemory(state: MockContactState): ContactChatbotMemory {
-  const own = state.profile.chatbot_memory_level;
-  return {
-    level: {
-      own,
-      effective: own ?? state.systemDefaultLevel,
-      system_default: state.systemDefaultLevel,
-    },
-    facts: buildFacts(state),
-    vocabulary: buildVocabulary(),
-    episodes: {
-      kept: state.episodeRows.length,
-      limit: 20,
-      current: state.episodesCurrent,
-      rows: state.episodeRows,
-    },
-    open_orders: { customer_name: state.customerName, rows: state.openOrders },
-  };
-}
-
 export type ContactChatbotSaveInput = ContactChatbotProfile;
 
 function profileFromContact(contact: {
@@ -419,9 +147,6 @@ function profileFromContact(contact: {
   };
 }
 
-// The S0 migration landed `chatbot_memory_level` on GET/PUT .../chatbot (contract
-// section 5) - this half of the card is real; `getContactChatbotMemory`/
-// `saveContactFact` below stay mocked until S2's own routes exist.
 export async function getContactChatbotProfile(contactId: string): Promise<ContactChatbotProfile> {
   const contact = await getContact(contactId);
   return profileFromContact(contact);
@@ -451,44 +176,32 @@ export async function saveContactChatbotProfile(
 }
 
 export async function getContactChatbotMemory(contactId: string): Promise<ContactChatbotMemory> {
-  return toMemory(stateFor(contactId));
+  const response = await apiFetch(`/api/v1/user-management/contacts/${contactId}/chatbot/memory`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load chatbot memory'));
+  }
+  return response.json();
 }
 
 /** `PUT .../chatbot/facts/{key}` - sets a staff fact; every save makes the fact Staff,
- * even one that replaces a Learned or Said value (contract section 4). */
+ * even one that replaces a Learned or Said value (contract section 4). Returns the
+ * memory GET body so the grid, vocabulary and everything else stay in sync with the
+ * one write. */
 export async function saveContactFact(
   contactId: string,
   key: string,
   value: string | string[],
 ): Promise<ContactChatbotMemory> {
-  const entry = catalogEntry(key);
-  if (!entry) {
-    throw new Error(`"${key}" is not an editable fact.`);
+  const response = await apiFetch(`/api/v1/user-management/contacts/${contactId}/chatbot/facts/${key}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save fact'));
   }
-  const state = stateFor(contactId);
-  state.facts[key] = {
-    value,
-    source: 'staff',
-    lastSeen: new Date().toISOString().slice(0, 10),
-  };
-  return toMemory(state);
+  return response.json();
 }
-
-/**
- * Best-effort local removal once the deferred delete commits.
- *
- * The real `DELETE .../chatbot/facts/{key}` runs server-side, through the same
- * pending-action commit every other delete uses (contract section 5) - this mock has no
- * server to commit against, so `useContactChatbotMemory`'s `onCommitted` callback calls
- * this directly so the row still disappears once the countdown lapses.
- */
-export function forgetContactFactMock(contactId: string, key: string): void {
-  delete stateFor(contactId).facts[key];
-}
-
-/* ============================================================================
- * end PHASE-1 MOCK
- * ========================================================================== */
 
 /**
  * Server-searched product options for the "Usual products" fact (Add fact modal).

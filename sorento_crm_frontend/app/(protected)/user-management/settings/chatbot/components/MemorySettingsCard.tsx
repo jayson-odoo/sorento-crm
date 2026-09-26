@@ -77,10 +77,11 @@ export default function MemorySettingsCard({
           />
         </div>
         <div className="space-y-1.5">
-          <Label>Default context level</Label>
+          <Label htmlFor="chatbot-memory-default-level">Default context level</Label>
           {/* Never clearable - the level always has a value once memory is on
               (contract section 2: `default_level` is never `off`, never null). */}
           <SearchableSelect
+            id="chatbot-memory-default-level"
             value={draft.default_level}
             onChange={(v) => set('default_level', v as ChatbotMemorySettings['default_level'])}
             options={LEVEL_OPTIONS}

@@ -326,10 +326,167 @@ class ContactService:
         self.db.commit()
         return {"deleted_count": deleted, "message": f"Deleted {deleted} contact(s)."}
 
+    # --------------------------------------------------------------------- #
+    # Chatbot memory lane A (contract section 5) - the contact's memory/facts
+    # surface. Reaches into `app.services.chatbot.turn.profile_facts` for the
+    # vocabulary, precedence and lock rules the engine's own writers already use
+    # (`test_import_boundary.py::ALLOWED` names this file as the one non-chatbot
+    # doorway, the same way it already names `app/api/v1/system/chatbot.py`).
+    # --------------------------------------------------------------------- #
+
+    def get_chatbot_memory(self, contact_id: str) -> dict:
+        from app.models.user import SystemSetting
+        from app.services.chatbot.turn import memory as memory_mod
+        from app.services.chatbot.turn import profile_facts
+
+        contact = self.get_contact(contact_id)
+        system_setting = self.db.query(SystemSetting).first()
+        system_memory = (getattr(system_setting, "chatbot_memory", None) or {}) if system_setting else {}
+        own_level = getattr(contact, "chatbot_memory_level", None)
+        effective = memory_mod.effective_level(own_level, system_memory)
+
+        merged = profile_facts.merged_facts_for_display(self.db, contact)
+        facts_out = [
+            profile_facts.fact_for_display(key, entry)
+            for key in profile_facts.VOCABULARY
+            for entry in (next((f for f in merged if f.get("key") == key), None),)
+            if entry is not None
+        ]
+        vocabulary_out = [profile_facts.vocabulary_entry(key) for key in profile_facts.VOCABULARY]
+
+        return {
+            "level": {
+                "own": own_level,
+                "effective": effective,
+                "system_default": system_memory.get("default_level") or "full",
+            },
+            "facts": facts_out,
+            "vocabulary": vocabulary_out,
+            "episodes": self._chatbot_episodes_summary(contact),
+            "open_orders": self._chatbot_open_orders(contact),
+        }
+
+    def _chatbot_episodes_summary(self, contact: RespondContact) -> dict:
+        from sqlalchemy import String, cast
+        from app.models.chatbot_turn import ChatbotTurn
+        from app.models.conversation_frame import ConversationFrame
+        from app.services.chatbot.turn.memory import KEEP_EPISODES
+
+        respond_id = contact.respond_io_id
+        if not respond_id:
+            return {"kept": 0, "limit": KEEP_EPISODES, "current": None, "rows": []}
+        frames = (
+            self.db.query(ConversationFrame)
+            .filter(
+                ConversationFrame.contact_respond_id == respond_id,
+                ConversationFrame.is_test.is_(False),
+            )
+            .order_by(ConversationFrame.last_activity_at.desc())
+            .all()
+        )
+        rows = [
+            {
+                "id": f.id,
+                "date": f.last_activity_at.isoformat() if f.last_activity_at else None,
+                "domains": [f.domain] if f.domain else [],
+                "summary": f.summary or "",
+                "turn_count": len(f.turn_ids or []),
+                "close_reason": f.close_reason,
+                "first_turn_id": (f.turn_ids or [None])[0],
+            }
+            for f in frames[:10]
+        ]
+        already_closed_ids = [tid for f in frames for tid in (f.turn_ids or [])]
+        turn_filters = [
+            ChatbotTurn.contact_respond_id == respond_id,
+            ChatbotTurn.is_test.is_(False),
+        ]
+        if already_closed_ids:
+            turn_filters.append(~cast(ChatbotTurn.id, String).in_(already_closed_ids))
+        open_turns = (
+            self.db.query(ChatbotTurn).filter(*turn_filters).order_by(ChatbotTurn.created_at.asc()).all()
+        )
+        current = None
+        if open_turns:
+            current = {
+                "turn_count": len(open_turns),
+                "first_turn_id": open_turns[0].id,
+                "started_at": open_turns[0].created_at.isoformat() if open_turns[0].created_at else None,
+                "summary": "",
+                "domains": [],
+            }
+        return {"kept": len(frames), "limit": KEEP_EPISODES, "current": current, "rows": rows}
+
+    def _chatbot_open_orders(self, contact: RespondContact) -> dict:
+        from app.models.access import RespondContactCustomer
+        from app.models.order import Customer, SalesOrder
+
+        primary = (
+            self.db.query(Customer)
+            .join(
+                RespondContactCustomer,
+                RespondContactCustomer.customer_id == Customer.id,
+            )
+            .filter(
+                RespondContactCustomer.contact_id == contact.id,
+                RespondContactCustomer.is_primary.is_(True),
+            )
+            .first()
+        )
+        if primary is None:
+            return {"customer_name": None, "rows": []}
+        orders = (
+            self.db.query(SalesOrder)
+            .filter(SalesOrder.customer_id == primary.id, SalesOrder.status != "closed")
+            .order_by(SalesOrder.order_date.desc().nullslast())
+            .limit(5)
+            .all()
+        )
+        rows = [
+            {
+                "document": order.so_number,
+                "kind": "sales_order",
+                "status": (order.status or "open").replace("_", " ").title(),
+                "summary": "",
+                "date": order.order_date.isoformat() if order.order_date else None,
+                "href": f"/scm/sales-orders/{order.id}",
+            }
+            for order in orders
+        ]
+        return {"customer_name": primary.customer_name, "rows": rows}
+
+    def set_contact_fact(self, contact_id: str, key: str, value, *, user_id: str) -> dict:
+        from app.services.chatbot.turn import profile_facts
+        from app.services.error_handler import handle_unprocessable
+
+        self.get_contact(contact_id)
+        entry = profile_facts.set_staff_fact(self.db, contact_id, key, value, user_id=user_id)
+        if entry is None:
+            raise handle_unprocessable(f"{key!r} is not an editable fact, or the value is invalid.")
+        return self.get_chatbot_memory(contact_id)
+
+    def delete_contact_fact(self, contact_id: str, key: str) -> None:
+        from app.services.chatbot.turn import profile_facts
+
+        self.get_contact(contact_id)
+        profile_facts.delete_fact(self.db, contact_id, key)
+
     @staticmethod
-    def contact_to_response_dict(contact: RespondContact) -> dict:
+    def contact_to_response_dict(contact: RespondContact, db: Optional[Session] = None) -> dict:
         ws = getattr(contact, "workspace", None)
         access_types = list(getattr(contact, "access_types", []) or [])
+        chatbot_profile = dict(getattr(contact, "chatbot_profile", None) or {})
+        if db is not None:
+            # AC-MEM041: both dict builders carry facts, the live CRM ones (never
+            # stored) merged in the same way the memory GET does. Skipped entirely
+            # when there is nothing to add - a contact with no stored facts and no
+            # CRM link keeps the exact `{}` `chatbot_profile` pre-lane-A callers
+            # already assert on, rather than growing an always-empty `facts: []`.
+            from app.services.chatbot.turn import profile_facts
+
+            merged = profile_facts.merged_facts_for_display(db, contact)
+            if merged:
+                chatbot_profile["facts"] = merged
         return {
             "id": str(contact.id),
             "phone_number": contact.phone_number,
@@ -354,7 +511,7 @@ class ContactService:
             # silenced. A manual dict builder drops anything it does not list.
             "outbound_enabled": bool(getattr(contact, "outbound_enabled", True)),
             # Chatbot turn re-architecture (AC-1503) - same rule as every field above.
-            "chatbot_profile": getattr(contact, "chatbot_profile", None) or {},
+            "chatbot_profile": chatbot_profile,
             "chatbot_recall_enabled": bool(getattr(contact, "chatbot_recall_enabled", False)),
             # Chatbot memory lane A (contract section 5): null = follow the system
             # default. Must be listed explicitly, same rule as every field above.

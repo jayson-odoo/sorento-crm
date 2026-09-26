@@ -62,6 +62,7 @@ from app.services.chatbot.turn import state as turn_state
 from app.services.chatbot.turn import compose as turn_compose
 from app.services.chatbot.turn import fetch as run_fetch_mod
 from app.services.chatbot.turn import memory as memory_mod
+from app.services.chatbot.turn import profile_facts as profile_facts_mod
 from app.services.chatbot.turn import tail as turn_tail
 from app.services.chatbot.turn.apply import apply as turn_apply
 from app.services.chatbot.turn.apply import is_product_shaped_entity
@@ -911,6 +912,11 @@ def run_turn(
             stage[0] = "queued"
         try:
             if ticket is not None:
+                # Chatbot memory lane A (contract section 6): the drawer's own Order
+                # panel reads this back through `trace_detail._order` - the ONLY
+                # place `waited_ms` is ever computed, so a turn that never queued
+                # (S7 off, or unordered) never gets a `queue` record at all.
+                queue_wait_started = time.monotonic()
                 try:
                     dispatch.wait_for_turn(
                         redis,
@@ -921,6 +927,13 @@ def run_turn(
                         ),
                     )
                     dispatch.mark_running(redis, contact_respond_id, ticket)
+                    turn_trace.add(
+                        "queue",
+                        {
+                            "ticket": ticket,
+                            "waited_ms": int((time.monotonic() - queue_wait_started) * 1000),
+                        },
+                    )
                 except dispatch.ORDERING_ERRORS:
                     # Redis went away mid-wait. Same call as above: answer unordered
                     # rather than not at all. `QueueWait` is NOT one of these and still
@@ -1883,6 +1896,25 @@ def _run_stages(  # noqa: PLR0915
             branch_kind = turn_route(plan)
         item = _stamp_item(access, branch_kind, {})
 
+        # AC-MEM037: a tier this turn's narrowing just resolved (a fresh roster
+        # pick, or the customer naming it outright) is the contact's own from now
+        # on. `narrow.py`'s own `profile.tier` check (turn/narrow.py:452,467) is
+        # what makes the NEXT ask silent once this lands - `load_profile` reads it
+        # straight back next turn, so nothing else has to change to suppress a
+        # repeat ask. A resolved LIST ("1 and 2") is not one tier and is not
+        # persisted.
+        resolved_tier: str | None = None
+        for fetch_spec in plan.fetch:
+            tier_value = fetch_spec.filters.get("tier")
+            if isinstance(tier_value, str) and tier_value:
+                resolved_tier = tier_value
+                break
+        if resolved_tier is not None and resolved_tier != state_in.profile.tier:
+            try:
+                profile_facts_mod.set_tier(db, contact_respond_id, resolved_tier)
+            except Exception:  # noqa: BLE001 - a lost tier write is never a lost turn
+                logger.warning("chatbot: tier persist did not run", exc_info=True)
+
         # AC-1546 / chatbot memory lane A (contract section 3): the episode belongs to
         # the topic that just CLOSED, and a topic closes because the customer changed
         # subject - not because this turn's lane went on to answer. Written HERE, where
@@ -1924,6 +1956,32 @@ def _run_stages(  # noqa: PLR0915
             if written_frame is not None
             else None
         )
+
+        # AC-MEM032: the tally runs after the episode write above has committed -
+        # never before, since it reads the newest CLOSED frames and a frame this
+        # turn just wrote is one of them. Gated on the effective level (facts are
+        # learned only when memory is not `off`, contract section 2/4) - episodes
+        # themselves are written whatever the level, staff still see them.
+        # Stashed on `before` the same way `_episode_written` is, so `_run_answer`'s
+        # tail can fold it into the turn's own `facts_saved` trace line.
+        if written_frame is not None:
+            try:
+                from app.models.access import RespondContact as _RespondContact
+                from app.models.user import SystemSetting as _SystemSetting
+
+                own_level_row = (
+                    db.query(_RespondContact.chatbot_memory_level)
+                    .filter(_RespondContact.respond_io_id == contact_respond_id)
+                    .scalar()
+                )
+                system_memory_row = db.query(_SystemSetting.chatbot_memory).scalar()
+                if memory_mod.effective_level(own_level_row, system_memory_row) != "off":
+                    tallied = profile_facts_mod.tally(db, contact_respond_id, is_test=dry_run)
+                    remembered_before["_facts_tallied"] = [
+                        {"key": f["key"], "source": f["source"]} for f in tallied
+                    ]
+            except Exception:  # noqa: BLE001 - a lost tally is never a lost turn
+                logger.warning("chatbot: the profile tally did not run", exc_info=True)
 
         turn_trace.add(
             "apply",
@@ -2886,6 +2944,41 @@ def _run_answer(
             turn_tail.persist(state, answer, tail_ctx)
             _log_session_write(db, turn_id=turn_id, contact_respond_id=contact_respond_id)
             written = True
+
+        # AC-MEM033: a `profile_statement` the parser read off THIS message is
+        # applied here, in the tail - never earlier, since a statement is only
+        # worth learning once the turn itself is being persisted (a dry run
+        # persists nothing, so it learns nothing either). `apply_statement` owns
+        # every validation and precedence rule; `None` back means it was rejected
+        # (an unknown key, an invalid value, or a staff fact already owns the key)
+        # and nothing is saved.
+        facts_saved: list[dict[str, Any]] = list(remembered_before.get("_facts_tallied") or [])
+        statement = verdict.get("profile_statement")
+        if not dry_run and isinstance(statement, dict) and statement.get("key"):
+            from app.models.access import RespondContact as _RespondContactStated
+            from app.models.user import SystemSetting as _SystemSettingStated
+
+            own_level_row = (
+                db.query(_RespondContactStated.chatbot_memory_level)
+                .filter(_RespondContactStated.respond_io_id == contact_respond_id)
+                .scalar()
+            )
+            system_memory_row = db.query(_SystemSettingStated.chatbot_memory).scalar()
+            if memory_mod.effective_level(own_level_row, system_memory_row) != "off":
+                try:
+                    entry = profile_facts_mod.apply_statement(
+                        db,
+                        contact_respond_id,
+                        statement["key"],
+                        statement.get("value"),
+                        turn_id=turn_id,
+                    )
+                except Exception:  # noqa: BLE001 - a lost statement is never a lost turn
+                    logger.warning("chatbot: profile_statement apply did not run", exc_info=True)
+                    entry = None
+                if entry is not None:
+                    facts_saved.append({"key": entry["key"], "source": entry["source"]})
+
         _record_memory_trace(
             db,
             turn_trace,
@@ -2896,6 +2989,7 @@ def _run_answer(
             recalled=recalled,
             dry_run=dry_run,
             written=written,
+            facts_saved=facts_saved,
         )
         lane_actions = [*actions, *_answer_actions(answer, dry_run=dry_run)]
         turn_trace.record(
@@ -3319,12 +3413,14 @@ def _record_memory_trace(
     recalled: list[dict[str, Any]],
     dry_run: bool,
     written: bool,
+    facts_saved: list[dict[str, Any]] | None = None,
 ) -> None:
     """The `memory` trace record (chatbot memory lane A, contract section 6): the
     contact's context level, the three shelves before/after with their writer, what
     THIS turn closed (`episodes.written`, stashed on `before` by the topic-reset write
     a few call frames back) and what it fed the parser (`episodes.read`), and the
-    facts it saved - always `[]` until S2's profile-facts writer lands."""
+    facts it saved this turn (tallied after a reset, stated from the tail, or both -
+    the caller has already applied both writers by the time this runs)."""
     from app.models.access import RespondContact
     from app.models.user import SystemSetting
     from app.services.chatbot.turn.pending import to_wire
@@ -3365,7 +3461,7 @@ def _record_memory_trace(
                 "written": before.get("_episode_written"),
                 "writer": "tail",
             },
-            "facts_saved": [],
+            "facts_saved": list(facts_saved or []),
             "open_question": {
                 "before": before.get("open_question"),
                 "after": to_wire(answer.question) if answer is not None else None,

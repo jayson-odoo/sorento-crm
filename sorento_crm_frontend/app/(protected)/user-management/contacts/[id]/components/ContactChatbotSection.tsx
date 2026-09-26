@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
@@ -36,7 +36,6 @@ import {
   useSaveContactFact,
 } from '../hooks/useContactChatbot';
 import {
-  forgetContactFactMock,
   searchUsualBrandOptions,
   searchUsualProductOptions,
   searchUsualSiteOptions,
@@ -242,27 +241,15 @@ const MULTI_FETCH_OPTIONS: Record<string, (query: string) => Promise<{ value: st
 };
 
 /**
- * The raw value the fact GET response only sends as a display string (contract
- * section 5's example gives `"value": "Chin Chun Trading (CC001)"`, never a code) -
- * reversed here through the vocabulary's own options so an in-place edit or the Add
- * modal can seed the right selection. A choice value that predates its own vocabulary
- * option (or a value typed before this reading was settled) falls back to empty rather
- * than guessing.
+ * The fact's own raw `value` (contract section 5: `"ms"`, `["SRTWB1455"]`), seeded
+ * straight into the editor for an in-place edit or the Add modal - no reverse-mapping
+ * through the vocabulary's labels, since the backend now sends the raw value directly.
  */
 function rawValueFor(
   fact: Pick<ContactChatbotFact, 'value'>,
   vocab: ContactChatbotVocabularyEntry | undefined,
 ): string | string[] {
-  if (!vocab || fact.value == null) return vocab?.kind === 'multi' ? [] : '';
-  if (vocab.kind === 'multi') {
-    return fact.value
-      .split(',')
-      .map((v) => v.trim())
-      .filter(Boolean);
-  }
-  if (vocab.kind === 'choice') {
-    return vocab.options?.find((option) => option.label === fact.value)?.value ?? '';
-  }
+  if (fact.value == null) return vocab?.kind === 'multi' ? [] : '';
   return fact.value;
 }
 
@@ -330,9 +317,10 @@ function WhatTheBotKnowsCard({
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string | string[]>('');
   const [addOpen, setAddOpen] = useState(false);
-  const deletingKeyRef = useRef<string | null>(null);
 
   // Delete asks nothing (D7): the row's actions become an inline countdown with Cancel.
+  // The server commits `contact_chatbot_fact.delete` when the window lapses (or the tab
+  // closes); `invalidateKeys` refetches the memory GET, which is what takes the row out.
   const deletion = useDeferredRowAction({
     actionKey: 'contact_chatbot_fact.delete',
     entityType: 'contact_chatbot_fact',
@@ -340,13 +328,6 @@ function WhatTheBotKnowsCard({
     successMessage: 'Fact deleted',
     surface: 'inline',
     invalidateKeys: [contactChatbotMemoryQueryKey(contactId)],
-    // PHASE-1 MOCK: the real DELETE runs server-side when the deferred action commits
-    // (contract section 5) - this mock has no server to commit against, so the row is
-    // taken out of the mock store here once the SAME countdown lapses.
-    onCommitted: () => {
-      if (deletingKeyRef.current) forgetContactFactMock(contactId, deletingKeyRef.current);
-      deletingKeyRef.current = null;
-    },
   });
 
   const vocabByKey = useMemo(
@@ -396,15 +377,15 @@ function WhatTheBotKnowsCard({
               <Link
                 href={fact.link}
                 className="truncate text-primary hover:underline"
-                title={fact.value ?? ''}
+                title={fact.display ?? ''}
               >
-                {fact.value}
+                {fact.display}
               </Link>
             );
           }
           return (
-            <span className="truncate" title={fact.value ?? ''}>
-              {fact.value ?? '-'}
+            <span className="truncate" title={fact.display ?? ''}>
+              {fact.display ?? '-'}
             </span>
           );
         },
@@ -473,7 +454,6 @@ function WhatTheBotKnowsCard({
                 size="sm"
                 aria-label={`Delete ${fact.label}`}
                 onClick={() => {
-                  deletingKeyRef.current = fact.key;
                   deletion.run({
                     id: factCompositeId(contactId, fact.key),
                     subject: fact.label,

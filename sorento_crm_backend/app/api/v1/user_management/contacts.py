@@ -174,7 +174,7 @@ async def get_contact(
     try:
         service = ContactService(db)
         contact = service.get_contact(contact_id)
-        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact))
+        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact, db))
     except HTTPException:
         raise
     except Exception as e:
@@ -191,7 +191,7 @@ async def create_contact(
     try:
         service = ContactService(db)
         contact = service.create_contact(contact_data)
-        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact))
+        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact, db))
     except HTTPException:
         raise
     except Exception as e:
@@ -209,7 +209,7 @@ async def update_contact(
     try:
         service = ContactService(db)
         contact = service.update_contact(contact_id, contact_data)
-        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact))
+        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact, db))
     except HTTPException:
         raise
     except Exception as e:
@@ -263,7 +263,15 @@ async def update_contact_chatbot(
     try:
         contact = ContactService(db).get_contact(contact_id)
         if body.chatbot_profile is not None:
-            contact.chatbot_profile = body.chatbot_profile
+            # Chatbot memory lane A (contract section 5): "`chatbot_profile` in the
+            # body never touches `facts`" - a whole-profile PUT sends `tier`/
+            # `default_ledgers`, never the facts list, so a bare replace would
+            # silently wipe every learned/said/staff fact on the very next save.
+            merged_profile = dict(body.chatbot_profile)
+            existing_facts = (contact.chatbot_profile or {}).get("facts")
+            if existing_facts is not None:
+                merged_profile["facts"] = existing_facts
+            contact.chatbot_profile = merged_profile
         # Present (including explicit null) sets it; absent leaves it alone - the same
         # rule every other field on this card follows. `model_fields_set` is the only
         # way to tell "sent as null" from "not sent at all" once both read as `None`.
@@ -280,12 +288,75 @@ async def update_contact_chatbot(
         db.commit()
         db.refresh(contact)
         return RespondContactResponse.model_validate(
-            ContactService.contact_to_response_dict(contact)
+            ContactService.contact_to_response_dict(contact, db)
         )
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error updating contact chatbot settings {contact_id}: {e}", exc_info=True)
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{contact_id}/chatbot/memory")
+async def get_contact_chatbot_memory(
+    contact_id: str,
+    current_user: dict = Depends(require_permission("user_management.contacts.view")),
+    db: Session = Depends(get_db),
+):
+    """Facts, episodes and open orders (chatbot memory lane A, contract section 5).
+    Router is HTTP only - `ContactService.get_chatbot_memory` owns every read."""
+    _ = current_user
+    try:
+        return ContactService(db).get_chatbot_memory(contact_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reading chatbot memory for {contact_id}: {e}", exc_info=True)
+        raise handle_internal_error(str(e))
+
+
+class ContactFactUpdate(BaseModel):
+    value: object
+
+
+@router.put("/{contact_id}/chatbot/facts/{key}")
+async def put_contact_chatbot_fact(
+    contact_id: str,
+    key: str,
+    body: ContactFactUpdate,
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
+    db: Session = Depends(get_db),
+):
+    """Sets a staff fact; 422 on an unknown key, a CRM-only key, a value outside its
+    choices, or over its length/count limit (contract section 5)."""
+    try:
+        return ContactService(db).set_contact_fact(contact_id, key, body.value, user_id=current_user["id"])
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error setting chatbot fact {key} for {contact_id}: {e}", exc_info=True)
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/{contact_id}/chatbot/facts/{key}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_contact_chatbot_fact(
+    contact_id: str,
+    key: str,
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
+    db: Session = Depends(get_db),
+):
+    """Hard delete through the deferred-action path - the FE fires this when the
+    countdown lapses (`contact_chatbot_fact.delete` in `app/services/record_actions.py`
+    already calls the same `ContactService.delete_contact_fact`); reachable directly
+    too, for a caller that has already waited out its own window."""
+    _ = current_user
+    try:
+        ContactService(db).delete_contact_fact(contact_id, key)
+        return None
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting chatbot fact {key} for {contact_id}: {e}", exc_info=True)
         raise handle_internal_error(str(e))
 
 
@@ -355,7 +426,7 @@ async def sync_contact(
     try:
         service = ContactService(db)
         contact = service.sync_contact_name(contact_id)
-        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact))
+        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact, db))
     except HTTPException:
         raise
     except ValueError as e:
