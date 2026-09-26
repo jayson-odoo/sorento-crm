@@ -200,4 +200,9 @@ def run(db: Session) -> Dict[str, int]:
     summary["numbering"] = 1 if seed_opportunity_numbering_rule(db) else 0
     summary["opportunity_statuses"] = seed_default_opportunity_graph(db)
     summary["opportunity_lost_reasons"] = seed_opportunity_lost_reasons(db)
+    # Every seeder above only flushes; `main.py`'s startup block closes this session
+    # rather than committing it, and closing a session with an open transaction rolls
+    # it back (Phase 3 fix B1) - without this, nothing seeded here ever survives past
+    # the request that ran it.
+    db.commit()
     return summary
