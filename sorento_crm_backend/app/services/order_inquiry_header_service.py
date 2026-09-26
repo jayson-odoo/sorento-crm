@@ -19,20 +19,24 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, List, Literal, Optional, get_args
 
-from sqlalchemy import Date, case, cast, func, or_
+from sqlalchemy import Date, String, and_, case, cast, func, or_
 from sqlalchemy.orm import Session
 
-from app.models.order import Customer, SalesOrder
+from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation, Supplier
 from app.models.project_so import (
     ACK_AWAITING,
     ACK_CHANGED,
     INQUIRY_CANCELLED,
+    IV_ORDER,
+    IV_ORDER_BACK,
+    IV_RESERVE_AND_ORDER,
     OrderInquiry,
     OrderInquiryLink,
     OrderInquiryRaise,
     OrderInquiryRow,
     ProjectSalesOrder,
+    ProjectSalesOrderLine,
 )
 from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
 from app.models.sales_agent import SalesAgent
@@ -104,6 +108,10 @@ _CUSTOMER_ID = func.coalesce(ProjectParty.customer_id, SalesOrder.customer_id)
 # file reads or filters on the agent's name.
 _AGENT_NAME = func.coalesce(SalesAgent.person_label, SalesAgent.sales_agent)
 
+#: The Lines tab's buy verbs (`isInquiryBuyRow`, `_shared/lib/orderInquiryWorklist.ts`):
+#: the only rows whose `qty` is in the Requested footer, and so in `qty_total` (G10).
+_BUY_VERBS = (IV_ORDER, IV_ORDER_BACK, IV_RESERVE_AND_ORDER)
+
 HeaderSort = Literal[
     "raised_at",
     "inquiry_no",
@@ -168,17 +176,53 @@ class OrderInquiryHeaderService:
         )
 
     def _rows_agg(self):
-        """One row per header: `lines_total` / `lines_to_confirm` / `qty_total` over its
-        own NON-CANCELLED rows only (AC-LS-05). A subquery rather than a join on the
-        outer query, so a header's row count never fans the header itself out."""
+        """One row per header, counted the way the OI detail's Lines tab renders it
+        (`PLAN-oi-no-double-count-25sep.md`, owner ruling 26 Sep 2026, G10: "The header
+        list lines and qty should be truthful to what is shown in the Lines tab").
+
+        * A LINE is the rows' sales order line, keyed exactly as the tab folds them
+          (`orderInquiryLineFold.ts::foldKeyOf`): the core line the row's mirror line
+          resolves to, else the row alone. Only NON-CANCELLED rows make a line render,
+          so a line whose every row was superseded is not one; a used row and a
+          cancelled sales order line's row still do (the tab shows them folded, or grey).
+        * `lines_total` = distinct lines. `lines_to_confirm` = distinct lines with a
+          non-cancelled row in awaiting / changed, used rows included (G6).
+        * `qty_total` = the tab's Requested footer: `qty` of the live buy rows (a buy
+          verb, not cancelled, not `redirected_to_pool`) on lines not cancelled on the SO.
+
+        A subquery rather than a join on the outer query, so a header's row count never
+        fans the header itself out."""
+        line_key = func.coalesce(
+            cast(SalesOrderLine.id, String), cast(OrderInquiryRow.id, String)
+        )
+        live_buy_qty = case(
+            (
+                and_(
+                    OrderInquiryRow.verb.in_(_BUY_VERBS),
+                    OrderInquiryRow.redirected_to_pool.isnot(True),
+                    func.coalesce(SalesOrderLine.line_status, "") != "cancelled",
+                ),
+                OrderInquiryRow.qty,
+            ),
+            else_=0,
+        )
         return (
             self.db.query(
                 OrderInquiryRow.order_inquiry_id.label("order_inquiry_id"),
-                func.count(OrderInquiryRow.id).label("lines_total"),
-                func.count(OrderInquiryRow.id)
+                func.count(func.distinct(line_key)).label("lines_total"),
+                func.count(func.distinct(line_key))
                 .filter(OrderInquiryRow.ack_state.in_((ACK_AWAITING, ACK_CHANGED)))
                 .label("lines_to_confirm"),
-                func.sum(OrderInquiryRow.qty).label("qty_total"),
+                func.sum(live_buy_qty).label("qty_total"),
+            )
+            .select_from(OrderInquiryRow)
+            .outerjoin(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+            )
+            .outerjoin(
+                SalesOrderLine,
+                SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
             )
             .filter(OrderInquiryRow.state != INQUIRY_CANCELLED)
             .group_by(OrderInquiryRow.order_inquiry_id)

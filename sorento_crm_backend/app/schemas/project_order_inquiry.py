@@ -448,6 +448,12 @@ class OrderInquiryWorklistRow(BaseModel):
     # cell's own `SO402757 · L5` label (`orderInquirySoLineLabel`) reads this. Null when
     # the mirror has no core line (same as `core_line_id`).
     line_no: Optional[int] = None
+    # `PLAN-oi-no-double-count-25sep.md` S1 (AC-ND-21): the sales order line's own Qty and
+    # No., the numbers the sales order's Lines grid shows for that line - the OI detail's
+    # SO Qty column. The core line's `qty_ordered` / `line_no`, else the mirror's own when
+    # it has no core line; both null when the row names no sales order line at all.
+    so_line_qty: Optional[str] = None
+    so_line_no: Optional[int] = None
     is_adopted: bool = False
     # The placed purchase order this row traces to (same coalesce the PO NO column reads),
     # so the "PO no" cell's popup can address `GET .../order-inquiries/po/{po_id}` without

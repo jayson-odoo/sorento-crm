@@ -5654,6 +5654,9 @@ class ProjectOrderInquiryService:
             row.acknowledged_by = actor_user_id
             row.acknowledged_at = now
             transitioned += 1
+        transitioned += self._acknowledge_used_rows_of(
+            rows, actor_user_id=actor_user_id, now=now
+        )
         # FLUSHED before the cascade: the session runs `autoflush=False` the way the
         # application's does, so the pass below would read these rows at their OLD
         # acknowledgement state and link none of them.
@@ -5678,6 +5681,47 @@ class ProjectOrderInquiryService:
             "link_up_to": placed["link_up_to"],
             "link_horizon": placed["link_horizon"],
         }
+
+    def _acknowledge_used_rows_of(
+        self, rows: Sequence[OrderInquiryRow], *, actor_user_id: str, now: datetime
+    ) -> int:
+        """G6 (`PLAN-oi-no-double-count-25sep.md`, owner ruling 26 Sep 2026): the OI
+        detail shows ONE row per sales order line and puts a used row in History only, so
+        confirming a line also takes on that line's used rows still in `changed` - on the
+        SAME header and the SAME sales order line as a confirmed row, never another line
+        or another header (AC-ND-24, AC-ND-25). Without it the header sits Outstanding on
+        a row nobody can see. A cancelled used row is history and stays as it is. Swept
+        rows are not linked: a used row's goods were released to the pool."""
+        lines = {
+            (str(row.order_inquiry_id), str(row.so_line_id))
+            for row in rows
+            if row.so_line_id is not None
+        }
+        if not lines:
+            return 0
+        named = {str(row.id) for row in rows}
+        used = (
+            self.db.query(OrderInquiryRow)
+            .filter(
+                OrderInquiryRow.order_inquiry_id.in_({key[0] for key in lines}),
+                OrderInquiryRow.so_line_id.in_({key[1] for key in lines}),
+                OrderInquiryRow.redirected_to_pool.is_(True),
+                OrderInquiryRow.ack_state == ACK_CHANGED,
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+            .all()
+        )
+        swept = 0
+        for row in used:
+            if str(row.id) in named:
+                continue
+            if (str(row.order_inquiry_id), str(row.so_line_id)) not in lines:
+                continue
+            row.ack_state = ACK_ACKNOWLEDGED
+            row.acknowledged_by = actor_user_id
+            row.acknowledged_at = now
+            swept += 1
+        return swept
 
     def unacknowledge_rows(
         self, row_ids: Sequence[str], *, actor_user_id: str

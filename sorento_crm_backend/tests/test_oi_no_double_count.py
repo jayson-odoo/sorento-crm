@@ -38,6 +38,7 @@ from app.models.project_so import (
     OrderInquiryRow,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
+    SOAmendment,
 )
 
 from ._pg_fixture import blank_session
@@ -84,11 +85,24 @@ class _Order:
         db.flush()
         self.inquiry = self.header()
 
-    def header(self) -> OrderInquiry:
+    def header(self, *, amendment: bool = False) -> OrderInquiry:
+        amendment_id = None
+        if amendment:
+            # L16: an amendment raises a SECOND header on the same sales order.
+            row = SOAmendment(
+                id=_uid(),
+                company_id=self.company_id,
+                project_sales_order_id=self.pso.id,
+                delta_json={"rows": []},
+            )
+            self.db.add(row)
+            self.db.flush()
+            amendment_id = row.id
         inquiry = OrderInquiry(
             id=_uid(),
             company_id=self.company_id,
             project_sales_order_id=self.pso.id,
+            amendment_id=amendment_id,
             state=INQUIRY_RAISED,
         )
         self.db.add(inquiry)
@@ -404,7 +418,7 @@ def test_confirm_leaves_used_rows_on_other_lines_and_headers_alone_AC_ND_25(api)
         mirror_b, product_b, "3", redirected=True, ack_state=ACK_CHANGED
     )
     # The same sales order line, but on an amendment header (L16): not this inquiry.
-    amendment = order.header()
+    amendment = order.header(amendment=True)
     used_other_header = order.row(
         mirror_a, product_a, "2", inquiry=amendment, redirected=True, ack_state=ACK_CHANGED
     )

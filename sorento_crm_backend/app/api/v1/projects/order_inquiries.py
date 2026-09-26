@@ -384,6 +384,14 @@ def list_order_inquiry_worklist(
             "by `order_inquiries.id`."
         ),
     ),
+    include_history: bool = Query(
+        False,
+        description=(
+            "`PLAN-oi-no-double-count-25sep.md` S1 (AC-ND-20): cancelled rows too, "
+            "so the OI detail's Lines tab reads a line's whole history in its one "
+            "fetch. An explicit `state` still wins. Off, the response is unchanged."
+        ),
+    ),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -403,6 +411,7 @@ def list_order_inquiry_worklist(
             limit=limit,
             sort=sort,
             direction=direction,
+            include_cancelled=include_history,
             **_worklist_filters(
                 query,
                 delivery_month,

@@ -790,6 +790,11 @@ _COLUMNS = (
     # L5` label (`orderInquirySoLineLabel`) - the SAME `SalesOrderLine` join `core_line_id`
     # above already reads, so this adds no join of its own.
     SalesOrderLine.line_no.label("line_no"),
+    # `PLAN-oi-no-double-count-25sep.md` S1 (AC-ND-21): the SO Qty and No. the sales
+    # order's own Lines grid shows, off the same two line joins; the mirror's own figures
+    # only when it has no core line.
+    func.coalesce(SalesOrderLine.qty_ordered, ProjectSalesOrderLine.qty).label("so_line_qty"),
+    func.coalesce(SalesOrderLine.line_no, ProjectSalesOrderLine.line_no).label("so_line_no"),
     Supplier.id.label("supplier_id"),
     Supplier.supplier_name.label("supplier"),
     PurchaseOrder.id.label("po_id"),
@@ -2373,6 +2378,11 @@ class OrderInquiryWorklistService:
             # Fix round (22 Sep): AutoCount's own line number, beside the id above - the
             # S/O line cell's own `SO402757 · L5` label reads this.
             "line_no": row.line_no,
+            # S1 (AC-ND-21): the sales order line's own Qty and No.
+            "so_line_qty": (
+                _qty_str(_dec(row.so_line_qty)) if row.so_line_qty is not None else None
+            ),
+            "so_line_no": row.so_line_no,
             # An adopted record is a mirror of a core sales order and has no project
             # registration; that pair is the whole distinction and the screen links on it.
             "is_adopted": bool(row.core_sales_order_id) and row.project_id is None,
