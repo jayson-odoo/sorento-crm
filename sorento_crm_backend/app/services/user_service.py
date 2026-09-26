@@ -535,17 +535,11 @@ class UserService:
                 code="CONTACT_ALREADY_LINKED",
             )
 
-    def _audit_contact_link(self, user_id: str, action: str, description: str) -> None:
-        """One `log_audit` row for a create-from-contact, link, or unlink
-        (S3 1.2 step 10, 1.3, 1.4). Best-effort in its OWN transaction, after the
-        caller's own commit - an audit-write failure must never undo the link
-        itself.
-
-        `log_audit` uppercases every action on purpose (its many other callers
-        rely on that for the generic CREATE/READ/UPDATE/DELETE/IMPORT verbs);
-        overridden back to the named lowercase verb here rather than loosening
-        that shared behaviour for everyone. The DB constraint was widened for
-        exactly these two values (migration identity_0002_s3_audit_actions).
+    def _audit_contact_link(self, user_id: str, description: str) -> None:
+        """One `log_audit` UPDATE row for a create-from-contact, link, or unlink
+        (S3 1.2 step 10, 1.3, 1.4), its description naming the contact. Best-effort
+        in its OWN transaction, after the caller's own commit: an audit-write failure
+        must never undo the link itself.
         """
         import logging
 
@@ -553,12 +547,11 @@ class UserService:
         try:
             from app.services.audit_service import log_audit
 
-            entry = log_audit(self.db, "user", user_id, action, description=description)
-            entry.action = action
+            log_audit(self.db, "user", user_id, "UPDATE", description=description)
             self.db.commit()
         except Exception as e:
             self.db.rollback()
-            logger.warning("Failed to write %s audit row for user %s: %s", action, user_id, e)
+            logger.warning("Failed to write the contact-link audit row for user %s: %s", user_id, e)
 
     def _user_create_data(self, user_data: UserCreate) -> dict:
         """Build User model dict from UserCreate, excluding role_ids/company_ids."""
@@ -648,7 +641,6 @@ class UserService:
         if contact is not None:
             self._audit_contact_link(
                 user.id,
-                "link_contact",
                 f"Created from WhatsApp contact {contact.name or contact.phone_number}",
             )
         return user
@@ -689,8 +681,8 @@ class UserService:
         # --- WhatsApp contact link / unlink / switch (S3 1.3) ---------------
         # Handled entirely here and popped out of update_data so the generic
         # field loop below never touches it a second time.
-        contact_audit: Optional[tuple[str, str]] = None  # (action, description)
-        revoke_for_unlink = False
+        contact_audit: Optional[str] = None  # the audit description
+        should_unlink = False
         if "respond_contact_id" in update_data:
             from app.models.access import RespondContact
 
@@ -726,19 +718,12 @@ class UserService:
                 # First link: saved, no role added, nothing sent, sessions NOT
                 # revoked (owner ruling, AC-54).
                 user.respond_contact_id = new_contact_id
-                contact_audit = ("link_contact", f"Linked WhatsApp contact {contact.name or contact.phone_number}")
+                contact_audit = f"Linked WhatsApp contact {contact.name or contact.phone_number}"
             elif not new_contact_id and current_contact_id:
-                unlinked = (
-                    self.db.query(RespondContact)
-                    .filter(RespondContact.id == current_contact_id)
-                    .first()
-                )
-                user.respond_contact_id = None
-                contact_audit = (
-                    "unlink_contact",
-                    f"Unlinked WhatsApp contact {(unlinked.name or unlinked.phone_number) if unlinked else 'contact'}",
-                )
-                revoke_for_unlink = True
+                # `unlink_contact` is the one implementation (S3 1.4) - it does
+                # its own commit, session revoke and audit row, run AFTER the
+                # rest of this PUT's fields commit below.
+                should_unlink = True
             # else: unchanged value, or unlink of an already-unlinked user - no-op.
 
         # Enforce Respond User ID uniqueness before applying any updates
@@ -805,8 +790,11 @@ class UserService:
 
         # Side effects that need the row committed - each best-effort (S3 1.3/1.4).
         if contact_audit is not None:
-            self._audit_contact_link(user.id, contact_audit[0], contact_audit[1])
-        if revoke_for_unlink or phone_changed:
+            self._audit_contact_link(user.id, contact_audit)
+        if should_unlink:
+            self.unlink_contact(user_id)
+            self.db.refresh(user)
+        if phone_changed:
             from app.services import user_session_service
 
             try:
@@ -837,7 +825,6 @@ class UserService:
         user_session_service.revoke_all_for_user(self.db, user_id)
         self._audit_contact_link(
             user_id,
-            "unlink_contact",
             f"Unlinked WhatsApp contact {(contact.name or contact.phone_number) if contact else 'contact'}",
         )
 

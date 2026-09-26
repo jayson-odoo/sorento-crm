@@ -720,7 +720,7 @@ def test_ac47_create_from_contact_writes_audit_row_with_real_user_id_and_contact
 
     row = (
         db.query(AuditLog)
-        .filter(AuditLog.entity_type == "user", AuditLog.entity_id == user_id, AuditLog.action == "link_contact")
+        .filter(AuditLog.entity_type == "user", AuditLog.entity_id == user_id, AuditLog.action == "UPDATE", AuditLog.description.ilike("%WhatsApp contact%"))
         .order_by(AuditLog.changed_at.desc())
         .first()
     )
@@ -742,7 +742,7 @@ def test_ac47_link_writes_audit_row_with_real_user_id_and_contact_name(real_sess
 
     row = (
         db.query(AuditLog)
-        .filter(AuditLog.entity_type == "user", AuditLog.entity_id == target.id, AuditLog.action == "link_contact")
+        .filter(AuditLog.entity_type == "user", AuditLog.entity_id == target.id, AuditLog.action == "UPDATE", AuditLog.description.ilike("%WhatsApp contact%"))
         .order_by(AuditLog.changed_at.desc())
         .first()
     )
@@ -765,7 +765,7 @@ def test_ac47_unlink_writes_audit_row_with_real_user_id(real_session_client):
 
     row = (
         db.query(AuditLog)
-        .filter(AuditLog.entity_type == "user", AuditLog.entity_id == target.id, AuditLog.action == "unlink_contact")
+        .filter(AuditLog.entity_type == "user", AuditLog.entity_id == target.id, AuditLog.action == "UPDATE", AuditLog.description.ilike("Unlinked WhatsApp contact%"))
         .order_by(AuditLog.changed_at.desc())
         .first()
     )
@@ -871,7 +871,7 @@ def test_ac54_put_unlink_revokes_every_session_and_writes_audit(api_client):
 
     row = (
         db.query(AuditLog)
-        .filter(AuditLog.entity_type == "user", AuditLog.entity_id == user.id, AuditLog.action == "unlink_contact")
+        .filter(AuditLog.entity_type == "user", AuditLog.entity_id == user.id, AuditLog.action == "UPDATE", AuditLog.description.ilike("Unlinked WhatsApp contact%"))
         .first()
     )
     assert row is not None
@@ -901,7 +901,7 @@ def test_ac54_deferred_unlink_contact_executor_revokes_sessions_and_writes_audit
 
         row = (
             db.query(AuditLog)
-            .filter(AuditLog.entity_type == "user", AuditLog.entity_id == user.id, AuditLog.action == "unlink_contact")
+            .filter(AuditLog.entity_type == "user", AuditLog.entity_id == user.id, AuditLog.action == "UPDATE", AuditLog.description.ilike("Unlinked WhatsApp contact%"))
             .first()
         )
         assert row is not None
