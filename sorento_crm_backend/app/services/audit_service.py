@@ -16,7 +16,8 @@ from sqlalchemy import inspect, select, func
 from sqlalchemy.orm.attributes import get_history
 from sqlalchemy.sql.elements import BindParameter
 from typing import Optional, Any, Iterable
-from datetime import datetime, date
+from datetime import datetime, date, time, timedelta
+from enum import Enum
 from decimal import Decimal
 from uuid import UUID
 from app.models.audit import AuditLog
@@ -33,16 +34,23 @@ BULK_AUDIT_CAP = 500
 # system_settings.smtp_password, *_ciphertext (respond_workspaces, ai_assistant_configs),
 # integration_api_keys.key_hash, portal_otp_codes.code_hash, integrations.credentials_json,
 # token / public_token / sign_token on the share-link tables.
-_REDACT_EXACT = frozenset({"password", "token", "key_hash", "code_hash", "credentials_json"})
+# A superset of S-1's AUDIT_SECRET_KEYS (PR #1298): the two lists merge into this one when it lands.
+_REDACT_EXACT = frozenset(
+    {"password", "password_hash", "token", "secret", "key_hash", "code_hash", "credentials_json"}
+)
 _REDACT_SUFFIXES = ("_password", "_secret", "_token", "_ciphertext")
 _REDACT_PREFIXES = ("api_key",)
 
 # Columns stamped on every touch. An UPDATE that changes only these writes no row, and they
-# never appear in a diff: integrations.last_used_at moves on every API-key call and
-# users.last_sign_in_at on every login, which would otherwise be the two loudest writers.
-_TOUCH_COLUMNS = frozenset(
-    {"updated_at", "last_used_at", "last_sign_in_at", "last_seen_at", "last_activity_at"}
-)
+# never appear in a diff. Measured writers: integrations / integration_api_keys.last_used_at
+# (every API-key call), users.last_sign_in_at (every login), integration_references
+# .last_synced_at (every sync, even of an unchanged record), scheduled_tasks.last_run_at (every
+# heartbeat), mcp_tools.last_seen_at and respond_*.synced_at (catalogue syncs),
+# attachments.storage_checked_at (the storage audit job).
+_TOUCH_COLUMNS = frozenset({
+    "updated_at", "last_used_at", "last_sign_in_at", "last_seen_at", "last_activity_at",
+    "last_synced_at", "synced_at", "last_run_at", "storage_checked_at",
+})
 
 
 def _is_secret_key(key: str) -> bool:
@@ -139,16 +147,29 @@ def _old_new_from_dirty(obj: Any, columns: Optional[list[str]] = None) -> tuple[
 
 
 def _json_serial(value: Any) -> Any:
-    """Convert a value to a JSON-serializable form."""
-    if value is None:
-        return None
-    if isinstance(value, datetime):
+    """Convert a value to a JSON-serializable form.
+
+    Total by design: default-on auditing reaches every column type in the schema (``time``,
+    ``interval``, enums, bytea, JSON holding Decimals), and one unserializable value would
+    fail the flush of the business write it was recording.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (datetime, date, time)):
         return value.isoformat()
-    if isinstance(value, date):
-        return value.isoformat()
+    if isinstance(value, timedelta):
+        return value.total_seconds()
     if isinstance(value, (UUID, Decimal)):
         return str(value)
-    return value
+    if isinstance(value, Enum):
+        return _json_serial(value.value)
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return f"[{len(bytes(value))} bytes]"
+    if isinstance(value, dict):
+        return {str(k): _json_serial(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_json_serial(v) for v in value]
+    return str(value)
 
 
 def _model_to_audit_dict(obj: Any) -> dict[str, Any]:
@@ -770,13 +791,9 @@ def _session_do_orm_execute(state: Any) -> None:
     conn = session.connection(bind_arguments=state.bind_arguments)
     if not _audit_table_exists(conn):
         return
-    try:
-        # A savepoint, so a failed capture cannot abort the transaction the write runs in.
-        with conn.begin_nested():
-            _write_bulk_rows(session, conn, cls, entity_type, statement, state.is_delete)
-    except Exception:
-        # Never let the trail break the write it is recording; say so loudly instead.
-        logger.exception("audit: bulk capture failed for %s", entity_type)
+    # Same contract as the flush path: the audit rows share the write's transaction, so a
+    # failed capture fails the write rather than leaving a change with no trail.
+    _write_bulk_rows(session, conn, cls, entity_type, statement, state.is_delete)
 
 
 def _write_bulk_rows(session: Session, conn: Any, cls: type, entity_type: str, statement: Any, is_delete: bool) -> None:

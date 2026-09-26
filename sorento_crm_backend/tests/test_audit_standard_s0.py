@@ -647,3 +647,26 @@ def test_ac_s0_23_the_list_route_returns_the_new_fields(db):
         "req-api", "corr-api", "probe.api", "r"
     )
     assert select  # keep the import used
+
+
+def test_ac_s0_01c_every_column_type_serializes():
+    """Default-on reaches time, interval, enum, bytea and JSON-with-Decimal columns; one
+    unserializable value failed the whole business flush (found by the full suite: a
+    `time` column on an SLA table)."""
+    import enum
+    import json
+    from datetime import time, timedelta
+    from decimal import Decimal
+
+    from app.services.audit_service import _json_serial
+
+    class Colour(enum.Enum):
+        RED = "red"
+
+    value = _json_serial({
+        "t": time(9, 30), "d": timedelta(minutes=2), "e": Colour.RED, "b": b"abc",
+        "nested": [Decimal("1.5"), {uuid.UUID(int=1)}], "other": object(),
+    })
+    json.dumps(value)
+    assert value["t"] == "09:30:00" and value["d"] == 120.0 and value["e"] == "red"
+    assert value["b"] == "[3 bytes]" and value["nested"][0] == "1.5"

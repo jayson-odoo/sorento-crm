@@ -90,9 +90,11 @@ own named alternative. Trigger to revisit: a second writer role appears.
    stays on the 42 classes as a no-op marker (removing it is churn with no behaviour change).
 2. **Changed keys only on UPDATE.** CREATE and DELETE stay full snapshots. An UPDATE whose only
    changed keys are touch columns (`updated_at`, `last_used_at`, `last_sign_in_at`,
-   `last_seen_at`, `last_activity_at`) writes nothing: measured sources are
-   `integrations.last_used_at` (stamped on every API-key call) and `users.last_sign_in_at` (every
-   login), which would otherwise become the two biggest writers.
+   `last_seen_at`, `last_activity_at`, `last_synced_at`, `synced_at`, `last_run_at`,
+   `storage_checked_at`) writes nothing. Measured writers: `integrations.last_used_at` (every
+   API-key call), `users.last_sign_in_at` (every login), `integration_references.last_synced_at`
+   (every sync, even of an unchanged record; found by the suite), `scheduled_tasks.last_run_at`
+   (every heartbeat), catalogue syncs, the storage audit job.
 3. **Bulk ORM DML via `do_orm_execute`.** For an audited table, an ORM or Core `update()` /
    `delete()` issued through `Session.execute` pre-selects the matching primary keys (and the old
    values of the SET columns, or the whole row for a delete), capped at 500 rows per statement,
