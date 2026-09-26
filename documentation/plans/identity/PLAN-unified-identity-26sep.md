@@ -1,12 +1,16 @@
 # PLAN: Unified identity, one login for the portal and the CRM (#1280)
 
-Status: draft plan + UAC, round 3 (27 Sep 2026): owner rulings on Q1, Q2, Q3, Q4, Q6, Q8, Q9, Q10
-(26 Sep 2026 23:45 MYT) and Q5 (27 Sep 2026 00:20 MYT) applied (section 12); Q7's reply was a
-question, answered on PR #1285. Owner alignment page: `alignment-unified-identity-27sep.html`
-(same folder). Q3 and Q4
+Status: draft plan + UAC, round 4 (27 Sep 2026): owner rulings on Q1, Q2, Q3, Q4, Q6, Q8, Q9, Q10
+(26 Sep 2026 23:45 MYT), Q5 (27 Sep 2026 00:20 MYT), the screen notes of 27 Sep 2026 00:45 MYT
+(Q7 ruled, Q16) and the invite email ruling of 27 Sep 2026 00:50 MYT (Q17) applied (section 12).
+Owner alignment page: `alignment-unified-identity-27sep.html` (same folder). Q3 and Q4
 reversed the recommendation: no user is ever created automatically, the owner creates and sets up
-every user at the backend (section 6). Track: full (migration, auth, RBAC, portal ingest). Nothing
-built. The plan rides in the first feature PR (S0); this lane is docs only.
+every user at the backend (section 6). Round 4: no new pages (the Salesperson accounts worklist
+and the separate admin identity slice S4 are withdrawn; creating and linking live in the existing
+Administrative Users and Internal Users pages), one sign-in page (the existing `/signin`) with an
+Email / Phone toggle, and no email is ever sent by creating or linking a user (section 6.4).
+Track: full (migration, auth, RBAC, portal ingest). Nothing built. The plan rides in the first
+feature PR (S0); this lane is docs only.
 UAC: `identity-unified-login-acceptance-criteria.md` (same folder; the Journey is there, and every
 AC traces to a step in it).
 Classification: CORE (auth and users are base-platform), tables stay in `public`.
@@ -61,6 +65,31 @@ captain's 14 Aug 2026 ruling that salespeople "shouldn't have user account in ou
 optional at least", repeated in `documentation/plans/sales/PLAN-customer-sales-agent-assignment-24sep.md:10`.
 Owner ruling 26 Sep 2026 23:45 MYT (Q2): "yeah correct", #1280 supersedes it; S3 corrects the
 docstring and that plan.
+
+Owner notes on the alignment page, 27 Sep 2026 00:45 MYT (PR #1285), verbatim and binding:
+
+> On the Salesperson accounts worklist: "just use our existing user management page, don't need
+> new page" and "there is no need for this, I will just create the user account and link to the
+> contact, i don't even want to send email verification to these ppl at this stage, you can maybe
+> help me to quick create from respond contact la, but i don't need another page called
+> salesperson account, just need existing Administrative Users and Internal contacts".
+> On the S3 / S4 card: "i don't need a brand new page for user management".
+> On the one-field sign-in sketch: "i just need 1 sign in page which is
+> https://fe-sorento.foundryx.my/signin with option to sign in by phone number, this is for normal
+> user, then for salesperson, they will still access via portal which will prompt them to enter
+> verification code when needed" and "we already got this send otp mechanism so just reuse it,
+> make sure i can toggle between phone auth and email pw auth in the sign in page while obeying
+> the design element of the current sign in page".
+
+Owner ruling 27 Sep 2026 00:50 MYT (PR #1285), verbatim and binding:
+
+> "cause i think now if we create the user with email, it will send email verification right? can
+> this be a manual step ah cause i worry will accidentally send the email to the salespersons when
+> we create for them, this one you also need to update in the lavish"
+
+"Internal contacts" is the page the sidebar calls **Internal Users** (Users & Access > People,
+the WhatsApp contact list, `config/menu.config.tsx:684-688`; the contact list page titles itself
+the same, `app/(protected)/user-management/contacts/page.tsx:15`). This plan uses the sidebar name.
 
 ## 1. Why
 
@@ -152,6 +181,13 @@ behaviour the owner asked for. The trigger that would justify it is named in sec
   (`user_service.py:570-574`), so case-duplicates are possible (AC-03); login does not check
   `is_trashed`; self-signup creates an INACTIVE user and never sends its email (`auth.py:226`,
   and the sign-in page links no signup); session tokens are stored in plain text (section 11).
+- **The sign-in page today** (`app/(auth)/signin/page.tsx`, the design Q16 binds S1 to): inside
+  `BrandedLayout`'s narrow card (`app/(auth)/layouts/branded.tsx:10-16,61-75`: `max-w-md`, the
+  configurable backdrop image, `p-6`), top to bottom: the Sorento wordmark (:91-106), the heading
+  "Sign in to Sorento" (:108-112), a destructive `Alert` for errors (:114-121), "Email" `Input`
+  (:123-135), "Password" with "Forgot Password?" on the label row and the eye toggle (:137-178),
+  "Remember me" `Checkbox` (:180-200), and a full-width "Continue" `Button` with a spinner
+  (:202-209). It calls `signIn('credentials')` and honours a same-origin `callbackUrl` (:48-72).
 - **No Next.js middleware:** CRM pages are gated client-side in `app/(protected)/layout.tsx:24-58`.
 - **Account lifecycle:** admin create (with password) or invite (no password, INACTIVE)
   (`app/api/v1/user_management/users.py:554-588`, resend `:652`); accept-invite and reset both go
@@ -159,6 +195,31 @@ behaviour the owner asked for. The trigger that would justify it is named in sec
   (`auth.py:358-411`); forgot password is non-enumerating and rate-limited (`auth.py:243-328`);
   force-logout (`users.py:274`); delete is soft `is_trashed`, hard only once trashed
   (`user_service.py:641-666`).
+- **What "Add user" sends today (the Q17 concern, measured).** Yes: by default, creating a user
+  with an email sends an invitation email in the same click.
+  - The Add user modal (`app/(protected)/user-management/users/components/user-add-dialog.tsx`)
+    holds `sendInvitationEmail` **defaulting to true** (:50), shown as a pre-ticked checkbox "Send
+    invitation email (they will set their password via the link)" (:372-383). On save it posts to
+    `/api/user-management/users/invite` when ticked, else `/api/user-management/users`
+    (:137-139); the success toast then reads "Invitation sent to <email>" (:155-157).
+  - The Next proxy `app/api/user-management/users/invite/route.ts` forwards to FastAPI
+    `POST /api/v1/user-management/users/invite` (`users.py:554-569`), which in one request calls
+    `UserService.invite_user` (`app/services/user_service.py:519-543`: INACTIVE, no password,
+    `invited_by_user_id`) and then `_send_invitation_link_for_user` (`users.py:161-213`), which
+    writes a 7-day verification token and queues "You're invited to join the platform" through
+    `NotificationService.create_with_channel_preferences(send_email=True)` (:200-209).
+  - Unticked, `POST /users` (`users.py:572-585`, `user_service.py:490-517`) sends nothing.
+  - Two other senders exist, both deliberate today: the user record action "Send invitation link"
+    (`app/(protected)/user-management/users/actions.tsx:76-96`, pushed at :120-127) posts to
+    `/{id}/resend-invite` (`users.py:652-668`) **at once, with no confirmation**; the Users list
+    bulk action `resend_invite` (`user-list.tsx:181-185`) does ask first (:469-471) and sends
+    through `users.py:248-266`.
+  - Editing an existing user's email queues an "account_email_changed" security notice
+    (`user_service.py:562-584`, queued at :630-637, sender :224-235); it is skipped when the user
+    had no email before (`old_email_for_notification` is None).
+  - Linking a user to a WhatsApp contact sends nothing today: the field already exists in the
+    user's Edit profile dialog (`app/(protected)/user-management/users/[id]/components/user-profile-edit-dialog.tsx:736-774`,
+    TCK-31) and saves through `PUT /users/{id}` (`user_service.py:598`).
 
 ### 3.3 Portal sign-in
 
@@ -176,7 +237,12 @@ behaviour the owner asked for. The trigger that would justify it is named in sec
 - **Cross-device login shipped:** `/portal/c/{slug}` is an identity hint, `GET /slug-info/{slug}`
   and `GET /token-info` return contact id, space id, name and masked phone, and the verify card
   fires `request-otp {contact_id, space_id}` itself (`portal.py:111`,
-  FE `PortalVerifyCard.tsx:110,161-200`). The person never types a phone number.
+  FE `PortalVerifyCard.tsx:110,161-200`). The person never types a phone number. The code screen
+  is one card "Verify your identity" (:411-483): "We'll send a code to your WhatsApp <masked>",
+  "Not your number?", one "Verification code" `Input` (`variant="lg"`, `inputMode="numeric"`,
+  `autoComplete="one-time-code"`, placeholder "6-digit code", :446-458), an outline "Send code" /
+  "Resend in Ns" button (:461-473), and it verifies on the sixth digit with no submit button
+  (:13, :280-285).
 - **Code delivery** is an RQ job on the `respond_io` queue (`app/tasks/respond_io_tasks.py:180`,
   template `portal_otp`, variable `otp_code`), so it needs the worker. **There is no SMS provider
   anywhere in the codebase** (no Twilio, no SMS code).
@@ -374,30 +440,51 @@ behaviour the owner asked for. The trigger that would justify it is named in sec
 Screens are designed at 375px first, then 1280px. No explanatory prose in the UI (PRINCIPLES
 design mandates); copy below is the full visible text.
 
-### 5.1 Sign-in (`/signin`, AC-20, AC-25)
+### 5.1 Sign-in (the existing `/signin`, AC-20, AC-25, AC-29)
 
-- **Step 1**, one field. Label "Email or phone number", `inputmode="email"` until the first
-  character is a digit or `+`, then `inputmode="tel"`; `autocomplete="username"`. Primary button
-  "Continue", full width at 375px. Link "Forgot password?" under it.
-- The client decides: contains `@` means password step; otherwise the FE normalises the phone
-  with the same rules as the backend (a shared test vector list keeps them equal) and calls
-  `request-code`. An input that is neither shows "Enter an email or a phone number" inline.
-- **Step 2a, password** (as today): the email shown read-only with "Change", password field,
-  "Keep me signed in", "Sign in".
-- **Step 2b, code:** heading "Enter the code sent to your WhatsApp", the masked number
-  (`+60 12-*** 6789`) with "Change number", six single-digit boxes (`inputmode="numeric"`,
-  `autocomplete="one-time-code"` on the first, paste fills all), "Resend code" disabled with a
-  60-second countdown, and "Use password instead" only when the user has one. At 375px with the
-  on-screen keyboard open the boxes and the submit sit above the fold; the code auto-submits on
-  the sixth digit.
-- **Errors in words:** wrong code "That code is not right. 4 tries left."; expired "That code has
-  expired. Send a new one."; limit "Too many tries. Try again in 12 minutes." (from the 429's
-  seconds); no WhatsApp contact or unknown number: nothing distinguishes it on screen (the code
-  simply never arrives), by design.
+Owner ruling 27 Sep 2026 00:45 MYT (Q7, Q16): "i just need 1 sign in page which is
+https://fe-sorento.foundryx.my/signin with option to sign in by phone number" and "make sure i can
+toggle between phone auth and email pw auth in the sign in page while obeying the design element
+of the current sign in page". So: no new page and no one-field guesser (the round 1 design is
+withdrawn); the existing page gains a two-way toggle, and every other element is the one it
+already has (section 3.2).
+
+- **Layout, top to bottom, in the same narrow card:** the wordmark; "Sign in to Sorento"; a
+  two-option toggle **Email | Phone** (the existing `Tabs` primitive, full width of the card,
+  Email selected by default); the error `Alert` slot; then the fields of the chosen mode. No
+  extra heading, no explanatory copy.
+- **Email mode** is today's page exactly: Email, Password with "Forgot Password?", the eye
+  toggle, Remember me, Continue. Nothing moves.
+- **Phone mode, step 1:** "Phone number" `Input` (`inputMode="tel"`, `autoComplete="tel"`,
+  placeholder "e.g. 012-345 6789"), then the full-width "Continue" button. No Remember me: a phone
+  sign-in is always the 30-day rolling session (Q15). The FE sends the number as typed; the
+  backend normalises it with `normalize_msisdn`.
+- **Phone mode, step 2 (same card, the toggle stays):** the line "We'll send a code to your
+  WhatsApp <masked number>" with "Change number" beside it, one "Verification code" `Input`
+  styled exactly as the portal's (`variant="lg"`, numeric, `one-time-code`, placeholder "6-digit
+  code", centred, letter-spaced), and the outline "Resend in 60s" / "Resend code" button under it.
+  It signs in on the sixth digit, the same as the portal card; there is no separate submit.
+- **Reuse, not a new sender** (Q16: "we already got this send otp mechanism so just reuse it"):
+  the code is the portal's code (`portal_otp_codes`, the `portal_otp` WhatsApp template, the
+  `send_portal_otp_respond_message` job on the `respond_io` queue, the same limits); only the
+  entry differs (section 4.2). The FE shares the portal card's code input and countdown, lifted
+  into one component both pages import, not copied.
+- **Errors in words, in the existing `Alert`:** wrong code "That code is not right. 4 tries
+  left."; expired "That code has expired. Send a new one."; limit "Too many tries. Try again in 12
+  minutes." (from the 429's seconds); no WhatsApp contact or unknown number: nothing distinguishes
+  it on screen (the code simply never arrives), by design.
+- **Who uses Phone here:** Q16 says "this is for normal user". Staff and admins (Q10) use it. A
+  salesperson is not sent to this page: their way in is the portal link (5.2). If one does sign in
+  here by phone it works and lands on their portal home (Q9); nothing blocks it, because blocking
+  would need a second rule for no gain.
+- At 375px with the keyboard open, the code input and the resend button stay above the fold.
 
 ### 5.2 Portal link (AC-34, AC-35)
 
-The verify card the contact already knows stays as it is visually. What changes is behind the
+Owner ruling 27 Sep 2026 00:45 MYT (Q16): "for salesperson, they will still access via portal
+which will prompt them to enter verification code when needed". So salespeople keep the portal as
+their door, and the portal's own verify card is where they are asked for the code, only when the
+device holds no live sign-in (first visit, expiry, sign-out). The verify card the contact already knows stays as it is visually. What changes is behind the
 button, and only for a contact the owner has set up (`has_user`, section 4.3): `verify` calls
 NextAuth `signIn('phone-otp', {contact_id, space_id, code})`, FastAPI finds the contact's linked
 user (never creates one), mints a `user_sessions` row with `auth_method = portal_link`, and the
@@ -412,16 +499,17 @@ sliding session (AC-35).
   has no password to forget: the code IS the sign-in.
 - **A phone-only user can add a password** from Account > Security ("Set a password"), and an
   email from Account > Profile (verified by the existing email-verification link before it is
-  used for sign-in). Both optional.
+  used for sign-in). Both optional, and both started by the person themselves; an admin adding an
+  email to someone's user sends nothing (6.4).
 - **Lost access to the WhatsApp number:** an admin edits the phone on the user (AC-54): every
   session ends, `phone_verified_at` clears, and the next phone sign-in to the new number verifies
   it. A user with an email can also recover through the password reset.
 - **A contact's number changes in Respond.io** (AC-46): the linked user is NOT changed by the
   sync (the owner sets users up, not a sync). The user's phone and the contact's phone now differ,
   so phone sign-in for that user is refused (the code would go to a number the owner never
-  approved), the user shows "Needs attention: phone differs from WhatsApp contact" in S4, and the
-  owner either takes the new number (the user's phone is updated, unverified, sessions end) or
-  unlinks.
+  approved), the user's Sign-in section on its existing Administrative Users page shows "Needs
+  attention: phone differs from WhatsApp contact" (S3, 6.3), and the owner either takes the new
+  number (the user's phone is updated, unverified, sessions end) or unlinks.
 - **Blocked or trashed users** cannot sign in by any method, including a code (fixes the measured
   `is_trashed` gap at the same time).
 
@@ -431,47 +519,68 @@ Owner ruling 26 Sep 2026 23:45 MYT (Q3, Q4): users are created consciously by th
 backend, never by the system. This section replaces the round 1 design (backfill for salesperson
 contacts, lazy creation at first portal sign-in), which is withdrawn in full.
 
+Owner ruling 27 Sep 2026 00:45 MYT (Q16): "i don't need another page called salesperson account,
+just need existing Administrative Users and Internal contacts" and "i don't need a brand new page
+for user management". So round 3's Salesperson accounts worklist and the separate admin identity
+slice (S4) are withdrawn. Everything below is a change to a page, modal or section that exists
+today; no route, sidebar entry or listing is added.
+
 ### 6.1 Who is a salesperson contact (Q1)
 
 Owner ruling 26 Sep 2026 23:45 MYT (Q1): "yeah". One function, `is_salesperson_contact(contact)`
 (AC-40): the contact is in any market segment with `is_requestor_selectable = true` (today
 `retail` and `project`, "product" read as "project"), **or** is the `contact_id` of any
 `sales_agents` row. Both sources exist and are admin-maintained today; no new flag is added. The
-function no longer creates anything: it only decides which contacts appear on the owner's
-Salesperson accounts worklist (6.4) and which role the create form suggests (6.2).
+function creates nothing and lists nothing: its only use is which role the Add user modal
+suggests (6.2).
 
-### 6.2 The admin flow: create, link, set roles, then the person signs in (AC-41 to AC-44)
+### 6.2 Where the owner creates and links (AC-41 to AC-44, AC-48, AC-53, AC-59)
 
-One create form, the existing Add user modal (create/edit is a modal by default), reachable from
-three places that all open it the same way:
+One create form, the existing Add user modal (`user-add-dialog.tsx`), opened from three places on
+the two existing pages:
 
-| Entry point | Opens the modal with |
-| --- | --- |
-| Contact detail > User account section > "Create user" | contact locked, everything below prefilled from it |
-| Salesperson accounts worklist (6.4) > row action "Create user" | the same, for that contact |
-| Users list > "Add user" (as today) | nothing prefilled; the contact field is optional |
+| Existing page | Entry point | Opens the Add user modal with |
+| --- | --- | --- |
+| Administrative Users (list) | "Add user" in the toolbar, as today | nothing prefilled; the new WhatsApp contact field is optional, and picking a contact fills the rest (the quick create from a Respond contact, from the Users side) |
+| Internal Users (list) | row action "Create user", shown only on a contact with no user | that contact locked, everything below prefilled (the quick create from a Respond contact, from the contacts side) |
+| Internal Users > a contact > Profile tab | new "User account" section, "Create user" | the same, for that contact |
 
-The modal's fields, in order (view and edit of the user show the same fields in the same order):
+The modal's fields, in order (the round 4 changes in bold; view and edit of the user show the
+same fields in the same order):
 
-1. **Name**, prefilled from the contact's name.
-2. **WhatsApp contact** (`SearchableSelect`, clearable when opened from the Users list, locked
-   when opened from a contact). Sets `users.respond_contact_id`.
-3. **Phone**, prefilled from the contact's number and read-only while a contact is set (the phone
+1. Name, prefilled from the contact's name.
+2. Email, **optional when there is a phone** (Q5), required when there is not.
+3. Contact Number, **prefilled from the contact and read-only while a contact is set** (the phone
    IS the contact's phone, so a code can only reach that WhatsApp number); editable only for a
    user with no contact.
-4. **Email**, optional when there is a phone (Q5, owner ruling 27 Sep 2026 00:20 MYT), required
-   when there is not. When
-   given, the existing invite email goes out so the person can set a password (as the Users list
-   invite does today).
-5. **Roles** (`SearchableMultiSelect`). Suggested, never forced: `salesperson` when the contact is
-   a salesperson contact (6.1), `portal_user` for any other contact, the `is_default` role when
-   there is no contact. The owner can change any of them before saving.
-6. **Companies** (`SearchableMultiSelect`), prefilled from the contact's
-   `respond_contact_companies`; the first becomes `last_active_company_id`.
+4. **WhatsApp contact** (`SearchableSelect`, clearable when opened from the Users list, locked
+   when opened from a contact), the same picker the Edit profile dialog already uses
+   (`user-profile-edit-dialog.tsx:736-774`, name and phone, never an id). Sets
+   `users.respond_contact_id`. Picking one fills Name, Contact Number and Companies and suggests
+   the role, overwriting only fields the owner has not typed in.
+5. Copy roles from another user (as today).
+6. Roles (`SearchableMultiSelect`). Suggested, never forced: `salesperson` when the contact is a
+   salesperson contact (6.1), `portal_user` for any other contact, the `is_default` role when
+   there is no contact.
+7. Companies, prefilled from the contact's `respond_contact_companies`; the first becomes
+   `last_active_company_id`.
+8. Superior (as today).
+9. **The "Send invitation email" checkbox is removed** (6.4). The footer is Cancel and "Add user".
 
-Saving creates the user ACTIVE when it has a phone (the WhatsApp code will prove the person), or
-INACTIVE with an invite when it has only an email (the invite flow as today). The response is the
-user; the contact's User account section and the worklist row flip to "Linked" with no reload.
+Saving always posts to `POST /api/v1/user-management/users`, never `/invite`. The user is created
+ACTIVE when it has a phone (the WhatsApp code will prove the person), or INACTIVE with no password
+when it has only an email (it can sign in once the owner sends the invitation, 6.4). The toast
+reads "User added"; the contact's User account section and the Internal Users row show the user
+with no reload.
+
+**Quick create** is this prefilled modal: from an Internal Users row or a contact, the owner
+checks the filled-in fields and clicks "Add user"; one screen, one click when nothing needs
+changing. No separate quick-create form (it would be a second copy of the same fields).
+
+**The Internal Users list** gains one column, "User" (the linked user's name, a link to it; blank
+when there is none), so the owner can see at a glance who is set up. Standard DataGrid rules
+(explicit size, truncate + title). No filter, no state machine: the round 3 worklist states are
+withdrawn with the page.
 
 Rules the backend enforces, each with a 409 the modal shows inline (AC-42, AC-43):
 
@@ -483,52 +592,102 @@ Rules the backend enforces, each with a 409 the modal shows inline (AC-42, AC-43
 - **That existing user is already linked to a different contact:** the link is refused too; the
   owner resolves it by hand (Unlink there first).
 
-**Linking an existing user** (a staff member who is also a salesperson): the contact's User
-account section has "Link existing user" (`SearchableSelect` of users with no contact) beside
-"Create user", and the user's Sign-in section has "Link WhatsApp contact". Same rules, same 409s.
-Linking adds no role; the owner adds `salesperson` in the same Roles field if wanted.
+**Linking an existing user** (a staff member who is also a salesperson), from either side:
 
-**Then the person signs in.** Nothing is sent automatically. The person uses the sign-in page
-(phone, S1) or the portal link they already have (S2). To hand them a link, the owner uses the
-existing "Send portal link" contact action (`app/api/v1/user_management/contacts.py:650-681`), no
-new message.
+- From the contact: the User account section has "Link existing user" beside "Create user" (a
+  `SearchableSelect` of users with no contact; saving sets that user's `respond_contact_id`).
+- From the user: the existing Edit profile dialog's WhatsApp contact field
+  (`user-profile-edit-dialog.tsx:736-774`), unchanged on screen, now with the same 409 rules.
 
-**Backend:** the existing `POST /api/v1/user_management/users` (and its update) accepts
+Linking adds no role and sends nothing; the owner adds `salesperson` in Roles if wanted.
+
+**Then the person signs in.** Nothing is sent automatically. A salesperson opens the portal link
+they already have (5.2); staff use `/signin` with the Phone toggle (5.1). To hand someone a link,
+the owner uses the existing "Send portal link" contact action (`PortalLinkButton`, backend
+`app/api/v1/user_management/contacts.py:650-681`), no new message.
+
+**Backend:** the existing `POST /api/v1/user-management/users` (and `PUT /{id}`) accepts
 `respond_contact_id`, an optional `email`, and `company_ids`; no new create endpoint. The FE
-prefills from the contact detail it has already loaded, so no prefill endpoint either. Permission:
-`user_management.users.create` to create, `user_management.users.edit` to link or unlink.
-Every create and link writes an audit row with the acting admin and the contact (AC-47).
+prefills from the contact it has already loaded, so no prefill endpoint either. The Internal Users
+listing gains the linked user's id and name in its row payload (the "User" column). Permission:
+`user_management.users.add` to create (the permission the create route already checks,
+`users.py:575`), `user_management.users.edit` to link, unlink or change the phone. Every create
+and link writes an audit row with the acting admin and the contact (AC-47).
 
-### 6.3 What the system never does (AC-44, AC-45)
+### 6.3 The user's Sign-in section, on the existing user page (AC-46, AC-52, AC-54)
+
+Round 3 put this in S4 as part of a set of admin screens; with S4 withdrawn it is one read-only
+section added to the existing Profile tab of an Administrative Users record, in S3:
+
+- Email (or "No email"), Phone with "verified" or "not verified yet", WhatsApp contact (name and
+  masked phone, a link to the contact) or "Not linked", last sign-in time and how (Email,
+  Phone, Portal).
+- **Needs attention: phone differs from WhatsApp contact**, shown only in that case, with "Use
+  new number" (updates the user's phone, clears `phone_verified_at`, ends every session).
+- **Unlink**, a 5-second deferred action with Cancel (D7), never a dialog; it ends every session
+  of the user.
+- **Send invitation email** (6.4), shown only when the user has an email.
+- Editing any of it happens in the existing Edit profile dialog, whose fields sit in the same
+  order.
+
+The Users list is not changed (round 3's Kind filter and Sign-in column are withdrawn with S4:
+nobody asked for them, and the role column already tells a salesperson apart).
+
+### 6.4 No email is ever sent by creating or linking a user (Q17, AC-56 to AC-58)
+
+Owner ruling 27 Sep 2026 00:50 MYT (Q17): "can this be a manual step ah cause i worry will
+accidentally send the email to the salespersons when we create for them". The answer to the
+owner's question is yes, today it does (section 3.2: the Add user checkbox is ticked by default
+and routes to `/invite`, which creates and emails in one request). After S3:
+
+- **Create sends nothing, whatever the fields.** The Add user modal loses its checkbox and always
+  posts to `POST /users`. `POST /users/invite` and its Next proxy
+  (`app/api/user-management/users/invite/route.ts`) are removed (the modal is their only caller;
+  S3 greps the FE, n8n workflow exports and the MCP catalogue before deleting, and keeps the
+  route returning 410 if any other caller turns up). A test asserts that creating a user with an
+  email, with a phone, and with both queues zero `email_outbox` rows and zero notifications.
+- **Link, unlink, role and company edits send nothing**, and neither does adding a first email to
+  a phone-only user (already skipped today, section 3.2). A test covers each.
+- **Sending is one deliberate button, off by default.** The existing "Send invitation link" record
+  action on the user page becomes "Send invitation email" and now opens a confirmation first:
+  title "Send invitation email?", body "An email with a link to set a password goes to
+  <email>.", buttons Cancel and "Send email" (Cancel focused, so Enter does not send). Only
+  "Send email" calls the existing `POST /{id}/resend-invite`. The action is hidden for a user
+  with no email. The Users list bulk "Resend invitation" already confirms first; it now skips
+  users with no email and says how many it skipped.
+- A confirmation dialog here does not break D7: D7 retires confirmations for destructive actions
+  (they get a countdown instead); this one guards an outward message that cannot be recalled,
+  which is what the owner asked for.
+- **What stays:** the security notice when an admin replaces an email a user already has
+  ("account_email_changed", section 3.2) keeps going out; it tells an existing account holder
+  their sign-in changed, it is not an invite. Q18 asks the owner to confirm.
+- **Verification email:** there is no separate verification email on create today (the invite
+  link doubles as it); nothing in this plan adds one. A phone-only user proves their number with
+  the WhatsApp code at first sign-in, which is not an email and is started by the person.
+
+### 6.5 What the system never does (AC-44, AC-45, AC-56)
 
 - It never creates a user: no migration backfill, no hook on market segment or sales agent
   changes, no creation at a portal verify step or a phone sign-in.
 - It never changes a user's roles: adding a contact to a salesperson segment, or taking it out
-  of every one, changes only the worklist (6.4), not the user.
+  of every one, changes nothing on the user.
 - It never changes a user's phone from a Respond.io sync (section 5.3).
+- It never sends an email because a user was created or linked (6.4).
 - It does link an existing user to the one contact with exactly the same phone, once, in the S0
   migration (AC-04). That is not creation and not new behaviour: `respond_link_service.py:25-48`
   already caches exactly this link at runtime today. The S0 PR lists every link it wrote so the
-  owner can see them; any the owner rejects are unlinked with the S4 Unlink.
+  owner can see them; any the owner rejects are unlinked with the S3 Unlink.
 
-### 6.4 The Salesperson accounts worklist (AC-50)
-
-The owner's to-do list for R3: every salesperson contact (6.1) with its user state, read-only
-except for the row actions. States: **No user yet** (action: Create user), **Linked** (action:
-Open user), **Needs attention** with the reason in words and its one action: "Phone belongs to
-<name>" (Link to <name>), "<name> is linked to another contact" (Open <name>), "No longer a
-salesperson; still has the Salesperson role" (Open user). Defaults to showing every state.
-
-### 6.5 Dealer contacts and every other portal contact (Q3, Q4)
+### 6.6 Dealer contacts and every other portal contact (Q3, Q4)
 
 A dealer contact is a portal contact like any other (ADR 0007: a dealer is a `customers` row, its
-people are contacts). It gets a user only when the owner creates one, from the contact's User
-account section, with the `portal_user` role suggested. Until then it keeps using the portal
-exactly as today: the same link, the same WhatsApp code, its own portal token (section 4.3). No
-bulk creation, no creation at sign-in. What it does on the portal is recorded against the contact
-(`actor_type = contact`, section 8), as today.
+people are contacts). It gets a user only when the owner creates one, from Internal Users, with
+the `portal_user` role suggested. Until then it keeps using the portal exactly as today: the same
+link, the same WhatsApp code, its own portal token (section 4.3). No bulk creation, no creation at
+sign-in. What it does on the portal is recorded against the contact (`actor_type = contact`,
+section 8), as today.
 
-### 6.6 The sales agent ruling
+### 6.7 The sales agent ruling
 
 Superseded by #1280 (owner ruling 26 Sep 2026 23:45 MYT, Q2). S3 edits the `sales_agent.py`
 docstring and adds a one-line supersession note to `PLAN-customer-sales-agent-assignment-24sep.md`.
@@ -539,9 +698,9 @@ join.
 
 | Kind (derived, never stored) | How it gets a user | Roles at creation | CRM access | Portal access | Lands on |
 | --- | --- | --- | --- | --- | --- |
-| Staff | the owner or an admin creates or invites it (as today) | as chosen, `is_default` suggested | per roles | only if a contact is linked | CRM home |
-| Salesperson | the owner creates it from the contact (6.2) | `salesperson` suggested (protected, no permissions) | none (Q8) | the linked contact's forms (market segment base + overrides) | portal home (Q9) |
-| Portal (dealer and others) | the owner creates it from the contact (6.2) | `portal_user` suggested (protected, no permissions) | none | the linked contact's forms | portal home |
+| Staff | the owner or an admin creates it on Administrative Users (no email sent, 6.4) | as chosen, `is_default` suggested | per roles | only if a contact is linked | CRM home |
+| Salesperson | the owner creates it from the contact on Internal Users, or links one (6.2) | `salesperson` suggested (protected, no permissions) | none (Q8) | the linked contact's forms (market segment base + overrides) | portal home (Q9) |
+| Portal (dealer and others) | the owner creates it from the contact on Internal Users (6.2) | `portal_user` suggested (protected, no permissions) | none | the linked contact's forms | portal home |
 | Contact with no user | never automatically | none | none | as today, by portal token | portal home |
 | Integration | as today | as today | as today | none | n/a |
 
@@ -555,12 +714,13 @@ join.
   follow-up is closed: none. When a salesperson grows into project sales, the owner adds a
   Project Sales role to that one person, or permissions to `salesperson` for everyone at once;
   both are data changes, no code.
-- **Kind is derived** for the S4 filter: Integration if `is_integration`; else Salesperson if the
-  user holds `salesperson`; else Portal if it holds `portal_user` and no other role; else Staff.
-  No `user_type` column.
+- **Kind is derived, never stored** (it is only a way to read this table): Integration if
+  `is_integration`; else Salesperson if the user holds `salesperson`; else Portal if it holds
+  `portal_user` and no other role; else Staff. No `user_type` column and, since round 4, no Kind
+  filter (the Users list's existing role column tells them apart).
 - **Company grants** are what the owner saves in the create form (prefilled from the contact's
-  companies). A user with no grants scopes to zero rows (fail closed, as the portal does today)
-  and appears in S4 as "Needs attention: no company".
+  companies). A user with no grants scopes to zero rows (fail closed, as the portal does today);
+  the Add user modal shows Companies as required when a contact is set, so the owner sees it.
 
 ## 8. The audit actor contract (for #1281)
 
@@ -647,8 +807,8 @@ every migration here is **expand only**, and every contract step is its own late
 3. Users whose `contact_number` matches exactly one contact but are unlinked (the link backfill
    set, AC-04; listed by name in the PR so the owner sees every link before S0 merges).
 4. Salesperson contacts by rule (6.1), split into: already linked, phone matches one user, phone
-   matches a user linked elsewhere, no match. This is the size of the owner's worklist on day one
-   (6.4); nothing is created from it.
+   matches a user linked elsewhere, no match. This tells the owner how many people there are to
+   set up on day one; nothing is created from it and no page lists it.
 5. Contacts whose portal tokens span more than one `space_id` (the S2 space-derivation risk,
    section 11).
 6. Every reader of `users.email` that would fail on NULL (code grep, listed in the PR).
@@ -661,10 +821,9 @@ merged or unlinked automatically.
 | Release | Expand (migration) | Code | Old image safe because |
 | --- | --- | --- | --- |
 | S0 | `users.email` DROP NOT NULL + check (email or phone); unique `lower(email)` index created concurrently beside the old one; unique partial index on `users.respond_contact_id`; `users.phone_verified_at`; `user_sessions.auth_method` (nullable, backfilled `password`); audit columns (nullable); roles `salesperson`, `portal_user` seeded, protected, empty; link backfill (9.1 query 3) | audit stamping; email lowercased on write | no row has a NULL email yet; new columns are nullable and ignored by the old image |
-| S1 | none | phone request / verify routes; NextAuth `phone-otp` provider; sign-in page | additive routes |
-| S3 | none | create form takes a contact, optional email and companies; contact User account section; Link existing user; Salesperson accounts worklist | users the owner creates may have a NULL email, which the old image's readers were guarded for in S0 |
+| S1 | none | phone request / verify routes; NextAuth `phone-otp` provider; Email / Phone toggle on the existing `/signin` | additive routes |
+| S3 | none | Add user modal takes a contact, optional email and companies, and loses the invite checkbox; `POST /users/invite` removed; Internal Users "Create user" row action and User column; contact User account section; Link existing user; user Sign-in section; invite button behind a confirmation | users the owner creates may have a NULL email, which the old image's readers were guarded for in S0; during the swap the old image's modal can still call `/invite` for a few minutes, which is today's behaviour |
 | S2 | none | portal principal from the user session; `has_user` on slug-info / token-info; verify card signs in for a set-up person; that person's old tokens stop sliding | the old image still resolves `X-Portal-Token`, and no token is revoked |
-| S4 | none | admin identity screens | additive screens |
 | Contract (S0 + one release, its own small PR) | drop the old case-sensitive email index | none | every write has lowercased email since S0 |
 
 - **No re-registration** (AC-06): staff keep email + password; portal contacts keep their link and
@@ -680,7 +839,10 @@ merged or unlinked automatically.
 
 ## 10. Slices, each with its definition of done and UAC ids
 
-Order is S0, then S1 and S3 in parallel, then S2, then S4. S3 moved ahead of S2 in round 2:
+Order is S0, then S1 and S3 in parallel, then S2. S4 (admin identity screens) is withdrawn by the
+Q16 ruling of 27 Sep 2026 00:45 MYT ("i don't need a brand new page for user management"); the one
+part of it that is still needed, the user's Sign-in section, moved into S3 (6.3). S3 moved ahead
+of S2 in round 2:
 with no automatic creation, the only users with a linked contact (the people S2 serves) are the
 ones the owner creates in S3, plus the staff linked by the S0 backfill. S1 does not need S3
 (staff with a phone can sign in by code), and S3 does not need S1 (a created user simply cannot
@@ -701,27 +863,35 @@ Every slice runs the full track and `security-reviewer` (AC-62).
 
 ### S1 Phone sign-in
 
-- Scope: sections 4.2, 4.3 (session part), 5.1, 5.3 (password and lost-phone parts).
-- UAC: AC-20 to AC-28.
+- Scope: sections 4.2, 4.3 (session part), 5.1, 5.3 (password and lost-phone parts). No new page:
+  the Email / Phone toggle goes on the existing `/signin` (Q7, Q16, owner ruling 27 Sep 2026 00:45
+  MYT), in its current design, reusing the portal's code sender and code input.
+- UAC: AC-20 to AC-29.
 - First task: read the approved `portal_otp` WhatsApp template's text; if it names the portal, ask
   the owner whether it may be reused for CRM sign-in or a `login_otp` template must be approved
   first (Meta approval lead time is the slice's longest pole).
 - Done when: a staff user, an admin (Q10) and a phone-only user each sign in by code through the
   real worker and a real WhatsApp send on the lane stack; a user whose phone differs from its
-  linked contact's is refused; enumeration tests green; browser evidence at 375px (keyboard open)
-  and 1280px.
+  linked contact's is refused; enumeration tests green; Email mode is pixel-for-pixel today's page
+  (a before/after screenshot pair at both widths in the PR); browser evidence at 375px (keyboard
+  open) and 1280px.
 
 ### S3 The owner creates and links users
 
-- Scope: sections 6 and 7.
-- UAC: AC-40 to AC-50, AC-53, AC-55.
-- Done when: the owner's flow runs end to end on the lane stack from the sidebar: open a
-  salesperson contact from the worklist, Create user (prefilled, `salesperson` suggested),
-  save, the row flips to Linked; the two 409s shown inline with their offered action; Link
-  existing user works from both ends; a test proves no code path outside the create and link
-  routes inserts a `users` row or changes a user's roles (AC-44); roles verified empty after the
-  grant sweep (AC-45); the sales agent docstring and the 24 Sep plan carry the supersession note;
-  evidence at both widths.
+- Scope: sections 6 and 7, on the existing Administrative Users and Internal Users pages only
+  (Q16, owner ruling 27 Sep 2026 00:45 MYT), and the no-email rule (6.4, Q17, owner ruling 27 Sep
+  2026 00:50 MYT).
+- UAC: AC-40 to AC-49, AC-52 to AC-59.
+- Done when: the owner's flow runs end to end on the lane stack from the sidebar: Users & Access >
+  People > Internal Users, a salesperson contact's row, Create user (prefilled, `salesperson`
+  suggested), Add user, the row's User column shows the name; the same from Administrative Users >
+  Add user by picking the WhatsApp contact; the two 409s shown inline with their offered action;
+  Link existing user works from both ends; the email outbox is empty after creating a user with an
+  email and after linking (AC-56); "Send invitation email" asks first and sends only on "Send
+  email" (AC-57); a test proves no code path outside the create and link routes inserts a `users`
+  row or changes a user's roles (AC-44); roles verified empty after the grant sweep (AC-45); the
+  sales agent docstring and the 24 Sep plan carry the supersession note; no route or sidebar
+  entry added (AC-59); evidence at both widths.
 
 ### S2 Portal on the unified session
 
@@ -736,14 +906,11 @@ Every slice runs the full track and `security-reviewer` (AC-62).
   by "Open CRM" with one sign-in (Q9); the set-up person's old token no longer slides; evidence at
   both widths.
 
-### S4 Admin identity screens
+### S4 Withdrawn
 
-- Scope: Users list Kind filter and Sign-in column, user Sign-in section (phone edit, Unlink,
-  phone-differs state), revocation on change.
-- UAC: AC-51, AC-52, AC-54, AC-55, AC-61.
-- Done when: each screen reached by sidebar clicks from `/`, every state (loading, empty, error,
-  needs attention) seen at 375px and 1280px; Unlink is a deferred action; the view permission is
-  swept onto existing roles.
+Owner ruling 27 Sep 2026 00:45 MYT (Q16): "i don't need a brand new page for user management".
+The Kind filter and Sign-in column are dropped; the user Sign-in section, Unlink and the
+phone-differs state moved to S3 (6.3). AC-50 and AC-51 are withdrawn.
 
 ## 11. Risks, out of scope, named triggers
 
@@ -760,8 +927,8 @@ Every slice runs the full track and `security-reviewer` (AC-62).
   rulings; the trigger to retire the token branch is below.
 - **Unified sign-in covers only the people the owner sets up.** R1 ("one sign-in") holds for them;
   a salesperson the owner has not reached yet is still a portal-only contact, and what it does is
-  audited as the contact, not a user (R4 is partial until the worklist is done). The worklist
-  (6.4) makes the gap visible; the owner's pace closes it.
+  audited as the contact, not a user (R4 is partial until the owner has set everyone up). The
+  Internal Users "User" column makes the gap visible; the owner's pace closes it.
 - **WhatsApp template outside the 24h window.** A code to someone who has not messaged Sorento in
   24 hours needs the approved template; a paused or rejected template stops every phone sign-in.
   Mitigation: email + password stays available to anyone with one; S1 logs every send to
@@ -776,14 +943,21 @@ Every slice runs the full track and `security-reviewer` (AC-62).
   to a number nobody approved. Email + password, where the user has one, still works meanwhile.
 - **Enumeration by timing.** request-code must do the same work for unknown numbers (enqueue
   nothing, but answer after the same lookup); the S1 security review checks it.
+- **An email-only user can do nothing until the owner sends the invite** (Q17). Created INACTIVE
+  with no password and no email sent, it cannot sign in until "Send invitation email". That is the
+  owner's ruling working as intended; the Sign-in section shows "Invitation not sent" so it is not
+  forgotten.
+- **Removing `/users/invite` breaks an unknown caller.** Mitigated by the S3 grep of the FE, n8n
+  exports and the MCP catalogue; if anything else calls it, the route stays and answers 410 with a
+  message naming the replacement.
 
 ### Out of scope (with the trigger that would bring each in)
 
 - **Automatic user creation** (backfill, sync hooks, first sign-in). Withdrawn by the Q3 / Q4
-  rulings. Trigger: the owner asks for it, for example when the worklist grows faster than they
-  can set people up.
+  rulings. Trigger: the owner asks for it, for example when there are more people to set up than
+  they can do by hand.
 - **Retiring `X-Portal-Token`.** Trigger: every contact that signed in to the portal in the last
-  30 days has a user (a query S4 can show), or the owner decides to require a user for the portal.
+  30 days has a user (a query the owner can be sent), or the owner decides to require a user for the portal.
 - **SMS delivery.** Trigger: the first salesperson who must sign in and cannot receive WhatsApp,
   or `integration_log` showing a sustained template failure rate. Then: one SMS provider behind
   the same request-code route, chosen by the user's channel.
@@ -799,6 +973,10 @@ Every slice runs the full track and `security-reviewer` (AC-62).
 - **Self-signup.** The signup route exists but sends no email and is not linked from sign-in;
   nothing in #1280 asks for public self-registration, and the Q3 / Q4 rulings point the other way.
   Left as is.
+- **A separate Salesperson accounts page, a quick-create form of its own, or any new user
+  management page.** Withdrawn by the Q16 ruling (27 Sep 2026 00:45 MYT). Trigger: the owner asks.
+- **Sending invitation or verification email automatically on create** (Q17). Trigger: the owner
+  asks for an opt-in, and then it is a checkbox that starts unticked.
 - **Dealers as tenants** (their own CRM): ADR 0007's flip condition; not this plan.
 - **CRM permissions for salespeople.** None, by the Q8 ruling. Trigger: the owner names the
   project sales permissions a salesperson should have; then it is a data change to the
@@ -807,8 +985,8 @@ Every slice runs the full track and `security-reviewer` (AC-62).
 ## 12. Grill questions for the owner
 
 Round 1 asked 15 questions with a recommendation each. Round 2 records the owner's answers of
-26 Sep 2026 23:45 MYT and round 3 the answer to Q5 of 27 Sep 2026 00:20 MYT (PR #1285, verbatim
-in quotes); unanswered ones stay on their recommendation and the UAC is written to it until the
+26 Sep 2026 23:45 MYT, round 3 the answer to Q5 of 27 Sep 2026 00:20 MYT, and round 4 the owner's
+notes of 27 Sep 2026 00:45 MYT (Q7, Q16) and 00:50 MYT (Q17) (PR #1285, verbatim in quotes); unanswered ones stay on their recommendation and the UAC is written to it until the
 owner says otherwise.
 
 1. **Who is a "product salesperson" and a "retail salesperson"?** Recommended: a contact in any
@@ -816,11 +994,11 @@ owner says otherwise.
    "product" read as "project"), plus any contact linked to a sales agent. (AC-40)
    Owner ruling 26 Sep 2026 23:45 MYT: "yeah". Adopted as recommended.
 2. **Confirm #1280 overrides the 14 Aug 2026 ruling that salespeople get no user account.**
-   Owner ruling 26 Sep 2026 23:45 MYT: "yeah correct". S3 records the supersession (6.6).
+   Owner ruling 26 Sep 2026 23:45 MYT: "yeah correct". S3 records the supersession (6.7).
 3. **Dealer contacts: users up front, or at their first portal sign-in?** Recommended: at first
    sign-in. Owner ruling 26 Sep 2026 23:45 MYT: "hmm i should be able to consciously create and
    setup at the backend first, it should be controlled by me". **Recommendation reversed:**
-   neither; the owner creates each user deliberately (6.2, 6.5). (AC-35, AC-41)
+   neither; the owner creates each user deliberately (6.2, 6.6). (AC-35, AC-41)
 4. **Does every portal contact become a user when it next signs in?** Recommended: yes, silently.
    Owner ruling 26 Sep 2026 23:45 MYT: "no it shouldn't, it should be consciously by me".
    **Recommendation reversed:** no user is ever created by a sign-in, a backfill or a sync; a
@@ -838,7 +1016,13 @@ owner says otherwise.
    right?", is a question about the design rather than the screen; it is answered on PR #1285
    ("Answers to the owner's questions (round 2)"): yes, that link is the design
    (`users.respond_contact_id`, section 4.1), and it is what lets a WhatsApp code sign a user in,
-   but the link alone does not sign anyone in. The screen layout stays on its recommendation.
+   but the link alone does not sign anyone in.
+   Owner ruling 27 Sep 2026 00:45 MYT, on the one-field sketch: "i just need 1 sign in page which
+   is https://fe-sorento.foundryx.my/signin with option to sign in by phone number" and "make sure
+   i can toggle between phone auth and email pw auth in the sign in page while obeying the design
+   element of the current sign in page". **Recommendation reversed:** the existing `/signin` gets
+   an Email | Phone toggle in its current design; the one-field guesser and the six code boxes are
+   withdrawn (5.1). (AC-20, AC-25, AC-29)
 8. **What can a salesperson user do in the CRM on day one?** Owner ruling 26 Sep 2026 23:45 MYT:
    "yeah now salesperson gets nothing other than portal submission". The `salesperson` role is
    protected and empty, and the follow-up ("which project sales permissions") is closed: none.
@@ -865,3 +1049,29 @@ owner says otherwise.
     nothing links by itself. (AC-42, AC-43)
 15. **How long does a phone or portal sign-in last?** Not answered; recommendation stands: 30
     days, extended while in use. (AC-24)
+16. **(Raised by the owner on the alignment page, 27 Sep 2026 00:45 MYT.) New pages?** Owner
+    ruling, verbatim: "just use our existing user management page, don't need new page"; "there
+    is no need for this, I will just create the user account and link to the contact, i don't even
+    want to send email verification to these ppl at this stage, you can maybe help me to quick
+    create from respond contact la, but i don't need another page called salesperson account, just
+    need existing Administrative Users and Internal contacts"; "i don't need a brand new page for
+    user management"; "for salesperson, they will still access via portal which will prompt them
+    to enter verification code when needed"; "we already got this send otp mechanism so just reuse
+    it". So: the Salesperson accounts worklist and S4 are withdrawn; creating and linking happen in
+    the existing Add user modal, Edit profile dialog and a new User account section on the
+    existing contact page, with a "Create user" row action on Internal Users as the quick create
+    from a Respond contact (6.2); salespeople keep the portal and its code prompt (5.2); phone
+    sign-in reuses the portal's code sender (5.1). (AC-48, AC-53, AC-59)
+17. **(Raised by the owner, 27 Sep 2026 00:50 MYT.) Does creating a user send an email?** Owner
+    ruling, verbatim: "cause i think now if we create the user with email, it will send email
+    verification right? can this be a manual step ah cause i worry will accidentally send the
+    email to the salespersons when we create for them, this one you also need to update in the
+    lavish". Answer: yes, today it does by default (section 3.2). So: creating or linking never
+    sends any email; the Add user checkbox and `POST /users/invite` are removed; sending is the
+    "Send invitation email" button on the user, behind a confirmation, off by default (6.4).
+    (AC-41, AC-56 to AC-58)
+18. **When an admin replaces a user's existing email, keep the security notice to that user?**
+    Not asked yet. **Recommended: keep it.** It goes only to someone who already has an account and
+    tells them their sign-in email changed; it is not an invite and it never fires on create, on
+    link, or when a phone-only user gets a first email. If the owner says no, the notice is removed
+    too and nothing about a user's email is ever mailed without the invite button. (6.4)
