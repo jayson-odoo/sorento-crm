@@ -4,7 +4,7 @@ Plan: `documentation/plans/sales/PLAN-sales-targets-opportunities-26sep.md`. Moc
 `documentation/plans/sales/mockups/sales-targets.html`. Slice 1 of #1170 (a sales agent on a
 customer) shipped in PR #1177 and is not repeated here.
 
-Status: building. Wave 1, S6, is on PR #1260 (S6-1 to S6-3, S6-8, S6-9, S6-12 to S6-18, S1-17; plan section 15). S6 accepted on the owner's hand test (26 Sep ~13:25Z); fix lane round 2 adds S6-16 to S6-18 (team leader, a returning agent listed once).
+Status: building. Wave 2, S1, is on PR #1297 (S1-1, S1-3 to S1-10, S1-12 to S1-15, S1-18 to S1-29, S6-4 to S6-7, S6-10; plan section 16). Wave 1, S6, merged on PR #1260 (S6-1 to S6-3, S6-8, S6-9, S6-12 to S6-18, S1-17; plan section 15). S6 accepted on the owner's hand test (26 Sep ~13:25Z); fix lane round 2 adds S6-16 to S6-18 (team leader, a returning agent listed once).
 Earlier status: grilled. Round 1 answered by the owner 26 Sep 2026 (PR #1260 comment, 05:25Z); every AC
 is now written to the ruling, marked "(Owner ruling 26 Sep, G#)". Round 2 questions R1 to R5
 (plan section 9) may still adjust the ACs marked "(R#)"; each is written to its recommendation.

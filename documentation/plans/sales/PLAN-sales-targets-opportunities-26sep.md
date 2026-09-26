@@ -1,6 +1,6 @@
 # PLAN: sales targets, opportunities and the WhatsApp achievement broadcast (#1170)
 
-Status: **building, wave 2 S1** (track: full; build contract section 16), S6 merged (#1260). Wave 1, S6, was on PR #1260 (wave 1: the `sales` module and schema, Sales Teams with dated
+Status: **building, wave 2.** S1 built on PR #1297 (track: full; build contract section 16; reviewer and security-reviewer clean, awaiting the owner's hand test); S6 merged (#1260). Wave 1, S6, was on PR #1260 (wave 1: the `sales` module and schema, Sales Teams with dated
 membership, the Sales menu with Sales Agents moved in; section 15). S6 accepted on the owner's
 hand test (26 Sep ~13:25Z); fix lane round 2 on the same PR adds the team leader (W1) and lists
 a returning agent once (W2), section 15. Track: full. Next: wave 2,
