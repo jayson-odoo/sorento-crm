@@ -148,6 +148,24 @@ describe('AC-ND-15 (G1, G6): the Rows tab', () => {
   });
 });
 
+describe('S2: the Rows tab never shows a false empty state', () => {
+  it('shows a skeleton, not "No earlier rows", while the cancelled rows are loading', async () => {
+    getOrderInquiryHeaderCancelledRows.mockReturnValue(new Promise(() => {}));
+    renderDialog([FRESH]);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('status', { name: 'Loading' })).toBeInTheDocument();
+    expect(within(dialog).queryByText('No earlier rows for this line.')).not.toBeInTheDocument();
+  });
+
+  it('shows the read error, not "No earlier rows", when the cancelled rows fail to load', async () => {
+    getOrderInquiryHeaderCancelledRows.mockRejectedValue(new Error('Could not load cancelled rows'));
+    renderDialog([FRESH]);
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('Could not load cancelled rows')).toBeInTheDocument();
+    expect(within(dialog).queryByText('No earlier rows for this line.')).not.toBeInTheDocument();
+  });
+});
+
 describe('Decisions tab', () => {
   it('reads the line decision trail, and says so when the line names no core line', async () => {
     renderDialog([row({ id: 'x', core_line_id: null, line_no: null })]);

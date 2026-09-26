@@ -694,6 +694,48 @@ describe('AC-ND-7 (owner ruling 26 Sep, G1): no Was / now on the line row', () =
     expect(screen.queryByText('used')).not.toBeInTheDocument();
     expect(screen.queryByText(/was 2/i)).not.toBeInTheDocument();
   });
+
+  const case1248 = () =>
+    toLineRows(
+      foldInquiryLines([
+        linesRow({ id: 'used', core_line_id: 'cl-1', qty: '2', state: 'placed', redirected_to_pool: true, ack_state: 'changed' }),
+        linesRow({
+          id: 'fresh',
+          core_line_id: 'cl-1',
+          qty: '5',
+          previous_qty: '2',
+          ack_state: 'changed',
+          note: 'Replaces 2 used; PO-2026/09-0023 received 24 Sep 2026 into BRW-IB',
+        }),
+      ]),
+    )[0];
+
+  function cellOf(key: string, lineRow: OrderInquiryWorklistRow) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const column = result.current.find(
+      (c) => (c as { accessorKey?: string }).accessorKey === key,
+    ) as { cell: (context: unknown) => React.ReactNode };
+    return column.cell({ row: { original: lineRow } });
+  }
+
+  it('B1: the #1248 line State reads To confirm, per the approved mockup', () => {
+    render(<>{cellOf('state', case1248())}</>);
+    expect(screen.getByText('To confirm')).toBeInTheDocument();
+    expect(screen.queryByText('To buy')).not.toBeInTheDocument();
+  });
+
+  it('B2: the Instruction cell carries no note (i), so "Replaces 2 used" never reads on the main grid', () => {
+    const { container } = render(<>{cellOf('verb', case1248())}</>);
+    expect(screen.getByText('ORDER')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Why this instruction' })).not.toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/replaces|used/i);
+  });
+
+  it('Nit N1: a cancelled line reads "-" in Instruction, as the mockup draws it', () => {
+    const [lineRow] = toLineRows(foldInquiryLines([linesRow({ id: 'c', core_line_id: 'cl-5', line_cancelled: true })]));
+    const { container } = render(<>{cellOf('verb', lineRow)}</>);
+    expect(container.textContent).toBe('-');
+  });
 });
 
 describe('AC-ND-9 (G5): the SPO cell lists every document of the line as first + "+N"', () => {
@@ -722,7 +764,9 @@ describe('AC-ND-9 (G5): the SPO cell lists every document of the line as first +
     ) as { cell: (context: unknown) => React.ReactNode };
     renderWithClient(<>{spoColumn.cell({ row: { original: lineRow } })}</>);
     expect(screen.getByText('SPO-2026/09-0007')).toBeInTheDocument();
-    const more = screen.getByRole('button', { name: '+1' });
+    // Nit N3: the accessible name says what "+1" means, never "plus one".
+    const more = screen.getByRole('button', { name: '1 more SPO' });
+    expect(more).toHaveTextContent('+1');
     fireEvent.click(more);
     expect(await screen.findByText('SPO-2026/09-0009')).toBeInTheDocument();
   });

@@ -11,6 +11,7 @@ import {
   foldKeyOf,
   lineFooterTotals,
   lineHistoryEntries,
+  reserveHistoryRowOf,
   usedRowIdsToConfirm,
 } from './orderInquiryLineFold';
 import type { OrderInquiryWorklistRow } from '../types/orderInquiry.types';
@@ -138,6 +139,19 @@ describe('AC-ND-7 (G1): the #1248 case folds to the current need; the used row g
     expect(entries[0].why).toBe('Was 2. Replaces 2 used; PO-2026/09-0023 received');
   });
 
+  it('B1: the line State reads To confirm, not To buy, while its live row waits on purchasing in changed', () => {
+    const [line] = foldInquiryLines([used, fresh]);
+    expect(line.state).toBe('to_confirm');
+  });
+
+  it('B1: a fresh row born awaiting does not turn the line To confirm (AC-ND-8 still reads To buy)', () => {
+    const [line] = foldInquiryLines([
+      row({ id: 'a', core_line_id: 'cl-2', qty: '6', linked_qty: '6', state: 'partly_linked', ack_state: 'acknowledged' }),
+      row({ id: 'b', core_line_id: 'cl-2', qty: '4', state: 'raised', ack_state: 'awaiting' }),
+    ]);
+    expect(line.state).toBe('raised');
+  });
+
   it('G6: confirming the line also confirms its used rows still in changed', () => {
     expect(usedRowIdsToConfirm([used, fresh], ['fresh'])).toEqual(['used']);
     expect(usedRowIdsToConfirm([used, fresh], [])).toEqual([]);
@@ -192,14 +206,26 @@ describe('AC-ND-17 (G4, G10): footer totals over the line rows, cancelled lines 
     ]);
     expect(lineFooterTotals(lines)).toEqual({ soQty: 15, requested: 15, taken: 6, remaining: 9 });
   });
+
+  it('S3: footer Remaining is the sum of the line Remaining cells, so an over-covered line nets nothing off another', () => {
+    const lines = foldInquiryLines([
+      row({ id: 'a', core_line_id: 'cl-1', line_no: 1, qty: '5', linked_qty: '8', state: 'placed' }),
+      row({ id: 'b', core_line_id: 'cl-2', line_no: 2, qty: '10' }),
+    ]);
+    expect(lines.map((line) => line.remaining)).toEqual([0, 10]);
+    expect(lineFooterTotals(lines).remaining).toBe(10);
+  });
 });
 
 describe('AC-ND-15: History row labels', () => {
   it('labels superseded, re-raised, cancel balance and plain cancelled rows, newest first after Now', () => {
     const [line] = foldInquiryLines([row({ id: 'now', core_line_id: 'cl-1', raised_at: '2026-09-25T08:00:00Z' })]);
+    // Review S1: only notes the backend really writes. A carry and a plain supersede both
+    // stamp "Superseded by revision N"; the carry is the one a later row of the line
+    // raises again at the same qty (`s` held 4, the line now asks 10).
     const cancelled = [
-      row({ id: 's', core_line_id: 'cl-1', state: 'cancelled', note: 'Superseded by revision 2', raised_at: '2026-09-19T08:00:00Z' }),
-      row({ id: 'r', core_line_id: 'cl-1', state: 'cancelled', note: 'Re-raised under revision 3', raised_at: '2026-09-22T08:00:00Z' }),
+      row({ id: 's', core_line_id: 'cl-1', qty: '4', state: 'cancelled', note: 'Superseded by revision 2', raised_at: '2026-09-19T08:00:00Z' }),
+      row({ id: 'r', core_line_id: 'cl-1', state: 'cancelled', note: 'Superseded by revision 3', raised_at: '2026-09-22T08:00:00Z' }),
       row({ id: 'cb', core_line_id: 'cl-1', state: 'cancelled', verb: 'CANCEL_BALANCE', raised_at: '2026-09-21T08:00:00Z' }),
       row({ id: 'x', core_line_id: 'cl-1', state: 'cancelled', raised_at: '2026-09-20T08:00:00Z' }),
       row({ id: 'other', core_line_id: 'cl-9', state: 'cancelled' }),
@@ -214,8 +240,57 @@ describe('AC-ND-15: History row labels', () => {
     ]);
   });
 
+  it('S1: the mockup #1248 carry reads Re-raised off real data, a same-qty row raised later on the line', () => {
+    const [line] = foldInquiryLines([
+      row({ id: 'used', core_line_id: 'cl-1', qty: '2', state: 'placed', redirected_to_pool: true, raised_at: '2026-09-25T07:00:00Z' }),
+      row({ id: 'fresh', core_line_id: 'cl-1', qty: '5', raised_at: '2026-09-25T08:00:00Z' }),
+    ]);
+    const entries = lineHistoryEntries(line, [
+      row({ id: 'carried', core_line_id: 'cl-1', qty: '2', state: 'cancelled', note: 'Superseded by revision 2', raised_at: '2026-09-19T08:00:00Z' }),
+    ]);
+    expect(entries.map((entry) => [entry.row.id, entry.what])).toEqual([
+      ['fresh', 'Now'],
+      ['used', 'Used'],
+      ['carried', 'Re-raised'],
+    ]);
+    expect(entries[2].why).toBe('Superseded by revision 2');
+  });
+
+  it('S1: a superseded row no later row raises again at its qty stays Superseded', () => {
+    const [line] = foldInquiryLines([row({ id: 'fresh', core_line_id: 'cl-1', qty: '5', raised_at: '2026-09-25T08:00:00Z' })]);
+    const entries = lineHistoryEntries(line, [
+      row({ id: 'old', core_line_id: 'cl-1', qty: '2', state: 'cancelled', note: 'Superseded by revision 2', raised_at: '2026-09-19T08:00:00Z' }),
+    ]);
+    expect(entries[1].what).toBe('Superseded');
+  });
+
   it('rows on a cancelled line read Line cancelled', () => {
     const [line] = foldInquiryLines([row({ id: 'a', core_line_id: 'cl-5', line_cancelled: true })]);
     expect(lineHistoryEntries(line, []).map((entry) => entry.what)).toEqual(['Line cancelled']);
+  });
+});
+
+describe('S4 (AC-ND-14): the Reserve tab follows whichever live row carries the reserve', () => {
+  it('finds the reserved row even when a requested row is the primary', () => {
+    const [line] = foldInquiryLines([
+      row({ id: 'a', core_line_id: 'cl-4', qty: '2', reserve_state: 'reserved' }),
+      row({ id: 'b', core_line_id: 'cl-4', qty: '3', reserve_state: 'requested' }),
+    ]);
+    expect(line.primary.id).toBe('b');
+    expect(reserveHistoryRowOf(line)?.id).toBe('a');
+  });
+
+  it('reads a declined row too, and nothing when no live row carries reserve history', () => {
+    const [declined] = foldInquiryLines([
+      row({ id: 'a', core_line_id: 'cl-4', qty: '3' }),
+      row({ id: 'b', core_line_id: 'cl-4', qty: '2', reserve_state: 'declined' }),
+    ]);
+    expect(reserveHistoryRowOf(declined)?.id).toBe('b');
+    const [plain] = foldInquiryLines([row({ id: 'c', core_line_id: 'cl-5', reserve_state: 'requested' })]);
+    expect(reserveHistoryRowOf(plain)).toBeNull();
+    const [usedOnly] = foldInquiryLines([
+      row({ id: 'd', core_line_id: 'cl-6', reserve_state: 'reserved', redirected_to_pool: true }),
+    ]);
+    expect(reserveHistoryRowOf(usedOnly)).toBeNull();
   });
 });
