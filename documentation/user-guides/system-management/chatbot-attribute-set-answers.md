@@ -28,7 +28,7 @@ exactly like asking about one product (files attached for a certificate or docum
 The bot states the count and asks:
 
 > 908 taps have certificates. That is too many to list in one message. How many should I show
-> (up to 50), or which brand or size should I narrow it to?
+> (up to 50)? Or ask again naming a brand or size.
 
 Reply with a number ("10") and the bot lists that many from the start of the set:
 

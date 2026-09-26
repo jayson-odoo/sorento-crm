@@ -137,6 +137,33 @@ cases:
         expect:
           reply_not_contains: ["Here are the first", "Showing"]
 
+  - name: a bare "10" answers the count question (reviewer S1, AC-1317c)
+    # The live parser's own reading of a bare count is what this case exists to observe;
+    # the engine reads the count off the text too, so the reply holds either way.
+    cold: true
+    turns:
+      - text: "which tap has cert"
+        expect:
+          reply_contains: ["taps have certificates", "How many should I show (up to 50)? Or ask again naming a brand or size."]
+      - text: "10"
+        expect:
+          reply_contains: ["taps have certificates. Here are the first 10."]
+          no_uuid: true
+
+  - name: a cert property word is the bare leg, never a scheme (reviewer B1)
+    text: "which tap has valid cert"
+    cold: true
+    expect:
+      reply_contains: ["taps have certificates"]
+      reply_not_contains: ["0 products have", "no valid certificates"]
+
+  - name: an unknown scheme names the schemes on file and lists nothing (reviewer B2, AC-1321)
+    text: "which tap has zzq cert"
+    cold: true
+    expect:
+      reply_contains: ["no zzq certificates", "Schemes on file:"]
+      reply_not_contains: ["have certificates.", "Did you mean"]
+
   - name: a count named in the ask itself lists that many
     text: "show 20 taps with cert"
     cold: true

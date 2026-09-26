@@ -611,15 +611,18 @@ def test_has_turn_fetch_passes_all_ids_to_the_domain_tool():
     )
 
     assert set(args.get("product_ids") or []) == set(uuids)
-    assert "limit" not in args, args.get("limit")
+    # Reviewer B3 on PR #833: the row cap is the tool's maximum, never the product count.
+    assert args.get("limit") == fetch.SET_ROW_LIMIT["crm_master_product_attachments_list"], args.get("limit")
 
 
 def test_has_fetch_lists_products_not_rows():
     """AC-1315/AC-1316, no paging (owner ruling, 26 Sep 2026): with SEVEN qualifying
     product ids the fetch step carries ALL seven (a set that fits one message is listed
     in full), a named count (`top_n`) cuts the PRODUCT list, and `limit` - the tool's
-    own ROW cap, rows can outnumber products - is never set. Both domains of the
-    original console finding: the stock tool and the cert tool.
+    own ROW cap, rows can outnumber products - is never the product count: it is the
+    tool's maximum (`fetch.SET_ROW_LIMIT`, reviewer B3 on PR #833; left at the tool's
+    default 50 it cut a 40-product stock set to about 8). Both domains of the original
+    console finding: the stock tool and the cert tool.
     """
     from app.services.chatbot.lanes.business import fetch
 
@@ -643,7 +646,7 @@ def test_has_fetch_lists_products_not_rows():
             }
         )
         assert args.get("product_ids") == ids, (tool, args.get("product_ids"))
-        assert "limit" not in args, (tool, args.get("limit"))
+        assert args.get("limit") == fetch.SET_ROW_LIMIT[tool], (tool, args.get("limit"))
 
         named = fetch.entity_ids_transformer(
             {
@@ -654,7 +657,7 @@ def test_has_fetch_lists_products_not_rows():
             }
         )
         assert named.get("product_ids") == ids[:3], (tool, named.get("product_ids"))
-        assert "limit" not in named, (tool, named.get("limit"))
+        assert named.get("limit") == fetch.SET_ROW_LIMIT[tool], (tool, named.get("limit"))
 
 
 # --------------------------------------------------------------------------- #

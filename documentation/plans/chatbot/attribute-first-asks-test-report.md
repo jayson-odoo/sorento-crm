@@ -178,6 +178,27 @@ review (11 Sep): one blocker (the legs' EXISTS subqueries escape the company lis
 tests could not see it), six should-fix. All adopted as rules in the plan (SEC-*, REV-*), each with a
 red test before the fix. Repo-wide audit of the EXISTS pattern filed as #832.
 
+## Review fix round (26 Sep 2026, reviewer pass on f2375f402)
+
+Cloud lane (CI Postgres, empty seeded schema, `.env.ci-tests`). Every fix red first, then green,
+then kill-tested: each repair was removed and the named tests went red.
+
+| Finding | Tests (`tests/chatbot/test_counted_set_review_fixes.py` unless named) | Kill |
+|---|---|---|
+| B1 | `test_a_cert_property_phrase_is_the_bare_certificate_leg`, `test_which_tap_has_valid_cert_answers_the_whole_certified_set` | RED |
+| B2 | `test_an_unknown_scheme_names_the_schemes_on_file_and_lists_nothing`, `..._as_an_attachment_type_entity_clarifies_too`, `..._on_a_class_word_no_code_carries_...`, `test_an_honest_zero_names_the_set_and_fetches_nothing` | RED (fetch refusal; did-you-mean skip) |
+| B3 | `test_a_listed_set_asks_the_tool_for_enough_rows`, `test_a_row_cap_that_still_cuts_the_set_says_how_many_are_listed` | RED (row limit; rendered count) |
+| B4 K4 | `test_the_recount_after_how_many_keeps_the_dealers_stock_visibility` | RED |
+| B4 K5 | `test_an_availability_row_is_numbered_with_its_product_code` | RED |
+| S1 | `test_a_bare_count_answers_the_question_whatever_the_parser_made_of_it`, `test_a_bare_count_message_is_read_...`, `test_anything_but_a_bare_count_is_left_to_the_parser` | RED |
+| S2 | `test_counted_set_no_paging.py::test_every_leg_past_the_list_limit_states_the_count_and_asks` | RED |
+| N2 | `test_a_count_that_names_nothing_still_arms_the_question` | RED |
+
+Gates on the final tree: `tests/chatbot` (CI excludes, not serial_ddl) plus the predicate, resolver,
+spec search, spec fallback and migration 511 files: 2949 passed, 214 skipped, 33 xfailed, 0 failed.
+Console cases: 22 in the yaml (three added for B1, B2, S1); 0 run here (no parser key on a cloud
+lane). The S1 live-parser pass is owed locally.
+
 ## Deviations
 
 - Phase 1 skipped by design: no UI surface. The lavish review page stands in for the mock.

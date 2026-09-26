@@ -71,7 +71,7 @@ tool. No new reply format.
   product does not qualify; with the child in the caller's company on a company-B product, it does
   not qualify either. Evidence: pytest, both directions for every leg including `incoming`; a leg
   rewritten as unscoped SQL must turn these red (reviewer kill test).
-- AC-1337 `is_more_reply` accepts only the fixed paging phrases (more, next, lagi, more please,
+- AC-1337 **Amended (owner ruling R39, 26 Sep 2026 01:55Z (no paging)):** the `is_more_reply` half is RETIRED with paging (the function is deleted; `test_the_paging_vocabulary_is_gone` pins its absence). The `set_noun_for` and cert-regex halves stand; `answer.SET_ID_CAP` (renamed from `SET_PAGE_ID_CAP`, reviewer N4) is still pinned equal to the resolver's copy. Original text: `is_more_reply` accepts only the fixed paging phrases (more, next, lagi, more please,
   show more, next 5, next five, lagi 5, "more <number>"); "no more" and "next week?" are not pages.
   `set_noun_for` pluralises "Bathroom Accessory" as "bathroom accessories" and the header's
   singular is the class label itself. `answer.SET_PAGE_ID_CAP` and the resolver's copy are pinned
@@ -127,7 +127,7 @@ tool. No new reply format.
   invoked while `require` is present, and predicate_words are stripped word by word ("PPS cert"
   removes both words). Evidence: pytest with the model reader patched to fail if called, plus the
   phrase-stripping case.
-- AC-1333 [security] A "more" page carries the contact's recomposed `access_levels` into the tool
+- AC-1333 [security] **Amended (owner ruling R39, 26 Sep 2026 01:55Z (no paging)):** there is no "more" page. What survives is the recount behind the answer to "how many should I show?" (AC-1317a): it carries the entitlement the first answer counted under (the carry's `access_levels`, never the parser's empty list), and the carry is armed only when a set was withheld; a tier-ask turn arms nothing. Evidence: `test_counted_set_no_paging.py`, `test_counted_set_review_fixes.py::test_the_recount_after_how_many_keeps_the_dealers_stock_visibility`. Original text: A "more" page carries the contact's recomposed `access_levels` into the tool
   args (never the parser's empty list), and the set_page carry is armed only after a set answer
   actually rendered; a tier-ask turn arms nothing. Evidence: pytest, two-turn promotion set with a
   contact holding one tier, asserting the page turn's `access_levels` equal the fresh turn's; a
@@ -180,7 +180,7 @@ tool. No new reply format.
   is in a warehouse with `is_active = false` does not qualify; the same row in an active warehouse
   does. Evidence: pytest on `resolve_product_set` with two warehouses; console "which bathroom
   accessory has stock" shows five products for five ids.
-- AC-1347 The paging words (more, next, lagi, please, show) are phrase stopwords: a HAS turn whose
+- AC-1347 **Amended (owner ruling R39, 26 Sep 2026 01:55Z (no paging)):** the stopword half stands (a remainder of only these words scopes nothing and is never reported unrecognized); the console evidence "... -> 'more' answers a set header" is RETIRED, since "more" now pages nothing (AC-1317b). Original text: The paging words (more, next, lagi, please, show) are phrase stopwords: a HAS turn whose
   remainder is only such words scopes nothing and never reports them as unrecognized. Evidence:
   pytest on `filter_specs` with free term "more"; console "which tap has cert" -> "which water tap
   has cert" -> "more" answers a set header, not "I don't know 'more'".
@@ -192,7 +192,7 @@ tool. No new reply format.
   promotion count restricted to that tier; a contact with no entitlement and no stated tier keeps
   the empty list. Evidence: pytest on `resolve_entity_body` with a tier gate output, and on
   `resolve_product_set` with `["Sorento Dealer"]` counting only the dealer promotion.
-- AC-1350 A page turn whose fetch never reached the tool leaves the carry's offset unchanged, and
+- AC-1350 **Amended (owner ruling R39, 26 Sep 2026 01:55Z (no paging)):** the page-turn offset half is RETIRED (there is no offset); the single-head migration half stands. Original text: A page turn whose fetch never reached the tool leaves the carry's offset unchanged, and
   the migration test asserts the lane migration is the single head whose parent exists in the
   versions directory, not a spelled parent id. Evidence: pytest.
 - AC-1351 Words the spec reader bound (`Understanding.bound_phrases`) never reach the described
@@ -211,18 +211,18 @@ tool. No new reply format.
   recovers the scheme from the remainder (AC-1338), so "which item has PPS cert" answers "N
   products have PPS certificates" on every parser variant seen. Evidence: pytest parametrize;
   console case.
-- AC-1354 A scheme-narrowed certificate leg lists only that scheme's files: the predicate block
+- AC-1354 **Amended (owner ruling R39, 26 Sep 2026 01:55Z (no paging)):** "and on 'more'" is RETIRED; the certificate ids ride the first answer and the recount after "how many". Original text: A scheme-narrowed certificate leg lists only that scheme's files: the predicate block
   carries `certificate_ids` (active certificates of the scheme linked to the qualifying products),
   the fetch passes them with the page's product ids on the first answer and on "more", and a
   product holding a PPS and a WCM certificate renders its PPS file only. A bare certificate leg
   passes no certificate ids. Evidence: pytest on the resolver block and on the fetch args (two
   turns); console "any tap has PPS cert" shows PPS files only.
-- AC-1355 A set answer whose products were described with spec words carries the forward path's
+- AC-1355 **RETIRED (main's turn engine re-architecture, #952, merged into this lane 26 Sep 2026):** main removed the Match line renderer entirely, so no answer carries it; the lane's four Match-line tests are retired with it and the resolver's `spec_asked` payload is no longer written (reviewer N6). Customers were seeing "_Matched on: ..._" on main's own Sep 4 and Sep 10 prod replays, so this is a product change on main, recorded here. Original text: A set answer whose products were described with spec words carries the forward path's
   Match line, rendered by the same renderer with the same wording ("Match: trap type: S-trap,
   trap length: 250 mm, class: Water Closet" or the renderer's existing format), when every shown
   product matches the bindings; a set answer with no spec words carries no Match line. Evidence:
   pytest on the rendered text for "check stock water closet with s trap 250mm"; console case.
-- AC-1356 The Match line renders on a set answer: the renderer accepts the set_page carry dict
+- AC-1356 **RETIRED (same ruling as AC-1355: main removed the Match line).** Original text: The Match line renders on a set answer: the renderer accepts the set_page carry dict
   (the tail's `last_result_set` on a set answer) as an answered set, and its whole-answer check
   counts product rows only, so a set answer whose word tokens also matched promotions still carries
   the line when every shown PRODUCT matched the bindings. Evidence: pytest with the carry-shaped
@@ -259,14 +259,14 @@ tool. No new reply format.
   for stock, `crm_incoming_stock_list` for incoming, `crm_marketing_promotion_products_list`
   for promotion) through the existing `TYPE_TO_PARAM` product → `product_ids` path. No new tool
   name appears in any trace. Evidence: pytest asserting the picked tool name per predicate.
-- AC-1316 A HAS turn fetches the first 5 qualifying PRODUCTS (all their rows or files; the tool's
+- AC-1316 **Superseded by AC-1316a/b below (owner ruling R39, 26 Sep 2026 01:55Z (no paging)).** Original text: A HAS turn fetches the first 5 qualifying PRODUCTS (all their rows or files; the tool's
   row limit stays at its default); the render is the existing block (for
   cert: Product Code / Attachment Type / File Name / Certificate Number / Valid Until / Validity,
   files attached) preceded by one header line "<qualifying_total> <set noun> have <predicate
   noun>. Showing <n>." e.g. "1,256 taps have certificates. Showing 5." When
   `qualifying_total` is 5 or fewer the header omits "Showing". Evidence: pytest on the rendered
   text; console turn "which tap has cert" on the prod copy.
-- AC-1317 Replying "more" to a HAS answer returns the next 5 of the same qualifying set with
+- AC-1317 **RETIRED, superseded by AC-1317a/b below (owner ruling R39, 26 Sep 2026 01:55Z (no paging)).** Original text: Replying "more" to a HAS answer returns the next 5 of the same qualifying set with
   the same header and "Showing 6 to 10"; a "more" past the end says "That was all
   <qualifying_total>." Evidence: pytest on two consecutive turns through the existing
   offer-carry state; console turn.
@@ -275,7 +275,8 @@ tool. No new reply format.
     "<qualifying_total> <set noun> have <predicate noun>." with no "Showing". Evidence:
     `tests/chatbot/test_counted_set_no_paging.py`.
   - AC-1316b More than 50, no count named: the header adds "That is too many to list in one
-    message. How many should I show (up to 50), or which brand or size should I narrow it to?"
+    message. How many should I show (up to 50)? Or ask again naming a brand or size." (worded
+    per AC-1317d)
     and no rows (and no files) are sent. Every leg (certificate, stock, attachment_type,
     promotion, incoming). Evidence: same file.
   - AC-1317a The answer to that question (the parser's `top_n`, no new subject) lists that many
@@ -285,13 +286,32 @@ tool. No new reply format.
   - AC-1317b "more" / "next" / "lagi" pages nothing, and no carry survives the turn after the
     question. A recount that finds nothing never calls the tool without a product filter.
     Evidence: same file; `tests/chatbot/test_rearch_invariants.py`.
+  - AC-1316c (reviewer B3, 26 Sep 2026) The header counts what the rows show: the fetch asks
+    each leg's tool for its maximum row `limit` (`fetch.SET_ROW_LIMIT`), and when the tool still
+    cuts rows short the header says "Here are the first <n>." over the products actually
+    listed, never a bare "<total> ... have X." over fewer. Evidence:
+    `tests/chatbot/test_counted_set_review_fixes.py` (B3 cases).
+  - AC-1317c (reviewer S1, 26 Sep 2026) While "how many should I show?" is open, a message that
+    is only a count ("10", "show 10", "the first 10", "10 please") is that count whatever the
+    parser made of it (a null `top_n`, or the number read as a `reference_positions` pick);
+    anything else is left to the parser. Evidence: same file (S1 cases); console case "a long
+    set asks how many" in `2026-09-11-attribute-first-asks.yaml` (live parser, local pass).
+  - AC-1317d (reviewer S2, 26 Sep 2026) The question offers only what is wired: "How many
+    should I show (up to 50)? Or ask again naming a brand or size." A full re-ask names its
+    own narrower set (AC-1327); "which brand or size should I narrow it to?" is dropped until
+    a bare narrowing reply is carried against the same set. Evidence:
+    `test_counted_set_no_paging.py` header tests.
 - AC-1318 Validity: "has cert" counts any active register certificate; expired rows keep the
   existing "Validity: Expired" flag in the block. Evidence: pytest on a product whose only
   certificate is expired (counted, flagged).
 
 ## F. Miss: the existing did-you-mean flow, with the set named [BE]
 
-- AC-1319 `qualifying_total=0` with an empty `unrecognized_terms` enters the existing miss flow
+- AC-1319 **Amended (reviewer B2, 26 Sep 2026):** the did-you-mean list over the class word's
+  own forward code matches is dropped (those codes are the ones named as checked; a class word
+  is not a typo), and the zero set never fetches. Evidence: whole turn
+  `test_counted_set_review_fixes.py::test_an_honest_zero_names_the_set_and_fetches_nothing`.
+  Original text: `qualifying_total=0` with an empty `unrecognized_terms` enters the existing miss flow
   (`DOMAIN_PROBE` for the domain) and the "Couldn't find" sentence names the described set and
   predicate: "Couldn't find a Sorento bidet with a certificate (checked ACC- BIDET, CABANA
   BIDET, SRT-BIDET)." followed by today's did-you-mean list and escalate offer. Evidence:
@@ -300,7 +320,10 @@ tool. No new reply format.
   never says "none": "I don't know 'water tap' as a product type. Did you mean tap, basin
   tap, shower tap?" where the suggestions come from the existing class / product_type
   vocabulary nearest-match. Evidence: pytest; console turn "which water tap has cert".
-- AC-1321 A scheme miss names the schemes: "The register has no watermark certificates.
+- AC-1321 **Amended (reviewer B1/B2, 26 Sep 2026):** holds as a whole turn (no fetch, no
+  did-you-mean over it), and a cert PROPERTY word ("valid", "validity", "expiry", "no",
+  "number") is never read as a scheme: "valid cert" is the bare leg. Evidence:
+  `test_counted_set_review_fixes.py` (B1, B2 cases). Original text: A scheme miss names the schemes: "The register has no watermark certificates.
   Schemes on file: SPAN, PPS, WCM, IKRAM ..." Evidence: pytest.
 
 ## G. Invariants [BE]

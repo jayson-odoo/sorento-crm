@@ -1,6 +1,6 @@
 # PLAN: attribute-first asks, "which products have X", across every product and domain
 
-Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged (46711c618), revive repairs R35 to R38 and owner ruling R39 (no paging) built, tester first; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
+Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged (46711c618), revive repairs R35 to R38 and owner ruling R39 (no paging) built, tester first; reviewer pass fix round (B1 to B4, S1 to S3, nits) done; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
 Test report: `attribute-first-asks-test-report.md`.
 UAC: `attribute-first-asks-acceptance-criteria.md`.
 Supersedes: `documentation/plans/_archive/chatbot/PLAN-spec-backward-search.md` (its backend half
@@ -294,6 +294,39 @@ incoming all this reverse asking need to be able to cater to that".
   clears the carry. A count in the ask itself works the same way. `continuation` pages nothing.
   A recount that finds nothing refuses the tool call rather than sending it with no product
   filter.
+
+## Review fix round, 26 Sep 2026 (reviewer pass on f2375f402)
+
+Every fix red first, then green, then kill-tested; tests in
+`tests/chatbot/test_counted_set_review_fixes.py`.
+
+- B1: a cert PROPERTY word ("valid", "validity", "expiry", "no", "number", ...) is removed with
+  the bare cert words before the remainder is read as a scheme (`predicate._CERT_PROPERTY_WORDS`),
+  so "valid cert" is the bare leg, never scheme "valid".
+- B2: a described set that qualifies nothing never fetches (`lanes/business.run_fetch` refuses
+  it as `not_found`), and the miss lane offers no did-you-mean over a class word's own code
+  matches, so the set's own sentence reaches the customer: "The register has no zzq
+  certificates. Schemes on file: ..." (AC-1321) and "Couldn't find a tap with a certificate"
+  (AC-1319).
+- B3: a listed set asks each leg's tool for its maximum rows (`fetch.SET_ROW_LIMIT`), and the
+  header counts the products the rows actually show (R8/AC-1330 restored), saying "Here are
+  the first N." when a tool still cut the list.
+- B4: the recount's stock visibility (K4) and the availability row's product code (K5) each
+  have a guarding test.
+- S1: while "how many should I show?" is open, a message that is only a count is that count,
+  whatever the parser made of it (`turn_runtime.with_set_count_from_text`). The live-parser
+  console pass still runs locally (the cloud lane has no parser key).
+- S2: the question offers only what is wired: "How many should I show (up to 50)? Or ask
+  again naming a brand or size." A full re-ask ("which sorento tap has cert") already answers
+  the narrower set (AC-1327); a bare "grohe" reply is not carried against the set. Trigger to
+  wire a bare narrowing reply: the owner asks for it, with the carry gaining the brand and the
+  recount a brand filter.
+- S3: the UAC marks AC-1316, AC-1317, AC-1333, AC-1337, AC-1347, AC-1350, AC-1354 retired or
+  amended under R39, AC-1355/AC-1356 retired with main's Match line, AC-1319/AC-1321 amended
+  for B1/B2, and adds AC-1316c, AC-1317c, AC-1317d.
+- N1 documented in 511's docstring; N2 one `contracts.named_count` for the engine, apply and
+  fetch; N3 comment restored; N4 stale "more" wording removed; N5 rewrapped; N6 the dead
+  `spec_asked` write removed.
 
 ## Definition of done
 
