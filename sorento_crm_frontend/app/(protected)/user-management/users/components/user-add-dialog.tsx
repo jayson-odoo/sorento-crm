@@ -1,16 +1,18 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm, type Resolver } from 'react-hook-form';
+import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { toast } from '@/lib/toast';
 import { apiFetch } from '@/lib/api';
+import type { CodedError } from '@/lib/api-client';
 import { isSuperadminUser } from '@/lib/is-superadmin';
 import { getCompaniesSelect } from '@/app/(protected)/system-management/companies/services/companyService';
-import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
+import { Alert, AlertContent, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import {
   Dialog,
   DialogBody,
@@ -28,7 +30,6 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import { Checkbox } from '@/components/ui/checkbox';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { Button } from '@/components/ui/button';
@@ -36,19 +37,47 @@ import { LoaderCircleIcon } from 'lucide-react';
 import { UserRole } from '@/app/models/user';
 import { useRoleSelectQuery } from '../../roles/hooks/use-role-select-query';
 import { UserAddSchema, UserAddSchemaType } from '../forms/user-add-schema';
+import { useCreateUserMutation } from '../hooks/use-create-user-mutation';
+import { findUserByContact, findUserByPhone, updateUserContactLink } from '../services/userService';
+import {
+  getContact,
+  getContactCompanies,
+  getContacts,
+} from '../../contacts/[id]/services/contactService';
+import type { RespondContact } from '../../contacts/types/contact.types';
+
+const contactLabel = (c?: { name?: string | null; phone_number?: string | null } | null) =>
+  c ? [c.name, c.phone_number].filter(Boolean).join(' · ') || 'Linked contact' : 'No linked contact';
+
+/** The 409s the Add user form has to branch on, inline, above the footer (S3
+ *  contract 2.1) - never a toast, since each one carries its own next step. */
+type LinkErrorCode = 'CONTACT_ALREADY_LINKED' | 'PHONE_BELONGS_TO_USER' | 'EMAIL_TAKEN';
 
 const UserAddDialog = ({
   open,
   closeDialog,
+  contact,
 }: {
   open: boolean;
   closeDialog: () => void;
+  /** Opened from a contact (Internal Users row, or its own User account
+   *  section): the WhatsApp contact field is locked to this one. */
+  contact?: { id: string };
 }) => {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const { data: session } = useSession();
   const isSuperadmin = isSuperadminUser(session?.user);
-  const [sendInvitationEmail, setSendInvitationEmail] = useState(true);
   const [copyRolesBusy, setCopyRolesBusy] = useState(false);
+  const [linkError, setLinkError] = useState<{ code: LinkErrorCode; message: string } | null>(null);
+  const [resolvedHolder, setResolvedHolder] = useState<{ id: string; name: string | null } | null>(
+    null,
+  );
+  const [linkingHolder, setLinkingHolder] = useState(false);
+  // Which contact/company set has already been applied to the form, so a
+  // re-render (or the same contact resolving twice) never re-fills it.
+  const appliedContactRef = useRef<string | null>(null);
+  const appliedCompaniesRef = useRef<string | null>(null);
 
   // Fetch available roles
   const { data: roleList } = useRoleSelectQuery();
@@ -59,6 +88,7 @@ const UserAddDialog = ({
       name: '',
       email: '',
       contact_number: '',
+      respond_contact_id: contact?.id ?? null,
       roleIds: [],
       superior_id: null,
       companyIds: [],
@@ -68,10 +98,22 @@ const UserAddDialog = ({
 
   useEffect(() => {
     if (open) {
-      form.reset();
-      setSendInvitationEmail(true);
+      form.reset({
+        name: '',
+        email: '',
+        contact_number: '',
+        respond_contact_id: contact?.id ?? null,
+        roleIds: [],
+        superior_id: null,
+        companyIds: [],
+      });
+      setLinkError(null);
+      setResolvedHolder(null);
+      appliedContactRef.current = null;
+      appliedCompaniesRef.current = null;
     }
-  }, [open, form]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- form is stable; contact.id read fresh on open
+  }, [open, contact?.id]);
 
   const { data: superiorUsers } = useQuery({
     queryKey: ['users-select', 'active'],
@@ -93,8 +135,68 @@ const UserAddDialog = ({
     staleTime: 1000 * 60 * 5,
   });
 
-  // One-shot prefill: copy another user's roles into the checkbox list, which stays
-  // fully editable afterwards. The picker resets to empty after each pick.
+  const selectedContactId = form.watch('respond_contact_id');
+  const isLocked = !!contact?.id;
+
+  // The picked (or locked) contact's own record, so Name / Contact Number /
+  // Companies / the suggested role can be filled from it (S3 2.1).
+  const { data: linkedContactDetail } = useQuery({
+    queryKey: ['respond-contact', selectedContactId],
+    queryFn: () => getContact(selectedContactId as string),
+    enabled: open && !!selectedContactId,
+    staleTime: 1000 * 60,
+  });
+
+  const { data: contactCompanies } = useQuery({
+    queryKey: ['contact-companies', selectedContactId],
+    queryFn: () => getContactCompanies(selectedContactId as string),
+    enabled: open && !!selectedContactId && isSuperadmin,
+    staleTime: 1000 * 60,
+  });
+
+  // Only into fields the owner has not typed in (react-hook-form dirtyFields) -
+  // picking a contact never overwrites something already entered. Contact
+  // Number is the exception: it is read-only while a contact is set, so it is
+  // always the contact's own number.
+  useEffect(() => {
+    if (!linkedContactDetail) return;
+    if (appliedContactRef.current === linkedContactDetail.id) return;
+    appliedContactRef.current = linkedContactDetail.id;
+    const dirty = form.formState.dirtyFields;
+    if (!dirty.name && linkedContactDetail.name) {
+      form.setValue('name', linkedContactDetail.name);
+    }
+    form.setValue('contact_number', linkedContactDetail.phone_number ?? '');
+    if (!dirty.roleIds && linkedContactDetail.suggested_role_slug && roleList?.length) {
+      const suggested = (roleList as UserRole[]).find(
+        (r) => r.slug === linkedContactDetail.suggested_role_slug,
+      );
+      if (suggested) form.setValue('roleIds', [suggested.id]);
+    }
+  }, [linkedContactDetail, form, roleList]);
+
+  useEffect(() => {
+    if (!selectedContactId || !contactCompanies || !isSuperadmin) return;
+    if (appliedCompaniesRef.current === selectedContactId) return;
+    if (form.formState.dirtyFields.companyIds) return;
+    appliedCompaniesRef.current = selectedContactId;
+    form.setValue(
+      'companyIds',
+      contactCompanies.map((c) => c.id),
+    );
+  }, [selectedContactId, contactCompanies, isSuperadmin, form]);
+
+  // Cleared: Contact Number goes editable again, the rest is left as it is.
+  useEffect(() => {
+    if (!selectedContactId) appliedContactRef.current = null;
+  }, [selectedContactId]);
+
+  const suggestedRole = (roleList as UserRole[] | undefined)?.find(
+    (r) => r.slug === linkedContactDetail?.suggested_role_slug,
+  );
+
+  // One-shot prefill: copy another user's roles into the multi-select, which
+  // stays fully editable afterwards. The picker resets to empty after each pick.
   const handleCopyRoles = async (pickedId: string) => {
     if (!pickedId) return;
     setCopyRolesBusy(true);
@@ -123,77 +225,109 @@ const UserAddDialog = ({
     }
   };
 
-  const mutation = useMutation({
-    mutationFn: async (values: UserAddSchemaType) => {
-      const { roleIds, superior_id, companyIds, ...rest } = values;
-      const contactNumber = typeof rest.contact_number === 'string' ? rest.contact_number.trim() : null;
-      const payload = {
-        ...rest,
-        contact_number: contactNumber || null,
-        role_ids: roleIds,
-        superior_id: superior_id === '__none__' || superior_id === '' ? null : superior_id,
-        company_ids: isSuperadmin ? (companyIds ?? []) : [],
-      };
-      const inviteUrl = '/api/user-management/users/invite';
-      const createUrl = '/api/user-management/users';
-      const response = await apiFetch(sendInvitationEmail ? inviteUrl : createUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
+  const createMutation = useCreateUserMutation();
 
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.detail ?? data.message ?? 'Request failed');
-      }
-
-      const userData = await response.json();
-      return { ...userData, _invited: sendInvitationEmail };
-    },
-    onSuccess: (data) => {
-      const message = data._invited
-        ? `Invitation sent to ${data.email}. They can set their password using the link in the email.`
-        : 'User added successfully';
-      toast.custom(
-        () => (
-          <Alert variant="mono" icon="success" close={false}>
-            <AlertIcon>
-              <RiCheckboxCircleFill />
-            </AlertIcon>
-            <AlertTitle>{message}</AlertTitle>
-          </Alert>
-        ),
-        {
-          position: 'top-center',
-        },
-      );
-
-      queryClient.invalidateQueries({ queryKey: ['user-users'] });
-      closeDialog();
-    },
-    onError: (error: Error) => {
-      toast.custom(
-        () => (
-          <Alert variant="mono" icon="destructive" close={false}>
-            <AlertIcon>
-              <RiErrorWarningFill />
-            </AlertIcon>
-            <AlertTitle>{error.message}</AlertTitle>
-          </Alert>
-        ),
-        {
-          position: 'top-center',
-        },
-      );
-    },
-  });
-
-  const isProcessing = mutation.status === 'pending';
+  const isProcessing = createMutation.isPending;
 
   const handleSubmit = (values: UserAddSchemaType) => {
-    mutation.mutate(values);
+    setLinkError(null);
+    setResolvedHolder(null);
+    const contactNumber = typeof values.contact_number === 'string' ? values.contact_number.trim() : '';
+    const email = typeof values.email === 'string' ? values.email.trim() : '';
+    createMutation.mutate(
+      {
+        name: values.name,
+        email: email ? email.toLowerCase() : null,
+        contact_number: contactNumber || null,
+        respond_contact_id: values.respond_contact_id || null,
+        role_ids: values.roleIds,
+        superior_id: values.superior_id === '__none__' || !values.superior_id ? null : values.superior_id,
+        company_ids: isSuperadmin ? (values.companyIds ?? []) : [],
+      },
+      {
+        onSuccess: () => {
+          toast.custom(
+            () => (
+              <Alert variant="mono" icon="success" close={false}>
+                <AlertIcon>
+                  <RiCheckboxCircleFill />
+                </AlertIcon>
+                <AlertTitle>User added</AlertTitle>
+              </Alert>
+            ),
+            { position: 'top-center' },
+          );
+          closeDialog();
+        },
+        onError: (error) => {
+          const coded = error as CodedError;
+          if (
+            coded.code === 'CONTACT_ALREADY_LINKED' ||
+            coded.code === 'PHONE_BELONGS_TO_USER' ||
+            coded.code === 'EMAIL_TAKEN'
+          ) {
+            setLinkError({ code: coded.code, message: coded.message });
+            return;
+          }
+          toast.custom(
+            () => (
+              <Alert variant="mono" icon="destructive" close={false}>
+                <AlertIcon>
+                  <RiErrorWarningFill />
+                </AlertIcon>
+                <AlertTitle>{coded.message || 'Failed to add user'}</AlertTitle>
+              </Alert>
+            ),
+            { position: 'top-center' },
+          );
+        },
+      },
+    );
+  };
+
+  // Resolve the OTHER user a 409 named, so "Open user" / "Link this contact to
+  // <name> instead" have somewhere to go (AC-42, AC-43). Mocked to null until
+  // Phase 2 (`userService` S3_USE_MOCKS) - until then the message alone stands.
+  useEffect(() => {
+    if (!linkError) {
+      setResolvedHolder(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      let holder: { id: string; name: string | null } | null = null;
+      if (linkError.code === 'CONTACT_ALREADY_LINKED' && selectedContactId) {
+        holder = await findUserByContact(selectedContactId);
+      } else if (linkError.code === 'PHONE_BELONGS_TO_USER') {
+        const phone = form.getValues('contact_number');
+        if (phone) holder = await findUserByPhone(phone);
+      }
+      if (!cancelled) setResolvedHolder(holder);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [linkError, selectedContactId, form]);
+
+  const handleLinkHolderInstead = async () => {
+    if (!resolvedHolder || !selectedContactId) return;
+    setLinkingHolder(true);
+    try {
+      await updateUserContactLink(resolvedHolder.id, selectedContactId);
+      toast.success(`Linked to ${resolvedHolder.name ?? 'that user'}`);
+      queryClient.invalidateQueries({ queryKey: ['user-users'] });
+      queryClient.invalidateQueries({ queryKey: ['respond-contacts'] });
+      queryClient.invalidateQueries({ queryKey: ['respond-contact', selectedContactId] });
+      closeDialog();
+    } catch (error) {
+      const coded = error as CodedError;
+      setLinkError({
+        code: (coded.code as LinkErrorCode) ?? 'CONTACT_ALREADY_LINKED',
+        message: coded.message,
+      });
+    } finally {
+      setLinkingHolder(false);
+    }
   };
 
   return (
@@ -225,7 +359,11 @@ const UserAddDialog = ({
                   <FormItem>
                     <FormLabel>Email</FormLabel>
                     <FormControl>
-                      <Input placeholder="Enter user email" {...field} />
+                      <Input
+                        placeholder="Optional when there is a phone"
+                        {...field}
+                        value={field.value ?? ''}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -242,6 +380,44 @@ const UserAddDialog = ({
                         placeholder="Enter contact number"
                         {...field}
                         value={field.value ?? ''}
+                        disabled={!!selectedContactId}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="respond_contact_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>WhatsApp contact</FormLabel>
+                    <FormControl>
+                      <SearchableSelect
+                        value={field.value ?? ''}
+                        onChange={(v) => field.onChange(v || null)}
+                        disabled={isLocked}
+                        clearable={!isLocked}
+                        fetchOptions={async (query, pageIndex) => {
+                          const page = await getContacts({
+                            pageIndex,
+                            pageSize: 20,
+                            searchQuery: query,
+                          });
+                          return page.data.map((c: RespondContact) => ({
+                            value: c.id,
+                            label: contactLabel(c),
+                          }));
+                        }}
+                        selectedOption={
+                          field.value && linkedContactDetail
+                            ? { value: field.value, label: contactLabel(linkedContactDetail) }
+                            : undefined
+                        }
+                        placeholder="Link a WhatsApp contact (optional)"
+                        emptyMessage="No contact found."
+                        triggerClassName="w-full"
                       />
                     </FormControl>
                     <FormMessage />
@@ -273,33 +449,26 @@ const UserAddDialog = ({
                 name="roleIds"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Roles</FormLabel>
+                    <FormLabel className="flex items-center gap-2">
+                      Roles
+                      {suggestedRole && (
+                        <span className="text-xs font-normal text-muted-foreground">
+                          Suggested: {suggestedRole.name}
+                        </span>
+                      )}
+                    </FormLabel>
                     <FormControl>
-                      <div className="flex max-h-48 flex-col gap-2 overflow-y-auto rounded-md border p-3">
-                        {(roleList ?? []).map((role: UserRole) => (
-                          <div
-                            key={role.id}
-                            className="flex flex-row items-center space-x-2"
-                          >
-                            <Checkbox
-                              id={`role-${role.id}`}
-                              checked={field.value?.includes(role.id)}
-                              onCheckedChange={(checked) => {
-                                const next = checked
-                                  ? [...(field.value ?? []), role.id]
-                                  : (field.value ?? []).filter((id) => id !== role.id);
-                                field.onChange(next);
-                              }}
-                            />
-                            <label
-                              htmlFor={`role-${role.id}`}
-                              className="font-normal cursor-pointer text-sm"
-                            >
-                              {role.name}
-                            </label>
-                          </div>
-                        ))}
-                      </div>
+                      <SearchableMultiSelect
+                        value={field.value ?? []}
+                        onChange={(v) => field.onChange(v)}
+                        options={(roleList ?? []).map((role: UserRole) => ({
+                          value: role.id,
+                          label: role.name,
+                        }))}
+                        placeholder="Select roles"
+                        emptyMessage="No role found."
+                        triggerClassName="w-full"
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -369,20 +538,53 @@ const UserAddDialog = ({
                 }}
               />
 
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="send-invitation"
-                  checked={sendInvitationEmail}
-                  onCheckedChange={(checked) => setSendInvitationEmail(checked === true)}
-                />
-                <label
-                  htmlFor="send-invitation"
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                >
-                  Send invitation email (they will set their password via the link)
-                </label>
-              </div>
-
+              {linkError && (
+                <Alert variant="destructive" appearance="light">
+                  <AlertIcon>
+                    <RiErrorWarningFill />
+                  </AlertIcon>
+                  <AlertContent>
+                    <AlertTitle>{linkError.message}</AlertTitle>
+                    {linkError.code === 'CONTACT_ALREADY_LINKED' && resolvedHolder && (
+                      <Button
+                        type="button"
+                        variant="link"
+                        size="sm"
+                        className="h-auto p-0"
+                        onClick={() => router.push(`/user-management/users/${resolvedHolder.id}`)}
+                      >
+                        Open user
+                      </Button>
+                    )}
+                    {linkError.code === 'PHONE_BELONGS_TO_USER' && resolvedHolder && (
+                      selectedContactId ? (
+                        <Button
+                          type="button"
+                          variant="link"
+                          size="sm"
+                          className="h-auto p-0"
+                          disabled={linkingHolder}
+                          onClick={() => void handleLinkHolderInstead()}
+                        >
+                          {linkingHolder
+                            ? 'Linking…'
+                            : `Link this contact to ${resolvedHolder.name ?? 'that user'} instead`}
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="link"
+                          size="sm"
+                          className="h-auto p-0"
+                          onClick={() => router.push(`/user-management/users/${resolvedHolder.id}`)}
+                        >
+                          Open user
+                        </Button>
+                      )
+                    )}
+                  </AlertContent>
+                </Alert>
+              )}
             </DialogBody>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={closeDialog}>

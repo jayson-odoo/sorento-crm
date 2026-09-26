@@ -14,10 +14,19 @@
 import { apiFetch } from '@/lib/api';
 import {
   buildDataGridParams,
+  codedError,
   extractApiError,
   type DataGridParamsInput,
 } from '@/lib/api-client';
 import type { User } from '@/app/models/user';
+
+// PHASE 1 MOCK: swap in Phase 2 once `GET /users/select` carries the `phone`
+// and `respond_contact_id` filters (S3 contract 1.7). Today's `/users/select`
+// carries no phone or contact id at all, so there is no honest way to resolve
+// the OTHER user a 409 names from here - the message already names them, this
+// mock only stands in for the id the "Open user" / "Link this contact to
+// <name> instead" buttons need to navigate or link.
+const S3_USE_MOCKS = true;
 
 export interface UserListResponse {
   data: User[];
@@ -101,4 +110,107 @@ export async function setDailySlaSummarySubscription(
       await extractApiError(response, 'Failed to update the conversation summary setting'),
     );
   }
+}
+
+export interface UserSelectOption {
+  id: string;
+  name: string | null;
+  email: string | null;
+}
+
+export interface CreateUserInput {
+  name: string;
+  email?: string | null;
+  contact_number?: string | null;
+  respond_contact_id?: string | null;
+  role_ids: string[];
+  superior_id?: string | null;
+  company_ids: string[];
+}
+
+/**
+ * Create a user (S3, AC-41 / AC-58): no invitation checkbox, no `/invite`
+ * branch - this is the only way the Add user modal saves. `codedError` so the
+ * dialog can branch on `CONTACT_ALREADY_LINKED` / `PHONE_BELONGS_TO_USER` /
+ * `EMAIL_TAKEN` instead of just showing the message.
+ */
+export async function createUser(input: CreateUserInput): Promise<User> {
+  const response = await apiFetch('/api/user-management/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw await codedError(response, 'Failed to add user');
+  }
+  return (await response.json()) as User;
+}
+
+/** Link or unlink a user's WhatsApp contact (S3 1.3): `null` unlinks. */
+export async function updateUserContactLink(
+  userId: string,
+  respondContactId: string | null,
+): Promise<User> {
+  const response = await apiFetch(`/api/user-management/users/${userId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ respond_contact_id: respondContactId }),
+  });
+  if (!response.ok) {
+    throw await codedError(response, 'Failed to update the linked contact');
+  }
+  return (await response.json()) as User;
+}
+
+/** "Use new number" (AC-46 / AC-54): takes the linked contact's own phone. */
+export async function useNewNumber(userId: string, phoneNumber: string): Promise<User> {
+  const response = await apiFetch(`/api/user-management/users/${userId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contact_number: phoneNumber }),
+  });
+  if (!response.ok) {
+    throw await codedError(response, 'Failed to update the phone number');
+  }
+  return (await response.json()) as User;
+}
+
+/**
+ * Resolve the user already holding a phone number, for "Link this contact to
+ * <name> instead" / "Open user" (AC-42). Null when it cannot be resolved -
+ * the caller falls back to the plain error message, which already names them.
+ */
+export async function findUserByPhone(phone: string): Promise<UserSelectOption | null> {
+  if (S3_USE_MOCKS) return null;
+  const params = new URLSearchParams({ phone });
+  const response = await apiFetch(`/api/user-management/users/select?${params.toString()}`);
+  if (!response.ok) return null;
+  const rows = (await response.json()) as UserSelectOption[];
+  return rows[0] ?? null;
+}
+
+/** Resolve the user already holding a WhatsApp contact ("Open user", AC-43). */
+export async function findUserByContact(
+  respondContactId: string,
+): Promise<UserSelectOption | null> {
+  if (S3_USE_MOCKS) return null;
+  const params = new URLSearchParams({ respond_contact_id: respondContactId });
+  const response = await apiFetch(`/api/user-management/users/select?${params.toString()}`);
+  if (!response.ok) return null;
+  const rows = (await response.json()) as UserSelectOption[];
+  return rows[0] ?? null;
+}
+
+/**
+ * Users with no linked contact, for "Link existing user" on a contact's User
+ * account section. `unlinked=true` is inert until Phase 2 (S3 1.7) - until
+ * then this is every active user, which still works for a genuinely unlinked
+ * pick and safely answers `USER_ALREADY_LINKED` on any other.
+ */
+export async function listUnlinkedUsers(query?: string): Promise<UserSelectOption[]> {
+  const params = new URLSearchParams({ status: 'ACTIVE', unlinked: 'true' });
+  if (query?.trim()) params.set('query', query.trim());
+  const response = await apiFetch(`/api/user-management/users/select?${params.toString()}`);
+  if (!response.ok) return [];
+  return (await response.json()) as UserSelectOption[];
 }

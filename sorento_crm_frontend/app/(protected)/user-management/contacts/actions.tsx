@@ -12,20 +12,43 @@
  * the list confirms over a row, the record over the record it is showing.
  */
 
-import { Trash2, UserCog } from 'lucide-react';
+import { Trash2, UserCog, UserPlus } from 'lucide-react';
 import type { RecordAction } from '@/components/common/recordActions';
 import type { RespondContact } from './types/contact.types';
 
 export interface ContactActionHandlers {
   impersonate: () => void;
   remove: () => void;
+  /** Opens the Add user modal with this contact locked (S3, AC-59). Omitted on
+   *  a surface that has no `users.add` grant or no room for the dialog. */
+  createUser?: () => void;
+}
+
+export interface ContactActionOptions {
+  /** `user_management.users.add` - the row's "Create user" item is absent
+   *  without it, same as any other permission-gated action here. */
+  canCreateUser?: boolean;
 }
 
 export function contactActions(
   contact: RespondContact,
   handlers: ContactActionHandlers,
+  options: ContactActionOptions = {},
 ): RecordAction[] {
-  return [
+  const actions: RecordAction[] = [];
+
+  // First in the menu (AC-59), and only for a contact with no user yet - once
+  // linked, the user account lives on the contact's own Profile tab.
+  if (options.canCreateUser && handlers.createUser && !contact.linked_user_id) {
+    actions.push({
+      key: 'contact.create_user',
+      label: 'Create user',
+      icon: UserPlus,
+      run: handlers.createUser,
+    });
+  }
+
+  actions.push(
     {
       key: 'contact.impersonate',
       label: 'Impersonate in portal',
@@ -39,5 +62,7 @@ export function contactActions(
       kind: 'destructive',
       run: handlers.remove,
     },
-  ];
+  );
+
+  return actions;
 }
