@@ -149,8 +149,9 @@ class TestContractEndpoint:
         body = res.json()
         # Bumped again (autocount-brands-ingest, AC-13): "2.3" adds `brands`
         # as a first-class EntitySpec. Bumped again (ingest-products-code-wins,
-        # SR0): "2.4" adds products code-wins deletion `codes`.
-        assert body["version"] == "2.4"
+        # SR0): "2.4" adds products code-wins deletion `codes`. Bumped again
+        # (ingest-stock-balances-2-5, Foundryx SR5): "2.5" adds `stock_balances`.
+        assert body["version"] == "2.5"
         entities = set(body["entities"])
         for expected in (
             "sales_orders",

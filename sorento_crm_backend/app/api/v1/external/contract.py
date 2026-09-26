@@ -2,7 +2,8 @@
 ingest-parity-standardisation; v2.2 adds the SO<->PO linkage fields below,
 ingest-contract-2-2-so-links; v2.3 adds `brands` as a first-class EntitySpec,
 autocount-brands-ingest; v2.4 adds products code-wins plus the deletions
-`codes` field, ingest-products-code-wins).
+`codes` field, ingest-products-code-wins; v2.5 adds `stock_balances`, a push
+entity that upserts `stock.quantity_on_hand`, ingest-stock-balances-2-5).
 
 The ESB gates every new key it sends behind `sorento_contract_version = 2` on
 its consumer connection, so it needs one endpoint to ask Sorento what version
@@ -53,6 +54,7 @@ from app.services.shipping_order_ingest_service import (
     WARN_CONTAINER_UNRESOLVED,
     WARN_RECEIVED_LOCKED,
 )
+from app.services.stock_balance_ingest_service import WARN_WAREHOUSE_INACTIVE
 
 router = APIRouter()
 
@@ -88,6 +90,11 @@ FIELDS_ADDED: dict[str, list[str]] = {
     # accepts an optional `codes` map (source_ref -> code) alongside
     # `source_refs`, read only for this entity - see FIELD_NOTES below.
     "products_deletions": ["codes"],
+    # v2.5 (ingest-stock-balances-2-5, Foundryx SR5): a wholly NEW entity
+    # rather than new fields on an existing one - listed here anyway (D2)
+    # so the ESB's own diff read sees it without special-casing "entities
+    # that are new" apart from "fields that are new" on this endpoint.
+    "stock_balances": ["item_code", "location_code", "qty", "item_description", "uom_code"],
 }
 
 # D24 (captain 2026-09-06): per-entity notes on a field's meaning that
@@ -123,6 +130,13 @@ FIELD_NOTES: dict[str, str] = {
         "source system (same ref_mismatch rule as the products push above). "
         "/external/read/products stays reference-only: a product linked under a "
         "document-minted reference is not found there by an item-code reference."
+    ),
+    "stock_balances": (
+        "upserts stock.quantity_on_hand only, resolved by (item_code, location_code) "
+        "rather than source_ref, which is an echo key never stored. "
+        "/ingest/stock_balances/deletions zeroes the quantity and keeps the row - it "
+        "never removes it - and its body carries pairs (source_ref -> {item_code, "
+        "location_code}) instead of codes."
     ),
 }
 
@@ -167,6 +181,7 @@ WARNINGS: list[str] = sorted(
         WARN_SUPPLIER_AMBIGUOUS,
         WARN_CONTAINER_UNRESOLVED,
         WARN_RECEIVED_LOCKED,
+        WARN_WAREHOUSE_INACTIVE,
         "category_created",
         "uom_created",
         "brand_created",
