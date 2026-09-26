@@ -350,6 +350,8 @@ def test_submit_notifies_every_verifier_once(cost_price_env):
     e.seed_settings(cost_price_verification_enabled=True)
     verifier_a = e.user(VERIFY_PERM, VIEW_PERM)
     verifier_b = e.user(VERIFY_PERM, VIEW_PERM)
+    e.grant_company(verifier_a, e.company_a)
+    e.grant_company(verifier_b, e.company_a)
     uploader = e.user(UPLOAD_PERM, VIEW_PERM)
     set_id = _seed_pending(e, uploader=uploader)
 

@@ -97,10 +97,15 @@ def test_apply_refuses_line_bound_to_foreign_product(cost_price_env):
     db_line.product_id = foreign_product.id
     db_line.match_outcome = "manual"
     db_line.line_state = "new_link"
+    # A `new_link` line with no lead time and no supplier default would ALSO be blocked
+    # by `lead_time_required` (AC-S2-05) - a different check, satisfied here so the ONLY
+    # refusal Apply can raise is the one this test pins.
+    db_line.new_link_lead_time_days = 45
     e.db.commit()
 
     r = e.apply(set_id)
     assert r.status_code == 422, r.text
+    assert r.json().get("code") == "invalid_product", r.text
 
     assert e.db.query(ProductSupplier).filter_by(product_id=foreign_product.id).count() == 0
     assert e.db.query(ProductSupplierCost).count() == 0
@@ -296,19 +301,26 @@ def test_source_file_download_with_a_quote_in_the_filename_cannot_inject_a_secon
     assert disposition.count("filename=") <= 1, disposition
 
 
-def test_source_file_download_with_a_300_char_filename_is_not_a_500(cost_price_env):
+def test_source_file_download_with_a_long_filename_is_truncated_not_a_500(cost_price_env):
+    """A name over 255 chars (`file_name` is `VARCHAR(255)`) is truncated to at most 255,
+    keeping the `.xlsx` extension - not a 500 at commit."""
     e = cost_price_env
     user = e.user(UPLOAD_PERM, VIEW_PERM)
     e.as_user(user)
     supplier = e.supplier(name=LETTERHEAD_TEXT)
     data = simple_price_list_workbook([("ZZCPC-FN-LONG-001", "cfg", 100)], letterhead=LETTERHEAD_TEXT)
-    long_name = ("a" * 296) + ".xlsx"  # 300 chars total
-    assert len(long_name) == 300
+    long_name = ("a" * 300) + ".xlsx"  # 305 chars, well over the 255 column limit
+    assert len(long_name) > 255
 
     uploaded = e.upload(data, supplier_id=str(supplier.id), currency="CNY", filename=long_name)
     assert uploaded.status_code == 201, uploaded.text
+    set_id = uploaded.json()["id"]
 
-    r = e.source_file(uploaded.json()["id"])
+    detail = e.detail(set_id).json()
+    assert len(detail["file_name"]) <= 255
+    assert detail["file_name"].endswith(".xlsx")
+
+    r = e.source_file(set_id)
     assert r.status_code == 200, r.text
 
 

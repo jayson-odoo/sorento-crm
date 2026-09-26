@@ -191,6 +191,17 @@ class CostPriceEnv:
             )
         self.db.commit()
 
+    def grant_company(self, user: dict, company_id: str) -> None:
+        """A `user_companies` row: `user` can switch INTO `company_id` (`UserCompany`'s own
+        docstring - "union of grants = a user's switchable company set"). The verifier
+        company-scoping fix (nit, security review) reads this table, so a test proving a
+        verifier IS notified needs the grant, same as the outsider test proves the ABSENCE
+        of one keeps someone out."""
+        from app.models.company import UserCompany
+
+        self.db.add(UserCompany(id=_u(), user_id=user["id"], company_id=company_id))
+        self.db.commit()
+
     def as_user(self, principal: dict | None, *, scope=None) -> None:
         self.principal = principal
         self.principal_real = None
