@@ -153,7 +153,7 @@ Vocabulary rule that follows (applies to every screen below):
 | Seed / User (source badge) | removed from default view; Advanced shows "Built in" / "Added here" |
 | `brand` (the code under the label) | removed from default view; Advanced shows it |
 | `_self` | "Other names for Capacity (oz)" field on the Header tab, not a value card |
-| shipped (rule badge) | removed; a rule someone changed says "Changed by Jayson, 26 Sep" instead |
+| shipped (rule badge) | removed; a rule someone changed says "Changed here" instead (Advanced keeps "Built in"), and "Put back the built-in rules" undoes it |
 | Pattern `(?<![A-Z0-9])(\d+...)OZ\b`, capture the 1 number | "The number just before OZ" |
 | From the product's brand field | "The product's brand" |
 | Description and flyer | "the description or flyer" in the sentence, not a separate column |
