@@ -93,6 +93,12 @@ Owner ruling 26 Sep: F2 "okay": one bare number after a question about several p
 - **AC-SA325 [BE]** F1: a dealer's did-you-mean is "Couldn't find <TYPED>. Did you mean <CODE>?" (or a list) with a `product_pick` carrying the typed quantity; "yes" or the code answers it with that quantity; "no" replies "Please refer to your salesman." with nothing open; any other escalation offer in a dealer's stock reply becomes "Please refer to your salesman." with no escalation pending. A detailed or compact contact is unaffected.
 - **AC-SA326 [BE]** F2: a bare number over an open task with several products still owed, not a family, fills each and fetches them all at that quantity.
 
+### Owner hand test of round 3, 26 Sep 2026 (:3087 console, PR #1247 fix round 4)
+
+- **AC-SA327 [BE]** A which-one pick list (the family pick and a dealer's multi-code did-you-mean) prints one numbered code per line, "1. <CODE>", the format every other picker prints; "and N others, reply with the full code." is unchanged.
+- **AC-SA328 [BE]** Once the which-one pick is spent and the stock check is about one product (still asked or just answered), a bare number is that product's quantity: after an answered quantity it re-fetches that product at the new quantity and answers straight away ("2" after SRTWC286-SH x 10 -> SRTWC286-SH x 2). It is never a pick from the old list and never a re-ask, whether the parser emits it as demand_qty or as a lone reference position.
+- **AC-SA329 [BE]** A real new pick still works after an answered quantity: a typed code is a new stock ask for that code, and "no, <position>" (a lone position with is_affirmative false) picks that position off the list the product was picked from, carrying the quantity already given.
+
 ## S4 - Agent notification + integration_log
 
 - **AC-SA401 [BE]** `notify_salesman` on: B1, B2, B4 each enqueue exactly one `notify_salesman` job on `respond_io`; B3 enqueues none; toggle off enqueues none; dry run, console and test turns enqueue none.
