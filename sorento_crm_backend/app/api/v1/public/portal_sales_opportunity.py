@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.public.portal import get_portal_token
 from app.database import get_db
-from app.models.base import company_scope, get_company_scope, set_company_scope
+from app.models.base import UNSET, company_scope, get_company_scope, set_company_scope
 from app.models.portal import PortalToken
 from app.models.sales_agent import SalesAgent
 from app.schemas.sales import (
@@ -78,12 +78,23 @@ def _require_agent(db: Session, token: PortalToken) -> SalesAgent:
     # test) overrides that dependency directly (LESSONS: db.info survives the thread hop
     # a contextvar would not).
     db.info["actor_contact_id"] = str(token.contact_id)
-    # Phase 3 fix S2: scope the WHOLE request to this agent's own company as soon as the
-    # agent is known (or leave it unrestricted - `None` - for a single-tenant install
-    # where the agent carries no company_id), so every query for the rest of the request
-    # - the customer lookup inside `_resolve_company` included - runs under the
-    # company-scope auto-filter and can never widen past it.
-    set_company_scope(db, frozenset({agent.company_id}) if agent.company_id else None)
+    # Phase 3 fix2 should-fix 4: NARROW only, never widen. `apply_company_scope` (the
+    # router-level dependency in `app/main.py`) already resolved the scope for THIS
+    # CONTACT'S OWN companies (`respond_contact_companies`) before this ever runs - an
+    # unconditional overwrite used to set the scope to `None` ("no predicate", i.e. every
+    # company - see `app/models/base.py`'s four-state table) for a SHARED agent
+    # (`company_id` is `None`), clobbering whatever the contact was actually scoped to. An
+    # agent WITH a `company_id` may narrow the request to just that company, but only when
+    # the existing scope already permits it; a shared agent, or one whose own company
+    # disagrees with the contact's scope, leaves the existing (already correct) scope
+    # untouched rather than widen it.
+    existing_scope = get_company_scope(db)
+    if agent.company_id and (
+        existing_scope is None
+        or existing_scope is UNSET
+        or (isinstance(existing_scope, frozenset) and agent.company_id in existing_scope)
+    ):
+        set_company_scope(db, frozenset({agent.company_id}))
     return agent
 
 
