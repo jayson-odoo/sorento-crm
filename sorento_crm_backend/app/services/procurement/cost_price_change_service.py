@@ -470,6 +470,26 @@ def _undecided_count(db: Session, set_id: str) -> int:
     )
 
 
+def _largest_rise(db: Session, set_id: str) -> Optional[dict]:
+    from app.models.cost_price import CostPriceChangeLine
+
+    best = None
+    best_pct = None
+    for ln in (
+        db.query(CostPriceChangeLine)
+        .filter(CostPriceChangeLine.change_set_id == set_id, CostPriceChangeLine.skipped.is_(False))
+        .all()
+    ):
+        pct = _change_pct(ln.current_unit_cost, ln.new_unit_cost)
+        if pct is None or pct <= 0:
+            continue
+        if best_pct is None or pct > best_pct:
+            best, best_pct = ln, pct
+    if best is None:
+        return None
+    return {"supplier_code": best.supplier_code, "change_pct": best_pct}
+
+
 def get_detail(db: Session, set_id: str, current_user: Optional[dict]) -> dict:
     from app.models.procurement import Supplier
 
@@ -502,6 +522,7 @@ def get_detail(db: Session, set_id: str, current_user: Optional[dict]) -> dict:
 
     can_discard = cs.status == "draft" and holds_upload
     sheets = (cs.source_meta or {}).get("sheets", [])
+    largest_rise = _largest_rise(db, set_id)
 
     return {
         "id": _u(cs.id), "code": cs.code, "status": cs.status, "channel": cs.channel,
@@ -524,6 +545,7 @@ def get_detail(db: Session, set_id: str, current_user: Optional[dict]) -> dict:
         "verified": cs.verified,
         "verification_enabled": verification_enabled,
         "counts": counts,
+        "largest_rise": largest_rise,
         "actions": {
             "can_apply": can_apply, "apply_blocked_reason": apply_blocked_reason,
             "apply_count": counts["changed"] + counts["new_link"],
