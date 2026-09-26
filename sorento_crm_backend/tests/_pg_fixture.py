@@ -94,7 +94,7 @@ def blank_schema_engine():
     paid once for the whole session rather than per test. Data isolation is the
     caller's job: use ``blank_session()``, which discards writes.
 
-    ``scm``, ``dealer_kit``, ``chatbot`` and ``projects`` are translated alongside the
+    ``scm``, ``dealer_kit``, ``chatbot``, ``sales`` and ``projects`` are translated alongside the
     default schema, so those models -- which could not be created on sqlite at all -- are
     included. Any future module that declares its own schema must be added here
     too, or ``create_all`` fails on the first table it cannot place.
@@ -124,6 +124,7 @@ def blank_schema_engine():
         admin.exec_driver_sql(f'CREATE SCHEMA "{name}_dealer_kit"')
         admin.exec_driver_sql(f'CREATE SCHEMA "{name}_projects"')
         admin.exec_driver_sql(f'CREATE SCHEMA "{name}_chatbot"')
+        admin.exec_driver_sql(f'CREATE SCHEMA "{name}_sales"')
         admin.close()
 
         scoped = engine.execution_options(
@@ -133,6 +134,7 @@ def blank_schema_engine():
                 "dealer_kit": f"{name}_dealer_kit",
                 "projects": f"{name}_projects",
                 "chatbot": f"{name}_chatbot",
+                "sales": f"{name}_sales",
             }
         )
         # AUTOCOMMIT, so each CREATE TABLE / ADD CONSTRAINT / CREATE INDEX commits
@@ -171,6 +173,7 @@ def drop_blank_schema():
         admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_dealer_kit" CASCADE')
         admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_projects" CASCADE')
         admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_chatbot" CASCADE')
+        admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_sales" CASCADE')
         admin.close()
 
 
@@ -206,6 +209,8 @@ def blank_session() -> Session:
     # tables, and unqualified raw SQL naming one of those means the core one. Put
     # `{name}_projects` earlier and seven core tables silently repoint at the module's.
     # `scm` and `dealer_kit` share no bare name with core, so their position is free.
+    # `sales` does (`teams`, `team_members`), and like projects it trails the default schema,
+    # so unqualified raw SQL naming either still means core's Users & Access table.
     #
     # `public` is LAST, deliberately trailing every scratch schema: every table on
     # `Base.metadata` was just created in one of the schemas above, so a real table name
@@ -219,7 +224,7 @@ def blank_session() -> Session:
     name = _BLANK["name"]
     connection.exec_driver_sql(
         f'SET LOCAL search_path TO "{name}", "{name}_scm", "{name}_dealer_kit", '
-        f'"{name}_chatbot", "{name}_projects", "public"'
+        f'"{name}_chatbot", "{name}_sales", "{name}_projects", "public"'
     )
 
     session = Session(bind=connection, join_transaction_mode="create_savepoint")
