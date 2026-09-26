@@ -706,7 +706,20 @@ def _answer_pending(state: State, decision: Decision, trace: Trace):
                 Plan(domains=[], fetch=[], ask=next_pending, denied=[], trace=trace),
                 True,
             )
-        if is_roster(pending.kind):
+        # #1262 slice 8 (F1b siblings) follow-up (coordinator round, 26 Sep 2026): a
+        # `kind_pick` is a ONE-SHOT disambiguation over a SINGLE ambiguous token, never
+        # a roster with more rows to pick over time (contract 36's sticky-roster rule
+        # is for product/customer/tier, which keep several USABLE options after their
+        # own pick) - the `queued` branch above is the only way a kind_pick answer
+        # stays open, and only onto the NEXT token's own fresh pick, never this one's.
+        # Falling through to `is_roster` here (true for `kind_pick`, `ROSTER_KINDS`)
+        # left the JUST-ANSWERED pick open forever, carrying its own unanswered
+        # sibling option (e.g. "Sorento (transporter)") for a later reader to echo
+        # even though nothing remains to disambiguate (measured via a full-engine
+        # replay: T4's reply printed "Transporter: Sorento" alongside the correct
+        # "Customer: Sorento", and `escalate_offered` got stamped onto a question with
+        # nothing left to ask).
+        if pending.kind != "kind_pick" and is_roster(pending.kind):
             return focus, with_answered_positions(pending, positions), None, True
         return focus, None, None, True
 
