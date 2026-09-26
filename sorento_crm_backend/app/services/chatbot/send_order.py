@@ -157,7 +157,7 @@ def earlier_unanswered(db: Session, *, contact_respond_id: str, me: ChatbotTurn)
                     )
                 )
 
-    found.extend(_ledger_only_media(db, contact_respond_id=contact_respond_id, me=me, my_sent=my_sent))
+    found.extend(_ledger_only_media(db, contact_respond_id=contact_respond_id, me=me))
     return sorted(found, key=lambda e: e.order_key)
 
 
@@ -213,7 +213,7 @@ def _latest_finished_arrival(db: Session, *, contact_respond_id: str, me: Chatbo
 
 
 def _ledger_only_media(
-    db: Session, *, contact_respond_id: str, me: ChatbotTurn, my_sent: int | None
+    db: Session, *, contact_respond_id: str, me: ChatbotTurn
 ) -> list[Earlier]:
     from app.models.media import ContactMediaUsage, MediaExtractionJob
 
@@ -261,12 +261,6 @@ def _ledger_only_media(
         query = query.filter(ContactMediaUsage.created_at > previous[0])
     if me.message_id:
         query = query.filter(ContactMediaUsage.message_id != me.message_id)
-    if my_sent is not None:
-        # The ledger has no send time, so its first sight must also predate THIS
-        # message's send time: two recorded instants, not a window. The column is naive
-        # UTC (`_epoch_ms`).
-        sent_at = datetime.fromtimestamp(my_sent / 1000, tz=timezone.utc).replace(tzinfo=None)
-        query = query.filter(ContactMediaUsage.created_at < sent_at)
 
     found: list[Earlier] = []
     for usage, job in query.order_by(ContactMediaUsage.created_at.asc()).all():
