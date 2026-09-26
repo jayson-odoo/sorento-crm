@@ -63,10 +63,11 @@ def test_open_question_answer_declared_strict_safe_and_tolerated_absent():
     assert items_schema["properties"]["qty"]["type"] == ["number", "null"]
     assert prop["properties"]["qty_for_all"]["type"] == ["number", "null"]
 
-    # A recorded emission that predates this key (every `verdict()` in this suite) is
+    # A recorded emission that predates this key (a full emission without it) is
     # still a valid emission.
     assert "open_question_answer" in parser_mod.TOLERATED_ABSENT
-    parser_mod.assert_emission(verdict())
+    recorded = {key: None for key in parser_mod.DECLARED_KEYS if key != "open_question_answer"}
+    parser_mod.assert_emission(recorded)
 
 
 # =============================================================================== #

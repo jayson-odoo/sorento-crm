@@ -319,6 +319,47 @@ def _build_json_schema() -> dict[str, Any]:
             # stock-specific: it is the one word that closes ANY open task with what
             # it already holds.
             "proceed_anyway": {"type": ["boolean", "null"]},
+            # PR #1247 round 8 (owner console test of round 7, 26 Sep 2026): the
+            # parser's own answer to the "Open question:" object the user block states,
+            # so a reply to the stock quantity question ("10 / 20 / 30", the list pasted
+            # back with blanks, "that's it", "3 for all of them") comes back as declared
+            # slots instead of being guessed from its shape by one rule per phrasing.
+            # Fixed keys and a list of fixed-shape items: strict-schema safe. Always an
+            # object; `mode` null is "this message does not answer it". Read first by
+            # `turn/apply.py::_open_question_answer`, the shape rules only as fallback.
+            "open_question_answer": {
+                "type": "object",
+                "additionalProperties": False,
+                "description": (
+                    "The answer to the user block's 'Open question:' object, else mode null."
+                ),
+                "properties": {
+                    "mode": {
+                        "type": ["string", "null"],
+                        "enum": ["fill", "all", "done", "cancel", None],
+                        "description": (
+                            "fill: quantities for some lines; done: these lines (or none) "
+                            "then answer now, blanks skipped; all: qty_for_all for every "
+                            "line; cancel: drop the question; null: not an answer to it."
+                        ),
+                    },
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "position": {"type": ["integer", "null"]},
+                                "code": string_or_null,
+                                "qty": {"type": ["number", "null"]},
+                            },
+                            "required": ["position", "code", "qty"],
+                        },
+                    },
+                    "qty_for_all": {"type": ["number", "null"]},
+                },
+                "required": ["mode", "items", "qty_for_all"],
+            },
             "anaphora": {
                 "type": "object",
                 "additionalProperties": False,
@@ -368,6 +409,7 @@ def _build_json_schema() -> dict[str, Any]:
             "asks",
             "topic_reset",
             "proceed_anyway",
+            "open_question_answer",
             "anaphora",
         ],
     }
@@ -399,8 +441,16 @@ DECLARED_KEYS: frozenset[str] = frozenset(PARSE_OUTPUT_JSON_SCHEMA["required"])
 #: `entities[].quantity` needs no tolerance - this check is TOP-LEVEL keys only, and a
 #: nested entity field is validated by the provider's own strict schema, never
 #: against a replay emission.
+#: `open_question_answer` joins them by the same rule (PR #1247 round 8): no recorded
+#: emission and no console case carries it, and absent reads as mode null.
 TOLERATED_ABSENT: frozenset[str] = frozenset(
-    {"broaden_to", "domain_in_message", "sales_channel", "proceed_anyway"}
+    {
+        "broaden_to",
+        "domain_in_message",
+        "sales_channel",
+        "proceed_anyway",
+        "open_question_answer",
+    }
 )
 
 
@@ -509,6 +559,8 @@ def build_user_block(
     profile_block: str | None = None,
     episodes_block: str | None = None,
     focus: Any = None,
+    open_question: dict[str, Any] | None = None,
+    recent_exchanges: list[tuple[str, str]] | None = None,
 ) -> str:
     """The user turn, in the same two lines the n8n `AI Agent` node sends.
 
@@ -531,6 +583,13 @@ def build_user_block(
     the model can fill a quantity for a product the task named whatever the current
     subject is, and can read "add", "drop", "make B 80", "proceed" and "never mind
     the stock check" as instructions on that task.
+
+    The fifth and sixth are PR #1247 round 8 (owner console test of round 7, 26 Sep
+    2026: "is the parameter from the parser too less already, is the context too less
+    already?"): the stock question as a structured `Open question:` object
+    (`task.open_question`), which the parser answers in `open_question_answer`, and the
+    last three exchanges, so a short reply is read against what was actually asked.
+    Both omitted, and the block is unchanged.
     """
     import re
 
@@ -549,6 +608,11 @@ def build_user_block(
         lines.append(subject)
     for task_line in task_mod.hint_lines(getattr(focus, "tasks", None)):
         lines.append(task_line)
+    if open_question:
+        lines.append(
+            "Open question: "
+            + json.dumps(open_question, separators=(",", ":"), ensure_ascii=False)
+        )
     if pending_kind:
         lines.append(f"Pending: the assistant is waiting for a {pending_kind} reply.")
     if pending_options:
@@ -567,7 +631,34 @@ def build_user_block(
         # AC-1547: the recalled frames, on the SECOND parse of a turn that pointed
         # backwards. Absent on every other turn, which keeps their block unchanged.
         lines.append(episodes_block)
+    if recent_exchanges:
+        lines.append("Recent exchanges, oldest first:")
+        last = len(recent_exchanges) - 1
+        for index, (user_text, assistant_text) in enumerate(recent_exchanges):
+            lines.append(f"User: {_exchange_text(user_text)}")
+            # The newest reply IS the Previous response line; not paid for twice.
+            lines.append(
+                "Assistant: (the Previous response)"
+                if index == last
+                else f"Assistant: {_exchange_text(assistant_text)}"
+            )
     return "\n".join(lines)
+
+
+#: How much of one exchange's text the parser reads (round 8). A ten-line point-form
+#: question is about 250 characters; a stock answer for ten products is longer, and its
+#: head is what a short reply refers to.
+EXCHANGE_TEXT_CAP = 500
+
+
+def _exchange_text(value: Any) -> str:
+    """One line of one exchange: newlines become " / ", at most `EXCHANGE_TEXT_CAP`."""
+    text = " / ".join(
+        part.strip() for part in str(value or "").splitlines() if part.strip()
+    )
+    if len(text) > EXCHANGE_TEXT_CAP:
+        return text[:EXCHANGE_TEXT_CAP] + "..."
+    return text
 
 
 class ParsedOutput(dict):

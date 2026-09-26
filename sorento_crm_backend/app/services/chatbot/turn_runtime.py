@@ -253,6 +253,68 @@ def previous_reply_text(
     return str(text_value) if text_value else None
 
 
+def _envelope_text(envelope: Any) -> str | None:
+    """The message text a stored envelope carries (the respond.io payload,
+    `message.message.message.text`), else an attachment's description."""
+    inner = envelope
+    for key in ("message", "message", "message"):
+        inner = inner.get(key) if isinstance(inner, dict) else None
+    if not isinstance(inner, dict):
+        return None
+    text = inner.get("text")
+    if not (isinstance(text, str) and text.strip()):
+        attachment = inner.get("attachment")
+        text = attachment.get("description") if isinstance(attachment, dict) else None
+    return text if isinstance(text, str) and text.strip() else None
+
+
+def recent_exchanges(
+    db: Session,
+    *,
+    contact_respond_id: str,
+    ingress: str | None,
+    is_test: bool,
+    limit: int = 3,
+) -> list[tuple[str, str]]:
+    """The last `limit` completed exchanges with this contact, oldest first, as (what
+    the contact said, what the bot answered) - the parser's "Recent exchanges" lines
+    (PR #1247 round 8: the owner's "is the context too less already?").
+
+    Read from the same rows and under the same three scopes as `previous_reply_text`,
+    so the newest pair's answer IS the Previous response. A row with no reply text or
+    no message text is skipped. A lookup failure is no exchanges, never a failed turn.
+    """
+    from app.models.chatbot_turn import ChatbotTurn
+
+    try:
+        query = db.query(ChatbotTurn.envelope, ChatbotTurn.response).filter(
+            ChatbotTurn.contact_respond_id == str(contact_respond_id),
+            ChatbotTurn.status == "done",
+            ChatbotTurn.is_test.is_(bool(is_test)),
+        )
+        if str(ingress or "") == _CONSOLE_INGRESS:
+            query = query.filter(ChatbotTurn.ingress == _CONSOLE_INGRESS)
+        else:
+            query = query.filter(ChatbotTurn.ingress != _CONSOLE_INGRESS)
+        rows = query.order_by(ChatbotTurn.created_at.desc()).limit(limit * 2).all()
+    except Exception:  # noqa: BLE001 - no history is no lines, never a failure
+        logger.warning(
+            "chatbot: recent exchanges lookup failed for %s", contact_respond_id, exc_info=True
+        )
+        return []
+    pairs: list[tuple[str, str]] = []
+    for envelope, response in rows:
+        reply = response.get("reply") if isinstance(response, dict) else None
+        answer = reply.get("text") if isinstance(reply, dict) else None
+        said = _envelope_text(envelope)
+        if not (isinstance(answer, str) and answer.strip()) or said is None:
+            continue
+        pairs.append((said, answer))
+        if len(pairs) == limit:
+            break
+    return list(reversed(pairs))
+
+
 def load_profile(
     db: Session, contact_respond_id: str, *, space_id: str | None = None
 ) -> tuple[Profile, bool]:

@@ -100,6 +100,9 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     # top-level verdict keys, and that one is a nested field of the `entities` row
     # above.
     "proceed_anyway": "app/services/chatbot/turn/task.py",
+    # PR #1247 round 8: the parser's declared answer to the "Open question:" object,
+    # read by `turn/apply.py::_open_question_answer` before any shape rule. 37 -> 38.
+    "open_question_answer": "app/services/chatbot/turn/apply.py",
 }
 
 

@@ -373,14 +373,9 @@ class StockQtyTask:
             return f"Last answered: {_listed(answered)}."
         parts = [f"Open task: {self.label}."]
         if len(task.slots) > 1:
-            # PR #1247 round 7 (W2): the point-form question's own lines, so the parser
-            # can name the product of a reply by line number ("1. 10, 2. 5"). They carry
-            # what is noted and what is owed, so the two lines below are not repeated.
-            lines = "; ".join(
-                f"{i}. {slot.label} - {'' if slot.value is None else slot.value}".rstrip()
-                for i, slot in enumerate(task.slots, 1)
-            )
-            parts.append(f"Asked as numbered lines, a blank quantity still owed: {lines}.")
+            # PR #1247 round 8: the point-form question's lines, what is noted and what
+            # is owed ride on the `Open question:` object (`open_question`), stated once.
+            parts.append("Asked as numbered lines: see Open question.")
             return " ".join(parts)
         noted = [
             f"{slot.label} x {slot.value}" for slot in task.slots if slot.value is not None
@@ -648,7 +643,21 @@ def _revised(task: Task, verdict: dict[str, Any], turn_no: int) -> Task | None:
 
     One product only: "how about 100?" after a two-product answer does not say which
     one it means. A message that names a product of its own, or states a quantity
-    beside one, is a stock ask of its own and is answered as one."""
+    beside one, is a stock ask of its own and is answered as one.
+
+    PR #1247 round 8: lines of any answered check are revised by `SLOT_QUANTITIES`,
+    which `apply._open_question_answer` writes from the parser's declared answer to
+    the "last_answer" object ("3 for all of them", "2. 10"). The other lines keep their
+    quantities, and the whole check is answered again."""
+    quantities = {key.strip().casefold(): qty for key, qty in _slot_quantities(verdict).items()}
+    if quantities:
+        if not any(slot.key.strip().casefold() in quantities for slot in task.slots):
+            return None
+        slots = tuple(
+            replace(slot, value=quantities.get(slot.key.strip().casefold(), slot.value))
+            for slot in task.slots
+        )
+        return replace(task, status=OPEN, touched_at_turn=turn_no, slots=slots)
     if len(task.slots) != 1:
         return None
     bare = _number(verdict.get("demand_qty"))
@@ -813,11 +822,19 @@ def after_reply(
 
     rows = list(block)
     tokens = _asked_tokens(asked or []) if named_products else []
+    # PR #1247 round 8, item 4: a row the dealer named by its own code is never a
+    # sibling to drop, even when it shares a prefix with another code they named
+    # ("SRTWC286-SH-150" beside "SRTWC286-SH").
+    named = {token for _shown, token, _entity in tokens}
     for _shown, token, _entity in tokens:
         group = _group(rows, token)
         exact = [row for row in group if (_row_label(row) or "").casefold() == token]
         if exact and len(group) > len(exact):
-            dropped = {id(row) for row in group if row not in exact}
+            dropped = {
+                id(row)
+                for row in group
+                if row not in exact and (_row_label(row) or "").casefold() not in named
+            }
             rows = [row for row in rows if id(row) not in dropped]
 
     families = [
@@ -970,6 +987,33 @@ def tasks_after_tool_status(
     if not impl.closes_on_tool_status(status):
         return tasks
     return tuple(task for task in tasks if task.kind != kind)
+
+
+def open_question(tasks: Any) -> dict[str, Any] | None:
+    """The stock question as the structured object the parser reads (PR #1247 round 8).
+
+    `kind` is "stock_quantities" while the quantities are still asked and "last_answer"
+    once the check is answered (a follow-up may revise it, "3 for all of them"). `items`
+    are the question's numbered lines in their fixed order, `qty` null while owed, and
+    `owed` names those positions. The parser answers it in `open_question_answer`.
+    None with no stock task. Reads a `Task` or its wire dict, like `hint_lines`.
+    """
+    for row in tasks or ():
+        if _value(row, "kind") != "stock_qty":
+            continue
+        task = row if isinstance(row, Task) else task_from_wire(row)
+        if task is None or not task.slots:
+            continue
+        items = [
+            {"position": i, "code": slot.label, "qty": _number(slot.value)}
+            for i, slot in enumerate(task.slots, 1)
+        ]
+        return {
+            "kind": "last_answer" if task.status == ANSWERED else "stock_quantities",
+            "items": items,
+            "owed": [item["position"] for item in items if item["qty"] is None],
+        }
+    return None
 
 
 def hint_lines(tasks: Any) -> list[str]:

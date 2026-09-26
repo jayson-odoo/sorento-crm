@@ -1259,6 +1259,14 @@ def _run_stages(  # noqa: PLR0915
             ingress=envelope.ingress,
             is_test=bool(dry_run),
         )
+        # PR #1247 round 8: the last three exchanges, so a short reply is read against
+        # what was asked. Same rows, same scopes, same session as the line above.
+        recent = turn_runtime.recent_exchanges(
+            db,
+            contact_respond_id=contact_respond_id,
+            ingress=envelope.ingress,
+            is_test=bool(dry_run),
+        )
         # `parser_config` is resolved AFTER media intake, not here: AC-1810's "no
         # parser call" means no parser SETUP either - a media-denied turn (no API
         # key required to check a gate/quota/burst decision) must not fail because
@@ -1421,6 +1429,12 @@ def _run_stages(  # noqa: PLR0915
     stage[0] = "understood"
     profile_words = memory_mod.profile_block(state_in.profile)
     pending_options = _pending_option_labels(state_in.pending)
+    # PR #1247 round 8: the open stock question as a structured object the parser
+    # answers in `open_question_answer`. Never under an open question of another kind:
+    # that question is what the message answers.
+    open_question = (
+        turn_task.open_question(state_in.focus.tasks) if state_in.pending is None else None
+    )
     user_block = parser.build_user_block(
         previous_response=previous_reply,
         latest_user_message=latest_user_message,
@@ -1428,6 +1442,8 @@ def _run_stages(  # noqa: PLR0915
         pending_options=pending_options,
         profile_block=profile_words,
         focus=state_in.focus,
+        open_question=open_question,
+        recent_exchanges=recent,
     )
     # G6: a dry run may supply the emission instead of paying for it.
     parser_bypassed = dry_run and "mock_reformulator_output" in harness_present
@@ -1513,6 +1529,8 @@ def _run_stages(  # noqa: PLR0915
                 profile_block=profile_words,
                 episodes_block=memory_mod.episodes_block(recalled),
                 focus=state_in.focus,
+                open_question=open_question,
+                recent_exchanges=recent,
             )
             try:
                 parser_raw = parser.parse(parser_config, user_block)
