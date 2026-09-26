@@ -783,7 +783,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "omitted = the current calendar year.\n\n"
             "ACCESS: pass `contact_id` + `space_id` (both or neither). The contact needs the "
             "Sales report reveal (403 `sales_report_not_enabled`); a dealer contact is forced "
-            "to its own customers and naming another is 403 `customer_not_permitted`."
+            "to its own customers and naming another is 403 `customer_not_permitted`, the "
+            "same 403 any contact that is not office staff gets."
         ),
         "/api/v1/order-management/top-selling",
         (),

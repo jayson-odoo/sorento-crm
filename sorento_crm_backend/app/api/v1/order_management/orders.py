@@ -1810,11 +1810,13 @@ def _top_selling_dealer_scope(db: Session, contact_id: str) -> Optional[list[str
     """The customers a dealer contact is forced to, or None for staff.
 
     A contact linked to any customer (`respond_contact_customers`) is that
-    customer's dealer and sees only its own ledgers. A contact typed as a dealer
-    (`contact_access_types` code naming dealer) with NO link has no ledgers to
-    be scoped to, so it is refused rather than falling through to the whole
-    book (fail closed). Anyone else holding the reveal key is staff."""
-    from app.services.contact_access_type_service import ContactAccessTypeService
+    customer's dealer and sees only its own ledgers, whatever else it holds.
+    Staff is positive, never the fallback: every access type the contact holds
+    reads as the office tier (`tier_gate.parse_level`, e.g. "Sorento Office")
+    and at least one of them is active. Anyone else (no type, end user, dealer
+    with no link, a type nobody classified) is refused (fail closed)."""
+    from app.models.access import ContactAccessType, respond_contact_access_types
+    from app.services.chatbot.lanes.business.tier_gate import parse_level
     from app.services.contact_customer_service import list_links
     from app.services.error_handler import AppException
 
@@ -1824,14 +1826,23 @@ def _top_selling_dealer_scope(db: Session, contact_id: str) -> Optional[list[str
             own.append(link.customer_id)
     if own:
         return own
-    codes = ContactAccessTypeService(db).get_contact_access_codes(contact_id)
-    if any("dealer" in (code or "").lower() for code in codes):
-        raise AppException(
-            403,
-            "You can only see sales for your own account.",
-            code="customer_not_permitted",
+    held = (
+        db.query(ContactAccessType.name, ContactAccessType.is_active)
+        .join(
+            respond_contact_access_types,
+            respond_contact_access_types.c.access_type_code == ContactAccessType.code,
         )
-    return None
+        .filter(respond_contact_access_types.c.contact_id == contact_id)
+        .all()
+    )
+    is_office = [(parse_level(name) or {}).get("tier") == "office" for name, _ in held]
+    if held and all(is_office) and any(active for _, active in held):
+        return None
+    raise AppException(
+        403,
+        "You can only see sales for your own account.",
+        code="customer_not_permitted",
+    )
 
 
 @sales_report_router.get("/top-selling", response_model=TopSellingResponse)
@@ -1893,9 +1904,9 @@ async def get_top_selling(
         None,
         description=(
             "Respond.io contact id, both-or-neither with space_id. When given the route re-checks "
-            "the `sales_orders.sales_report` reveal key (403 `sales_report_not_enabled`), and a "
-            "dealer contact is forced to its own customers (403 `customer_not_permitted` when it "
-            "names another)."
+            "the `sales_orders.sales_report` reveal key (403 `sales_report_not_enabled`). A contact "
+            "linked to customers is forced to them (403 `customer_not_permitted` when it names "
+            "another); an unlinked contact must be office staff, else 403 `customer_not_permitted`."
         ),
     ),
     space_id: Optional[str] = Query(None, description="Respond.io workspace id, required together with contact_id."),
