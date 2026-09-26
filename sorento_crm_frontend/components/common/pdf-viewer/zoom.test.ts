@@ -76,24 +76,38 @@ describe('captureAnchor', () => {
 });
 
 describe('anchoredScroll', () => {
-  it.each([
-    [1, 2],
-    [1, 0.5],
-    [0.8, 3.1],
-    [2.5, 1],
-  ])('zooming %s -> %s keeps the point under the cursor where it was', (from, to) => {
+  function zoomAround(from: number, to: number, scroll: { left: number; top: number }) {
     const cursor = { x: 420, y: 230 };
     const before = layout(from);
-    const scroll = { left: from > 1 ? 120 : 0, top: 900 };
     const was = pointUnder(before, scroll, cursor, from);
 
     const anchor = captureAnchor(before, { x: scroll.left + cursor.x, y: scroll.top + cursor.y });
     const after = layout(to);
     const next = anchoredScroll(after[anchor!.index], anchor!, cursor);
-    const now = pointUnder(after, next, cursor, to);
+    return { was, now: pointUnder(after, next, cursor, to) };
+  }
+
+  it.each([
+    [1, 2],
+    [0.8, 3.1],
+    [1.25, 1.5],
+  ])('zooming in %s -> %s keeps the point under the cursor where it was', (from, to) => {
+    const { was, now } = zoomAround(from, to, { left: from > 1 ? 120 : 0, top: 900 });
 
     expect(now.index).toBe(was.index);
     expect(now.u).toBeCloseTo(was.u, 6);
+    expect(now.v).toBeCloseTo(was.v, 6);
+  });
+
+  it.each([
+    [2, 1],
+    [2.5, 0.5],
+  ])('zooming out %s -> %s keeps the line under the cursor where it was', (from, to) => {
+    // Across, the page may now be narrower than the view and simply centres, so only the
+    // vertical position can (and must) hold.
+    const { was, now } = zoomAround(from, to, { left: 120, top: 2400 });
+
+    expect(now.index).toBe(was.index);
     expect(now.v).toBeCloseTo(was.v, 6);
   });
 
