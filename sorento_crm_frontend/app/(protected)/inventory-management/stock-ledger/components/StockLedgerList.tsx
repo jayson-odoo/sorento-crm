@@ -22,9 +22,14 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useStockLedger } from '../hooks/useStockLedger';
-import type { StockLedgerEntry } from '../types/stockLedger.types';
+import {
+  STOCK_LEDGER_TRANSACTION_TYPE_OPTIONS,
+  stockLedgerTypeLabel,
+  type StockLedgerEntry,
+} from '../types/stockLedger.types';
 
 export default function StockLedgerList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
@@ -74,7 +79,9 @@ export default function StockLedgerList() {
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
         size: 140,
         cell: ({ row }) => (
-          <span className="text-xs font-medium text-muted-foreground">{row.original.transaction_type}</span>
+          <span className="text-xs font-medium text-muted-foreground">
+            {stockLedgerTypeLabel(row.original.transaction_type)}
+          </span>
         ),
         meta: { headerTitle: 'Type' },
       },
@@ -175,11 +182,14 @@ export default function StockLedgerList() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label>Transaction type</Label>
-                    <Input
-                      placeholder="Transaction type"
+                    <Label htmlFor="stock-ledger-type">Transaction type</Label>
+                    <SearchableSelect
+                      id="stock-ledger-type"
                       value={transactionType}
-                      onChange={(e) => setTransactionType(e.target.value)}
+                      onChange={setTransactionType}
+                      options={STOCK_LEDGER_TRANSACTION_TYPE_OPTIONS}
+                      placeholder="All types"
+                      clearable
                     />
                   </div>
                   {(productId || warehouseId || transactionType) && (

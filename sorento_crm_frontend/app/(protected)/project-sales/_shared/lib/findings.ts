@@ -20,6 +20,153 @@ export const FINDING_SEVERITY_BADGE_VARIANT: Record<FindingSeverity, 'destructiv
   info: 'secondary',
 };
 
+/**
+ * What holds Publish, and the ONE rule for it (owner lesson (e), S6 hand test): this order's
+ * own hard findings with no `acknowledged_at`. The server's `blocking_findings`
+ * (`project_so_draft_service.py`) filters the same three things, so the count under Publish,
+ * the "Need attention" rows and the server's refusal cannot disagree. A schedule-level finding
+ * never blocks: the server keys those to the (PO, schedule) pair, never to an order.
+ */
+export function publishBlockers(orderFindings: ProjectSalesOrderFinding[]): ProjectSalesOrderFinding[] {
+  return orderFindings.filter((finding) => finding.severity === 'hard' && !finding.acknowledged_at);
+}
+
+/** Where a finding was raised: on this sales order, or on the schedule it was split from. */
+export type FindingSource = 'sales_order' | 'schedule';
+
+export const FINDING_SOURCE_LABEL: Record<FindingSource, string> = {
+  sales_order: 'Sales order',
+  schedule: 'Schedule',
+};
+
+export interface FlagMember {
+  finding: ProjectSalesOrderFinding;
+  source: FindingSource;
+}
+
+/** One entry in a row's Flag: one or more findings cleared by one Dismiss. */
+export interface FlagItem {
+  key: string;
+  /** The most severe member's severity. */
+  severity: FindingSeverity;
+  /** False once dismissed; a dismissed item keeps its reason readable and loses its action. */
+  open: boolean;
+  members: FlagMember[];
+  /** The sales order line the item sits on, or null for a row of its own. */
+  lineId: string | null;
+}
+
+const SEVERITY_RANK: Record<FindingSeverity, number> = { hard: 3, warn: 2, info: 1 };
+
+function mostSevere(members: FlagMember[]): FindingSeverity {
+  return members.reduce<FindingSeverity>(
+    (worst, member) =>
+      SEVERITY_RANK[member.finding.severity] > SEVERITY_RANK[worst] ? member.finding.severity : worst,
+    'info',
+  );
+}
+
+function normalisedCode(value: unknown): string {
+  return typeof value === 'string' ? value.toUpperCase().replace(/[^A-Z0-9]/g, '') : '';
+}
+
+/**
+ * Where a product code may start inside a schedule column: the start of each separator-split
+ * segment, the rest of the column normalised. Mirrors the server's `_code_candidates`
+ * (`BUI-HB-SRTWC8613-RL` is `SRTWC8613-RL` with a prefix bolted on), so `CB1178A` names
+ * `BUI-HB-CB1178ASS` while `HB` or `H12` never names `BUI-HB-FH12SS`.
+ */
+function columnTails(value: unknown): string[] {
+  if (typeof value !== 'string') return [];
+  const parts = value.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+  return parts.map((_, start) => parts.slice(start).join(''));
+}
+
+/** The server's own floor on a code candidate: shorter than this names half the catalogue. */
+const MIN_PAIRING_CODE_LENGTH = 3;
+
+/**
+ * Every finding on the sales order page as the Flag items its rows carry (S7-3).
+ *
+ * Open findings collapse per `collapseFindings` within their own source. R23 then folds a
+ * schedule's unmapped column (`unresolved_product`, keyed by `customer_code_raw`) into the
+ * order's `schedule_short` finding for the product that column names, since the column is why
+ * the schedule places nothing: one item, both sentences, one Dismiss. A code names a column only
+ * where it starts one of the column's segments (`columnTails`); where two fit, the longer wins
+ * (CB1178A over CB1178). Dismissed findings stay one item each.
+ */
+export function buildFlagItems(
+  orderFindings: ProjectSalesOrderFinding[],
+  scheduleFindings: ProjectSalesOrderFinding[],
+): FlagItem[] {
+  const toItems = (findings: ProjectSalesOrderFinding[], source: FindingSource): FlagItem[] => {
+    const byId = new Map(findings.map((finding) => [finding.id, finding]));
+    return collapseFindings(findings).map((row) => {
+      const members = row.ids.map((id) => ({ finding: byId.get(id) as ProjectSalesOrderFinding, source }));
+      return {
+        key: `${source}:${row.key}`,
+        severity: mostSevere(members),
+        open: true,
+        members,
+        lineId: members[0].finding.line_id ?? null,
+      };
+    });
+  };
+
+  const orderItems = toItems(orderFindings.filter((finding) => !finding.acknowledged_at), 'sales_order');
+  const scheduleItems = toItems(scheduleFindings.filter((finding) => !finding.acknowledged_at), 'schedule');
+
+  const shortByCode = orderItems
+    .filter((item) => item.members[0].finding.code === 'schedule_short')
+    .map((item) => ({ item, code: normalisedCode(item.members[0].finding.detail_json?.product_code) }))
+    .filter((entry) => entry.code.length >= MIN_PAIRING_CODE_LENGTH)
+    .sort((a, b) => b.code.length - a.code.length);
+
+  const unpaired = scheduleItems.filter((item) => {
+    const first = item.members[0].finding;
+    if (first.code !== 'unresolved_product') return true;
+    const tails = columnTails(first.detail_json?.customer_code_raw);
+    const cause = shortByCode.find((entry) => tails.some((tail) => tail.startsWith(entry.code)));
+    if (!cause) return true;
+    cause.item.members.push(...item.members);
+    cause.item.severity = mostSevere(cause.item.members);
+    return false;
+  });
+
+  const dismissed: FlagItem[] = [
+    ...orderFindings.map((finding) => ({ finding, source: 'sales_order' as const })),
+    ...scheduleFindings.map((finding) => ({ finding, source: 'schedule' as const })),
+  ]
+    .filter((member) => Boolean(member.finding.acknowledged_at))
+    .map((member) => ({
+      key: `${member.source}:dismissed:${member.finding.id}`,
+      severity: member.finding.severity,
+      open: false,
+      members: [member],
+      lineId: member.finding.line_id ?? null,
+    }));
+
+  return [...orderItems, ...unpaired, ...dismissed];
+}
+
+/**
+ * The item a row's pill speaks for: the most severe open one, the earliest on a tie. A row that
+ * holds Publish must read "Blocks publish" whatever order the server raised its findings in.
+ */
+export function leadFlagItem(items: FlagItem[]): FlagItem | undefined {
+  return items
+    .filter((item) => item.open)
+    .reduce<FlagItem | undefined>(
+      (lead, item) => (!lead || SEVERITY_RANK[item.severity] > SEVERITY_RANK[lead.severity] ? item : lead),
+      undefined,
+    );
+}
+
+/** An item a person has to act on: open, and not merely for information. */
+export function needsAttention(item: FlagItem): boolean {
+  return item.open && item.severity !== 'info';
+}
+
 export interface CollapsedFinding {
   /** The collapse key: `${code}::${subjectKey}`, or the lone finding's own id when it has no subject key. */
   key: string;

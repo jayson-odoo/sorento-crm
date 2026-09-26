@@ -233,8 +233,9 @@ describe('deleting a batch of drafts', () => {
 
     await screen.findByRole('checkbox', { name: 'Select PSO-000123' });
     expect(screen.queryByRole('button', { name: /Delete \d+ sales order/ })).toBeNull();
-    // The counts row is what the header says with nothing selected.
-    expect(screen.getByText('2 sales orders')).toBeInTheDocument();
+    // Nothing stands in the header with nothing selected: the count is the pagination's
+    // (owner hand test, PR #1264 note 5).
+    expect(screen.queryByText('2 sales orders')).toBeNull();
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select PSO-000123' }));
 
@@ -242,8 +243,6 @@ describe('deleting a batch of drafts', () => {
       await screen.findByRole('button', { name: 'Delete 1 sales order' }),
     ).toBeInTheDocument();
     expect(screen.getByText('1 selected')).toBeInTheDocument();
-    // One statement at a time: the counts row stands down while a selection is live.
-    expect(screen.queryByText('2 sales orders')).toBeNull();
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select PSO-000124' }));
 
