@@ -42,8 +42,61 @@ vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => perms.granted.has(slug),
 }));
 
-const hooks = vi.hoisted(() => ({ useSalesOpportunities: vi.fn() }));
+const hooks = vi.hoisted(() => ({
+  useSalesOpportunities: vi.fn(),
+  useSalesOpportunityMeta: vi.fn(),
+  useSalesOpportunityAgentOptions: vi.fn(),
+}));
 vi.mock('../hooks/useSalesOpportunities', () => hooks);
+
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: (props: {
+    id?: string;
+    'aria-label'?: string;
+    value: string;
+    onChange: (v: string) => void;
+    options?: { value: string; label: string }[];
+    fetchOptions?: (q: string) => Promise<{ value: string; label: string }[]>;
+  }) => {
+    const [options, setOptions] = React.useState(props.options ?? []);
+    React.useEffect(() => {
+      if (props.fetchOptions) props.fetchOptions('').then(setOptions);
+    }, []);
+    return (
+      <select
+        aria-label={props['aria-label'] ?? props.id ?? 'select'}
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value)}
+      >
+        <option value="" />
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    );
+  },
+}));
+
+vi.mock('@/components/ui/date-range-picker', () => ({
+  DateRangePicker: (props: {
+    id?: string;
+    'aria-label'?: string;
+    from?: string | null;
+    to?: string | null;
+    onChange: (next: { from: string | null; to: string | null }) => void;
+  }) => (
+    <input
+      aria-label={props['aria-label'] ?? props.id ?? 'date range'}
+      value={props.from ?? ''}
+      onChange={(e) => props.onChange({ from: e.target.value || null, to: props.to ?? null })}
+    />
+  ),
+}));
+
+const service = vi.hoisted(() => ({ getSalesOpportunityCustomerOptions: vi.fn() }));
+vi.mock('../services/salesOpportunityService', () => service);
 
 vi.mock('./SalesOpportunityModal', () => ({
   default: ({ open }: { open: boolean }) => (open ? <div role="dialog">opportunity modal</div> : null),
@@ -83,6 +136,14 @@ function withOpportunities(data: SalesOpportunityListItem[]) {
 beforeEach(() => {
   perms.granted = new Set(['sales.opportunities.view', 'sales.opportunities.add']);
   hooks.useSalesOpportunities.mockReset();
+  hooks.useSalesOpportunityMeta.mockReturnValue({ data: { stages: [], lost_reasons: [] } });
+  hooks.useSalesOpportunityAgentOptions.mockReturnValue({ data: [] });
+  service.getSalesOpportunityCustomerOptions.mockReset();
+  service.getSalesOpportunityCustomerOptions.mockResolvedValue({
+    items: [],
+    prospect: null,
+    blocked: null,
+  });
 });
 
 describe('SalesOpportunitiesView', () => {
@@ -154,5 +215,45 @@ describe('SalesOpportunitiesView', () => {
     });
     render(<SalesOpportunitiesView />);
     expect(screen.getByText(/failed to load/i)).toBeTruthy();
+  });
+
+  it('fix B2: shows the Agent column', () => {
+    withOpportunities([opportunity({ sales_agent_label: 'ALI - Ali Hassan' })]);
+    render(<SalesOpportunitiesView />);
+    expect(screen.getByText('ALI - Ali Hassan')).toBeTruthy();
+  });
+
+  it('fix B2: passes Stage, Agent, Customer and close-date filters to the query', () => {
+    hooks.useSalesOpportunityMeta.mockReturnValue({
+      data: { stages: [{ id: 'st-1', key: 'new', label: 'New' }], lost_reasons: [] },
+    });
+    hooks.useSalesOpportunityAgentOptions.mockReturnValue({
+      data: [{ id: 'agent-1', code: 'ALI', label: 'ALI - Ali Hassan' }],
+    });
+    withOpportunities([]);
+    render(<SalesOpportunitiesView />);
+
+    fireEvent.change(screen.getByLabelText('Stage'), { target: { value: 'st-1' } });
+    fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'agent-1' } });
+
+    expect(hooks.useSalesOpportunities).toHaveBeenLastCalledWith(
+      expect.objectContaining({ statusId: 'st-1', salesAgentId: 'agent-1' }),
+    );
+  });
+
+  it('fix B2: passes pagination state through to the query', () => {
+    hooks.useSalesOpportunities.mockReturnValue({
+      data: { data: [opportunity()], pagination: { total: 120, page: 1, limit: 50 }, empty: false },
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    render(<SalesOpportunitiesView />);
+    expect(hooks.useSalesOpportunities).toHaveBeenLastCalledWith(
+      expect.objectContaining({ pageIndex: 0, pageSize: 50 }),
+    );
+    // recordCount comes from the API's own total, not the page's row count.
+    expect(screen.getByText(/120/)).toBeTruthy();
   });
 });
