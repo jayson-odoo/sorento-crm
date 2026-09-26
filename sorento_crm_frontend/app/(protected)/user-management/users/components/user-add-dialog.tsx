@@ -592,7 +592,9 @@ const UserAddDialog = ({
               </Button>
               <Button
                 type="submit"
-                disabled={!form.formState.isDirty || isProcessing}
+                // A contact prefills the whole form, so the quick create is one
+                // click with nothing typed (plan 6.2).
+                disabled={(!form.formState.isDirty && !selectedContactId) || isProcessing}
               >
                 {isProcessing && <LoaderCircleIcon className="animate-spin" />}
                 Add user

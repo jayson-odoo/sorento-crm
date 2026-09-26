@@ -199,6 +199,10 @@ export async function listUnlinkedUsers(query?: string): Promise<UserSelectOptio
   const params = new URLSearchParams({ status: 'ACTIVE', unlinked: 'true' });
   if (query?.trim()) params.set('query', query.trim());
   const response = await apiFetch(`/api/user-management/users/select?${params.toString()}`);
-  if (!response.ok) return [];
+  // Thrown, not an empty list: an empty answer is cached and would read
+  // "No unlinked user found" until a reload.
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load users'));
+  }
   return (await response.json()) as UserSelectOption[];
 }

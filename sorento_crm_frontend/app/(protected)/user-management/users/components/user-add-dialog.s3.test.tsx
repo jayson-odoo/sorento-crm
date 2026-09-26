@@ -337,6 +337,27 @@ describe('UserAddDialog - S3 2.1: opened from a contact, locked', () => {
     expect(document.body.textContent ?? '').not.toMatch(UUID_RE);
   });
 
+  it('plan 6.2 quick create: Add user is enabled and submits with nothing typed', async () => {
+    renderDialog({ id: CONTACT_LOCKED.id });
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Name')).toHaveValue(CONTACT_LOCKED.name),
+    );
+    const roles = screen.getByRole('group', { name: 'Select roles' });
+    await waitFor(() =>
+      expect(within(roles).getByLabelText('Salesperson')).toBeChecked(),
+    );
+
+    const submit = screen.getByRole('button', { name: 'Add user' });
+    expect(submit).not.toBeDisabled();
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(createUserMock).toHaveBeenCalledTimes(1));
+    expect(createUserMock).toHaveBeenCalledWith(
+      expect.objectContaining({ respond_contact_id: CONTACT_LOCKED.id }),
+    );
+  });
+
   it('does not overwrite a name already typed when a contact is picked', async () => {
     renderDialog();
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Custom Name' } });

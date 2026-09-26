@@ -150,8 +150,12 @@ const UserProfile = ({
             <div className="grid grid-cols-subgrid col-span-2 items-baseline">
               <dt>Email address:</dt>
               <dd className="flex items-center gap-2.5">
-                <span>{user.email}</span>
-                {user.emailVerifiedAt ? (
+                {!user.email ? (
+                  <span className="text-muted-foreground">No email</span>
+                ) : (
+                  <span>{user.email}</span>
+                )}
+                {!user.email ? null : user.emailVerifiedAt ? (
                   <Badge variant="secondary" appearance="light">
                     Verified
                   </Badge>
