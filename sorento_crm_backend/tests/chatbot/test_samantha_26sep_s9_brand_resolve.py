@@ -682,3 +682,167 @@ class TestUnlistedBrandNeverSelectsASubjectlessReport:
         assert "XYZ" in reply, (
             f"an unresolved brand word must be named, not silently dropped: {reply!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Fix lane round 2, B1 (reviewer pass at 4719a829): AC-S9-6 THROUGH THE CHATBOT.
+# The strip keeps a live brand away from the shared resolver, so the brand never
+# became a gate row with a uuid and `TYPE_TO_PARAM["brand"]` never fired for the
+# orders tools: "delivery orders brand Sorento for Cheng Huat Sentul" called
+# `crm_order_management_orders_list` with `customer_ids` only, and the header
+# printed `Customer: Cheng Huat Sentul` with no Brand line, so the answer read as
+# brand-filtered when it was not.
+# --------------------------------------------------------------------------- #
+
+
+class TestB1OrdersListAskGetsTheBrand:
+    CHENG_HUAT_UUID = "44444444-4444-4444-4444-444444444444"
+
+    def _resolve_entity(self, asked: list[str]):
+        def _fn(body: dict[str, Any]) -> dict[str, Any]:
+            tokens = list(body.get("tokens") or [])
+            asked.extend(tokens)
+            resolutions = [
+                {
+                    "token": token,
+                    "resolved": True,
+                    "matches": [
+                        {
+                            "uuid": self.CHENG_HUAT_UUID,
+                            "entity_type": "customer",
+                            "canonical_code": "Cheng Huat Sentul",
+                            "match_tier": "exact",
+                        }
+                    ],
+                }
+                for token in tokens
+                if token == "Cheng Huat Sentul"
+            ]
+            return {"tokens": tokens, "resolutions": resolutions, "unresolved_tokens": []}
+
+        return _fn
+
+    def _run(self, session_factory, monkeypatch, *, tool_body: dict[str, Any]):
+        from app.services.chatbot import engine as engine_mod
+        from app.services.chatbot.head import parser as parser_mod
+        from app.services.chatbot.lanes.business.services import AnswerServices
+
+        _seed_contact_scoped_to_sorento(session_factory)
+        brand_id = _seed_brand(session_factory, name="Sorento", code="SRT")
+        set_chatbot_switches(session_factory, business_lane=True)
+        from app.models.user import SystemSetting
+
+        db = session_factory()
+        row = db.query(SystemSetting).first()
+        if row is None:
+            row = SystemSetting()
+            db.add(row)
+        row.chatbot_completed_lanes = ["business_query"]
+        db.commit()
+
+        monkeypatch.setattr(engine_mod, "default_space_id", lambda db: "364817")
+        monkeypatch.setattr(
+            engine_mod,
+            "check_access",
+            lambda db, *, agent_code, contact_id, space_id: {
+                "allowed": True,
+                "decision": "allow",
+                "agent_name": "General",
+                "attributes": [],
+                "all_attributes_allowed": None,
+            },
+        )
+
+        def fake_resolve_config(db, *, current_date, override_version_id=None):
+            return parser_mod.ParserConfig(
+                system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
+            )
+
+        monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)
+        qf = _parser_output(
+            domain_hint="order",
+            intent_hint="check_order",
+            order_status="delivered",
+            entities=[
+                {"raw": "Sorento", "hint": "brand", "canonical_code": None, "current_message": True, "confident": True},
+                {
+                    "raw": "Cheng Huat Sentul",
+                    "hint": "customer",
+                    "canonical_code": None,
+                    "current_message": True,
+                    "confident": True,
+                },
+            ],
+        )
+        monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: qf)
+
+        asked: list[str] = []
+        resolve_services = ResolveGateServices(
+            access_types=lambda **_: [{"name": "Sorento Dealer"}],
+            resolve_entity=validating_resolve_entity(self._resolve_entity(asked)),
+            probe=lambda **_: None,
+        )
+        captured: list[tuple[str, dict[str, Any]]] = []
+
+        def mcp_call(name: str, args: dict) -> str:
+            captured.append((name, dict(args)))
+            return json.dumps(tool_body)
+
+        monkeypatch.setattr(
+            engine_mod.business_services, "production_services", lambda db, *, space_id=None: resolve_services
+        )
+        monkeypatch.setattr(engine_mod.business_services, "fetch_services", lambda db: FetchServices(mcp_call=mcp_call))
+        monkeypatch.setattr(
+            engine_mod.business_services,
+            "answer_services_for",
+            lambda session_factory: AnswerServices(
+                mcp_probe=lambda name, args: {"data": []}, family_fetch=lambda query: {"data": []}
+            ),
+        )
+
+        envelope = _envelope()
+        envelope.message["message"]["message"]["text"] = "delivery orders brand Sorento for Cheng Huat Sentul"
+        result = engine_mod.run_turn(envelope, session_factory=session_factory)
+        return brand_id, asked, captured, ((result.reply or {}).get("text") or "")
+
+    def _assert_orders_call_carries_the_brand(self, brand_id, asked, captured) -> None:
+        assert "Sorento" not in asked, asked
+        order_calls = [
+            (n, a) for n, a in captured if n in fetch_mod.ORDER_TOOLS
+        ]
+        assert order_calls, f"the orders ask must call an orders tool: {captured}"
+        _, args = order_calls[0]
+        assert args.get("customer_ids") == [self.CHENG_HUAT_UUID], args
+        assert args.get("brand_ids") == [brand_id], (
+            f"the live brand must narrow the orders tool too (AC-S9-6), never be "
+            f"dropped in silence: {args}"
+        )
+
+    def test_orders_miss_sends_brand_ids_and_names_the_brand(self, session_factory, monkeypatch) -> None:
+        brand_id, asked, captured, reply = self._run(
+            session_factory, monkeypatch, tool_body={"has_result": False, "items": []}
+        )
+        self._assert_orders_call_carries_the_brand(brand_id, asked, captured)
+        assert "Brand: Sorento" in reply, reply
+
+    def test_orders_hit_names_the_brand_in_the_scope_header(self, session_factory, monkeypatch) -> None:
+        body = {
+            "has_result": True,
+            "items": [
+                {
+                    "order_number": "DO-ZZT-1",
+                    "customer_name": "Cheng Huat Sentul",
+                    "actual_delivery_date": "2026-09-01",
+                }
+            ],
+            "data": [
+                {
+                    "order_number": "DO-ZZT-1",
+                    "customer_name": "Cheng Huat Sentul",
+                    "actual_delivery_date": "2026-09-01",
+                }
+            ],
+        }
+        brand_id, asked, captured, reply = self._run(session_factory, monkeypatch, tool_body=body)
+        self._assert_orders_call_carries_the_brand(brand_id, asked, captured)
+        assert "Brand: Sorento" in reply, reply

@@ -1293,6 +1293,15 @@ def resolve_kinds(
         logger.warning("chatbot: the resolver did not answer", exc_info=True)
         return ResolveOutcome({}, [], None, {}, {}, False, None)
 
+    if matched_brands and isinstance(payload.get("gate"), dict):
+        # #1262 fix lane round 2, B1: the words of the live brands this order turn is
+        # filtered by (`fetch.entity_ids_transformer` sends their ids as `brand_ids`),
+        # so the order headers can say "Brand: Sorento" - the brand is never a gate row
+        # (it never reached the resolver), so no axis could name it otherwise.
+        payload["gate"]["live_brands"] = [
+            jsc.nullish_str(e.get("raw") or e.get("canonical_code")).strip() for e in matched_brands
+        ]
+
     resolved = payload.get("resolved")
     by_token: dict[str, dict[str, int]] = {}
     for resolution in jsc.array(jsc.get(resolved, "resolutions")):

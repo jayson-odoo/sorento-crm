@@ -513,6 +513,13 @@ def space_id_or_default(space_id: Any) -> str:
 TIER_PROBE_TOOL = "crm_marketing_promotions_list"
 
 
+def _resolved_brand_ids(semantic_input: Any) -> list[str]:
+    """The brand ids `lanes/business/__init__._resolve_outstanding_brand_ids` resolved
+    for this turn off the live brand list (the key keeps its first caller's name), real
+    uuids only - the same `is_uuid` guard every other `<entity>_ids` argument uses."""
+    return [b for b in jsc.array(jsc.get(semantic_input, "outstanding_brand_ids")) if is_uuid(b)]
+
+
 def entity_ids_transformer(
     trigger: dict[str, Any] | None, *, space_id: str | None = None
 ) -> dict[str, Any]:
@@ -629,9 +636,7 @@ def entity_ids_transformer(
         # `is_uuid` guard every other `<entity>_ids` argument in this function uses,
         # never a bare `isinstance(..., list)` check that would let a non-uuid string
         # reach the tool call.
-        brand_ids = [
-            b for b in jsc.array(jsc.get(semantic_input, "outstanding_brand_ids")) if is_uuid(b)
-        ]
+        brand_ids = _resolved_brand_ids(semantic_input)
         if brand_ids:
             out["brand_ids"] = brand_ids
         # AC-1105 (review round, 13 Sep 2026): the WORD the customer typed, echoed by
@@ -791,6 +796,15 @@ def entity_ids_transformer(
                 codes.append(jsc.js_string(code))
         if codes:
             out["warehouse_codes"] = codes
+
+    # #1262 fix lane round 2, B1 (AC-S9-6): the orders tools take the SAME resolved
+    # brand ids the outstanding report does. The live brand never reaches the shared
+    # resolver (`turn_runtime.resolve_kinds`'s order-domain strip), so it is never a
+    # gate row with a uuid and `TYPE_TO_PARAM["brand"]` alone could not carry it here.
+    if tool_name in ORDER_TOOLS:
+        brand_ids = _resolved_brand_ids(semantic_input)
+        if brand_ids:
+            out["brand_ids"] = brand_ids
 
     # order_status (order tools only): "outstanding" | "delivered" | "so_outstanding"
     # (A3, AC-905); omitted when null.

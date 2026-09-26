@@ -33,6 +33,7 @@ from typing import Any, Literal
 
 from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business.fetch import DATE_PARAMS, space_id_or_default
+from app.services.chatbot.tail.scope_block import live_brand_words
 
 # The did-you-mean helpers the JS carries in BOTH bodies with a "keep in lockstep" note.
 # `miss_suggest` owns them because that is where their node lives; this file imports them
@@ -3310,6 +3311,10 @@ def not_found_error_message(
                         head.append(f"{axis['label']}: {words or axis['allText']}")
                     elif words:
                         head.append(f"{axis['label']}: {words}")
+                # #1262 fix lane round 2, B1: the brand the fetch was filtered by.
+                brand_words = live_brand_words(g)
+                if brand_words:
+                    head.append(f"Brand: {brand_words}")
                 # Dates last, and stated even when no window was set: without it "no order
                 # matched these" never said whether it had looked at all dates or just a month.
                 if not start and not end:
