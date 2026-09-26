@@ -15,9 +15,12 @@ vi.mock('../hooks/useBrands', () => ({
   useBrand: (id: string | null) => useBrandMock(id),
 }));
 
-vi.mock('@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes', () => ({
-  useContactAccessTypes: () => ({ data: [] }),
-}));
+vi.mock(
+  '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes',
+  () => ({
+    useContactAccessTypes: () => ({ data: [] }),
+  }),
+);
 
 import BrandFormDialog from './BrandFormDialog';
 
@@ -27,15 +30,22 @@ beforeEach(() => {
 });
 
 function fillRequiredFields() {
-  fireEvent.change(screen.getByLabelText(/Brand Code/i), { target: { value: 'ZZTX-001' } });
-  fireEvent.change(screen.getByLabelText(/Brand Name/i), { target: { value: 'ZZT Test Brand' } });
+  fireEvent.change(screen.getByLabelText(/Brand Code/i), {
+    target: { value: 'ZZTX-001' },
+  });
+  fireEvent.change(screen.getByLabelText(/Brand Name/i), {
+    target: { value: 'ZZT Test Brand' },
+  });
 }
 
 describe('BrandFormDialog - Chatbot default brand switch (W5)', () => {
   it('renders off by default for a new brand', () => {
     render(<BrandFormDialog open onOpenChange={() => {}} />);
 
-    expect(screen.getByLabelText('Chatbot default brand')).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByLabelText('Chatbot default brand')).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
   });
 
   it('round-trips is_chatbot_default: true into the create payload after a toggle', async () => {

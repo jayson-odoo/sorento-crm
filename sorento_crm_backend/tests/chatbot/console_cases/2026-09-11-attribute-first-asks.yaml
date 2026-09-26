@@ -198,3 +198,47 @@ cases:
         expect:
           reply_not_contains: ["Showing"]
           no_uuid: true
+
+  # Owner hand test round 2 (26 Sep 2026, contact 487555417), W1 to W6. Run against a
+  # database where Sorento is the chatbot default brand (migration bcd_0001).
+  - name: owner turn 1, water basin is a wash basin and no code dump (W6)
+    text: "which water basin has stock"
+    cold: true
+    expect:
+      reply_contains: ["Product type: Wash basin", "wash basins have stock"]
+      reply_not_contains: ["*stock* for", "I don't know"]
+      no_uuid: true
+
+  - name: owner turn 5, the brand is honoured (W1, W2)
+    text: "whici sorento wash basin has stock"
+    cold: true
+    expect:
+      reply_contains: ["Brand: Sorento, Product type: Wash basin", "wash basins have stock"]
+      reply_not_contains: ["products have stock", "(default)"]
+
+  - name: owner turns 9 then 10, the page keeps the brand set (W1, W4)
+    cold: true
+    turns:
+      - text: "which sorento wall hung basin has stock?"
+        expect:
+          reply_contains: ["Brand: Sorento, Product type: Wash basin, Mounting: Wall hung", "wash basins have stock"]
+          reply_not_contains: ["products have stock"]
+      - text: "10"
+        expect:
+          reply_contains: ["Brand: Sorento, Product type: Wash basin, Mounting: Wall hung", "Here are the first 10."]
+          no_uuid: true
+
+  - name: owner turns 3 then 4, another N continues the list (W4)
+    cold: true
+    turns:
+      - text: "which wash basin has stock"
+        expect:
+          reply_contains: ["Brand: Sorento (default)", "Other brands:"]
+      - text: "10"
+        expect:
+          reply_contains: ["Here are the first 10."]
+      - text: "can give another 40?"
+        expect:
+          reply_contains: ["Here are 11 to 50."]
+          reply_not_contains: ["more", "next"]
+

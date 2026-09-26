@@ -345,3 +345,32 @@ tool. No new reply format.
   (940), "which basin has photo" (alias hit), "which sink has incoming" (count from the new
   leg), "any shower set on promo" (product_type binding), "more" after the tap answer (6 to
   10). Evidence: `documentation/agents/chatbot-verification.md` procedure.
+
+## I. Owner hand test round 2 (26 Sep 2026, contact 487555417) [BE + FE]
+
+Evidence for each: `tests/chatbot/test_attribute_asks_round2.py` (whole turns, real resolver,
+MCP stubbed), plus the console cases in `console_cases/2026-09-11-attribute-first-asks.yaml`.
+
+- AC-1360 (W1) A brand word is a brand: "sorento wash basin" (the brand as its own entity or
+  inside the class word) answers Sorento wash basins only, never every Sorento product;
+  "wall hung basin" keeps the Wash Basin class and the wall hung mounting. The brand is read
+  off the brands table (`Product.brand_id`), and a brand word that scoped the set is never
+  reported as "I could not find <brand>".
+- AC-1361 (W2) The header names the resolved spec in plain words, labels from the spec
+  registry, no snake_case: "Brand: Sorento, Product type: Wash basin, Mounting: Wall hung. 2
+  wash basins have stock." The count noun is the set's class. A word that was not understood
+  is said ("I did not understand "zzqx", so it is not part of this search.").
+- AC-1362 (W3) Each set row is one line: product name (key spec) | code | the tool's fields.
+- AC-1363 (W4) A bare count after the count question pages the set just asked, brand
+  included; "another N" after a list continues from where it stopped with the header
+  repeated ("Here are 3 to 4."); a bare number after a listed page is not a page; the count
+  does not change between ask and page, and when stock moved the page says so. The bot never
+  offers "more"/"next".
+- AC-1364 (W5) One chatbot default brand per company, seeded to Sorento, edited on Master Data >
+  Brands. No brand named: "Brand: Sorento (default), ... Other brands: Mocha 3, name one to
+  see them."; a named brand answers that brand only; a page keeps the default; a default the
+  set does not reach leaves the set whole. Evidence also `tests/test_brand_chatbot_default_route.py`,
+  `tests/test_migration_bcd_0001_brand_chatbot_default.py`, and vitest
+  `brands/[id]/page.chatbotDefault.test.tsx`, `brands/components/BrandFormDialog.chatbotDefault.test.tsx`.
+- AC-1365 (W6) "water basin" is Wash Basin even where the category lacks the synonym; a
+  section header never lists more than five codes in one line.

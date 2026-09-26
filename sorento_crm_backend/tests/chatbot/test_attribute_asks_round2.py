@@ -434,6 +434,8 @@ def test_w4_another_n_continues_from_where_the_list_stopped(chat, world, small_l
     assert first == (
         f"Brand: {_display(brand)}, Product type: Wash basin. 5 wash basins have stock. Here are 3 to 4."
     ), page2
+    # The rows are numbered where the list stands, 3 and 4, not 1 and 2 again.
+    assert [ln.split(".")[0] for ln in page2.splitlines() if re.match(r"^\d+\. ", ln)] == ["3", "4"], page2
     one, two = _listed(page1, world), _listed(page2, world)
     assert len(two) == 2 and not set(one) & set(two), (page1, page2)
     every = sorted(_codes(world["srt_basins"][:3] + world["srt_wall"]))

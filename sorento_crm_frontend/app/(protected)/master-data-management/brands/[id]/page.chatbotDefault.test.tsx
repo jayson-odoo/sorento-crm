@@ -9,7 +9,13 @@
  */
 import React, { Suspense } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
+import {
+  render,
+  screen,
+  fireEvent,
+  act,
+  waitFor,
+} from '@testing-library/react';
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
 
 import type { Brand } from '../../products/types/product.types';
@@ -39,14 +45,21 @@ function brand(over: Partial<Brand> = {}): Brand {
 }
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), back: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({
+    push: vi.fn(),
+    back: vi.fn(),
+    replace: vi.fn(),
+    refresh: vi.fn(),
+  }),
   useSearchParams: () => new URLSearchParams(''),
   usePathname: () => `/master-data-management/brands/${BRAND_ID}`,
 }));
 
 // Container pulls SettingsProvider context this unit test does not need.
 vi.mock('@/components/common/container', () => ({
-  Container: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  Container: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
 }));
 
 vi.mock('../hooks/useBrands', () => ({
@@ -54,21 +67,28 @@ vi.mock('../hooks/useBrands', () => ({
   useUpdateBrand: () => ({ mutateAsync: h.updateMutate, isPending: false }),
 }));
 
-vi.mock('@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes', () => ({
-  useContactAccessTypes: () => ({ data: [] }),
-}));
+vi.mock(
+  '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes',
+  () => ({
+    useContactAccessTypes: () => ({ data: [] }),
+  }),
+);
 
 // `useDeferredAction` (delete) watches from mount, which reads this on every render.
 vi.mock('@/services/pendingActionService', () => ({
   createPendingAction: vi.fn(),
   cancelPendingAction: vi.fn(),
-  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+  getCurrentPendingAction: vi
+    .fn()
+    .mockResolvedValue({ pending: null, last_outcome: null }),
 }));
 
 import BrandDetailPage from './page';
 
 async function renderDetail() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
   await act(async () => {
     render(
       <QueryClientProvider client={client}>
@@ -113,7 +133,10 @@ describe('Brand detail - Chatbot default brand (W5)', () => {
     await renderDetail();
     await startEdit();
 
-    expect(screen.getByLabelText('Chatbot default brand')).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByLabelText('Chatbot default brand')).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
   });
 
   it('toggling it on sends is_chatbot_default: true', async () => {

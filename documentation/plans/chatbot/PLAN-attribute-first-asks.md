@@ -1,6 +1,6 @@
 # PLAN: attribute-first asks, "which products have X", across every product and domain
 
-Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged (46711c618), revive repairs R35 to R38 and owner ruling R39 (no paging) built, tester first; reviewer pass fix round (B1 to B4, S1 to S3, nits) done; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
+Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged, revive repairs R35 to R38 and owner ruling R39 (no paging) built, reviewer pass fix round done; owner hand test round 2 (W1 to W6: brand binding, plain-words header, readable rows, paging keeps the set, chatbot default brand, water basin) built tester first; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
 Test report: `attribute-first-asks-test-report.md`.
 UAC: `attribute-first-asks-acceptance-criteria.md`.
 Supersedes: `documentation/plans/_archive/chatbot/PLAN-spec-backward-search.md` (its backend half
@@ -327,6 +327,41 @@ Every fix red first, then green, then kill-tested; tests in
 - N1 documented in 511's docstring; N2 one `contracts.named_count` for the engine, apply and
   fetch; N3 comment restored; N4 stale "more" wording removed; N5 rewrapped; N6 the dead
   `spec_asked` write removed.
+
+## Owner hand test round 2, 26 Sep 2026 (contact 487555417, W1 to W6)
+
+Turns 5, 9, 10 of the owner's run: "whici sorento wash basin has stock" answered "2,306
+products" (every Sorento product), "which sorento wall hung basin has stock?" answered "144
+products", and the "10" after it answered from the earlier 334 set. Every fix red first,
+then green, then kill-tested; tests in `tests/chatbot/test_attribute_asks_round2.py`.
+
+- W1 (AC-1360): `resolve_product_set` takes every brands-table name out of the parser's class
+  word and scopes the set by `Product.brand_id`; a term whose tail is a class and whose head
+  binds a spec ("wall hung basin") is split into the class and the spec. A head that binds
+  nothing ("water tap" with no synonym) stays whole, so AC-1301/AC-1320's clarify holds.
+- W2 (AC-1361): the header leads with what was identified, labelled from the spec registry
+  (`describe_set`): "Brand: Sorento, Product type: Wash basin, Mounting: Wall hung. 2 wash
+  basins have stock." A word the set reader could not use is said, never dropped.
+- W3 (AC-1362): a set row is one line led by the product name and its top two spec values by
+  registry `rank_weight` (`row_labels`), then the code, then the tool's fields.
+- W4 (AC-1363): the resolver's predicate carries its exact description (`set_key`: specs,
+  brand, LOOKUP ids); the carry keeps it with the count asked over and how many were shown;
+  a page replays it. "another N" / "N more" after a list continues ("Here are 11 to 50."); a
+  bare number after a listed page is still a row pick; a count that moved is said ("It was 5
+  when you asked."). A page turn runs no resolver.
+- W5 (AC-1364): `brands.is_chatbot_default` (migration `bcd_0001_brand_chatbot_default`,
+  seeded to Sorento, one per company) is edited on Master Data > Brands (record page Edit,
+  and the create/edit dialog). Chosen over Product Specifications because the preference is a
+  property of a brand, and the Brands master already carries the per-brand knobs
+  (`access_levels`, `flows_to_purchasing`); the spec registry is keyed by spec key and has no
+  per-brand row. No brand named: the default brand's set first, "Brand: Sorento (default)",
+  plus "Other brands: Mocha 300, Cabana 121, name one to see them."; a default the set does
+  not reach leaves the set whole. A single default rather than per-brand weights: one
+  preference, one column (PRINCIPLES "simplest thing"); trigger for weights is the owner
+  asking to rank a second brand above the rest.
+- W6 (AC-1365): `resolve_classes_for_term` also reads the shipped `CLASS_SYNONYMS` for a class
+  the catalogue has, so "water basin" is Wash Basin on a database that never got 511's
+  synonym; a section header names at most five subjects, past that it counts them.
 
 ## Definition of done
 

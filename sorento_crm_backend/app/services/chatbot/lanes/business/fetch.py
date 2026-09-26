@@ -2493,6 +2493,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     set_predicate = ctx.get("predicate") if isinstance(ctx.get("predicate"), dict) else None
     set_row_labels = jsc.get(set_predicate, "row_labels") if set_predicate is not None else None
     set_row_labels = set_row_labels if isinstance(set_row_labels, dict) else None
+    # W4: a page that continues a list numbers its rows where the list stands ("Here are
+    # 11 to 50." over rows 11 to 50). Display only: a set answer mints no pick roster.
+    set_row_offset = int(jsc.get(set_predicate, "offset") or 0) if set_predicate is not None else 0
 
     def _set_item_line(position: int, it: Any) -> str:
         fields = [f for f in (jsc.get(it, "fields") or []) if isinstance(f, dict)]
@@ -2567,7 +2570,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # still resolves against the same page rows. And ONLY the numbered list goes: the
     # multi-company note reads `e.items` for attribution and must keep seeing the real rows.
     for i, it in enumerate([] if (qs_render or groups_render) else (e.get("items") or [])):
-        msg += _item_line(i + 1, it) + "\n\n"
+        msg += _item_line(i + 1 + set_row_offset, it) + "\n\n"
     # Item 8: the product projection's miss lines, one per asked word, AFTER the items
     # (`_project_product_specs`). Byte-inert when the key is absent.
     for miss in e.get("spec_misses") or []:
