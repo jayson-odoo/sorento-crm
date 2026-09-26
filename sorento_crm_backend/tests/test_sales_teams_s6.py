@@ -310,6 +310,44 @@ def test_s6_14_overlapping_move_is_422(api):
     assert res.status_code == 422, res.text
 
 
+def test_review_s1_moves_on_the_day_the_current_row_began_suggests_a_date_that_works(api):
+    """Kim joined South on 15 Oct; a move to West on 15 Oct would leave South no day at all.
+
+    The 422 says "on or after" and names 16 Oct, and retrying with that date is accepted.
+    """
+    import re
+
+    client, db, _ = api
+    kim = _agent(db, "KIM", "Kim Tan")
+    client.post(BASE, json={"name": "North", "sales_agent_ids": [kim.id]})
+    south = client.post(BASE, json={"name": "South", "sales_agent_ids": []}).json()
+    west = client.post(BASE, json={"name": "West", "sales_agent_ids": []}).json()
+    client.put(
+        f"{BASE}/{south['id']}/members",
+        json={"sales_agent_ids": [kim.id], "moves_on": "2026-10-15"},
+    )
+
+    res = client.put(
+        f"{BASE}/{west['id']}/members",
+        json={"sales_agent_ids": [kim.id], "moves_on": "2026-10-15"},
+    )
+    assert res.status_code == 422, res.text
+    assert "on or after the Moves on date" in res.text
+    suggested = re.search(r"pick (\d{4}-\d{2}-\d{2}) or later", res.text)
+    assert suggested is not None, res.text
+    assert suggested.group(1) == "2026-10-16"
+
+    retry = client.put(
+        f"{BASE}/{west['id']}/members",
+        json={"sales_agent_ids": [kim.id], "moves_on": suggested.group(1)},
+    )
+    assert retry.status_code == 200, retry.text
+    rows = {r.sales_team_id: r for r in _membership_rows(db, kim.id)}
+    assert rows[south["id"]].valid_from == date(2026, 10, 15)
+    assert rows[south["id"]].valid_to == date(2026, 10, 15)
+    assert rows[west["id"]].valid_from == date(2026, 10, 16)
+
+
 def test_s6_14_readding_the_same_day_reopens_the_row(api):
     """Removed by mistake and put straight back: one continuous membership, not a gap."""
     client, db, _ = api

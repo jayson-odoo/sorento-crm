@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple, cast
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, or_
@@ -49,18 +49,10 @@ class Move:
 
 def acting_company_id(db: Session) -> str:
     """The company a write belongs to; the same answer the insert auto-stamp gives."""
-    from app.services.company_scope import DEFAULT_COMPANY_ID, get_company_scope
+    from app.services.company_scope import get_company_scope, resolve_write_company_id
 
-    scope = get_company_scope(db)
-    if isinstance(scope, frozenset) and len(scope) == 1:
-        return next(iter(scope))
-    if scope is None:
-        return DEFAULT_COMPANY_ID
-    raise AppException(
-        status_code=400,
-        message="Pick one active company before working with sales teams.",
-        code="SALES_COMPANY_AMBIGUOUS",
-    )
+    # None only under the test-only leave-NULL seam; a real ambiguous scope raises there.
+    return cast(str, resolve_write_company_id(get_company_scope(db)))
 
 
 def agent_label(agent: SalesAgent) -> str:
@@ -249,10 +241,12 @@ def set_members(
                     previous.valid_to = None
                     continue
             else:
+                # The old row needs at least one day, so the first date that works is the
+                # day after it began.
                 raise _unprocessable(
                     f"{agent_label(agent)} joined {from_team.name} on "
-                    f"{covering.valid_from.isoformat()}, after the Moves on date; pick "
-                    f"{covering.valid_from.isoformat()} or later.",
+                    f"{covering.valid_from.isoformat()}, on or after the Moves on date; pick "
+                    f"{(covering.valid_from + timedelta(days=1)).isoformat()} or later.",
                     "MEMBERSHIP_OVERLAP",
                 )
         if not history:

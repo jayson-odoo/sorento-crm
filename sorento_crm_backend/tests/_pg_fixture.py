@@ -300,8 +300,8 @@ def pg_empty_schema(tables) -> Session:
     for you -- Postgres validates FK targets at DDL time where sqlite did not, so an
     incomplete list fails loudly here instead of silently not enforcing.
 
-    Every module schema is translated (``scm``, ``projects`` and ``chatbot`` alongside
-    the default),
+    Every module schema is translated (``scm``, ``projects``, ``chatbot`` and ``sales``
+    alongside the default),
     mirroring ``blank_schema_engine``: a model that declares a schema must land in a
     scratch copy of it, never in the REAL ``projects`` schema, and a caller reaching
     one through a foreign key must not have it quietly dropped.
@@ -313,6 +313,7 @@ def pg_empty_schema(tables) -> Session:
     admin.exec_driver_sql(f'CREATE SCHEMA "{name}_scm"')
     admin.exec_driver_sql(f'CREATE SCHEMA "{name}_projects"')
     admin.exec_driver_sql(f'CREATE SCHEMA "{name}_chatbot"')
+    admin.exec_driver_sql(f'CREATE SCHEMA "{name}_sales"')
     admin.close()
 
     scoped = engine.execution_options(
@@ -321,6 +322,7 @@ def pg_empty_schema(tables) -> Session:
             "scm": f"{name}_scm",
             "projects": f"{name}_projects",
             "chatbot": f"{name}_chatbot",
+            "sales": f"{name}_sales",
         }
     )
     connection = scoped.connect()
@@ -342,4 +344,5 @@ def pg_empty_schema(tables) -> Session:
         cleanup.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_scm" CASCADE')
         cleanup.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_projects" CASCADE')
         cleanup.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_chatbot" CASCADE')
+        cleanup.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_sales" CASCADE')
         cleanup.close()
