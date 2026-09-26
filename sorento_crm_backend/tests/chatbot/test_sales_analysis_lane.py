@@ -190,3 +190,17 @@ class TestParserContract:
         from app.services.chatbot.lanes.business import _fetch_semantic_input
 
         assert key in inspect.getsource(_fetch_semantic_input)
+
+
+def test_ac_s1_19_the_seed_rows_carry_the_same_tool():
+    # Lives here, not beside the migration test: only tests/chatbot/ may import the
+    # chatbot package (test_import_boundary).
+    from app.services.chatbot.lanes.business.fetch import CHATBOT_READ_ONLY_TOOLS
+    from app.services.chatbot.turn import policy_rows
+    from app.services.mcp_tool_domains import CHATBOT_TOOL_DOMAINS as TOOL_DOMAINS
+
+    order = next(r for r in policy_rows.DEFAULT_DOMAIN_ROWS if r["name"] == "order")
+    assert TOOL in order["tools"] and order["tools"][0] != TOOL
+    assert TOOL in CHATBOT_READ_ONLY_TOOLS
+    assert TOOL in policy_rows.DATE_PARAM_TOOLS
+    assert TOOL_DOMAINS[TOOL] == "order"

@@ -166,18 +166,6 @@ def test_ac_s1_19_the_tool_and_intent_join_the_live_order_row_once():
         assert tools[0] != TOOL, "never tools[0]: the pick is an override"
 
 
-def test_ac_s1_19_the_seed_rows_carry_the_same_tool():
-    from app.services.chatbot.lanes.business.fetch import CHATBOT_READ_ONLY_TOOLS
-    from app.services.chatbot.turn import policy_rows
-    from app.services.mcp_tool_domains import CHATBOT_TOOL_DOMAINS as TOOL_DOMAINS
-
-    order = next(r for r in policy_rows.DEFAULT_DOMAIN_ROWS if r["name"] == "order")
-    assert TOOL in order["tools"] and order["tools"][0] != TOOL
-    assert TOOL in CHATBOT_READ_ONLY_TOOLS
-    assert TOOL in policy_rows.DATE_PARAM_TOOLS
-    assert TOOL_DOMAINS[TOOL] == "order"
-
-
 def test_the_parser_prompt_with_the_sales_analysis_words_is_production_after_upgrade():
     from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 
