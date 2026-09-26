@@ -10,18 +10,15 @@ import {
 } from '@tanstack/react-table';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
-import { Check, ChevronDown, ChevronRight, CornerDownRight, GripVertical, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
-import { DataGridTable } from '@/components/ui/data-grid-table';
+import { DataGridScroller, DataGridTable } from '@/components/ui/data-grid-table';
 import {
   DataGridTableDndRowHandle,
   DataGridTableDndRows,
 } from '@/components/ui/data-grid-table-dnd-rows';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -46,7 +43,8 @@ export interface ExplodedLineGroup {
 }
 
 /**
- * Reassembles the set explosion so a set reads as a set.
+ * Reassembles the set explosion so a set reads as a set. The regroup dialog's, now: the lines
+ * table draws every line as one plain row (owner hand test, PR #1264 note 1).
  *
  * 52 PO lines become 99 sales order lines because the PO speaks in SETS and the sales order
  * speaks in components: one priced parent plus zero-priced companions. The contract carries
@@ -97,60 +95,33 @@ interface DisplayRow {
   /** Null on a finding-only row: a finding naming no line of this order (S7-3). */
   line: ProjectSalesOrderLine | null;
   items: FlagItem[];
-  groupKey: string;
-  isCompanion: boolean;
-  companionCount: number;
-  sourcePoLineNo: number | null;
+  /** The line number a zero-priced set part is priced on, or null. */
+  partOf: number | null;
 }
 
 /**
  * The section's own heading, shared by the read and the edit.
  *
  * Declared once and rendered by both branches below, so the two views cannot drift apart: the
- * read view is what teaches somebody where the lines section is, and an edit that redrew its
- * heading, its count or its "Show all lines" control would make every edit start with
- * re-finding them.
+ * read view is what teaches somebody where the lines section is. One line: the Need attention
+ * / All lines filter when anything needs attention, otherwise the line count.
  */
 function LinesSectionHeader({
   lineCount,
-  explodedSets,
-  focused,
-  onClearFocus,
   leading,
-  trailing,
 }: {
   lineCount: number;
-  explodedSets: number;
-  focused: boolean;
-  onClearFocus?: () => void;
   /** Stands where the count stands: the Need attention / All lines filter, when it applies. */
   leading?: React.ReactNode;
-  /** An extra header action beside "Show all lines" - the reorder toggle, for instance. */
-  trailing?: React.ReactNode;
 }) {
   return (
-    <CardHeader className="block space-y-3">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 break-words">
-          {leading ?? (
+    <CardHeader className="block">
+      <div className="min-w-0">
+        {leading ?? (
           <p className="text-xs text-muted-foreground">
-            {`${lineCount.toLocaleString()} line${lineCount === 1 ? '' : 's'}${
-              explodedSets > 0
-                ? `, ${explodedSets} set${explodedSets === 1 ? '' : 's'} exploded`
-                : ''
-            }`}
+            {`${lineCount.toLocaleString()} line${lineCount === 1 ? '' : 's'}`}
           </p>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {focused && (
-            <Button type="button" variant="outline" size="sm" onClick={onClearFocus}>
-              <X className="size-4" aria-hidden />
-              Show all lines
-            </Button>
-          )}
-          {trailing}
-        </div>
+        )}
       </div>
     </CardHeader>
   );
@@ -181,8 +152,6 @@ export function SalesOrderLinesTable({
   canDismiss = null,
   onDismiss,
   defaultNeedsAttention = false,
-  focusLineId = null,
-  onClearFocus,
   editing,
   reference,
   reorder,
@@ -199,8 +168,6 @@ export function SalesOrderLinesTable({
   onDismiss?: (item: FlagItem) => void;
   /** Open on "Need attention" while anything needs it (owner lesson (c)). */
   defaultNeedsAttention?: boolean;
-  focusLineId?: string | null;
-  onClearFocus?: () => void;
   /**
    * Set while the screen's edit session is open. The section keeps its Card, its heading and
    * its counts; only the table inside it becomes a spreadsheet. See `SalesOrderLinesEditor`
@@ -210,12 +177,9 @@ export function SalesOrderLinesTable({
   /** The order's reference, for the editor's row labels. */
   reference?: string;
   /**
-   * A drag handle per row, saved immediately on drop. Offered as a FLAT list ordered by
-   * `line_no`, not the grouped read below: a set's components are clustered by their shared
-   * `source_po_line_no`, so a row dropped mid-table would visually snap back to its own
-   * cluster no matter where it landed - the flat view is what makes drag position and
-   * display position the same thing. The existing "From PO line" column stays as the row's
-   * context, standing in for a chip.
+   * A drag handle on every row, and a drop saves at once: no mode to press into first
+   * (owner hand test, PR #1264 note 2). The rows are always the flat `line_no` order, so a
+   * drop position and a display position are the same thing.
    */
   reorder?: SalesOrderLinesReorder;
 }) {
@@ -223,17 +187,7 @@ export function SalesOrderLinesTable({
     pageIndex: 0,
     pageSize: 50,
   });
-  const [collapsed, setCollapsed] = React.useState<Record<string, boolean>>({});
-  const containerRef = React.useRef<HTMLDivElement>(null);
-  // Opt-in: the grouped read stays the default (it is what a finding's "Show line N" narrows,
-  // and what a set collapses), and reordering swaps to the flat view only while pressed on.
-  const [reordering, setReordering] = React.useState(false);
-  const reorderAvailable = Boolean(reorder?.enabled);
-  React.useEffect(() => {
-    if (!reorderAvailable) setReordering(false);
-  }, [reorderAvailable]);
-
-  const groups = React.useMemo(() => groupExplodedLines(lines), [lines]);
+  const reorderable = Boolean(reorder?.enabled);
 
   const items = React.useMemo(
     () => flagItems ?? buildFlagItems(findings, []),
@@ -250,36 +204,36 @@ export function SalesOrderLinesTable({
         byLine.set(item.lineId, [...(byLine.get(item.lineId) ?? []), item]);
         return;
       }
-      standalone.push({
-        key: `finding:${item.key}`,
-        line: null,
-        items: [item],
-        groupKey: `finding:${item.key}`,
-        isCompanion: false,
-        companionCount: 0,
-        sourcePoLineNo: null,
-      });
+      standalone.push({ key: `finding:${item.key}`, line: null, items: [item], partOf: null });
     });
     return { itemsByLine: byLine, standaloneRows: standalone };
   }, [items, lines]);
 
+  /**
+   * Every line, one plain row each, in `line_no` order (owner hand test, PR #1264 note 1). A
+   * set is no longer a heading row over an indented tree: a zero-priced part says, in its own
+   * price cell, which line it is priced on - the server states that pairing (`parent_line_id`)
+   * rather than this table guessing it.
+   */
+  const lineRows = React.useMemo<DisplayRow[]>(() => {
+    const numberOf = new Map(lines.map((line) => [line.id, line.line_no]));
+    return [...lines]
+      .sort((a, b) => a.line_no - b.line_no)
+      .map((line) => ({
+        key: line.id,
+        line,
+        items: itemsByLine.get(line.id) ?? [],
+        partOf:
+          line.is_companion && line.parent_line_id
+            ? (numberOf.get(line.parent_line_id) ?? null)
+            : null,
+      }));
+  }, [itemsByLine, lines]);
+
   const attentionRows = React.useMemo<DisplayRow[]>(
-    () => [
-      ...standaloneRows.filter((row) => row.items.some(needsAttention)),
-      ...[...lines]
-        .sort((a, b) => a.line_no - b.line_no)
-        .map((line) => ({
-          key: line.id,
-          line,
-          items: itemsByLine.get(line.id) ?? [],
-          groupKey: line.id,
-          isCompanion: false,
-          companionCount: 0,
-          sourcePoLineNo: line.source_po_line_no ?? null,
-        }))
-        .filter((row) => row.items.some(needsAttention)),
-    ],
-    [itemsByLine, lines, standaloneRows],
+    () =>
+      [...standaloneRows, ...lineRows].filter((row) => row.items.some(needsAttention)),
+    [lineRows, standaloneRows],
   );
   const [attentionOnly, setAttentionOnly] = React.useState(defaultNeedsAttention);
   // Nothing left to act on is not a filter worth keeping: the table falls back to every line.
@@ -288,62 +242,10 @@ export function SalesOrderLinesTable({
     setPagination((current) => ({ ...current, pageIndex: 0 }));
   }, [showingAttention]);
 
-  const focusedGroupKey = React.useMemo(() => {
-    if (!focusLineId) return null;
-    const group = groups.find(
-      (entry) =>
-        entry.parent.id === focusLineId ||
-        entry.companions.some((companion) => companion.id === focusLineId),
-    );
-    return group?.key ?? null;
-  }, [focusLineId, groups]);
-
-  // jsdom implements no scrollIntoView, hence the optional call.
-  React.useEffect(() => {
-    if (focusedGroupKey) containerRef.current?.scrollIntoView?.({ block: 'start' });
-  }, [focusedGroupKey]);
-
-  const visibleGroups = React.useMemo(
-    () => (focusedGroupKey ? groups.filter((group) => group.key === focusedGroupKey) : groups),
-    [focusedGroupKey, groups],
+  const rows = React.useMemo<DisplayRow[]>(
+    () => (showingAttention ? attentionRows : [...standaloneRows, ...lineRows]),
+    [attentionRows, lineRows, showingAttention, standaloneRows],
   );
-
-  const rows = React.useMemo<DisplayRow[]>(() => {
-    if (showingAttention && !focusedGroupKey) return attentionRows;
-    const out: DisplayRow[] = focusedGroupKey ? [] : [...standaloneRows];
-    visibleGroups.forEach((group) => {
-      out.push({
-        key: group.parent.id,
-        line: group.parent,
-        items: itemsByLine.get(group.parent.id) ?? [],
-        groupKey: group.key,
-        isCompanion: false,
-        companionCount: group.companions.length,
-        sourcePoLineNo: group.sourcePoLineNo,
-      });
-      if (collapsed[group.key]) return;
-      group.companions.forEach((companion) => {
-        out.push({
-          key: companion.id,
-          line: companion,
-          items: itemsByLine.get(companion.id) ?? [],
-          groupKey: group.key,
-          isCompanion: true,
-          companionCount: group.companions.length,
-          sourcePoLineNo: group.sourcePoLineNo,
-        });
-      });
-    });
-    return out;
-  }, [
-    attentionRows,
-    collapsed,
-    focusedGroupKey,
-    itemsByLine,
-    showingAttention,
-    standaloneRows,
-    visibleGroups,
-  ]);
 
   // Read through a ref so the columns keep their identity: TanStack renders a cell function
   // as a component, so a new `canDismiss` each parent render would remount every Flag cell
@@ -357,9 +259,7 @@ export function SalesOrderLinesTable({
         id: 'line_no',
         header: ({ column }) => <DataGridColumnHeader title="#" column={column} />,
         cell: ({ row }) => (
-          <span
-            className={`tabular-nums ${row.original.isCompanion || !row.original.line ? 'text-muted-foreground' : ''}`}
-          >
+          <span className={`tabular-nums ${row.original.line ? '' : 'text-muted-foreground'}`}>
             {row.original.line?.line_no ?? '-'}
           </span>
         ),
@@ -373,20 +273,9 @@ export function SalesOrderLinesTable({
         cell: ({ row }) => {
           const code = rowSubject(row.original);
           return (
-            <div className={`flex min-w-0 items-center gap-1 ${row.original.isCompanion ? 'pl-4' : ''}`}>
-              {row.original.isCompanion && (
-                <CornerDownRight
-                  className="size-3.5 shrink-0 text-muted-foreground"
-                  aria-label="Companion of the line above"
-                />
-              )}
-              <span
-                className={`truncate ${row.original.isCompanion ? 'text-muted-foreground' : 'font-medium'}`}
-                title={code}
-              >
-                {code}
-              </span>
-            </div>
+            <span className="block truncate font-medium" title={code}>
+              {code}
+            </span>
           );
         },
         size: 200,
@@ -461,6 +350,14 @@ export function SalesOrderLinesTable({
         cell: ({ row }) => {
           const line = row.original.line;
           if (!line) return <Dash />;
+          if (row.original.partOf !== null) {
+            const text = `Part of #${row.original.partOf}`;
+            return (
+              <span className="block truncate text-muted-foreground" title={text}>
+                {text}
+              </span>
+            );
+          }
           return (
             <span
               className={`block truncate tabular-nums ${
@@ -510,55 +407,34 @@ export function SalesOrderLinesTable({
         minSize: 100,
         meta: { headerTitle: 'Delivery', skeleton: <Skeleton className="h-4 w-20" /> },
       },
-      {
-        id: 'phase_label',
-        header: ({ column }) => <DataGridColumnHeader title="Area" column={column} />,
-        cell: ({ row }) => {
-          if (!row.original.line) return <Dash />;
-          const text = row.original.line.phase_label || 'Unlabeled area';
-          return (
-            <span className="block truncate" title={text}>
-              {text}
-            </span>
-          );
-        },
-        size: 160,
-        minSize: 120,
-        meta: { headerTitle: 'Area', skeleton: <Skeleton className="h-4 w-24" /> },
-      },
-      {
-        id: 'source_po_line_no',
-        header: ({ column }) => <DataGridColumnHeader title="From PO line" column={column} />,
-        cell: ({ row }) => (
-          <span className="block truncate text-muted-foreground tabular-nums">
-            {row.original.sourcePoLineNo ?? '-'}
-          </span>
-        ),
-        size: 120,
-        minSize: 100,
-        meta: { headerTitle: 'From PO line', skeleton: <Skeleton className="h-4 w-8" /> },
-      },
-      {
-        id: 'stock_location',
-        header: ({ column }) => <DataGridColumnHeader title="Stock location" column={column} />,
-        cell: ({ row }) => {
-          const text = row.original.line?.stock_location || '-';
-          return (
-            <span className="block truncate text-muted-foreground" title={text}>
-              {text}
-            </span>
-          );
-        },
-        size: 150,
-        minSize: 110,
-        meta: { headerTitle: 'Stock location', skeleton: <Skeleton className="h-4 w-24" /> },
-      },
     ],
     [],
   );
 
+  // The handle leads the row whenever the order may be reordered: no toggle to press first.
+  const tableColumns = React.useMemo<ColumnDef<DisplayRow>[]>(
+    () =>
+      reorderable
+        ? [
+            {
+              id: 'drag_handle',
+              header: () => <span className="sr-only">Reorder</span>,
+              // A finding-only row is not a line and has no place in the order to move.
+              cell: ({ row }) =>
+                row.original.line ? <DataGridTableDndRowHandle rowId={row.original.key} /> : null,
+              size: 44,
+              minSize: 44,
+              enableResizing: false,
+              meta: { headerTitle: 'Reorder', skeleton: <Skeleton className="size-7" /> },
+            },
+            ...columns,
+          ]
+        : columns,
+    [columns, reorderable],
+  );
+
   const table = useReactTable({
-    columns,
+    columns: tableColumns,
     data: rows,
     pageCount: Math.ceil(rows.length / pagination.pageSize) || 0,
     getRowId: (row) => row.key,
@@ -569,90 +445,23 @@ export function SalesOrderLinesTable({
     columnResizeMode: 'onChange',
   });
 
-  // Reorder mode's own flat rows, in the order the draft currently holds them - not grouped,
-  // and not paged: "drop anywhere in the table" means every line has to be on screen and a
-  // drop position has to mean what it looks like.
-  const flatRows = React.useMemo<DisplayRow[]>(
-    () =>
-      [...lines]
-        .sort((a, b) => a.line_no - b.line_no)
-        .map((line) => ({
-          key: line.id,
-          line,
-          items: itemsByLine.get(line.id) ?? [],
-          groupKey: line.id,
-          isCompanion: false,
-          companionCount: 0,
-          sourcePoLineNo: line.source_po_line_no ?? null,
-        })),
-    [itemsByLine, lines],
-  );
-
-  const dragHandleColumn = React.useMemo<ColumnDef<DisplayRow>>(
-    () => ({
-      id: 'drag_handle',
-      header: () => <span className="sr-only">Reorder</span>,
-      cell: ({ row }) => <DataGridTableDndRowHandle rowId={row.original.key} />,
-      size: 44,
-      minSize: 44,
-      meta: { headerTitle: 'Reorder', skeleton: <Skeleton className="size-7" /> },
-    }),
-    [],
-  );
-  const dragColumns = React.useMemo(
-    () => [dragHandleColumn, ...columns],
-    [columns, dragHandleColumn],
-  );
-
-  const dragTable = useReactTable({
-    columns: dragColumns,
-    data: flatRows,
-    getRowId: (row) => row.key,
-    getCoreRowModel: getCoreRowModel(),
-    columnResizeMode: 'onChange',
-  });
-
+  /**
+   * A drop saves straight away (PR #1264 note 2). The move is made on the WHOLE order's line
+   * ids, not the rows on screen, so a drop inside the Need attention filter or on a later page
+   * still sends every line, in its new sequence.
+   */
   const handleRowDragEnd = React.useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
       if (!over || !reorder || active.id === over.id) return;
-      const ids = flatRows.map((row) => row.key);
+      const ids = lineRows.map((row) => row.key);
       const oldIndex = ids.indexOf(String(active.id));
       const newIndex = ids.indexOf(String(over.id));
       if (oldIndex === -1 || newIndex === -1) return;
       reorder.onReorder(arrayMove(ids, oldIndex, newIndex));
     },
-    [flatRows, reorder],
+    [lineRows, reorder],
   );
-
-  const explodedSets = groups.filter((group) => group.companions.length > 0).length;
-
-  /**
-   * A set gets a header row above its priced parent; a line that exploded into nothing does
-   * not, or every row on a 99 line order would carry a divider.
-   */
-  const renderSetHeader = (row: DisplayRow, previous: DisplayRow | null): React.ReactNode => {
-    if (row.isCompanion || row.companionCount === 0) return null;
-    if (previous && previous.groupKey === row.groupKey) return null;
-    const isCollapsed = Boolean(collapsed[row.groupKey]);
-    return (
-      <button
-        type="button"
-        className="flex items-center gap-1.5 text-left"
-        aria-expanded={!isCollapsed}
-        onClick={() =>
-          setCollapsed((current) => ({ ...current, [row.groupKey]: !current[row.groupKey] }))
-        }
-      >
-        {isCollapsed ? (
-          <ChevronRight className="size-3.5" aria-hidden />
-        ) : (
-          <ChevronDown className="size-3.5" aria-hidden />
-        )}
-        {`Set from PO line ${row.sourcePoLineNo ?? '-'}: ${row.companionCount + 1} components`}
-      </button>
-    );
-  };
 
   /**
    * The edit, in the same section as the read: same Card, same heading, same counts, and the
@@ -665,19 +474,13 @@ export function SalesOrderLinesTable({
    */
   if (editing) {
     return (
-      <div ref={containerRef}>
+      <div>
         <Card>
-          <LinesSectionHeader
-            lineCount={lines.length}
-            explodedSets={explodedSets}
-            focused={Boolean(focusedGroupKey)}
-            onClearFocus={onClearFocus}
-          />
+          <LinesSectionHeader lineCount={lines.length} />
           {/* `min-w-0` on BOTH boxes, and it is load-bearing rather than tidiness: the editor
               scrolls a wide line table inside its own gutter, and a flex/grid ancestor that
-              forgets it lets the table's intrinsic width (about 1,700px) become the page's, so
-              the whole screen scrolls sideways at 375px. Measured: 1709px against a 375px
-              viewport before this was added, 375px after. */}
+              forgets it lets the table's intrinsic width become the page's, so the whole
+              screen scrolls sideways at 375px. */}
           <CardTable className="min-w-0">
             <div className="min-w-0 px-4 pb-4">
               <SalesOrderLinesEditor
@@ -712,93 +515,19 @@ export function SalesOrderLinesTable({
     </ToggleGroup>
   );
 
-  const reorderToggle = reorderAvailable ? (
-    <Button
-      type="button"
-      variant={reordering ? 'primary' : 'outline'}
-      size="sm"
-      onClick={() => setReordering((current) => !current)}
-    >
-      {reordering ? (
-        <>
-          <Check className="size-4" aria-hidden />
-          Done reordering
-        </>
-      ) : (
-        <>
-          <GripVertical className="size-4" aria-hidden />
-          Reorder lines
-        </>
-      )}
-    </Button>
-  ) : null;
-
-  /**
-   * Reorder mode: the same section, but flat and draggable, pressed on from the toggle
-   * above. Not the grouped read below - see `reorder`'s own doc comment for why a set's
-   * cluster and a free drag cannot share a view - and not paginated, because a drop target
-   * has to be reachable on screen.
-   */
-  if (reordering) {
-    return (
-      <div ref={containerRef}>
-        <DataGrid
-          table={dragTable}
-          recordCount={flatRows.length}
-          isLoading={false}
-          listingKey="projects.projects.view::project-sales-order-lines"
-          tableLayout={{ width: 'fixed', columnsResizable: true }}
-        >
-          <Card>
-            <LinesSectionHeader
-              lineCount={lines.length}
-              explodedSets={explodedSets}
-              focused={false}
-              trailing={reorderToggle}
-            />
-
-            <CardTable>
-              {lines.length === 0 ? (
-                <div className="px-6 py-10 text-center">
-                  <h3 className="text-sm font-semibold">This draft has no lines</h3>
-                  <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                    Rebuild it from the purchase order and its delivery schedule.
-                  </p>
-                </div>
-              ) : (
-                <ScrollArea>
-                  <DataGridTableDndRows
-                    handleDragEnd={handleRowDragEnd}
-                    dataIds={flatRows.map((row) => row.key)}
-                  />
-                  <ScrollBar orientation="horizontal" />
-                </ScrollArea>
-              )}
-            </CardTable>
-          </Card>
-        </DataGrid>
-      </div>
-    );
-  }
-
   return (
-    <div ref={containerRef} className="min-w-0">
+    <div className="min-w-0">
       <DataGrid
         table={table}
         recordCount={rows.length}
         isLoading={false}
         listingKey="projects.projects.view::project-sales-order-lines"
         tableLayout={{ width: 'fixed', columnsResizable: true }}
-        renderGroupHeader={renderSetHeader}
       >
         <Card>
           <LinesSectionHeader
             lineCount={lines.length}
-            explodedSets={explodedSets}
-            focused={Boolean(focusedGroupKey)}
-            onClearFocus={onClearFocus}
             leading={attentionRows.length > 0 ? attentionToggle : undefined}
-            trailing={reorderToggle}
           />
 
           <CardTable className="min-w-0">
@@ -809,6 +538,15 @@ export function SalesOrderLinesTable({
                   Rebuild it from the purchase order and its delivery schedule.
                 </p>
               </div>
+            ) : reorderable ? (
+              // The grid's own scroller, not a Radix ScrollArea: that wrapper shrink-fits the
+              // table and kills the sideways scroll (S1-05, the S6 hand test's item 1).
+              <DataGridScroller>
+                <DataGridTableDndRows
+                  handleDragEnd={handleRowDragEnd}
+                  dataIds={table.getRowModel().rows.map((row) => row.id)}
+                />
+              </DataGridScroller>
             ) : (
               <DataGridTable />
             )}

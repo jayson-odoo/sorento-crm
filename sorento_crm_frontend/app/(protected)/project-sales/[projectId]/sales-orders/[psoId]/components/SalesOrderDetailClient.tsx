@@ -47,7 +47,6 @@ import {
   useSalesOrderMutations,
   projectSalesOrdersPagerQuery,
 } from '../../../../_shared/hooks/useProjectSalesOrders';
-import { SalesOrderStockLocationBulkApply } from './SalesOrderStockLocationBulkApply';
 import { useProject } from '../../../../_shared/hooks/useProjects';
 import { useReviewOriginHref } from '../../../../_shared/hooks/useReviewOrigin';
 import { useOpenDivergenceForOrder } from '../../../../_shared/hooks/useSoDivergence';
@@ -351,9 +350,26 @@ export function SalesOrderDetailClient({
                 : null,
               `Area group ${shown.area_group || '-'}`,
               `Customer PO ${so.po_number || '-'}${poVersionNo ? ` v${poVersionNo}` : ''}`,
+              so.stock_location ? `Stock location ${so.stock_location}` : null,
             ]
               .filter(Boolean)
               .join(' · ')}
+            {/* PR #1264 note 3: derived from the sales agent's location group, never picked.
+                When a link in that chain is missing it is a flag naming the link, not a
+                picker. */}
+            {!so.stock_location && so.stock_location_gap && (
+              <>
+                {' · '}
+                <Badge
+                  variant="warning"
+                  appearance="light"
+                  size="sm"
+                  title={so.stock_location_gap}
+                >
+                  No stock location
+                </Badge>
+              </>
+            )}
             {' · '}
             <Link
               href={`/project-sales/${projectId}?tab=activity`}
@@ -618,17 +634,6 @@ export function SalesOrderDetailClient({
         </TabsList>
 
         <TabsContent value="lines" className="min-w-0 space-y-3">
-          {/* Standalone, like "Move lines": writes immediately on the stored order, so it is
-              offered only while the order may still be corrected and no session is open. */}
-          {canEdit && !isPublished && !edit.isEditing && (
-            <SalesOrderStockLocationBulkApply
-              projectId={projectId}
-              psoId={psoId}
-              lines={lines}
-              reference={reference}
-            />
-          )}
-
           <SalesOrderLinesTable
             lines={lines}
             findings={findings}
@@ -639,7 +644,7 @@ export function SalesOrderDetailClient({
             reference={reference}
             // The same section either way. With a session open the card keeps its heading and
             // its counts and the table inside becomes a spreadsheet; the columns are the same
-            // twelve in the same order.
+            // in the same order.
             editing={
               edit.isEditing
                 ? {
@@ -650,9 +655,9 @@ export function SalesOrderDetailClient({
                   }
                 : null
             }
-            // Writes immediately on the stored order, so it is only offered while there is no
-            // in-progress edit session for it to race (a staged, unsaved new row has no id the
-            // reorder route could place).
+            // A drop writes immediately on the stored order (PR #1264 note 2: no toggle), so the
+            // handles are only drawn while there is no edit session for it to race (a staged,
+            // unsaved new row has no id the reorder route could place).
             reorder={
               canEdit && isReorderableStatus && !edit.isEditing
                 ? { enabled: true, onReorder: (lineIds) => reorderLines.mutate(lineIds) }
