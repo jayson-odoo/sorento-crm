@@ -61,4 +61,4 @@ def test_description_states_the_required_metric_and_the_no_cutoff_rule() -> None
     text = _spec().description
     assert "rank_by" in text and "REQUIRED" in text
     assert "total_count" in text
-    assert "–" not in text and "—" not in text
+    assert chr(0x2013) not in text and chr(0x2014) not in text
