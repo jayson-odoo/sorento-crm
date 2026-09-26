@@ -246,3 +246,54 @@ def test_same_domain_null_domain_hint_still_refines() -> None:
         f"a null domain_hint must still refine the open outstanding offer: "
         f"got {decision.kind!r}/{decision.why!r}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Fix lane round 2, S2 (reviewer pass at 4719a829): T5 - a product-list photo with
+# per-line quantities and no domain word, sent while the outstanding offer is OPEN.
+# Same shape as T7; slice 4 tells them apart only by the parser's own domain_hint, so
+# the reading must be pinned for the two hints that keep narrowing (null, "order"),
+# and the console case that grades the LIVE parser on it must exist.
+# --------------------------------------------------------------------------- #
+
+
+def _t5_verdict(domain_hint):
+    return verdict(
+        entities=[
+            {**entity("SRTBF 11502", hint="product"), "quantity": 3},
+            {**entity("SRTBF 11503", hint="product"), "quantity": 4},
+        ],
+        domain_in_message=False,
+        domain_hint=domain_hint,
+    )
+
+
+def test_t5_photo_list_with_null_hint_refines_the_open_offer() -> None:
+    decision = decide(_t5_verdict(None), Focus(), OUTSTANDING_OFFER)
+    assert decision.kind == REFINE, (decision.kind, decision.why)
+
+
+def test_t5_photo_list_with_order_hint_refines_the_open_offer() -> None:
+    decision = decide(_t5_verdict("order"), Focus(), OUTSTANDING_OFFER)
+    assert decision.kind == REFINE, (decision.kind, decision.why)
+
+
+def test_console_cases_carry_t5_under_the_open_offer() -> None:
+    """The live-parser half of S2: the Samantha console cases must send T5 AFTER an
+    outstanding ask in the same case (so the offer is open), and grade the parser's
+    own `domain_in_message` on it, so the prompt version is checked on T5 before its
+    label moves."""
+    from pathlib import Path
+
+    import yaml
+
+    path = Path(__file__).resolve().parent / "console_cases" / "2026-09-26-samantha.yaml"
+    cases = yaml.safe_load(path.read_text(encoding="utf-8"))["cases"]
+    t5 = [c for c in cases if str(c.get("name", "")).startswith("T5")]
+    assert t5, [c.get("name") for c in cases]
+    turns = t5[0]["turns"]
+    assert "outstanding" in turns[0]["text"].lower(), turns[0]
+    photo = turns[1]
+    assert "\n" in photo["text"] and "outstanding" not in photo["text"].lower(), photo
+    assert photo["expect"].get("parser", {}).get("domain_in_message") is False, photo
+    assert "Incoming" in photo["expect"].get("reply_not_contains", []), photo

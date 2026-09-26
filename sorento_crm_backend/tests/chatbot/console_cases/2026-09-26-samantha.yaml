@@ -35,6 +35,28 @@ cases:
           reply_contains: ["Sorento", "CHENG HUAT"]
           reply_not_contains: ["Which customer do you mean?", "(transporter)", "(customer)", "escalate", "Customer: all"]
 
+  # Fix lane round 2, S2 (reviewer pass at 4719a829): T5 has the same shape as T7 (a
+  # product-list photo, no domain word) but arrives while the outstanding offer is still
+  # OPEN, so it must narrow the report. Slice 4 reads the parser's own domain_hint: a
+  # "inventory" or "incoming" hint here makes it a new ask and the report stops
+  # narrowing. Run live with the new prompt version BEFORE the label moves, and pin the
+  # domain_hint it emits here (null or "order" passes slice 4; anything else is a
+  # prompt defect to fix before promoting).
+  - name: T5 - a product-list photo under the open outstanding offer narrows the report (S2, S4, S5)
+    cold: true
+    turns:
+      - text: "outstanding brand Sorento dealer Cheng Huat Sentul"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["CHENG HUAT"]
+      - text: "SRTBF 11502 x3\nSRTBF 11503 x4"
+        expect:
+          branch_kind: business_query
+          parser:
+            domain_in_message: false
+          reply_contains: ["CHENG HUAT", "SRTBF 11502", "SRTBF 11503"]
+          reply_not_contains: ["Incoming", "incoming stock", "Error executing tool", "Customer: all"]
+
   - name: T6 - got eta closes the outstanding offer and prints no zero header (S4, S6)
     cold: true
     turns:
