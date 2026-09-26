@@ -11,6 +11,7 @@ import { useCustomer, customersPagerQuery } from '../hooks/useCustomers';
 import { formatDate } from '@/lib/helpers';
 import DetailActions from '@/components/common/DetailActions';
 import { useCustomerActions } from '../actions';
+import CustomerOpportunitiesSection from './CustomerOpportunitiesSection';
 
 interface CustomerDetailProps {
   customerId: string;
@@ -149,6 +150,8 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
           </CardContent>
         </Card>
       </div>
+
+      <CustomerOpportunitiesSection customerId={customerId} />
     </div>
   );
 }
