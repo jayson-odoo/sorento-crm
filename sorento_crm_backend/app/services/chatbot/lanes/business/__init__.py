@@ -854,6 +854,69 @@ def _refinement_product_resolves(db: Any, token: str) -> bool:
     )
 
 
+def _resolve_outstanding_brand_ids(
+    parse_output: dict[str, Any],
+    semantic_input: dict[str, Any],
+    *,
+    db: Any,
+) -> None:
+    """#1262 slice 9 (F1a), round 3 section 6 step 4: the brand word(s) this turn (or
+    a refinement) named, resolved to the live brand's OWN ids - the SAME live read
+    `turn_runtime.active_brands` uses (case-insensitive exact on name or code, the
+    one place "which brand does this word mean" is answered). `db` is None outside
+    a real turn (this module's own direct `run_fetch` tests), same no-op every
+    other db-gated read here already has. The token never reached the shared
+    resolver at all (`turn_runtime.resolve_kinds`'s own pre-resolver intercept), so
+    this is the FIRST and only place it becomes an id.
+
+    Review round (26 Sep 2026), SF4: split out of `_resolve_report_product_and_
+    location` and called EARLY in `run_fetch`, before the order-outstanding subject
+    gate reads `has_brand` - a brand-hinted entity naming a word that matches NO
+    live brand (an unlisted brand) must not count as a subject at all, and the only
+    way to tell "named a real brand" from "named a brand-shaped word" apart is to
+    actually resolve it here first.
+    """
+    if semantic_input.get("outstanding_brand_ids"):
+        return
+    brand_tokens = {
+        jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
+        for e in [
+            *jsc.array(parse_output.get("entities")),
+            *jsc.array(parse_output.get("outstanding_refinement_entities")),
+        ]
+        if isinstance(e, dict) and jsc.js_string(e.get("hint") or "").strip().lower() == "brand"
+    }
+    brand_tokens.discard("")
+    if brand_tokens and db is not None:
+        from app.services.chatbot.turn_runtime import active_brands
+
+        folded_tokens = {t.casefold() for t in brand_tokens}
+        brand_ids: list[str] = []
+        for row in active_brands(db):
+            name = jsc.js_string(row.get("brand_name") or "").strip().casefold()
+            code = jsc.js_string(row.get("brand_code") or "").strip().casefold()
+            if (name and name in folded_tokens) or (code and code in folded_tokens):
+                if row["id"] not in brand_ids:
+                    brand_ids.append(row["id"])
+        if brand_ids:
+            semantic_input["outstanding_brand_ids"] = brand_ids
+    if not semantic_input.get("outstanding_brand_ids"):
+        # R13/R15/D10, the same fallback the customer-id carry above and
+        # `_outstanding_filters_from`'s own docstring make: an ANSWERING turn (a scope
+        # pick, an out-of-range re-ask, a refinement) typed no brand word of its own -
+        # the ids rode in on the carried filter set, already resolved, and have to ride
+        # back out on it too or the re-run silently drops the very brand the question
+        # was scoped to.
+        # N1 (security review, 26 Sep 2026): a carried brand id is a resolved uuid or
+        # it is nothing - the same `is_uuid` guard the customer-id carry above uses,
+        # never a bare truthiness check that would let a non-uuid string through.
+        carried_brand_ids = [
+            b for b in jsc.array(parse_output.get("outstanding_carried_brand_ids")) if fetch_mod.is_uuid(b)
+        ]
+        if carried_brand_ids:
+            semantic_input["outstanding_brand_ids"] = carried_brand_ids
+
+
 def _resolve_report_product_and_location(
     parse_output: dict[str, Any],
     entities: Any,
@@ -978,51 +1041,7 @@ def _resolve_report_product_and_location(
             semantic_input["outstanding_warehouse_codes"] = carried_wh_codes
             semantic_input["outstanding_location_token"] = carried_token or None
 
-    # #1262 slice 9 (F1a), round 3 section 6 step 4: the brand word(s) this turn (or
-    # a refinement) named, resolved to the live brand's OWN ids - the SAME live read
-    # `turn_runtime.active_brands` uses (case-insensitive exact on name or code, the
-    # one place "which brand does this word mean" is answered). `db` is None outside
-    # a real turn (this module's own direct `run_fetch` tests), same no-op every
-    # other db-gated read here already has. The token never reached the shared
-    # resolver at all (`turn_runtime.resolve_kinds`'s own pre-resolver intercept), so
-    # this is the FIRST and only place it becomes an id.
-    brand_tokens = {
-        jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
-        for e in [
-            *jsc.array(parse_output.get("entities")),
-            *jsc.array(parse_output.get("outstanding_refinement_entities")),
-        ]
-        if isinstance(e, dict) and jsc.js_string(e.get("hint") or "").strip().lower() == "brand"
-    }
-    brand_tokens.discard("")
-    if brand_tokens and db is not None:
-        from app.services.chatbot.turn_runtime import active_brands
-
-        folded_tokens = {t.casefold() for t in brand_tokens}
-        brand_ids: list[str] = []
-        for row in active_brands(db):
-            name = jsc.js_string(row.get("brand_name") or "").strip().casefold()
-            code = jsc.js_string(row.get("brand_code") or "").strip().casefold()
-            if (name and name in folded_tokens) or (code and code in folded_tokens):
-                if row["id"] not in brand_ids:
-                    brand_ids.append(row["id"])
-        if brand_ids:
-            semantic_input["outstanding_brand_ids"] = brand_ids
-    if not semantic_input.get("outstanding_brand_ids"):
-        # R13/R15/D10, the same fallback the customer-id carry above and
-        # `_outstanding_filters_from`'s own docstring make: an ANSWERING turn (a scope
-        # pick, an out-of-range re-ask, a refinement) typed no brand word of its own -
-        # the ids rode in on the carried filter set, already resolved, and have to ride
-        # back out on it too or the re-run silently drops the very brand the question
-        # was scoped to.
-        # N1 (security review, 26 Sep 2026): a carried brand id is a resolved uuid or
-        # it is nothing - the same `is_uuid` guard the customer-id carry above uses,
-        # never a bare truthiness check that would let a non-uuid string through.
-        carried_brand_ids = [
-            b for b in jsc.array(parse_output.get("outstanding_carried_brand_ids")) if fetch_mod.is_uuid(b)
-        ]
-        if carried_brand_ids:
-            semantic_input["outstanding_brand_ids"] = carried_brand_ids
+    _resolve_outstanding_brand_ids(parse_output, semantic_input, db=db)
 
 
 def run_fetch(
@@ -1332,15 +1351,14 @@ def run_fetch(
         else False
     )
     # #1262 slice 9 (F1a), AC-S9-4: a brand alone is a valid subject for the
-    # outstanding report. Read off the RAW `parse_output` entities, never the
-    # gate-resolved `entities` above - a brand token never reaches the shared
-    # resolver at all (`turn_runtime.resolve_kinds`'s own pre-resolver intercept),
-    # so it never appears there, the same reason the location word just above
-    # reads `parse_output` directly instead.
-    has_brand = any(
-        isinstance(e, dict) and jsc.js_string(e.get("hint") or "").strip().lower() == "brand"
-        for e in jsc.array(parse_output.get("entities"))
-    )
+    # outstanding report. Resolved here (not merely hinted): SF4 (review round, 26
+    # Sep 2026) - "brand XYZ" naming an unlisted word must never count as a subject,
+    # so this must test the RESOLVED `outstanding_brand_ids` (the SAME live lookup
+    # `_resolve_report_product_and_location` performs, called early here so its
+    # result is ready before the subject gate below reads it), never any
+    # brand-hinted entity regardless of whether it matched a live brand.
+    _resolve_outstanding_brand_ids(parse_output, semantic_input, db=db)
+    has_brand = bool(semantic_input.get("outstanding_brand_ids"))
     # #1262 slice 2 (F1c): a carried customer id is a subject only when it is a real
     # uuid - a kind-pick's printed label ("Sorento (customer)") riding on this same
     # key is not a resolved customer, and must never count as one here either.
