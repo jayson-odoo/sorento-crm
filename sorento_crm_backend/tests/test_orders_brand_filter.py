@@ -217,3 +217,47 @@ class TestOrdersByProductBrandFilter:
         )
         assert resp.status_code == 400, resp.text
         assert resp.json()["detail"]["code"] == "INVALID_UUID", resp.text
+
+
+class TestN5AnotherCompanysBrand:
+    """Fix lane round 2, N5: a brand id from ANOTHER company must give no rows, on
+    both orders routes - the brand, its products and its orders are all company
+    scoped, and none of them may leak through the brand filter."""
+
+    def test_other_company_brand_gives_no_orders(self, client, db):
+        from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
+
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+        seed_mocha(db)
+        mocha_brand = Brand(
+            id=str(uuid.uuid4()), brand_name="Mocha", brand_code="MCH", is_active=True, company_id=MOCHA_ID
+        )
+        db.add(mocha_brand)
+        db.flush()
+        mocha_cust = customer(db, company_id=MOCHA_ID, name="ZZT Mocha Customer")
+        mocha_wh = warehouse(db, company_id=MOCHA_ID)
+        mocha_product = product(db, company_id=MOCHA_ID, code=unique_code("MCHX"))
+        mocha_product.brand_id = mocha_brand.id
+        db.flush()
+        order = Order(
+            id=str(uuid.uuid4()), order_number=unique_code("ORD"), customer_id=mocha_cust.id,
+            is_cancelled=False, company_id=MOCHA_ID,
+        )
+        db.add(order)
+        db.flush()
+        db.add(
+            OrderLine(
+                id=str(uuid.uuid4()), order_id=order.id, product_id=mocha_product.id,
+                warehouse_id=mocha_wh.id, quantity=1, company_id=MOCHA_ID,
+            )
+        )
+        db.commit()
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+
+        resp = client.get(ORDERS_BASE, params={"brand_ids": [mocha_brand.id]})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"] == [], resp.json()
+
+        resp = client.get(BY_PRODUCT_BASE, params={"brand_ids": [mocha_brand.id]})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"] == [], resp.json()

@@ -138,3 +138,38 @@ class TestBrandFilterOnTheRoute:
         assert resp.status_code != 422, resp.text
         body = resp.json()
         assert body.get("brand_name") == "Sorento", body
+
+
+class TestN5AnotherCompanysBrand:
+    """Fix lane round 2, N5: a brand id from ANOTHER company gives no rows and no
+    `brand_name` - the header must never name a brand the caller cannot see."""
+
+    def test_other_company_brand_gives_no_rows_and_no_brand_name(self, client, db):
+        from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
+
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+        seed_mocha(db)
+        mocha_brand = _brand(db, name="Mocha", code="MCH", company_id=MOCHA_ID)
+        mocha_cust = customer(db, company_id=MOCHA_ID, name="ZZT Mocha Brand Customer")
+        mocha_product = product(db, company_id=MOCHA_ID, code=unique_code("MCHSKU"))
+        mocha_product.brand_id = mocha_brand.id
+        so = SalesOrder(
+            id=str(uuid.uuid4()), so_number=unique_code("SO"), customer_id=mocha_cust.id,
+            order_date=date(2026, 1, 1), status="open", company_id=MOCHA_ID,
+        )
+        db.add(so)
+        db.flush()
+        db.add(
+            SalesOrderLine(
+                id=str(uuid.uuid4()), sales_order_id=so.id, product_id=mocha_product.id,
+                qty_ordered=9, qty_delivered=1, line_status="open", company_id=MOCHA_ID,
+            )
+        )
+        db.commit()
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+
+        resp = client.get(BASE, params={"brand_ids": [mocha_brand.id], "scope": "so"})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert not body.get("brand_name"), body
+        assert not body["so"]["ordered_qty"], body
