@@ -258,7 +258,7 @@ class TestPromptHasNoHardCodedBrandList:
     migration exists - the wrong seam to grade this from. Follows
     `test_parser_growth_r1_reachability.py::TestTheOutstandingVocabularyIsPublished`
     instead: import the migration module directly and assert on its own
-    `_full_text()`/`_slim_text()` (the exact bodies it publishes), no DB needed."""
+    `_full_text()` (the exact body it publishes), no DB needed."""
 
     def _migration(self):
         import importlib.util
@@ -281,12 +281,8 @@ class TestPromptHasNoHardCodedBrandList:
 
     def test_the_migration_publishes_known_brands_and_drops_the_hardcoded_list(self) -> None:
         """`_full_text()` is `SEMANTIC_PARSER_PROMPT` (the body `production` sits on) -
-        the one this AC is about. `_slim_text()` is a frozen legacy body
-        (`_legacy_prompt_bodies.SEMANTIC_PARSER_PROMPT_SLIM_V1`, "retired from the
-        live module" per this migration's own comment) that this migration keeps
-        republishing byte-for-byte, unrelated to this addendum - it never carried
-        the hard-coded brand list either, so only THAT half of the guard applies
-        to it."""
+        the one this AC is about, and (fix lane round 2, N2) the only body this
+        migration publishes."""
         module = self._migration()
         assert callable(module.publish)
         full = module._full_text()
@@ -294,4 +290,52 @@ class TestPromptHasNoHardCodedBrandList:
         assert "Sorento, Mocha, or Cabana" not in full, (
             "the published FULL prompt must no longer hard-code the brand list"
         )
-        assert "Sorento, Mocha, or Cabana" not in module._slim_text()
+
+
+class TestN2DowngradeOnlyDropsWhatThisMigrationPublished:
+    """Fix lane round 2, N2: the legacy `SLIM_V1` body (the draft's `_slim_text()`), which an
+    EARLIER migration already published - so this migration's own SLIM publish is always
+    a no-op, and its downgrade, which deleted by template equality over BOTH texts,
+    deleted that earlier migration's unlabelled SLIM row. The downgrade must drop only
+    the version this migration published."""
+
+    def test_downgrade_keeps_an_earlier_unlabelled_slim_row(self, session_factory, monkeypatch) -> None:
+        from types import SimpleNamespace
+
+        from app.models.ai_prompt import AIPromptVersion
+
+        module = TestPromptHasNoHardCodedBrandList._migration(None)
+        db = session_factory()
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(module.__file__).resolve().parent.parent))
+        from _legacy_prompt_bodies import SEMANTIC_PARSER_PROMPT_SLIM_V1 as slim_v1
+        db.add(
+            AIPromptVersion(
+                name="chatbot_semantic_parser", version=901, type="text", template=slim_v1, variables=[]
+            )
+        )
+        db.add(
+            AIPromptVersion(
+                name="chatbot_semantic_parser",
+                version=902,
+                type="text",
+                template=module._full_text(),
+                variables=[],
+            )
+        )
+        db.commit()
+        monkeypatch.setattr(module, "op", SimpleNamespace(get_bind=lambda: db.connection()))
+
+        module.downgrade()
+
+        check = session_factory()
+        left = {
+            v
+            for (v,) in check.query(AIPromptVersion.version)
+            .filter(AIPromptVersion.name == "chatbot_semantic_parser")
+            .all()
+        }
+        assert 901 in left, "the downgrade deleted an earlier migration's unlabelled SLIM row"
+        assert 902 not in left, "the downgrade must still drop the version this migration published"

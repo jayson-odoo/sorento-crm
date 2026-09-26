@@ -44,10 +44,15 @@ unchanged body:
    the brand NAME as that line lists it, never the code in parentheses and never
    a name the model remembers from training.
 
-Both bodies are published for the measured reason 487 / 490 / 514 / 517 / 519 /
-520 / 521 give: prod's `production` label sits on the FULL `SEMANTIC_PARSER_PROMPT`,
-while the local / dev label sits on the SLIM one, so publishing one text reaches one
-deployment only.
+Only the FULL body is published (fix lane round 2, N2). The earlier draft also
+"republished" the SLIM body, as 487 / 490 / 514 / 517 / 519 / 520 / 521 do, but the
+SLIM body retired from the live module (AC-1506) and the copy this revision could
+reach was the frozen legacy `SLIM_V1`, which carries NEITHER addendum. A local or dev
+label sitting on SLIM therefore gets neither the quantity key nor the Known brands
+line from this revision; point that label at the FULL version this revision publishes
+to test either slice there. Publishing SLIM_V1 was a no-op on every database (an
+earlier migration already holds that text), and matching it on downgrade deleted the
+earlier migration's own unlabelled row.
 
 Same immutable-versions-plus-movable-labels split as migration 475: the text
 lands as the next `chatbot_semantic_parser` version with NO label, so promoting
@@ -91,25 +96,10 @@ def _full_text() -> str:
     return SEMANTIC_PARSER_PROMPT
 
 
-def _slim_text() -> str:
-    # SEMANTIC_PARSER_PROMPT_SLIM retired from the live module (chatbot turn
-    # re-architecture S0, AC-1506) - this migration keeps publishing the exact body it
-    # always published, from the immutable copy alembic/_legacy_prompt_bodies.py holds.
-    import sys
-    from pathlib import Path
-
-    _alembic_root = Path(__file__).resolve().parent.parent
-    if str(_alembic_root) not in sys.path:
-        sys.path.insert(0, str(_alembic_root))
-    from _legacy_prompt_bodies import SEMANTIC_PARSER_PROMPT_SLIM_V1
-
-    return SEMANTIC_PARSER_PROMPT_SLIM_V1
-
-
 def _publish_one(session: Session, template: str, tag: str) -> int | None:
     """Publish ``template`` as the next `chatbot_semantic_parser` version, unless a
     version already carries it. Returns the new version number, or None when already
-    published. ``tag`` is only for the log line (``"full"`` or ``"slim"``)."""
+    published. ``tag`` is only for the log line."""
     spec = PROMPT_KEYS[PROMPT_NAME]
     existing = (
         session.query(AIPromptVersion)
@@ -154,13 +144,9 @@ def _publish_one(session: Session, template: str, tag: str) -> int | None:
 
 
 def publish(session: Session) -> dict[str, int | None]:
-    """Publish BOTH the FULL and SLIM texts as new versions, each idempotent on template
-    equality. Returns ``{"full": v|None, "slim": v|None}``; a second call on an
-    already-published database returns both None."""
-    return {
-        "full": _publish_one(session, _full_text(), "full"),
-        "slim": _publish_one(session, _slim_text(), "slim"),
-    }
+    """Publish the FULL text as a new version, idempotent on template equality. Returns
+    ``{"full": v|None}``; a second call on an already-published database returns None."""
+    return {"full": _publish_one(session, _full_text(), "full")}
 
 
 def upgrade() -> None:
@@ -181,7 +167,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop the unlabelled versions this migration published (FULL and SLIM).
+    """Drop the unlabelled version this migration published. Its FULL text carries both
+    addenda, so no other migration's row matches it (a later identical publish is
+    skipped by `_publish_one`), which is what makes a template match safe here.
 
     A version this migration published can stop being unlabelled: the owner may have
     since moved a label (e.g. `production`) onto it in the admin UI.
@@ -191,7 +179,7 @@ def downgrade() -> None:
     a label is therefore excluded from the delete; the label keeps pointing at it.
     """
     bind = op.get_bind()
-    templates = [_full_text(), _slim_text()]
+    templates = [_full_text()]
     session = Session(bind=bind)
     try:
         labelled_version_ids = {
