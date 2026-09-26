@@ -12,6 +12,7 @@ the role bypass a portal contact has no role to claim), the kind not visible (40
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, status
@@ -35,6 +36,7 @@ from app.services.sales.portal_agent import agent_for_contact
 from app.services.uuid_path_param import validate_uuid_path
 
 router = APIRouter(tags=["public-portal-sales-opportunity"])
+logger = logging.getLogger(__name__)
 
 _FORM_TYPE = "sales_opportunity"
 
@@ -98,8 +100,15 @@ def _resolve_company(db: Session, *, customer_id: Optional[str], agent: SalesAge
 
 
 def _reraise(db: Session, exc: Exception):
+    """See `app.api.v1.sales.opportunities._reraise` - same contract, same reason
+    (Phase 3 fix S1): a bare `str(exc)` on an unexpected error is a SQL/psycopg
+    string, which a portal-facing 500 must not leak.
+    """
     db.rollback()
-    raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+    if hasattr(exc, "status_code"):
+        raise exc
+    logger.error("Unexpected error in portal sales opportunity route: %s", exc, exc_info=True)
+    raise handle_internal_error()
 
 
 @router.get("/sales-opportunities")

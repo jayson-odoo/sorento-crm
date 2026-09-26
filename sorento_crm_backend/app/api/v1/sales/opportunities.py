@@ -5,6 +5,7 @@ the worker's event loop (LESSONS-LEARNT).
 """
 from __future__ import annotations
 
+import logging
 from datetime import date as DateType
 from typing import Optional
 
@@ -29,6 +30,7 @@ from app.services.sales import team_service
 from app.services.uuid_path_param import validate_uuid_path
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 VIEW = "sales.opportunities.view"
 ADD = "sales.opportunities.add"
@@ -37,8 +39,17 @@ DELETE = "sales.opportunities.delete"
 
 
 def _reraise(db: Session, exc: Exception):
+    """An AppException/HTTPException (a deliberate, already-shaped response) is
+    re-raised as-is. Anything else is unexpected - log it with the real text server
+    side, but never put that text in the response body (Phase 3 fix S1): a bare
+    `str(exc)` on a DB error is a SQL/psycopg string, which is exactly the kind of
+    detail an internal-error response must not leak to the caller.
+    """
     db.rollback()
-    raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+    if hasattr(exc, "status_code"):
+        raise exc
+    logger.error("Unexpected error in sales opportunities route: %s", exc, exc_info=True)
+    raise handle_internal_error()
 
 
 def _stamp_actor(user: dict) -> None:
