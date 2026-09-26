@@ -63,6 +63,8 @@ class BrandBase(BaseModel):
     # is bought locally by CS and never raises an Order Inquiry. Default true so
     # nothing changes until an admin flips it.
     flows_to_purchasing: bool = True
+    # Owner brief W5 on PR #833: the chatbot's default brand (one per company).
+    is_chatbot_default: bool = False
 
 
 class BrandCreate(BrandBase):
@@ -78,6 +80,7 @@ class BrandUpdate(BaseModel):
     is_active: Optional[bool] = None
     access_levels: Optional[list[str]] = None
     flows_to_purchasing: Optional[bool] = None
+    is_chatbot_default: Optional[bool] = None
 
 
 class BrandResponse(BrandBase):

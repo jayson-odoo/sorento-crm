@@ -106,6 +106,7 @@ def test_the_body_runs_again_on_a_database_that_already_has_the_column(db):
     db.execute(text(f"ALTER TABLE brands ADD COLUMN IF NOT EXISTS {_COLUMN} BOOLEAN NOT NULL DEFAULT false"))
     company = _company(db)
     sorento = _brand(db, "Sorento", company_id=company)
+    _brand(db, "SORENTO ", company_id=company)  # a second spelling of the same name
 
     _run(db)
     _run(db)

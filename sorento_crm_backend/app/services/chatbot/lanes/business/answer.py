@@ -2619,6 +2619,7 @@ def build_set_header(
     not_understood: Any = None,
     offset: int = 0,
     previous_total: int | None = None,
+    other_brands: Any = None,
 ) -> str:
     """AC-1316: "<qualifying_total> <set noun> have <predicate noun>." - the counted set's
     own line, ahead of the rows. No paging (owner ruling, 26 Sep 2026: no "Showing 5", no
@@ -2647,6 +2648,15 @@ def build_set_header(
     if previous_total and previous_total != qualifying_total:
         # W4: the page re-counted and the set moved since the question; say so.
         header += f" It was {previous_total:,} when you asked."
+    # W5: the default brand answered first; the other brands' counts, so the customer
+    # can name one.
+    others = [
+        f"{jsc.js_string(jsc.get(o, 'brand')).strip()} {int(jsc.get(o, 'count') or 0):,}"
+        for o in jsc.array(other_brands)
+        if jsc.js_string(jsc.get(o, "brand")).strip() and jsc.get(o, "count")
+    ]
+    if others:
+        header += f" Other brands: {', '.join(others)}, name one to see them."
     if offset and shown > 0:
         # W4: "another N" continues the list; the numbers say where.
         header += f" Here are {offset + 1} to {offset + shown}."

@@ -2780,6 +2780,8 @@ def resolve_reference_post(
             # The stock leg counts only the locations the asking contact's own
             # stock visibility policy allows, as the stock tool answers them.
             stock_policy=_stock_policy_for(db, payload) if require.get("stock") else None,
+            # W5: no brand named -> the chatbot default brand's set first.
+            prefer_default_brand=True,
         )
         # One nested block, not top-level scalars: n8n item-mutation chains
         # persist top-level keys across nodes. And never inside `by_entity_type`,
@@ -2836,12 +2838,15 @@ def resolve_reference_post(
             ]
         if outcome.get("row_labels"):
             result["predicate"]["row_labels"] = outcome["row_labels"]
+        if outcome.get("other_brands"):
+            result["predicate"]["other_brands"] = outcome["other_brands"]
         # W4: what a page of this set replays - the bound specs, the brand and the ids
         # LOOKUP matched (the other half of the union) - so the page counts the same set.
         if outcome["qualifying_total"]:
             result["predicate"]["set_key"] = {
                 "specs": outcome.get("set_specs") or [],
                 "brand": outcome.get("brand"),
+                "brand_default": bool(outcome.get("brand_default")),
                 "product_ids": lookup_ids[:_SET_ID_CAP],
             }
         _emit_spec_matches(result, outcome["candidates"], payload.query or "")

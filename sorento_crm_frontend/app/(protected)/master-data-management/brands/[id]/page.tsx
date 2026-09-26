@@ -41,6 +41,7 @@ interface Draft {
   is_active: boolean;
   access_levels: string[];
   flows_to_purchasing: boolean;
+  is_chatbot_default: boolean;
 }
 
 const Empty = ({ children = 'Not set' }: { children?: string }) => (
@@ -139,6 +140,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
       is_active: brand.is_active,
       access_levels: brand.access_levels ?? [],
       flows_to_purchasing: brand.flows_to_purchasing,
+      is_chatbot_default: brand.is_chatbot_default ?? false,
     });
     setEditing(true);
   };
@@ -159,6 +161,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
         is_active: draft.is_active,
         access_levels: draft.access_levels,
         flows_to_purchasing: draft.flows_to_purchasing,
+        is_chatbot_default: draft.is_chatbot_default,
       },
     });
     cancelEdit();
@@ -308,6 +311,22 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
                       }
                     />
                   ) : brand.flows_to_purchasing ? (
+                    'Yes'
+                  ) : (
+                    'No'
+                  )}
+                </Field>
+
+                <Field label="Chatbot default brand" htmlFor="brand-chatbot-default">
+                  {editing && draft ? (
+                    <Switch
+                      id="brand-chatbot-default"
+                      checked={draft.is_chatbot_default}
+                      onCheckedChange={(value) =>
+                        setDraft({ ...draft, is_chatbot_default: value })
+                      }
+                    />
+                  ) : brand.is_chatbot_default ? (
                     'Yes'
                   ) : (
                     'No'

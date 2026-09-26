@@ -2213,6 +2213,7 @@ def set_page_carry(
     if has_description:
         key["specs"] = list(described.get("specs") or [])
         key["brand"] = described.get("brand")
+        key["brand_default"] = bool(described.get("brand_default"))
         key["product_ids"] = list(described.get("product_ids") or [])
     return {"set_key": key}
 
@@ -2298,6 +2299,7 @@ def page_the_set(
         limit=answer_mod.SET_ID_CAP,
         product_ids=(list(key.get("product_ids") or []) or None) if described else None,
         brand=key.get("brand") if described else None,
+        brand_is_default=bool(key.get("brand_default")) if described else False,
         access_levels=entitled,
         stock_policy=stock_policy,
     )

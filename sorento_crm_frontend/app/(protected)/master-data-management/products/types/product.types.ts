@@ -171,6 +171,9 @@ export interface Brand {
   // A brand marked false is bought locally by CS and never raises an Order
   // Inquiry - PLAN-brand-flows-to-purchasing.md.
   flows_to_purchasing: boolean;
+  // The brand the chatbot answers first when a customer names no brand (one per
+  // company; setting one clears the others). Owner brief W5 on PR #833.
+  is_chatbot_default?: boolean;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;

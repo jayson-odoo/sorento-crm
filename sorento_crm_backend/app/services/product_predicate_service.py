@@ -609,7 +609,9 @@ def _sentence_case(text: str) -> str:
     return text[:1].upper() + text[1:].lower() if text else text
 
 
-def describe_set(db: Session, *, brand: str | None, membership: dict[str, list[str]]) -> list[dict[str, str]]:
+def describe_set(
+    db: Session, *, brand: str | None, membership: dict[str, list[str]], brand_is_default: bool = False
+) -> list[dict[str, str]]:
     """The described set in plain words, one `{key, label, value}` per binding, in the
     order the header says them: Brand, Product type, then every other spec key.
 
@@ -620,7 +622,8 @@ def describe_set(db: Session, *, brand: str | None, membership: dict[str, list[s
 
     out: list[dict[str, str]] = []
     if brand:
-        out.append({"key": "brand", "label": "Brand", "value": _display_name(brand)})
+        value = _display_name(brand) + (" (default)" if brand_is_default else "")
+        out.append({"key": "brand", "label": "Brand", "value": value})
     classes = [c for c in membership.get("class") or [] if c]
     if classes:
         out.append({"key": "class", "label": "Product type", "value": " or ".join(_sentence_case(c) for c in classes)})
@@ -722,6 +725,8 @@ def resolve_product_set(
     brand: str | None = None,
     access_levels: list[str] | None = None,
     stock_policy: Any = None,
+    prefer_default_brand: bool = False,
+    brand_is_default: bool = False,
 ) -> dict:
     """(described set) ∩ (require legs), with an honest count.
 
@@ -885,6 +890,35 @@ def resolve_product_set(
                 func.lower(Brand.brand_name) == brand.strip().lower()
             )
         return query
+
+    # W5 (owner brief on PR #833): a customer who names no brand gets the company's
+    # chatbot default brand (`Brand.is_chatbot_default`, Master Data > Brands) first, and
+    # the other brands' counts beside it. A default the set does not reach at all leaves
+    # the set whole; a brand the customer named always wins.
+    other_brands: list[dict[str, Any]] = []
+    if prefer_default_brand and not brand:
+        default_row = (
+            db.query(Brand)
+            .filter(Brand.is_chatbot_default.is_(True), Brand.is_active.is_(True))
+            .order_by(Brand.brand_name)
+            .first()
+        )
+        if default_row is not None:
+            per_brand = (
+                _base(db.query(Brand.brand_name, func.count(func.distinct(family))))
+                .join(Brand, Brand.id == Product.brand_id)
+                .group_by(Brand.brand_name)
+                .all()
+            )
+            counts = {name: int(n) for name, n in per_brand if n}
+            if counts.get(default_row.brand_name):
+                brand = default_row.brand_name
+                brand_is_default = True
+                other_brands = [
+                    {"brand": _display_name(name), "count": n}
+                    for name, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+                    if name != default_row.brand_name
+                ]
 
     qualifying_total = _base(db.query(func.count(func.distinct(family)))).scalar() or 0
 
@@ -1053,8 +1087,14 @@ def resolve_product_set(
     # W1: the brand the set is scoped to, as the brands table spells it.
     if brand:
         outcome["brand"] = brand
+    if brand and brand_is_default:
+        outcome["brand_default"] = True
+    if other_brands:
+        outcome["other_brands"] = other_brands
     # W2: what was identified, for the header. Present only when something was.
-    description = describe_set(db, brand=brand, membership=verdict.get("membership") or {})
+    description = describe_set(
+        db, brand=brand, membership=verdict.get("membership") or {}, brand_is_default=bool(brand and brand_is_default)
+    )
     if description:
         outcome["description"] = description
     # W4: the set's own description, exactly as counted, so a page of it replays the

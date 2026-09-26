@@ -97,7 +97,7 @@ describe('Brand detail - Chatbot default brand (W5)', () => {
     await renderDetail();
 
     const page = (document.body.textContent ?? '').replace(/\s+/g, ' ');
-    expect(page).toContain('Chatbot default brand Yes');
+    expect(page).toMatch(/Chatbot default brand\s*Yes/);
   });
 
   it('view mode says No for any other brand', async () => {
@@ -105,7 +105,7 @@ describe('Brand detail - Chatbot default brand (W5)', () => {
     await renderDetail();
 
     const page = (document.body.textContent ?? '').replace(/\s+/g, ' ');
-    expect(page).toContain('Chatbot default brand No');
+    expect(page).toMatch(/Chatbot default brand\s*No/);
   });
 
   it('edit mode: the switch reflects the stored value', async () => {

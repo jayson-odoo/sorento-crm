@@ -2701,6 +2701,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             not_understood=jsc.get(predicate, "unrecognized_terms"),
             offset=offset,
             previous_total=jsc.get(predicate, "previous_total"),
+            other_brands=jsc.get(predicate, "other_brands"),
         )
         set_header = header
         msg = header if set_withheld else f"{header}\n{msg}"

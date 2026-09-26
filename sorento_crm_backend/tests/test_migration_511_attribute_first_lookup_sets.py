@@ -67,7 +67,11 @@ def test_the_revision_id_is_under_32_characters_and_chains_onto_head():
     assert module.down_revision in known_revisions, (module.down_revision, sorted(known_revisions))
 
     heads = script_dir.get_heads()
-    assert list(heads) == [module.revision], (heads, module.revision)
+    assert len(heads) == 1, heads
+    # bcd_0001_brand_chatbot_default (owner brief W5, same lane) now sits on top of 511;
+    # 511 must still be on the one chain that head walks.
+    chain = {rev.revision for rev in script_dir.iterate_revisions(heads[0], "base")}
+    assert module.revision in chain, (heads, module.revision)
 
 
 def _set_rows(db):
