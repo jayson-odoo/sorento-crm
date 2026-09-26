@@ -139,6 +139,22 @@ def _only_task_slots(
     return True
 
 
+def _named_slots(task: "Task", verdict: dict[str, Any]) -> tuple["Slot", ...]:
+    """The task's slots this message named, in the task's own order."""
+    codes: set[str] = set()
+    for entity in verdict.get("entities") or []:
+        if isinstance(entity, dict):
+            codes |= _entity_codes(entity)
+    return tuple(
+        slot
+        for slot in task.slots
+        if any(
+            isinstance(value, str) and value.strip().casefold() in codes
+            for value in (slot.key, slot.label)
+        )
+    )
+
+
 #: SEC-S2 (#1118 security review, round 1): how many slots one stock task may carry,
 #: and how many of them a sentence enumerates before it counts the rest. An ask that
 #: names no product at all used to open a task with one slot per CATALOGUE row (the
@@ -509,6 +525,13 @@ def run(
             # (3) resume: the task's own topic, named again with nothing new. Only
             # what is still missing is asked; nothing is asked twice.
             resumed = replace(task, status=OPEN, touched_at_turn=turn_no)
+            named = _named_slots(task, verdict)
+            if named and len(named) < len(task.slots):
+                # Owner hand test 26 Sep, slice 3 (T5): "check stock SRTWC286-SH-UF"
+                # over a ten-product question names ONE of them - the dealer has
+                # picked, so the task narrows to what they named and asks only that.
+                resumed = replace(resumed, slots=named)
+                rules.append(f"task_narrowed_{task.kind}")
             out.append(resumed)
             rules.append(f"task_resumed_{task.kind}")
             if question is None:
