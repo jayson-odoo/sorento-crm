@@ -1,9 +1,13 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
+import {
+  ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from '@tanstack/react-table';
 import { Plus, UserRound, UsersRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTable } from '@/components/ui/card';
@@ -19,7 +23,10 @@ import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { PageHeader } from '@/components/common/PageHeader';
 import { PillOverflow } from '@/components/common/PillOverflow';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import {
+  isSearchInFlight,
+  useDebouncedSearch,
+} from '@/hooks/useDebouncedSearch';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { todayMalaysiaYyyyMmDd } from '@/lib/helpers';
 import { useSalesTargets } from '../hooks/useSalesTargets';
@@ -31,7 +38,10 @@ import {
   formatPct,
   scopeSummary,
 } from '../lib/format';
-import type { SalesTargetRow, TargetSubjectKind } from '../types/salesTarget.types';
+import type {
+  SalesTargetRow,
+  TargetSubjectKind,
+} from '../types/salesTarget.types';
 import SetTargetModal from './SetTargetModal';
 
 type Keyed = SalesTargetRow & { subject_key: string; end_date: string | null };
@@ -42,7 +52,11 @@ interface ModalState {
   subjectId?: string;
 }
 
-const TABS: { value: TargetSubjectKind; label: string; icon: typeof UsersRound }[] = [
+const TABS: {
+  value: TargetSubjectKind;
+  label: string;
+  icon: typeof UsersRound;
+}[] = [
   { value: 'team', label: 'Teams', icon: UsersRound },
   { value: 'agent', label: 'Agents', icon: UserRound },
 ];
@@ -56,11 +70,17 @@ function writeUrl(next: Record<string, string>) {
     else params.delete(key);
   }
   const search = params.toString();
-  window.history.replaceState(window.history.state, '', `${window.location.pathname}${search ? `?${search}` : ''}`);
+  window.history.replaceState(
+    window.history.state,
+    '',
+    `${window.location.pathname}${search ? `?${search}` : ''}`,
+  );
 }
 
 function subjectId(row: SalesTargetRow): string {
-  return (row.subject_kind === 'team' ? row.sales_team_id : row.sales_agent_id) ?? '';
+  return (
+    (row.subject_kind === 'team' ? row.sales_team_id : row.sales_agent_id) ?? ''
+  );
 }
 
 /** Every target of a line, one per target (a split target has one period on the date). */
@@ -73,7 +93,10 @@ function MeasuresCell({ row }: { row: SalesTargetRow }) {
   const items = [
     { key: 'metric', label: METRIC_LABEL[row.metric] },
     { key: 'basis', label: row.basis ? BASIS_LABEL[row.basis] : '' },
-    { key: 'scope', label: scopeSummary(row.product_scope, row.scope_labels.length) },
+    {
+      key: 'scope',
+      label: scopeSummary(row.product_scope, row.scope_labels.length),
+    },
   ].filter((i) => i.label);
   return (
     <PillOverflow
@@ -85,7 +108,11 @@ function MeasuresCell({ row }: { row: SalesTargetRow }) {
             <li key={i.key}>{i.label}</li>
           ))}
           {row.scope_labels.map((label) => (
-            <li key={label} className="truncate text-muted-foreground" title={label}>
+            <li
+              key={label}
+              className="truncate text-muted-foreground"
+              title={label}
+            >
               {label}
             </li>
           ))}
@@ -109,7 +136,9 @@ function MeasuresCell({ row }: { row: SalesTargetRow }) {
 export default function SalesTargetsView() {
   const params = useSearchParams();
   const canAdd = useHasPermission('sales.targets.add');
-  const [tab, setTab] = useState<TargetSubjectKind>(params.get('tab') === 'agent' ? 'agent' : 'team');
+  const [tab, setTab] = useState<TargetSubjectKind>(
+    params.get('tab') === 'agent' ? 'agent' : 'team',
+  );
   const [on, setOn] = useState(params.get('on') || todayMalaysiaYyyyMmDd());
   const [teamFilter, setTeamFilter] = useState(params.get('team') ?? '');
   const [modal, setModal] = useState<ModalState | null>(null);
@@ -126,9 +155,13 @@ export default function SalesTargetsView() {
     ...(tab === 'agent' && teamFilter ? { salesTeamId: teamFilter } : {}),
     ...(debouncedSearch ? { query: debouncedSearch } : {}),
   };
-  const { data, isLoading, isFetching, isError, error } = useSalesTargets(listParams);
+  const { data, isLoading, isFetching, isError, error } =
+    useSalesTargets(listParams);
   // The Team filter's choices: the teams on the landing's own list (usually already cached).
-  const { data: teamList } = useSalesTargets({ on, subject: 'team' }, tab === 'agent');
+  const { data: teamList } = useSalesTargets(
+    { on, subject: 'team' },
+    tab === 'agent',
+  );
 
   const lines = useMemo<Line[]>(
     () =>
@@ -144,18 +177,24 @@ export default function SalesTargetsView() {
   const teamOptions = useMemo(() => {
     const seen = new Map<string, string>();
     for (const row of teamList?.rows ?? []) {
-      if (row.sales_team_id && !seen.has(row.sales_team_id)) seen.set(row.sales_team_id, row.subject_label);
+      if (row.sales_team_id && !seen.has(row.sales_team_id))
+        seen.set(row.sales_team_id, row.subject_label);
     }
     return [
       { value: 'none', label: 'No team' },
-      ...Array.from(seen, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label)),
+      ...Array.from(seen, ([value, label]) => ({ value, label })).sort((a, b) =>
+        a.label.localeCompare(b.label),
+      ),
     ];
   }, [teamList]);
 
   const changeTab = (value: string) => {
     const next: TargetSubjectKind = value === 'agent' ? 'agent' : 'team';
     setTab(next);
-    writeUrl({ tab: next === 'agent' ? 'agent' : '', team: next === 'agent' ? teamFilter : '' });
+    writeUrl({
+      tab: next === 'agent' ? 'agent' : '',
+      team: next === 'agent' ? teamFilter : '',
+    });
   };
   const changeOn = (value: string) => {
     if (!value) return;
@@ -171,204 +210,6 @@ export default function SalesTargetsView() {
     setTeamFilter('none');
     writeUrl({ tab: 'agent', team: 'none' });
   };
-
-  const columns = useMemo<ColumnDef<Line>[]>(() => {
-    const subjectColumn: ColumnDef<Line> = {
-      id: 'subject',
-      header: ({ column }) => (
-        <DataGridColumnHeader title={tab === 'team' ? 'Team' : 'Agent'} column={column} />
-      ),
-      cell: ({ row }) => {
-        const { primary } = row.original;
-        return (
-          <span className="flex min-w-0 items-center gap-2">
-            <span
-              className={primary.left_on ? 'truncate text-muted-foreground' : 'truncate font-medium'}
-              title={primary.subject_label}
-            >
-              {primary.subject_label}
-            </span>
-          </span>
-        );
-      },
-      size: tab === 'team' ? 200 : 240,
-      meta: { headerTitle: tab === 'team' ? 'Team' : 'Agent', skeleton: <Skeleton className="h-4 w-28" /> },
-    };
-    const secondColumn: ColumnDef<Line> =
-      tab === 'team'
-        ? {
-            id: 'agents',
-            header: ({ column }) => <DataGridColumnHeader title="Agents" column={column} />,
-            cell: ({ row }) => {
-              const members = row.original.primary.members ?? [];
-              return members.length ? (
-                <PillOverflow
-                  ariaLabel={`Agents in ${row.original.primary.subject_label}`}
-                  items={members.map((m) => ({ key: m.sales_agent_id, label: m.label }))}
-                  renderPopover={(items) => (
-                    <ul className="flex flex-col gap-1 text-sm">
-                      {items.map((i) => (
-                        <li key={i.key}>{i.label}</li>
-                      ))}
-                    </ul>
-                  )}
-                />
-              ) : (
-                <span className="text-muted-foreground">No agents</span>
-              );
-            },
-            size: 240,
-            enableSorting: false,
-            meta: { headerTitle: 'Agents', skeleton: <Skeleton className="h-5 w-32" /> },
-          }
-        : {
-            id: 'team',
-            header: ({ column }) => <DataGridColumnHeader title="Team" column={column} />,
-            cell: ({ row }) => {
-              const name = row.original.primary.team_name;
-              return name ? (
-                <span className="block truncate" title={name}>
-                  {name}
-                </span>
-              ) : (
-                <span className="text-muted-foreground">No team</span>
-              );
-            },
-            size: 160,
-            enableSorting: false,
-            meta: { headerTitle: 'Team', skeleton: <Skeleton className="h-4 w-20" /> },
-          };
-
-    return [
-      subjectColumn,
-      secondColumn,
-      {
-        id: 'targets',
-        header: ({ column }) => <DataGridColumnHeader title="Targets" column={column} />,
-        cell: ({ row }) => {
-          const line = row.original;
-          const targets = targetsOf(line);
-          if (targets.length === 0) {
-            return (
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="text-muted-foreground">No target</span>
-                {canAdd ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setModal({ kind: line.primary.subject_kind, subjectId: line.subject_key });
-                    }}
-                  >
-                    Set target
-                  </Button>
-                ) : null}
-              </span>
-            );
-          }
-          if (targets.length === 1) {
-            return (
-              <Link
-                href={`/sales/targets/${targets[0].target_id}`}
-                onClick={(event) => event.stopPropagation()}
-                className="block truncate text-primary hover:underline"
-                title={targets[0].name ?? undefined}
-              >
-                {targets[0].name}
-              </Link>
-            );
-          }
-          return (
-            <PillOverflow
-              ariaLabel={`Targets of ${line.primary.subject_label}`}
-              items={targets.map((t) => ({ key: t.target_id as string, label: t.name ?? '' }))}
-              renderPopover={() => (
-                <ul className="flex flex-col gap-1 text-sm">
-                  {targets.map((t) => (
-                    <li key={t.target_id} className="flex min-w-0 items-center justify-between gap-3">
-                      <Link
-                        href={`/sales/targets/${t.target_id}`}
-                        className="truncate text-primary hover:underline"
-                        title={t.name ?? undefined}
-                      >
-                        {t.name}
-                      </Link>
-                      <span className="shrink-0 tabular-nums">{formatPct(t.achieved_pct)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            />
-          );
-        },
-        size: 240,
-        enableSorting: false,
-        meta: { headerTitle: 'Targets', skeleton: <Skeleton className="h-5 w-32" /> },
-      },
-      {
-        id: 'measures',
-        header: ({ column }) => <DataGridColumnHeader title="Measures" column={column} />,
-        cell: ({ row }) => <MeasuresCell row={row.original.primary} />,
-        size: 200,
-        enableSorting: false,
-        meta: { headerTitle: 'Measures', skeleton: <Skeleton className="h-5 w-24" /> },
-      },
-      {
-        id: 'target',
-        header: ({ column }) => <DataGridColumnHeader title="Target" column={column} />,
-        cell: ({ row }) => (
-          <span className="block truncate text-end tabular-nums">{formatFigure(row.original.primary.target_value)}</span>
-        ),
-        size: 120,
-        enableSorting: false,
-        meta: { headerTitle: 'Target', skeleton: <Skeleton className="h-4 w-16" /> },
-      },
-      {
-        id: 'achieved',
-        header: ({ column }) => <DataGridColumnHeader title="Achieved" column={column} />,
-        cell: ({ row }) => (
-          <span className="block truncate text-end tabular-nums">{formatFigure(row.original.primary.achieved_value)}</span>
-        ),
-        size: 120,
-        enableSorting: false,
-        meta: { headerTitle: 'Achieved', skeleton: <Skeleton className="h-4 w-16" /> },
-      },
-      {
-        id: 'pct',
-        header: ({ column }) => <DataGridColumnHeader title="%" column={column} />,
-        cell: ({ row }) => {
-          const pct = row.original.primary.achieved_pct;
-          return (
-            <span
-              className={
-                pct !== null && pct >= 100
-                  ? 'block text-end font-medium tabular-nums text-success'
-                  : 'block text-end tabular-nums'
-              }
-            >
-              {formatPct(pct)}
-            </span>
-          );
-        },
-        size: 90,
-        enableSorting: false,
-        meta: { headerTitle: '%', skeleton: <Skeleton className="h-4 w-10" /> },
-      },
-    ];
-  }, [tab, canAdd]);
-
-  const table = useReactTable({
-    columns,
-    data: lines,
-    getRowId: (row) => row.subject_key,
-    getCoreRowModel: getCoreRowModel(),
-    // The server orders subjects by name, and the first target by the fold rule.
-    enableSorting: false,
-    columnResizeMode: 'onChange',
-    enableColumnResizing: true,
-  });
 
   const headerAction = canAdd ? (
     <Button variant="primary" onClick={() => setModal({ kind: tab })}>
@@ -393,7 +234,11 @@ export default function SalesTargetsView() {
           <Tabs value={tab} onValueChange={changeTab}>
             <TabsList>
               {TABS.map((t) => (
-                <TabsTrigger key={t.value} value={t.value} onClick={() => changeTab(t.value)}>
+                <TabsTrigger
+                  key={t.value}
+                  value={t.value}
+                  onClick={() => changeTab(t.value)}
+                >
                   <t.icon className="size-4" />
                   {t.label}
                 </TabsTrigger>
@@ -402,26 +247,29 @@ export default function SalesTargetsView() {
           </Tabs>
           {isError ? (
             <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-              {error instanceof Error ? error.message : 'Failed to load targets.'}
+              {error instanceof Error
+                ? error.message
+                : 'Failed to load targets.'}
             </div>
           ) : null}
-          <DataGrid
-            table={table}
-            recordCount={lines.length}
+          {/* One grid per tab (keyed): the two tabs have different columns, and a shared table
+              instance carried the Teams tab's column order into the Agents tab's saved layout. */}
+          <TargetsGrid
+            key={tab}
+            tab={tab}
+            lines={lines}
+            on={on}
+            canAdd={canAdd}
             isLoading={isLoading}
-            listingKey={`sales.targets.view::${tab}`}
-            tableLayout={{ width: 'fixed', columnsResizable: true }}
             emptyMessage={emptyMessage}
-            rowHref={(line) =>
-              line.primary.subject_kind === 'team'
-                ? `/sales/teams/${line.subject_key}?on=${on}`
-                : (targetsOf(line)[0]?.target_id ? `/sales/targets/${targetsOf(line)[0].target_id}` : '')
-            }
-          >
-            <Card>
+            onSetTarget={setModal}
+            toolbar={
               <CardHeader className="flex flex-wrap items-end gap-3 py-3">
                 <div className="flex flex-col gap-1">
-                  <Label htmlFor="targets-active-on" className="text-xs text-muted-foreground">
+                  <Label
+                    htmlFor="targets-active-on"
+                    className="text-xs text-muted-foreground"
+                  >
                     Active on
                   </Label>
                   <Input
@@ -435,13 +283,24 @@ export default function SalesTargetsView() {
                 <ListSearchInput
                   value={searchQuery}
                   onChange={setSearchQuery}
-                  isSettling={isSearchInFlight(isSettling, isFetching, debouncedSearch)}
-                  placeholder={tab === 'team' ? 'Search teams or targets...' : 'Search agents or targets...'}
+                  isSettling={isSearchInFlight(
+                    isSettling,
+                    isFetching,
+                    debouncedSearch,
+                  )}
+                  placeholder={
+                    tab === 'team'
+                      ? 'Search teams or targets...'
+                      : 'Search agents or targets...'
+                  }
                   className="w-full sm:w-64"
                 />
                 {tab === 'agent' ? (
                   <div className="flex flex-col gap-1">
-                    <Label htmlFor="targets-team-filter" className="text-xs text-muted-foreground">
+                    <Label
+                      htmlFor="targets-team-filter"
+                      className="text-xs text-muted-foreground"
+                    >
                       Team
                     </Label>
                     <SearchableSelect
@@ -456,31 +315,32 @@ export default function SalesTargetsView() {
                   </div>
                 ) : null}
               </CardHeader>
-              <CardTable>
-                <DataGridTable />
-              </CardTable>
-              {tab === 'team' && data ? (
-                <div className="flex flex-col divide-y border-t text-sm">
-                  <button
-                    type="button"
-                    onClick={showNoTeam}
-                    className="flex min-w-0 items-center justify-between gap-3 px-4 py-2.5 text-start hover:bg-muted/40"
-                  >
-                    <span className="font-medium">No team</span>
-                    <span className="truncate text-muted-foreground">
-                      {`${data.no_team_count} agent${data.no_team_count === 1 ? '' : 's'}`}
-                    </span>
-                  </button>
-                  <div className="flex min-w-0 items-center justify-between gap-3 px-4 py-2.5">
-                    <span className="font-medium">Unassigned</span>
-                    <span className="truncate tabular-nums text-muted-foreground">
-                      {`RM ${formatFigure(data.unassigned_amount)}`}
-                    </span>
+            }
+            footer={
+              <>
+                {tab === 'team' && data ? (
+                  <div className="flex flex-col divide-y border-t text-sm">
+                    <button
+                      type="button"
+                      onClick={showNoTeam}
+                      className="flex min-w-0 items-center justify-between gap-3 px-4 py-2.5 text-start hover:bg-muted/40"
+                    >
+                      <span className="font-medium">No team</span>
+                      <span className="truncate text-muted-foreground">
+                        {`${data.no_team_count} agent${data.no_team_count === 1 ? '' : 's'}`}
+                      </span>
+                    </button>
+                    <div className="flex min-w-0 items-center justify-between gap-3 px-4 py-2.5">
+                      <span className="font-medium">Unassigned</span>
+                      <span className="truncate tabular-nums text-muted-foreground">
+                        {`RM ${formatFigure(data.unassigned_amount)}`}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              ) : null}
-            </Card>
-          </DataGrid>
+                ) : null}
+              </>
+            }
+          />
         </div>
       </Container>
       {modal ? (
@@ -492,5 +352,315 @@ export default function SalesTargetsView() {
         />
       ) : null}
     </>
+  );
+}
+
+/**
+ * The Targets grid for one tab, one line per subject (S1-21). Its own component so each tab
+ * gets its own table state (column order, sizes), saved under its own listing key.
+ */
+function TargetsGrid({
+  tab,
+  lines,
+  on,
+  canAdd,
+  isLoading,
+  emptyMessage,
+  onSetTarget,
+  toolbar,
+  footer,
+}: {
+  tab: TargetSubjectKind;
+  lines: Line[];
+  on: string;
+  canAdd: boolean;
+  isLoading: boolean;
+  emptyMessage: string;
+  onSetTarget: (modal: ModalState) => void;
+  toolbar: ReactNode;
+  footer: ReactNode;
+}) {
+  const columns = useMemo<ColumnDef<Line>[]>(() => {
+    const subjectColumn: ColumnDef<Line> = {
+      id: 'subject',
+      header: ({ column }) => (
+        <DataGridColumnHeader
+          title={tab === 'team' ? 'Team' : 'Agent'}
+          column={column}
+        />
+      ),
+      cell: ({ row }) => {
+        const { primary } = row.original;
+        return (
+          <span className="flex min-w-0 items-center gap-2">
+            <span
+              className={
+                primary.left_on
+                  ? 'truncate text-muted-foreground'
+                  : 'truncate font-medium'
+              }
+              title={primary.subject_label}
+            >
+              {primary.subject_label}
+            </span>
+          </span>
+        );
+      },
+      size: tab === 'team' ? 150 : 200,
+      meta: {
+        headerTitle: tab === 'team' ? 'Team' : 'Agent',
+        skeleton: <Skeleton className="h-4 w-28" />,
+      },
+    };
+    const secondColumn: ColumnDef<Line> =
+      tab === 'team'
+        ? {
+            id: 'agents',
+            header: ({ column }) => (
+              <DataGridColumnHeader title="Agents" column={column} />
+            ),
+            cell: ({ row }) => {
+              const members = row.original.primary.members ?? [];
+              return members.length ? (
+                <PillOverflow
+                  ariaLabel={`Agents in ${row.original.primary.subject_label}`}
+                  items={members.map((m) => ({
+                    key: m.sales_agent_id,
+                    label: m.label,
+                  }))}
+                  renderPopover={(items) => (
+                    <ul className="flex flex-col gap-1 text-sm">
+                      {items.map((i) => (
+                        <li key={i.key}>{i.label}</li>
+                      ))}
+                    </ul>
+                  )}
+                />
+              ) : (
+                <span className="text-muted-foreground">No agents</span>
+              );
+            },
+            size: 170,
+            enableSorting: false,
+            meta: {
+              headerTitle: 'Agents',
+              skeleton: <Skeleton className="h-5 w-32" />,
+            },
+          }
+        : {
+            id: 'team',
+            header: ({ column }) => (
+              <DataGridColumnHeader title="Team" column={column} />
+            ),
+            cell: ({ row }) => {
+              const name = row.original.primary.team_name;
+              return name ? (
+                <span className="block truncate" title={name}>
+                  {name}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">No team</span>
+              );
+            },
+            size: 120,
+            enableSorting: false,
+            meta: {
+              headerTitle: 'Team',
+              skeleton: <Skeleton className="h-4 w-20" />,
+            },
+          };
+
+    return [
+      subjectColumn,
+      secondColumn,
+      {
+        id: 'targets',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Targets" column={column} />
+        ),
+        cell: ({ row }) => {
+          const line = row.original;
+          const targets = targetsOf(line);
+          if (targets.length === 0) {
+            return (
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="text-muted-foreground">No target</span>
+                {canAdd ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onSetTarget({
+                        kind: line.primary.subject_kind,
+                        subjectId: line.subject_key,
+                      });
+                    }}
+                  >
+                    Set target
+                  </Button>
+                ) : null}
+              </span>
+            );
+          }
+          if (targets.length === 1) {
+            return (
+              <Link
+                href={`/sales/targets/${targets[0].target_id}`}
+                onClick={(event) => event.stopPropagation()}
+                className="block truncate text-primary hover:underline"
+                title={targets[0].name ?? undefined}
+              >
+                {targets[0].name}
+              </Link>
+            );
+          }
+          return (
+            <PillOverflow
+              ariaLabel={`Targets of ${line.primary.subject_label}`}
+              items={targets.map((t) => ({
+                key: t.target_id as string,
+                label: t.name ?? '',
+              }))}
+              renderPopover={() => (
+                <ul className="flex flex-col gap-1 text-sm">
+                  {targets.map((t) => (
+                    <li
+                      key={t.target_id}
+                      className="flex min-w-0 items-center justify-between gap-3"
+                    >
+                      <Link
+                        href={`/sales/targets/${t.target_id}`}
+                        className="truncate text-primary hover:underline"
+                        title={t.name ?? undefined}
+                      >
+                        {t.name}
+                      </Link>
+                      <span className="shrink-0 tabular-nums">
+                        {formatPct(t.achieved_pct)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            />
+          );
+        },
+        size: 160,
+        enableSorting: false,
+        meta: {
+          headerTitle: 'Targets',
+          skeleton: <Skeleton className="h-5 w-32" />,
+        },
+      },
+      {
+        id: 'measures',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Measures" column={column} />
+        ),
+        cell: ({ row }) => <MeasuresCell row={row.original.primary} />,
+        size: 190,
+        enableSorting: false,
+        meta: {
+          headerTitle: 'Measures',
+          skeleton: <Skeleton className="h-5 w-24" />,
+        },
+      },
+      {
+        id: 'target',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Target" column={column} />
+        ),
+        cell: ({ row }) => (
+          <span className="block truncate text-end tabular-nums">
+            {formatFigure(row.original.primary.target_value)}
+          </span>
+        ),
+        size: 100,
+        enableSorting: false,
+        meta: {
+          headerTitle: 'Target',
+          skeleton: <Skeleton className="h-4 w-16" />,
+        },
+      },
+      {
+        id: 'achieved',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Achieved" column={column} />
+        ),
+        cell: ({ row }) => (
+          <span className="block truncate text-end tabular-nums">
+            {formatFigure(row.original.primary.achieved_value)}
+          </span>
+        ),
+        size: 100,
+        enableSorting: false,
+        meta: {
+          headerTitle: 'Achieved',
+          skeleton: <Skeleton className="h-4 w-16" />,
+        },
+      },
+      {
+        id: 'pct',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="%" column={column} />
+        ),
+        cell: ({ row }) => {
+          const pct = row.original.primary.achieved_pct;
+          return (
+            <span
+              className={
+                pct !== null && pct >= 100
+                  ? 'block text-end font-medium tabular-nums text-success'
+                  : 'block text-end tabular-nums'
+              }
+            >
+              {formatPct(pct)}
+            </span>
+          );
+        },
+        size: 70,
+        enableSorting: false,
+        meta: { headerTitle: '%', skeleton: <Skeleton className="h-4 w-10" /> },
+      },
+    ];
+  }, [tab, canAdd, onSetTarget]);
+
+  const table = useReactTable({
+    columns,
+    data: lines,
+    getRowId: (row) => row.subject_key,
+    getCoreRowModel: getCoreRowModel(),
+    // The server orders subjects by name, and the first target by the fold rule.
+    enableSorting: false,
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+  });
+
+  return (
+    <DataGrid
+      table={table}
+      recordCount={lines.length}
+      isLoading={isLoading}
+      listingKey={`sales.targets.view::${tab}`}
+      tableLayout={{ width: 'fixed', columnsResizable: true }}
+      emptyMessage={emptyMessage}
+      rowHref={(line) =>
+        line.primary.subject_kind === 'team'
+          ? `/sales/teams/${line.subject_key}?on=${on}`
+          : targetsOf(line)[0]?.target_id
+            ? `/sales/targets/${targetsOf(line)[0].target_id}`
+            : ''
+      }
+    >
+      <Card>
+        {toolbar}
+        <CardTable>
+          <DataGridTable />
+        </CardTable>
+        {footer}
+      </Card>
+    </DataGrid>
   );
 }
