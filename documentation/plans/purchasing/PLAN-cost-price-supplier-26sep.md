@@ -8,7 +8,9 @@ built; this lane is docs only (draft PR #1291).
 UAC: `cost-price-supplier-acceptance-criteria.md` (same folder; the Journey is there and every AC
 traces to a step in it).
 Mockups: `mockups/cost-price-upload-review.html`, `mockups/cost-price-verification.html`,
-`mockups/supplier-price-page.html`.
+`mockups/supplier-price-page.html`. They predate the round 2 rulings: the effective date field,
+the "Scheduled" history row and the `SRT2800-GY` to `SRT2800-GR` one-edit suggestion in them are
+superseded by section 12 (Q3, Q8) and are redrawn in Phase 1 once the owner answers.
 Classification: CORE (suppliers and the procurement base are core, `PRINCIPLES.md` "Modular
 architecture"); tables in `public`, routes under the existing `procurement` module guard.
 Companions: #1280 unified identity (draft PR #1285: the supplier login that replaces the token
@@ -560,7 +562,7 @@ parallel.
 
 ### Lane A: S1 + S2, "upload, verify, apply" (branch `feat/cost-price-change-sets`)
 
-**S1: staff upload into a pending change set.** UAC AC-S1-01 to AC-S1-24, AC-AU-01, AC-AU-02
+**S1: staff upload into a pending change set.** UAC AC-S1-01 to AC-S1-25, AC-AU-01, AC-AU-02
 (upload and submit events), AC-AU-04.
 
 - BE: migration (the two change-set tables, `supplier_price_links` created empty so Lane B needs
@@ -577,7 +579,7 @@ parallel.
   listed apart; submit refuses unresolved rows; the live price is unchanged; 375px and 1280px
   screenshots; pre-flight queries 1 to 5 answered in the PR body.
 
-**S2: verification and apply.** UAC AC-S2-01 to AC-S2-18, AC-AU-02 (return and apply events),
+**S2: verification and apply.** UAC AC-S2-01 to AC-S2-19, AC-AU-02 (return and apply events),
 AC-AU-03.
 
 - BE: decide, decide-all, return, apply (conditional update, stale check under row lock, link

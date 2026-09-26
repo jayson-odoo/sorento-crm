@@ -1,8 +1,9 @@
 # UAC: Cost price from the supplier's price list, verified before it applies (#1288)
 
-Status: draft, 26 Sep 2026. Written to the recommendations in the plan's section 12 ("Grill
-questions for the owner"); an owner answer that differs from a recommendation rewrites the ACs it
-names before Phase 1 starts. Track: full.
+Status: draft, round 2 (26 Sep 2026). Written to the owner rulings of 26 Sep 23:45 MYT for Q1, Q2,
+Q5, Q6, Q7, Q9, Q10, to the restated round 2 recommendations for Q3, Q4, Q8 (re-asked on PR
+#1291), and to the round 1 recommendations for Q11 to Q15 (plan section 12). An owner answer that
+differs from a recommendation rewrites the ACs it names before Phase 1 starts. Track: full.
 Plan: `PLAN-cost-price-supplier-26sep.md` (same folder).
 Mockups: `mockups/cost-price-upload-review.html` (S1), `mockups/cost-price-verification.html`
 (S2), `mockups/supplier-price-page.html` (S3).
@@ -18,12 +19,17 @@ Terms used below:
   staff upload, the supplier's page table, or the supplier's page upload.
 - **Line** is one row of a change set: a supplier code, what it matched, the current price and
   the proposed price.
-- **Verifier** is a Sorento user holding `procurement.cost_price_changes.verify`.
+- **Verifier** is a Sorento staff user holding `procurement.cost_price_changes.verify` (Q6
+  ruling). One verifier decides a set; the set's uploader or submitter cannot be its verifier.
+- **Purchasing roles** are the roles holding `scm.proforma_invoice.upload` today, integration
+  roles excluded (plan section 10).
 
 ## Journey
 
-Actors: Mei Ling (purchasing, holds `upload`), Kelvin (purchasing lead, holds `verify`), Mr Chen
-(sales at XIAMEN TAIYANG, no Sorento account).
+Actors: Mei Ling (purchasing, holds `upload` and `verify`), Kelvin (purchasing, a different
+Sorento person, holds `upload` and `verify`), Mr Chen (sales at XIAMEN TAIYANG, no Sorento
+account). Both staff hold the same permissions (Q5, Q6 rulings); Kelvin verifies Mei Ling's set
+because she uploaded it.
 
 **Staff upload (S1)**
 
@@ -49,11 +55,10 @@ Actors: Mei Ling (purchasing, holds `upload`), Kelvin (purchasing lead, holds `v
 - **J6.** Kelvin gets an in-app notification and opens the set from it (or from the list, filtered
   to Pending verification).
 - **J7.** He sees the changed lines with their percent change and when each price last changed.
-  He accepts or rejects each line (Accept all is one click), optionally with a reason, and sets
-  the effective date (defaults to today).
+  He accepts or rejects each line (Accept all is one click), optionally with a reason.
 - **J8.** He clicks Apply N changes. Only now do the accepted prices land in
   `product_suppliers`. The set becomes Applied, and every product's Suppliers tab shows the new
-  price with its history (effective date, change set, verifier, source).
+  price with its history (applied date, change set, verifier, source).
 - **J9.** Alternatively he clicks Return to submitter with a reason; the set goes back to Draft
   for Mei Ling (or to the supplier's page, for a supplier set).
 
@@ -99,14 +104,15 @@ Actors: Mei Ling (purchasing, holds `upload`), Kelvin (purchasing lead, holds `v
 - **AC-S1-06** `[BE]` (J2) Given the letterhead text contains the supplier's name or code and
   exactly one active supplier matches, then the upload pre-selects it; given zero or several, then
   the supplier field is empty and required.
-- **AC-S1-07** `[BE]` (J2) Given the supplier's existing links all carry `CNY`, then the set's
-  currency is CNY; given the 价格 header carries a currency token (`RMB`, `元`, `USD`), then that
+- **AC-S1-07** `[BE]` (J2) Given the supplier's existing links all carry `CNY` (the owner
+  expects CNY for TAIYANG's file, Q2 ruling), then the set's currency is CNY; given the 价格 header carries a currency token (`RMB`, `元`, `USD`), then that
   wins; given neither resolves, then the currency field is required in the upload dialog. There is
   no house default.
 - **AC-S1-08** `[BE]` (J3, J4) Given the parsed lines, when matched, then each line records one
-  outcome: `exact` / `normalised` / `alias` (bound to a product), `near` (one candidate at
-  separator, token or one-edit distance, not bound), `unmatched`, or `ambiguous` (several
-  candidates, not bound). Matching runs with `remember=False`; the upload writes no alias.
+  outcome: `exact` / `normalised` / `alias` (bound to a product), `near` (one token-set
+  candidate from the existing `supplier_code_matcher`, suggested and never bound), `unmatched`,
+  or `ambiguous` (several candidates, not bound). No one-edit rung is added (Q8, round 2).
+  Matching runs with `remember=False`; the upload writes no alias.
 - **AC-S1-09** `[BE]` (J4) Given a bound product, then the line records the current
   `unit_cost` and `currency` of the (product, supplier) link at parse time, the new price, and the
   change percent (null when there is no current price); given no link exists, then the line is
@@ -131,6 +137,10 @@ Actors: Mei Ling (purchasing, holds `upload`), Kelvin (purchasing lead, holds `v
 - **AC-S1-16** `[BE]` (J1 to J5) Given a caller without `procurement.cost_price_changes.upload`,
   then upload, map, pick, skip and submit return 403; without `.view`, then list and detail
   return 403.
+- **AC-S1-25** `[BE]` `[T]` (J1) Given the migration has run, then
+  `procurement.cost_price_changes.upload` and `.view` exist and are granted to every role that
+  holds `scm.proforma_invoice.upload`, and to `admin` and `superadmin`; no `integration_%` role
+  receives either; running the migration twice grants nothing twice (Q5 ruling).
 - **AC-S1-17** `[BE]` (J3) Given the caller's session spans two companies, then upload returns 422
   "pick one company" (the `_require_single_company` rule).
 - **AC-S1-18** `[BE]` (J14) Given an upload, then the source file is retained and downloadable from
@@ -165,12 +175,14 @@ Actors: Mei Ling (purchasing, holds `upload`), Kelvin (purchasing lead, holds `v
   the count.
 - **AC-S2-03** `[BE]` `[T]` (J8) Given the verifier is the set's uploader or submitter, then accept,
   reject, return and apply return 403 `SAME_PERSON_CANNOT_VERIFY`; this holds for superadmin too.
-  A supplier-page set has no staff submitter, so any verifier may verify it.
+  Given a different Sorento user holding `verify`, then that one user's decisions and Apply are
+  enough (no second approval). A supplier-page set has no staff submitter, so any one verifier
+  may verify it (Q6 ruling).
 - **AC-S2-04** `[BE]` (J8) Given Apply, then in one transaction: each accepted line writes
   `product_suppliers.unit_cost` and `currency` for its (product, supplier) pair; a `new_link` line
   creates the link (lead time from AC-S2-05); every mapped line writes its alias
   (`source=manual`); the set becomes `applied` with `applied_by_user_id`, `applied_at` and
-  `effective_date`. Rejected lines write nothing.
+  Rejected lines write nothing.
 - **AC-S2-05** `[BE]` (J8) Given a `new_link` line accepted, then the new link's
   `standard_lead_time_days` is the most common value across this supplier's existing links; given
   the supplier has no links, then the line shows a lead time input and cannot be accepted empty.
@@ -179,9 +191,10 @@ Actors: Mei Ling (purchasing, holds `upload`), Kelvin (purchasing lead, holds `v
   those lines as `stale`, writes nothing, and the lines show both values for a fresh decision.
 - **AC-S2-07** `[BE]` (J8) Given Apply is called twice concurrently, then exactly one succeeds
   (conditional update on `status='pending_verification'`), and the other returns 409.
-- **AC-S2-08** `[BE]` (J7) Given the effective date, then it defaults to today (Malaysia date), may
-  be any date from 90 days back to today, and a future date returns 422 (Q3; future scheduling is
-  out of scope with a named trigger).
+- **AC-S2-08** `[BE]` (J8) Given Apply, then the new price takes effect at once and the set's
+  `applied_at` is the date shown in history; Apply takes no date input (Q3, round 2 restated
+  recommendation, re-asked). If the owner asks for the supplier's list date instead, this AC is
+  rewritten to an `effective_date` defaulting to the apply date, never future.
 - **AC-S2-09** `[BE]` (J9) Given Return to submitter with a reason (required, up to 500
   characters), then the set goes back to `draft`, decisions are cleared, the reason is stored and
   shown in the header, and the submitter (or the supplier page, for a supplier set) can edit and
@@ -190,7 +203,7 @@ Actors: Mei Ling (purchasing, holds `upload`), Kelvin (purchasing lead, holds `v
   on every write route).
 - **AC-S2-11** `[BE]` (J8) Given a product, then `GET .../products/{id}/supplier-cost-history`
   returns, per supplier, the accepted lines of applied sets newest first (price, currency,
-  effective date, set code, verifier, channel), plus one "before tracking" row per pair carrying
+  applied date, set code, verifier, channel), plus one "before tracking" row per pair carrying
   the oldest recorded current price when it is not null.
 - **AC-S2-12** `[BE]` (J6) Given a set enters `pending_verification`, then every active user holding
   `verify` in the set's company gets one in-app notification linking to the set; given a set is
@@ -202,7 +215,7 @@ Actors: Mei Ling (purchasing, holds `upload`), Kelvin (purchasing lead, holds `v
   (`/procurement/product-suppliers`) require `procurement.product_suppliers.add|edit|delete` from
   this slice on, with a grant sweep to every role that could reach them before (Q13).
 - **AC-S2-15** `[FE]` (J7) The verification view is the same set detail page (same tabs, same
-  order) with the Decision column switched on; the apply bar shows effective date, accepted,
+  order) with the Decision column switched on; the apply bar shows accepted,
   rejected and undecided counts, and the largest rise; Apply names the accepted count and is
   disabled with a tooltip reason when AC-S2-02 or AC-S2-03 would refuse it.
 - **AC-S2-16** `[FE]` (J8) The product detail's Suppliers tab shows the cost history sub-table per
@@ -213,6 +226,13 @@ Actors: Mei Ling (purchasing, holds `upload`), Kelvin (purchasing lead, holds `v
 - **AC-S2-18** `[E2E]` (J6 to J8) A second user opens the notification, rejects one line with a
   reason, applies; the product's Suppliers tab shows the new price and history; the reorder
   screen's supplier price for that product shows the new value. 375px and 1280px.
+- **AC-S2-19** `[BE]` `[T]` (J7, J8) Given the migration has run, then
+  `procurement.cost_price_changes.verify` is granted to every role that holds
+  `scm.proforma_invoice.upload`, and to `admin` and `superadmin`, and to no `integration_%` role;
+  given an API-key principal (`X-API-Key`, including one acting as a user through
+  `EXTERNAL_API_KEY_ACT_AS_USER_ID`) or any public supplier route, then decide, return and apply
+  are unreachable (403 or no such route): verification is by a Sorento staff session only (Q6
+  ruling).
 
 ## S3: The supplier page
 
@@ -290,6 +310,6 @@ Actors: Mei Ling (purchasing, holds `upload`), Kelvin (purchasing lead, holds `v
 
 ## Out of scope (named triggers in the plan, section 11)
 
-Future-dated effective prices, FX conversion into MYR, writing `products.cost_price`, a supplier
-login (arrives with #1280), OTP on the supplier page, automatic WeChat sending, product creation
+A separate effective date and future-dated prices (Q3), FX conversion into MYR, writing
+`products.cost_price`, a supplier login (arrives with #1280), OTP on the supplier page, automatic WeChat sending, product creation
 from an unmatched code, and multiple open sets per supplier.
