@@ -15,12 +15,21 @@ from typing import Dict, List, Type
 
 from sqlalchemy.orm import Session
 
-from app.models.sales import SalesTeam, SalesTeamMember
+from app.models.sales import (
+    SalesTarget,
+    SalesTargetPeriod,
+    SalesTargetScope,
+    SalesTeam,
+    SalesTeamMember,
+)
 
 logger = logging.getLogger(__name__)
 
 #: Every module-owned table, children first.
 PURGE_ORDER: List[Type] = [
+    SalesTargetScope,
+    SalesTargetPeriod,
+    SalesTarget,
     SalesTeamMember,
     SalesTeam,
 ]

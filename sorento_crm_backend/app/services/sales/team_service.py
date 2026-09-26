@@ -352,6 +352,10 @@ def list_teams(db: Session, *, query: Optional[str] = None) -> List[dict]:
     by_team: Dict[str, List[SalesAgent]] = {}
     for team_id, agent in rows:
         by_team.setdefault(team_id, []).append(agent)
+    # Imported here: target_service reads this module's helpers at import time.
+    from app.services.sales.target_service import targets_now_by_team
+
+    targets_now = targets_now_by_team(db, [t.id for t in teams], _today())
 
     out = []
     for team in teams:
@@ -364,6 +368,7 @@ def list_teams(db: Session, *, query: Optional[str] = None) -> List[dict]:
                 "leader_sales_agent_id": team.leader_sales_agent_id,
                 "member_count": len(agents),
                 "members": [{"sales_agent_id": a.id, "label": agent_label(a)} for a in agents],
+                "targets_now": targets_now.get(team.id, 0),
                 "created_at": team.created_at,
                 "updated_at": team.updated_at,
             }
