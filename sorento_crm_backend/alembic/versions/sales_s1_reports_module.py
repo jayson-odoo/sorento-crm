@@ -24,7 +24,7 @@ landed), so it:
    2026: the deploy ships the config).
 
 Revision ID: sales_s1_reports_module
-Revises: sb2_stock_pair_unique
+Revises: sb3_company_stock_push_at
 """
 import importlib.util
 import logging
@@ -39,7 +39,7 @@ from sqlalchemy.orm import Session
 from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 
 revision = "sales_s1_reports_module"
-down_revision = "sb2_stock_pair_unique"
+down_revision = "sb3_company_stock_push_at"
 branch_labels = None
 depends_on = None
 
