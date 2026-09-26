@@ -4,6 +4,13 @@ Status: S1 built (26 Sep 2026), track full, on PR #1269 (the plan rides inside t
 owner ruling 26 Sep ~08:25Z; Q9 (a), Q10 (a); Mocha AutoCount connected in production, so S4
 shrinks to verifying Mocha sales orders arrive). S2, S3, S5, S6 not built. Build notes and the
 deviations S1 took from this text are in section S1-B below.
+S4 check (26 Sep, code only, no prod access from the lane): no CRM code change is needed for
+Mocha orders. `POST /external/ingest/sales_orders` files each batch under the company named by
+`companyCode` (or the integration's `config_json.company_code`), matched on `companies.code`
+then `companies.autocount_ref` (`app/api/v1/external/company_anchor.py`), and refuses (422)
+rather than defaulting to Sorento. What is left is data, not code: count Mocha's
+`sales_orders` on prod (AC-S4-2), then switch on Mocha's `so_feed_live` on the Companies page.
+S4 stays as that verification only.
 
 Round 5 status line, kept: draft, round 5 (26 Sep 2026), ready to build (S0, S4 and S1 can start now). The owner's
 answers to round 4's Q6 to Q8 (PR #1269 comment 5844298765, 26 Sep 07:34:40Z, quoting "## Round
