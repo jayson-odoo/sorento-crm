@@ -278,6 +278,21 @@ Rewritten after the lavish review: one lines list, not a Lines tab plus a Findin
   schedule column only where the code starts one of the column's segments and is at least 3
   characters, the same floor the server's `_code_candidates` uses.
 
+  Owner hand test, 26 Sep 2026 ~07:15Z on :3081 (PR #1264, five binding notes), applied:
+  (1) the Lines table is one plain row per line in line order: no set heading row, no collapse,
+  no indented companion; a zero-priced set part reads "Part of #N" in its price cell (the
+  server's `parent_line_id`). Area, From PO line and Stock location leave BOTH the read and the
+  edit view, which closes the SF3 question above for those three; the nine left are the
+  editable fields plus #, Flag and Amount. (2) No Reorder lines toggle: every row carries its
+  handle while the order may be reordered, and a drop saves at once. (3) No "Stock location for
+  all lines" bar: the server derives the order's location from its customer's sales agent's
+  location group (`BRW-<group>`, master site from `project_allocation_brw_warehouse_code`) and
+  the header states it; a missing link is a "No stock location" flag naming it. (4) The project's
+  Sales orders list keeps every row one line; To review is one pill in the Flag pill's words.
+  (5) The three chips are gone; a footer row sums Value (labelled Page total past one page).
+  Evidence: `evidence/pr1264-owner-notes/` (1280 and 375, cloud-lane stack seeded from the test
+  builders, sidebar navigation, a real drag that saved).
+
 ## Out of scope (rulings)
 
 - **OOS-1** Any active-company indicator on lists (R8).
