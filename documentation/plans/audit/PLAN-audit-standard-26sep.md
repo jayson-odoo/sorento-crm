@@ -4,7 +4,9 @@ Status: S0 built, PR #1299, fix lane round 2 done on the reviewer pass at 7a5607
 a migration and an auth-surface change). #1298 (S-1) and #1303 (identity S0) are merged into the
 lane; merge order is #1298, then #1303, then #1299. The actor on every audit row is #1303's
 (identity plan section 8); S0 adds no actor column. Measurement gate: `measure-s0.sql`, to run on
-the production copy before merge. S1, S2, S3 not started.
+the production copy before merge. Round 2 runs: backend main set 17650 passed, 10 failed, all 10
+also red on main in this environment (9 PDF renders need a frontend on :3040; one order-dependent
+leak from `test_hide_retired_everywhere_embedding.py`). S1, S2, S3 not started.
 Plan created: 2026-09-26 (from the investigation report on #1281, comment 5846914028, sections 7
 to 10, investigated at `51d30ccc5`).
 Domain: audit (CORE, not a module: every install needs a trail; the `audit` App Store key keeps
