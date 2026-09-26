@@ -8,6 +8,7 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { selectOption } from '@/test-utils';
 
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
@@ -28,6 +29,15 @@ vi.mock('@/components/common/SearchableSelect', () => ({
         props.fetchOptions(query, 0).then(setOptions);
       }
     }, [query]);
+    // Static mode (no fetchOptions): the real SearchableSelect reads `options` straight
+    // off props on every render, so a caller whose own async fetch fills it in AFTER
+    // mount (ProductLineRow) sees it update live. `useState(props.options)` above only
+    // seeds the FIRST render - mirror the real component's reactivity here too, or a
+    // test that correctly waits for the row's own fetch to resolve waits on a value
+    // this mock can never produce (LESSONS 27 - the wait would be real, the mock isn't).
+    React.useEffect(() => {
+      if (!props.fetchOptions) setOptions(props.options ?? []);
+    }, [props.options, props.fetchOptions]);
     const label = props['aria-label'] ?? props.id ?? 'select';
     return (
       <div>
@@ -156,8 +166,17 @@ describe('SalesOpportunityModal', () => {
   });
 
   it('sends the product lines in the order they were entered', async () => {
+    // Both selects below are populated by an async fetch that has not resolved on the
+    // first render (LESSONS 27): a `fireEvent.change` fired before that resolution is a
+    // silent no-op (jsdom rejects a <select> value with no matching <option>), which used
+    // to leave `lines` empty rather than fail on the field that dropped it.
+    service.getSalesOpportunityCustomerOptions.mockResolvedValue({
+      items: [{ customer_id: 'cust-1', customer_code: 'C1', customer_name: 'ZZT Customer' }],
+      prospect: null,
+      blocked: null,
+    });
     render(<SalesOpportunityModal open onOpenChange={() => {}} />);
-    fireEvent.change(screen.getByLabelText('Customer or prospect'), { target: { value: 'cust-1' } });
+    await selectOption('Customer or prospect', 'cust-1');
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'ZZT Opp' } });
     fireEvent.change(screen.getByLabelText('Expected amount'), { target: { value: '1000' } });
     fireEvent.change(screen.getByLabelText('Expected close date'), {
@@ -166,6 +185,13 @@ describe('SalesOpportunityModal', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /add product/i }));
     const rows = screen.getAllByTestId('opportunity-line-row');
+    await waitFor(() =>
+      expect(
+        Array.from(
+          (within(rows[0]).getByLabelText(/product/i) as HTMLSelectElement).options,
+        ).map((o) => o.value),
+      ).toContain('p1'),
+    );
     const firstProductSelect = within(rows[0]).getByLabelText(/product/i);
     fireEvent.change(firstProductSelect, { target: { value: 'p1' } });
     const firstQty = within(rows[0]).getByLabelText(/qty/i);
