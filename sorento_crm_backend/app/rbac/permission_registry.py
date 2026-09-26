@@ -815,6 +815,12 @@ PERMISSION_REGISTRY.extend([
 ])
 
 
+# Sales module (plan 3.7, slice S6). Migration `sales_0001_teams` creates these and grants
+# them to admin and superadmin; declared here as well so a database built with create_all +
+# sync_permissions (CI, `scripts/bootstrap_env`) has them.
+PERMISSION_REGISTRY.extend(_crud("sales", "teams", "Sales Teams"))
+
+
 def sync_permissions(db: Session, created_by_user_id: Optional[str] = None) -> int:
     """
     Idempotent sync: ensure every slug in PERMISSION_REGISTRY exists in user_permissions.
