@@ -19,6 +19,15 @@ describe('moduleKeyForPath', () => {
     expect(moduleKeyForPath('/project-sales')).toBe('projects');
   });
 
+  it('maps /sales/teams and a team page to sales', () => {
+    expect(moduleKeyForPath('/sales/teams')).toBe('sales');
+    expect(moduleKeyForPath('/sales/teams/3f1c')).toBe('sales');
+  });
+
+  it('keeps Sales Agents on its own module, product, under its unchanged path', () => {
+    expect(moduleKeyForPath('/master-data-management/sales-agents')).toBe('product');
+  });
+
   it('returns null for an unknown path', () => {
     expect(moduleKeyForPath('/unknown-route')).toBeNull();
   });

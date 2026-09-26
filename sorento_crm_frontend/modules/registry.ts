@@ -13,6 +13,7 @@
 import type { LucideIcon } from 'lucide-react';
 
 import projectsPurgeTables from './projects/purge_tables.json';
+import salesPurgeTables from './sales/purge_tables.json';
 
 export interface ModuleMenuChildJson {
   title: string;
@@ -62,6 +63,9 @@ export const MODULE_REGISTRY: ModuleAsset[] = [
   // sorento_crm_backend/tests/test_projects_module_purge_invariants.py
   // (test_the_frontend_purge_manifest_matches_purge_order_exactly). Edit both together.
   { key: 'projects', purgeTables: projectsPurgeTables },
+  // `sales` (plan 3.7): same shape and the same pin, in
+  // sorento_crm_backend/tests/test_sales_module_purge_invariants.py.
+  { key: 'sales', purgeTables: salesPurgeTables },
 ];
 
 export function moduleRoutePrefixes(): { prefix: string; moduleKey: string }[] {

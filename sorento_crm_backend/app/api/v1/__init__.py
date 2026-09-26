@@ -29,6 +29,7 @@ from app.api.v1 import (
     downloads,
     dealer_kit,
     reports,
+    sales,
     scm,
 )
 from app.api.v1.system import (
@@ -100,6 +101,12 @@ api_router.include_router(
     prefix="/project-sales",
     tags=["project-sales"],
     dependencies=[Depends(require_module_enabled_with_api_key("projects"))],
+)
+api_router.include_router(
+    sales.router,
+    prefix="/sales",
+    tags=["sales"],
+    dependencies=[Depends(require_module_enabled_with_api_key("sales"))],
 )
 api_router.include_router(
     forms.router,

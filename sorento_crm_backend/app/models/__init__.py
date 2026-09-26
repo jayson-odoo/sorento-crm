@@ -13,6 +13,7 @@ from app.models.product_set_proposal import ProductSetProposalBatch, ProductSetP
 from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, ProductSpecException, ProductSpecVerification, ProductSpecFlyerBatch, ProductSpecFlyerProposal
 from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine, SalesOrder, SalesOrderLine
 from app.models.sales_agent import SalesAgent
+from app.models.sales import SalesTeam, SalesTeamMember
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine, PurchaseOrder, PurchaseOrderLine
 from app.models.supplier_notice import SupplierNotice, SupplierNoticeLine
@@ -367,6 +368,9 @@ __all__ = [
     "MarketSignal",
     "ScmAnalyticsRun",
     "MarketResearchRun",
+    # Sales (schema: sales)
+    "SalesTeam",
+    "SalesTeamMember",
     # Dealer Kit (schema: dealer_kit)
     "Page",
     "PageVersion",

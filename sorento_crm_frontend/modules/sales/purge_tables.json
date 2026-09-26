@@ -1,0 +1,8 @@
+{
+  "moduleKey": "sales",
+  "tables": [
+    "sales.team_members",
+    "sales.teams"
+  ],
+  "description": "Sales teams and their membership history. Sales agents and sales orders are core records and are not touched."
+}
