@@ -506,17 +506,20 @@ def test_s5_two_users_with_plain_and_plus_prefixed_same_number_are_ineligible(ra
     `contact_number IN (num, '+'+num)` - with two DIFFERENT user rows
     matching (one stored as digits, one as `+digits`), `.first()` picks
     whichever the query planner returns first instead of refusing an
-    ambiguous match."""
+    ambiguous match. Two distinct contacts (`respond_contact_id` is itself
+    unique per user) so the only thing under test is the `contact_number`
+    match count."""
     from app.services.phone_signin_service import find_eligible
 
     with blank_session() as db:
         ws = _workspace(db)
         digits = _digits()
-        contact = _contact(db, ws, digits)
+        contact_a = _contact(db, ws, digits)
+        contact_b = _contact(db, ws, _digits())
         rate_limit_cleanup.append(digits)
 
-        _user(db, phone=digits, contact_id=contact.id, email=f"{unique_code('dup1')}@x.com".lower())
-        _user(db, phone=f"+{digits}", contact_id=contact.id, email=f"{unique_code('dup2')}@x.com".lower())
+        _user(db, phone=digits, contact_id=contact_a.id, email=f"{unique_code('dup1')}@x.com".lower())
+        _user(db, phone=f"+{digits}", contact_id=contact_b.id, email=f"{unique_code('dup2')}@x.com".lower())
 
         assert find_eligible(db, digits) is None
 
