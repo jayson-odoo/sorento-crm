@@ -2,7 +2,8 @@
 
 Status: grilled, round 5 (the owner's answers to R1 to R5 and T1 to T5, PR #1260 comment
 5843775673 of 26 Sep 06:09Z, folded in as "Owner ruling 26 Sep 06:09" lines; section 13 says how
-each was applied; round 5 questions posted on the PR as the "Round 5" comment). **Every slice is
+each was applied; round 5 questions V1 to V3 posted on the PR as the "Round 5" comment,
+5844053739). **Every slice is
 in scope now; nothing is deferred or backlogged** (Owner ruling 26 Sep 06:09, T5: "the point is
 we need to do it now and not backlog or defer"). **Build order after round 5: S6, then S1 and S2
 in parallel, then S7, S4, S3 and S5** (section 6, "Lanes after round 5").
@@ -1721,7 +1722,7 @@ Round 5 adds none (a team-level override of the summed figure is ruled out by T3
 
 No criterion was deleted. New UAC criteria: S1-26 to S1-29, S3-7, S4-12, S6-14, S6-15.
 
-## 14. Round 5 questions (posted on PR #1260 as the "Round 5" comment)
+## 14. Round 5 questions (posted on PR #1260 as the "Round 5" comment, 5844053739)
 
 - **V1. An agent's first team (T2).** Recommend: when an agent who has never been in a team is
   put in one, their earlier orders count for that team too (`valid_from` empty); only a later

@@ -22,7 +22,7 @@ targets). **Build order after round 4: S6, S1, S7, S2, S3, S4, S5** (plan sectio
 Round 5 (26 Sep): the owner's answers to R1 to R5 and T1 to T5 (PR #1260 comment, 06:09Z) are
 folded in as rulings marked "(Owner ruling 26 Sep 06:09, R# or T#)". No criterion was deleted: an
 AC a ruling changes keeps its id and text and gains a "Round 5" note; new ones are S1-26 to
-S1-29, S3-7, S4-12, S6-14 and S6-15. Round 5 questions V1 to V3 (plan section 14) may still
+S1-29, S3-7, S4-12, S6-14 and S6-15. Round 5 questions V1 to V3 (plan section 14, PR comment 5844053739) may still
 adjust the ACs marked "(V#)"; each is written to its recommendation. Tables live in schema
 `sales` (plan 3.7 map; V3): where an AC names `sales_targets` and the like, the built name is
 `sales.targets`. **Every slice is built now, nothing deferred (T5). Waves: S6; then S1 beside
