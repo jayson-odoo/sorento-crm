@@ -2,7 +2,7 @@
 
 Status: grilled (round 1 answered by the owner 26 Sep 2026, PR #1260 comment 05:25Z; round 2
 questions posted on the PR; round 3 folds in the owner's Lavish review of the mockup, PR #1260
-comment 05:35Z, and its questions T1 to T5 are posted on the PR). Track: full track for every
+comment 05:35Z, and its questions T1 to T5 are posted on the PR as comment 5843719967). Track: full track for every
 build lane (new tables, migrations, new permissions, a new module key, a new portal surface).
 Nothing built beyond slice 1 of the issue (PR #1177, a sales agent on a customer). Build order
 after round 3: S1, S6 (sales teams), S2, S3, S4, S5 (section 6).
@@ -863,7 +863,7 @@ Verbatim and binding. Written after round 2 (commit 2f5ece4f), folded in by roun
 None of the Lavish points changes R1 to R5; they stand as written. R2 (person label) also widens
 each member agent of a team target (3.2).
 
-## 10. Round 3 questions (posted on PR #1260)
+## 10. Round 3 questions (posted on PR #1260, comment 5843719967)
 
 - **T1. Reuse the existing `teams` table, or a new sales team table?** (Owner's L4.) Recommend: a
   new `sales_teams` with `sales_team_members`. `teams` holds CRM users
