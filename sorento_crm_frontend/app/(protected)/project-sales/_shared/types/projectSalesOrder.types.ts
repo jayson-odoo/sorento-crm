@@ -130,6 +130,10 @@ export interface ProjectSalesOrderLine {
   explosion_source: ExplosionSource;
   source_po_line_no?: number | null;
   stock_location?: string | null;
+  /** The priced line of the set this line belongs to, stated by the server; null outside a set. */
+  parent_line_id?: string | null;
+  /** A zero-priced part of a set, priced on `parent_line_id`. */
+  is_companion?: boolean;
 }
 
 export interface ProjectSalesOrderFinding {
@@ -151,6 +155,13 @@ export interface ProjectSalesOrderFinding {
 export interface ProjectSalesOrderDetail extends ProjectSalesOrderRow {
   lines: ProjectSalesOrderLine[];
   findings: ProjectSalesOrderFinding[];
+  /**
+   * Derived by the server from the customer's sales agent's location group (`BRW-BB` for
+   * group BB), never picked (PR #1264 note 3). Null when a link in that chain is missing,
+   * and then `stock_location_gap` names it.
+   */
+  stock_location?: string | null;
+  stock_location_gap?: string | null;
 }
 
 // ------------------------------------------------------------- AutoCount worksheet

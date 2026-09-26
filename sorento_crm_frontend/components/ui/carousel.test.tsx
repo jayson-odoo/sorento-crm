@@ -139,4 +139,25 @@ describe('Carousel arrow keys do not double-fire (M2-02 fix round)', () => {
     expect(fakeApi.scrollNext).toHaveBeenCalledTimes(1);
     expect(fakeApi.scrollNext).toHaveBeenCalledWith(true);
   });
+
+  it('leaves the arrows to a text box inside a slide (the PDF viewer search, PR #1256)', () => {
+    render(
+      <Carousel>
+        <CarouselContent>
+          <CarouselItem>
+            <input aria-label="Search in PDF" />
+          </CarouselItem>
+        </CarouselContent>
+      </Carousel>,
+    );
+    const box = screen.getByRole('textbox', { name: 'Search in PDF' });
+
+    const notPrevented = fireEvent.keyDown(box, { key: 'ArrowLeft' });
+    fireEvent.keyDown(box, { key: 'ArrowRight' });
+
+    // The caret moves inside the box; the slide stays put.
+    expect(notPrevented).toBe(true);
+    expect(fakeApi.scrollPrev).not.toHaveBeenCalled();
+    expect(fakeApi.scrollNext).not.toHaveBeenCalled();
+  });
 });

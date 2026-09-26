@@ -31,6 +31,7 @@ What is DIFFERENT from the order sheet, and why:
 """
 from __future__ import annotations
 
+import logging
 from io import BytesIO
 from typing import Optional
 from urllib.parse import quote
@@ -40,6 +41,8 @@ from sqlalchemy.orm import Session
 from app.models.product import Product, ProductCategory
 from app.services.error_handler import AppException
 from app.services.scm import summary_order_service as svc
+
+logger = logging.getLogger(__name__)
 
 #: The sixteen columns, in the client's own order (AC-31). Description and Category lead,
 #: and Reorder qty sits beside Reorder level, because that is how the sheet this replaces
@@ -172,6 +175,7 @@ def _split(db: Session, run_id: Optional[str]) -> dict:
     return {
         "run_id": rep["run_id"],
         "as_of": rep.get("as_of") or svc._today().isoformat(),
+        "generated_at": rep.get("generated_at"),
         "master": master,
         "all_rows": ordered,
         "low_rows": [r for r in ordered if _is_low(r)],
@@ -233,47 +237,62 @@ def _sheet_row(row: dict, master: dict, *, include_supplier: bool) -> tuple:
     return cells[:_SUPPLIER_INDEX] + cells[_SUPPLIER_INDEX + 1:]
 
 
-def export_low_stock(db: Session, *, run_id: Optional[str],
-                     include_supplier: bool = True,
-                     split: str = "none") -> tuple[bytes, str, str, dict]:
-    """The workbook for one run: `(bytes, content_type, filename, {"low": n, "all": m,
-    "sheets": s})` (AC-10) - all three keys ALWAYS present, never a shape that varies by
-    branch (the drill rule from the Stock Debt lane).
+#: The in-app page's default split (owner, 26 Sep 01:40Z: "default is split by both"). The
+#: export route's own default stays "none" for API callers; the page always sends its split.
+VIEW_DEFAULT_SPLIT = "supplier_category"
 
-    The counts ride back with the bytes (reviewer item 4) because this function has already
-    built both row sets: the task stamps `low`/`all` onto the download row at `mark_ready`
-    so S5's chat turn can say "Low: 12 of 340" without opening the workbook (AC-43), and
-    reading them from here rather than a second `row_counts()` call is what keeps a chat
-    report to ONE read of the frozen run.
+NO_SUPPLIER = "No supplier"
+NO_CATEGORY = "No category"
 
-    `split="none"` (the default) is today's workbook, byte-for-byte: "Low stock" written
-    FIRST so `wb.active` is the sheet the file was opened for, then "All", and `sheets` is
-    2 - the fixed pair, not a group count.
 
-    Any other `split` re-files the SAME visible rows (`workbook_split.split_rows`, keyed on
-    the frozen `supplier_name` and the master-data `category_code`) into ONE pair of sheets
-    per group, in sanitised-title order: `"<key> - Low"` (the group's rows below their
-    level - header only when none are, A3) then `"<key>"` (every row in the group). A key
-    longer than 25 characters is cut so the ` - Low` suffix still fits Excel's 31-char
-    limit (A4); a collision on the cut gets ` (2)` on BOTH sheets of the pair, because both
-    share the same `unique_sheet_title` call.
+def _supplier_key(row: dict) -> str:
+    """The split's own supplier key (`workbook_split.split_rows` folds a blank the same
+    way), so a filter picks exactly the rows a supplier sheet would hold."""
+    return row.get("supplier_name") or NO_SUPPLIER
 
-    `include_supplier=False` (S5's chat route, for a contact without the
-    `purchase_orders.supplier` reveal key) DROPS the Supplier column from every sheet
-    rather than blanking it - a blank column still tells the reader a supplier exists and
-    is being withheld, which is the leak the reveal key exists to prevent (AC-47). A split
-    by supplier under that same withholding would leak the names through the sheet TITLES
-    instead, so `split in ("supplier", "supplier_category")` is refused 422 before any
-    sheet is written (R5).
 
-    Refused above `MAX_LOW_STOCK_ROWS` on the "All" sheet (AC-35) whatever the split - the
-    cap is checked against the total visible count, never a per-group figure. The route
-    refuses on the same number before it creates a download row, so this is the backstop
-    rather than how a buyer finds out.
+def _category_key(row: dict, master: dict) -> str:
+    return master.get(row["product_code"], {}).get("category_code") or NO_CATEGORY
+
+
+def _facet(rows: list[dict], key) -> list[dict]:
+    """`[{key, rows, low}]` over `rows`, sorted by key case-insensitively (AC-5)."""
+    counts: dict[str, list[int]] = {}
+    for row in rows:
+        bucket = counts.setdefault(key(row), [0, 0])
+        bucket[0] += 1
+        if _is_low(row):
+            bucket[1] += 1
+    return [
+        {"key": k, "rows": counts[k][0], "low": counts[k][1]}
+        for k in sorted(counts, key=str.lower)
+    ]
+
+
+def build_low_stock_view(db: Session, *, run_id: Optional[str],
+                         include_supplier: bool = True,
+                         split: str = VIEW_DEFAULT_SPLIT,
+                         suppliers: Optional[list[str]] = None,
+                         categories: Optional[list[str]] = None) -> dict:
+    """The low stock workbook as a model: the ONE builder behind both the in-app page and
+    the file (PLAN-excel-preview-26sep S1, AC-1/AC-2). `export_low_stock` writes exactly
+    what this returns, so the screen and the download cannot disagree.
+
+    `rows` holds each kept row once, as `_sheet_row` cells in `columns` order; every sheet
+    names its rows by index into it (AC-9), in the order the sheet prints them.
+
+    Filters apply BEFORE the split (AC-4), on the split's own keys: a row is kept when its
+    supplier key is in `suppliers` (or `suppliers` is empty) and its category key is in
+    `categories` (or empty). Blank keys are the literal "No supplier" / "No category", so
+    they are selectable; a key the run does not hold simply matches nothing.
+
+    `facets` are over the WHOLE run, not the kept rows (AC-5): every choice stays visible
+    with its row and low count while the user narrows.
+
+    The cap (`MAX_LOW_STOCK_ROWS`) is on the KEPT rows (AC-7, owner ruling 26 Sep Q8), so a
+    filter can bring an oversized run under it. Over the cap the model carries the counts
+    and `over_cap`, but no rows and no sheets.
     """
-    from openpyxl import Workbook
-    from openpyxl.utils import get_column_letter
-
     from app.services.scm.workbook_split import SPLIT_VALUES, split_rows, unique_sheet_title
 
     if split not in SPLIT_VALUES:
@@ -284,87 +303,271 @@ def export_low_stock(db: Session, *, run_id: Optional[str],
         )
 
     frozen = _split(db, run_id)
-    if len(frozen["all_rows"]) > MAX_LOW_STOCK_ROWS:
-        raise AppException(422, "Narrow the plan first")
+    master = frozen["master"]
+    everything = frozen["all_rows"]
+
+    def _category(row: dict) -> str:
+        return _category_key(row, master)
+
+    wanted_suppliers = set(suppliers or ())
+    wanted_categories = set(categories or ())
+    kept = [
+        r for r in everything
+        if (not wanted_suppliers or _supplier_key(r) in wanted_suppliers)
+        and (not wanted_categories or _category(r) in wanted_categories)
+    ]
+    low_count = sum(1 for r in kept if _is_low(r))
 
     columns = list(LOW_STOCK_COLUMNS)
-    widths = list(_LOW_STOCK_WIDTHS)
     if not include_supplier:
         columns.pop(_SUPPLIER_INDEX)
-        widths.pop(_SUPPLIER_INDEX)
-    width_map = {get_column_letter(i + 1): w for i, w in enumerate(widths)}
 
-    master = frozen["master"]
+    groups = [] if split == "none" else split_rows(
+        kept, split, supplier=lambda r: r.get("supplier_name"), category=_category,
+    )
+    sheet_count = 2 if split == "none" else 2 * len(groups)
+    over_cap = len(kept) > MAX_LOW_STOCK_ROWS
 
-    def _write(ws, rows: list[dict]) -> None:
-        svc.write_sheet(
-            ws,
-            columns,
-            [_sheet_row(r, master.get(r["product_code"], {}),
-                        include_supplier=include_supplier) for r in rows],
-            width_map,
-        )
+    rows: list[tuple] = []
+    sheets: list[dict] = []
+    if not over_cap:
+        position: dict[int, int] = {}
+        for index, r in enumerate(kept):
+            position[id(r)] = index
+            rows.append(_sheet_row(r, master.get(r["product_code"], {}),
+                                   include_supplier=include_supplier))
 
-    wb = Workbook()
-    counts: dict = {"low": len(frozen["low_rows"]), "all": len(frozen["all_rows"])}
+        def _indexes(group: list[dict]) -> list[int]:
+            return [position[id(r)] for r in group]
 
-    if split == "none":
-        for index, (title, rows) in enumerate(
-            (("Low stock", frozen["low_rows"]), ("All", frozen["all_rows"]))
-        ):
-            ws = wb.active if index == 0 else wb.create_sheet()
-            ws.title = title
-            _write(ws, rows)
-        counts["sheets"] = 2
-    else:
-        groups = split_rows(
-            frozen["all_rows"], split,
-            supplier=lambda r: r.get("supplier_name"),
-            category=lambda r: master.get(r["product_code"], {}).get("category_code"),
-        )
-        used_titles: set[str] = set()
-        sheet_index = 0
-        for key, group_rows in groups:
-            base = unique_sheet_title(key, used_titles, limit=25, reserve=(" - Low",))
-            low_group = [r for r in group_rows if _is_low(r)]
-            for title, rows in ((f"{base} - Low", low_group), (base, group_rows)):
-                ws = wb.active if sheet_index == 0 else wb.create_sheet()
-                ws.title = title
-                _write(ws, rows)
-                sheet_index += 1
-        counts["sheets"] = sheet_index
+        if split == "none":
+            sheets = [
+                {"title": "Low stock", "row_indexes": _indexes([r for r in kept if _is_low(r)]),
+                 "low": True},
+                {"title": "All", "row_indexes": _indexes(kept), "low": False},
+            ]
+        else:
+            used_titles: set[str] = set()
+            for key, group_rows in groups:
+                base = unique_sheet_title(key, used_titles, limit=25, reserve=(" - Low",))
+                sheets.append({
+                    "title": f"{base} - Low",
+                    "row_indexes": _indexes([r for r in group_rows if _is_low(r)]),
+                    "low": True,
+                })
+                sheets.append({"title": base, "row_indexes": _indexes(group_rows), "low": False})
+
+    return {
+        "run": {"run_id": frozen["run_id"], "as_of": frozen["as_of"],
+                "generated_at": frozen["generated_at"]},
+        "split": split,
+        "columns": columns,
+        "rows": rows,
+        "sheets": sheets,
+        "facets": {
+            "suppliers": _facet(everything, _supplier_key),
+            "categories": _facet(everything, _category),
+        },
+        "counts": {"rows": len(kept), "low": low_count, "sheets": sheet_count},
+        "over_cap": over_cap,
+        "max_rows": MAX_LOW_STOCK_ROWS,
+        "filename": f"low-stock-{svc.compact_ddmmyyyy(frozen['as_of'])}.xlsx",
+    }
+
+
+def _write_workbook(view: dict, widths: list[int]) -> bytes:
+    """Write the model's sheets, styled like `summary_order_service.write_sheet` (dark bold
+    white header, thin border and top-aligned wrapped text on every cell, frozen at A2, the
+    column widths), in openpyxl's WRITE-ONLY mode (owner ruling 26 Sep, Q8).
+
+    Why not `write_sheet`: it appends every row and then walks every cell a second time,
+    assigning a fresh border and alignment to each, which is where a 5,000-row run spent
+    about 90% of its export time. Here each cell is written once and takes a COPY of one of
+    two prepared style arrays (header or body), which is exactly what openpyxl's own style
+    assignment ends up storing, without the per-cell lookups.
+    """
+    from copy import copy
+
+    from openpyxl import Workbook
+    from openpyxl.cell import WriteOnlyCell
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook(write_only=True)
+    thin = Side(style="thin")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    wrap = Alignment(wrap_text=True, vertical="top")
+
+    columns = view["columns"]
+    rows = view["rows"]
+    header_style = None
+    body_style = None
+    for sheet in view["sheets"]:
+        ws = wb.create_sheet(title=sheet["title"])
+        ws.freeze_panes = "A2"
+        for i, width in enumerate(widths):
+            ws.column_dimensions[get_column_letter(i + 1)].width = width
+        if header_style is None:
+            probe = WriteOnlyCell(ws)
+            probe.border = border
+            probe.alignment = wrap
+            body_style = copy(probe._style)
+            probe.font = Font(bold=True, color="FFFFFFFF")
+            probe.fill = PatternFill("solid", fgColor="FF404040")
+            header_style = copy(probe._style)
+
+        def _cells(values, style):
+            out = []
+            for value in values:
+                cell = WriteOnlyCell(ws, value=value)
+                cell._style = copy(style)
+                out.append(cell)
+            return out
+
+        ws.append(_cells(columns, header_style))
+        for index in sheet["row_indexes"]:
+            ws.append(_cells(rows[index], body_style))
 
     buf = BytesIO()
     wb.save(buf)
+    return buf.getvalue()
+
+
+def export_low_stock(db: Session, *, run_id: Optional[str],
+                     include_supplier: bool = True,
+                     split: str = "none",
+                     suppliers: Optional[list[str]] = None,
+                     categories: Optional[list[str]] = None) -> tuple[bytes, str, str, dict]:
+    """The workbook for one run: `(bytes, content_type, filename, {"low": n, "all": m,
+    "sheets": s})` (AC-10) - all three keys ALWAYS present, never a shape that varies by
+    branch (the drill rule from the Stock Debt lane).
+
+    It writes exactly the model `build_low_stock_view` returns for the same arguments
+    (PLAN-excel-preview-26sep AC-2): the sheets, in order, with the rows each one names.
+    So what follows describes the model as much as the file.
+
+    The counts ride back with the bytes (reviewer item 4): the task stamps `low`/`all` onto
+    the download row at `mark_ready` so S5's chat turn can say "Low: 12 of 340" without
+    opening the workbook (AC-43), off ONE read of the frozen run.
+
+    `split="none"` (the default) is the two-sheet workbook: "Low stock" FIRST so it is the
+    sheet the file opens on, then "All", and `sheets` is 2. Any other `split` re-files the
+    same rows (`workbook_split.split_rows`, keyed on the frozen `supplier_name` and the
+    master-data `category_code`) into ONE pair of sheets per group, in sanitised-title
+    order: `"<key> - Low"` (header only when nothing in the group is low, A3) then
+    `"<key>"`. A key longer than 25 characters is cut so the ` - Low` suffix still fits
+    Excel's 31-char limit (A4); a collision on the cut gets ` (2)` on BOTH sheets of the
+    pair.
+
+    `suppliers` / `categories` (PLAN-excel-preview-26sep AC-4/AC-6) keep only the rows whose
+    split key is listed, before the split; omitted or empty keeps everything.
+
+    `include_supplier=False` (S5's chat route, for a contact without the
+    `purchase_orders.supplier` reveal key) DROPS the Supplier column rather than blanking
+    it (AC-47), and a split by supplier is then refused 422 (R5): the names would leak
+    through the sheet titles instead.
+
+    Refused 422 above `MAX_LOW_STOCK_ROWS` kept rows (AC-35; counted after the filters
+    since PLAN-excel-preview-26sep AC-7). The route refuses on the same number before it
+    creates a download row, so this is the backstop rather than how a buyer finds out.
+    """
+    view = build_low_stock_view(
+        db, run_id=run_id, include_supplier=include_supplier, split=split,
+        suppliers=suppliers, categories=categories,
+    )
+    if view["over_cap"]:
+        raise AppException(422, "Narrow the plan first")
+    # Review N2: a split whose filters keep nothing is a view with no sheets. A workbook
+    # cannot have none (openpyxl would save a lone empty "Sheet" the view never showed), so
+    # there is no file that matches the view: refuse rather than write one that does not.
+    if not view["sheets"]:
+        raise AppException(422, "Nothing matches these filters")
+
+    widths = list(_LOW_STOCK_WIDTHS)
+    if not include_supplier:
+        widths.pop(_SUPPLIER_INDEX)
+
     return (
-        buf.getvalue(),
+        _write_workbook(view, widths),
         CONTENT_TYPE,
-        f"low-stock-{svc.compact_ddmmyyyy(frozen['as_of'])}.xlsx",
-        counts,
+        view["filename"],
+        {"low": view["counts"]["low"], "all": view["counts"]["rows"],
+         "sheets": view["counts"]["sheets"]},
     )
 
 
-def low_stock_preview(db: Session, run_id: Optional[str]) -> dict:
-    """`{"rows": n, "sheet_counts": {"supplier": a, "category": b, "supplier_category": c}}`
-    (R4, AC-15b) - the split dialog's own courtesy read, off the SAME `_split()` and the
-    SAME `workbook_split.split_rows` the workbook itself is built from, so a group count
-    here is never a second guess at what `export_low_stock` would actually write.
-
-    `rows` is the visible row count (the workbook's own "All" count). Each `sheet_counts`
-    entry is the number of GROUPS that split would produce - none-buckets included, pairs
-    only when present - not the sheet count itself: the caller (the FE dialog) doubles a
-    group count into a sheet count (R2, `previewLowStockExport`).
-    """
-    from app.services.scm.workbook_split import split_rows
-
+def filtered_row_count(db: Session, run_id: Optional[str], *,
+                       suppliers: Optional[list[str]], categories: Optional[list[str]]) -> int:
+    """How many rows the filters keep (AC-7), for the export route's cap check on a run
+    whose whole-run count is over the cap. Same builder, same keys, no rows serialised."""
     frozen = _split(db, run_id)
     master = frozen["master"]
-    sheet_counts = {
-        key: len(split_rows(
-            frozen["all_rows"], key,
-            supplier=lambda r: r.get("supplier_name"),
-            category=lambda r: master.get(r["product_code"], {}).get("category_code"),
-        ))
-        for key in ("supplier", "category", "supplier_category")
+    wanted_suppliers = set(suppliers or ())
+    wanted_categories = set(categories or ())
+    return sum(
+        1 for r in frozen["all_rows"]
+        if (not wanted_suppliers or _supplier_key(r) in wanted_suppliers)
+        and (not wanted_categories or _category_key(r, master) in wanted_categories)
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The automation trigger the daily email hangs off (PLAN-excel-preview-26sep S1,
+# AC-19..AC-22; owner rulings 26 Sep, Q1 and Q5).
+# --------------------------------------------------------------------------- #
+
+READY_TRIGGER = "low_stock_report_ready"
+
+
+def report_link(run_id: str) -> str:
+    """The in-system page for one run, never a file: staff emails link to the page, and the
+    deep-link-after-login layout brings a signed-out reader back to it."""
+    from app.config import settings
+
+    base = (settings.frontend_base_url or "").rstrip("/")
+    return f"{base}/scm/low-stock-report/{run_id}"
+
+
+def ready_context(db: Session, run_id: str) -> dict:
+    """The trigger's template context: `report.{link, as_of, date_label, low, rows}`. The
+    counts are the default page's (whole run, no filters) off the same frozen read."""
+    from datetime import date as _date
+
+    frozen = _split(db, run_id)
+    as_of = frozen["as_of"]
+    day = _date.fromisoformat(as_of)
+    return {
+        "report": {
+            "link": report_link(run_id),
+            "as_of": as_of,
+            "date_label": f"{day.day} {day.strftime('%b %Y')}",
+            "low": len(frozen["low_rows"]),
+            "rows": len(frozen["all_rows"]),
+        },
     }
-    return {"rows": len(frozen["all_rows"]), "sheet_counts": sheet_counts}
+
+
+def dispatch_ready(db: Session, run_id: str) -> dict:
+    """Fire `low_stock_report_ready` once for a finished run: every enabled automation on
+    it sends its own template to its own `recipient_config` (Q5). The caller decides what a
+    failure means; the daily run swallows it.
+
+    Only a COMPLETED run is reported (review B1): `run_reorder` never raises, it marks a
+    failed run `failed` and returns, so a failed plan would otherwise mail buyers a "0 low"
+    all-clear linking to an empty page. Read off the run row, so no caller can skip it."""
+    from app.models.scm import ReorderRun
+    from app.services.automation_service import AutomationService
+
+    status = db.query(ReorderRun.status).filter(ReorderRun.id == run_id).scalar()
+    if status != "completed":
+        logger.warning(
+            "low_stock_report_ready not dispatched: run %s is %s, not completed", run_id, status,
+        )
+        return {"trigger_type": READY_TRIGGER, "fired": 0, "results": []}
+
+    return AutomationService(db).dispatch_event(
+        READY_TRIGGER,
+        context=ready_context(db, run_id),
+        source_kind="reorder_run",
+        source_id=str(run_id),
+    )

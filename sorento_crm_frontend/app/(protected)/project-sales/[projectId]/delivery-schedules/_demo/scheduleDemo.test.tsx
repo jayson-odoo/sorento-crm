@@ -74,10 +74,11 @@ describe('the ?demo= toggle', () => {
     renderReview();
 
     expect(
-      await screen.findByRole('heading', { name: /Delivery schedule for HQ\/26\/01\/121/ }),
+      await screen.findByRole('heading', { name: /Schedule HQ\/26\/01\/121/ }),
     ).toBeInTheDocument();
     // Six columns, four of which reconcile on the first pass, as measured on the real document.
-    expect(screen.getByText('4 of 6 columns reconciled')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Need attention (2)' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'All rows (6)' })).toBeInTheDocument();
     expect(getDeliveryScheduleVersion).not.toHaveBeenCalled();
     expect(getProject).not.toHaveBeenCalled();
   });
@@ -95,7 +96,8 @@ describe('the ?demo= toggle', () => {
     renderReview();
 
     expect(await screen.findByText(/Confirmed .* by Eling Tan/)).toBeInTheDocument();
-    expect(screen.getByText('All 6 columns reconciled')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Need attention (0)' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'All rows (6)' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.queryByRole('button', { name: /^Confirm$/ })).toBeNull();
   });
 

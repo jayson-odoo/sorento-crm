@@ -664,3 +664,38 @@ register(
     ),
     _trigger_sponsorship_form_approved,
 )
+
+
+def _trigger_low_stock_report_ready(
+    db: Session,
+    config: dict[str, Any],
+    timezone: str,
+) -> Iterable[TriggerMatch]:
+    """Event-driven; pull-mode evaluation yields nothing.
+
+    Dispatched once by the daily reorder run when it has funded its plan
+    (`low_stock_report_service.dispatch_ready`), with context
+    ``report.{link, as_of, date_label, low, rows}``: the link opens the in-system low stock
+    report page for that run (PLAN-excel-preview-26sep S1; owner ruling 26 Sep, Q1 - the
+    daily low stock email is an automation, and its recipients are the automation's own).
+    """
+    return []
+
+
+register(
+    TriggerSpec(
+        type="low_stock_report_ready",
+        label="Low stock report ready",
+        description=(
+            "Fires when the daily reorder run finishes (event-driven). Use {{ report.link }} "
+            "for the low stock report page, {{ report.date_label }}, {{ report.low }} and "
+            "{{ report.rows }}."
+        ),
+        config_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    ),
+    _trigger_low_stock_report_ready,
+)

@@ -144,6 +144,23 @@ def _delete_user(db: Session, payload: dict):
 # Registrations. `<entity>.<verb>`, the same keys the frontend's action sets name.
 # --------------------------------------------------------------------------------------
 
+def _delete_sales_team(db: Session, payload: dict):
+    from app.services.sales import team_service
+
+    return team_service.delete_team_by_id(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="sales_team.delete",
+        entity_types=("sales_team",),
+        execute=_delete_sales_team,
+        window=WINDOW_DESTRUCTIVE,
+        permission="sales.teams.delete",
+        label="Delete sales team",
+    )
+)
+
 register(
     FormAction(
         key="product.delete",

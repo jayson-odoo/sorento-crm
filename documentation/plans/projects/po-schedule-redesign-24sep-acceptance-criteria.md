@@ -105,6 +105,8 @@ R3's other terms -- one severity set, one verb, duplicates collapsed, the gate u
   "Override with a reason" and "Clear with a reason" (`dismissVerb.guard.test.ts`). The third
   string, "Dismiss as false signal", is still live on purpose in
   `DeliveryScheduleReconciliationList.tsx` - it is S5's to rename.
+  26 Sep 2026 (S5): renamed with the list's removal; `dismissVerb.guard.test.ts` now bans all
+  three strings.
 - **S3-3 [FE] (J4)** Findings with the same `code` about the same subject render as one row with
   a count. Subject key, first present wins: `line_id`, then `detail_json.customer_code_raw` (a
   schedule column; the unmapped-column finding carries one row per area), then
@@ -113,6 +115,9 @@ R3's other terms -- one severity set, one verb, duplicates collapsed, the gate u
   these keys never collapses.
   25 Sep 2026: `collapseFindings()` shipped with no caller yet, and R23's cross-code collapse is
   not implemented in it; both carried to S5 (schedule matrix) and S7 (SO lines list).
+  26 Sep 2026 (S5): the schedule matrix has nothing to collapse. Its flags are the per-column
+  verdicts (one entry per column already, addressed by `product_index`), not `SODraftFinding`
+  rows, so `collapseFindings()` has no caller there either; both it and R23 stay with S7.
 - **S3-4 [FE] (J4)** The dismiss dialog requires a reason of at least 3 characters (the service's
   existing rule) and names the count ("Dismiss 7").
 - **S3-5 [FE][BE] (J4)** The publish gate is unchanged: a pytest pins that warn findings leave an
@@ -172,6 +177,29 @@ Re-dating and Notes move into a secondary History panel rather than tabs of thei
   raw status number (R13).
 - **S5-6 [FE] (J3)** Every section renders when empty, with `-` per ADR 1e.
 - **S5-7 [E2E] (J3)** HQ/26/01/121 v2 at 1280 and 375 matches the approved mockup's callouts.
+
+Implementation notes, 26 Sep 2026 (S5, binding owner lessons from the S6 hand tests on PR #1237):
+
+- S5-3: the Flag cell is one pill plus a count, row height unchanged; the sentences, the product
+  picker, "Fix the quantities" and "Dismiss with a reason" sit in its popover (lesson (b)), not
+  in an Action column. Product and Flag are pinned; the matrix scrolls in its own container
+  (lesson (a)). The totals close each row as Schedule and PO, per the mockup; the printed TOTAL
+  QTY is named in the popover when it disagrees.
+- S5-4: "Only rows with a flag" reads "Need attention (N)" / "All rows (N)" (lesson (c)). Need
+  attention is exactly the columns `blocksConfirm()` returns, the same test the server's
+  `confirm` makes (not reconciled, a dismissal counting as reconciled), so the screen and the
+  server cannot disagree (lesson (e)). A shortfall warning ("Needs acknowledgement") does not
+  block on either side and is shown under All rows. On a partial read the confirm dialog now
+  asks for the acknowledgement the server already required.
+- S5-5: Documents holds the file only, nothing under it (lesson (d)).
+- Removed as more than the mockup (R22): the gear menu (the PO link moved to the meta line, the
+  document to its tab), the confirmed banner and its "Back to the project" button, the reading
+  time, the revision label and issuer in the meta line, the "N cells re-dated" chip, the
+  "Remembered code" pill and the inline "will resolve" note (now a toast). A confirmed version
+  that owes an amendment makes "Review the amendment" the one primary button.
+- S5-7: evidence in this lane is component-level (the real client rendered off its `?demo=`
+  fixture in Chromium; no live stack or login in the cloud lane). The pass on HQ/26/01/121 v2
+  stays owed on a local stack.
 
 ## S6. PO review screen (per approved `mockups/po-review.html`; page renamed from "PO confirm")
 
@@ -251,6 +279,47 @@ Rewritten after the lavish review: one lines list, not a Lines tab plus a Findin
   findings card.
 - **S7-4 [FE] (J4)** Summary card renders `-` for unknown values (ADR 1e).
 - **S7-5 [E2E] (J4)** PSO-000003 at 1280 and 375 matches the approved mockup.
+
+  Implementation notes, 26 Sep 2026 (S7 lane), applying the S6 owner lessons: a row's Flag is
+  one compact pill (most severe open item, plus a count when there are several) that opens a
+  popover with one entry per item, its source and its "Dismiss with a reason"; row height stays
+  one line. Lines opens on "Need attention (N)" beside "All lines (N)"; every row holding a
+  publish blocker is in Need attention. The count under Publish and the server's refusal share
+  one rule, `publishBlockers` in `_shared/lib/findings.ts` (this order's hard findings with no
+  `acknowledged_at`, the filter `blocking_findings` applies); a schedule-level finding is shown
+  but never counted, because the server never lets it block. R23's pairing (an unmapped schedule
+  column folded into the `schedule_short` finding for the product it names) is in
+  `buildFlagItems`. Assumption flagged for the owner: the per-order allocation grid now shows only
+  on a published order, so a draft's Lines tab is one table (R16).
+
+  Open for the owner, R22 (PR #1264 review SF3): the mockup's lines table has 6 columns (#,
+  Product, Qty, Value, Flag, Action); the shipped grid has 12 (#, Product, Flag, Description,
+  Qty, UOM, Unit price, Amount, Delivery, Area, Source line, Stock location), and the Lines tab
+  keeps the stock-location bulk-apply control. All of these predate S7 (they come from main),
+  and the edit view mirrors the same 12 headers by rule, so the S7 lane kept them rather than
+  cut working fields under R22 on its own call. Until the owner rules, R22 reads as unmet on
+  these extras; a trim is its own slice (read and edit columns together).
+
+  Review fixes, 26 Sep 2026 (PR #1264): a Flag pill, read and edit, leads with the most severe
+  open item (`leadFlagItem`), never the first raised; "All lines (N)" counts finding-only rows
+  too, so it equals the rows the view shows (lesson (c)); R23 pairs a product code with a
+  schedule column only where the code starts one of the column's segments and is at least 3
+  characters, the same floor the server's `_code_candidates` uses.
+
+  Owner hand test, 26 Sep 2026 ~07:15Z on :3081 (PR #1264, five binding notes), applied:
+  (1) the Lines table is one plain row per line in line order: no set heading row, no collapse,
+  no indented companion; a zero-priced set part reads "Part of #N" in its price cell (the
+  server's `parent_line_id`). Area, From PO line and Stock location leave BOTH the read and the
+  edit view, which closes the SF3 question above for those three; the nine left are the
+  editable fields plus #, Flag and Amount. (2) No Reorder lines toggle: every row carries its
+  handle while the order may be reordered, and a drop saves at once. (3) No "Stock location for
+  all lines" bar: the server derives the order's location from its customer's sales agent's
+  location group (`BRW-<group>`, master site from `project_allocation_brw_warehouse_code`) and
+  the header states it; a missing link is a "No stock location" flag naming it. (4) The project's
+  Sales orders list keeps every row one line; To review is one pill in the Flag pill's words.
+  (5) The three chips are gone; a footer row sums Value (labelled Page total past one page).
+  Evidence: `evidence/pr1264-owner-notes/` (1280 and 375, cloud-lane stack seeded from the test
+  builders, sidebar navigation, a real drag that saved).
 
 ## Out of scope (rulings)
 

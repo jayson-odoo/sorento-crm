@@ -17,6 +17,7 @@ import {
   fmtMoneyIn,
   fmtSupplierCost,
   fmtTrimmedDecimal,
+  fmtWallStamp,
 } from './format';
 
 describe('fmtSupplierCost', () => {
@@ -134,3 +135,16 @@ describe('fmtDateTime', () => {
 });
 
 
+
+describe('fmtWallStamp', () => {
+  it('writes a zoneless wall-time stamp as day, short month, year and HH:MM, unshifted', () => {
+    expect(fmtWallStamp('2026-09-26T07:40:12.345678')).toBe('26 Sep 2026 07:40');
+    expect(fmtWallStamp('2026-01-05T23:59:59')).toBe('5 Jan 2026 23:59');
+  });
+
+  it('a bare date has no time, and nothing is a dash', () => {
+    expect(fmtWallStamp('2026-12-09')).toBe('9 Dec 2026');
+    expect(fmtWallStamp(null)).toBe(EM_DASH);
+    expect(fmtWallStamp('not a date')).toBe(EM_DASH);
+  });
+});
