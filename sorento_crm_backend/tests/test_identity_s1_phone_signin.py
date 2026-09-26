@@ -28,6 +28,27 @@ CONTRACT AMBIGUITIES resolved here (see the tester's report to the captain):
      key-name-agnostic boundary of "a number for which no code was ever
      requested" (no live Redis marker either way) rather than by moving a
      hidden marker whose key format is not specified.
+
+SECURITY ROUND (#1280) test changes, authorised by the captain:
+  - S1 (timing): `POST /phone/request-code` no longer decides eligibility
+    itself - it enqueues `dispatch_phone_signin_code` for EVERY number,
+    known or not, with identical args, and that job (not the route) creates
+    the code only for an eligible one. Every AC-21 test that used to assert
+    "enqueue called only for the eligible number" now asserts eligibility
+    directly via `find_eligible`, and `test_ac21_code_created_and_enqueued_
+    only_for_the_eligible_user` is renamed and rewritten to prove BOTH halves
+    (identical enqueue, eligible-only dispatch). Every AC-23/24/27 test that
+    used to read the OTP code back from `mock_enqueue.call_args.args[4]`
+    (the code doesn't reach the route's own enqueue call any more - it's
+    generated inside the job) now seeds one directly via `_seed_signin_code`,
+    which calls the same `PortalService.create_and_dispatch_otp` the job
+    calls, on the test's own db.
+  - S4 (per-IP DoS): `test_ac23_verify_per_ip_limit_is_429` pinned a per-IP
+    429 on `/phone/verify` that no longer exists (NextAuth calls that route
+    server-to-server, so the "IP" is the Next.js server for every real user -
+    a shared bucket anyone could exhaust). Renamed and rewritten to prove the
+    opposite: a burst of verifies for DIFFERENT numbers from one client is
+    NOT globally blocked.
 """
 from __future__ import annotations
 
@@ -137,6 +158,33 @@ def _eligible_chain(db):
     return ws, contact, user, digits
 
 
+def _seed_signin_code(db, contact) -> str:
+    """Security round S1: `/phone/request-code` no longer creates the OTP row
+    itself (it enqueues `dispatch_phone_signin_code`, which does). A test
+    that needs a REAL, usable code on its own `blank_session` db calls
+    `create_and_dispatch_otp` directly with a fake inline task - exactly what
+    that job does - instead of reading the code back out of a mocked
+    `enqueue_job` call, which no longer carries it."""
+    from app.services.phone_signin_service import SIGNIN_OTP_TEXT
+    from app.services.portal_service import PortalService
+
+    captured: dict = {}
+
+    def _fake_task(otp_id, identifier, message_text, otp_code, space_id):
+        captured["code"] = otp_code
+        return {"status": "success"}
+
+    space_id = ""
+    workspace = getattr(contact, "workspace", None)
+    if workspace is not None:
+        space_id = getattr(workspace, "space_id", None) or ""
+
+    PortalService(db).create_and_dispatch_otp(
+        contact, space_id, SIGNIN_OTP_TEXT, _fake_task, dispatch_inline=True
+    )
+    return captured["code"]
+
+
 class _client_ctx:
     """TestClient bound to a single blank-schema db (get_db overridden)."""
 
@@ -202,7 +250,18 @@ def test_ac21_identical_200_shape_for_known_and_unknown_number(rate_limit_cleanu
     assert b2["sent_to"].endswith(unknown[-4:]), b2
 
 
-def test_ac21_code_created_and_enqueued_only_for_the_eligible_user(rate_limit_cleanup):
+def test_ac21_route_enqueues_dispatch_identically_then_dispatch_creates_code_only_for_eligible(
+    rate_limit_cleanup,
+):
+    """Security round S1: the eligibility split moved from the route to the
+    `dispatch_phone_signin_code` job it enqueues, so the route itself must be
+    identical for a known and an unknown number (part 1), and the job - run
+    directly here, against the real DB it opens its own SessionLocal on,
+    mirroring the AC-22 task-level tests - must create/send a code only for
+    the eligible one (part 2)."""
+    from app.database import SessionLocal
+    from app.tasks.respond_io_tasks import dispatch_phone_signin_code
+
     with blank_session() as db:
         ws, contact, user, digits = _eligible_chain(db)
         unknown = _digits()
@@ -210,13 +269,52 @@ def test_ac21_code_created_and_enqueued_only_for_the_eligible_user(rate_limit_cl
         with _phone_client(db) as client, patch(
             "app.services.queue_service.enqueue_job"
         ) as mock_enqueue:
-            client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
-            client.post("/api/v1/auth/phone/request-code", json={"phone": unknown})
+            r1 = client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
+            r2 = client.post("/api/v1/auth/phone/request-code", json={"phone": unknown})
 
-        assert mock_enqueue.call_count == 1, mock_enqueue.call_args_list
+        assert r1.status_code == 200 and r2.status_code == 200
+        assert mock_enqueue.call_count == 2, mock_enqueue.call_args_list
+        for call in mock_enqueue.call_args_list:
+            assert call.args[0] is dispatch_phone_signin_code
+            assert call.kwargs.get("queue_name") == "respond_io"
+        assert {call.args[1] for call in mock_enqueue.call_args_list} == {digits, unknown}
+
+    # Part 2: the job itself, real DB (mirrors the AC-22 task-level tests -
+    # dispatch_phone_signin_code opens its own SessionLocal, so a
+    # blank_session fixture would be invisible to it).
+    real_db = SessionLocal()
+    ws2 = contact2 = user2 = None
+    try:
+        ws2, contact2, user2, digits2 = _eligible_chain(real_db)
+        unknown2 = _digits()
+
+        with patch("app.tasks.respond_io_tasks.send_login_otp_respond_message") as mock_send:
+            dispatch_phone_signin_code(digits2)
+        assert mock_send.call_count == 1, mock_send.call_args_list
         assert (
-            db.query(PortalOtpCode).filter(PortalOtpCode.contact_id == contact.id).count() == 1
+            real_db.query(PortalOtpCode).filter(PortalOtpCode.contact_id == contact2.id).count() == 1
         )
+
+        with patch("app.tasks.respond_io_tasks.send_login_otp_respond_message") as mock_send_unknown:
+            dispatch_phone_signin_code(unknown2)
+        assert mock_send_unknown.call_count == 0
+    finally:
+        if contact2 is not None:
+            real_db.query(PortalOtpCode).filter(PortalOtpCode.contact_id == contact2.id).delete(
+                synchronize_session=False
+            )
+        if user2 is not None:
+            real_db.query(User).filter(User.id == user2.id).delete(synchronize_session=False)
+        if contact2 is not None:
+            real_db.query(RespondContact).filter(RespondContact.id == contact2.id).delete(
+                synchronize_session=False
+            )
+        if ws2 is not None:
+            real_db.query(RespondWorkspace).filter(RespondWorkspace.id == ws2.id).delete(
+                synchronize_session=False
+            )
+        real_db.commit()
+        real_db.close()
 
 
 def test_ac21_contact_with_no_user_gets_no_code_and_creates_no_user(rate_limit_cleanup):
