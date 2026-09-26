@@ -62,8 +62,9 @@ describe('SalesOpportunityPortalList', () => {
     expect(screen.getByText('New basin order')).toBeTruthy();
     expect(screen.getByText('Kedai Mine')).toBeTruthy();
     expect(screen.getByText('Qualified')).toBeTruthy();
-    expect(screen.getByText(/5000/)).toBeTruthy();
-    expect(screen.getByText(/2026-11-15/)).toBeTruthy();
+    // The shared formatters, as the portal detail and the CRM grid use them.
+    expect(screen.getByText('RM 5,000.00')).toBeTruthy();
+    expect(screen.getByText('15/11/2026')).toBeTruthy();
 
     const link = card.closest('a');
     expect(link?.getAttribute('href')).toContain('/portal/sales_opportunity/opp-1');

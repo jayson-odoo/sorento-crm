@@ -19,8 +19,10 @@ describe('sales_opportunity portal form kind', () => {
     expect(portalFormKindLabel('sales_opportunity')).toBe('Sales Opportunities');
   });
 
-  it('is a recognised landing kind, not a base submission kind', () => {
-    expect(isLandingKind('sales_opportunity')).toBe(true);
+  // Not a landing kind: `isLandingKind` gates the generic submission-tab machinery, which
+  // this kind does not use (it has its own pages). It is granted and labelled, nothing more.
+  it('is not a generic landing kind', () => {
+    expect(isLandingKind('sales_opportunity')).toBe(false);
   });
 
   it('joins the Market Segments grantable-additional-kinds list', () => {

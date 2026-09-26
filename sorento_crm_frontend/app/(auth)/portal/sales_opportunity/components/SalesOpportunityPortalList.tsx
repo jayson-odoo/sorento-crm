@@ -18,6 +18,7 @@ import {
   listPortalSalesOpportunities,
   type PortalSalesOpportunity,
 } from '../../lib/sales-opportunity-service';
+import { formatCurrency, formatDate } from '@/lib/helpers';
 
 export default function SalesOpportunityPortalList() {
   const [items, setItems] = useState<PortalSalesOpportunity[]>([]);
@@ -100,8 +101,8 @@ export default function SalesOpportunityPortalList() {
                     <span>{item.customer_name ?? item.prospect_name ?? '-'}</span>
                   </span>
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>RM {item.expected_amount}</span>
-                    <span>{item.expected_close_date}</span>
+                    <span>{formatCurrency(item.expected_amount)}</span>
+                    <span>{formatDate(item.expected_close_date)}</span>
                   </div>
                 </CardContent>
               </Card>
