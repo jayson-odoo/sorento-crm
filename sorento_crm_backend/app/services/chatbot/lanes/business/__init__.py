@@ -463,6 +463,36 @@ def _sales_report_not_enabled() -> dict[str, Any]:
     }
 
 
+def _sales_analysis_axis_unsupported(group_by: str) -> dict[str, Any]:
+    """A sales analysis asked by an axis it cannot draw (customer, product, ...): ONE line
+    naming the axes it can, no figure and no fetch (`_sales_report_not_enabled`'s shape)."""
+    structured: dict[str, Any] = {
+        "response": (
+            f"I can't break sales down by {group_by} yet. "
+            "I can show them by month, by year or by channel."
+        ),
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": True,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        "outstanding_report": True,
+    }
+    item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
+    return {
+        "kind": "result",
+        "_fetch_arm": item["_fetch_arm"],
+        "delegate": DELEGATE,
+        "delegate_payload": {"fetch": item},
+        "fetch": item,
+    }
+
+
 def _outstanding_detail_reoffer(
     filters: dict[str, Any], rows: list[dict[str, Any]], *, kind: str = "outstanding_detail"
 ) -> dict[str, Any]:
@@ -1299,6 +1329,11 @@ def run_fetch(
         # whole table in text and the same query as an Excel (Owner ruling 26 Sep 07:16
         # Q2). An override like the two reports beside it, never `tools[0]`; the grant
         # was checked above, before anything was fetched.
+        group_by = jsc.js_string(parse_output.get("group_by") or "")
+        if group_by and group_by not in fetch_mod.SALES_ANALYSIS_GROUP_BY:
+            # Review round 2 S1: "sales by customer" is not answered with a by-channel
+            # table and no word that the ask was changed; it is said, and nothing fetched.
+            return _sales_analysis_axis_unsupported(group_by)
         tool_name = _SALES_ANALYSIS_TOOL
         tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_analysis_override"}}
     elif (

@@ -677,9 +677,11 @@ def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportPivotL
     # month or by channel (Configure summary, the chatbot's own views), the last row minus
     # the one before is DEC minus NOV, or Project minus Dealer - so no VARIANCE, and the
     # column totals come back (reviewer B1).
-    by_year = row_column.period_years
+    # The same holds for years by channel: a channel is not a month, so there is no "same
+    # months last year" to hold this year to (review round 2 B1).
+    by_year = row_column.period_years and col_column.fixed_values == reg.MONTHS_OF_YEAR
     variance_row, variance_total = (
-        _variance(row_values, cells, measures)
+        _variance(ctx, row_values, cells, measures)
         if layout.variance == "last_two_rows" and by_year
         else (None, None)
     )
@@ -758,30 +760,47 @@ def _value_labels(column: reg.Column, values: List[str]) -> Optional[Dict[str, s
     return None
 
 
+def variance_months(period_start: date, as_at: date, last_year: int, previous_year: int) -> List[str]:
+    """The months ("01".."12") a year-on-year difference is taken over (G5 (a)): every month
+    of the last year up to the as-at month, whose month the year before is inside the
+    period too. A month after the as-at date is left out, so a September report does not
+    read October to December as a collapse that has not happened."""
+    first = date(period_start.year, period_start.month, 1)
+    return [
+        f"{month:02d}"
+        for month in range(1, 13)
+        if date(last_year, month, 1) <= as_at and date(previous_year, month, 1) >= first
+    ]
+
+
 def _variance(
+    ctx: QueryContext,
     row_values: List[str],
     cells: Dict[str, Dict[str, Dict[str, str]]],
     measures: List[reg.Column],
 ) -> Tuple[Optional[Dict[str, Dict[str, str]]], Optional[Dict[str, str]]]:
-    """The last row minus the one before, over the columns the LAST row has (G5 (a)).
+    """The last row minus the one before, month by month from JAN to the as-at month; its
+    total is this year to date minus last year over the same months (G5 (a), AC-S1-10).
 
-    A column the last row has nothing in is blank, not "minus last year": a September
-    report must not read October to December as a collapse that has not happened.
+    A missing cell reads as 0, so a month this year sold nothing in and last year did
+    counts against it (review round 2 B1). A month neither year sold in stays blank.
     """
     real = [v for v in row_values if v != BLANK_VALUE]
     if len(real) < 2:
         return None, None
     last, previous = real[-1], real[-2]
+    as_at = ctx.period.end_exclusive - timedelta(days=1)
+    months = variance_months(ctx.period.start, as_at, int(last), int(previous))
     row: Dict[str, Dict[str, str]] = {}
     total: Dict[str, Decimal] = {}
-    for col_value, by_measure in (cells.get(last) or {}).items():
+    for month in months:
         for measure in measures:
-            value = by_measure.get(measure.key)
-            if value is None:
+            now = (cells.get(last) or {}).get(month, {}).get(measure.key)
+            before = (cells.get(previous) or {}).get(month, {}).get(measure.key)
+            if now is None and before is None:
                 continue
-            before = (cells.get(previous) or {}).get(col_value, {}).get(measure.key)
-            diff = Decimal(value) - (Decimal(before) if before is not None else Decimal(0))
-            row.setdefault(col_value, {})[measure.key] = _money(diff)
+            diff = Decimal(now or 0) - Decimal(before or 0)
+            row.setdefault(month, {})[measure.key] = _money(diff)
             total[measure.key] = total.get(measure.key, Decimal(0)) + diff
     return row, _totals(total)
 

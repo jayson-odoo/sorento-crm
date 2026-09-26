@@ -113,48 +113,67 @@ def _money(value: Optional[Decimal]) -> Optional[str]:
     return None if value is None else str(value.quantize(Decimal("0.01")))
 
 
-def _answer(result, *, company_name: str, channel: Optional[str], basis: str,
-            row_label: str, col_label: str, n: Optional[int]) -> Dict[str, Any]:
+def _answer(result, *, by_month, period_start: date, as_at: date, company_name: str,
+            channel: Optional[str], basis: str, row_label: str, col_label: str,
+            n: Optional[int]) -> Dict[str, Any]:
     """The pivot as the text reads it: one line per row, the columns in order, a Difference
-    column (last year minus the one before) when the columns are two or more years."""
+    column (last year minus the one before) when the columns are two or more years.
+
+    The Difference is the VARIANCE row's rule (G5 (a), review round 2 B1): this year to
+    date against the same months last year, a missing month read as 0, so a month this
+    year sold nothing in counts. It is read off `by_month` (the same rows, by month of the
+    period), because a year column alone cannot say which months it holds."""
     from app.services.reports.datasets.sales_order_lines import BASIS_WORDS, CHANNELS
+    from app.services.reports.engine import variance_months
 
     pivot = result.layouts.summary
     labels = pivot.col_dim.value_labels or {}
     col_values = list(pivot.col_dim.values)
     columns = [labels.get(v, v) for v in col_values]
     difference = col_label == "Year" and len(col_values) >= 2
+    months: List[str] = []
+    if difference:
+        last, previous = col_values[-1], col_values[-2]
+        months = variance_months(period_start, as_at, int(last), int(previous))
+
+    def _difference(row_value: str) -> Optional[Decimal]:
+        per_month = by_month.cells.get(row_value, {})
+        diff: Optional[Decimal] = None
+        for month in months:
+            now = per_month.get(f"{last}-{month}", {}).get("sales_value")
+            before = per_month.get(f"{previous}-{month}", {}).get("sales_value")
+            if now is None and before is None:
+                continue
+            diff = (diff or Decimal(0)) + Decimal(now or 0) - Decimal(before or 0)
+        return diff
 
     def _cells(per_col: Dict[str, Dict[str, str]]) -> List[Optional[str]]:
-        values = [per_col.get(v, {}).get("sales_value") for v in col_values]
-        if difference:
-            last, before = values[-1], values[-2]
-            values.append(
-                _money(Decimal(last) - Decimal(before or 0)) if last is not None else None
-            )
-        return values
+        return [per_col.get(v, {}).get("sales_value") for v in col_values]
 
     row_labels = pivot.row_value_labels or {}
-    rows = [
-        {
+    rows = []
+    diffs: List[Decimal] = []
+    for value in pivot.row_values:
+        values = _cells(pivot.cells.get(value, {}))
+        if difference:
+            diff = _difference(value)
+            values.append(_money(diff))
+            if diff is not None:
+                diffs.append(diff)
+        rows.append({
             "label": row_labels.get(value, value),
-            "values": _cells(pivot.cells.get(value, {})),
+            "values": values,
             "total": pivot.row_totals.get(value, {}).get("sales_value"),
-        }
-        for value in pivot.row_values
-    ]
+        })
     total_count = len(rows)
-    rows_all = rows
     if n is not None:
         # Ranked by the row's own total, then its label: the top X rule (PR #1263).
         rows = sorted(rows, key=lambda r: (-Decimal(r["total"] or 0), r["label"]))[:n]
 
     totals = _cells(pivot.col_totals)
     if difference:
-        # G5 (a): the total difference is the sum of the months the last year has, a year
-        # to date against the same months a year earlier - never the full year before it.
-        diffs = [r["values"][-1] for r in rows_all if r["values"][-1] is not None]
-        totals[-1] = _money(sum((Decimal(d) for d in diffs), Decimal(0))) if diffs else None
+        # Every row's, not only the top n: the total line is the whole set's (AC-S1-7).
+        totals.append(_money(sum(diffs, Decimal(0))) if diffs else None)
     channel_words = dict(CHANNELS)
     return {
         "status": "ready",
@@ -302,8 +321,18 @@ def _prepare(
     if AXES[rows] == "month_of_year" and AXES[cols] == "year":
         file_view = view.model_copy(update={"pivot": view.pivot.model_copy(
             update={"rows": "year", "cols": "month_of_year"})})
+    by_month = None
+    if AXES[cols] == "year" and len(result.layouts.summary.col_dim.values) >= 2:
+        # The Difference column's months (see `_answer`): the same rows, by month.
+        month_view = view.model_copy(update={"pivot": view.pivot.model_copy(
+            update={"cols": "year_month"})})
+        by_month = engine.run(db, definition, params, month_view,
+                              company_grants=grant).layouts.summary
     answer = _answer(
         result,
+        by_month=by_month,
+        period_start=start,
+        as_at=end,
         company_name=companies[company_id][0],
         channel=channel,
         basis=basis,

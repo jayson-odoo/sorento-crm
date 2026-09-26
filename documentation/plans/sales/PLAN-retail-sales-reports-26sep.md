@@ -80,8 +80,18 @@ design; nothing here changes a ruling):
   session). The export job carries the enqueuer's grant (`company_grants`).
 - **`sheet_per` writes blocks on the one SUMMARY sheet** (Q1 (b)), and the screen shows the
   same blocks (`ReportLayouts.blocks`), each with its table and chart (J2).
-- **VARIANCE only when the rows are the period's years** (`Column.period_years`); re-pivoted
-  by month or channel the column totals come back (reviewer finding).
+- **VARIANCE only when the rows are the period's years and the columns the months of the
+  year** (`Column.period_years`, `registry.MONTHS_OF_YEAR`); re-pivoted by month or channel,
+  or years by channel, the column totals come back (reviewer finding; review round 2 B1).
+- **VARIANCE runs JAN to the as-at month, a missing cell read as 0 in both years** (review
+  round 2 B1, `engine.variance_months`): a month this year sold nothing in and last year did
+  counts against this year, so the total is this year to date minus last year over the same
+  months. A month neither year sold in stays blank. The chatbot's Difference column uses the
+  same months for both its shapes (months down, or one line per channel).
+- **The chatbot says an axis it cannot draw** (review round 2 S1): a sales analysis asked by
+  customer, product, date, warehouse, supplier or transporter gets one line naming month,
+  year and channel, with no figure and no fetch. `year` maps explicitly to one line per
+  channel, the years across.
 - **The detail truncates** past the 5,000 line cap instead of refusing (`DetailLayout.cap`),
   newest lines first, whole-set totals kept, so a three-year summary is never refused.
 - **Chatbot: no `compare_years` key.** The period dates carry the years ("2025 vs 2026" is
@@ -90,8 +100,10 @@ design; nothing here changes a ruling):
   republished and promoted by the S1 migration (the chatbot_rearch_s12 rule).
 - **The route is the chatbot's only** (`X-API-Key` required, security review B2), the dealer
   check reads with the company scope off (B1), ten asks per contact per ten minutes.
-- **The `sales` module is enabled** wherever `order` is, in the migration (scm and dealer_kit
-  shipped dormant; a dormant module hides the menu item from every non-admin).
+- **The `sales` module stays dormant** (review round 2 S2, 27 Sep, captain's brief: "#1260
+  shipped it dormant on purpose, keep it so"). The S1 migration writes no `tenant_modules`
+  row, and its downgrade leaves any such row alone. Owner step after deploy: switch on Sales
+  in App Store; until then the menu item is hidden from every non-admin.
 - **AC-S1-6's "a list over 50 ids" is not applicable in S1**: no id-list param exists yet
   (customer lists arrive with S2 and S5).
 - **Company names come from `companies.name`** ("SORENTO - DEALER"); the PDF's "SORENTO SDN
@@ -104,7 +116,7 @@ design; nothing here changes a ruling):
   - `sales_s1_reports_module` now sits on `sales_0002_team_leader` (one alembic head). The
     schema and the catalog row are `sales_0001_teams`'s, so S1's `CREATE SCHEMA IF NOT
     EXISTS` and catalog insert are no-ops there, and S1's downgrade leaves the catalog row
-    to that revision. S1 still enables the module wherever `order` is.
+    to that revision. S1 no longer enables the module (review round 2 S2, above).
   - `/api/v1/sales` is mounted once; its router holds the teams routes and the analysis
     route.
   - The Yearly comparison joins #1260's Sales group (Sales Teams, Sales Agents), which has

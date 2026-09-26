@@ -68,6 +68,14 @@ def current_year_period() -> Dict[str, Any]:
     return {"kind": "year", "year": today_malaysia().year}
 
 
+_MONTH_NAMES = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+#: A month-of-year axis's fixed values ("01", "JAN") .. ("12", "DEC"). The kernel reads a
+#: column carrying exactly these as months of the year (the VARIANCE window, G5 (a)).
+MONTHS_OF_YEAR: Tuple[Tuple[str, str], ...] = tuple(
+    (f"{index:02d}", name) for index, name in enumerate(_MONTH_NAMES, start=1)
+)
+
+
 @dataclass(frozen=True)
 class Column:
     """One catalog column: what it is called, what it holds, and how to select it."""

@@ -84,16 +84,14 @@ _TITLE_HEIGHTS = {_COMPANY_ROW: 35.25, _REPORT_ROW: 30.75, _PERIOD_ROW: 29.25, _
 _FORMULA_LEAD = ("=", "+", "-", "@")
 
 
-def safe_text(value):
-    """Kept as the text it is. openpyxl turns only a leading "=" into a formula, but the
-    other leads are escaped too, the way a spreadsheet's own import would: with Excel's
-    quote prefix (`_mark_text`), never a visible apostrophe in the value."""
-    return value
-
-
 def _mark_text(cell) -> None:
+    """A text cell starting with a formula lead is kept as that text. openpyxl turns only
+    a leading "=" into a formula, but the other leads are escaped too, the way a
+    spreadsheet's own import would: with Excel's quote prefix, never a visible apostrophe
+    in the value. The kernel's own "-" placeholder is left alone: Excel reads a lone "-"
+    as text anyway, and the existing workbooks stay byte-for-byte as they were."""
     value = cell.value
-    if isinstance(value, str) and value.startswith(_FORMULA_LEAD):
+    if isinstance(value, str) and value != NO_VALUE and value.startswith(_FORMULA_LEAD):
         cell.data_type = "s"
         cell.quotePrefix = True
 
@@ -164,8 +162,8 @@ def _title_block(
     """The four lines every sheet opens with, merged across the table (AC-G7)."""
     spec = definition.workbook
     lines = (
-        (_COMPANY_ROW, safe_text((company or spec.company_name).upper()), _COMPANY_FONT),
-        (_REPORT_ROW, safe_text((spec.report_title or definition.title).upper()), _REPORT_FONT),
+        (_COMPANY_ROW, (company or spec.company_name).upper(), _COMPANY_FONT),
+        (_REPORT_ROW, (spec.report_title or definition.title).upper(), _REPORT_FONT),
         (_PERIOD_ROW, period_date or period_text, _PERIOD_FONT),
     )
     for row, value, font in lines:
@@ -181,7 +179,7 @@ def _title_block(
 
     if note:
         # A report with a stated basis prints it where the department line sits.
-        cell = sheet.cell(row=_DEPARTMENT_ROW, column=1, value=safe_text(note))
+        cell = sheet.cell(row=_DEPARTMENT_ROW, column=1, value=note)
         cell.font = _DEPARTMENT_FONT
         cell.alignment = _LEFT
         if width > 1:
@@ -295,7 +293,7 @@ def _render_detail(
                 if value:
                     sheet.cell(row=row, column=index, value=TICK).alignment = _CENTRE
             elif value is not None:
-                sheet.cell(row=row, column=index, value=safe_text(value)).alignment = _LEFT
+                sheet.cell(row=row, column=index, value=value).alignment = _LEFT
             sheet.cell(row=row, column=index).border = _BOX
         row += 1
 
@@ -388,7 +386,7 @@ def _pivot_table(
     sheet.merge_cells(start_row=top, start_column=1, end_row=header, end_column=1)
 
     def _group(column: int, label: str) -> None:
-        sheet.cell(row=top, column=column, value=safe_text(label))
+        sheet.cell(row=top, column=column, value=label)
         if span > 1:
             sheet.merge_cells(
                 start_row=top, start_column=column, end_row=top, end_column=column + span - 1
@@ -417,7 +415,7 @@ def _pivot_table(
     sheet.column_dimensions["A"].width = _width(spec, pivot.row_dim.key)
 
     def _line(row: int, label: str, per_col: Dict, total: Dict, *, bold=False) -> None:
-        cell = sheet.cell(row=row, column=1, value=safe_text(label))
+        cell = sheet.cell(row=row, column=1, value=label)
         cell.alignment = _LEFT
         if bold:
             cell.font = _TOTAL_FONT
@@ -506,7 +504,7 @@ def _render_blocks(
     _title_block(sheet, definition, company, width, period_text, None, data.note)
     row = _GROUP_ROW
     for block in blocks:
-        cell = sheet.cell(row=row, column=1, value=safe_text(block.title))
+        cell = sheet.cell(row=row, column=1, value=block.title)
         cell.font = _HEADER_FONT
         cell.alignment = _LEFT
         if width > 1:

@@ -32,10 +32,7 @@ from app.services.reports import registry as reg
 from app.services.reports.engine import month_label
 from app.services.sales_report_service import _common_filters, _per_line_exprs
 
-_MONTHS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
-MONTH_OF_YEAR: Tuple[Tuple[str, str], ...] = tuple(
-    (f"{index:02d}", name) for index, name in enumerate(_MONTHS, start=1)
-)
+MONTH_OF_YEAR = reg.MONTHS_OF_YEAR
 
 #: The Channel filter's values and the words each reads as (G4: `demand_class`).
 CHANNELS: Tuple[Tuple[str, str], ...] = (("dealer", "Dealer"), ("project", "Project team"))

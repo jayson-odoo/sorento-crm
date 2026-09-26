@@ -398,6 +398,10 @@ def has_narrowing_filter(args: Any, *, tool_name: str | None = None) -> bool:
 # silent drop as sending the wrong name.
 SCALAR_PARAMS: frozenset[str] = frozenset()
 
+#: The sales analysis's `group_by` -> the route's `rows` (the years are always across).
+#: "month" is months down the side; "year" and no axis said are one line per channel.
+SALES_ANALYSIS_GROUP_BY = {"": "channel", "year": "channel", "month": "month"}
+
 DATE_PARAMS: dict[str, tuple[str, str]] = {
     "crm_order_management_orders_list": ("actual_delivery_date_from", "actual_delivery_date_to"),
     "crm_order_management_orders_by_product_list": (
@@ -749,7 +753,9 @@ def entity_ids_transformer(
         for key in ("product_ids", "customer_ids", "warehouse_ids", "limit", "group_by", "top_n"):
             out.pop(key, None)
         group_by = jsc.js_string(jsc.get(semantic_input, "group_by") or "")
-        out["rows"] = "month" if group_by == "month" else "channel"
+        # Every axis mapped by name (review round 2 S1). Any other `group_by` never gets
+        # here: `run_fetch` says it cannot draw it and fetches nothing.
+        out["rows"] = SALES_ANALYSIS_GROUP_BY[group_by]
         out["cols"] = "year"
         channel = jsc.get(semantic_input, "sales_channel")
         if channel in ("dealer", "project"):

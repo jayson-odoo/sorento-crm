@@ -12,11 +12,9 @@ revision:
 2. seeds ``sales.reports.view`` and grants it to admin and superadmin (PRINCIPLES DoD 3);
    every other role through the role editor (#1260 3.7).
 3. registers the module in ``app_modules_catalog`` (``ON CONFLICT DO NOTHING``, so the row
-   ``sales_0001_teams`` wrote stands) and ENABLES it for every tenant that already has
-   ``order`` enabled. Precedent (scm, dealer_kit) shipped dormant; this one is
-   not, because the owner asked to use these reports now and a dormant module hides the
-   menu item from every non-admin with no error to read. Disabling it on the App Store
-   screen is unchanged.
+   ``sales_0001_teams`` wrote stands) and writes NO ``tenant_modules`` row: #1260 shipped
+   ``sales`` dormant on purpose, and it stays so (review round 2 S2). The owner switches
+   it on in App Store.
 4. adds ``crm_sales_analysis`` to the live ``order`` chatbot domain's tool allow-list (never
    ``tools[0]``: the pick is an override in ``run_fetch``), the ``chatbot_rearch_s9`` shape.
 5. republishes the parser prompt (its body now teaches ``order_status "sales_analysis"``,
@@ -102,16 +100,6 @@ def seed_rbac_and_module(bind) -> None:
             "desc": "Sales teams, targets with live achievement, opportunities and WhatsApp updates.",
             "deps": '["base", "product", "order"]',
         },
-    )
-    bind.execute(
-        sa.text(
-            "INSERT INTO tenant_modules (id, tenant_id, module_key, enabled) "
-            "SELECT gen_random_uuid(), t.tenant_id, 'sales', true "
-            "  FROM tenant_modules t "
-            " WHERE t.module_key = 'order' AND t.enabled "
-            "   AND NOT EXISTS (SELECT 1 FROM tenant_modules x "
-            "                    WHERE x.tenant_id = t.tenant_id AND x.module_key = 'sales')"
-        )
     )
 
 
@@ -203,9 +191,8 @@ def downgrade() -> None:
                 session.commit()
     finally:
         session.close()
-    # Back to the dormant module `sales_0001_teams` left. The catalog row is that
-    # revision's, so its own downgrade removes it, not this one.
-    bind.execute(sa.text("DELETE FROM tenant_modules WHERE module_key = 'sales'"))
+    # The catalog row and any `tenant_modules` row are not this revision's: the first is
+    # `sales_0001_teams`'s, the second the owner's App Store switch.
     bind.execute(
         sa.text(
             "DELETE FROM user_role_permissions WHERE permission_id IN "
