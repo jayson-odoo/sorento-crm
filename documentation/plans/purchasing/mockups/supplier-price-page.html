@@ -1,260 +1,176 @@
-<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Supplier price page</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-<style>
-/* Mockup for PLAN-cost-price-supplier-26sep.md, slice S3 (the supplier page) and the staff
-   "Share with supplier" dialog that issues its link. Static sample data; not the shipped UI.
-   Mobile first: the phone frames are 375px wide, the page is opened from WeChat's in-app browser.
-   Labels are Chinese first with English beneath (Q12). Tokens mirror css/config.reui.css names. */
-:root {
-  --background: #ffffff; --foreground: #0a0a0a; --muted: #f4f4f5; --muted-foreground: #71717a;
-  --border: #e4e4e7; --primary: #1b84ff; --primary-foreground: #ffffff;
-  --up-bg: #fef3f2; --up-fg: #b42318; --down-bg: #ecfdf3; --down-fg: #067647;
-  --warn-bg: #fff4e5; --warn-fg: #b54708; --info-bg: #eff8ff; --info-fg: #175cd3;
-  --radius: 0.5rem; --text-2sm: 0.8125rem; --text-xs: 0.75rem;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --background: #0b0b0d; --foreground: #f4f4f5; --muted: #18181b; --muted-foreground: #a1a1aa;
-    --border: #27272a; --up-bg: #3b1412; --up-fg: #fda29b; --down-bg: #0c2e1d; --down-fg: #75e0a7;
-    --warn-bg: #3a2410; --warn-fg: #fdb022; --info-bg: #102a4c; --info-fg: #84caff;
-  }
-}
-:root[data-theme="dark"] {
-  --background: #0b0b0d; --foreground: #f4f4f5; --muted: #18181b; --muted-foreground: #a1a1aa;
-  --border: #27272a; --up-bg: #3b1412; --up-fg: #fda29b; --down-bg: #0c2e1d; --down-fg: #75e0a7;
-  --warn-bg: #3a2410; --warn-fg: #fdb022; --info-bg: #102a4c; --info-fg: #84caff;
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--background); color: var(--foreground);
-  font: 400 14px/1.45 Inter, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif; }
-.wrap { max-width: 1280px; margin: 0 auto; padding: 16px; }
-.note { font-size: var(--text-xs); color: var(--muted-foreground); margin: 0 0 8px; }
-h2.section { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground);
-  margin: 32px 0 8px; font-weight: 600; }
-.row { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
-.phone { width: 375px; max-width: 100%; border: 1px solid var(--border); border-radius: 22px; overflow: hidden;
-  background: var(--background); box-shadow: 0 8px 24px rgba(0,0,0,.08); }
-.wx { background: var(--muted); padding: 10px 14px; font-size: var(--text-xs); color: var(--muted-foreground);
-  display: flex; justify-content: space-between; border-bottom: 1px solid var(--border); }
-.top { padding: 14px 16px 10px; border-bottom: 1px solid var(--border); }
-.top .brand { font-size: var(--text-xs); color: var(--muted-foreground); display: flex; justify-content: space-between; align-items: center; }
-.lang { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; padding: 2px; }
-.lang button { border: 0; background: transparent; font: inherit; font-size: var(--text-xs); padding: 2px 10px; border-radius: 999px; color: var(--muted-foreground); }
-.lang button[aria-pressed="true"] { background: var(--foreground); color: var(--background); }
-.top h1 { font-size: 18px; margin: 8px 0 2px; font-weight: 600; }
-.en { display: block; font-size: var(--text-xs); color: var(--muted-foreground); font-weight: 400; }
-.top .who { font-size: var(--text-2sm); margin-top: 6px; }
-.badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 2px 9px;
-  font-size: var(--text-xs); font-weight: 500; white-space: nowrap; }
-.badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.b-pending { background: var(--info-bg); color: var(--info-fg); }
-.b-warn { background: var(--warn-bg); color: var(--warn-fg); }
-.b-up { background: var(--up-bg); color: var(--up-fg); }
-.b-down { background: var(--down-bg); color: var(--down-fg); }
-.b-muted { background: var(--muted); color: var(--muted-foreground); }
-.tabs { display: flex; gap: 18px; padding: 0 16px; border-bottom: 1px solid var(--border); overflow-x: auto; white-space: nowrap; }
-.tabs button { border: 0; background: none; font: inherit; font-size: var(--text-2sm); color: var(--muted-foreground);
-  padding: 10px 0; border-bottom: 2px solid transparent; }
-.tabs button[aria-selected="true"] { color: var(--foreground); border-color: var(--foreground); font-weight: 500; }
-.tools { display: flex; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
-.search { flex: 1; border: 1px solid var(--border); border-radius: var(--radius); padding: 7px 10px; color: var(--muted-foreground); font-size: var(--text-2sm); }
-.chip { border: 1px solid var(--border); border-radius: 999px; padding: 6px 10px; font-size: var(--text-xs); white-space: nowrap; }
-.item { padding: 12px 16px; border-bottom: 1px solid var(--border); display: grid; grid-template-columns: minmax(0,1fr) 116px; gap: 4px 12px; align-items: center; }
-.item .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; font-weight: 500; }
-.item .cfg { font-size: var(--text-xs); color: var(--muted-foreground); grid-column: 1; }
-.item .cur { font-size: var(--text-xs); color: var(--muted-foreground); grid-column: 1; }
-.price { grid-row: 1 / span 3; grid-column: 2; display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
-.price input { width: 100%; font: inherit; font-size: 16px; text-align: right; padding: 8px 10px; border: 1px solid var(--border);
-  border-radius: var(--radius); background: var(--background); color: var(--foreground); font-variant-numeric: tabular-nums; }
-.price input.changed { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
-.price .d { text-align: right; }
-.sticky { position: sticky; bottom: 0; background: var(--background); border-top: 1px solid var(--border); padding: 12px 16px;
-  display: flex; flex-direction: column; gap: 8px; }
-.btn { border: 1px solid var(--border); background: var(--background); color: var(--foreground); font: inherit;
-  font-size: var(--text-2sm); padding: 10px 12px; border-radius: var(--radius); text-align: center; cursor: pointer; }
-.btn.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); font-weight: 500; }
-.btn .en { color: inherit; opacity: .8; }
-.summary { font-size: var(--text-2sm); display: flex; justify-content: space-between; }
-.drop { margin: 16px; border: 1.5px dashed var(--border); border-radius: var(--radius); padding: 24px 12px; text-align: center; font-size: var(--text-2sm); }
-.body { padding: 16px; font-size: var(--text-2sm); }
-.list { margin: 0; padding: 0; list-style: none; }
-.list li { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); }
-.dialog { width: 460px; max-width: 100%; border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px);
-  box-shadow: 0 12px 32px rgba(0,0,0,.14); background: var(--background); }
-.dialog .dh { padding: 16px; border-bottom: 1px solid var(--border); font-weight: 600; }
-.dialog .db { padding: 16px; display: flex; flex-direction: column; gap: 14px; font-size: var(--text-2sm); }
-.dialog .df { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
-.dialog .btn { padding: 6px 12px; }
-.qr { display: flex; gap: 14px; align-items: center; }
-.qr svg { width: 120px; height: 120px; flex: none; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
-.url { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 7px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.kv { display: grid; grid-template-columns: 110px minmax(0,1fr); gap: 6px 10px; }
-.kv dt { color: var(--muted-foreground); }
-.kv dd { margin: 0; }
-.msg { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; background: var(--muted); white-space: pre-line; font-size: var(--text-xs); }
-</style>
-</head>
-<body>
-<div class="wrap">
-<p class="note">Mockup, S3 of PLAN-cost-price-supplier-26sep.md. Frame A is the staff side: the supplier record's "Share price page" dialog, which issues the link as a plain URL, a QR code and a ready-to-paste WeChat message. Frames B to E are the supplier's phone, opened from WeChat. Grey captions are for the plan reader, not UI copy.</p>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Supplier price page mockup</title><style>
+:root{color-scheme:light}
+body{margin:0;background:#eef0f3;color:#18202b;font:15px/1.55 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:1360px;margin:0 auto;padding:24px 16px 60px}
+h1{font-size:26px;margin:0 0 6px}
+h2{font-size:21px;margin:40px 0 10px;padding-top:14px;border-top:2px solid #d5d9e0}
+h3{font-size:17px;margin:26px 0 6px}
+p{margin:6px 0}
+.sub{color:#5b6472}
+.lbl{font-size:12px;font-weight:600;color:#5b6472;text-transform:uppercase;letter-spacing:.05em;margin:14px 0 6px}
+.dd{font-size:14px;color:#3d4653}
+blockquote{margin:8px 0;padding:10px 14px;background:#fff;border-left:4px solid #1b84ff;border-radius:6px}
+.rul{background:#fff;border:1px solid #dde1e7;border-radius:10px;padding:12px 14px;margin:10px 0}
+.rul .when{font-size:13px;color:#5b6472;font-weight:600}
+.rul .then{margin-top:6px}
+.rul .then b{color:#0f5e40}
+.slice{background:#fff;border:1px solid #dde1e7;border-radius:10px;padding:12px 14px;margin:12px 0}
+.slice .tag{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;background:#fdf5e1;color:#8a5a0c;margin-left:6px}
+.slice .tag.no{background:#f1f2f4;color:#4b5563}
+.ba{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}
+.ba div{background:#f7f8fa;border-radius:8px;padding:9px 11px;font-size:14px}
+.ba b{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#5b6472}
+.oq{background:#fff;border:1px solid #dde1e7;border-radius:10px;padding:12px 14px;margin:10px 0}
+.toc a{color:#1463c7;text-decoration:none}
+.toc{columns:2;font-size:14px}
+ul{padding-left:20px}
+li{margin:3px 0}
+.screen{margin-bottom:34px}
+.note{background:#fff8e6;border:1px solid #f0dca8;border-radius:8px;padding:10px 12px;font-size:14px}
+@media (max-width:700px){.ba{grid-template-columns:1fr}.toc{columns:1}h1{font-size:22px}}
 
-<h2 class="section">Frame A: Suppliers &gt; XIAMEN TAIYANG &gt; Share price page (staff, modal)</h2>
-<div class="dialog" role="dialog" aria-label="Share price page">
-  <div class="dh">Share price page</div>
-  <div class="db">
-    <dl class="kv">
-      <dt>Contact</dt><dd>Mr Chen Wei (sales), +86 138 **** 5521</dd>
-      <dt>Products</dt><dd>258 linked to this supplier</dd>
-      <dt>Expires</dt><dd>26 Oct 2026 (30 days)</dd>
-    </dl>
-    <div class="qr">
-      <svg viewBox="0 0 29 29" aria-label="QR code for the price page link" role="img">
-        <rect width="29" height="29" fill="#fff"/>
-        <g fill="#000">
-          <rect x="1" y="1" width="7" height="7"/><rect x="2" y="2" width="5" height="5" fill="#fff"/><rect x="3" y="3" width="3" height="3"/>
-          <rect x="21" y="1" width="7" height="7"/><rect x="22" y="2" width="5" height="5" fill="#fff"/><rect x="23" y="3" width="3" height="3"/>
-          <rect x="1" y="21" width="7" height="7"/><rect x="2" y="22" width="5" height="5" fill="#fff"/><rect x="3" y="23" width="3" height="3"/>
-          <rect x="10" y="2" width="1" height="1"/><rect x="12" y="3" width="2" height="1"/><rect x="15" y="1" width="1" height="3"/><rect x="18" y="4" width="1" height="2"/>
-          <rect x="10" y="9" width="3" height="1"/><rect x="14" y="10" width="1" height="3"/><rect x="17" y="9" width="2" height="2"/><rect x="21" y="11" width="3" height="1"/>
-          <rect x="2" y="11" width="2" height="1"/><rect x="5" y="13" width="1" height="2"/><rect x="9" y="14" width="2" height="1"/><rect x="12" y="15" width="3" height="1"/>
-          <rect x="18" y="14" width="1" height="3"/><rect x="22" y="15" width="2" height="2"/><rect x="25" y="13" width="1" height="3"/><rect x="11" y="19" width="1" height="2"/>
-          <rect x="14" y="21" width="3" height="1"/><rect x="19" y="20" width="1" height="3"/><rect x="22" y="23" width="3" height="1"/><rect x="11" y="25" width="2" height="2"/>
-          <rect x="16" y="25" width="1" height="2"/><rect x="20" y="26" width="3" height="1"/><rect x="26" y="20" width="1" height="2"/><rect x="25" y="26" width="2" height="1"/>
-        </g>
-      </svg>
-      <div style="display:flex;flex-direction:column;gap:8px;min-width:0">
-        <div class="url">https://crm.sorento.com.my/c/srt/supplier-prices/Hq7x2Lk9vR4mTz8QwYp1bN</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn">Copy link</button><button class="btn">Save QR image</button></div>
-      </div>
-    </div>
-    <div class="msg">Sorento 价格维护 / Sorento price page
+.mk{--bg:#f5f6f8;--card:#fff;--line:#e4e6eb;--text:#18202b;--muted:#6b7280;--pri:#1b84ff;--pri-soft:#e9f3ff;
+--ok:#17a36b;--ok-soft:#e6f7ef;--bad:#e5484d;--bad-soft:#fdecec;--warn:#b7791f;--warn-soft:#fdf5e1;--gray-soft:#f1f2f4;
+font:13px/1.45 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--text)}
+.mk *{box-sizing:border-box}
+.mk .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:6px}
+.mk .fd{width:1280px;background:var(--bg);border:1px solid #cfd3da;border-radius:10px;overflow:hidden;display:flex;min-height:560px}
+.mk .fm{width:375px;background:var(--bg);border:1px solid #cfd3da;border-radius:22px;overflow:hidden;min-height:640px;position:relative}
+.mk .side{width:210px;background:#101828;color:#cbd2dc;padding:14px 10px;flex:none}
+.mk .side .logo{color:#fff;font-weight:700;font-size:15px;padding:4px 8px 14px}
+.mk .side .grp{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#8792a2;padding:10px 8px 4px}
+.mk .side .it{padding:6px 8px;border-radius:6px}
+.mk .side .it.on{background:#1f2a3d;color:#fff}
+.mk .main{flex:1;min-width:0;display:flex;flex-direction:column}
+.mk .top{height:48px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 20px;gap:12px;color:var(--muted)}
+.mk .top .sp{flex:1}
+.mk .av{width:26px;height:26px;border-radius:50%;background:#dbe7ff;color:#1b4fb8;display:inline-grid;place-items:center;font-size:11px;font-weight:600}
+.mk .pg{padding:18px 20px;flex:1}
+.mk .mtop{height:48px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 14px;gap:10px}
+.mk .mtop b{font-size:15px}
+.mk .mpg{padding:12px}
+.mk h1{font-size:19px;margin:0}
+.mk .crumb{color:var(--muted);font-size:12px;margin-bottom:4px}
+.mk .ph{display:flex;align-items:flex-start;gap:8px;margin-bottom:14px}
+.mk .ph .sp{flex:1}
+.mk .meta{color:var(--muted);font-size:12px;margin-top:3px}
+.mk .card{background:var(--card);border:1px solid var(--line);border-radius:10px}
+.mk .btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:7px;border:1px solid var(--line);background:#fff;color:var(--text);font-weight:500;white-space:nowrap}
+.mk .btn.p{background:var(--pri);border-color:var(--pri);color:#fff}
+.mk .btn.g{background:var(--ok);border-color:var(--ok);color:#fff}
+.mk .btn.d{color:var(--bad)}
+.mk .btn.sm{height:26px;padding:0 9px;font-size:12px}
+.mk .btn.dis{opacity:.45}
+.mk .btn.full{width:100%;justify-content:center;height:40px}
+.mk .icon{width:32px;padding:0;justify-content:center}
+.mk .search{display:flex;align-items:center;gap:7px;height:32px;border:1px solid var(--line);border-radius:7px;background:#fff;padding:0 10px;color:var(--muted);min-width:0}
+.mk .search .q{color:var(--text)}
+.mk .search .ic{width:12px;height:12px;border:2px solid #9aa3af;border-radius:50%;position:relative;flex:none}
+.mk .search .ic:after{content:"";position:absolute;width:6px;height:2px;background:#9aa3af;right:-6px;bottom:-3px;transform:rotate(45deg)}
+.mk .ss{display:inline-flex;align-items:center;gap:6px;height:32px;border:1px solid var(--line);border-radius:7px;background:#fff;padding:0 8px 0 10px;min-width:0}
+.mk .ss .v{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mk .ss .ph2{flex:1;color:#9aa3af;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mk .ss .x{color:#9aa3af;font-size:13px}
+.mk .ss .cv{color:#6b7280;font-size:10px}
+.mk .ss .lab{color:var(--muted);font-size:12px;white-space:nowrap}
+.mk .chip{display:inline-flex;align-items:center;gap:4px;background:var(--gray-soft);border-radius:5px;padding:1px 6px;font-size:12px;white-space:nowrap}
+.mk .open{position:relative}
+.mk .menu{position:absolute;left:0;right:0;top:36px;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(16,24,40,.12);z-index:3;padding:6px}
+.mk .menu .search{height:30px;margin-bottom:4px}
+.mk .menu .o{padding:6px 8px;border-radius:5px;display:flex;gap:8px;align-items:center}
+.mk .menu .o.h{background:var(--pri-soft)}
+.mk .menu .o small{color:var(--muted)}
+.mk .ck{width:14px;height:14px;border:1.5px solid #9aa3af;border-radius:3px;display:inline-block;flex:none}
+.mk .ck.on{background:var(--pri);border-color:var(--pri)}
+.mk .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.mk .bar .sp{flex:1}
+.mk table{width:100%;border-collapse:collapse;table-layout:fixed}
+.mk th{text-align:left;font-weight:600;color:var(--muted);font-size:12px;padding:9px 10px;border-bottom:1px solid var(--line);background:#fafbfc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mk td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top;overflow:hidden;text-overflow:ellipsis}
+.mk tr:last-child td{border-bottom:0}
+.mk td.ovv{overflow:visible}
+.mk td .sub{color:var(--muted);font-size:12px}
+.mk .num{text-align:right;font-variant-numeric:tabular-nums}
+.mk .code{font-weight:600}
+.mk .b{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:500;white-space:nowrap}
+.mk .b.blue{background:var(--pri-soft);color:#1463c7}
+.mk .b.green{background:var(--ok-soft);color:#11774f}
+.mk .b.red{background:var(--bad-soft);color:#b42328}
+.mk .b.amber{background:var(--warn-soft);color:#8a5a0c}
+.mk .b.gray{background:var(--gray-soft);color:#4b5563}
+.mk .stats{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:12px}
+.mk .stat{background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px 12px}
+.mk .stat .n{font-size:18px;font-weight:700}
+.mk .stat .t{color:var(--muted);font-size:12px}
+.mk .stat.on{border-color:var(--pri);box-shadow:inset 0 0 0 1px var(--pri)}
+.mk .mstats{display:flex;gap:8px;overflow-x:auto;margin-bottom:10px}
+.mk .mstats .stat{flex:none;min-width:98px;padding:7px 10px}
+.mk .mstats .stat .n{font-size:16px}
+.mk .tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);margin-bottom:12px;overflow-x:auto;white-space:nowrap}
+.mk .tabs span{padding:8px 0;color:var(--muted)}
+.mk .tabs span.on{color:var(--text);font-weight:600;box-shadow:inset 0 -2px 0 var(--pri)}
+.mk .foot{position:sticky;bottom:0;background:#fff;border-top:1px solid var(--line);padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.mk .foot .sp{flex:1}
+.mk .banner{border-radius:8px;padding:9px 12px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.mk .banner.info{background:var(--pri-soft);color:#154a8a}
+.mk .banner.warn{background:var(--warn-soft);color:#7a4f0b}
+.mk .banner.ok{background:var(--ok-soft);color:#0f5e40}
+.mk .mc{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px}
+.mk .mc .r{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.mk .mc .r+.r{margin-top:4px}
+.mk .muted{color:var(--muted)}
+.mk .small{font-size:12px}
+.mk .up{color:#b42328}
+.mk .down{color:#11774f}
+.mk .strike{text-decoration:line-through;color:var(--muted)}
+.mk .ov{position:absolute;inset:0;background:rgba(16,24,40,.45);display:flex;align-items:flex-start;justify-content:center;padding-top:60px;z-index:4}
+.mk .ovm{position:absolute;inset:0;background:rgba(16,24,40,.45);z-index:4}
+.mk .modal{background:#fff;border-radius:12px;width:560px;box-shadow:0 20px 50px rgba(0,0,0,.25)}
+.mk .modal .mh{padding:14px 18px;border-bottom:1px solid var(--line);font-weight:600;font-size:15px;display:flex}
+.mk .modal .mh .sp{flex:1}
+.mk .modal .mb{padding:16px 18px}
+.mk .modal .mf{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end}
+.mk .sheet{position:absolute;left:0;right:0;bottom:0;top:40px;background:#fff;border-radius:16px 16px 0 0;z-index:5;display:flex;flex-direction:column}
+.mk .sheet .mb{padding:14px;flex:1}
+.mk .sheet .mh{padding:12px 14px;border-bottom:1px solid var(--line);font-weight:600;font-size:15px;display:flex}
+.mk .sheet .mh .sp{flex:1}
+.mk .sheet .mf{padding:12px 14px;border-top:1px solid var(--line);display:flex;gap:8px}
+.mk .fl{display:block;font-weight:500;margin:0 0 5px}
+.mk .fg{margin-bottom:13px}
+.mk .fg .ss,.mk .fg .inp{width:100%}
+.mk .inp{display:inline-flex;align-items:center;height:32px;border:1px solid var(--line);border-radius:7px;padding:0 10px;background:#fff;gap:6px}
+.mk .inp .ph2{color:#9aa3af;flex:1}
+.mk .inp.big{height:40px;font-size:16px}
+.mk .inp.hl{border-color:var(--pri);box-shadow:0 0 0 2px var(--pri-soft)}
+.mk .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.mk .drop{border:1.5px dashed #b8c0cc;border-radius:10px;padding:14px;display:flex;gap:12px;align-items:center;background:#fafbfc;margin-bottom:13px}
+.mk .file{width:34px;height:40px;border-radius:5px;background:#17a36b;color:#fff;font-size:10px;font-weight:700;display:grid;place-items:center;flex:none}
+.mk .sw{width:36px;height:20px;border-radius:999px;background:#cfd4dc;position:relative;flex:none}
+.mk .sw:after{content:"";position:absolute;width:16px;height:16px;border-radius:50%;background:#fff;top:2px;left:2px}
+.mk .sw.on{background:var(--pri)}
+.mk .sw.on:after{left:18px}
+.mk .seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.mk .seg span{padding:4px 10px;font-size:12px}
+.mk .seg span.on{background:var(--text);color:#fff}
+.mk .qr{width:132px;height:132px;flex:none;background:
+ conic-gradient(from 90deg at 18% 18%,#000 25%,#fff 0) 0 0/33px 33px;border:6px solid #fff;outline:1px solid var(--line);border-radius:6px;position:relative}
+.mk .qr:before,.mk .qr:after{content:"";position:absolute;width:34px;height:34px;border:6px solid #000;background:#fff;box-shadow:inset 0 0 0 5px #fff,inset 0 0 0 20px #000}
+.mk .qr:before{top:0;left:0}.mk .qr:after{top:0;right:0}
+.mk .msg{background:#f6f8fa;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;white-space:pre-line}
+.mk .lead{font-size:14px;font-weight:600}
+.mk .en{color:var(--muted);font-size:12px;font-weight:400}
+.mk .cl{display:grid;grid-template-columns:auto 1fr auto;gap:2px 10px;font-size:12px;margin-top:6px;padding-top:6px;border-top:1px dashed var(--line)}
+.mk .inforce{box-shadow:inset 3px 0 0 var(--ok)}
+.mk .dec{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.mk .dec span{padding:2px 9px;font-size:12px}
+.mk .dec .a{background:var(--ok-soft);color:#11774f;font-weight:600}
+.mk .dec .r{background:var(--bad-soft);color:#b42328;font-weight:600}
+.mk .nested td{background:#fbfcfd}
+.mk .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:5px}
+</style></head><body><div class="wrap mk-host"><h1>Supplier price page mockup</h1><p class="sub">Final mockup, round 3, 27 Sep 2026. Plan: PLAN-cost-price-supplier-26sep.md. Every screen is drawn at 1280 wide and at 375 wide. Every dropdown is the system dropdown (single or multi select).</p><div class="mk"><section class="screen" id="share"><h3>Share price page dialog (staff)</h3><p>Link, QR code and a ready bilingual message to paste into WeChat.</p><p class="dd"><b>Dropdowns:</b> None.</p><div class="lbl">At 1280 wide</div><div class="scroll"><div class="fd" style="position:relative"><div class="side"><div class="logo">Sorento CRM</div><div class="grp">Purchasing</div><div class="it">Purchase orders</div><div class="it">Proforma invoices</div><div class="it">Loading plans</div><div class="it on">Suppliers</div><div class="it">Cost price uploads</div><div class="grp">Master data</div><div class="it">Products</div><div class="grp">System</div><div class="it">Settings</div></div><div class="main"><div class="top"><span class="search"><i class="ic"></i><span>Search anything</span></span><span class="sp"></span><span>Sorento</span><span class="av">ML</span></div><div class="pg"><div class="ph"><div><h1>XIAMEN TAIYANG TECHNOLOGY</h1></div></div><div class="tabs"><span>Details</span><span>Products</span><span class="on">Prices</span></div></div></div><div class="ov"><div class="modal"><div class="mh">Share price page<span class="sp"></span><span class="muted">&#x2715;</span></div><div class="mb"><div style="display:flex;gap:14px;flex-wrap:wrap"><span class="qr"></span><div style="flex:1;min-width:180px"><div class="small muted">Link for XIAMEN TAIYANG TECHNOLOGY, valid until 27 Oct 2026</div><div class="inp" style="width:100%;margin:6px 0;overflow:hidden;white-space:nowrap">sorento.app/c/sorento/supplier-prices/&bull;&bull;&bull;&bull;&bull;&bull;</div><div style="display:flex;gap:6px;flex-wrap:wrap"><span class="btn sm">Copy link</span><span class="btn sm">Save QR image</span></div><div class="small muted" style="margin-top:8px">Last opened 27 Sep 14:20 &middot; opened 3 times</div></div></div><div class="fl" style="margin-top:14px">Message to paste into WeChat</div><div class="msg">Sorento 价格维护 / Sorento price page
 请在此更新贵司的产品价格:
-https://crm.sorento.com.my/c/srt/supplier-prices/Hq7x2Lk9vR4mTz8QwYp1bN
-(30天内有效 / valid for 30 days)</div>
-  </div>
-  <div class="df"><button class="btn">Close</button><button class="btn primary">Copy message</button></div>
-</div>
-<p class="note" style="margin-top:8px">Captions: the link follows the existing supplier-request page shape (/c/{company}/...), a plain https URL that WeChat opens in its in-app browser. The QR image is for a supplier who scans from a desktop screen. Revoke lives in the supplier record's gear menu as a 5s deferred action (reversible: a new link can be issued).</p>
-
-<h2 class="section">Frames B to E: the supplier's phone (375px, WeChat in-app browser)</h2>
-<div class="row">
-
-  <div class="phone" aria-label="Frame B, price list">
-    <div class="wx"><span>WeChat</span><span>crm.sorento.com.my</span></div>
-    <div class="top">
-      <div class="brand"><span>SORENTO</span><span class="lang"><button aria-pressed="true">中文</button><button aria-pressed="false">EN</button></span></div>
-      <h1>产品价格 <span class="en">Product prices</span></h1>
-      <div class="who">厦门太阳科技有限公司 <span class="en">XIAMEN TAIYANG TECHNOLOGY</span></div>
-      <div style="margin-top:6px"><span class="badge b-muted">币种 CNY</span></div>
-    </div>
-    <div class="tabs" role="tablist">
-      <button role="tab" aria-selected="true">价格表 Prices</button>
-      <button role="tab" aria-selected="false">上传Excel Upload</button>
-      <button role="tab" aria-selected="false">记录 History</button>
-    </div>
-    <div class="tools"><div class="search">搜索型号 Search model</div><span class="chip">19系列 &#9662;</span></div>
-    <div class="item">
-      <span class="code">SRTWT1900-BL-DIY</span>
-      <span class="cfg">不锈钢面板, 黑色, DIY安装</span>
-      <span class="cur">当前 Current: 486.00</span>
-      <div class="price"><input class="changed" value="512.00" aria-label="新价格 New price SRTWT1900-BL-DIY"><span class="d"><span class="badge b-up">+5.3%</span></span></div>
-    </div>
-    <div class="item">
-      <span class="code">SRTWT1900-WH-DIY</span>
-      <span class="cfg">不锈钢面板, 白色, DIY安装</span>
-      <span class="cur">当前 Current: 486.00</span>
-      <div class="price"><input value="486.00" aria-label="新价格 New price SRTWT1900-WH-DIY"></div>
-    </div>
-    <div class="item">
-      <span class="code">SRTWT1901-BL</span>
-      <span class="cfg">钢化玻璃, 黑色</span>
-      <span class="cur">当前 Current: 530.00</span>
-      <div class="price"><input value="530.00" aria-label="新价格 New price SRTWT1901-BL"></div>
-    </div>
-    <div class="sticky">
-      <div class="summary"><span>已修改 Changed: 1</span><span>共 Total: 258</span></div>
-      <button class="btn primary">提交审核 <span class="en">Submit for review</span></button>
-    </div>
-  </div>
-
-  <div class="phone" aria-label="Frame C, upload">
-    <div class="wx"><span>WeChat</span><span>crm.sorento.com.my</span></div>
-    <div class="top">
-      <div class="brand"><span>SORENTO</span><span class="lang"><button aria-pressed="true">中文</button><button aria-pressed="false">EN</button></span></div>
-      <h1>上传价格表 <span class="en">Upload price list</span></h1>
-    </div>
-    <div class="tabs" role="tablist">
-      <button role="tab" aria-selected="false">价格表 Prices</button>
-      <button role="tab" aria-selected="true">上传Excel Upload</button>
-      <button role="tab" aria-selected="false">记录 History</button>
-    </div>
-    <div class="drop">
-      <strong>选择文件 Choose file</strong><br>
-      <span class="en">.xlsx, 同样的格式 same layout as your price list</span>
-    </div>
-    <div class="body">
-      <ul class="list">
-        <li><span>识别行数 <span class="en">Rows read</span></span><strong>258</strong></li>
-        <li><span>价格变动 <span class="en">Price changed</span></span><strong>31</strong></li>
-        <li><span>未识别型号 <span class="en">Models we do not know</span></span><strong>9</strong></li>
-      </ul>
-    </div>
-    <div class="sticky">
-      <button class="btn">查看变动 <span class="en">Review changes</span></button>
-      <button class="btn primary">提交审核 <span class="en">Submit for review</span></button>
-    </div>
-  </div>
-
-  <div class="phone" aria-label="Frame D, submitted">
-    <div class="wx"><span>WeChat</span><span>crm.sorento.com.my</span></div>
-    <div class="top">
-      <div class="brand"><span>SORENTO</span><span class="lang"><button aria-pressed="true">中文</button><button aria-pressed="false">EN</button></span></div>
-      <h1>已提交 <span class="en">Submitted</span></h1>
-    </div>
-    <div class="body">
-      <p style="margin:0 0 12px"><span class="badge b-pending">审核中 Pending review</span></p>
-      <ul class="list">
-        <li><span>编号 <span class="en">Reference</span></span><strong>CPC-0008</strong></li>
-        <li><span>价格变动 <span class="en">Price changes</span></span><strong>31</strong></li>
-        <li><span>提交时间 <span class="en">Submitted</span></span><strong>26 Sep 2026 15:10</strong></li>
-      </ul>
-      <p class="note" style="margin-top:12px">Caption: while a set is pending the Prices tab shows the submitted values read-only; the supplier cannot open a second set until Sorento verifies or returns this one (Q10).</p>
-    </div>
-  </div>
-
-  <div class="phone" aria-label="Frame E, history">
-    <div class="wx"><span>WeChat</span><span>crm.sorento.com.my</span></div>
-    <div class="top">
-      <div class="brand"><span>SORENTO</span><span class="lang"><button aria-pressed="false">中文</button><button aria-pressed="true">EN</button></span></div>
-      <h1>History <span class="en">记录</span></h1>
-    </div>
-    <div class="body">
-      <ul class="list">
-        <li><span>CPC-0008 <span class="en">26 Sep 2026</span></span><span class="badge b-pending">Pending review</span></li>
-        <li><span>CPC-0005 <span class="en">2 Aug 2026, 12 of 14 accepted</span></span><span class="badge b-down">Applied</span></li>
-        <li><span>CPC-0002 <span class="en">12 Mar 2026</span></span><span class="badge b-down">Applied</span></li>
-      </ul>
-      <p class="note" style="margin-top:12px">Caption: EN toggled; English leads and Chinese sits beneath. The supplier sees the outcome per set and per row, never the verifier's internal reason text (Q11).</p>
-    </div>
-  </div>
-
-</div>
-
-<h2 class="section">Frame F: expired or revoked link (375px)</h2>
-<div class="phone" aria-label="Frame F, expired">
-  <div class="wx"><span>WeChat</span><span>crm.sorento.com.my</span></div>
-  <div class="body" style="text-align:center;padding:40px 16px">
-    <h1 style="font-size:18px;margin:0 0 6px">链接已失效 <span class="en">This link is no longer valid</span></h1>
-    <p style="margin:0">请联系您的Sorento采购联系人获取新链接。<span class="en">Ask your Sorento purchasing contact for a new link.</span></p>
-  </div>
-</div>
-</div>
-</body>
-</html>
+sorento.app/c/sorento/supplier-prices/&bull;&bull;&bull;
+(2026-10-27 前有效 / valid until 27 Oct 2026)</div></div><div class="mf"><span class="btn d" style="margin-right:auto">Revoke</span><span class="btn">Close</span><span class="btn p">Copy message</span></div></div></div></div></div><div class="lbl">At 375 wide (phone)</div><div class="scroll"><div class="fm"><div class="mtop"><span>&#8592;</span><b>TAIYANG</b></div><div class="mpg"></div><div class="ovm"></div><div class="sheet"><div class="mh">Share price page<span class="sp"></span><span class="muted">&#x2715;</span></div><div class="mb"><div style="display:flex;gap:14px;flex-wrap:wrap"><span class="qr"></span><div style="flex:1;min-width:180px"><div class="small muted">Link for XIAMEN TAIYANG TECHNOLOGY, valid until 27 Oct 2026</div><div class="inp" style="width:100%;margin:6px 0;overflow:hidden;white-space:nowrap">sorento.app/c/sorento/supplier-prices/&bull;&bull;&bull;&bull;&bull;&bull;</div><div style="display:flex;gap:6px;flex-wrap:wrap"><span class="btn sm">Copy link</span><span class="btn sm">Save QR image</span></div><div class="small muted" style="margin-top:8px">Last opened 27 Sep 14:20 &middot; opened 3 times</div></div></div><div class="fl" style="margin-top:14px">Message to paste into WeChat</div><div class="msg">Sorento 价格维护 / Sorento price page
+请在此更新贵司的产品价格:
+sorento.app/c/sorento/supplier-prices/&bull;&bull;&bull;
+(2026-10-27 前有效 / valid until 27 Oct 2026)</div></div><div class="mf"><span class="btn d">Revoke</span><span class="sp" style="flex:1"></span><span class="btn p">Copy message</span></div></div></div></div></section><section class="screen" id="public-prices"><h3>The supplier's own page: Prices</h3><p>Chinese first, English beneath. Search, cost lists with date ranges, new prices with an optional validity for the whole submission.</p><p class="dd"><b>Dropdowns:</b> None.</p><div class="lbl">At 1280 wide</div><div class="scroll"><div class="fd" style="display:block"><div class="mtop" style="height:56px;padding:0 24px"><b>Sorento 价格维护</b><span class="en">Price page</span><span class="sp" style="flex:1"></span><span class="seg"><span class="on">中文</span><span>EN</span></span></div><div class="pg"><div style="max-width:1060px;margin:0 auto"><div class="small muted" style="margin-bottom:8px">XIAMEN TAIYANG TECHNOLOGY &middot; CNY &middot; 链接 2026-10-27 前有效 <span class="en">valid until 27 Oct 2026</span></div><div class="tabs"><span class="on">价格表 <span class="en">Prices</span></span><span>上传Excel <span class="en">Upload</span></span><span>记录 <span class="en">History</span></span></div><div class="bar"><span class="search"><i class="ic"></i><span>搜索型号或配置 Search model or configuration</span></span></div><div class="card " style="overflow:hidden"><table><thead><tr><th style="width:200px" class="">型号 Model</th><th style="width:190px" class="">产品配置 Configuration</th><th style="width:140px" class="num">价格 Price (CNY)</th><th style="width:220px" class="">有效期 Valid</th><th style="width:150px" class="">状态 Status</th><th style="width:150px" class="">新价格 New price</th></tr></thead><tbody><tr class=""><td class=""><span class='code'>SRTWT1900-BL-DIY</span></td><td class="">304不锈钢 单把 冷热</td><td class="num"><span class='dot'></span>86.00</td><td class="">一直有效 Always</td><td class=""><span class="b green">生效中 In force</span></td><td class=""><span class="inp hl" style="width:100%">95.00</span><div class="sub up">+3.3%</div></td></tr><tr class="nested"><td class=""></td><td class=""></td><td class="num">92.00</td><td class="">2026-10-01 起 from</td><td class=""><span class="b blue">待生效 Scheduled</span></td><td class=""></td></tr><tr class=""><td class=""><span class='code'>CB2500SS-BL</span></td><td class="">不锈钢 拉丝 蓝</td><td class="num">498.00</td><td class="">一直有效 Always</td><td class=""><span class="b gray">基础 Always</span></td><td class=""><span class="inp" style="width:100%"><span class="ph2">468.00</span></span></td></tr><tr class="nested"><td class=""></td><td class=""></td><td class="num"><span class='dot'></span>468.00</td><td class="">2026-09-15 至 2026-09-30</td><td class=""><span class="b green">生效中 In force</span></td><td class=""></td></tr></tbody></table></div><p class="small muted" style="margin:6px 0 0">Sample rows. The codes CB2500SS-BL（彩盒） and SRTWT1900-BL-DIY are quoted from the TAIYANG file in the issue; every other code, configuration and price is illustrative, not read from the file.</p><div class="foot" style="margin-top:12px;border:1px solid var(--line);border-radius:10px"><span class="small">生效日期 <span class="en">Valid from</span></span><span class="inp" style="width:150px">2026-10-01</span><span class="small">截止日期 <span class="en">Valid to</span></span><span class="inp" style="width:150px"><span class="ph2">不填 No end</span></span><span class="sp"></span><span class="small">已修改 1 / 258 <span class="en">changed</span></span><span class="btn p">提交审核 Submit for review</span></div></div></div></div></div><div class="lbl">At 375 wide (phone)</div><div class="scroll"><div class="fm"><div class="mtop" style=""><b>Sorento 价格维护</b><span class="en">Price page</span><span class="sp" style="flex:1"></span><span class="seg"><span class="on">中文</span><span>EN</span></span></div><div class="mpg"><div class="small muted" style="margin-bottom:8px">XIAMEN TAIYANG TECHNOLOGY &middot; CNY &middot; 链接 2026-10-27 前有效 <span class="en">valid until 27 Oct 2026</span></div><div class="tabs"><span class="on">价格表 <span class="en">Prices</span></span><span>上传Excel <span class="en">Upload</span></span><span>记录 <span class="en">History</span></span></div><div class="bar"><span class="search" style="flex:1"><i class="ic"></i><span>搜索型号或配置 Search model or configuration</span></span></div><div class="mc"><div class="r"><span class="code">SRTWT1900-BL-DIY</span><span class="small muted">304不锈钢 单把 冷热</span></div><div class="cl"><span><span class=dot></span>86.00</span><span class="muted">一直有效 Always</span><span><span class="b green">生效中 In force</span></span><span>92.00</span><span class="muted">2026-10-01 起 from</span><span><span class="b blue">待生效 Scheduled</span></span></div><div class="r" style="margin-top:8px;align-items:center"><span class="small">新价格 <span class="en">New price</span></span><span style="display:flex;gap:6px;align-items:center"><span class="b red">+3.3%</span><span class="inp big hl" style="width:120px">95.00</span></span></div></div><div class="mc"><div class="r"><span class="code">CB2500SS-BL</span><span class="small muted">不锈钢 拉丝 蓝</span></div><div class="cl"><span>498.00</span><span class="muted">一直有效 Always</span><span><span class="b gray">基础 Always</span></span><span><span class=dot></span>468.00</span><span class="muted">09-15 至 09-30</span><span><span class="b green">生效中 In force</span></span></div><div class="r" style="margin-top:8px;align-items:center"><span class="small">新价格 <span class="en">New price</span></span><span style="display:flex;gap:6px;align-items:center"><span class="inp big" style="width:120px"><span class="ph2">468.00</span></span></span></div></div><div style="height:150px"></div></div><div style="position:absolute;left:0;right:0;bottom:0"><div class="foot" style="display:block"><div class="row2" style="margin-bottom:8px"><div><div class="small">生效日期 <span class="en">Valid from</span></div><span class="inp big" style="width:100%">2026-10-01</span></div><div><div class="small">截止日期 <span class="en">Valid to</span></div><span class="inp big" style="width:100%"><span class="ph2">不填 No end</span></span></div></div><div style="display:flex;align-items:center;gap:8px"><span class="small">已修改 1 / 258 <span class="en">changed</span></span><span class="sp" style="flex:1"></span><span class="btn p">提交审核 Submit for review</span></div></div></div></div></div></section><section class="screen" id="public-history"><h3>The supplier's own page: History</h3><p>Its own submissions and outcomes, searchable by code.</p><p class="dd"><b>Dropdowns:</b> None.</p><div class="lbl">At 1280 wide</div><div class="scroll"><div class="fd" style="display:block;min-height:320px"><div class="mtop" style="height:56px;padding:0 24px"><b>Sorento 价格维护</b><span class="en">Price page</span><span class="sp" style="flex:1"></span><span class="seg"><span class="on">中文</span><span>EN</span></span></div><div class="pg"><div style="max-width:1060px;margin:0 auto"><div class="tabs"><span>价格表 <span class="en">Prices</span></span><span>上传Excel <span class="en">Upload</span></span><span class="on">记录 <span class="en">History</span></span></div><div class="bar"><span class="search"><i class="ic"></i><span>搜索编号 Search code</span></span></div><div class="card " style="overflow:hidden"><table><thead><tr><th style="width:120px" class="">编号 Code</th><th style="width:150px" class="">提交日期 Submitted</th><th style="width:200px" class="">有效期 Valid</th><th style="width:180px" class="">状态 Status</th><th style="width:140px" class="num">通过 Accepted</th></tr></thead><tbody><tr class=""><td class=""><b>CPC-0008</b></td><td class="">2026-09-27</td><td class="">2026-10-01 起 from</td><td class=""><span class="b amber">审核中 Pending review</span></td><td class="num">-</td></tr><tr class=""><td class=""><b>CPC-0003</b></td><td class="">2026-08-30</td><td class="">一直有效 Always</td><td class=""><span class="b green">已生效 Applied</span></td><td class="num">38 / 40</td></tr></tbody></table></div></div></div></div></div><div class="lbl">At 375 wide (phone)</div><div class="scroll"><div class="fm"><div class="mtop" style=""><b>Sorento 价格维护</b><span class="en">Price page</span><span class="sp" style="flex:1"></span><span class="seg"><span class="on">中文</span><span>EN</span></span></div><div class="mpg"><div class="tabs"><span>价格表 <span class="en">Prices</span></span><span>上传Excel <span class="en">Upload</span></span><span class="on">记录 <span class="en">History</span></span></div><div class="bar"><span class="search" style="flex:1"><i class="ic"></i><span>搜索编号 Search code</span></span></div><div class="mc"><div class="r"><b>CPC-0008</b><span class="b amber">审核中 Pending review</span></div><div class="r small muted"><span>提交 2026-09-27</span><span>2026-10-01 起</span></div></div><div class="mc"><div class="r"><b>CPC-0003</b><span class="b green">已生效 Applied</span></div><div class="r small muted"><span>提交 2026-08-30</span><span>通过 38 / 40 accepted</span></div></div></div></div></div></section><section class="screen" id="public-expired"><h3>The supplier's own page: expired or revoked link</h3><p>Nothing else is readable.</p><p class="dd"><b>Dropdowns:</b> None.</p><div class="lbl">At 1280 wide</div><div class="scroll"><div class="fd" style="display:block;min-height:260px"><div class="mtop" style="height:56px;padding:0 24px"><b>Sorento 价格维护</b><span class="en">Price page</span><span class="sp" style="flex:1"></span><span class="seg"><span class="on">中文</span><span>EN</span></span></div><div style="text-align:center;padding:80px 16px"><div style="font-size:20px;font-weight:700">链接已失效</div><div class="muted">This link is no longer valid</div></div></div></div><div class="lbl">At 375 wide (phone)</div><div class="scroll"><div class="fm"><div class="mtop" style=""><b>Sorento 价格维护</b><span class="en">Price page</span><span class="sp" style="flex:1"></span><span class="seg"><span class="on">中文</span><span>EN</span></span></div><div class="mpg"><div style="text-align:center;padding:120px 16px"><div style="font-size:18px;font-weight:700">链接已失效</div><div class="muted">This link is no longer valid</div></div></div></div></div></section></div></div></body></html>
