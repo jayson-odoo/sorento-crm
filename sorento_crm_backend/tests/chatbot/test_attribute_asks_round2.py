@@ -13,6 +13,7 @@ The owner's turns this pins (verbatim):
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from typing import Any
 
@@ -333,3 +334,33 @@ def test_w2_a_word_that_was_not_understood_is_said_never_silently_dropped(chat, 
     first = text.splitlines()[0]
     assert "Product type: Wash basin." in first, text
     assert "I did not understand \"zzqx\"" in first, text
+
+
+# --------------------------------------------------------------------------- #
+# W3: rows a dealer can read                                                    #
+# --------------------------------------------------------------------------- #
+
+
+def test_w3_each_row_leads_with_the_product_name_and_key_spec_then_code_and_stock(chat, world):
+    brand = world["sorento"].brand_name.lower()
+    text = chat.say(
+        f"which {brand} wash basin has stock",
+        _stock_verdict([{"raw": brand, "hint": "brand"}, {"raw": "wash basin", "hint": "product_type"}],
+                       f"which {brand} wash basin has stock"),
+    )
+    lines = text.splitlines()
+    for p in world["srt_wall"]:
+        [line] = [ln for ln in lines if p.product_code in ln]
+        assert re.match(
+            rf"^\d+\. {re.escape(p.product_name)} \(Mounting: Wall hung, Finish: White\) \| "
+            rf"{re.escape(p.product_code)} \| \*Total:\* 10$",
+            line,
+        ), text
+    for p in world["srt_basins"][:3]:
+        [line] = [ln for ln in lines if p.product_code in ln]
+        assert re.match(
+            rf"^\d+\. {re.escape(p.product_name)} \(Finish: White\) \| {re.escape(p.product_code)} \| \*Total:\* 10$",
+            line,
+        ), text
+    # One line per row: no field is left dangling on a line of its own.
+    assert not [ln for ln in lines if ln.startswith("*Total:*") or ln.startswith("*Product Code:*")], text
