@@ -1,7 +1,9 @@
 # PLAN: Unified identity, one login for the portal and the CRM (#1280)
 
-Status: draft plan + UAC, round 2 (26 Sep 2026): owner rulings on Q1, Q2, Q3, Q4, Q6, Q8, Q9, Q10
-applied (section 12); Q5 re-asked; Q7's reply was a question, answered on PR #1285. Q3 and Q4
+Status: draft plan + UAC, round 3 (27 Sep 2026): owner rulings on Q1, Q2, Q3, Q4, Q6, Q8, Q9, Q10
+(26 Sep 2026 23:45 MYT) and Q5 (27 Sep 2026 00:20 MYT) applied (section 12); Q7's reply was a
+question, answered on PR #1285. Owner alignment page: `alignment-unified-identity-27sep.html`
+(same folder). Q3 and Q4
 reversed the recommendation: no user is ever created automatically, the owner creates and sets up
 every user at the backend (section 6). Track: full (migration, auth, RBAC, portal ingest). Nothing
 built. The plan rides in the first feature PR (S0); this lane is docs only.
@@ -289,9 +291,9 @@ behaviour the owner asked for. The trigger that would justify it is named in sec
   it is today: everything keyed on `respond_contacts.id` (form grants, ownership of submissions,
   requested-by, sales agents, CS pins, `respond_inbox_url`) is untouched. The user is what signs
   in, holds roles, holds a session, and is written into the audit log.
-- **Email becomes optional** (AC-02, Q5, still unanswered after round 2 and re-asked on PR
-  #1285; the owner's create flow in section 6 is where it bites: a salesperson who has only
-  WhatsApp cannot be created without it). `users.email` NOT NULL is relaxed; a check constraint
+- **Email becomes optional** (AC-02, Q5; owner ruling 27 Sep 2026 00:20 MYT: "identity plan q5 -
+  yeah can"). The owner's create flow in section 6 relies on it: a salesperson who has only
+  WhatsApp is created with a phone and no email. `users.email` NOT NULL is relaxed; a check constraint
   requires `email IS NOT NULL OR contact_number IS NOT NULL`. A salesperson with only WhatsApp is a
   user with a phone and no email. Placeholder emails (`6012...@phone.local`) are rejected as a
   design: the email outbox, invite, reset and SLA emails all read `users.email`, and a fake
@@ -457,7 +459,8 @@ The modal's fields, in order (view and edit of the user show the same fields in 
 3. **Phone**, prefilled from the contact's number and read-only while a contact is set (the phone
    IS the contact's phone, so a code can only reach that WhatsApp number); editable only for a
    user with no contact.
-4. **Email**, optional when there is a phone (Q5, re-asked), required when there is not. When
+4. **Email**, optional when there is a phone (Q5, owner ruling 27 Sep 2026 00:20 MYT), required
+   when there is not. When
    given, the existing invite email goes out so the person can set a password (as the Users list
    invite does today).
 5. **Roles** (`SearchableMultiSelect`). Suggested, never forced: `salesperson` when the contact is
@@ -693,8 +696,8 @@ Every slice runs the full track and `security-reviewer` (AC-62).
   migration applies on a clone of the prod copy and the previous image's suite passes against it
   (AC-05); red-then-green tests for AC-11 and AC-12 committed; audit screens show actor words,
   including `contact`, at 375px and 1280px; every `users.email` reader guarded with a test;
-  single alembic head. Blocked on Q5 only for the NULL-email part (AC-02); if the owner answers
-  "email required", AC-02 is dropped and the rest of S0 is unchanged.
+  single alembic head. Q5 is ruled (27 Sep 2026 00:20 MYT, phone-only users allowed), so AC-02
+  stays and S0 carries no open question.
 
 ### S1 Phone sign-in
 
@@ -804,8 +807,9 @@ Every slice runs the full track and `security-reviewer` (AC-62).
 ## 12. Grill questions for the owner
 
 Round 1 asked 15 questions with a recommendation each. Round 2 records the owner's answers of
-26 Sep 2026 23:45 MYT (PR #1285, verbatim in quotes); unanswered ones stay on their
-recommendation and the UAC is written to it until the owner says otherwise.
+26 Sep 2026 23:45 MYT and round 3 the answer to Q5 of 27 Sep 2026 00:20 MYT (PR #1285, verbatim
+in quotes); unanswered ones stay on their recommendation and the UAC is written to it until the
+owner says otherwise.
 
 1. **Who is a "product salesperson" and a "retail salesperson"?** Recommended: a contact in any
    market segment flagged "Requested by / Salesperson" selectable (today `retail` and `project`,
@@ -822,9 +826,11 @@ recommendation and the UAC is written to it until the owner says otherwise.
    **Recommendation reversed:** no user is ever created by a sign-in, a backfill or a sync; a
    contact the owner has not set up keeps its portal token exactly as today. (AC-35, AC-44)
 5. **May a user have no email (phone only)?** Recommended: yes, at least one of email or phone
-   required; no placeholder emails. (AC-02) **Not answered in round 2; re-asked on PR #1285.**
-   It now matters more: in the owner's create flow (6.2) it decides whether a WhatsApp-only
-   salesperson can be created at all.
+   required; no placeholder emails. (AC-02) Not answered in round 2; re-asked on PR #1285.
+   Owner ruling 27 Sep 2026 00:20 MYT: "identity plan q5 - yeah can". Adopted as recommended: a
+   user may have no email (phone only), at least one of email or phone is required, and
+   placeholder emails are never created. AC-02 stays; a WhatsApp-only salesperson is created in
+   the owner's form (6.2) with a phone and no email.
 6. **Code channel: WhatsApp only, or SMS too?** Owner ruling 26 Sep 2026 23:45 MYT: "yeap
    whatsapp codes". WhatsApp only; SMS stays behind its trigger (section 11). (AC-22)
 7. **Sign-in screen: one "Email or phone number" field, or two tabs?** Recommended: one field.

@@ -1,10 +1,10 @@
 # UAC: Unified identity, one login for the portal and the CRM (#1280)
 
 Plan: `PLAN-unified-identity-26sep.md` (same folder).
-Status: draft, round 2 (26 Sep 2026). Rewritten for the owner rulings of 26 Sep 2026 23:45 MYT on
-Q1, Q2, Q3, Q4, Q6, Q8, Q9, Q10 (plan section 12). Q5 is re-asked and Q11 to Q15 are unanswered;
-ACs that depend on them still follow the recommendation and name it as `(Qn)`, to be rewritten
-before their slice starts if the owner answers differently.
+Status: draft, round 3 (27 Sep 2026). Rewritten for the owner rulings of 26 Sep 2026 23:45 MYT on
+Q1, Q2, Q3, Q4, Q6, Q8, Q9, Q10 and 27 Sep 2026 00:20 MYT on Q5 (plan section 12). Q11 to Q15 are
+unanswered; ACs that depend on them still follow the recommendation and name it as `(Qn)`, to be
+rewritten before their slice starts if the owner answers differently.
 
 Owner ruling 26 Sep 2026 23:45 MYT (Q3, Q4), binding on every AC below: no user is ever created
 automatically. The owner creates and sets up every user at the backend (create, link to the
@@ -99,9 +99,9 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
   `users` row. A WhatsApp contact links to at most one user (`users.respond_contact_id` unique
   where set). A second user linking the same contact is rejected with 409 `CONTACT_ALREADY_LINKED`
   naming the other user's name (never its id).
-- **AC-02 [BE][T]** A user may have no email when it has a phone (Q5): `users.email` is nullable,
-  and a database check requires at least one of `email` or `contact_number`. No placeholder email
-  is ever generated.
+- **AC-02 [BE][T]** A user may have no email when it has a phone (Q5, owner ruling 27 Sep 2026
+  00:20 MYT: "identity plan q5 - yeah can"): `users.email` is nullable, and a database check
+  requires at least one of `email` or `contact_number`. No placeholder email is ever generated.
 - **AC-03 [BE][T]** Email uniqueness is case-insensitive: creating or updating a user whose email
   differs only by case from another's is rejected with 409; sign-in with any casing finds the
   user. The migration's pre-flight lists any existing case-duplicates and stops (does not merge
