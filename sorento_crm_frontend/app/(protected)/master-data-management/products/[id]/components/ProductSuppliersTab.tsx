@@ -7,7 +7,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { getProductSuppliersByProductId } from '../../../../procurement-management/product-suppliers/services/productSupplierService';
-import { getCostRowsForLink } from '../../../../procurement-management/cost-price-uploads/services/costPriceService';
 import { formatPlainDate } from '../../../../procurement-management/cost-price-uploads/lib/formatPlainDate';
 import type { CostRowStatus } from '../../../../procurement-management/cost-price-uploads/types/costPrice.types';
 import { ProductSuppliedWithSection } from './ProductSuppliedWithSection';
@@ -111,7 +110,7 @@ export default function ProductSuppliersTab({ productId }: ProductSuppliersTabPr
             ) : (
               <div className="space-y-3">
                 {visible.map((ps) => {
-                  const costs = getCostRowsForLink(ps.id, ps.unit_cost, ps.currency);
+                  const costs = ps.costs ?? [];
                   return (
                     <div key={ps.id} className="rounded-lg border p-4">
                       <div className="flex flex-wrap items-center gap-2">

@@ -9,12 +9,13 @@ import ListPager from '@/components/common/ListPager';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatStatusLabel } from '@/lib/status-badge';
 import {
   costPriceChangeSetsPagerQuery,
   useCostPriceChangeSet,
 } from '../../hooks/useCostPriceChangeSets';
-import { useLocalDeferredAction } from '../../hooks/useLocalDeferredAction';
-import { discardCostPriceChangeSet, downloadCostPriceSourceFile } from '../../services/costPriceService';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
+import { downloadCostPriceSourceFile } from '../../services/costPriceService';
 import { formatPlainDate } from '../../lib/formatPlainDate';
 import { CostPriceHistoryTab } from './CostPriceHistoryTab';
 import { CostPriceLinesTab } from './CostPriceLinesTab';
@@ -44,17 +45,15 @@ export function CostPriceChangeSetDetail({ changeSetId }: { changeSetId: string 
     [pathname, router, searchParams],
   );
 
-  const discard = useLocalDeferredAction({
+  const discard = useDeferredAction({
+    actionKey: 'cost_price_change_set.discard',
     entityType: 'cost_price_change_set',
     entityId: changeSetId,
     verb: 'Discarding',
     subject: changeSet?.code ?? 'this set',
-    windowSeconds: 10,
+    surface: 'inline',
     successMessage: 'Discarded.',
-    onCommit: async () => {
-      await discardCostPriceChangeSet(changeSetId);
-      router.push('/procurement-management/cost-price-uploads');
-    },
+    onCommitted: () => router.push('/procurement-management/cost-price-uploads'),
   });
 
   if (isLoading || !changeSet) {
@@ -72,7 +71,7 @@ export function CostPriceChangeSetDetail({ changeSetId }: { changeSetId: string 
         title={
           <span className="flex items-center gap-2">
             {changeSet.code}
-            <Badge status={changeSet.status}>{changeSet.status.replace('_', ' ')}</Badge>
+            <Badge status={changeSet.status}>{formatStatusLabel(changeSet.status)}</Badge>
           </span>
         }
         crumbTitle={changeSet.code}
@@ -83,7 +82,7 @@ export function CostPriceChangeSetDetail({ changeSetId }: { changeSetId: string 
             </Button>
             {changeSet.actions.can_discard ? (
               discard.countdown ?? (
-                <Button variant="ghost" className="text-destructive" onClick={discard.start}>
+                <Button variant="ghost" className="text-destructive" onClick={() => discard.start()}>
                   Discard
                 </Button>
               )

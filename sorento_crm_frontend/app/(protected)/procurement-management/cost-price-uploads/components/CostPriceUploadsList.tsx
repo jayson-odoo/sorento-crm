@@ -12,6 +12,7 @@ import {
 } from '@tanstack/react-table';
 import { Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { formatStatusLabel } from '@/lib/status-badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -124,7 +125,7 @@ export default function CostPriceUploadsList() {
         id: 'status',
         header: 'Status',
         size: 110,
-        cell: ({ row }) => <Badge status={row.original.status}>{row.original.status.replace('_', ' ')}</Badge>,
+        cell: ({ row }) => <Badge status={row.original.status}>{formatStatusLabel(row.original.status)}</Badge>,
       },
       {
         id: 'lines_changed',
@@ -272,7 +273,7 @@ export default function CostPriceUploadsList() {
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="font-medium">{row.code}</span>
-                <Badge status={row.status}>{row.status.replace('_', ' ')}</Badge>
+                <Badge status={row.status}>{formatStatusLabel(row.status)}</Badge>
               </div>
               <div className="mt-1 truncate text-sm">{row.supplier.supplier_name}</div>
               <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">

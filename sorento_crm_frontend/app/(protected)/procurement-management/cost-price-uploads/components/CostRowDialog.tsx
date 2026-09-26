@@ -18,10 +18,9 @@ import { toast } from '@/lib/toast';
 import {
   createProductSupplierCost,
   updateProductSupplierCost,
-  deleteProductSupplierCost,
 } from '../services/costPriceService';
 import type { ProductSupplierCostRow } from '../types/costPrice.types';
-import { useLocalDeferredAction } from '../hooks/useLocalDeferredAction';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 
 const CURRENCY_OPTIONS = [
   { value: 'CNY', label: 'CNY' },
@@ -46,9 +45,7 @@ function fromDateOnly(value: string | null): Date | undefined {
 
 /**
  * Add or edit one cost list row by hand (section 2.3), shared by the supplier Prices tab
- * and the product Suppliers tab. Delete is the 10s deferred action, no dialog (D7) - see
- * `useLocalDeferredAction`'s own comment for why this is a local stand-in rather than the
- * real `useDeferredAction` in Phase 1.
+ * and the product Suppliers tab. Delete is the 10s deferred action, no dialog (D7).
  */
 export function CostRowDialog({
   open,
@@ -69,16 +66,15 @@ export function CostRowDialog({
   const [endDate, setEndDate] = React.useState<Date | undefined>(fromDateOnly(cost?.end_date ?? null));
   const [saving, setSaving] = React.useState(false);
 
-  const deleteAction = useLocalDeferredAction({
+  const deleteAction = useDeferredAction({
+    actionKey: 'product_supplier_cost.delete',
     entityType: 'product_supplier_cost',
     entityId: cost?.id ?? null,
     verb: 'Deleting',
     subject: `the ${link.product?.product_code ?? ''} price`.trim(),
-    windowSeconds: 10,
+    surface: 'inline',
     successMessage: 'Deleted.',
-    onCommit: async () => {
-      if (!cost) return;
-      await deleteProductSupplierCost(link.id, cost.id);
+    onCommitted: () => {
       onSaved();
       onOpenChange(false);
     },
@@ -158,7 +154,7 @@ export function CostRowDialog({
         <DialogFooter className="sm:justify-between">
           {cost ? (
             deleteAction.countdown ?? (
-              <Button variant="ghost" className="text-destructive" onClick={deleteAction.start}>
+              <Button variant="ghost" className="text-destructive" onClick={() => deleteAction.start()}>
                 Delete
               </Button>
             )

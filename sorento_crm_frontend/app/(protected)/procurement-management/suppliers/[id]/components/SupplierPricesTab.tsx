@@ -13,11 +13,9 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
-import { getProductSuppliers } from '@/app/(protected)/procurement-management/product-suppliers/services/productSupplierService';
-import type { ProductSupplier } from '@/app/(protected)/procurement-management/product-suppliers/types/productSupplier.types';
-import { getCostRowsForLink } from '@/app/(protected)/procurement-management/cost-price-uploads/services/costPriceService';
+import { getSupplierCostLists } from '@/app/(protected)/procurement-management/cost-price-uploads/services/costPriceService';
 import { formatPlainDate } from '@/app/(protected)/procurement-management/cost-price-uploads/lib/formatPlainDate';
-import type { CostRowStatus, ProductSupplierCostRow } from '@/app/(protected)/procurement-management/cost-price-uploads/types/costPrice.types';
+import type { CostRowStatus, ProductSupplierCostRow, SupplierCostListEntry } from '@/app/(protected)/procurement-management/cost-price-uploads/types/costPrice.types';
 import { CostRowDialog } from '@/app/(protected)/procurement-management/cost-price-uploads/components/CostRowDialog';
 
 const STATUS_LABELS: Record<CostRowStatus, string> = {
@@ -39,65 +37,42 @@ const STATUS_OPTIONS = (Object.keys(STATUS_LABELS) as CostRowStatus[]).map((valu
   label: STATUS_LABELS[value],
 }));
 
-interface Entry {
-  link: ProductSupplier;
-  costs: ProductSupplierCostRow[];
-}
+type Row = { id: string; entry: SupplierCostListEntry; cost: ProductSupplierCostRow | null };
 
-type Row = { id: string; entry: Entry; cost: ProductSupplierCostRow | null };
+/** A cost-list link, adapted to what `CostRowDialog` needs (contract 2.3). */
+function dialogLink(entry: SupplierCostListEntry) {
+  return { id: entry.product_supplier_id, product: entry.product, currency: entry.currency };
+}
 
 export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
   const canEdit = useHasPermission('procurement.product_suppliers.edit');
   const queryClient = useQueryClient();
   const [search, setSearch] = React.useState('');
   const [statuses, setStatuses] = React.useState<CostRowStatus[]>([]);
-  const [dialog, setDialog] = React.useState<{ link: ProductSupplier; cost: ProductSupplierCostRow | null } | null>(null);
+  const [dialog, setDialog] = React.useState<{ entry: SupplierCostListEntry; cost: ProductSupplierCostRow | null } | null>(null);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['supplier-cost-lists', supplierId],
-    queryFn: async () => {
-      const page = await getProductSuppliers({ pageIndex: 0, pageSize: 500, supplier_id: supplierId });
-      return page.data;
-    },
+    queryKey: ['supplier-cost-lists', supplierId, search, statuses],
+    queryFn: () => getSupplierCostLists(supplierId, { query: search || undefined, status: statuses.length ? statuses : undefined }),
     enabled: !!supplierId,
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['supplier-cost-lists', supplierId] });
 
-  const entries: Entry[] = React.useMemo(
-    () => (data ?? []).map((link) => ({ link, costs: getCostRowsForLink(link.id, link.unit_cost, link.currency) })),
-    [data],
-  );
-
-  const tokens = React.useMemo(() => search.toLowerCase().split(/\s+/).filter(Boolean), [search]);
-  const filteredEntries = React.useMemo(() => {
-    return entries
-      .filter((entry) => {
-        if (!tokens.length) return true;
-        const haystack = [entry.link.product?.product_code, entry.link.product?.product_name, entry.link.supplier_item_code]
-          .filter(Boolean)
-          .map((s) => (s as string).toLowerCase());
-        return tokens.every((t) => haystack.some((h) => h.includes(t)));
-      })
-      .filter((entry) => {
-        if (!statuses.length) return true;
-        if (entry.costs.length === 0) return false;
-        return entry.costs.some((c) => statuses.includes(c.status));
-      });
-  }, [entries, tokens, statuses]);
+  const entries = React.useMemo(() => data?.data ?? [], [data]);
 
   const rows: Row[] = React.useMemo(() => {
     const out: Row[] = [];
-    for (const entry of filteredEntries) {
+    for (const entry of entries) {
       const visibleCosts = statuses.length ? entry.costs.filter((c) => statuses.includes(c.status)) : entry.costs;
       if (visibleCosts.length === 0) {
-        out.push({ id: `${entry.link.id}-empty`, entry, cost: null });
+        out.push({ id: `${entry.product_supplier_id}-empty`, entry, cost: null });
       } else {
         for (const cost of visibleCosts) out.push({ id: cost.id, entry, cost });
       }
     }
     return out;
-  }, [filteredEntries, statuses]);
+  }, [entries, statuses]);
 
   const columns = React.useMemo<ColumnDef<Row>[]>(
     () => [
@@ -161,11 +136,11 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
         cell: ({ row }) =>
           canEdit ? (
             row.original.cost ? (
-              <Button size="sm" variant="ghost" onClick={() => setDialog({ link: row.original.entry.link, cost: row.original.cost })}>
+              <Button size="sm" variant="ghost" onClick={() => setDialog({ entry: row.original.entry, cost: row.original.cost })}>
                 Edit
               </Button>
             ) : (
-              <Button size="sm" variant="outline" onClick={() => setDialog({ link: row.original.entry.link, cost: null })}>
+              <Button size="sm" variant="outline" onClick={() => setDialog({ entry: row.original.entry, cost: null })}>
                 <Plus className="size-3.5" /> Price
               </Button>
             )
@@ -213,19 +188,19 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
           listingKey=""
           tableLayout={{ width: 'fixed', columnsResizable: true }}
           renderGroupHeader={(row: Row, previous: Row | null) => {
-            if (previous && previous.entry.link.id === row.entry.link.id) return null;
-            const { link } = row.entry;
+            if (previous && previous.entry.product_supplier_id === row.entry.product_supplier_id) return null;
+            const { entry } = row;
             return (
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <span className="font-medium">{link.product?.product_code ?? '-'}</span>
-                  <span className="ms-2 text-muted-foreground">{link.product?.product_name ?? ''}</span>
-                  {link.supplier_item_code ? (
-                    <span className="ms-2 text-muted-foreground">&middot; {link.supplier_item_code}</span>
+                  <span className="font-medium">{entry.product?.product_code ?? '-'}</span>
+                  <span className="ms-2 text-muted-foreground">{entry.product?.description ?? ''}</span>
+                  {entry.supplier_code ? (
+                    <span className="ms-2 text-muted-foreground">&middot; {entry.supplier_code}</span>
                   ) : null}
                 </div>
                 <span className="tabular-nums text-muted-foreground">
-                  {link.unit_cost != null ? `${Number(link.unit_cost).toFixed(2)} ${link.currency ?? ''}` : 'no price'}
+                  {entry.unit_cost != null ? `${Number(entry.unit_cost).toFixed(2)} ${entry.currency ?? ''}` : 'no price'}
                 </span>
               </div>
             );
@@ -245,7 +220,7 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
           onOpenChange={(next) => {
             if (!next) setDialog(null);
           }}
-          link={dialog.link}
+          link={dialogLink(dialog.entry)}
           cost={dialog.cost}
           onSaved={invalidate}
         />
