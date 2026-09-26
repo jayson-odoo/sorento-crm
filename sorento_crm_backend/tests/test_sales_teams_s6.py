@@ -102,6 +102,10 @@ def api(world):
     client, originals = _client(db, ALL)
     try:
         yield client, db, company_id
+        # The leader rule is a DEFERRED constraint trigger, which fires at the real commit and
+        # a savepoint release never reaches. Fire it here, so a write that leaves a team's
+        # leader outside the team fails the test instead of the owner's next save (W1).
+        db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
     finally:
         _restore(originals)
 
@@ -659,3 +663,239 @@ def test_security_another_companys_agent_cannot_be_placed_or_listed(api):
     )
     ids = {o["id"] for o in client.get(f"{BASE}/agent-options").json()["data"]}
     assert theirs.id not in ids
+
+
+# --------------------------------------------------------------------------- #
+# Fix lane round 2: team leader (W1), returning agent listed once (W2)
+# Owner ruling 26 Sep ~13:25Z: "I need it to be able to set a sales leader, which is also a
+# sales agent". Owner ruling 26 Sep ~13:05Z on N1: "hmm shouldn't list twice la".
+# --------------------------------------------------------------------------- #
+
+def _leader_rule_fires(db) -> None:
+    """Fire the deferred leader trigger now, inside a savepoint the caller can roll back."""
+    db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+    db.execute(text("SET CONSTRAINTS ALL DEFERRED"))
+
+
+def test_w1_create_team_with_a_leader_names_the_leader_on_the_page_and_the_list(api):
+    client, db, _ = api
+    ali = _agent(db, "ALI", "Ali Hassan")
+    mei = _agent(db, "MEI", "Tan Mei Ling")
+
+    res = client.post(
+        BASE,
+        json={"name": "North", "sales_agent_ids": [ali.id, mei.id], "leader_sales_agent_id": mei.id},
+    )
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["leader_sales_agent_id"] == mei.id
+    assert body["leader_label"] == f"{mei.sales_agent} - Tan Mei Ling"
+
+    row = next(t for t in client.get(BASE).json()["data"] if t["id"] == body["id"])
+    assert row["leader_sales_agent_id"] == mei.id
+    assert client.get(f"{BASE}/{body['id']}").json()["leader_sales_agent_id"] == mei.id
+
+
+def test_w1_a_team_has_no_leader_until_one_is_picked(api):
+    client, db, _ = api
+    ali = _agent(db, "ALI", "Ali Hassan")
+    body = client.post(BASE, json={"name": "North", "sales_agent_ids": [ali.id]}).json()
+    assert body["leader_sales_agent_id"] is None
+    assert body["leader_label"] is None
+
+
+def test_w1_a_leader_who_is_not_picked_is_added_as_a_member(api):
+    client, db, _ = api
+    ali = _agent(db, "ALI", "Ali Hassan")
+    mei = _agent(db, "MEI", "Tan Mei Ling")
+
+    body = client.post(
+        BASE, json={"name": "North", "sales_agent_ids": [ali.id], "leader_sales_agent_id": mei.id}
+    ).json()
+    assert {m["sales_agent_id"] for m in body["members"] if not m["left"]} == {ali.id, mei.id}
+    assert body["leader_sales_agent_id"] == mei.id
+    # First team: from the beginning, like any agent Add agents places (V1).
+    assert _membership_rows(db, mei.id)[0].valid_from is None
+
+
+def test_w1_a_leader_from_another_team_moves_on_the_moves_on_date(api):
+    client, db, _ = api
+    kim = _agent(db, "KIM", "Kim Tan")
+    south = client.post(BASE, json={"name": "South", "sales_agent_ids": [kim.id]}).json()
+    north = client.post(BASE, json={"name": "North", "sales_agent_ids": []}).json()
+
+    res = client.patch(
+        f"{BASE}/{north['id']}",
+        json={"leader_sales_agent_id": kim.id, "moves_on": "2026-10-15"},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["leader_sales_agent_id"] == kim.id
+    assert [m["from_team_name"] for m in body["moved"]] == ["South"]
+    rows = _membership_rows(db, kim.id)
+    assert [(r.sales_team_id, r.valid_from, r.valid_to) for r in rows] == [
+        (south["id"], None, date(2026, 10, 14)),
+        (north["id"], date(2026, 10, 15), None),
+    ]
+
+
+def test_w1_patch_changes_and_clears_the_leader_and_leaves_it_when_not_sent(api):
+    client, db, _ = api
+    ali = _agent(db, "ALI", "Ali Hassan")
+    mei = _agent(db, "MEI", "Tan Mei Ling")
+    north = client.post(
+        BASE,
+        json={"name": "North", "sales_agent_ids": [ali.id, mei.id], "leader_sales_agent_id": ali.id},
+    ).json()
+
+    kept = client.patch(f"{BASE}/{north['id']}", json={"name": "North East"}).json()
+    assert kept["leader_sales_agent_id"] == ali.id
+
+    changed = client.patch(f"{BASE}/{north['id']}", json={"leader_sales_agent_id": mei.id}).json()
+    assert changed["leader_sales_agent_id"] == mei.id
+    # Changing the leader moves nobody: both are still members.
+    assert {m["sales_agent_id"] for m in changed["members"] if not m["left"]} == {ali.id, mei.id}
+
+    cleared = client.patch(f"{BASE}/{north['id']}", json={"leader_sales_agent_id": None}).json()
+    assert cleared["leader_sales_agent_id"] is None
+    assert cleared["member_count"] == 2
+
+
+def test_w1_removing_the_leader_from_the_team_clears_the_leader(api):
+    client, db, _ = api
+    ali = _agent(db, "ALI", "Ali Hassan")
+    mei = _agent(db, "MEI", "Tan Mei Ling")
+    north = client.post(
+        BASE,
+        json={"name": "North", "sales_agent_ids": [ali.id, mei.id], "leader_sales_agent_id": ali.id},
+    ).json()
+
+    body = client.put(f"{BASE}/{north['id']}/members", json={"sales_agent_ids": [mei.id]}).json()
+    assert body["leader_sales_agent_id"] is None
+    _leader_rule_fires(db)
+
+
+def test_w1_the_leader_moving_to_another_team_clears_the_old_teams_leader(api):
+    client, db, _ = api
+    ali = _agent(db, "ALI", "Ali Hassan")
+    north = client.post(
+        BASE, json={"name": "North", "sales_agent_ids": [ali.id], "leader_sales_agent_id": ali.id}
+    ).json()
+    south = client.post(BASE, json={"name": "South", "sales_agent_ids": []}).json()
+
+    res = client.put(
+        f"{BASE}/{south['id']}/members",
+        json={"sales_agent_ids": [ali.id], "moves_on": "2026-10-15"},
+    )
+    assert res.status_code == 200, res.text
+    db.expire_all()
+    assert client.get(f"{BASE}/{north['id']}").json()["leader_sales_agent_id"] is None
+    _leader_rule_fires(db)
+
+
+def test_w1_the_leader_must_be_one_of_our_agents(api):
+    client, db, _ = api
+    other = Company(id=_uid(), name="ZZT Other Co 4", code=f"Z{_uid()[:6]}")
+    db.add(other)
+    db.flush()
+    theirs = _agent(db, "THEIRS", "Not Ours", company_id=other.id)
+    north = client.post(BASE, json={"name": "North", "sales_agent_ids": []}).json()
+
+    res = client.patch(f"{BASE}/{north['id']}", json={"leader_sales_agent_id": theirs.id})
+    assert res.status_code == 422, res.text
+    res = client.post(
+        BASE, json={"name": "South", "sales_agent_ids": [], "leader_sales_agent_id": theirs.id}
+    )
+    assert res.status_code == 422, res.text
+
+
+def test_w1_setting_the_leader_needs_the_edit_slug(world):
+    from app.services.sales import team_service
+
+    db, company_id = world
+    ali = _agent(db, "ALI", "Ali Hassan")
+    team = team_service.create_team(
+        db, company_id=company_id, name="ZZT Lead Gate", sales_agent_ids=[ali.id]
+    )
+    db.flush()
+    client, originals = _client(db, [s for s in ALL if s != "sales.teams.edit"])
+    try:
+        res = client.patch(f"{BASE}/{team.id}", json={"leader_sales_agent_id": ali.id})
+    finally:
+        _restore(originals)
+    assert res.status_code == 403
+
+
+def test_w1_the_database_refuses_a_leader_who_is_not_an_open_member(world):
+    """`trg_sales_teams_leader_is_member`: the rule holds for any writer, not just the service."""
+    from sqlalchemy.exc import IntegrityError
+
+    from app.services.sales import team_service
+
+    db, company_id = world
+    ali = _agent(db, "ALI", "Ali Hassan")
+    mei = _agent(db, "MEI", "Tan Mei Ling")
+    team = team_service.create_team(
+        db, company_id=company_id, name="ZZT Lead Rule", sales_agent_ids=[ali.id]
+    )
+    db.flush()
+
+    # A leader who was never a member.
+    with pytest.raises(IntegrityError, match="leader"):
+        with db.begin_nested():
+            db.execute(
+                text("UPDATE sales.teams SET leader_sales_agent_id = :a WHERE id = :t"),
+                {"a": mei.id, "t": team.id},
+            )
+            _leader_rule_fires(db)
+
+    # A leader whose membership is then closed behind the service's back.
+    db.execute(
+        text("UPDATE sales.teams SET leader_sales_agent_id = :a WHERE id = :t"),
+        {"a": ali.id, "t": team.id},
+    )
+    _leader_rule_fires(db)
+    with pytest.raises(IntegrityError, match="leader"):
+        with db.begin_nested():
+            db.execute(
+                text(
+                    "UPDATE sales.team_members SET valid_to = current_date "
+                    "WHERE sales_team_id = :t AND sales_agent_id = :a"
+                ),
+                {"a": ali.id, "t": team.id},
+            )
+            _leader_rule_fires(db)
+
+
+def test_w2_an_agent_who_left_and_came_back_is_listed_once_as_active(api, monkeypatch):
+    """N1 ruling: one line per agent; the earlier stint stays in the data, not on the page."""
+    from app.services.sales import team_service
+
+    client, db, _ = api
+    ali = _agent(db, "ALI", "Ali Hassan")
+    mei = _agent(db, "MEI", "Tan Mei Ling")
+    north = client.post(BASE, json={"name": "North", "sales_agent_ids": [ali.id, mei.id]}).json()
+
+    monkeypatch.setattr(team_service, "_today", lambda: date(2026, 10, 5))
+    client.put(f"{BASE}/{north['id']}/members", json={"sales_agent_ids": [mei.id]})
+    monkeypatch.setattr(team_service, "_today", lambda: TODAY)
+    client.put(f"{BASE}/{north['id']}/members", json={"sales_agent_ids": [mei.id, ali.id]})
+
+    # History keeps both stints.
+    rows = _membership_rows(db, ali.id)
+    assert [(r.valid_from, r.valid_to) for r in rows] == [
+        (None, date(2026, 10, 5)),
+        (TODAY, None),
+    ]
+
+    detail = client.get(f"{BASE}/{north['id']}").json()
+    alis = [m for m in detail["members"] if m["sales_agent_id"] == ali.id]
+    assert len(alis) == 1, alis
+    assert alis[0]["left"] is False
+    assert alis[0]["valid_from"] == TODAY.isoformat()
+    assert detail["member_count"] == 2
+
+    # Between the stints the page shows the one that had ended, still once.
+    gap = client.get(f"{BASE}/{north['id']}", params={"on": "2026-10-10"}).json()
+    alis = [m for m in gap["members"] if m["sales_agent_id"] == ali.id]
+    assert [(m["left"], m["valid_to"]) for m in alis] == [(True, "2026-10-05")]
