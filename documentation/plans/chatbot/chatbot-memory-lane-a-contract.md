@@ -63,6 +63,10 @@ Four values, stored as these strings:
 - D14 third exception (Q15 recommendation, assumed): a CONSOLE turn (`is_test` and ingress
   `console`) writes `is_test = true` frames and nothing else. Every other dry run (clone,
   replay, harness) writes no frame.
+- Range, as built: the turns of this contact and side that are in no surviving frame's
+  `turn_ids`, created before the resetting turn and not before the oldest surviving frame's
+  `started_at`. Equivalent to the time cutoff on live data, and it keeps the backfill idempotent
+  after a trim (a trimmed frame's turns are never re-derived).
 - No embedding is enqueued for a frame (S3 deletes the enqueue; S0 already stops calling it
   from the new writer).
 - Contact delete removes the contact's frames by `contact_respond_id = respond_io_id`.
@@ -185,6 +189,10 @@ chatbot parser row.
 6. One schema migration for the lane (S0) carries every schema change, the contact level
    column and the usage-log turn id included; S3 adds one more migration that only publishes
    the new parser prompt version (label unmoved, the 487/513 precedent).
-7. The 25 Sep prod dump is not on this VM: digest goldens are built from synthetic turn rows in
+7. The static prompt ceiling is the measured baseline in the contract's own estimator:
+   37,153 est tokens (bytes / 3) for the rendered production prompt at 232182ae. The plan's
+   22,100 was a chars / 4 figure on a different rendering; the rule it encodes ("the static
+   prompt may not grow") is unchanged.
+8. The 25 Sep prod dump is not on this VM: digest goldens are built from synthetic turn rows in
    the recorded trace shape; the prod-copy goldens, the backfill run and the Q18 counts are
    posted as orchestrator steps.
