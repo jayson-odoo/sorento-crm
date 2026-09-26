@@ -1,7 +1,8 @@
 # PLAN - Chatbot memory: contact profile, episodes and turn context under a token budget
 
 Status: DRAFT round 2, 26 Sep 2026. Owner rulings of 26 Sep 23:45 MYT applied (grill
-questions 1, 2, 7, 10); questions 3, 4, 5, 6, 8, 9 re-asked on PR #1284; 11 to 18 still open.
+questions 1, 2, 7, 10); questions 3, 4, 5, 6, 8, 9 answered in plain language and re-asked
+on PR #1284 (comment 5847656721, "Answers to the owner's questions (round 2)"); 11 to 18 still open.
 Track: full (migration, parser prompt change, staff screen, expected diff well over 300 lines).
 Recommended as two lanes (grill question 17): A = S0 to S3 plus the owner test slice S3T,
 B = S4.
