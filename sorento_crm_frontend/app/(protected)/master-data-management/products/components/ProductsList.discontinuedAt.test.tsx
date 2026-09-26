@@ -159,7 +159,11 @@ beforeEach(() => {
   getProducts.mockReset();
   getProducts.mockResolvedValue({
     data: [ACTIVE_ROW, DISCONTINUED_ROW],
-    pagination: { total: 2, page: 1, limit: 50 },
+    // 500 with pageSize 50 -> 10 pages, so `setPageIndex(2)` in the "typing a range"
+    // test lands on a real page instead of being clamped back to 0 by TanStack (a
+    // `total: 2` fixture gives pageCount = 1, so the precondition it sets up - "start
+    // on a later page" - could never hold).
+    pagination: { total: 500, page: 1, limit: 50 },
   });
 });
 
