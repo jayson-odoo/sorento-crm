@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID, ARRAY, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
+from app.models.audit import audit_columns_excluding_secrets
 import uuid
 
 
@@ -18,23 +19,10 @@ class UserStatus(str, enum.Enum):
 class User(Base):
     __tablename__ = "users"
     __audit_track__ = True  # who changed what (Sub-plan D Tier-2)
-    # Every column EXCEPT `password`: the bcrypt hash was written into audit_logs on
-    # every user write, logins included (#1281). audit_service.AUDIT_SECRET_KEYS drops
-    # it too; this list keeps it out even if that deny list is ever edited.
-    __audit_columns__ = [
-        "id", "email", "country", "timezone", "name", "contact_number", "status",
-        "created_at", "updated_at", "last_sign_in_at", "email_verified_at", "is_trashed",
-        "avatar", "avatar_storage_provider", "invited_by_user_id", "is_protected",
-        "is_integration", "respond_user_id", "respond_synced", "superior_id",
-        "last_active_company_id", "tier", "daily_sla_summary_subscribed",
-        "respond_contact_id", "notify_whatsapp", "notify_whatsapp_summary",
-        "notify_email_on_assignment", "notify_email_on_escalation",
-        "notify_whatsapp_on_assignment", "notify_whatsapp_on_escalation",
-        "notify_email_on_product_discontinued", "notify_whatsapp_on_product_discontinued",
-        "notify_email_on_deadline_extended", "notify_whatsapp_on_deadline_extended",
-        "notify_email_on_handling", "notify_whatsapp_on_handling",
-        "notify_email_on_mention", "notify_push_message_scope",
-    ]
+    # `__audit_columns__` is set right after the class body: every column minus
+    # AUDIT_SECRET_KEYS, derived so a new column is audited without being listed.
+    # The bcrypt `password` hash was written into audit_logs on every user write,
+    # logins included (#1281).
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     email = Column(String, unique=True, nullable=False, index=True)
@@ -138,6 +126,9 @@ class User(Base):
         # One phone == one user. Postgres allows multiple NULLs, so unlinked users are fine.
         UniqueConstraint("contact_number", name="uq_users_contact_number"),
     )
+
+
+User.__audit_columns__ = audit_columns_excluding_secrets(User.__table__)
 
 
 class UserProductDiscontinuedScope(Base):

@@ -1,6 +1,6 @@
 """Audit logs API routes."""
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
@@ -11,19 +11,23 @@ from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.models.user import User
 from app.models.access import RespondContact
 from app.services.user_service import UserPermissionService
+from app.services.error_handler import AppException
 
 router = APIRouter()
 
 # The audit log holds every audited change, its before/after values and the actor's
 # IP address, so reading it is a superadmin/admin act (#1281): the menu entries were
 # superadmin-only, the routes were open to any login or API key. The one exception is
-# a detail page's Audit Trail panel, which reads ONE record's history and takes the
-# same view permission as the record's own page.
+# a detail page's history panel, which reads ONE record's history and takes the
+# same view permission as the record's own page. Every FE reader of
+# `getAuditLogs({ entity_type, entity_id })` needs its entity type here.
 _PER_RECORD_VIEW_PERMISSION: dict[str, str] = {
     "complaint": "complaint_management.complaints.view",
     "stock_inquiry": "procurement.stock_inquiries.view",
     "purchase_request": "procurement.purchase_requests.view",
     "product": "master_data.products.view",
+    # Packing List detail, Timeline tab (usePackingLists.ts, R17).
+    "inbound_shipments": "procurement.packing_lists.view",
 }
 
 
@@ -32,10 +36,11 @@ def _is_audit_admin(db: Session, user_id: str) -> bool:
     return bool(slugs & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"})
 
 
-def _forbidden() -> HTTPException:
-    return HTTPException(
+def _forbidden() -> AppException:
+    return AppException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail="Superadmin access is required to read the audit log.",
+        message="Superadmin access is required to read the audit log.",
+        code="audit_admin_required",
     )
 
 

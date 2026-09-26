@@ -381,7 +381,14 @@ def get_activity_feed(
     df = _parse_day(date_from)
     dt = _parse_day(date_to)
 
+    # Same company predicate as the /audit/logs/ listing (list_audit_logs), so the two
+    # audit screens show the same company's rows (#1281, 6.2).
+    from app.services.company_scope import admin_listing_company_filter
+    scope_filter = admin_listing_company_filter(db, AuditLog.company_id)
+
     base = db.query(AuditLog)
+    if scope_filter is not None:
+        base = base.filter(scope_filter)
     filtered = _apply_filters(
         base,
         stored_types=stored_types,
@@ -445,8 +452,11 @@ def get_activity_feed(
 
     # Actors for the filter dropdown: distinct real users in the window,
     # ignoring the current user_id filter so switching users stays possible.
+    actor_base = db.query(AuditLog.user_id).filter(AuditLog.user_id.isnot(None))
+    if scope_filter is not None:
+        actor_base = actor_base.filter(scope_filter)
     actor_scope = _apply_filters(
-        db.query(AuditLog.user_id).filter(AuditLog.user_id.isnot(None)),
+        actor_base,
         stored_types=stored_types,
         action=action,
         user_id=None,

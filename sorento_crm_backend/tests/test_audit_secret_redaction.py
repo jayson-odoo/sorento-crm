@@ -16,13 +16,17 @@ Every test seeds its own rows on a blank schema.
 """
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 
 import pytest
+from sqlalchemy import Column, MetaData, String, Table, inspect
+from sqlalchemy.orm import configure_mappers
 
 from app.audit_context import set_audit_context
-from app.models.audit import AuditLog
+from app.database import Base
+from app.models.audit import AuditLog, audit_columns_excluding_secrets
 from app.models.user import User
 from app.services import audit_service
 from app.services.audit_service import log_audit, register_audit_listeners
@@ -101,14 +105,26 @@ def test_a_password_change_writes_no_hash_either():
             assert "hash" not in str(row.new_values or {})
 
 
-def test_user_declares_audit_columns_without_password():
+def test_user_audits_every_column_but_the_secrets():
+    # Derived, not hand-copied: a column added to User is audited without anyone
+    # remembering to list it, and a secret one is not (review of a17f4b36).
     cols = getattr(User, "__audit_columns__", None)
     assert cols is not None, "User must name its audited columns explicitly"
     assert "password" not in cols
-    # Every named column is real, or the filter silently drops it.
-    real = {c.key for c in User.__table__.columns}
-    assert set(cols) <= real
+    real = {c.key for c in inspect(User).mapper.column_attrs}
+    assert set(cols) == real - audit_service.AUDIT_SECRET_KEYS
     assert {"email", "name", "status"} <= set(cols)
+
+
+def test_a_new_column_is_audited_unless_it_is_a_secret():
+    table = Table(
+        "zz_audit_derivation_probe",
+        MetaData(),
+        Column("id", String, primary_key=True),
+        Column("brand_new_flag", String),
+        Column("password", String),
+    )
+    assert audit_columns_excluding_secrets(table) == ["id", "brand_new_flag"]
 
 
 def test_log_audit_drops_deny_listed_keys_from_any_caller():
@@ -127,7 +143,49 @@ def test_log_audit_drops_deny_listed_keys_from_any_caller():
         assert entry.new_values == {"status": "issued"}
 
 
+# Column names that read as a credential: the name ENDS in a secret word, so
+# `sign_token` matches and `sign_token_expires_at` / `gatepass_date` do not. A match on
+# an audited model that the deny list does not cover is copied into audit_logs verbatim.
+_SECRET_NAME = re.compile(
+    r"(^|_)(password|passwd|secret|token|api_?key|hash|credentials?)$", re.I
+)
+
+
+def _audited_columns(cls):
+    cols = getattr(cls, "__audit_columns__", None)
+    if cols is not None:
+        return set(cols)
+    return {c.key for c in inspect(cls).mapper.column_attrs}
+
+
 def test_deny_list_covers_the_secret_columns_on_audited_models():
-    # The two secret-bearing columns found on `__audit_track__` models at the time
-    # of #1281. A new one belongs here AND in the deny list.
-    assert {"password", "sign_token"} <= set(getattr(audit_service, "AUDIT_SECRET_KEYS", ()))
+    configure_mappers()
+    leaks = sorted(
+        f"{mapper.class_.__name__}.{col}"
+        for mapper in Base.registry.mappers
+        if getattr(mapper.class_, "__audit_track__", False)
+        for col in _audited_columns(mapper.class_)
+        if _SECRET_NAME.search(col) and col not in audit_service.AUDIT_SECRET_KEYS
+    )
+    assert leaks == [], f"secret-looking audited columns not in AUDIT_SECRET_KEYS: {leaks}"
+    # The two found at the time of #1281 stay covered.
+    assert {"password", "sign_token"} <= audit_service.AUDIT_SECRET_KEYS
+
+
+def test_log_audit_drops_deny_listed_keys_nested_in_a_json_value():
+    with blank_session() as db:
+        entry = log_audit(
+            db,
+            "integration_settings",
+            str(uuid.uuid4()),
+            "UPDATE",
+            old_values={"config": {"api_key": "old", "region": "my"}},
+            new_values={
+                "config": {"api_key": "new", "region": "sg"},
+                "hooks": [{"url": "https://x", "secret": "s"}],
+            },
+        )
+        db.flush()
+        db.refresh(entry)
+        assert entry.old_values == {"config": {"region": "my"}}
+        assert entry.new_values == {"config": {"region": "sg"}, "hooks": [{"url": "https://x"}]}

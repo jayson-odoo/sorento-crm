@@ -24,6 +24,8 @@ from app.main import app
 import app.database as app_database
 from app.dependencies import get_current_user_or_api_key
 from app.models.audit import AuditLog
+from app.models.base import set_company_scope
+from app.services.company_scope_resolver import apply_company_scope
 from app.models.user import (
     User,
     UserPermission,
@@ -34,6 +36,9 @@ from app.models.user import (
 from tests._pg_fixture import blank_session
 
 COMPLAINT_VIEW = "complaint_management.complaints.view"
+PACKING_LIST_VIEW = "procurement.packing_lists.view"
+COMPANY_A = str(uuid.uuid4())
+COMPANY_B = str(uuid.uuid4())
 
 
 def _role(db, slug, permission_slugs=()):
@@ -68,6 +73,7 @@ def env():
             "admin": _user(db, "admin", _role(db, "admin")),
             "staff": _user(db, "staff", _role(db, "zz_complaint_staff", [COMPLAINT_VIEW])),
             "plain": _user(db, "plain"),
+            "packing": _user(db, "packing", _role(db, "zz_packing_staff", [PACKING_LIST_VIEW])),
         }
         db.commit()
         # The seed users' own CREATE rows are not under test.
@@ -80,17 +86,26 @@ def env():
         ))
         db.commit()
 
-        caller = {"id": None}
+        caller = {"id": None, "scope": None}
 
         def _override_db():
             yield db
 
+        async def _override_scope():
+            # None = unscoped (every company); a frozenset = the request's active company.
+            set_company_scope(db, caller["scope"])
+            return caller["scope"]
+
         app.dependency_overrides[app_database.get_db] = _override_db
+        app.dependency_overrides[apply_company_scope] = _override_scope
         app.dependency_overrides[get_current_user_or_api_key] = lambda: {"id": caller["id"]}
 
-        def as_(who):
+        def as_(who, scope=None):
             caller["id"] = ids[who]
+            caller["scope"] = scope
             return TestClient(app)
+
+        as_.db = db
 
         try:
             yield as_, complaint_id
@@ -151,3 +166,94 @@ def test_an_entity_type_without_an_entity_id_is_a_listing_not_a_record(env):
     as_, _ = env
     r = as_("staff").get("/api/v1/audit/logs/?entity_type=complaint")
     assert r.status_code == 403, r.text
+
+
+def test_forbidden_is_an_app_exception_body(env):
+    # CLAUDE.md: routes raise AppException, which serialises {message, detail, code}.
+    as_, _ = env
+    r = as_("plain").get("/api/v1/audit/logs/")
+    assert r.status_code == 403, r.text
+    body = r.json()
+    assert body["code"] == "audit_admin_required"
+    assert body["message"]
+
+
+# --- the packing list Timeline tab (R17) ----------------------------------------
+
+def test_packing_list_timeline_is_readable_with_the_packing_list_view_permission(env):
+    # PackingListTimelineTab reads `entity_type=inbound_shipments` (usePackingLists.ts)
+    # for any user who can open the packing list; a17f4b36 answered that with a 403.
+    as_, _ = env
+    shipment_id = str(uuid.uuid4())
+    as_.db.add(AuditLog(
+        id=str(uuid.uuid4()), entity_type="inbound_shipments", entity_id=shipment_id,
+        action="UPDATE", old_values={"status": "draft"}, new_values={"status": "confirmed"},
+        description="Over capacity: carrier confirmed the extra pallet",
+    ))
+    as_.db.commit()
+    r = as_("packing").get(
+        f"/api/v1/audit/logs/?entity_type=inbound_shipments&entity_id={shipment_id}"
+    )
+    assert r.status_code == 200, r.text
+    assert [row["entity_id"] for row in r.json()["data"]] == [shipment_id]
+
+
+def test_the_packing_list_permission_does_not_open_a_complaints_history(env):
+    as_, complaint_id = env
+    r = as_("packing").get(f"/api/v1/audit/logs/?entity_type=complaint&entity_id={complaint_id}")
+    assert r.status_code == 403, r.text
+
+
+# --- company scope ---------------------------------------------------------------
+
+def _row_in(db, company_id, entity_type="complaint"):
+    entity_id = str(uuid.uuid4())
+    db.add(AuditLog(
+        id=str(uuid.uuid4()), entity_type=entity_type, entity_id=entity_id,
+        action="UPDATE", old_values={"status": "pending"}, new_values={"status": "resolved"},
+        company_id=company_id,
+    ))
+    db.commit()
+    return entity_id
+
+
+def test_one_record_history_does_not_cross_companies(env):
+    # The per-record path is the one open to non-admin staff: a staff user whose
+    # request is scoped to company A gets nothing for a company-B record's history.
+    as_, _ = env
+    in_b = _row_in(as_.db, COMPANY_B)
+    r = as_("staff", frozenset({COMPANY_A})).get(
+        f"/api/v1/audit/logs/?entity_type=complaint&entity_id={in_b}"
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"] == []
+    # The same staff user scoped to B sees it, so the empty answer above is the scope.
+    r = as_("staff", frozenset({COMPANY_B})).get(
+        f"/api/v1/audit/logs/?entity_type=complaint&entity_id={in_b}"
+    )
+    assert [row["entity_id"] for row in r.json()["data"]] == [in_b]
+
+
+def test_the_logs_listing_does_not_cross_companies(env):
+    as_, _ = env
+    in_a = _row_in(as_.db, COMPANY_A)
+    in_b = _row_in(as_.db, COMPANY_B)
+    r = as_("admin", frozenset({COMPANY_A})).get("/api/v1/audit/logs/")
+    assert r.status_code == 200, r.text
+    ids = {row["entity_id"] for row in r.json()["data"]}
+    assert in_a in ids
+    assert in_b not in ids
+
+
+def test_the_activity_feed_does_not_cross_companies(env):
+    # a17f4b36: /audit/logs/ hid the company-B row and /audit/activity showed it.
+    as_, _ = env
+    in_a = _row_in(as_.db, COMPANY_A)
+    in_b = _row_in(as_.db, COMPANY_B)
+    r = as_("admin", frozenset({COMPANY_A})).get("/api/v1/audit/activity")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    ids = {item["entity_id"] for item in body["items"]}
+    assert in_a in ids
+    assert in_b not in ids
+    assert body["pagination"]["total"] == len(body["items"])

@@ -8,7 +8,7 @@ from typing import Optional, Any
 from datetime import datetime, date
 from decimal import Decimal
 from uuid import UUID
-from app.models.audit import AuditLog
+from app.models.audit import AUDIT_SECRET_KEYS, AuditLog
 
 
 def _is_uuid(value: str) -> bool:
@@ -107,30 +107,16 @@ def _model_to_audit_dict(obj: Any) -> dict[str, Any]:
         return {}
 
 
-# Keys that never enter audit_logs, whichever model or caller produced the payload
-# (issue #1281). `__audit_columns__` is opt-in per model and a model without it
-# snapshots every column, so the deny list is the backstop: `users.password` (a
-# bcrypt hash) and `project_quotation_issues.sign_token` (a bearer link token) were
-# both written verbatim before it. A new secret column on an audited model belongs here.
-AUDIT_SECRET_KEYS = frozenset({
-    "password",
-    "password_hash",
-    "hashed_password",
-    "sign_token",
-    "token",
-    "access_token",
-    "refresh_token",
-    "api_key",
-    "key_hash",
-    "secret",
-    "client_secret",
-})
-
-
-def _redact_secrets(values: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
-    if not values:
-        return values
-    return {k: v for k, v in values.items() if k not in AUDIT_SECRET_KEYS}
+# The deny list lives beside the model (app.models.audit.AUDIT_SECRET_KEYS) so a model
+# can derive its `__audit_columns__` from it. `__audit_columns__` is opt-in per model and
+# a model without it snapshots every column, so the deny list is the backstop.
+def _redact_secrets(values: Any) -> Any:
+    """Drop deny-listed keys at every depth: top level, nested JSON objects, lists of them."""
+    if isinstance(values, dict):
+        return {k: _redact_secrets(v) for k, v in values.items() if k not in AUDIT_SECRET_KEYS}
+    if isinstance(values, list):
+        return [_redact_secrets(v) for v in values]
+    return values
 
 
 def log_audit(
