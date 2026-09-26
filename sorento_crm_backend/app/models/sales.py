@@ -22,11 +22,15 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Numeric,
+    SmallInteger,
     String,
+    Text,
     event,
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -191,6 +195,118 @@ def leader_rule_ddl(schema: str) -> list[str]:
         EXECUTE FUNCTION {q}.sales_team_leader_is_member()
         """,
     ]
+
+
+class SalesOpportunity(CompanyScopedMixin, Base):
+    """A possible sale being worked on (plan 3.4; slice S2).
+
+    Stages live on the existing configurable status engine
+    (`app.modules.sales.status_entities`, entity type ``sales_opportunity``), not a bespoke
+    column, so System > Status Graphs is the one place every funnel in the CRM is edited
+    (owner ruling 26 Sep, G5). Lines are logged separately (`SalesOpportunityLine` below).
+    """
+
+    __tablename__ = "opportunities"
+    __audit_track__ = True
+    # `audit_log.entity_type` defaults to the bare table name; qualified the same way
+    # `SalesTeam` is, so an opportunity's stage moves show under their own noun.
+    __audit_entity_type__ = "sales_opportunities"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    opportunity_no = Column(String(20), nullable=False)
+    customer_id = Column(
+        UUID(as_uuid=False), ForeignKey("customers.id", ondelete="RESTRICT"), nullable=True
+    )
+    # Required when `customer_id` is null (check below): a showroom that is not a customer
+    # yet (round 4, N10). Kept as history once the opportunity is Won onto a real customer.
+    prospect_name = Column(String(200), nullable=True)
+    # Portal: the logging contact's own agent. CRM: stamped from the customer, editable.
+    sales_agent_id = Column(
+        UUID(as_uuid=False), ForeignKey("sales_agents.id", ondelete="SET NULL"), nullable=True
+    )
+    title = Column(String(200), nullable=False)
+    status_id = Column(
+        UUID(as_uuid=False), ForeignKey("statuses.id", ondelete="SET NULL"), nullable=True
+    )
+    # Derived by the service from the current stage's key (won / lost / else open) - the
+    # same split `leads.outcome` uses (plan 3.4).
+    outcome = Column(String(8), nullable=False, default="open", server_default=text("'open'"))
+    expected_amount = Column(Numeric(15, 2), nullable=False)
+    expected_close_date = Column(Date, nullable=False)
+    # A value from lookup set `sales_opportunity_lost_reasons`; required by the service (not
+    # a DB check - the terminal "Lost" key is configurable) when the stage moves there.
+    lost_reason = Column(String(150), nullable=True)
+    sales_order_id = Column(
+        UUID(as_uuid=False), ForeignKey("sales_orders.id", ondelete="SET NULL"), nullable=True
+    )
+    source = Column(String(8), nullable=False)
+    created_by_contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by_user_id = Column(String(64), nullable=True)
+    stage_changed_at = Column(DateTime(timezone=False), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    lines = relationship(
+        "SalesOpportunityLine",
+        back_populates="opportunity",
+        cascade="all, delete-orphan",
+        order_by="SalesOpportunityLine.sort_order",
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "customer_id IS NOT NULL OR prospect_name IS NOT NULL",
+            name="ck_sales_opportunities_customer_or_prospect",
+        ),
+        CheckConstraint(
+            "outcome IN ('open', 'won', 'lost')", name="ck_sales_opportunities_outcome"
+        ),
+        CheckConstraint("source IN ('portal', 'crm')", name="ck_sales_opportunities_source"),
+        Index(
+            "uq_sales_opportunities_company_no", "company_id", "opportunity_no", unique=True
+        ),
+        Index("ix_sales_opportunities_customer_id", "customer_id"),
+        Index("ix_sales_opportunities_sales_agent_id", "sales_agent_id"),
+        Index("ix_sales_opportunities_status_id", "status_id"),
+        Index("ix_sales_opportunities_expected_close_date", "expected_close_date"),
+        {"schema": SCHEMA},
+    )
+
+
+class SalesOpportunityLine(CompanyScopedMixin, Base):
+    """One product an opportunity names, with a quantity (plan 3.4; round 4, N11).
+
+    Optional (zero lines is valid - an early lead may not know yet). No unit price: the
+    expected amount stays a typed figure, never priced from these lines (plan 3.4).
+    """
+
+    __tablename__ = "opportunity_lines"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    opportunity_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(f"{SCHEMA}.opportunities.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False
+    )
+    qty = Column(Numeric(12, 2), nullable=False)
+    # The order the salesperson entered them, entered order preserved (S2-16).
+    sort_order = Column(SmallInteger, nullable=False, default=0, server_default=text("0"))
+
+    opportunity = relationship("SalesOpportunity", back_populates="lines")
+
+    __table_args__ = (
+        CheckConstraint("qty > 0", name="ck_sales_opportunity_lines_qty_positive"),
+        Index("ix_sales_opportunity_lines_product_id", "product_id"),
+        {"schema": SCHEMA},
+    )
 
 
 def translated_schema(connection, schema: str = SCHEMA) -> str:
