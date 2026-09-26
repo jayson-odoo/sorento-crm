@@ -85,7 +85,10 @@ export function ValuesAndWordsTab({
   // The counts a choice's "Products" column shows - the same aggregate the
   // Products tab already fetches, asked for zero rows: this tab needs the
   // by-value counts, not the product list itself.
-  const { data: productCounts } = useSpecKeyProductsQuery(row.spec_key, { limit: 1, offset: 0 });
+  const { data: productCounts, isPlaceholderData } = useSpecKeyProductsQuery(row.spec_key, {
+    limit: 1,
+    offset: 0,
+  });
   const countByValue = useMemo(() => {
     const map = new Map<string, number>();
     for (const entry of productCounts?.by_value ?? []) {
@@ -386,6 +389,7 @@ export function ValuesAndWordsTab({
           table={table}
           recordCount={rows.length}
           isLoading={false}
+          isPlaceholderData={isPlaceholderData}
           listingKey={null}
           tableLayout={{ width: 'fixed', columnsResizable: true }}
         >
