@@ -1,0 +1,25 @@
+{
+  "name": "after-topic-switch-prompt-carries-previous-episode-summary",
+  "needs_memory": true,
+  "given": {
+    "memory_level": "full",
+    "frames": [
+      {
+        "summary": "Thu 25 Sep: stock SRTWB1455 (answered).",
+        "days_ago": 1,
+        "entities": {"product": ["SRTWB1455"]}
+      }
+    ]
+  },
+  "turn": {
+    "message": "outstanding DO for chin chun",
+    "verdict": {
+      "domain_hint": "order",
+      "status": "outstanding",
+      "entities": [{"raw": "chin chun", "hint": "customer", "canonical_code": null, "current_message": true, "confident": true}]
+    }
+  },
+  "expected": {
+    "prompt_contains": ["stock SRTWB1455 (answered)"]
+  }
+}

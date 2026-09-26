@@ -1,0 +1,24 @@
+{
+  "name": "stock-for-the-usual-uses-usual-products",
+  "needs_memory": true,
+  "given": {
+    "memory_level": "full",
+    "profile_facts": [
+      {
+        "key": "usual_products", "value": ["SRTWB1455"], "source": "tallied",
+        "source_ref": null, "first_seen": "2026-09-01", "last_seen": "2026-09-20",
+        "seen_count": 4, "set_by": null
+      }
+    ]
+  },
+  "turn": {
+    "message": "stock for the usual",
+    "verdict": {
+      "domain_hint": "inventory",
+      "entities": [{"raw": "SRTWB1455", "hint": "product", "canonical_code": "SRTWB1455", "current_message": false, "confident": true}]
+    }
+  },
+  "expected": {
+    "prompt_contains": ["usual products SRTWB1455"]
+  }
+}
