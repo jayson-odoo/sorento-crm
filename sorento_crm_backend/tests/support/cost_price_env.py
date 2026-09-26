@@ -367,30 +367,87 @@ class CostPriceEnv:
         return self.client.put(SETTINGS_GENERAL_URL, json=body)
 
 
-@pytest.fixture
-def cost_price_env():
+def _wire_overrides(e: "CostPriceEnv", db) -> None:
+    """The dependency-override wiring both fixtures below share: same `get_db`,
+    `get_current_user(_or_api_key)` and `apply_company_scope` overrides, whatever the
+    substrate under `db` (a scratch schema or the live database)."""
     from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
     from app.models.base import set_company_scope
     from app.services.company_scope_resolver import apply_company_scope
 
+    def _override_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = lambda: e.principal
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: e.principal
+
+    async def _override_scope():
+        set_company_scope(db, e.scope)
+        return e.scope
+
+    app.dependency_overrides[apply_company_scope] = _override_scope
+
+
+@pytest.fixture
+def cost_price_env():
     with blank_session() as db:
         e = CostPriceEnv(db)
-
-        def _override_get_db():
-            yield db
-
-        app.dependency_overrides[get_db] = _override_get_db
-        app.dependency_overrides[get_current_user] = lambda: e.principal
-        app.dependency_overrides[get_current_user_or_api_key] = lambda: e.principal
-
-        async def _override_scope():
-            set_company_scope(db, e.scope)
-            return e.scope
-
-        app.dependency_overrides[apply_company_scope] = _override_scope
-
+        _wire_overrides(e, db)
         e.client = TestClient(app)
         try:
             yield e
         finally:
             app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def cost_price_env_live():
+    """Same `CostPriceEnv`/`TestClient` wiring as `cost_price_env`, but over a REAL
+    connection to the live database (rolled back at teardown, `tests/scm/conftest.py`'s
+    `scm_app` pattern) instead of a `blank_session()` scratch schema.
+
+    Needed for exactly one seam: `supplier_code_matcher._remember` (the auto-alias write
+    at Apply, AC-S1-12) does `INSERT INTO scm.supplier_product_code_alias ...` with the
+    schema HARDCODED in the SQL text, so it never goes through `blank_session()`'s
+    `schema_translate_map` - it always lands on the REAL `scm.supplier_product_code_alias`
+    table, whose `supplier_id` FK was bound at CREATE TIME to the real `public.suppliers`,
+    not a scratch schema's copy. A supplier seeded in a scratch schema is therefore never
+    "present in table suppliers" from that constraint's point of view, and the insert 500s
+    with a `ForeignKeyViolation` - not a bug in the test, a real substrate mismatch this
+    ONE seam has and the rest of the suite does not (same reasoning
+    `tests/scm/test_supplier_code_matcher.py` documents for using `pg_session` instead of a
+    sqlite/scratch fixture: the ladder's normalisation and this alias write are real SQL
+    against real schema-qualified tables).
+
+    The new cost_price_* tables already exist for real on the CI/dev database this points
+    at (`alembic upgrade head` has run there - confirmed by querying
+    `information_schema.tables` directly), so nothing here needs `create_all`.
+    """
+    from sqlalchemy import event
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database import engine
+
+    connection = engine.connect()
+    trans = connection.begin()
+    Session = sessionmaker(bind=connection)
+    db = Session()
+    db.begin_nested()
+
+    @event.listens_for(db, "after_transaction_end")
+    def _restart_savepoint(session, transaction):  # noqa: ANN001
+        if transaction.nested and not transaction._parent.nested:
+            session.begin_nested()
+
+    e = CostPriceEnv(db)
+    _wire_overrides(e, db)
+    e.client = TestClient(app)
+    try:
+        yield e
+    finally:
+        app.dependency_overrides.clear()
+        event.remove(db, "after_transaction_end", _restart_savepoint)
+        db.close()
+        trans.rollback()
+        connection.close()

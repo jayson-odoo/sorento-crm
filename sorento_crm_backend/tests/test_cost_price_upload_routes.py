@@ -26,6 +26,7 @@ from tests.support.cost_price_env import (
     UPLOAD_PERM,
     VIEW_PERM,
     cost_price_env,
+    cost_price_env_live,
 )
 
 
@@ -314,10 +315,17 @@ def test_apply_refused_while_unmatched_or_needs_attention_line_unresolved(cost_p
 # --------------------------------------------------------------------------------- AC-S1-12
 
 
-def test_manual_map_is_stored_and_aliases_written_only_on_apply(cost_price_env):
+def test_manual_map_is_stored_and_aliases_written_only_on_apply(cost_price_env_live):
+    """Live database, not the usual scratch schema (see `cost_price_env_live`'s own
+    docstring): the ladder-bound code's `auto` alias is written through
+    `supplier_code_matcher._remember`, which hardcodes `INSERT INTO
+    scm.supplier_product_code_alias ...` - a literal schema prefix that bypasses
+    `blank_session()`'s `schema_translate_map` and always lands on the REAL table, whose
+    `supplier_id` FK was bound at CREATE TIME to the real `public.suppliers`. A supplier
+    seeded in a scratch schema is never "present" from that constraint's point of view."""
     from app.models.scm import SupplierProductCodeAlias
 
-    e = cost_price_env
+    e = cost_price_env_live
     user = e.user(UPLOAD_PERM, VIEW_PERM)
     e.as_user(user)
     supplier = e.supplier(name=LETTERHEAD_TEXT)
