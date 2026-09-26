@@ -42,10 +42,12 @@ from tests.chatbot.test_media_intake_turn import (
 )
 
 # Mr Loo's two messages, with the send times respond.io stamped on them (ms since epoch).
-# "Stock" is the real envelope's `timestamp` (1790405849000 = 06:57:29Z = 14:57:29 local);
-# the photo is the owner's WhatsApp screenshot, 14:57:25 local.
+# The photo is the owner's WhatsApp screenshot, 14:57:25 local. "Stock" was sent 4 s later
+# (the real envelope's `timestamp` was 1790405849000 = 14:57:29 local), but here its send
+# time is taken when the test builds it: the ledger path compares it with the photo's
+# ledger row, which the test writes NOW (review round 2, N1), so a fixed past instant
+# would put "Stock" before the photo n8n had already seen.
 PHOTO_SENT_MS = 1790405845000
-STOCK_SENT_MS = 1790405849000
 PHOTO_MESSAGE_ID = "1790405845000000"
 STOCK_MESSAGE_ID = "1790405849000000"
 
@@ -76,7 +78,13 @@ def _product(code: str) -> dict[str, Any]:
     return {"raw": code, "canonical_code": code, "hint": "product", "current_message": False}
 
 
-def _seed_contact(session_factory, contact_id: int, *, focus_codes: list[str]) -> None:
+def _now_ms() -> int:
+    return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+
+def _seed_contact(
+    session_factory, contact_id: int, *, focus_codes: list[str], phone: str = "+60163281179"
+) -> None:
     session_vars = {
         "focus": {"products": [_product(c) for c in focus_codes], "domains": ["inventory"]},
         "open_question": None,
@@ -90,7 +98,7 @@ def _seed_contact(session_factory, contact_id: int, *, focus_codes: list[str]) -
             "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
             "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
         ),
-        {"cid": str(contact_id), "phone": "+60163281179", "sv": json.dumps(session_vars)},
+        {"cid": str(contact_id), "phone": phone, "sv": json.dumps(session_vars)},
     )
     db.commit()
 
@@ -117,7 +125,7 @@ def _stock_envelope(contact_id: int) -> Envelope:
     return _base_envelope(
         contact_id,
         message_id=STOCK_MESSAGE_ID,
-        sent_ms=STOCK_SENT_MS,
+        sent_ms=_now_ms() + 4000,
         inner={"type": "text", "text": "Stock"},
     )
 
@@ -137,7 +145,9 @@ def _photo_envelope(contact_id: int) -> Envelope:
     )
 
 
-def _n8n_media_intake(session_factory, contact_id: int, monkeypatch) -> None:
+def _n8n_media_intake(
+    session_factory, contact_id: int, monkeypatch, *, message_id: str = PHOTO_MESSAGE_ID, worker_runs: bool = True
+) -> None:
     """What n8n's `sub-media-intake` does for the photo BEFORE it calls `/chat/turn`: one
     `/external/media/process` call through the real fast path (decide, meter, record,
     enqueue). The extraction is still RUNNING when "Stock" arrives, as it was for Mr Loo
@@ -160,14 +170,15 @@ def _n8n_media_intake(session_factory, contact_id: int, monkeypatch) -> None:
             func, args = queued.pop(0)
             func(*args)
 
-    monkeypatch.setattr(media_intake_mod.time, "sleep", _worker_finishes)
+    if worker_runs:
+        monkeypatch.setattr(media_intake_mod.time, "sleep", _worker_finishes)
 
     db = session_factory()
     _decide_meter_record_and_enqueue(
         db,
         MediaProcessRequest(
             respond_io_id=str(contact_id),
-            message_id=PHOTO_MESSAGE_ID,
+            message_id=message_id,
             modality="image",
             media_url=PHOTO_URL,
             mime_type="image/jpeg",
@@ -312,6 +323,22 @@ class TestPhotoStillInN8nMediaIntake:
 
         assert late.duplicate is True
         assert len(calls) == parsed, "the photo must not be parsed or answered a second time"
+        # Review round 2, N2: nothing extracted or charged twice, pinned on the ledger
+        # itself rather than through the turn row.
+        from app.models.media import ContactMediaUsage, MediaExtractionJob
+
+        db = session_factory()
+        usage = (
+            db.query(ContactMediaUsage)
+            .filter(
+                ContactMediaUsage.respond_io_id == str(contact_id),
+                ContactMediaUsage.message_id == PHOTO_MESSAGE_ID,
+            )
+            .all()
+        )
+        assert len(usage) == 1, [(u.outcome, u.created_at) for u in usage]
+        jobs = db.query(MediaExtractionJob).filter(MediaExtractionJob.usage_id == usage[0].id).all()
+        assert len(jobs) == 1, [j.status for j in jobs]
 
     def test_a_photo_whose_extraction_already_finished_is_not_replayed(
         self, session_factory, stub_access, media_pipeline, monkeypatch
@@ -418,7 +445,7 @@ class TestBothInThePerContactQueue:
         later = _base_envelope(
             contact_id,
             message_id="ZZT-later",
-            sent_ms=STOCK_SENT_MS + 5000,
+            sent_ms=_now_ms() + 3_600_000,
             inner={"type": "text", "text": "thanks"},
         )
         db = session_factory()
@@ -664,3 +691,261 @@ class TestReviewRound1:
         assert [_message_line(c) for c in calls] == ["Stock"]
         assert _turn_for(session_factory, contact_id, PHOTO_MESSAGE_ID) is None
         assert engine_mod._claim_own_row(session_factory, queued) is True
+
+
+def _received_facts(session_factory, contact_id: int, message_id: str) -> dict[str, Any]:
+    row = _turn_for(session_factory, contact_id, message_id)
+    assert row is not None, f"no turn row for {message_id}"
+    first = (row.trace or [{}])[0]
+    assert first.get("stage") == "received", row.trace
+    return first.get("facts") or {}
+
+
+class TestContactIsolation:
+    """Review round 2, B1: a pre-step answers THIS contact's earlier messages and nobody
+    else's. Either contact filter dropped would put another customer's products and reply
+    on this customer's response."""
+
+    def test_another_contacts_queued_earlier_row_is_never_claimed_or_answered(
+        self, session_factory, stub_access, monkeypatch
+    ):
+        contact_a = _fresh_contact_id()
+        contact_b = _fresh_contact_id()
+        _seed_contact(session_factory, contact_a, focus_codes=[])
+        _seed_contact(session_factory, contact_b, focus_codes=[], phone="+60120000002")
+        stub_access()
+        calls: list[str] = []
+        _install_parser(monkeypatch, calls)
+        other = _queued_row(
+            session_factory, contact_b, message_id="ZZT-b-earlier", sent_ms=PHOTO_SENT_MS, text_="M210-GM"
+        )
+
+        result = engine_mod.run_turn(_stock_envelope(contact_a), session_factory=session_factory)
+
+        assert [_message_line(c) for c in calls] == ["Stock"]
+        assert not any("M210-GM" in t for t in _texts(result.actions)), _texts(result.actions)
+        assert engine_mod._claim_own_row(session_factory, other) is True, "B's row is left for B"
+
+    def test_another_contacts_running_ledger_photo_is_never_answered_under_this_contact(
+        self, session_factory, stub_access, media_pipeline, monkeypatch
+    ):
+        contact_a = _fresh_contact_id()
+        contact_b = _fresh_contact_id()
+        _seed_contact(session_factory, contact_a, focus_codes=[])
+        _seed_contact(session_factory, contact_b, focus_codes=[], phone="+60120000003")
+        _seed_media_limit(session_factory, contact_id=contact_b, modality="image")
+        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        media_pipeline.set_result(PHOTO_RESULT)
+        stub_access()
+        calls: list[str] = []
+        _install_parser(monkeypatch, calls)
+        _n8n_media_intake(session_factory, contact_b, monkeypatch)
+
+        result = engine_mod.run_turn(_stock_envelope(contact_a), session_factory=session_factory)
+
+        assert [_message_line(c) for c in calls] == ["Stock"]
+        assert not any("M210-GM" in t for t in _texts(result.actions)), _texts(result.actions)
+        assert _turn_for(session_factory, contact_a, PHOTO_MESSAGE_ID) is None
+        assert _turn_for(session_factory, contact_b, PHOTO_MESSAGE_ID) is None
+
+
+class TestPreStepBounds:
+    """Review round 2, S1: a fixed count per turn, and the media waits it takes on never
+    add up to n8n's 90 s `chat-turn` timeout. Bounds are counts and the existing per-item
+    wait, never a clock. What is left over goes to its own delivery, and the trace says so."""
+
+    def test_at_most_two_earlier_messages_are_answered_ahead_and_the_rest_are_left(
+        self, session_factory, stub_access, monkeypatch
+    ):
+        contact_id = _fresh_contact_id()
+        _seed_contact(session_factory, contact_id, focus_codes=[])
+        stub_access()
+        calls: list[str] = []
+        _install_parser(monkeypatch, calls)
+        first = _queued_row(session_factory, contact_id, message_id="ZZT-1", sent_ms=PHOTO_SENT_MS, text_="one")
+        second = _queued_row(
+            session_factory, contact_id, message_id="ZZT-2", sent_ms=PHOTO_SENT_MS + 1000, text_="two"
+        )
+        third = _queued_row(
+            session_factory, contact_id, message_id="ZZT-3", sent_ms=PHOTO_SENT_MS + 2000, text_="three"
+        )
+
+        engine_mod.run_turn(_stock_envelope(contact_id), session_factory=session_factory)
+
+        assert [_message_line(c) for c in calls] == ["one", "two", "Stock"]
+        assert engine_mod._claim_own_row(session_factory, first) is False
+        assert engine_mod._claim_own_row(session_factory, second) is False
+        assert engine_mod._claim_own_row(session_factory, third) is True, "left for its own request"
+        facts = _received_facts(session_factory, contact_id, STOCK_MESSAGE_ID)
+        assert facts.get("earlier_answered_ahead") == 2, facts
+        assert facts.get("earlier_left_for_own_turns") == 1, facts
+        assert "count_bound" in str(facts.get("earlier_left_because")), facts
+
+    def test_a_photo_whose_wait_would_reach_the_n8n_timeout_is_left_for_its_own_turn(
+        self, session_factory, stub_access, media_pipeline, monkeypatch
+    ):
+        contact_id = _fresh_contact_id()
+        _seed_contact(session_factory, contact_id, focus_codes=YESTERDAY_CODES)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
+        # One 90 s wait alone is n8n's whole `chat-turn` timeout.
+        _seed_settings(session_factory, media_sync_wait_seconds=90)
+        media_pipeline.set_result(PHOTO_RESULT)
+        stub_access()
+        calls: list[str] = []
+        _install_parser(monkeypatch, calls)
+        _n8n_media_intake(session_factory, contact_id, monkeypatch)
+
+        engine_mod.run_turn(_stock_envelope(contact_id), session_factory=session_factory)
+
+        assert [_message_line(c) for c in calls] == ["Stock"]
+        assert _turn_for(session_factory, contact_id, PHOTO_MESSAGE_ID) is None
+        facts = _received_facts(session_factory, contact_id, STOCK_MESSAGE_ID)
+        assert facts.get("earlier_answered_ahead") == 0, facts
+        assert facts.get("earlier_left_for_own_turns") == 1, facts
+        assert "media_wait_budget" in str(facts.get("earlier_left_because")), facts
+
+
+class TestLedgerPhotoNotReadWhileAnsweredAhead:
+    """Review round 2, S2 (today's live path, pre-S6): n8n's `media-route` replies itself
+    when its extraction fails or outlives the wait. The CRM then sends NOTHING for that
+    photo and leaves it to its own delivery, so the customer never gets two messages."""
+
+    def _setup(self, session_factory, stub_access, media_pipeline, monkeypatch, calls):
+        contact_id = _fresh_contact_id()
+        _seed_contact(session_factory, contact_id, focus_codes=YESTERDAY_CODES)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
+        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        stub_access()
+        _install_parser(monkeypatch, calls)
+        return contact_id
+
+    def _assert_nothing_for_the_photo(self, session_factory, contact_id, result, calls):
+        assert [_message_line(c) for c in calls] == ["Stock"]
+        texts = _texts(result.actions)
+        assert len(texts) == 1, f"only the Stock reply goes out: {texts}"
+        assert engine_mod.GENERIC_ERROR_REPLY not in texts
+        assert _turn_for(session_factory, contact_id, PHOTO_MESSAGE_ID) is None, (
+            "no turn row, so the photo's own delivery is not a duplicate"
+        )
+        facts = _received_facts(session_factory, contact_id, STOCK_MESSAGE_ID)
+        assert facts.get("earlier_left_for_own_turns") == 1, facts
+        assert "photo_not_read" in str(facts.get("earlier_left_because")), facts
+
+    def test_a_failed_extraction_sends_nothing_for_the_photo(
+        self, session_factory, stub_access, media_pipeline, monkeypatch
+    ):
+        calls: list[str] = []
+        contact_id = self._setup(session_factory, stub_access, media_pipeline, monkeypatch, calls)
+        media_pipeline.set_result(error=RuntimeError("provider refused the image"))
+        _n8n_media_intake(session_factory, contact_id, monkeypatch)
+
+        result = engine_mod.run_turn(_stock_envelope(contact_id), session_factory=session_factory)
+
+        self._assert_nothing_for_the_photo(session_factory, contact_id, result, calls)
+
+    def test_an_extraction_that_outlives_the_wait_sends_nothing_for_the_photo(
+        self, session_factory, stub_access, media_pipeline, monkeypatch
+    ):
+        import time as time_mod
+
+        calls: list[str] = []
+        contact_id = self._setup(session_factory, stub_access, media_pipeline, monkeypatch, calls)
+        media_pipeline.set_result(PHOTO_RESULT)
+        _n8n_media_intake(session_factory, contact_id, monkeypatch, worker_runs=False)
+        real_sleep = time_mod.sleep
+        monkeypatch.setattr(time_mod, "sleep", lambda _s: real_sleep(0.05))
+
+        result = engine_mod.run_turn(_stock_envelope(contact_id), session_factory=session_factory)
+
+        self._assert_nothing_for_the_photo(session_factory, contact_id, result, calls)
+
+
+class TestReviewRound2:
+    def test_a_raising_close_after_a_raising_earlier_turn_still_answers_this_turn(
+        self, session_factory, stub_access, monkeypatch
+    ):
+        """S3: the earlier message's stages raise, and so does closing its row (a DB blip
+        is the likely cause of both). The pre-step swallows it; this turn still answers."""
+        contact_id = _fresh_contact_id()
+        _seed_contact(session_factory, contact_id, focus_codes=[])
+        stub_access()
+        calls: list[str] = []
+        _install_parser(monkeypatch, calls)
+        earlier = _queued_row(
+            session_factory, contact_id, message_id="ZZT-blip", sent_ms=PHOTO_SENT_MS, text_="M210-GM"
+        )
+        real_stages = engine_mod._run_stages
+        real_close = engine_mod._close_turn
+
+        def _stages(envelope, **kwargs):
+            if kwargs.get("turn_id") == earlier:
+                raise RuntimeError("database went away mid-turn")
+            return real_stages(envelope, **kwargs)
+
+        def _close(db, turn_id, **kwargs):
+            if turn_id == earlier:
+                raise RuntimeError("database still away")
+            return real_close(db, turn_id, **kwargs)
+
+        monkeypatch.setattr(engine_mod, "_run_stages", _stages)
+        monkeypatch.setattr(engine_mod, "_close_turn", _close)
+
+        result = engine_mod.run_turn(_stock_envelope(contact_id), session_factory=session_factory)
+
+        assert [_message_line(c) for c in calls] == ["Stock"]
+        assert engine_mod.GENERIC_ERROR_REPLY not in _texts(result.actions)
+        assert _turn_for(session_factory, contact_id, STOCK_MESSAGE_ID).status == "done"
+
+    def test_a_ledger_photo_first_seen_after_this_message_was_sent_is_not_answered_ahead(
+        self, session_factory, stub_access, media_pipeline, monkeypatch
+    ):
+        """N1: the ledger has no send time, so its row must also predate THIS message's
+        send time. Two recorded instants, not a window."""
+        contact_id = _fresh_contact_id()
+        _seed_contact(session_factory, contact_id, focus_codes=[])
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
+        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        media_pipeline.set_result(PHOTO_RESULT)
+        stub_access()
+        calls: list[str] = []
+        _install_parser(monkeypatch, calls)
+        _n8n_media_intake(session_factory, contact_id, monkeypatch)
+        # "Stock" was sent a minute BEFORE n8n first told the CRM about the photo.
+        stock = _base_envelope(
+            contact_id,
+            message_id=STOCK_MESSAGE_ID,
+            sent_ms=_now_ms() - 60_000,
+            inner={"type": "text", "text": "Stock"},
+        )
+
+        engine_mod.run_turn(stock, session_factory=session_factory)
+
+        assert [_message_line(c) for c in calls] == ["Stock"]
+        assert _turn_for(session_factory, contact_id, PHOTO_MESSAGE_ID) is None
+
+    def test_the_row_answered_ahead_names_the_turn_that_answered_it(
+        self, session_factory, stub_access, media_pipeline, monkeypatch
+    ):
+        """N3: an operator on the trace screen can tell why the photo's reply went out on
+        "Stock"'s response."""
+        contact_id = _fresh_contact_id()
+        _seed_contact(session_factory, contact_id, focus_codes=YESTERDAY_CODES)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
+        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        media_pipeline.set_result(PHOTO_RESULT)
+        stub_access()
+        calls: list[str] = []
+        _install_parser(monkeypatch, calls)
+        _n8n_media_intake(session_factory, contact_id, monkeypatch)
+
+        engine_mod.run_turn(_stock_envelope(contact_id), session_factory=session_factory)
+
+        stock_row = _turn_for(session_factory, contact_id, STOCK_MESSAGE_ID)
+        photo_row = _turn_for(session_factory, contact_id, PHOTO_MESSAGE_ID)
+        first = photo_row.trace[0]
+        assert first["stage"] == "received"
+        assert (first.get("raw") or {}).get("answered_ahead_by") == str(stock_row.id), first.get("raw")
+        assert first["facts"].get("answered_ahead_by_message") == STOCK_MESSAGE_ID, first["facts"]
+        facts = _received_facts(session_factory, contact_id, STOCK_MESSAGE_ID)
+        assert facts.get("earlier_answered_ahead") == 1, facts
+        assert facts.get("earlier_left_for_own_turns") == 0, facts
