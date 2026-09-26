@@ -66,7 +66,7 @@ Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` browser pass via sidebar, `[T]` a
   `run_id` omitted = newest completed run. Every field declared on `LowStockViewOut` and asserted
   by name through the route. (J-A 4)
 - AC-2 [BE] The view and the export are ONE builder. `export_low_stock` renders the sheet model
-  returned by `build_low_stock_model(...)`; no second row builder, no second split. For the same
+  returned by `build_low_stock_view(...)`; no second row builder, no second split. For the same
   `(run_id, split, suppliers, categories)` the workbook's sheet titles equal `sheets[].title` in
   order, and every sheet's cell values equal the view's rows at `row_indexes` in order. [T]
   `test_view_and_workbook_agree` over all four splits and one filtered case. (J-A 7)
@@ -143,7 +143,7 @@ Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` browser pass via sidebar, `[T]` a
   `automation_triggers`, event-driven (pull mode yields nothing), listed by
   `GET /system/automation/triggers/catalog` so the admin can pick it in System > Automations. No migration.
 - AC-20 [BE] When `_handler_scm_reorder_run` has funded the run it dispatches the trigger ONCE
-  with context `report: {link, as_of, date_label, low, rows, run_label}`; every enabled
+  with context `report: {link, as_of, date_label, low, rows}`; every enabled
   automation on that trigger sends its own template to its own `recipient_config`. No enabled
   automation = nothing sent, no error. No new recipient list anywhere (Q5).
 - AC-21 [BE] `report.link` is `<FRONTEND_BASE_URL>/scm/low-stock-report/<run_id>` (the in-system
