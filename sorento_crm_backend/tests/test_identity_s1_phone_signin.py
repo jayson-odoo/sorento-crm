@@ -721,7 +721,8 @@ def test_ac27_staff_user_signs_in_by_phone_code_with_normal_permissions(rate_lim
 
         with _phone_client(db) as client:
             with patch("app.services.queue_service.enqueue_job") as mock_enqueue:
-                client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
+                req = client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
+            assert req.status_code == 200, req.text
             code = mock_enqueue.call_args.args[4]
             resp = client.post("/api/v1/auth/phone/verify", json={"phone": digits, "code": code})
 
@@ -752,7 +753,8 @@ def test_ac27_superadmin_signs_in_by_phone_code(rate_limit_cleanup):
 
         with _phone_client(db) as client:
             with patch("app.services.queue_service.enqueue_job") as mock_enqueue:
-                client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
+                req = client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
+            assert req.status_code == 200, req.text
             code = mock_enqueue.call_args.args[4]
             resp = client.post("/api/v1/auth/phone/verify", json={"phone": digits, "code": code})
 
