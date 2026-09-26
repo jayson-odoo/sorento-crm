@@ -89,6 +89,9 @@ class CostPriceEnv:
 
         self.client: TestClient | None = None
         self.principal: dict | None = None
+        # The REAL user during an `.as_impersonated(...)` session, else None (matches
+        # `_maybe_apply_impersonation`'s "same as current_user outside impersonation").
+        self.principal_real: dict | None = None
         self.scope = frozenset({self.company_a})
 
     # ------------------------------------------------------------- principals
@@ -189,6 +192,19 @@ class CostPriceEnv:
 
     def as_user(self, principal: dict | None, *, scope=None) -> None:
         self.principal = principal
+        self.principal_real = None
+        self.scope = scope if scope is not None else frozenset({self.company_a})
+
+    def as_impersonated(self, real_principal: dict, effective_principal: dict, *, scope=None) -> None:
+        """Simulates an admin (`real_principal`) impersonating `effective_principal` (B2):
+        every route sees `current_user` == `effective_principal`. Not wired further into
+        this fixture's `get_current_user` override (see that function's own docstring for
+        why a `Request`-typed override broke every route through this harness) - no code
+        path in this lane reads a "real actor" today (that absence IS the B2 finding), so a
+        test proves it from `current_user["id"]` == the effective principal alone and
+        checks the outcome against `e.principal_real` directly."""
+        self.principal = effective_principal
+        self.principal_real = real_principal
         self.scope = scope if scope is not None else frozenset({self.company_a})
 
     # ---------------------------------------------------------------- catalogue
@@ -229,6 +245,19 @@ class CostPriceEnv:
         self.db.add(p)
         self.db.flush()
         return p
+
+    def product_in_company(self, company_id: str, code: str | None = None, *, description: str = "A product"):
+        """A product stamped with `company_id`, not the test's own `company_a` (B1: cross-
+        company product references). Switches the session's company scope for one insert,
+        then restores it - a direct ORM seed, not a request, so `self.scope` (read only by
+        the `apply_company_scope` override on the NEXT request) is untouched either way."""
+        from app.models.base import set_company_scope
+
+        set_company_scope(self.db, frozenset({company_id}))
+        try:
+            return self.product(code=code, description=description)
+        finally:
+            set_company_scope(self.db, self.scope)
 
     def link(self, product, supplier, *, unit_cost=None, currency=None, lead_time_days=30):
         from app.models.procurement import ProductSupplier

@@ -254,12 +254,58 @@ def test_migration_sweeps_product_supplier_writes():
 # --------------------------------------------------------------------------------- AC-S2-19
 
 
+def _all_dependency_calls(dependant) -> set:
+    """Every callable reachable from `dependant`, walked recursively.
+
+    A route's OWN `dependant.dependencies` holds `_require` (the closure `require_permission(
+    slug)` returns), never `get_current_user`/`get_current_user_or_api_key` directly - those
+    live one level DOWN, as `_require`'s own sub-dependency. Checking only the top level (the
+    walk this replaces) is vacuous: it can never see the API-key dependency no matter which
+    one the route actually uses, so it would still pass after a regression to
+    `require_permission_with_api_key`. This walks every `Dependant` in the tree instead.
+    """
+    seen: set = set()
+    stack = [dependant]
+    while stack:
+        d = stack.pop()
+        if d is None:
+            continue
+        if d.call is not None:
+            seen.add(d.call)
+        stack.extend(d.dependencies)
+    return seen
+
+
+def _permission_gate_dependant(dependant):
+    """The route's OWN `require_permission(...)`/`require_any_permission(...)` sub-dependant
+    (its closure is named `_require` in `app/dependencies.py`), never the router-level
+    `require_module_enabled_with_api_key(...)` module guard (named `_guard`) every route
+    under `/procurement` also carries.
+
+    Both sit as DIRECT children of `route.dependant` - FastAPI flattens a router's
+    `dependencies=[...]` list and a route's own `Depends(...)` parameters into one list,
+    not two - and the module guard legitimately depends on `get_current_user_or_api_key`
+    (an integration may reach a disabled-module check without holding any business
+    permission at all). Walking the WHOLE tree without excluding it made the first version
+    of this test unsatisfiable by ANY route under this router, module guard included, which
+    is a different vacuous failure than the one it was fixing: it is the permission gate
+    that must never route through the API-key principal, not the guard.
+    """
+    for dep in dependant.dependencies:
+        if getattr(dep.call, "__name__", "") == "_require":
+            return dep
+    return None
+
+
 def test_api_key_principal_cannot_decide_return_or_apply():
     """`verify` is a Sorento-staff-only permission (plan section 10): the legacy `system`
     API-key principal must never reach decide/decide-all/return/apply, so those four
-    routes are pinned to depend on `get_current_user`, never `get_current_user_or_api_key`.
+    routes' OWN permission gate is pinned to `get_current_user`, never
+    `get_current_user_or_api_key` - the router-level module guard is a separate, legitimate
+    user of the API-key variant and is excluded from this walk (see
+    `_permission_gate_dependant`).
     """
-    from app.dependencies import get_current_user_or_api_key
+    from app.dependencies import get_current_user, get_current_user_or_api_key
     from app.main import app
 
     watched_paths = {
@@ -275,8 +321,14 @@ def test_api_key_principal_cannot_decide_return_or_apply():
             continue
         found += 1
         dependant = getattr(route, "dependant", None)
-        callables = {dep.call for dep in (dependant.dependencies if dependant else [])}
-        assert get_current_user_or_api_key not in callables, path
+        gate = _permission_gate_dependant(dependant)
+        assert gate is not None, (path, "no require_permission/require_any_permission gate found")
+        calls = _all_dependency_calls(gate)
+        assert get_current_user_or_api_key not in calls, (path, calls)
+        # The walk itself must be capable of finding the real dependency, or the
+        # "not in calls" assertion above is exactly as vacuous as the top-level-only
+        # version this replaces.
+        assert get_current_user in calls, (path, calls)
 
     assert found == len(watched_paths), (
         "the four verify-only routes are not mounted yet: "
