@@ -1,15 +1,26 @@
 # UAC: Unified identity, one login for the portal and the CRM (#1280)
 
 Plan: `PLAN-unified-identity-26sep.md` (same folder).
-Status: draft, round 3 (27 Sep 2026). Rewritten for the owner rulings of 26 Sep 2026 23:45 MYT on
-Q1, Q2, Q3, Q4, Q6, Q8, Q9, Q10 and 27 Sep 2026 00:20 MYT on Q5 (plan section 12). Q11 to Q15 are
-unanswered; ACs that depend on them still follow the recommendation and name it as `(Qn)`, to be
+Status: draft, round 4 (27 Sep 2026). Rewritten for the owner rulings of 26 Sep 2026 23:45 MYT on
+Q1, Q2, Q3, Q4, Q6, Q8, Q9, Q10, 27 Sep 2026 00:20 MYT on Q5, 27 Sep 2026 00:45 MYT on Q7 and Q16
+(no new pages; the existing `/signin` with an Email / Phone toggle) and 27 Sep 2026 00:50 MYT on
+Q17 (creating or linking never sends email) (plan section 12). Round 4 withdraws AC-50 (the
+Salesperson accounts worklist) and AC-51 (the Users list Kind filter and Sign-in column), moves
+AC-52 and AC-54 from S4 to S3 (S4 is withdrawn), and adds AC-29 and AC-56 to AC-59. Q11 to Q15
+and Q18 are unanswered; ACs that depend on them still follow the recommendation and name it as `(Qn)`, to be
 rewritten before their slice starts if the owner answers differently.
 
 Owner ruling 26 Sep 2026 23:45 MYT (Q3, Q4), binding on every AC below: no user is ever created
 automatically. The owner creates and sets up every user at the backend (create, link to the
 contact, set roles), then the person signs in. A contact the owner has not set up keeps using the
 portal exactly as today.
+
+Owner rulings 27 Sep 2026 00:45 MYT (Q7, Q16) and 00:50 MYT (Q17), binding on every AC below: no
+new page (creating and linking happen in the existing Administrative Users and Internal Users
+pages, the owner's "Internal contacts"); one sign-in page, the existing `/signin`, with a toggle
+between phone code and email plus password in its current design, reusing the existing code
+sender; salespeople keep the portal and its code prompt; creating or linking a user never sends
+any email, and sending the invitation email is a separate button with a confirmation.
 
 Owner words, 26 Sep 2026 ~13:50Z, issue #1280 (verbatim, binding):
 
@@ -33,20 +44,21 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
 1. Aisyah is a retail salesperson contact. She already exists as a WhatsApp contact. The owner
    has created her user from her contact (J-E): linked to her contact, role Salesperson, her
    companies. She did nothing.
-2. She opens the sign-in page on her phone. One field: "Email or phone number". She types her
-   number (any common form: `012-345 6789`, `+60123456789`, `60123456789`).
-3. The system recognises a phone number and moves straight to "Enter the code we sent to your
-   WhatsApp", masked number shown, six boxes, the phone's own one-time-code autofill offered.
-4. She receives the code on WhatsApp, enters it, and lands on the portal home she already knows
-   (a salesperson lands on the portal first, Q9), with the forms her market segment grants. She
-   never chose a password and never registered.
-5. What she submits is recorded against her user (and her contact, as today).
+2. She taps the portal link she already has on WhatsApp (salespeople keep the portal, Q16). The
+   portal's verify card she knows asks for a code only when her phone holds no live sign-in.
+3. She receives the code on WhatsApp, enters it in the one "Verification code" box, and lands on
+   the portal home she already knows (a salesperson lands on the portal first, Q9), with the forms
+   her market segment grants. She never chose a password, never registered, never got an email.
+4. What she submits is recorded against her user (and her contact, as today).
 
-### J-B A staff member signs in as before
+### J-B A staff member signs in on the existing sign-in page
 
-1. Staff open the same sign-in page, type their email, and get the password step exactly as
-   today. Nothing about staff sign-in changes unless they choose to type their phone number,
-   which works the same way as J-A once their phone is verified.
+1. Staff open the same `/signin` they use today. Under "Sign in to Sorento" there is now a toggle,
+   Email | Phone, with Email selected: the page below it is exactly today's (Email, Password,
+   Forgot Password?, Remember me, Continue).
+2. A staff member who prefers the phone taps Phone, types their number (any common form:
+   `012-345 6789`, `+60123456789`, `60123456789`), taps Continue, gets a WhatsApp code, types it in
+   the one "Verification code" box, and is in on the sixth digit.
 
 ### J-C An existing portal contact taps an old WhatsApp link
 
@@ -66,26 +78,32 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
    header; the CRM shows Project Sales in the sidebar and a "Portal" entry back. Same sign-in,
    same session.
 
-### J-E The owner sets a person up, then the person signs in
+### J-E The owner sets a person up on the existing pages, then the person signs in
 
-1. The owner opens User Management > Salesperson accounts: every salesperson contact with its
-   state, No user yet, Linked, or Needs attention.
-2. On Aisyah's row (No user yet) the owner clicks Create user. The Add user modal opens with her
-   contact locked, her name and phone filled in, role Salesperson suggested and her companies
-   filled in. The owner reviews, changes anything, and saves.
-3. The row flips to Linked. Her contact's page shows her user in its User account section.
-4. The owner may send her the portal link with the existing "Send portal link" action, or simply
-   tell her to sign in with her number. Nothing is sent by itself.
-5. For a dealer contact, the owner does the same from the contact's page (User account > Create
-   user), with role Portal suggested. For a staff member who is also a salesperson, the owner uses
-   Link existing user instead of creating a second one.
+1. The owner opens Users & Access > People > Internal Users (the WhatsApp contact list they
+   already use). Aisyah's row has an empty "User" column and a row action "Create user".
+2. Create user opens the existing Add user modal with her WhatsApp contact locked, her name and
+   phone filled in, role Salesperson suggested and her companies filled in. There is no "send
+   invitation" tick box any more. The owner reviews, changes anything, and clicks Add user.
+3. Her row's User column now shows her name; her contact's Profile tab shows her user in a "User
+   account" section. No email and no WhatsApp message went out.
+4. The same works from Administrative Users > Add user: picking her in the new WhatsApp contact
+   field fills the rest.
+5. The owner may send her the portal link with the existing "Send portal link" action, or simply
+   let her use the link she has. Nothing is sent by itself.
+6. For a dealer contact, the owner does the same, with role Portal suggested. For a staff member
+   who is also a salesperson, the owner uses Link existing user on the contact, or the WhatsApp
+   contact field in the staff member's Edit profile, instead of creating a second user.
 
-### J-E2 The owner looks after identities
+### J-E2 The owner sends an invitation email, on purpose
 
-1. Users list: a "Kind" filter (Staff / Salesperson / Portal) and a "Sign-in" column (Email,
-   Phone, both).
-2. A user's page: a "Sign-in" section with email, phone (verified or not), linked WhatsApp
-   contact, last sign-in and how, and "Needs attention" when the contact's phone has changed.
+1. Daniel, a staff member, was created with an email and no phone. He cannot sign in yet, and his
+   Sign-in section says "Invitation not sent".
+2. The owner opens Daniel on Administrative Users and clicks "Send invitation email". A
+   confirmation asks "Send invitation email?" and names the address. Cancel closes it with nothing
+   sent; "Send email" sends the existing invitation link.
+3. The same Sign-in section shows email, phone (verified or not), linked WhatsApp contact, last
+   sign-in and how, and "Needs attention" when the contact's phone has changed.
 
 ### J-F Recovery
 
@@ -144,10 +162,12 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
 
 ## S1 Phone sign-in
 
-- **AC-20 [FE][E2E]** The sign-in page has one field, "Email or phone number" (Q7). Input that
-  normalises to a phone number goes to the code step; anything with `@` goes to the password step.
-  Usable at 375px with the keyboard open (submit button reachable without scrolling the field
-  away) and at 1280px.
+- **AC-20 [FE][E2E]** One sign-in page, the existing `/signin` (Q7, Q16, owner ruling 27 Sep 2026
+  00:45 MYT), with a two-option toggle "Email | Phone" under "Sign in to Sorento", Email selected
+  by default. Email mode shows today's fields, in today's order, unchanged. Phone mode shows
+  "Phone number" and Continue; Continue requests the code and swaps in the code step in the same
+  card. No new route is added for sign-in. Usable at 375px with the keyboard open (code input and
+  resend button reachable without scrolling) and at 1280px.
 - **AC-21 [BE][T]** `POST /api/v1/auth/phone/request-code` with a phone number always answers
   200 with the same body, whether or not the number belongs to anyone (no enumeration). A code is
   sent only when the number resolves to exactly one ACTIVE, non-integration user with a linked
@@ -161,9 +181,11 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
 - **AC-24 [BE][T]** `POST /api/v1/auth/phone/verify` with the right code creates a `user_sessions`
   row (`auth_method = phone_otp`, 30-day rolling, Q15) and returns the same shape as email login,
   so NextAuth stores it the same way. It stamps `users.phone_verified_at`.
-- **AC-25 [FE][E2E]** The code step: six boxes with `autocomplete="one-time-code"`, paste of a
-  six-digit code fills all boxes, a resend button counting down from 60, "Use password instead"
-  shown only when the user has a password, and a "Change number" back link.
+- **AC-25 [FE][E2E]** The code step reuses the portal's code input (Q16: "we already got this send
+  otp mechanism so just reuse it"): one "Verification code" input (numeric, `one-time-code`,
+  placeholder "6-digit code"), signs in on the sixth digit with no submit button, an outline
+  resend button counting down from 60, and a "Change number" link. The portal verify card and
+  `/signin` import the same component (a vitest renders both and finds it).
 - **AC-26 [BE][T]** Email login no longer reveals whether an email exists: an unknown email and a
   wrong password return the same 401 body.
 - **AC-27 [BE][T]** Phone sign-in works for staff and admins too (Q10, owner ruling 26 Sep 2026
@@ -173,6 +195,10 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
   23:45 MYT): a `callbackUrl` the user may open wins; otherwise a user holding the `salesperson`
   role lands on its portal home even if it also holds CRM permissions; any other user with a CRM
   permission (or admin) lands on the CRM home; a user with none lands on its portal home.
+- **AC-29 [FE][E2E]** The toggle obeys the current sign-in design (Q16): the same card, wordmark,
+  heading, `Input`, `Button`, `Checkbox` and destructive `Alert` as today, no new colours, fonts
+  or illustrations, no explanatory copy. The S1 PR carries a before/after screenshot pair of Email
+  mode at 375px and 1280px showing no change beyond the toggle row.
 
 ## S2 Portal on the unified session
 
@@ -208,17 +234,18 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
   and an "Open CRM" link in the portal header; a portal-only user who opens a CRM URL lands on
   their portal home, not an empty CRM shell.
 
-## S3 The owner creates and links users
+## S3 The owner creates and links users, on the existing pages
 
 - **AC-40 [BE][T]** A salesperson contact is (Q1, owner ruling 26 Sep 2026 23:45 MYT): a contact in
   any market segment with `is_requestor_selectable = true` (today `retail` and `project`), or a
-  contact linked from `sales_agents.contact_id`. One function; it only decides who appears on the
-  worklist (AC-50) and which role the create form suggests. It creates nothing.
+  contact linked from `sales_agents.contact_id`. One function; it only decides which role the Add
+  user modal suggests. It creates nothing and lists nothing.
 - **AC-41 [BE][T]** The owner creates a user from a contact: `POST
-  /api/v1/user_management/users` accepts `respond_contact_id`, an optional `email` (Q5) and
+  /api/v1/user-management/users` accepts `respond_contact_id`, an optional `email` (Q5) and
   `company_ids`; the saved user is linked to the contact, its phone is the contact's phone, its
   roles and companies are exactly what the owner submitted, status ACTIVE when it has a phone,
-  INACTIVE with the existing invite email when it has only an email.
+  INACTIVE with no password when it has only an email. No email is sent in either case (Q17,
+  AC-56).
 - **AC-42 [BE][T]** One person, one user, decided by the owner (Q14): creating a user whose phone
   equals an existing user's answers 409 `PHONE_BELONGS_TO_USER` naming that user (never its id),
   and creates nothing; linking the contact to that existing user instead succeeds and adds no
@@ -240,48 +267,68 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
   phone, clears `phone_verified_at` and ends its sessions (AC-54).
 - **AC-47 [BE][T]** Every create and link is audited with the acting admin (`real_user_id`) and
   names the contact it came from.
-- **AC-48 [FE][E2E]** The create form (the existing Add user modal) opened from a contact or a
-  worklist row shows, in order: Name, WhatsApp contact (locked), Phone (read-only, from the
-  contact), Email (optional when there is a phone, Q5), Roles (`SearchableMultiSelect`,
-  `salesperson` suggested for a salesperson contact, `portal_user` for any other), Companies
-  (prefilled from the contact). Each 409 shows inline with its action ("Open user", "Link this
-  contact to <name> instead"). Usable at 375px and 1280px.
+- **AC-48 [FE][E2E]** The existing Add user modal (Q16, owner ruling 27 Sep 2026 00:45 MYT) gains
+  a WhatsApp contact field (`SearchableSelect`, name and phone, never an id): clearable when opened
+  from Administrative Users > Add user, locked when opened from a contact. Picking a contact fills
+  Name, Contact Number (then read-only) and Companies, and suggests `salesperson` for a
+  salesperson contact or `portal_user` for any other, without overwriting a field the owner has
+  typed in. Email is optional when there is a phone (Q5). The "Send invitation email" checkbox is
+  gone (AC-58). Each 409 shows inline with its action ("Open user", "Link this contact to <name>
+  instead"). Usable at 375px and 1280px.
 - **AC-49 [BE]** S3 records the supersession of the 14 Aug 2026 "no user account for salespeople"
   ruling (Q2, owner ruling 26 Sep 2026 23:45 MYT) in the `sales_agent.py` docstring and
   `PLAN-customer-sales-agent-assignment-24sep.md`.
-- **AC-50 [FE][E2E]** "Salesperson accounts" (under User Management): a DataGrid of every
-  salesperson contact with columns Contact, Phone, Segment / Agent, User, State (No user yet,
-  Linked, Needs attention); filter by State, defaulting to all; row actions Create user (opens
-  AC-48), Open user, or for Needs attention the one resolving action named in words ("Phone
-  belongs to <name>": Link to <name>; "<name> is linked to another contact": Open <name>; "No
-  longer a salesperson; still has the Salesperson role": Open user). Standard DataGrid rules
-  (fixed layout, resizable, explicit sizes, truncate + title), usable at 375px.
-- **AC-53 [FE][E2E]** Contact detail: a "User account" section showing the linked user, or "No
-  user yet" with Create user and Link existing user for an admin; Unlink is a 5-second deferred
-  action with Cancel (D7), never a dialog.
-
-## S4 Admin identity screens
-
-- **AC-51 [FE][E2E]** Users list: a "Kind" filter (Staff, Salesperson, Portal, derived from roles)
-  that defaults to showing everyone (lesson: a list that opens filtered cannot be reconciled), and
-  a "Sign-in" column (Email, Phone, Email + Phone).
-- **AC-52 [FE][E2E]** User detail: a "Sign-in" section in the same place on view and edit, with
-  email, phone and its verified state, linked WhatsApp contact (name and masked phone, clickable)
-  with Link WhatsApp contact when there is none, last sign-in time and method, and "Needs
-  attention: phone differs from WhatsApp contact" with "Use new number" (AC-46); explicit empty
-  states ("No phone yet. Add one to allow phone sign-in.").
+- **AC-50** Withdrawn, round 4 (owner ruling 27 Sep 2026 00:45 MYT, Q16: "i don't need another
+  page called salesperson account"). No Salesperson accounts page.
+- **AC-51** Withdrawn, round 4 (Q16: "i don't need a brand new page for user management"). The
+  Users list is not changed: no Kind filter, no Sign-in column.
+- **AC-52 [FE][E2E]** Administrative Users > a user > Profile tab: a read-only "Sign-in" section
+  (moved from S4, which is withdrawn), with email or "No email", phone and its verified state,
+  linked WhatsApp contact (name and masked phone, a link to the contact) or "Not linked", last
+  sign-in time and method, "Invitation not sent" for an email-only user that has never been
+  invited, and "Needs attention: phone differs from WhatsApp contact" with "Use new number"
+  (AC-46); explicit empty states ("No phone yet. Add one to allow phone sign-in."). Editing stays
+  in the existing Edit profile dialog, fields in the same order.
+- **AC-53 [FE][E2E]** Internal Users > a contact > Profile tab: a "User account" section showing
+  the linked user, or "No user yet" with Create user (AC-48, contact locked) and Link existing user
+  for an admin; Unlink is a 5-second deferred action with Cancel (D7), never a dialog. The user's
+  Edit profile WhatsApp contact field (it exists today) links from the other side with the same
+  409 rules.
 - **AC-54 [BE][T]** Unlinking, or changing a user's phone or linked contact, revokes every session of
-  that user (the same path as force-logout) and writes an audit row.
-- **AC-55 [BE][T]** Every new or extended admin route is permission-gated:
-  `user_management.users.create` to create from a contact, `user_management.users.edit` for link,
-  unlink and phone edits, `user_management.users.view` for the worklist; each has an auth-denial
-  test, and the grant sweep gives the new view permission to every role that already holds
-  `user_management.users.view`.
+  that user (the same path as force-logout) and writes an audit row. None of them sends an email.
+- **AC-55 [BE][T]** Every new or extended admin route is permission-gated with the permissions that
+  exist today: `user_management.users.add` to create (as `POST /users` checks now),
+  `user_management.users.edit` for link, unlink, phone edits and sending the invitation; the
+  Internal Users "User" column needs `user_management.users.view` and is hidden without it. Each
+  has an auth-denial test. No new permission is added.
+- **AC-56 [BE][T]** Creating or linking a user never sends an email (Q17, owner ruling 27 Sep 2026
+  00:50 MYT): creating a user with an email, with a phone, and with both; linking and unlinking a
+  contact; editing roles or companies; and adding a first email to a phone-only user each leave
+  the `email_outbox` and notification row counts unchanged (one test per action). Nothing sends a
+  WhatsApp message either.
+- **AC-57 [FE][BE][E2E][T]** Sending the invitation is one deliberate button with a confirmation,
+  off by default (Q17): the user record action reads "Send invitation email", is hidden for a user
+  with no email, and opens a dialog "Send invitation email?" naming the address, with Cancel
+  (focused) and "Send email". Cancel, Escape or closing sends nothing; only "Send email" calls
+  `POST /users/{id}/resend-invite`. The Users list bulk "Resend invitation" keeps its confirmation,
+  skips users with no email and reports how many it skipped.
+- **AC-58 [FE][BE][T]** The create-and-email path is gone: the Add user modal has no "Send
+  invitation email" checkbox and posts only to `POST /users`; `POST /users/invite` and its Next
+  proxy are removed after a grep of the FE, n8n exports and the MCP catalogue finds no other caller
+  (if one is found the route answers 410 instead). A test asserts `/invite` no longer creates a
+  user.
+- **AC-59 [FE][E2E]** No new page (Q16): the lane adds no route under `app/(protected)` and no
+  sidebar entry. The quick create from a Respond contact is the Internal Users row action "Create
+  user" (shown only on a contact with no user) opening the prefilled Add user modal, plus the
+  WhatsApp contact field in Administrative Users > Add user. Internal Users gains one column,
+  "User" (the linked user's name, a link; blank when none), with an explicit size and truncate +
+  title.
 
 ## Cross-cutting
 
 - **AC-60 [T]** No em-dash or en-dash in any file this lane adds or edits.
-- **AC-61 [E2E]** Every changed screen is verified by agent-browser at 375px and 1280px, reached by
+- **AC-61 [E2E]** Every changed screen (the existing `/signin`, Administrative Users, Internal
+  Users, the contact and user pages, the portal verify card) is verified by agent-browser at 375px and 1280px, reached by
   sidebar clicks from `/` (the portal from its WhatsApp link), with evidence under
   `documentation/plans/identity/evidence/<slice>/`.
 - **AC-62 [BE]** `security-reviewer` runs on every slice of this plan (auth, RBAC and portal ingest

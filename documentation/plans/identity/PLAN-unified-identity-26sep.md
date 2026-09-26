@@ -626,7 +626,8 @@ section added to the existing Profile tab of an Administrative Users record, in 
   new number" (updates the user's phone, clears `phone_verified_at`, ends every session).
 - **Unlink**, a 5-second deferred action with Cancel (D7), never a dialog; it ends every session
   of the user.
-- **Send invitation email** (6.4), shown only when the user has an email.
+- **Send invitation email** (6.4), shown only when the user has an email, and "Invitation not
+  sent" beside the email while an email-only user has never been invited.
 - Editing any of it happens in the existing Edit profile dialog, whose fields sit in the same
   order.
 
