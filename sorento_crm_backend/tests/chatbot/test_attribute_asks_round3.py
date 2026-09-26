@@ -360,8 +360,9 @@ def test_w1_a_certificate_row_is_a_vertical_block_too(chat, world):
         code = _block_code(block)
         assert re.match(rf"^\d+\. {re.escape(names[code])}$", block[0]), block
         assert block[1] == f"*Product Code:* {code}", block
-        # The code is said once, never bare beside its labelled twin.
-        assert sum(1 for ln in block if code in ln) == 1, block
+        # The code is said once as the code, never bare beside its labelled twin.
+        assert [ln for ln in block if ln.startswith("*Product Code:*")] == [f"*Product Code:* {code}"], block
+        assert not [ln for ln in block if ln.strip() == code], block
         assert "*Attachment Type:* Certification" in block, block
 
 
@@ -372,9 +373,11 @@ def test_w1_an_incoming_row_is_a_vertical_block_too(chat, world):
     assert "|" not in text, text
     blocks = _blocks(text)
     assert {_block_code(b) for b in blocks} == _codes(world["srt_tubs"]), text
+    names = {p.product_code: p.product_name for p in world["srt_tubs"]}
     for block in blocks:
-        assert block[1].startswith("*Product Code:* "), block
-        assert "*ETA:* 01/10/2026" in block, block
+        code = _block_code(block)
+        assert block[0].split(". ", 1)[1] == names[code], block
+        assert block[1] == f"*Product Code:* {code}", block
 
 
 # --------------------------------------------------------------------------- #
@@ -588,3 +591,29 @@ def test_w5_a_page_of_the_default_brand_set_stays_in_that_brand(chat, world, sma
     listed = _listed(page)
     assert listed and {_brand_of(world["db"], c) for c in listed} == {world["sorento"].brand_name}, page
     assert world["mch_ptrap"][0].product_code not in page, page
+
+
+def test_w3_a_question_after_a_set_never_names_the_old_set_as_its_subject(chat, world, small_list):
+    """Owner turn 4's reply opened "Product: SRTWC286-SH-NEW-P, ..." - a question whose
+    subject line named the water closet set the customer had moved on from."""
+    chat.say("which water closet has stock, p trap", _wc_ptrap())
+    chat.say("2", _bare(top_n=2))
+    text = chat.say("which aqua tub has cert", _ask("cert", "aqua tub", "which aqua tub has cert"))
+    assert not _codes_in(text, world), text
+    assert not text.startswith("Product:"), text
+
+
+def test_w1_a_product_named_only_by_its_code_leads_with_its_description_never_spec_values(world):
+    """Owner turn 2: "1. Seat cover material: Pp, Length: 680mm | *Product Code:* ..." -
+    a product whose name is its own code was led by spec values."""
+    from app.services.product_predicate_service import resolve_product_set
+
+    db = world["db"]
+    product = world["srt_ptrap"][0]
+    product.product_name = product.product_code
+    db.flush()
+
+    outcome = resolve_product_set(db, require={"stock": True}, scope_terms=["water closet"])
+    lead = outcome["row_labels"][product.product_code]
+    assert lead["name"] == product.description, lead
+    assert all(s["label"] and s["value"] for s in lead["specs"]), lead

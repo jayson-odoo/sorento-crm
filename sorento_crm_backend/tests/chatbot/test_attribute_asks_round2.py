@@ -342,28 +342,30 @@ def test_w2_a_word_that_was_not_understood_is_said_never_silently_dropped(chat, 
 
 
 def test_w3_each_row_leads_with_the_product_name_and_key_spec_then_code_and_stock(chat, world):
+    """Superseded in layout by round 3 W1 (owner, 26 Sep 13:07Z: "vertical, don't use |"):
+    the row is a block, name, then code, then the key specs, then the tool's fields."""
     brand = world["sorento"].brand_name.lower()
     text = chat.say(
         f"which {brand} wash basin has stock",
         _stock_verdict([{"raw": brand, "hint": "brand"}, {"raw": "wash basin", "hint": "product_type"}],
                        f"which {brand} wash basin has stock"),
     )
-    lines = text.splitlines()
+    assert "|" not in text, text
+    chunks = text.split("\n\n")
     for p in world["srt_wall"]:
-        [line] = [ln for ln in lines if p.product_code in ln]
+        [block] = [c for c in chunks if f"*Product Code:* {p.product_code}" in c]
         assert re.match(
-            rf"^\d+\. {re.escape(p.product_name)} \(Mounting: Wall hung, Finish or colour: White\) \| "
-            rf"\*Product Code:\* {re.escape(p.product_code)} \| \*Total:\* 10$",
-            line,
+            rf"^\d+\. {re.escape(p.product_name)}\n\*Product Code:\* {re.escape(p.product_code)}\n"
+            rf"\*Mounting:\* Wall hung\n\*Finish or colour:\* White\n\*Total:\* 10$",
+            block,
         ), text
     for p in world["srt_basins"][:3]:
-        [line] = [ln for ln in lines if p.product_code in ln]
+        [block] = [c for c in chunks if f"*Product Code:* {p.product_code}" in c]
         assert re.match(
-            rf"^\d+\. {re.escape(p.product_name)} \(Finish or colour: White\) \| \*Product Code:\* {re.escape(p.product_code)} \| \*Total:\* 10$",
-            line,
+            rf"^\d+\. {re.escape(p.product_name)}\n\*Product Code:\* {re.escape(p.product_code)}\n"
+            rf"\*Finish or colour:\* White\n\*Total:\* 10$",
+            block,
         ), text
-    # One line per row: no field is left dangling on a line of its own.
-    assert not [ln for ln in lines if ln.startswith("*Total:*") or ln.startswith("*Product Code:*")], text
 
 
 # --------------------------------------------------------------------------- #
@@ -380,11 +382,12 @@ def _bare(**overrides: Any) -> dict[str, Any]:
 
 
 def _listed(text: str, world) -> list[str]:
-    """The product codes in the order the rows list them."""
+    """The product codes in the order the rows list them (one "*Product Code:*" line per
+    row block, round 3 W1)."""
     codes = {p.product_code for p in world["every"]}
     out = []
     for line in text.splitlines():
-        m = re.match(r"^\d+\. .*?\*Product Code:\* (\S+)", line)
+        m = re.match(r"^\*Product Code:\* (\S+)$", line)
         if m and m.group(1) in codes:
             out.append(m.group(1))
     return out
@@ -435,7 +438,7 @@ def test_w4_another_n_continues_from_where_the_list_stopped(chat, world, small_l
         f"Brand: {_display(brand)}, Product type: Wash basin. 5 wash basins have stock. Here are 3 to 4."
     ), page2
     # The rows are numbered where the list stands, 3 and 4, not 1 and 2 again.
-    assert [ln.split(".")[0] for ln in page2.splitlines() if re.match(r"^\d+\. ", ln)] == ["3", "4"], page2
+    assert [ln.split(".")[0] for ln in page2.splitlines()[1:] if re.match(r"^\d+\. ", ln)] == ["3", "4"], page2
     one, two = _listed(page1, world), _listed(page2, world)
     assert len(two) == 2 and not set(one) & set(two), (page1, page2)
     every = sorted(_codes(world["srt_basins"][:3] + world["srt_wall"]))
@@ -490,20 +493,10 @@ def test_w4_a_count_named_in_the_ask_itself_continues_on_another_n(chat, world, 
     assert not set(_listed(first, world)) & set(_listed(more, world)), (first, more)
 
 
-@pytest.mark.parametrize(
-    "parser_reads", [{"reference_positions": [2]}, {"top_n": 2}], ids=["as_a_row", "as_a_count"]
-)
-def test_w4_a_bare_number_after_a_listed_page_is_not_read_as_another_page(chat, world, small_list, parser_reads):
-    brand = world["sorento"].brand_name
-    chat.say(
-        f"which {brand.lower()} wash basin has stock",
-        _stock_verdict(_brand_entity_shapes(brand.lower(), "wash basin")[0], "which wash basin has stock"),
-    )
-    chat.say("2", _bare())
-    before = len(chat.calls)
-    pick = chat.say("2", _bare(**parser_reads))
-    assert "Here are 3 to 4" not in pick and "Here are the first 2" not in pick, pick
-    assert not [c for c in chat.calls[before:] if len(c["args"].get("product_ids") or []) == 2], chat.calls[before:]
+# `test_w4_a_bare_number_after_a_listed_page_is_not_read_as_another_page` is retired: the
+# owner ruled the opposite in round 3 (26 Sep 13:07Z, "why when i say 10, it gives some
+# other answer"). A bare count after a listed page continues the same set; see
+# `test_attribute_asks_round3.py::test_w2_a_count_after_a_listed_page_continues_the_same_set`.
 
 
 # --------------------------------------------------------------------------- #
@@ -530,8 +523,9 @@ def test_w5_no_brand_named_answers_the_default_brand_first_and_names_the_others(
     )
     first = text.splitlines()[0]
     brand, other = _display(world["sorento"].brand_name), _display(world["mocha"].brand_name)
-    assert first.startswith(f"Brand: {brand} (default), Product type: Wash basin. 5 wash basins have stock."), text
-    assert f"Other brands: {other} 3, name one to see them." in first, text
+    # Round 3 W4: no "(default)"; the other brands close the reply.
+    assert first == f"Brand: {brand}, Product type: Wash basin. 5 wash basins have stock.", text
+    assert text.splitlines()[-1] == f"Other brands with stock: {other} 3. Name one to see them.", text
     assert _codes_in(text, world) == _codes(world["srt_basins"][:3] + world["srt_wall"]), text
 
 
@@ -544,7 +538,7 @@ def test_w5_naming_a_brand_answers_that_brand_only(chat, sorento_default):
     )
     first = text.splitlines()[0]
     assert first.startswith(f"Brand: {_display(mocha)}, Product type: Wash basin. 3 wash basins have stock."), text
-    assert "(default)" not in first and "Other brands" not in first, text
+    assert "(default)" not in text and "Other brands" not in text, text
     assert _codes_in(text, world) == _codes(world["mch_basins"] + world["mch_wall"]), text
 
 
@@ -573,7 +567,7 @@ def test_w5_a_page_of_the_default_brand_set_keeps_the_default(chat, sorento_defa
     page = chat.say("2", _bare())
     first = page.splitlines()[0]
     assert first.startswith(
-        f"Brand: {_display(world['sorento'].brand_name)} (default), Product type: Wash basin. 5 wash basins have stock."
+        f"Brand: {_display(world['sorento'].brand_name)}, Product type: Wash basin. 5 wash basins have stock."
     ), page
     assert set(_listed(page, world)) <= _codes(world["srt_basins"][:3] + world["srt_wall"]), page
 

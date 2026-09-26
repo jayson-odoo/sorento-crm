@@ -669,47 +669,49 @@ def _spec_value_text(row: Any, value: Any) -> str | None:
     return labels.get(value) or _sentence_case(str(value))
 
 
-def row_labels(db: Session, candidates: list[dict], *, skip_keys: set[str]) -> dict[str, str]:
-    """`{product_code: "Sorento Wall Basin (Mounting: Wall hung, Finish: White)"}` for the
-    candidates: the product's own name, then its top `ROW_SPEC_MAX` spec values by the
-    registry's `rank_weight`, leaving out what the header already says (`skip_keys`).
+def row_labels(db: Session, candidates: list[dict], *, skip_keys: set[str]) -> dict[str, dict[str, Any]]:
+    """`{product_code: {"name": "Sorento Wall Basin", "specs": [{"label": "Mounting",
+    "value": "Wall hung"}, ...]}}` for the candidates: the product's own name, then its
+    top `ROW_SPEC_MAX` spec values by the registry's `rank_weight`, leaving out what the
+    header already says (`skip_keys`).
 
-    Owner brief W3 on PR #833: "codes alone are useless to the user". One query for the
-    names, one for the registry rows."""
+    Owner brief W3 on PR #833: "codes alone are useless to the user". Round 3 W1: the
+    name is its own line and is never a spec value; a product whose name is only its
+    code is named by its description, then by its code. One query for the names, one
+    for the registry rows."""
     from app.models.product_spec import ProductSpecRegistry
 
     ids = [c.get("product_id") for c in candidates if c.get("product_id")]
     if not ids:
         return {}
     names = {
-        str(pid): (name or "").strip()
-        for pid, name in db.query(Product.id, Product.product_name).filter(Product.id.in_(ids)).all()
+        str(pid): ((name or "").strip(), (description or "").strip().lstrip("*").strip())
+        for pid, name, description in db.query(Product.id, Product.product_name, Product.description)
+        .filter(Product.id.in_(ids))
+        .all()
     }
     registry = {
         row.spec_key: row
         for row in db.query(ProductSpecRegistry).filter(ProductSpecRegistry.is_active.is_(True)).all()
     }
-    out: dict[str, str] = {}
+    out: dict[str, dict[str, Any]] = {}
     for cand in candidates:
         code = cand.get("product_code")
         if not code:
             continue
-        name = names.get(str(cand.get("product_id"))) or ""
+        name, description = names.get(str(cand.get("product_id"))) or ("", "")
         specs = cand.get("specifications") or {}
         keys = [k for k in specs if k not in skip_keys and k in registry]
         keys.sort(key=lambda k: (-float(registry[k].rank_weight or 0), k))
-        shown: list[str] = []
+        shown: list[dict[str, str]] = []
         for key in keys:
             text = _spec_value_text(registry[key], specs[key])
             if text:
-                shown.append(f"{registry[key].label}: {text}")
+                shown.append({"label": registry[key].label, "value": text})
             if len(shown) >= ROW_SPEC_MAX:
                 break
-        label = name if name and name != code else ""
-        if shown:
-            label = f"{label} ({', '.join(shown)})" if label else ", ".join(shown)
-        if label:
-            out[code] = label
+        title = next((n for n in (name, description) if n and n != code), code)
+        out[code] = {"name": title, "specs": shown}
     return out
 
 

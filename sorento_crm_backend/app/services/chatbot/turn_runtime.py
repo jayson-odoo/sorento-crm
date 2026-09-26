@@ -613,15 +613,16 @@ def with_set_count_from_text(
         return verdict
     if any(isinstance(e, dict) and e.get("current_message") is True for e in (verdict.get("entities") or [])):
         return verdict
-    # W4: after a LISTED page (`shown` > 0) only an explicit "another N" continues the set,
-    # read whatever the parser made of it; a bare number there is a row pick, not a count.
+    # W4: after a LISTED page (`shown` > 0), "another N" continues the set, read whatever
+    # the parser made of it. Round 3 W2 (owner hand test, "why when i say 10, it gives
+    # some other answer"): so does a bare count - "10" after a page of 30 is rows 31 to
+    # 40 of the same set, never a row pick (a set answer mints no pick roster) and never
+    # the parser's own reading of it.
     shown = int((carried.get("set_key") or {}).get("shown") or 0)
     more = set_continue_count(message)
     if more is not None:
         return {**verdict, "top_n": more, "reference_positions": [], SET_CONTINUE_KEY: True}
-    if shown > 0:
-        return verdict
-    if named_count(verdict.get("top_n")) is not None:
+    if shown == 0 and named_count(verdict.get("top_n")) is not None:
         return verdict
     # Line 1 is the customer's own text; a quoted "reply to: ..." rides on line 2
     # (`engine.build_latest_user_message`).
@@ -632,7 +633,44 @@ def with_set_count_from_text(
     count = int(match.group(1))
     if count <= 0:
         return verdict
+    if shown > 0:
+        return {**verdict, "top_n": count, "reference_positions": [], SET_CONTINUE_KEY: True}
     return {**verdict, "top_n": count, "reference_positions": []}
+
+
+#: The entity hints that describe WHICH products a set is: its class word, its spec
+#: words, its brand, and the codes of an earlier answer.
+_SET_DESCRIBING_HINTS = frozenset({"product_type", "category", "spec", "brand", "product"})
+
+
+def with_new_set_words(verdict: dict[str, Any]) -> dict[str, Any]:
+    """The verdict without an EARLIER turn's set words, when this message names a class
+    word of its own.
+
+    Round 3 W3 (owner hand test on PR #833, turn 4): "which basin has cert" after a
+    water closet set came back with the water closet words and codes beside "basin",
+    `current_message: false` - the parser reads them off the conversation. They blended
+    into "Product type: Wash basin or Water closet" or, carrying the listed codes, asked
+    for the attachment type of a water closet. A new class word starts a new set: the
+    earlier class, spec, brand and product entities are dropped. A customer, a location
+    or a document from earlier is not part of the set and stays.
+    """
+    entities = [e for e in (verdict.get("entities") or []) if isinstance(e, dict)]
+    names_a_class = any(
+        e.get("current_message") is True and jsc.nullish_str(e.get("hint")).strip().lower() in CLASS_HINTS
+        for e in entities
+    )
+    if not names_a_class:
+        return verdict
+    kept = [
+        e
+        for e in entities
+        if e.get("current_message") is True
+        or jsc.nullish_str(e.get("hint")).strip().lower() not in _SET_DESCRIBING_HINTS
+    ]
+    if len(kept) == len(entities):
+        return verdict
+    return {**verdict, "entities": kept}
 
 
 #: Set on the verdict when the message asked for "another N" of the carried set;
@@ -1951,7 +1989,27 @@ def make_tool_runner(
             )
             if probe_gate.get("gate_passed") is False:
                 no_subject_gate = probe_gate
-        if (
+        exhausted = page_predicate is not None and bool(page_predicate.get("exhausted")) and not page_ids
+        if exhausted:
+            # Round 3 W2: every product of the carried set is listed already. No tool call:
+            # the reply is the set's own header, closed by "That is all N.".
+            from app.services.chatbot.lanes.business import answer as business_answer
+
+            said = business_answer.build_set_header(
+                int(page_predicate.get("qualifying_total") or 0),
+                0,
+                jsc.nullish_str(page_predicate.get("set_noun")).strip() or "products",
+                page_predicate.get("require") or {},
+                description=page_predicate.get("description"),
+                previous_total=page_predicate.get("previous_total"),
+                exhausted=True,
+            )
+            others = business_answer.other_brands_line(
+                page_predicate.get("other_brands"), page_predicate.get("require") or {}
+            )
+            text = f"{said}\n\n{others}" if others else said
+            fragment: dict[str, Any] = {"fetch": {"has_result": True, "response": text, "set_header": said}}
+        elif (
             (
                 spec.filters.get("tier")
                 and isinstance(tier_gate_value, dict)
@@ -1964,7 +2022,7 @@ def make_tool_runner(
             or would_be_unfiltered
             or no_subject_gate is not None
         ):
-            fragment: dict[str, Any] = {
+            fragment = {
                 "fetch": {"has_result": False, "response": business_fetch.NO_RESULT_INTRO},
                 "outcome": "not_found",
             }
@@ -2077,9 +2135,10 @@ def make_tool_runner(
             raw_fragment=fragment,
         )
         if page_predicate is not None:
-            # W4: what an "another N" after this page continues from (None when the set
-            # is exhausted). The engine keeps it on `focus.set_page`.
-            envelope["set_carry"] = page_predicate.get("next_carry") if page_ids else None
+            # W4: what an "another N" after this page continues from; after the last page
+            # it stays, so a further count says "That is all" (round 3 W2). The engine
+            # keeps it on `focus.set_page`.
+            envelope["set_carry"] = page_predicate.get("next_carry") if (page_ids or exhausted) else None
         return envelope
 
     return runner
@@ -2324,18 +2383,23 @@ def page_the_set(
     }
     if offset:
         predicate["offset"] = offset
+    if total and offset >= total:
+        # Round 3 W2: a count after the last page. Every product was listed already, and
+        # the reply says so ("That is all 62.") rather than calling the tool with nothing.
+        predicate["exhausted"] = True
     # The count the question was asked over: said again when the page counts another.
     asked_total = int(key.get("total") or 0)
     if asked_total and asked_total != total:
         predicate["previous_total"] = asked_total
-    for field in ("description", "row_labels", "brand"):
+    for field in ("description", "row_labels", "brand", "other_brands"):
         if outcome.get(field):
             predicate[field] = outcome[field]
     if outcome.get("certificate_ids"):
         predicate["certificate_ids"] = outcome["certificate_ids"]
     # The next page's carry: the same description, moved past what this page lists.
-    next_key = {**key, "total": total, "shown": offset + len(page_ids)}
-    predicate["next_carry"] = {"set_key": next_key} if page_ids and offset + len(page_ids) < total else None
+    # Kept after the last page too (round 3 W2), so a further count says "That is all".
+    next_key = {**key, "total": total, "shown": min(offset + len(page_ids), total) if page_ids else offset}
+    predicate["next_carry"] = {"set_key": next_key} if total else None
     return predicate, page_ids
 
 

@@ -1631,13 +1631,14 @@ def test_stock_set_answer_matches_forward_block_for_a_dealer():
     block_forward = _block_for(reply_forward, p1.product_code)
     block_has = _block_for(reply_has, p1.product_code)
 
-    # The SAME fields reach the dealer either way. The set row is one line led by the
-    # product's key spec (W3, owner hand test round 2), so the fields are compared, not
-    # the layout.
+    # The SAME tool fields reach the dealer either way. The set row is a block led by the
+    # product's name and key specs (owner hand test rounds 2 and 3), so the fields are
+    # compared, not the layout, and the set row's only extra lines are its spec lines.
     def _fields(block: str) -> set[str]:
         return {m.strip() for m in re.findall(r"\*[^*]+:\* [^|\n]+", block)}
 
-    assert _fields(block_forward) == _fields(block_has), (reply_forward, reply_has)
+    assert _fields(block_forward) <= _fields(block_has), (reply_forward, reply_has)
+    assert {f.split(":*")[0] for f in _fields(block_has) - _fields(block_forward)} <= {"*Finish or colour"}, reply_has
     assert "Sellable" not in reply_forward, reply_forward
     assert "Sellable" not in reply_has, reply_has
     lines_has = reply_has.splitlines()

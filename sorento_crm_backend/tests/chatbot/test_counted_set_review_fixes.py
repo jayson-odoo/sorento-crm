@@ -344,10 +344,11 @@ def test_an_availability_row_is_numbered_with_its_product_code(
 
     lines = text.splitlines()
     listed = sorted([taps[0].product_code, taps[2].product_code])
-    # W3 (owner hand test round 2): the row leads with the product's key spec, and its
-    # code still closes the line, never a bare "1. ".
-    assert any(line.startswith("1. ") and line.endswith(listed[0]) for line in lines), text
-    assert any(line.startswith("2. ") and line.endswith(listed[1]) for line in lines), text
+    # Owner hand test round 3 (W1): the row is a block, the product's name on its numbered
+    # line and its code on the next, never a bare "1. ".
+    for n, code in enumerate(listed, start=1):
+        i = lines.index(f"*Product Code:* {code}")
+        assert lines[i - 1].startswith(f"{n}. ") and lines[i - 1] != f"{n}. ", text
 
 
 # --------------------------------------------------------------------------- #

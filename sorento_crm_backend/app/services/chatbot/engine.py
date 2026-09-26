@@ -1563,6 +1563,8 @@ def _run_stages(  # noqa: PLR0915
     verdict = turn_runtime.with_set_count_from_text(
         verdict, latest_user_message, carried=state_in.focus.set_page
     )
+    # Round 3 W3 on PR #833: a class word of this message's own starts a new set.
+    verdict = turn_runtime.with_new_set_words(verdict)
 
     # -- access, C APPLY, D ROUTE ------------------------------------------- #
     stage[0] = "access"
