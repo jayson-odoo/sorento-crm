@@ -1,12 +1,15 @@
 # PLAN: a contact's turns are answered in WhatsApp send order, not arrival order
 
-Status: implemented, awaiting review. Track: feature by line count (product code is ~480 lines
+Status: implemented, fix lane round 1 done (W4 stale-focus guard removed), awaiting review. Track: feature by line count (product code is ~480 lines
 including docstrings, over the ~300 small-fix line), otherwise small-fix shaped: no migration,
 no auth / RBAC change, no new ingest surface, no frontend. One lane, one PR.
 UAC: `chatbot-turn-order-by-send-time-acceptance-criteria.md`.
-Source: issue #1262 round 3 (Mr Loo, sections 1 and 3, N6 / R3-6) and the owner's two chat
+Source: issue #1262 round 3 (Mr Loo, sections 1 and 3) and the owner's two chat
 rulings of 26 Sep 2026: "this fix of waiting few seconds is very fragile ... the order supposed
-to be photo -> stock" and "yeah go for one lane".
+to be photo -> stock" and "yeah go for one lane". Owner ruling of 26 Sep on #1262: no
+stale-focus guard (round 3 N6 / R3-6 rejected). Nothing drops carried focus on a calendar-day or
+clock rule; only the ordering is fixed, and a bare "Stock" on yesterday's focus answers from it,
+as on main.
 
 ## Evidence
 
@@ -55,8 +58,8 @@ an answer already given. A test turn (dry run) never claims or answers a live me
 
 Not covered, and accepted:
 
-- A message the CRM has not seen at all when a later one is answered. After S6 that window is
-  the time between two respond.io webhooks. The stale-focus guard below covers what is left.
+- A message the CRM has not seen at all when a later one is answered stays uncovered until n8n
+  S6 is live. After S6 that window is the time between two respond.io webhooks.
 - One response now carries the earlier message's turn (including its bounded media poll, up to
   `media_sync_wait_seconds`) plus this one. That runs against n8n's 90 s `chat-turn` timeout,
   the 60 s worker deadline when turns are offloaded, and successors' 45 s queue wait. If the
@@ -66,17 +69,6 @@ Not covered, and accepted:
   "could not read" / "still reading" reply. If n8n still takes its own `media-route` `reply` arm
   for that job, the customer gets two such messages; on the `continue` arm the late delivery is
   a duplicate and sends nothing. Owner to check the arm mapping; S6 removes the question.
-
-## Stale focus (R3-6)
-
-A bare business ask (no entity, `entity_op: reuse`, not answering an open question) on a focus
-left by a turn that started on an EARLIER local day (Asia/Kuala_Lumpur) drops the carried
-products before APPLY. The turn then gets the existing bare-stock contract reply ("That would
-search every stock we have - I need at least one filter to narrow it down. Give me a product
-code, ..."), as a contact with no focus does. The age is the contact's last FINISHED live turn
-(a photo answered first inside the same turn finishes before it and counts as today; a dry run
-reads the live focus, so it reads the live turns too). Any finished turn counts, a casual
-"good morning" included. No finished turn: age unknown, focus untouched.
 
 ## n8n steps for the owner (plan S6, not touched by this lane)
 
