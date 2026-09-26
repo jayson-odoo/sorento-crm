@@ -199,6 +199,40 @@ spec search, spec fallback and migration 511 files: 2949 passed, 214 skipped, 33
 Console cases: 22 in the yaml (three added for B1, B2, S1); 0 run here (no parser key on a cloud
 lane). The S1 live-parser pass is owed locally.
 
+## Round 4: owner console test of round 3 (27 Sep 2026 00:03 MYT), R1 to R7
+
+All new tests are in `tests/chatbot/test_attribute_asks_round4.py` (34), plus
+`tests/test_brand_chatbot_weight_route.py`, `tests/test_migration_bcw_0001_brand_chatbot_weight.py`
+and three Brands vitest files. Each was red on `8618622b1` before its fix. The eight exchanges
+replay from `tests/chatbot/fixtures/owner_console_2026_09_27.json`; every reply of the round 2, 3
+and 4 files is scanned for snake_case.
+
+Kill tests (a throwaway worktree, one mutation each, the ruling's own tests run): 13 of 13 RED.
+
+| Kill | Mutation | Result |
+|---|---|---|
+| K1 R1 | brands ranked by count, weight ignored | RED |
+| K2 R2 | header filters back on one line | RED |
+| K3 R2 | class head split off ("water closet p trap") | RED |
+| K4 R3 | every tool field on the row | RED |
+| K5 R4 | near miss not passed to the reply | RED |
+| K6 R5 | clarify answer ignored | RED |
+| K7 R5 | clarify carry never cleared | RED |
+| K8 R6 | unknown values never found | RED |
+| K9 R6 | covered-phrase guard removed ("wall hung" read as unknown) | RED |
+| K10 R7 | slug display off | RED |
+| K11 R7 | Specs line guard off | RED |
+| K12 R7 | domain key printed raw | RED |
+| K13 R1 | migration seeds Sorento 0 | RED |
+
+Gates on the merged tree (origin/main `232182ae5` merged, 511 re-parented onto
+`sales_0002_team_leader`, one alembic head `bcw_0001_brand_chatbot_weight`): `tests/chatbot`
+(CI excludes, not serial_ddl) plus predicate, resolver, spec search, spec list, brand routes and
+migrations 511 / bcd_0001 / bcw_0001: 3010 passed, 213 skipped, 33 xfailed, 0 failed (one
+worker error in that run did not reproduce on a rerun of `tests/chatbot`). Brands vitest: 27
+passed. `tests/test_cs_pinpoint_routing.py::test_resolver_valid_pin_returns_assignee` fails
+identically on 1683cb2f1, outside this lane. Live parser: not run (no parser key on this VM).
+
 ## Deviations
 
 - Phase 1 skipped by design: no UI surface. The lavish review page stands in for the mock.
