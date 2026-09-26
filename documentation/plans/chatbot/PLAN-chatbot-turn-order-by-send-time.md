@@ -1,6 +1,6 @@
 # PLAN: a contact's turns are answered in WhatsApp send order, not arrival order
 
-Status: implemented, fix lane round 2 done (reviewer B1, S1 to S3, N1 to N3), awaiting review. Track: feature by line count (product code is ~480 lines
+Status: implemented, fix lane round 3 done (reviewer B1, S1, S2, N1, N2 of the 57c0c9f7 pass), awaiting review. Track: feature by line count (product code is ~480 lines
 including docstrings, over the ~300 small-fix line), otherwise small-fix shaped: no migration,
 no auth / RBAC change, no new ingest surface, no frontend. One lane, one PR.
 UAC: `chatbot-turn-order-by-send-time-acceptance-criteria.md`.
@@ -40,7 +40,10 @@ CRM already knows about and has not answered, then itself (`app/services/chatbot
    ran out, so it never sends the generic error beside the real answer).
 2. **Photos still in n8n's media intake** (today, until plan S6 is promoted). A ledger row with
    no turn row, accepted, whose job is still `queued` or `running`, written before this turn
-   arrived, before this turn's own send time, and after this contact's previous turn. It is rebuilt as the attachment envelope and
+   arrived and after this contact's previous turn, both on the CRM's own clock. It is never
+   compared with a respond.io send time (review round 3, B1): n8n records the photo only after
+   respond.io's webhook, its queue and its media intake, so that comparison would turn on n8n's
+   latency and on the skew between two clocks. It is rebuilt as the attachment envelope and
    answered first; its intake replays the same ledger row and job (idempotency key: contact,
    message id, modality), so nothing is extracted or charged twice. The only wait is the
    existing bounded media poll on that job, which the photo's own turn would have waited too.
@@ -69,7 +72,10 @@ A ledger photo is answered ahead only once it has been READ (review round 2, S2)
 first takes the existing bounded wait on its job, and a job that fails or outlives the wait is
 left alone, with no turn row and nothing sent. n8n's own `media-route` reply arm owns that
 outcome today, so the customer never gets two messages, and a later delivery of the photo runs
-as its own turn. The row answered ahead records the message whose response carried it
+as its own turn. A wait that raises (a DB blip on a poll) counts as not read (review round 3,
+S1). A photo still being read when the wait ends will run later as its own turn, so it ends the
+take like any other bound: nothing sent after it is answered ahead of it (review round 3, S2).
+A failed photo does not: n8n answers it on its reply arm and it never reaches `/chat/turn`. The row answered ahead records the message whose response carried it
 (`answered_ahead_by_message` in its first trace record's facts, the carrying turn id in `raw`).
 
 Not covered, and accepted:
@@ -80,6 +86,12 @@ Not covered, and accepted:
   bound above, but LLM calls are not counted, so a slow provider can still push a request past
   n8n's timeout. If the request carrying the answers dies, the earlier answers die with it, and
   those messages' own deliveries are duplicates that send nothing.
+- A text sent before a photo but delivered by n8n after that photo's `/external/media/process`
+  call is answered after the photo (review round 3, B1). Texts are forwarded at once, so this
+  needs the text to lose a race of several seconds; it disappears at S6.
+- When queued rows and ledger photos are both present, one sort mixes respond.io send times
+  (queued rows) with the CRM's first sight (ledger photos), so a small clock skew can swap a
+  queued text and a ledger photo (review round 3, N2). The ledger path goes away at S6.
 
 ## n8n steps for the owner (plan S6, not touched by this lane)
 
@@ -91,7 +103,8 @@ main since #1139.
 2. Same workflow: delete `if-message-is-audio`; both of its outputs go to `chat-turn` and the
    save-message call.
 3. `chat-turn` HTTP body: `{envelope: <message>}`. Drop the `media` key entirely (with it
-   present the CRM skips its own intake, `media_intake.patched_upstream`). Timeout stays 90 s.
+   present the CRM skips its own intake, `media_intake.patched_upstream`). Timeout stays 90 s;
+   `send_order.N8N_CHAT_TURN_TIMEOUT_SECONDS` mirrors it, so change both together.
 4. `sub-respond-save-message-redis`: for an attachment message store the caption as `message`
    (empty string when none).
 5. Draft on the clone first; smoke one photo-only, one photo with caption, one voice note, one

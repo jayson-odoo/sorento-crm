@@ -41,8 +41,17 @@ Plan: `PLAN-chatbot-turn-order-by-send-time.md`. Tests:
   `T::TestLedgerPhotoNotReadWhileAnsweredAhead::*` (2)
 - AC-15 An earlier message whose stages raise and whose close raises too still leaves this turn
   answered. `T::TestReviewRound2::test_a_raising_close_after_a_raising_earlier_turn_still_answers_this_turn`
-- AC-16 A ledger photo first seen after this message's send time is not answered ahead.
-  `T::TestReviewRound2::test_a_ledger_photo_first_seen_after_this_message_was_sent_is_not_answered_ahead`
+- AC-16 (inverted in review round 3, B1) A ledger photo the CRM first recorded AFTER this
+  message's respond.io send time, but before this turn arrived, is still answered first: the
+  two clocks are never compared.
+  `T::TestReviewRound2::test_a_ledger_photo_first_seen_after_this_message_was_sent_is_still_answered_ahead`
 - AC-17 The row answered ahead names the message that carried it; the late delivery leaves one
   ledger row and one extraction job. `T::TestReviewRound2::test_the_row_answered_ahead_names_the_turn_that_answered_it`,
   `T::TestPhotoStillInN8nMediaIntake::test_the_photos_own_late_delivery_is_a_duplicate_and_sends_nothing`
+- AC-18 A wait on an earlier photo's job that raises leaves that photo alone; an earlier message
+  already answered keeps its reply and this turn still answers, with no generic error.
+  `T::TestReviewRound3::test_a_raising_wait_on_the_ledger_job_leaves_the_photo_and_keeps_the_rest`
+- AC-19 A photo still being read when the wait ends ends the take: a text sent after it stays
+  queued for its own request. A failed photo does not hold back the later text.
+  `T::TestReviewRound3::test_a_photo_that_outlives_the_wait_ends_the_take`,
+  `T::TestReviewRound3::test_a_failed_photo_does_not_hold_back_a_later_text`

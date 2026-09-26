@@ -52,7 +52,8 @@ QUEUED_STAGE = "queued"
 # (an LLM call, maybe a media wait), and they all ride this request.
 MAX_EARLIER_PER_TURN = 2
 # n8n's HTTP timeout on its `/chat/turn` call. Every media wait the pre-step takes on is
-# spent inside it, so their worst-case sum must stay below it.
+# spent inside it, so their worst-case sum must stay below it. A copy of the n8n node's
+# setting: change both together (plan n8n step 3).
 N8N_CHAT_TURN_TIMEOUT_SECONDS = 90.0
 
 
