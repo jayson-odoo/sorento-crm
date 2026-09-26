@@ -84,7 +84,10 @@ def test_apply_stock_qty_bare_number_single_missing_assigns_it():
     assert _slot_values(stock) == {"uuid-a": 5, "uuid-b": 60, "uuid-c": 110}
 
 
-def test_apply_stock_qty_bare_number_two_missing_reasks_both():
+def test_apply_stock_qty_bare_number_two_missing_applies_to_each():
+    """Owner ruling 26 Sep 2026 (hand test F2, "okay"), superseding #1118's "belongs to
+    neither": one bare number after a question about several products applies to each
+    product still owed. A (already 5) keeps its own quantity."""
     from app.services.chatbot.turn.apply import apply
     from app.services.chatbot.turn.state import Focus
 
@@ -97,9 +100,7 @@ def test_apply_stock_qty_bare_number_two_missing_reasks_both():
     state2, _plan = apply(_state(focus), v, build_policy())
 
     stock = _task_of_kind(state2.focus, "stock_qty")
-    assert _slot_values(stock) == {"uuid-a": 5, "uuid-c": None, "uuid-d": None}, (
-        "a bare number with two slots still missing must not guess which one it is for"
-    )
+    assert _slot_values(stock) == {"uuid-a": 5, "uuid-c": 110, "uuid-d": 110}
 
 
 # --------------------------------------------------------------------------- #

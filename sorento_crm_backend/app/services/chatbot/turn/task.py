@@ -147,6 +147,27 @@ def _only_task_slots(
     return True
 
 
+def _is_family(labels: list[str]) -> bool:
+    """Are these one product family - every code the shared stem itself or the stem plus
+    a "-" variant suffix (SRTWC286-SH, SRTWC286-SH-UF, SRTWC286-SH-150, ...)? Two codes
+    that merely share leading characters (ELP3754, ELP3756) are two products."""
+    codes = [label.strip().casefold() for label in labels if isinstance(label, str)]
+    if len(codes) < 2:
+        return False
+    stem = codes[0]
+    for code in codes[1:]:
+        while not code.startswith(stem):
+            stem = stem[:-1]
+    while stem:
+        stem = stem.rstrip("-")
+        if all(code == stem or code.startswith(stem + "-") for code in codes):
+            return True
+        # Back to the previous "-" boundary: SRTWC286-SH-BK and SRTWC286-SH-BL share
+        # "srtwc286-sh-b", and their family stem is "srtwc286-sh".
+        stem = stem[: stem.rfind("-")] if "-" in stem else ""
+    return False
+
+
 def _named_slots(task: "Task", verdict: dict[str, Any]) -> tuple["Slot", ...]:
     """The task's slots this message named, in the task's own order."""
     codes: set[str] = set()
@@ -252,14 +273,27 @@ class StockQtyTask:
                 not_checked=dropped,
             )
         still_missing = [slot for slot in slots if slot.value is None]
+        bare = _number(verdict.get("demand_qty"))
         if len(still_missing) == 1 and not by_code:
             # Deterministic fallback, for a prompt version that does not fill
             # `entities[].quantity` yet: a bare number with exactly ONE slot still
-            # owed belongs to that slot. Two owed slots and it belongs to neither.
-            bare = _number(verdict.get("demand_qty"))
+            # owed belongs to that slot.
             if bare is not None:
                 index = slots.index(still_missing[0])
                 slots[index] = replace(still_missing[0], value=bare)
+        elif (
+            still_missing
+            and bare is not None
+            and not by_code
+            and not verdict.get("entities")
+            and not _is_family([slot.label for slot in task.slots])
+        ):
+            # Owner ruling 26 Sep 2026 (hand test F2, "okay"): one bare number after a
+            # question about several products - a real multi-product ask, not a family
+            # - applies to each product still owed. A family ("which one of these?")
+            # never reaches here as a task any more (slice 2); one written before that
+            # still re-asks rather than checking ten variants at once.
+            slots = [replace(slot, value=bare) if slot.value is None else slot for slot in slots]
         return replace(task, slots=tuple(slots))
 
     def to_fetch(self, task: Task) -> FetchSpec | None:
