@@ -7,9 +7,10 @@ this plan and the UAC disagree, the UAC wins). **Review:** `UX-REVIEW-product-sp
 **Rule appendix:** `rule-engine-built-in-rules.md` (every built-in rule in the new form).
 **Mockups:** `mockups/`.
 **Classification:** CORE, schema `public`. No new table, no new permission.
-**Status:** DRAFT, round 3, 27 Sep 2026. Planned, not built. Round 1 owner rulings and the
-round 3 Lavish mockup rulings applied (the two rulings sections below, and section 8). Q8 is answered (no re-read concept on
-any screen). Waiting on the owner for Q3 and Q11 (answered in PR #1290 comment 5847720339), and
+**Status:** DRAFT, round 4, 27 Sep 2026. Planned, not built. Round 1 owner rulings, the
+round 3 Lavish mockup rulings and the round 4 Lavish notes applied (the three rulings sections
+below, and section 8). Plan text accepted by the owner ("ok this is fine"); mockups 02 and 03
+accepted as they are. Q8 is answered (no re-read concept on any screen). Waiting on the owner for Q3 and Q11 (answered in PR #1290 comment 5847720339), and
 for confirmation of Q7, Q9 and Q10, which stay on the recommendation. **Track: full** (one lane,
 expected diff well over 300 lines, two data migrations: the Brand specification removal and the
 rule conversion).
@@ -51,6 +52,35 @@ CLAUDE.md). Branch it from `origin/main` when the owner has answered.
   tab):** "we don't really need this spec at all". Confirms D1: no Brand specification and no
   brand picker on the Specifications tab.
 
+## Owner rulings, round 4 (Lavish notes on the plan and mockups, 27 Sep 2026, 00:45 and 00:50 MYT, verbatim in PR #1290)
+
+- **Owner ruling, 27 Sep 2026 (plan page):** "ok this is fine". Plan text accepted.
+- **Owner ruling, 27 Sep 2026 (mockup 02, details; mockup 03, choices and words):** "ok this is
+  ok" / "ok this is ok". Both accepted as they are.
+- **Owner ruling, 27 Sep 2026 (mockup 01, the round 2 list):** "hmm i have provided my input on
+  this before, did you not capture it?" / "like i don't want to needs a re-read and re-read".
+  Already captured in round 3 (D10); the owner was looking at the round 2 list. The final list
+  mockup carries no re-read pill and no Re-read button.
+- **Owner ruling, 27 Sep 2026 (mockup 04, the sentence rules):** "hmm can this be more
+  structured?". Applied as D14: the rules screen is a structured grid, one row per rule and one
+  column per part (where to look, what to find, which value it sets). No rule is ever shown as a
+  sentence, on the grid or in the rule form.
+- **Owner ruling, 27 Sep 2026 (mockup 04, the flexible rule row):** "ok this is flexible, good,
+  make sure no snake case". Applied as D15: no snake_case on any screen or mockup; every value
+  reads in plain words.
+- **Owner ruling, 27 Sep 2026 (mockup 04, the "Look in / Find" controls):** "use dropdown
+  component in the system". **(mockup 04, the chip inputs):** "use multi select dropdown
+  components in the system where applicable". Applied as D16: every selector in the rule form and
+  the rules grid is the system's own `SearchableSelect` or `SearchableMultiSelect`
+  (`components/common/`), never a segmented control or a hand-made chip box.
+- **Owner ruling, 27 Sep 2026 (mockup 05, "Reading and search"):** "simplify this, too messy".
+  Applied as D9: that block holds what a merchandiser needs, the read values and one search box,
+  nothing else.
+- **Owner ruling, 27 Sep 2026, 00:50 MYT (the alignment page):** "chatbot memory, product specs
+  also need a final mockup to align, cost price yeah need final mockup ya". The alignment page
+  carries the final mockup of every screen this plan touches, at 1280 and 375, with every ruling
+  to date applied.
+
 ## 1. Journey (PRINCIPLES step 0)
 
 Two actors; every screen is built for them. There is no Advanced disclosure for a maintainer: if a
@@ -67,10 +97,13 @@ Specifications.
 3. A value is missing. **Add specification**, pick "Capacity (oz)", type 8, save.
 4. They press **Mark as checked**. The line reads "Checked by {their name}, today" with an Undo
    that counts down 5 s.
-5. Below the price tag wording, a plain **Search** section (always open, no drawer) shows the
-   product's description, "Search finds this product", what search matches, and "Read specs from
-   a text". There is no "Read this product again": a product is read again by itself whenever its
-   code, description, category or sizes change (owner ruling, 27 Sep 2026).
+5. Below the price tag wording, a plain **Reading and search** section (always open, no drawer)
+   holds two things only: the read values, the one line search reads for this product ("Water
+   closet · One piece · Twister flush · S-trap · UF seat cover"), and one search box. They type
+   "one piece toilet twister" and it answers "This product comes up, 1st of 6" (owner ruling, 27
+   Sep 2026, "simplify this, too messy"). There is no "Read this product again": a product is read
+   again by itself whenever its code, description, category or sizes change (owner ruling, 27 Sep
+   2026).
 
 What they hold at the end: correct specs, a checked stamp, and they never saw a pattern, a code
 name, the word "Derived" or a re-read button.
@@ -82,21 +115,26 @@ Product Specifications.
    No status pill, no Re-read button (owner ruling, 27 Sep 2026). Brand is not in the list.
 2. They open Finish or colour. Four tabs: **Details**, **Choices and words**, **How it is read**
    (the rules tab), **Products**.
-3. **How it is read** is a data grid of rules, one row each, in the order they run: Order, Looks
-   in, Finds, Answer, Only when. "1 · Description or flyer · MATT BLACK · Black · (blank)".
-   Columns sort; clicking a Finds or Answer cell edits it in place. No pattern exists
-   anywhere to show, and nothing says "built in" or "changed here".
-4. They press **Add a rule**. The rule form asks three things, each a pick or a typed word: **Look
-   in** (Description or flyer), **Find** (Words: GUNMETAL, GUN METAL), **Answer** (Gunmetal).
-   Optional fourth: **Only when** another spec has a value. The sentence at the top of the form
-   updates as they fill it. **Try it on** a real product shows what the rule reads; **See what
-   would change** shows the products whose value would change before they save.
+3. **How it is read** is a structured grid of rules, one row each, in the order they run, one
+   column per part: Order, Where to look, Kind, What to find, Value it sets, Only when.
+   "1 · Description or flyer · Words · MATT BLACK · Black · (blank)". Columns sort; clicking a
+   What to find or Value it sets cell edits it in place with the system's multi-select or
+   dropdown. No rule is written as a sentence, no pattern exists anywhere to show, and nothing
+   says "built in" or "changed here".
+4. They press **Add a rule**. The rule form asks the same parts as the grid's columns, each a
+   system dropdown (`SearchableSelect`) or multi-select (`SearchableMultiSelect`): **Where to
+   look** (Description or flyer), **Kind** (Words), **What to find** (GUNMETAL, GUN METAL),
+   **Value it sets** (Gunmetal). Optional: **Only when** another spec has some values. Under the
+   form, the rule shows as the one grid row it will become. **Try it on** a real product shows
+   what the rule reads; **See what would change** shows the products whose value would change
+   before they save.
 5. They save. The toast says "Saved. 14 products updated." (the same 14 See what would change
    listed). The products carry the new value within moments; nobody presses anything, and the
    list simply shows the current values.
 
-Decisions per journey: A, one per wrong value plus one Mark as checked; B, the three picks of a
-rule. Nothing asks them for a code name, a pattern, a source code or a re-read.
+Decisions per journey: A, one per wrong value plus one Mark as checked; B, the picks of a rule.
+Nothing asks them for a code name, a pattern, a source code or a re-read, and nothing shows them
+a value with underscores in it.
 
 ## 2. What exists (measured; the review has the file:line)
 
@@ -173,16 +211,26 @@ rule. Nothing asks them for a code name, a pattern, a source code or a re-read.
 
 ### Rule engine (owner ruling, Q5, Q6)
 
-- **D5 One rule model, five kinds, no patterns.** A rule is three picks and an optional fourth,
-  stored as the `builder` the screen already saves. The engine compiles it; nobody types or sees a
-  regular expression, and the server refuses a rule without a builder.
+- **D5 One rule model, five kinds, no patterns.** A rule is a set of picks, one per part, stored
+  as the `builder` the screen already saves. The engine compiles it; nobody types or sees a
+  regular expression, and the server refuses a rule without a builder. The parts below are the
+  rules grid's columns (D14) and the rule form's fields, in the same order; the control named for
+  each is the system's own (D16). The example sentences further down are this plan's shorthand
+  for a reader of the plan; no screen shows a rule as a sentence (owner ruling, 27 Sep 2026).
 
-  | Part | What the person does | Choices |
+  | Part (grid column and form field) | Control (D16) | Choices |
   | --- | --- | --- |
-  | **Look in** | picks where to read | Description or flyer (default), Description only, Flyer only, The product name (without sizes and extras, the default for Product class). Code and Product rules read their own place, so Look in is not asked. |
-  | **Find** | picks a kind, fills its blanks | **Words**: one or more words ("SOFT CLOSE", "SOFT CLOSING"); optionally "only at the end of the name"; optionally "skip it when it comes right after" some words. **Number**: the number before / after / between words, optionally "written in" a unit (metres to mm), optionally "ignore numbers below". **Size**: from a size like 1500 x 750 x 630, the 1st / 2nd / 3rd / 4th number, or the one labelled L / W / H. **Code**: the product code contains / starts with / ends with some text. **Product**: a fact already on the product: its category's class, its length / width / height, or what its name says it is. |
-  | **Answer** | picks the value | A choice from the spec's list; Yes for yes or no specs. Number, Size and Product rules answer with what they find, so Answer is not asked. |
-  | **Only when** (optional) | adds a condition | Another spec is, or is not, one of some values ("Except when Shape is Round or Square"). |
+  | **Where to look** | `SearchableSelect` | Description or flyer (default), Description only, Flyer only, The product name (without sizes and extras, the default for Product class). Code and Product rules read their own place, so the field is not asked and the cell reads "Product code" or "The product". |
+  | **Kind** | `SearchableSelect` | Words, Number, Size, Code, Product. |
+  | **What to find** | per kind, below | **Words**: one or more words ("SOFT CLOSE", "SOFT CLOSING") in a `SearchableMultiSelect`; optionally "only at the end of the name" (a checkbox); optionally "skip it when it comes right after" some words (a second `SearchableMultiSelect`). **Number**: the number before / after / between (a `SearchableSelect`) some words (`SearchableMultiSelect`), optionally "written in" a unit (`SearchableSelect`: metres to mm), optionally "ignore numbers below" (a number input). **Size**: from a size like 1500 x 750 x 630, the 1st / 2nd / 3rd / 4th number, or the one labelled L / W / H (`SearchableSelect`). **Code**: the product code contains / starts with / ends with (`SearchableSelect`) some text (`SearchableMultiSelect`). **Product**: a fact already on the product (`SearchableSelect`): its category's class, its length / width / height, or what its name says it is. |
+  | **Value it sets** | `SearchableSelect` | A choice from the spec's list; Yes for yes or no specs. Number, Size and Product rules set what they find, so the field is not asked and the cell reads "The number it finds". |
+  | **Only when** (optional) | `SearchableSelect` (the spec), `SearchableSelect` (is / is not), `SearchableMultiSelect` (its values) | Another spec is, or is not, one of some values ("Shape is not Round, Square"). |
+
+  **Typed words in a multi-select.** `SearchableMultiSelect` offers the words this spec already
+  knows (its Choices and words grid, and the words its other rules use); a word not yet in the
+  list is offered as the first option, "Add BRUSHED GOLD", built from the search text through the
+  component's existing `onSearchChange`. No new component and no chip box: the picked words show
+  inside the multi-select's own trigger.
 
   **How matching works, the same for every rule, never a setting:**
   - Case never matters.
@@ -250,8 +298,17 @@ rule. Nothing asks them for a code name, a pattern, a source code or a re-read.
   Trigger named for bringing a reset back: the first time the owner asks to restore a spec's
   shipped rules; until then it is a one-line data fix on request.
 - **D9 Product tab order**: checked line, values table, price tag wording (where it is today, owner
-  ruling), then a plain **Search** section, always shown, not collapsed (description, search finds
-  it or not, what search matches, read specs from a text). No "Read this product again": the
+  ruling), then a plain **Reading and search** section, always shown, not collapsed, holding two
+  things only (owner ruling, 27 Sep 2026, "simplify this, too messy"):
+  - **Read values**: one plain line of what search reads for this product ("Water closet · One
+    piece · Twister flush · S-trap · UF seat cover"; empty: "Nothing read yet.").
+  - **One search box**: "Type what a customer would ask". It runs the existing preview search
+    (`POST /product-specifications/preview-search`, the ranker the chatbot uses) and answers in
+    one line: "This product comes up, 1st of 6" or "This product does not come up for this".
+  Gone from the tab: the description text (it is on Details), the "Search finds this product"
+  pill (the box answers it), the separate "What search matches" label (it is the read values
+  line) and the "Read specs from a text" panel (`SpecExtractPanel`; its endpoint stays, trigger
+  named for bringing the panel back: a merchandiser asks for it). No "Read this product again": the
   change listener already re-reads a product when its code, description, category or sizes change
   (`DERIVATION_INPUTS`, section 2), so the button has nothing left to do (owner ruling, 27 Sep
   2026). S2 starts by checking whether a new flyer reading re-reads the product the same way; if
@@ -278,17 +335,38 @@ rule. Nothing asks them for a code name, a pattern, a source code or a re-read.
   Details (one row per word), and brand words on Master data > Brands if D3's measurement finds
   any (one row per word: Word, Brand). No chips, no cards, at 1280 or 375; at 375 the grid keeps
   its first two columns and scrolls inside its own frame, never the page.
-- **D14 Rules live on their own tab, as a data grid a merchandiser reads** (owner ruling, 27 Sep
-  2026, mockup 02). How it is read is the rules tab (its name is Q9, pending confirmation). One
-  row per rule, columns: **Order**, **Looks in** (Description or flyer, Product code, The product
-  name ...), **Finds** (the words, number, size or code it looks for, in plain words: "MATT
-  BLACK", "the number before OZ", "code ends with -GM"), **Answer** (the choice, or "the number
-  it finds"), **Only when** ("Shape is not Round or Square", or blank). No per-rule product
-  count: the stored reading records the matched text, not which rule set it, and counting would
-  need new bookkeeping; the Products tab and See what would change already answer "which
-  products" (trigger named: the owner asks which rule set a given value). Sortable columns; Finds and Answer edit in
-  place; the pencil opens the full rule form (mockup 04) for Look in, the kind and Only when.
-  The rule sentence shows at the top of the form, not as a grid column.
+- **D14 Rules live on their own tab, as a structured grid, never sentences** (owner rulings, 27
+  Sep 2026, mockup 02, and mockup 04 "hmm can this be more structured?"). How it is read is the
+  rules tab (its name is Q9, pending confirmation). One row per rule and one column per part:
+  **Order**, **Where to look** (Description or flyer, Product code, The product name ...),
+  **Kind** (Words, Number, Size, Code, Product), **What to find** (the blanks of that kind, as
+  labelled values, not a sentence: "MATT BLACK, MAT BLACK"; "Before: OZ"; "After: S TRAP, P
+  TRAP · Before: MM"; "3rd number"; "Ends with: -GM"; "The product's length"; the optional parts
+  as a second line: "Skip after: W/O, WITHOUT", "Written in: metres", "Ignore below: 10"),
+  **Value it sets** (the choice, or "The number it finds"), **Only when** ("Shape is not: Round,
+  Square", or blank). No per-rule product count: the stored reading records the matched text,
+  not which rule set it, and counting would need new bookkeeping; the Products tab and See what
+  would change already answer "which products" (trigger named: the owner asks which rule set a
+  given value). Sortable columns; What to find and Value it sets edit in place with the same
+  system controls as the form (D16); the pencil opens the rule form (mockup 04) for every part.
+  The form has no sentence: under its fields it shows the rule as the one grid row it will
+  become.
+- **D15 No snake_case anywhere** (owner ruling, 27 Sep 2026, "make sure no snake case"). No
+  screen, mockup, toast, error or empty state shows a value with an underscore in it: a spec
+  reads by its label ("Capacity (oz)", never `capacity_oz`), a choice by its label ("Rose gold",
+  never `rose_gold`), a source by its plain name ("Set by hand", never `human`), and a server
+  error naming a missing part names it in plain words ("Add at least one word to find"). A
+  vitest guard renders the spec screens over fixtures whose keys carry underscores and fails on
+  any rendered `\w_\w`.
+- **D16 The system's own selectors, everywhere in the rule form and the rules grid** (owner
+  rulings, 27 Sep 2026, "use dropdown component in the system" and "use multi select dropdown
+  components in the system where applicable"). A single pick (Where to look, Kind, before / after
+  / between, which number, written in, ends with / starts with / contains, which product fact,
+  Value it sets, the Only when spec and is / is not) is `SearchableSelect`; a pick of several
+  (the words to find, the skip-after words, the code text, the Only when values) is
+  `SearchableMultiSelect`, both from `components/common/` (the pair CLAUDE.md already mandates
+  for every dropdown). The round 2 segmented Find control and the hand-made chip boxes go. The
+  one control that is neither is "ignore numbers below", a number `Input` from `components/ui`.
 - **D11 Back sits with the title**: wrap `PageHeader` in `Container` on the record page (all three
   states) and copy "Back to specifications".
 - **D12 Product class keeps its list shape** (Q3, still open): its choices are the category class
@@ -328,21 +406,23 @@ Scope: D5 to D8 on the spec record page.
 - BE: saving a rule, scope or cap re-reads exactly the products it changes through
   `rederive_codes` (D10); the worker re-reads the catalogue once on start when the stored rules
   fingerprint differs from the running rules.
-- FE: How it is read is a data grid of rules (D14): Order, Looks in, Finds, Answer, Only when;
-  sortable; Finds and Answer edit in place; drag or Move up / Move down while sorted by Order;
-  deferred 5 s remove. Add / Edit a rule is a modal with Look in, Find, Answer, Only when, a live
-  sentence, Try it on and See what would change. No Changed here, no Put back the built-in rules.
+- FE: How it is read is a structured grid of rules (D14): Order, Where to look, Kind, What to
+  find, Value it sets, Only when; sortable; What to find and Value it sets edit in place; drag or
+  Move up / Move down while sorted by Order; deferred 5 s remove. Add / Edit a rule is a modal
+  with the same parts in the same order, every selector a `SearchableSelect` or
+  `SearchableMultiSelect` (D16), the rule previewed as its grid row (no sentence), Try it on and
+  See what would change. No Changed here, no Put back the built-in rules. No snake_case (D15).
 - Details: Name, Unit (not on List specs), In use, Highest believable value, and Other names as
   a small data grid (D13).
 - Choices and words: a data grid, one row per choice, words edited in place (D13); no `_self`
   row, no "user" badge, no code name.
-**Definition of done:** AC-S1.1 to AC-S1.16 green; golden parity over the dev catalogue with every
+**Definition of done:** AC-S1.1 to AC-S1.18 green; golden parity over the dev catalogue with every
 changed product listed; browser run on Finish or colour, Capacity (oz) and Length at both widths.
 
 ### S2 - Product Specifications tab declutter
 
-Scope: D9.
-**Definition of done:** AC-S2.1 to AC-S2.9 green; browser run on SRTWC7604-SC-SH (the owner's
+Scope: D9, D15.
+**Definition of done:** AC-S2.1 to AC-S2.10 green; browser run on SRTWC7604-SC-SH (the owner's
 screenshot product) at both widths: first values row visible without scrolling at 1280.
 
 ### S3 - List and navigation
@@ -371,7 +451,9 @@ the brand flag), `product_spec_registry.py` (seed row, shipped rules as builders
 `PS/lib/ruleSentence.ts` (the five kinds, mirrored), `PS/components/SpecRuleEditor.tsx` (the rule
 modal), `PS/components/record/*`, `PS/components/SpecKeyRecordDetail.tsx`,
 `PS/components/SpecRegistryGrid.tsx`, `PS/components/CatalogueFreshnessLine.tsx` (removed),
-`products/[id]/components/ProductSpecificationsTab.tsx`, `components/spec-table/*`, the Brand form.
+`products/[id]/components/ProductSpecificationsTab.tsx` (Reading and search: read values and
+one search box over the existing preview search; `SpecExtractPanel` no longer mounted there),
+`components/spec-table/*`, the Brand form, and one vitest snake_case guard (D15).
 
 ## 6. Risks
 
@@ -431,8 +513,9 @@ modal), `PS/components/record/*`, `PS/components/SpecKeyRecordDetail.tsx`,
 3. Is product class the same as product category? Answered there with an example.
    Recommendation: keep Product class as a specification with its list of class labels (D12).
 7. What does the product's Specifications tab show first? Recommendation: checked line, values,
-   price tag wording, then the plain Search section (no longer collapsed: owner ruling, 27 Sep
-   2026, no Advanced or drawer anywhere). Pending confirmation: confirm the owner's line 7 was the price
+   price tag wording, then the plain Reading and search section (no longer collapsed: owner
+   ruling, 27 Sep 2026, no Advanced or drawer anywhere; simplified to the read values and one
+   search box: owner ruling, 27 Sep 2026, 00:45 MYT). Pending confirmation: confirm the owner's line 7 was the price
    tag question (Q10), and whether this order stands.
 9. Tab names on a spec's page? Recommendation, pending confirmation: Details, Choices and words,
    How it is read (the rules tab), Products. Under the other choice only the labels change; the
@@ -445,16 +528,21 @@ modal), `PS/components/record/*`, `PS/components/SpecKeyRecordDetail.tsx`,
 
 ## 9. Mockups (for the owner's Lavish review before build)
 
-Each file has a 1280 frame, a 375 frame and numbered notes citing the UAC ids. Regenerated in
-round 3 to the 27 Sep 2026 Lavish notes: no re-read pill or button, no Advanced or collapsed
-drawer anywhere, words as data grids, no brand spec or brand picker, and a sixth mockup for the
-rules tab as a data grid. All six are embedded in `alignment-product-specs-27sep.html`.
+Each file has a 1280 frame, a 375 frame and numbered notes citing the UAC ids. Round 3
+regenerated them to the 27 Sep 2026 00:05 MYT notes (no re-read pill or button, no Advanced or
+collapsed drawer anywhere, words as data grids, no brand spec or brand picker, a sixth mockup for
+the rules tab). Round 4 is the final set, to the 00:45 MYT notes: 02 and 03 accepted as they
+are (03's one note no longer spells a snake_case example); 04 and 06 restructured (structured
+grid columns, no sentences, the system's `SearchableSelect` and `SearchableMultiSelect` in every
+selector); 05's Reading and search simplified to the read values and one search box; 01
+unchanged from round 3 (it already has no re-read). All six are embedded in
+`alignment-product-specs-27sep.html`.
 
 | File | Screen | Slices |
 | --- | --- | --- |
 | `mockups/01-spec-list.html` | Product Specifications list: no Brand row, no status pill, no Re-read | S0, S3 |
-| `mockups/02-spec-details.html` | A spec's Details tab (Capacity (oz)), Other names as a grid, Back placement | S1, S3 |
-| `mockups/03-spec-choices-words.html` | Finish or colour, Choices and words as a data grid with inline edit | S1 |
-| `mockups/04-spec-how-it-is-read.html` | The rule form: Add a rule, and the five kinds filled with built-in rules | S1 |
-| `mockups/05-product-specifications-tab.html` | A product's Specifications tab: no Brand row, plain Search section | S0, S2 |
-| `mockups/06-spec-rules-grid.html` | How it is read, the rules tab: a data grid of rule rows | S1 |
+| `mockups/02-spec-details.html` | A spec's Details tab (Capacity (oz)), Other names as a grid, Back placement (accepted) | S1, S3 |
+| `mockups/03-spec-choices-words.html` | Finish or colour, Choices and words as a data grid with inline edit (accepted) | S1 |
+| `mockups/04-spec-how-it-is-read.html` | The rule form: Add a rule with system dropdowns and multi-selects, and the five kinds filled with built-in rules | S1 |
+| `mockups/05-product-specifications-tab.html` | A product's Specifications tab: no Brand row, Reading and search as read values plus one search box | S0, S2 |
+| `mockups/06-spec-rules-grid.html` | How it is read, the rules tab: a structured grid, one column per part | S1 |
