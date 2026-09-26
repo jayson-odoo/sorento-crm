@@ -267,3 +267,201 @@ behaviour the owner asked for. The trigger that would justify it is named in sec
 - **MCP** sends the shared API key plus `X-Source: mcp`, `X-Tool-Name`, `X-Correlation-Id`
   (`sorento_crm_mcp/sorento_crm_mcp/http_client.py:25,91-95`) and has four write tools
   (`record_actions.py`), all acting as the integration's act-as user.
+
+## 4. Design: one principal, several ways in
+
+### 4.1 The person
+
+- **A person who signs in is a `users` row.** Staff, salespeople and portal contacts alike. A
+  user has at most one linked WhatsApp contact (`users.respond_contact_id`, made unique where set,
+  AC-01), and a contact has at most one user. The contact stays the WhatsApp and portal identity
+  it is today: everything keyed on `respond_contacts.id` (form grants, ownership of submissions,
+  requested-by, sales agents, CS pins, `respond_inbox_url`) is untouched. The user is what signs
+  in, holds roles, holds a session, and is written into the audit log.
+- **Email becomes optional** (AC-02, Q5). `users.email` NOT NULL is relaxed; a check constraint
+  requires `email IS NOT NULL OR contact_number IS NOT NULL`. A salesperson with only WhatsApp is a
+  user with a phone and no email. Placeholder emails (`6012...@phone.local`) are rejected as a
+  design: the email outbox, invite, reset and SLA emails all read `users.email`, and a fake
+  address turns each of them into a silent bounce. S0 lists every `users.email` reader
+  (`grep -rn "\.email" app/`), and each one that would break on NULL gets a guard (skip the email
+  channel, never raise) with a test.
+- **Email is unique case-insensitively** (AC-03): a unique index on `lower(email)` replaces the
+  plain one, and every write lowercases. The S0 pre-flight query lists case-duplicates first; if
+  any exist the migration stops and they go to the owner (never a silent merge).
+- **Phone stays unique** (the existing `uq_users_contact_number`), normalised by the one
+  normaliser `normalize_msisdn`. `phone_verified_at` (new, nullable) is set by a successful code
+  and cleared when the number changes. The second normaliser, `utils/phone_normalize.normalize_phone`
+  (digits only), is not used by anything in this plan.
+
+### 4.2 The ways in
+
+| Method | Who | Proves | Result |
+| --- | --- | --- | --- |
+| Email + password | any user with a password (as today) | knows the password | `user_sessions` row, `auth_method = password` |
+| Phone + WhatsApp code | any ACTIVE non-integration user whose phone resolves to a linked contact (AC-21, AC-27) | holds the WhatsApp number | `user_sessions` row, `auth_method = phone_otp` |
+| Portal link (`/portal/c/{slug}`, `/portal?token=`) | a portal contact | holds the WhatsApp number (the same code) | `user_sessions` row, `auth_method = portal_link`; the user is created at this step if missing (AC-35) |
+| API key | integrations (n8n, MCP, AutoCount) | holds the key | unchanged; acts as the integration's user, now named in audit (AC-09) |
+| Admin "view as contact" | admins | an admin session | unchanged token, now audited as the admin (AC-11, Q12) |
+
+- **Phone login reuses the portal's code machinery, not a new table.** The typed number is
+  normalised, resolved to one contact (`respond_contacts.phone_number`, unique) and that contact's
+  linked user; the code is stored in the existing `portal_otp_codes` keyed by that contact, sent
+  by the existing `send_portal_otp_respond_message` task, and checked by the same limits. The
+  difference from the portal flow is only the entry (a typed phone instead of a slug) and the
+  result (a user session instead of a portal token). A user whose phone has no contact cannot use
+  phone sign-in until an admin links one (AC-52 shows it); creating Respond.io contacts from a
+  typed number at sign-in is not done (it would let anyone create contacts).
+- **No enumeration** (AC-21, AC-26): request-code answers the same body for every number; email
+  login answers the same 401 for an unknown email and a wrong password.
+- **SMS is not built** (Q6). The codebase has no SMS provider; WhatsApp is how every one of these
+  people already talks to Sorento. Named trigger in section 11.
+
+### 4.3 One session model
+
+- **`user_sessions` is the only session.** It gains `auth_method` (AC-07). NextAuth gains a
+  second Credentials provider, `phone-otp`, whose `authorize()` posts `{phone, code}` (or
+  `{contact_id, space_id, code}` from the portal verify card) to FastAPI and stores the returned
+  `apiToken` exactly as email login does. Everything downstream of the token (company context,
+  roles, 401 sign-out, device list, force-logout, revocation on password change) works unchanged.
+- **Lifetime:** phone and portal sessions are 30-day rolling, the same as "remember me" today
+  (Q15 folded into Q7's answer: the portal's 30-day sliding token is what these people are used
+  to). Email sessions keep their remember-me choice.
+- **The portal reads the same session.** Portal pages obtain the `apiToken` from
+  `/api/auth/token` and send `Authorization: Bearer`. `get_portal_token` becomes
+  `get_portal_principal`, returning the same three things every portal route reads today
+  (`contact_id`, `space_id`, and an id for logout), from either (a) a user session whose user has a
+  linked contact, space from the contact's workspace, or (b) a legacy `X-Portal-Token` until those
+  expire (AC-36). The 46 route signatures change type, not logic; AC-31 proves each form kind
+  answers identically under both principals.
+- **Company scope for portal routes stays the contact's** (AC-32): the resolver's `/public/`
+  branch checks for a portal principal before a Bearer user, so a salesperson with CRM grants still
+  sees portal data scoped exactly as the portal did.
+- **Where a person lands** (AC-28, AC-39, Q9): any CRM permission (or admin) means the CRM home or
+  the `callbackUrl`; none means the portal home `/portal/c/{slug}` of the linked contact. The
+  `(protected)` layout sends a portal-only user to their portal home instead of rendering an empty
+  shell; the user menu carries "Portal" for anyone with a linked contact, and the portal header
+  carries "Open CRM" for anyone with a CRM permission.
+
+## 5. Sign-in and recovery flows
+
+Screens are designed at 375px first, then 1280px. No explanatory prose in the UI (PRINCIPLES
+design mandates); copy below is the full visible text.
+
+### 5.1 Sign-in (`/signin`, AC-20, AC-25)
+
+- **Step 1**, one field. Label "Email or phone number", `inputmode="email"` until the first
+  character is a digit or `+`, then `inputmode="tel"`; `autocomplete="username"`. Primary button
+  "Continue", full width at 375px. Link "Forgot password?" under it.
+- The client decides: contains `@` means password step; otherwise the FE normalises the phone
+  with the same rules as the backend (a shared test vector list keeps them equal) and calls
+  `request-code`. An input that is neither shows "Enter an email or a phone number" inline.
+- **Step 2a, password** (as today): the email shown read-only with "Change", password field,
+  "Keep me signed in", "Sign in".
+- **Step 2b, code:** heading "Enter the code sent to your WhatsApp", the masked number
+  (`+60 12-*** 6789`) with "Change number", six single-digit boxes (`inputmode="numeric"`,
+  `autocomplete="one-time-code"` on the first, paste fills all), "Resend code" disabled with a
+  60-second countdown, and "Use password instead" only when the user has one. At 375px with the
+  on-screen keyboard open the boxes and the submit sit above the fold; the code auto-submits on
+  the sixth digit.
+- **Errors in words:** wrong code "That code is not right. 4 tries left."; expired "That code has
+  expired. Send a new one."; limit "Too many tries. Try again in 12 minutes." (from the 429's
+  seconds); no WhatsApp contact or unknown number: nothing distinguishes it on screen (the code
+  simply never arrives), by design.
+
+### 5.2 Portal link (AC-34, AC-35)
+
+The verify card the contact already knows stays as it is visually. What changes is behind the
+button: `verify` calls NextAuth `signIn('phone-otp', {contact_id, space_id, code})`, FastAPI finds
+or creates the user (section 6.3), mints a `user_sessions` row with `auth_method = portal_link`,
+and the page continues to the portal home with the session in place. `sorento.portalToken` is no
+longer written; an existing stored token keeps working until it expires (AC-36).
+
+### 5.3 Recovery
+
+- **Forgot password:** unchanged (email reset link, 1 hour, non-enumerating). A phone-only user
+  has no password to forget: the code IS the sign-in.
+- **A phone-only user can add a password** from Account > Security ("Set a password"), and an
+  email from Account > Profile (verified by the existing email-verification link before it is
+  used for sign-in). Both optional.
+- **Lost access to the WhatsApp number:** an admin edits the phone on the user (AC-54): every
+  session ends, `phone_verified_at` clears, and the next phone sign-in to the new number verifies
+  it. A user with an email can also recover through the password reset.
+- **A contact's number changes in Respond.io** (AC-46): the linked user's `contact_number` follows
+  and is marked unverified; a collision with another user is refused on the user side and listed
+  in S4's "Needs attention".
+- **Blocked or trashed users** cannot sign in by any method, including a code (fixes the measured
+  `is_trashed` gap at the same time).
+
+## 6. Counterpart users for salesperson and dealer contacts
+
+### 6.1 Who is a salesperson contact (Q1)
+
+One function, `is_salesperson_contact(contact)`, used by the backfill, the sync hooks and the S4
+view (AC-40): the contact is in any market segment with `is_requestor_selectable = true` (today
+`retail` and `project`), **or** is the `contact_id` of any `sales_agents` row. Both sources exist
+and are admin-maintained today; no new flag is added. If the owner defines the two salesperson
+kinds differently (for example by access type), only this function changes.
+
+### 6.2 Salesperson contacts: provisioned up front (AC-41 to AC-47)
+
+- **Backfill (S3 migration + a re-runnable service):** for every salesperson contact with no
+  linked user: if exactly one user has the same phone, link it and add the `salesperson` role
+  (one person, one user, AC-42, Q14); if that user is already linked to another contact, report
+  it and skip (AC-43); otherwise create a user: name from the contact, `contact_number` from the
+  contact, no email, no password, status ACTIVE, role `salesperson`, company grants copied from
+  `respond_contact_companies`, `last_active_company_id` the first of those.
+- **Stays true** (AC-44): the market segment assignment service and the sales agent service call
+  the same provisioning function after they add a contact, inside their own transaction. Losing
+  every salesperson source removes the `salesperson` role; the user and its history stay.
+- **Why up front and not at first sign-in:** the owner asked for the counterpart user to exist
+  "so in the future all of them can use our system and be audit trailed", and salespeople are
+  referenced by other people's records (requested-by, sales agent, CS pins) before they ever sign
+  in; S3 can then show the user beside those references.
+- **Onboarding intake** starts setting `users.respond_contact_id` when it provisions both (it
+  creates them side by side today and leaves them unlinked); its UUID-typed
+  `onboarding_people.respond_contact_id` is left alone (not read by this plan).
+
+### 6.3 Every other portal contact, dealer contacts included (Q3, Q4)
+
+- **Created at the next portal sign-in, not in bulk** (AC-35): when the portal verify step
+  succeeds for a contact with no user, the same provisioning function runs with role
+  `portal_user`. A dealer contact is a portal contact like any other (ADR 0007: a dealer is a
+  `customers` row, and its people are contacts); it gets a user the day it signs in, and never
+  earlier.
+- **Why not bulk for dealers:** most dealer contacts never open the portal; bulk creation would
+  fill the Users list with accounts that never sign in, and every one of them would need its
+  company grants and clashes reviewed now for no gain. Anything a dealer contact does happens
+  either on the portal (signed in, so a user exists by then) or on WhatsApp (recorded as the
+  contact, as today, and the contact resolves to a user once one exists).
+
+### 6.4 The sales agent ruling
+
+The 14 Aug 2026 ruling is superseded by #1280 once the owner confirms Q2: S3 edits the
+`sales_agent.py` docstring and adds a one-line supersession note to
+`PLAN-customer-sales-agent-assignment-24sep.md`. `sales_agents` gains no `user_id`: the path
+agent -> contact -> user already exists and is one join.
+
+## 7. Permissions each kind of user gets
+
+| Kind (derived, never stored) | How it gets a user | Roles at creation | CRM access | Portal access |
+| --- | --- | --- | --- | --- |
+| Staff | admin create or invite (as today) | as chosen, else `is_default` | per roles | only if a contact is linked |
+| Salesperson | S3 backfill / sync | `salesperson` (protected, no permissions) | none until an admin adds a role | the linked contact's forms (market segment base + overrides) |
+| Portal | first portal sign-in | `portal_user` (protected, no permissions) | none until an admin adds a role | the linked contact's forms |
+| Integration | as today | as today | as today | none |
+
+- **Portal access is not a permission.** It follows from having a linked contact, exactly as it
+  follows from holding a token today, and the forms shown are the contact's (AC-33). No
+  `portal.*` permission is added; the market segment grants and per-contact overrides stay the one
+  source of truth.
+- **The two roles are empty on purpose** (AC-45, Q8). The owner's growth path ("will grow to use
+  our project sales modules") is served by adding permissions to `salesperson` once, which grants
+  every salesperson at the same moment, or by adding a Project Sales role to one person. Which
+  project sales permissions a salesperson should get by default is Q8's second half; until the
+  owner names them, the role stays empty so nobody gains CRM access by a migration.
+- **Kind is derived** for the S4 filter: Integration if `is_integration`; else Salesperson if the
+  user holds `salesperson`; else Portal if it holds `portal_user` and no other role; else Staff.
+  No `user_type` column.
+- **Company grants** for provisioned users copy the contact's companies; a contact in no company
+  gives a user with no grants, which scopes to zero rows (fail closed, as the portal does today)
+  and appears in S4 as "Needs attention: no company".
