@@ -121,6 +121,25 @@ export function OrderInquiryStatePill({ state }: { state: string }) {
 }
 
 /**
+ * `PLAN-oi-no-double-count-25sep.md` S0: the OI detail's line row (one per sales order
+ * line) reads two states no single row carries - a cancelled sales order line (owner
+ * ruling 26 Sep, G7) and a line whose rows are all history (O2). Every other value is a
+ * row state and reads exactly as `OrderInquiryStatePill`.
+ */
+const LINE_STATE: Record<string, { label: string; palette: string }> = {
+  line_cancelled: { label: 'Line cancelled', palette: 'voided' },
+  nothing_to_buy: { label: 'Nothing to buy', palette: 'draft' },
+};
+
+export function OrderInquiryLineStatePill({ state }: { state: string }) {
+  const own = LINE_STATE[state];
+  if (!own) return <OrderInquiryStatePill state={state} />;
+  return (
+    <span className={`${STATUS_PILL_BASE} ${statusPillClass(own.palette)}`}>{own.label}</span>
+  );
+}
+
+/**
  * `PLAN-oi-request-cs-reserve.md` 3.5 (AC-RS-20/AC-RS-25): `requested` while an open
  * reserve request row exists, `reserved` once CS has actually reserved something (and no
  * open request). Rendered BESIDE the state pill on the worklist (its own read-only

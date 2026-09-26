@@ -917,18 +917,36 @@ export async function getOrderInquiryHeader(
  */
 export async function getOrderInquiryHeaderLines(
   id: string,
+  state?: string,
 ): Promise<OrderInquiryWorklistRow[]> {
   const limit = 1000;
   let page = 1;
   let rows: OrderInquiryWorklistRow[] = [];
   for (;;) {
     // Pages are read in order, not fanned out - each one depends on the last.
-    const envelope = await listOrderInquiryWorklist({ inquiry_id: id, limit, page });
+    const envelope = await listOrderInquiryWorklist({
+      inquiry_id: id,
+      limit,
+      page,
+      ...(state ? { state } : {}),
+    });
     rows = rows.concat(envelope.data);
     if (envelope.data.length === 0 || rows.length >= envelope.total) break;
     page += 1;
   }
   return rows;
+}
+
+/**
+ * `PLAN-oi-no-double-count-25sep.md` S0: the History dialog's Rows tab lists a line's
+ * cancelled rows (superseded, re-raised, cancel balance) too, which the Lines read above
+ * leaves out. Today's own `state=cancelled` filter on the same `inquiry_id` read returns
+ * them; S1's `include_history` folds this into the one Lines fetch.
+ */
+export async function getOrderInquiryHeaderCancelledRows(
+  id: string,
+): Promise<OrderInquiryWorklistRow[]> {
+  return getOrderInquiryHeaderLines(id, 'cancelled');
 }
 
 export async function getOrderInquiryHeaderRelatedDocuments(

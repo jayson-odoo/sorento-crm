@@ -64,12 +64,18 @@ import {
   resolveReserveRowRequestAnchor,
 } from '../../../_shared/lib/orderInquiryReserve';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
+import {
+  foldKeyOf,
+  isLiveInquiryRow,
+  usedRowIdsToConfirm,
+  type OrderInquiryLine,
+} from '../../../_shared/lib/orderInquiryLineFold';
 import type { CommitReservePayload } from '../../../_shared/services/orderInquiryReserveService';
 import { OrderInquiryLinesTab } from './OrderInquiryLinesTab';
 import { OrderInquiryGeneralTab } from './OrderInquiryGeneralTab';
 import { ReserveRequestDialog } from './ReserveRequestDialog';
 import { ReserveLineForm } from './ReserveLineForm';
-import { ReserveLineHistoryDialog } from './ReserveLineHistoryDialog';
+import { OrderInquiryLineHistoryDialog } from './OrderInquiryLineHistoryDialog';
 import type { StagedReserveEntry } from './orderInquiryHeaderLinesColumns';
 import {
   OrderInquiryRelatedPurchaseOrdersTab,
@@ -162,8 +168,11 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     row: OrderInquiryWorklistRow;
     mode: 'reserve' | 'amend';
   } | null>(null);
-  // Which row `ReserveLineHistoryDialog` is open for (AC-RS-89).
-  const [historyRow, setHistoryRow] = useState<OrderInquiryWorklistRow | null>(null);
+  // Which sales order line the one History dialog is open for
+  // (`PLAN-oi-no-double-count-25sep.md` AC-ND-13/14, owner ruling 26 Sep, G3).
+  const [historyLine, setHistoryLine] = useState<OrderInquiryLine | null>(null);
+  // AC-RS-89: the line's reserve history (its Reserve tab) is read off its primary row.
+  const historyRow = historyLine?.primary ?? null;
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   // Unlink selected (AC-DP-06, fix round UL): a server-deferred pending action
   // (`order_inquiry_row.unlink`), never a confirm dialog - one park per ticked line,
@@ -199,7 +208,9 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   }
 
   const lines = useMemo(() => linesQuery.data ?? [], [linesQuery.data]);
-  const activeLines = useMemo(() => lines.filter((l) => l.state !== 'cancelled'), [lines]);
+  // S0 (`PLAN-oi-no-double-count-25sep.md`, G1/G6): a used row is history now, so it is
+  // never ticked, linked, unlinked or rejected from this page - only swept by Confirm.
+  const activeLines = useMemo(() => lines.filter(isLiveInquiryRow), [lines]);
   const selectedLines = useMemo(
     () => activeLines.filter((l) => rowSelection[l.id]),
     [activeLines, rowSelection],
@@ -379,8 +390,8 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     setEditingRow({ row, mode: 'amend' });
   }, []);
 
-  const handleHistoryClick = useCallback((row: OrderInquiryWorklistRow) => {
-    setHistoryRow(row);
+  const handleLineHistoryClick = useCallback((line: OrderInquiryLine) => {
+    setHistoryLine(line);
   }, []);
 
   const handleUndoStaged = useCallback((rowId: string) => {
@@ -527,15 +538,24 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   // AC-DP-05: the visible label is simply how many lines are TICKED; disabled reads the
   // scope's own eligibility - the ticked lines' handshake state with something ticked,
   // the header's own count with nothing ticked.
-  const confirmLabel = selectedIds.length > 0 ? `Confirm (${selectedIds.length})` : 'Confirm';
+  // AC-ND-12 (`PLAN-oi-no-double-count-25sep.md`): the grid ticks LINES, so N counts the
+  // ticked sales order lines, not the rows behind them.
+  const selectedLineCount = useMemo(
+    () => new Set(selectedLines.map(foldKeyOf)).size,
+    [selectedLines],
+  );
+  const confirmLabel = selectedIds.length > 0 ? `Confirm (${selectedLineCount})` : 'Confirm';
   const confirmDisabled =
     selectedIds.length > 0
       ? selectedConfirmable.length === 0
       : (header?.lines_to_confirm ?? 0) === 0;
 
   function runConfirm() {
+    // G6 (owner ruling 26 Sep): a ticked line's used rows still in `changed` are
+    // confirmed with it, so the header never waits on a row nobody can see.
+    const rowIds = [...selectedIds, ...usedRowIdsToConfirm(lines, selectedIds)];
     acknowledge.mutate(
-      selectedIds.length > 0 ? { rowIds: selectedIds } : { filter: { inquiry_id: id } },
+      selectedIds.length > 0 ? { rowIds } : { filter: { inquiry_id: id } },
       { onSuccess: () => setRowSelection({}) },
     );
   }
@@ -848,7 +868,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
             onTickReserve={handleTickReserve}
             onEditReserve={handleEditReserve}
             onAmendReserve={handleAmendReserve}
-            onHistoryClick={handleHistoryClick}
+            onLineHistoryClick={handleLineHistoryClick}
             onUndoStaged={handleUndoStaged}
           />
         </TabsContent>
@@ -945,14 +965,20 @@ export function OrderInquiryDetail({ id }: { id: string }) {
         />
       ) : null}
 
-      {historyRow ? (
-        <ReserveLineHistoryDialog
-          open
+      {historyLine ? (
+        <OrderInquiryLineHistoryDialog
+          inquiryId={id}
+          line={historyLine}
           onOpenChange={(next) => {
-            if (!next) setHistoryRow(null);
+            if (!next) setHistoryLine(null);
           }}
-          itemCode={historyRow.item_code ?? null}
-          entries={historyQuery.data ?? []}
+          // AC-ND-14: a Reserve tab only when the line has reserve history - the same
+          // reserved / declined gate the retired reserve History icon used.
+          reserveEntries={
+            historyRow?.reserve_state === 'reserved' || historyRow?.reserve_state === 'declined'
+              ? (historyQuery.data ?? [])
+              : undefined
+          }
         />
       ) : null}
 

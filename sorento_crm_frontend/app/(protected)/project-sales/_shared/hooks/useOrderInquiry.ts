@@ -11,6 +11,7 @@ import {
   exportOrderInquiryXlsx,
   getOrderInquiryHeader,
   getOrderInquiryHeaderLines,
+  getOrderInquiryHeaderCancelledRows,
   getOrderInquiryHeaderRelatedDocuments,
   getOrderInquiryPoCandidates,
   getOrderInquiryUploadJob,
@@ -151,6 +152,16 @@ export function useOrderInquiryHeaderLines(id: string | undefined) {
   return useQuery({
     queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY, id],
     queryFn: () => getOrderInquiryHeaderLines(id as string),
+    enabled: Boolean(id),
+  });
+}
+
+/** The History dialog's cancelled rows (`PLAN-oi-no-double-count-25sep.md` S0), read
+ * once per inquiry on first open. */
+export function useOrderInquiryHeaderCancelledRows(id: string | undefined) {
+  return useQuery({
+    queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY, id, 'cancelled'],
+    queryFn: () => getOrderInquiryHeaderCancelledRows(id as string),
     enabled: Boolean(id),
   });
 }

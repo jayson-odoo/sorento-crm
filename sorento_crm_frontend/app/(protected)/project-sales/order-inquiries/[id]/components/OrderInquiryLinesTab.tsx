@@ -32,6 +32,13 @@ import {
   StagedReserveEntry,
   useOrderInquiryHeaderLinesColumns,
 } from './orderInquiryHeaderLinesColumns';
+import {
+  foldInquiryLines,
+  lineOf,
+  toLineRows,
+  type OrderInquiryLine,
+  type OrderInquiryLineRow,
+} from '../../../_shared/lib/orderInquiryLineFold';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
 
 /** `PLAN-oi-header-list-detail.md`, AC-DP-03. */
@@ -71,6 +78,44 @@ function matchesStateFilter(row: OrderInquiryWorklistRow, selected: string[]): b
   });
 }
 
+/** A line matches the State filter when any of its live rows does (G5: the line folds
+ * every live row, so filtering on one row's state would hide the line's others). */
+function lineMatchesStateFilter(line: OrderInquiryLine, selected: string[]): boolean {
+  if (selected.length === 0) return true;
+  return line.liveRows.some((row) => matchesStateFilter(row, selected));
+}
+
+/** Detail's selection is keyed by ROW id (every mutation takes row ids); the grid ticks
+ * LINES. A line reads ticked when every one of its live rows is. */
+function lineSelectionOf(
+  lineRows: OrderInquiryLineRow[],
+  rowSelection: RowSelectionState,
+): RowSelectionState {
+  const next: RowSelectionState = {};
+  for (const lineRow of lineRows) {
+    const live = lineOf(lineRow).liveRows;
+    if (live.length > 0 && live.every((row) => rowSelection[row.id])) {
+      next[lineOf(lineRow).key] = true;
+    }
+  }
+  return next;
+}
+
+/** A ticked line hands back its live row ids only, never a used or cancelled one
+ * (AC-ND-12, AC-ND-27). */
+function rowSelectionOf(
+  lineRows: OrderInquiryLineRow[],
+  lineSelection: RowSelectionState,
+): RowSelectionState {
+  const next: RowSelectionState = {};
+  for (const lineRow of lineRows) {
+    const line = lineOf(lineRow);
+    if (!lineSelection[line.key]) continue;
+    for (const row of line.liveRows) next[row.id] = true;
+  }
+  return next;
+}
+
 export function OrderInquiryLinesTab({
   lines,
   isLoading,
@@ -81,7 +126,7 @@ export function OrderInquiryLinesTab({
   onTickReserve,
   onEditReserve,
   onAmendReserve,
-  onHistoryClick,
+  onLineHistoryClick,
   onUndoStaged,
 }: {
   lines: OrderInquiryWorklistRow[];
@@ -96,7 +141,8 @@ export function OrderInquiryLinesTab({
   onTickReserve?: (row: OrderInquiryWorklistRow) => void;
   onEditReserve?: (row: OrderInquiryWorklistRow) => void;
   onAmendReserve?: (row: OrderInquiryWorklistRow) => void;
-  onHistoryClick?: (row: OrderInquiryWorklistRow) => void;
+  /** AC-ND-13/14: the line's one History icon. */
+  onLineHistoryClick?: (line: OrderInquiryLine) => void;
   onUndoStaged?: (rowId: string) => void;
 }) {
   const router = useRouter();
@@ -118,7 +164,7 @@ export function OrderInquiryLinesTab({
     onTickReserve,
     onEditReserve,
     onAmendReserve,
-    onHistoryClick,
+    onLineHistoryClick,
     onUndoStaged,
   });
 
@@ -135,20 +181,27 @@ export function OrderInquiryLinesTab({
     }
   }
 
-  // Cancelled lines are hidden here, same as the worklist (S5) - they carry no
-  // instruction left to confirm or link, only a history the raise-cancel already told.
+  // Cancelled rows are hidden here, same as the worklist (S5) - they carry no
+  // instruction left to confirm or link, only a history the raise-cancel already told;
+  // the line's History dialog lists them (`PLAN-oi-no-double-count-25sep.md`, G1).
+  // S0 (owner ruling 26 Sep, G5): the rest fold into ONE row per sales order line.
+  const allLineRows = useMemo(
+    () => toLineRows(foldInquiryLines(lines.filter((line) => line.state !== 'cancelled'))),
+    [lines],
+  );
   const rows = useMemo(
-    () =>
-      lines
-        .filter((line) => line.state !== 'cancelled')
-        .filter((line) => matchesStateFilter(line, stateFilter)),
-    [lines, stateFilter],
+    () => allLineRows.filter((lineRow) => lineMatchesStateFilter(lineOf(lineRow), stateFilter)),
+    [allLineRows, stateFilter],
+  );
+  const lineSelection = useMemo(
+    () => lineSelectionOf(allLineRows, rowSelection),
+    [allLineRows, rowSelection],
   );
 
   const table = useReactTable({
     columns,
     data: rows,
-    getRowId: (row) => row.id,
+    getRowId: (row) => lineOf(row).key,
     // AC-DT-6 (`PLAN-oi-decision-trail-ui.md`, round 2 ruling): "Raised via" is hidden by
     // default on THIS screen too now, matching the worklist's own `DEFAULT_HIDDEN_
     // COLUMNS` - `initialState` only, so a saved column preference (`listingKey` below)
@@ -158,15 +211,19 @@ export function OrderInquiryLinesTab({
         DEFAULT_HIDDEN_COLUMNS.map((id) => [id, false]),
       ),
     },
-    state: { pagination, sorting, rowSelection, globalFilter: search, expanded },
+    state: { pagination, sorting, rowSelection: lineSelection, globalFilter: search, expanded },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     onExpandedChange: setExpanded,
     onRowSelectionChange: (updater) =>
       onRowSelectionChange(
-        typeof updater === 'function' ? updater(rowSelection) : updater,
+        rowSelectionOf(
+          allLineRows,
+          typeof updater === 'function' ? updater(lineSelection) : updater,
+        ),
       ),
-    enableRowSelection: true,
+    // AC-ND-12: a line with no live row has nothing to confirm or link.
+    enableRowSelection: (row) => lineOf(row.original).liveRows.length > 0,
     getColumnCanGlobalFilter: () => true,
     globalFilterFn: (row, _columnId, value) => lineMatches(row.original, String(value ?? '')),
     getCoreRowModel: getCoreRowModel(),
@@ -179,10 +236,15 @@ export function OrderInquiryLinesTab({
   });
 
   // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-4/10/11/12): a link from the SO detail's
-  // own "Order inquiry" cell lands on this exact row (`?row=<id>`).
+  // own "Order inquiry" cell lands on this exact row (`?row=<id>`). S0: the row now sits
+  // inside its line, so the line answers to the id of ANY row it folds.
+  const deepLinkTarget = searchParams.get('row');
   const deepLink = useTableDeepLinkHighlight(table, {
     paramName: 'row',
-    rowId: (row: OrderInquiryWorklistRow) => row.id,
+    rowId: (row: OrderInquiryLineRow) =>
+      deepLinkTarget && lineOf(row).rows.some((r) => r.id === deepLinkTarget)
+        ? deepLinkTarget
+        : row.id,
     currentSearch: search,
     clearSearch: () => setSearch(''),
     enabled: !isLoading,
@@ -205,7 +267,13 @@ export function OrderInquiryLinesTab({
       }
       listingKey={LISTING_KEY}
       rowAttributes={deepLink.rowAttributes}
-      rowClassName={deepLink.rowClassName}
+      // G7 / O2: a cancelled line and a line with nothing left to buy read muted, the
+      // same `opacity-60` the worklist uses for a used or cancelled-line row.
+      rowClassName={(row) =>
+        [deepLink.rowClassName(row), lineOf(row).muted ? 'opacity-60' : null]
+          .filter(Boolean)
+          .join(' ') || undefined
+      }
     >
       <Card>
         <CardHeader className="block">

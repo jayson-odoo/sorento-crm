@@ -165,7 +165,10 @@ vi.mock('@/services/pendingActionService', () => ({
 }));
 
 import { pendingEntityStore } from '@/lib/pending-entity-store';
-import { getOrderInquiryHeader } from '../../../_shared/services/orderInquiryService';
+import {
+  getOrderInquiryHeader,
+  getOrderInquiryHeaderLines,
+} from '../../../_shared/services/orderInquiryService';
 import { OrderInquiryDetail } from './OrderInquiryDetail';
 
 const mockGetOrderInquiryHeader = getOrderInquiryHeader as unknown as ReturnType<typeof vi.fn>;
@@ -249,6 +252,36 @@ describe('Confirm label / disabled follow the ticked scope (AC-DP-05, S5)', () =
     fireEvent.click(await screen.findByLabelText(`Select ${LINKED_LINE.item_code}`));
 
     expect(await screen.findByRole('button', { name: 'Confirm (1)' })).toBeInTheDocument();
+  });
+
+  // `PLAN-oi-no-double-count-25sep.md` AC-ND-12 + G6 (owner ruling 26 Sep 2026): the
+  // grid ticks sales order LINES; Confirm (N) counts lines, and confirming a line also
+  // confirms its used rows still in `changed`.
+  it('ticks a line, counts it once, and Confirm sweeps its used row', async () => {
+    const lineRow = (over: Partial<OrderInquiryWorklistRow>) =>
+      ({
+        ...LINKED_LINE,
+        item_code: 'ZZT-SPLIT',
+        core_line_id: 'cl-1',
+        line_no: 1,
+        verb: 'ORDER',
+        links: [],
+        ...over,
+      }) as OrderInquiryWorklistRow;
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce([
+      lineRow({ id: 'row-used', state: 'placed', redirected_to_pool: true, ack_state: 'changed' }),
+      lineRow({ id: 'row-a', state: 'raised', ack_state: 'changed' }),
+      lineRow({ id: 'row-b', state: 'raised', ack_state: 'awaiting' }),
+    ]);
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+
+    fireEvent.click(await screen.findByLabelText('Select ZZT-SPLIT'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm (1)' }));
+
+    await waitFor(() => expect(acknowledgeRowsSpy).toHaveBeenCalledTimes(1));
+    const sent = (acknowledgeRowsSpy.mock.calls[0] as unknown[])[0] as string[];
+    expect([...sent].sort()).toEqual(['row-a', 'row-b', 'row-used']);
   });
 
   it('is disabled on a Completed header with nothing ticked', async () => {
