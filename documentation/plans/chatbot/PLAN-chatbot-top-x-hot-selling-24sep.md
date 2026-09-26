@@ -4,7 +4,10 @@ Status: grilled (26 Sep 2026; owner rulings on PR #1175 folded in below, S1 in b
 `feat/chatbot-top-selling-s1`). S2 + S3 built on PR #1263 (branch
 `claude/top-selling-s2-s3-j8nhan`), reviewer pass of 26 Sep 05:52Z fixed on the same PR; see
 "As built (S2 + S3, PR #1263)" for where the route differs from the contract below and which
-ruling decides it. S1, S4, S6, S7 open. Track: full track (new route + MCP tool = a new external
+ruling decides it. S1 (PR #1258), S2 + S3 (PR #1263) and S4 are folded into ONE PR on
+branch `claude/top-selling-s4-parser-wiring-69mpx3` (S4 built 26 Sep 2026, see "As built
+(S4)"); S5 (sales agent resolver), S6 (review + live console) and S7 (per-month breakdown)
+open. Track: full track (new route + MCP tool = a new external
 ingest surface, one policy-row migration, one prompt migration, one entity-kind migration;
 the diff will pass 300 lines).
 Issue: #1171. UAC: `chatbot-top-x-hot-selling-24sep-acceptance-criteria.md` (AC-19xx).
@@ -464,6 +467,51 @@ No word table anywhere in Python (S12 of the sales report holds).
 11. `mcp_tool_domains.py`: `crm_top_selling_report` under `orders`. NO in-app assistant
     bootstrap (security B1 of the sales report: the same money, same reason).
 
+
+### As built (S4)
+
+Where S4 differs from the two sections above, and which ruling decides it.
+
+- Parser keys use the route's own vocabulary: `rank_by` quantity | amount (not `qty`),
+  `basis` delivered | ordered | unclear, `rank_group` item | category | unclear, all
+  nullable enums, required for strict mode and in `TOLERATED_ABSENT`. Taught by the
+  trailing `TOP_SELLING_ADDENDUM`, published unlabelled by `chatbot_top_selling_vocab`
+  (ONE body: the slim body was retired by the rearch S0).
+- The carry is ONE slot, `Focus.top_selling` (`turn/apply._top_selling_rules`), live
+  while `focus.status == "top_selling"`. A fresh ask (the parser's `domain_in_message`)
+  states its own axes unless the last reply was one of the lane's questions; "by
+  amount" / "ordered" under a ranking change only the axis they name; any other new ask
+  leaves the ranking. A bare number the parser reads as a position, with no list open
+  and a count awaited, is the count.
+- No N named: the lane sends `count_only=true` (new route param, review N1) and the route
+  returns the full count with no rows, one row kept as is; the presenter asks how many
+  (owner, PR #1258 05:32Z). A named N over 100 is capped at 100 by the lane.
+- No date: the lane sends none and the route's current-year default is echoed (as built
+  on PR #1263). "All dates" said in words is NOT honoured yet (the route has no
+  unbounded window); trigger: the owner asks for an all-dates ranking.
+- Rows print the code only, at both grains (owner, 26 Sep 2026: "just show code will
+  do"), and the pick label is that printed code. A category row therefore prints the
+  category code, not its name.
+- The ranked list arms a sticky `top_selling_pick` roster through `compose._lane_question`
+  (S1's `turn/pending.top_selling_pick`). A pick is answered by
+  `apply._answer_top_selling_pick`, never the generic roster path (the rows carry no uuid
+  and must not land on `focus.products`): an item row sends `detail_code` (one shot),
+  a category row re-runs the item ranking with that category as a filter.
+- Category words are resolved by the lane (`services.resolve_category_token`), never by
+  the generic resolver, which is not even asked about them (the engine strips
+  category-hinted entities from its input on a top selling ask; AC-1954's hazard). A word
+  matching no category is a miss, never a silent widening.
+- Dealer refusal: the route is the check (403 `customer_not_permitted`, no name oracle);
+  the presenter turns that body into the fixed refusal line. The customer picker still
+  runs for a dealer's ambiguous customer word before the route refuses; trigger to move
+  the check earlier: the first dealer contact holding the sales report key.
+- `top_selling` joins `resolve_gate.OUTSTANDING_ORDER_STATUS` (no DO hint on the picker,
+  point 10) and `contracts.SALES_FIGURE_STATUSES` (grant before roster, point 5).
+- A no-subject miss prints the ranking's own header and `No sales found.` above the
+  escalate offer (`answer._outstanding_report_text` now reads the wrapped fetch body).
+- Not built in S4: the month clarify and the per-month breakdown (S7), the sales agent
+  entity kind and resolver (S5; the arg block already maps a resolved `sales_agent`
+  entity to `sales_agent_ids`).
 
 ## Filters combination matrix (rewritten for the 26 Sep rulings)
 

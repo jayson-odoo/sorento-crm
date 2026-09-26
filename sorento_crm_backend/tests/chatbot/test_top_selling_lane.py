@@ -763,7 +763,7 @@ class TestParser:
         for needle in ('order_status "top_selling"', '"rank_by"', '"basis"', '"rank_group"', "top_n"):
             assert needle in text, needle
         assert prompt_mod.SEMANTIC_PARSER_PROMPT.endswith(text)
-        for banned in ("—", "–"):
+        for banned in (chr(0x2014), chr(0x2013)):
             assert banned not in text
 
     def test_the_migration_publishes_the_prompt(self) -> None:

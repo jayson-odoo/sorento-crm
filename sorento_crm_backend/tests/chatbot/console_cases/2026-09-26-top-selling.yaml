@@ -1,0 +1,211 @@
+# Console cases for the chatbot top X hot selling journey (#1171, AC-1980).
+#
+# `documentation/plans/chatbot/PLAN-chatbot-top-x-hot-selling-24sep.md` "Journey" and
+# "Lane wiring (S4)", with the owner's rulings folded on PR #1175, #1258 and #1263: no
+# paging; the header states the full count; no N named = state the total and ask how
+# many; the ranked list is a sticky pick list; rows show the code only; metric asked
+# when absent; basis delivered unless "ordered"; grain asked when unclear; the current
+# calendar year when no date is named.
+#
+# Every expectation is STRUCTURAL (header lines, the offer sentence, the question lines,
+# the pending kind) and never a money figure, so the file holds on any prod copy.
+# `expect.parser` grades the LIVE parser's emission for the new keys (order_status
+# top_selling, rank_by, basis, rank_group, top_n), which is the half of S4 no pytest can
+# reach.
+#
+# NOT collected by pytest. Run against the lane stack with the REAL parser:
+#
+#   cd sorento_crm_backend
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-26-top-selling.yaml \
+#       --base-url http://127.0.0.1:<lane backend port> --sleep-seconds 8 \
+#       --prompt-version <id of the chatbot_semantic_parser version migration
+#                         chatbot_top_selling_vocab published>
+#
+# `--prompt-version` because the migration publishes the new prompt UNLABELLED: without
+# it the run grades the prompt production still points at, which has never heard of
+# `top_selling`. Export EXTERNAL_API_KEY from the backend .env first.
+#
+# PREREQUISITES:
+# - Contact 437264483 holds the `sales_orders.sales_report` reveal key and is office
+#   staff (every access type it holds is an office type, e.g. "Sorento Office"): the
+#   route refuses a contact that is neither staff nor linked to a customer.
+# - Migrations `chatbot_top_selling_tool` and `chatbot_top_selling_vocab` have run and the
+#   MCP server was restarted after this branch landed (the catalog gains `count_only`).
+# - "Delivery date: 01/01/2026 to 31/12/2026" is the current-year default. BUMP EVERY
+#   JANUARY.
+
+contact: "437264483"
+
+cases:
+  - name: Journey 1 - top 5 by quantity, whole book, current year, sticky pick list
+    cold: true
+    turns:
+      - text: "top 5 selling items by quantity"
+        expect:
+          branch_kind: business_query
+          parser: {order_status: top_selling, rank_by: quantity, top_n: 5}
+          reply_contains:
+            - |-
+              *Top 5 selling items*
+              Ranked by: Quantity
+              Basis: Delivered (transferred to DO)
+            - "Items with sales:"
+            - |-
+              Customer: all
+              Category: all
+              Sales agent: all
+              Channel: all
+              Delivery date: 01/01/2026 to 31/12/2026
+            - "Reply with a rank number to see that item's customers and months."
+          reply_not_contains: ["more", "next", "lagi", "How many", "Would you like me to escalate"]
+          pending_kind: top_selling_pick
+          no_uuid: true
+      # a rank number opens that item's detail, and the list stays open
+      - text: "2"
+        expect:
+          branch_kind: business_query
+          reply_contains: [": customers and months*", "*_By customer_*", "*_By month_*", "Ranked by: Quantity"]
+          pending_kind: top_selling_pick
+          no_uuid: true
+      - text: "4"
+        expect:
+          branch_kind: business_query
+          reply_contains: [": customers and months*", "*_By customer_*"]
+          pending_kind: top_selling_pick
+      # "ordered" re-runs the same ranking on the ordered basis
+      - text: "ordered"
+        expect:
+          branch_kind: business_query
+          parser: {basis: ordered}
+          reply_contains: ["*Top 5 selling items*", "Basis: Ordered", "Ranked by: Quantity"]
+          reply_not_contains: ["customers and months"]
+          pending_kind: top_selling_pick
+
+  - name: Journey 2 - no metric named, the bot asks, "amount" answers it
+    cold: true
+    turns:
+      - text: "top 5 selling items last month"
+        expect:
+          branch_kind: business_query
+          parser: {order_status: top_selling, rank_by: null, top_n: 5}
+          reply_contains: ["By quantity or by amount?"]
+          reply_not_contains: ["Items with sales:"]
+      - text: "amount"
+        expect:
+          branch_kind: business_query
+          parser: {rank_by: amount}
+          reply_contains: ["*Top 5 selling items*", "Ranked by: Amount"]
+          reply_not_contains: ["Delivery date: 01/01/2026 to 31/12/2026"]
+          pending_kind: top_selling_pick
+
+  - name: Journey 6 - no N named, the bot states the total and asks how many
+    cold: true
+    turns:
+      - text: "top selling items by quantity"
+        expect:
+          branch_kind: business_query
+          parser: {order_status: top_selling, rank_by: quantity, top_n: null}
+          reply_contains:
+            - "*Top selling items*"
+            - "Items with sales:"
+            - "How many items do you want to see? Reply with a number from 1 to"
+          reply_not_contains: ["too long", "one message", "Reply with a rank number"]
+      - text: "20"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["*Top 20 selling items*", "Ranked by: Quantity", "\n20. "]
+          pending_kind: top_selling_pick
+
+  - name: Journey 4 - categories ranked, then a category row runs its items
+    cold: true
+    turns:
+      - text: "which category sells most by amount"
+        expect:
+          branch_kind: business_query
+          parser: {order_status: top_selling, rank_group: category, rank_by: amount}
+          reply_contains: ["selling categories*", "Categories with sales:", "Reply with a rank number to see that category's top items."]
+          pending_kind: top_selling_pick
+      - text: "1"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Ranked by: Amount", "Items with sales:"]
+          reply_not_contains: ["Category: all"]
+
+  - name: Journey 4 - "by category" alone is asked, never assumed
+    cold: true
+    turns:
+      - text: "top selling by category"
+        expect:
+          branch_kind: business_query
+          parser: {order_status: top_selling, rank_group: unclear}
+          reply_contains: ["Do you want the top items inside one category, or the categories ranked against each other?"]
+      - text: "the categories, by quantity"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["selling categories*", "Ranked by: Quantity"]
+
+  - name: Journey 3 - a customer filter
+    cold: true
+    turns:
+      - text: "top 5 for hanlim by amount this year"
+        expect:
+          branch_kind: business_query
+          parser: {order_status: top_selling, rank_by: amount, top_n: 5}
+          reply_contains: ["*Top 5 selling items*", "Ranked by: Amount"]
+          reply_not_contains: ["Customer: all", "- has DO", "- no DO"]
+          no_uuid: true
+
+  - name: Journey 4 - a named category is a filter
+    cold: true
+    turns:
+      - text: "top 3 kitchen sinks by quantity in 2026"
+        expect:
+          branch_kind: business_query
+          parser: {order_status: top_selling, rank_by: quantity, top_n: 3, rank_group: item}
+          reply_contains: ["*Top 3 selling items*", "Delivery date: 01/01/2026 to 31/12/2026"]
+          reply_not_contains: ["Category: all", "Which customer do you mean?"]
+
+  - name: Basis - "top orders" is ambiguous and asked
+    cold: true
+    turns:
+      - text: "top orders by quantity this year"
+        expect:
+          branch_kind: business_query
+          parser: {order_status: top_selling, basis: unclear}
+          reply_contains: ["Delivered (transferred to DO) or ordered?"]
+
+  - name: FUZZY - what's selling well this month
+    cold: true
+    turns:
+      - text: "what's selling well this month by quantity"
+        expect:
+          branch_kind: business_query
+          parser: {order_status: top_selling, rank_by: quantity}
+          reply_contains: ["Ranked by: Quantity", "Items with sales:"]
+
+  - name: MALAY - barang paling laku bulan lepas
+    cold: true
+    turns:
+      - text: "barang paling laku bulan lepas ikut kuantiti"
+        expect:
+          branch_kind: business_query
+          parser: {order_status: top_selling, rank_by: quantity}
+          reply_contains: ["Ranked by: Quantity", "Items with sales:"]
+
+  - name: TRAP - a plain top N on an order list stays an order list
+    cold: true
+    turns:
+      - text: "last 3 DO for hanlim"
+        expect:
+          branch_kind: business_query
+          reply_not_contains: ["selling items", "Ranked by:", "By quantity or by amount?"]
+
+  - name: TRAP - the sales report still reaches the sales report
+    cold: true
+    turns:
+      - text: "sales report for hanlim"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Sales orders:"]
+          reply_not_contains: ["Ranked by:"]

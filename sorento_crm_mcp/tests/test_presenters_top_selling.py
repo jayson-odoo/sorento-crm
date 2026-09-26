@@ -450,3 +450,14 @@ def test_any_other_route_error_is_an_error_envelope():
     body = {"message": "n must be between 1 and 100", "detail": "0", "code": "invalid_n"}
     envelope = _top_selling_envelope(body)
     assert envelope == {"error": "invalid_n: n must be between 1 and 100"}
+
+
+def test_a_named_n_of_one_reads_singular():
+    body = _mock("categories")
+    body["n"] = 1
+    body["rows"] = body["rows"][:1]
+    assert _top_selling(body).startswith("*Top 1 selling category*\n")
+    body = _mock("items-qty")
+    body["n"] = 1
+    body["rows"] = body["rows"][:1]
+    assert _top_selling(body).startswith("*Top 1 selling item*\n")

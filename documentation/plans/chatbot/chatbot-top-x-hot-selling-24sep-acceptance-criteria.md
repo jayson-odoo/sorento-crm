@@ -1,7 +1,7 @@
 # UAC - Chatbot: top X hot selling items by category / customer / sales agent / date range
 
 Plan: `PLAN-chatbot-top-x-hot-selling-24sep.md`. Numbering: AC-19xx. Status: grilled
-(26 Sep 2026; S2 + S3 built on PR #1263, "As built" lines below; owner rulings from PR #1175 folded in as dated "Owner ruling 26 Sep" lines). Each criterion names its evidence (pytest / golden fixture / console check).
+(26 Sep 2026; S2 + S3 built on PR #1263 and S4 on the combined lane PR, "As built" lines below; owner rulings from PR #1175 folded in as dated "Owner ruling 26 Sep" lines). Each criterion names its evidence (pytest / golden fixture / console check).
 "Contact" = a Respond.io contact through `/api/v1/external/chat/turn`. Issue #1171.
 
 Defaults written as `[Qn]` were proposals awaiting the grill answer to question n in the plan.
@@ -281,6 +281,19 @@ mirror `sorento_crm_mcp/tests/fixtures/top_selling/`.
   for a later pick against the same list; it has no turn clock; it closes when every row
   was picked or a new ask about something else was answered. Evidence: pytest
   `tests/chatbot/test_top_selling_sticky_pick.py`.
+
+As built (S4), evidence per criterion, all in `tests/chatbot/test_top_selling_lane.py`
+unless named: AC-1950 `TestToolPick`; AC-1951 `TestNoGrant`; AC-1952
+`test_rank_by_and_top_n_from_parser_only` (the parser's `rank_by` is sent, `top_n` is
+`n`, absent `top_n` is `count_only`); AC-1953 `test_param_mapping_and_date_default` (no
+date sends none, the route's year is echoed); AC-1954 `TestCategory` (the lane resolves
+the word, the generic resolver is never asked); AC-1955 `TestCustomerPicker`; AC-1956
+`TestFollowUp`; AC-1957 `test_miss_takes_not_found_path` (the ranking's own header and
+`No sales found.` above the offer); AC-1958 `test_header_skipped`; AC-1959 `TestParser`;
+AC-1960 the existing order list tests, unchanged and green; AC-1961 to AC-1965
+`TestClarify`, `TestDealer`, `TestPickList`, `TestHowMany`; AC-1966 `TestPickList` plus
+`test_top_selling_sticky_pick.py`. AC-1963's "no fetch" is as built "no figures": the
+route is the check and answers 403, which the presenter prints as the refusal line.
 
 ## Phase 2 - sales agent slot (S5; the gate on #1168 / #1170 is lifted, owner ruling 26 Sep)
 

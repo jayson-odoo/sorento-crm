@@ -2530,7 +2530,11 @@ def _top_selling_header(report: dict) -> str:
     every filter axis."""
     noun = "categories" if _top_selling_is_category(report) else "items"
     n = report.get("n")
-    title = f"*Top {n} selling {noun}*" if _filled(n) else f"*Top selling {noun}*"
+    if _filled(n):
+        one = str(n) == "1"
+        title = f"*Top {n} selling {('category' if noun == 'categories' else 'item') if one else noun}*"
+    else:
+        title = f"*Top selling {noun}*"
     return "\n".join(
         [
             title,
