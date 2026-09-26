@@ -1,9 +1,11 @@
 # PLAN: sales targets, opportunities and the WhatsApp achievement broadcast (#1170)
 
 Status: grilled (round 1 answered by the owner 26 Sep 2026, PR #1260 comment 05:25Z; round 2
-questions posted on the PR). Track: full track for every build lane (new tables, migrations, new
-permissions, a new module key, a new portal surface). Nothing built beyond slice 1 of the issue
-(PR #1177, a sales agent on a customer).
+questions posted on the PR; round 3 folds in the owner's Lavish review of the mockup, PR #1260
+comment 05:35Z, and its questions T1 to T5 are posted on the PR). Track: full track for every
+build lane (new tables, migrations, new permissions, a new module key, a new portal surface).
+Nothing built beyond slice 1 of the issue (PR #1177, a sales agent on a customer). Build order
+after round 3: S1, S6 (sales teams), S2, S3, S4, S5 (section 6).
 Domain: sales. Classification: **MODULE** `sales` (installable; another tenant with a sales team
 would turn it on), tables in `public` with normal FKs (targets and opportunities are durable
 business records, so by the uninstall test they stay in `public`).
@@ -11,10 +13,13 @@ UAC: `sales-targets-opportunities-26sep-acceptance-criteria.md` alongside (the c
 journey J1 to J12 lives there and is not repeated here).
 Mockup: `mockups/sales-targets.html` (Targets screen at 1280 and 375, the Set target modal with
 scope, validity and commission tiers, the portal opportunity form at 375, the Recipients tab, and
-the WhatsApp message two recipients receive).
+the WhatsApp message two recipients receive; round 3 adds the Sales group with Sales Agents, the
+header Set target CTA, the Teams tab and the Sales Teams page, each at 1280 and 375).
 Grill: section 8 of this file. Each of G1 to G10 now carries a dated **Owner ruling 26 Sep** line
 that replaces round 1's recommendation; the question and its options are kept. Round 2 questions
-(at most five, each with a recommendation) are in section 9 and on the PR.
+(at most five, each with a recommendation) are in section 9 and on the PR. The owner's Lavish
+review (L1 to L4) is in section 8 as "Owner ruling 26 Sep (Lavish)" lines; round 3 questions T1
+to T5 are in section 10 and on the PR.
 
 ## 1. In plain words (for the owner)
 
@@ -57,6 +62,11 @@ Three ideas, and how they fit together.
   higher rate above target) are common in industry ([QuotaPath][quotapath]). Ruling G6 asks for
   the full set: tiers, a higher rate above target, commission on quantity targets, and one-off
   bonuses, all set per target.
+- **A sales team** (Owner ruling 26 Sep (Lavish), L2) is a named group of sales agents, for
+  example "North" with Ali and Mei. A team can hold its own targets, set in the same modal, and
+  its achievement is the sum of its agents' orders counted by that target's own rules. Odoo also
+  keeps a target on the sales team itself (the team's invoicing target mentioned above), typed on
+  the team and not derived from its members' targets; this plan does the same (round 3 T3).
 
 Research note: odoo.com and Salesforce help pages were blocked by the network proxy during
 research; the Odoo facts above were read from the official Odoo 18.0 documentation source and the
@@ -169,6 +179,31 @@ run by the 10 s heartbeat (`app/scheduler/task_scheduler.py:598-614`) against ha
 `_next_run_for_daily` (`app/services/automation_service.py:50`) computing the next local run.
 The per-contact broadcast copies this shape.
 
+**The existing teams tables (round 3, L4).** `teams` (`app/models/access.py:518-552`) is a
+company-scoped team **of CRM users** "for round-robin assignment" (:525), with a `parent_team_id`
+hierarchy (:538-542) that carries access: "a member of a parent team can see + act on the work of
+all descendant teams" (:532-537), computed by `descendant_team_ids`
+(`app/services/user_service.py:2793`) and used for SLA and coverage scope
+(`sla_service.py:1392-1404`, `coverage_subscription_service.py:85-98`). `team_members`
+(:555-586) links `team_id` to `user_id` FK `users.id` (:561), with round-robin `sort_order` and
+`include_in_round_robin` (:562-569) and market segments (:576-580). `agent_teams` (:589-648)
+binds AI access agents to a team per team-set code and tier with an SLA policy, and
+`agent_team_round_robin_cursors` (:651-667) rotates assignees. Procurement emails a team's members
+through `AgentTeam` (`procurement_service.py:4888-4898`). Admin: Users & Access > People > Teams
+(`config/menu.config.tsx:690-693`), routes `app/api/v1/user_management/teams.py` (CRUD :15-78,
+members :95-166), slugs `user_management.teams.*` (`permission_registry.py:37`), module `base`.
+Sales agents are not users (`sales_agent.py:1-17`), so none of these tables can hold one today.
+
+**The sidebar (round 3, L1, L3).** `MENU_SIDEBAR` already has a `SALES` heading
+(`config/menu.config.tsx:78`) holding Project Sales (:80, `moduleKey: 'projects'`), Delivery
+Orders and Marketing. Sales Agents sits under Users & Access > People (:694-698, permission
+`master_data.sales_agents.view`) and again in `MENU_SIDEBAR_COMPACT` (:1561-1565). Its route is
+owned by module `product` (`lib/route-module-map.ts:14`, `/master-data-management`; backend
+`permission_module_map.py:23` maps `master_data` to `product`). The sidebar filter hides an item
+whose own `moduleKey` is off and recurses into children, dropping a group only when every child
+is gone (`app/components/layouts/demo1/components/sidebar-menu.tsx:78-86`), so children of one
+group may carry different module keys (precedent: `scm` children under `procurement`, :301-331).
+
 **Nothing to collide with.** No table named target, quota, commission, incentive, opportunity or
 broadcast exists. `projects.leads` is the project (tender) pipeline owned by users (section 5).
 
@@ -193,9 +228,10 @@ edits are exactly what people dispute):
 | `id`, `company_id` | | |
 | `target_no` | varchar(20), unique per company | `TGT-000123`, the human id (no UUID in the UI); numbering rule seeded like `seed_lead_numbering_rule` (`project_seed_service.py:644`) |
 | `name` | varchar(120) not null | "Ali FY26 H2 basins" |
-| `subject_kind` | varchar(16) not null | check `agent` or `dealer` |
+| `subject_kind` | varchar(16) not null | check `agent` or `dealer`; S6 widens the check to `agent`, `dealer` or `team` (Owner ruling 26 Sep (Lavish), L2) |
 | `sales_agent_id` | uuid FK `sales_agents` ON DELETE CASCADE, null | required when `agent` (check) |
 | `customer_id` | uuid FK `customers` ON DELETE CASCADE, null | required when `dealer` (check) |
+| `sales_team_id` | uuid FK `sales_teams` ON DELETE CASCADE, null | **added in S6**; required when `team`; the check becomes "exactly the one subject column that matches `subject_kind` is set" (3.8) |
 | `metric` | varchar(16) not null | check `amount` or `quantity` (G4) |
 | `basis` | varchar(16) not null default `ordered` | check `ordered` or `delivered` (G1) |
 | `product_scope` | varchar(16) not null default `all` | check `all`, `categories`, `products` (G4) |
@@ -268,7 +304,11 @@ later AutoCount edits (then snapshot at period close only). S1 adds `ix_sales_or
 - Attribution (G2): `agent` matches `sales_orders.sales_agent_id` against the target's agent (see
   round 2 R2 on whether a person's other agent codes also count); `dealer` matches
   `sales_orders.customer_id`, whoever the agent. `demand_class` is never filtered, so an agent's
-  project orders count (G10).
+  project orders count (G10). `team` (S6, Owner ruling 26 Sep (Lavish), L2) matches
+  `sales_orders.sales_agent_id` against the team's current members (a third CTE over
+  `sales_team_members`), each member widened by R2 exactly as an agent target is; an order has one
+  agent and an agent has one team (T2), so a team figure never counts an order twice and always
+  equals the sum of the same target evaluated per member.
 - Scope: `all` passes; `categories` requires the product's category in the expanded set;
   `products` requires the product in the scope rows.
 - Value by metric and basis:
@@ -312,6 +352,10 @@ Unique `(target_id, from_pct)`. Computed per period, never stored, in
   round 1 "incentive at 100%" is the tier `from_pct = 100, rate = <same as below>, bonus = 500`.
 - Money is rounded half up to 2 dp once per period, after summing tiers.
 - `none` returns null commission (a target with no tiers).
+- Team targets (S6 then S4, round 3 T4): tiers on a team target compute one team figure per
+  period, shown as "Team pool" on the team row. It is never split to agents or added to an
+  agent's commission; who is paid from it is the owner's decision outside the CRM. **Trigger for
+  a split rule:** the owner asks the CRM to divide a team pool among members.
 
 The tiers table is justified by the ruling itself (tiers, higher rate above target, quantity
 commission, all configurable). No shared "commission plan" reused across targets: each target
@@ -407,6 +451,7 @@ flagged in the count, never guessed at 50 (the engine's own rule, `status.py:105
 | `follows_kind` | varchar(16) not null | `agent`, `dealer` or `team` (check) |
 | `sales_agent_id` | uuid FK null | required when `agent` |
 | `customer_id` | uuid FK null | required when `dealer` |
+| `sales_team_id` | uuid FK `sales_teams` ON DELETE CASCADE, null | only with `team` (Owner ruling 26 Sep (Lavish), L2): set = that team; null = every agent, the round 2 meaning of `team` |
 | `frequency` | varchar(16) not null default `weekly` | `daily`, `weekly`, `monthly` (G7) |
 | `weekday` | smallint null | 0 Monday to 6 Sunday, required when weekly; default 0 |
 | `day_of_month` | smallint null | 1 to 28, or 0 for "last day", required when monthly |
@@ -419,8 +464,8 @@ flagged in the count, never guessed at 50 (the engine's own rule, `status.py:105
 | `next_run_at`, `last_sent_at` | timestamp null | runner bookkeeping |
 | `created_at`, `updated_at` | | |
 
-Unique `(contact_id, follows_kind, coalesce(sales_agent_id, nil), coalesce(customer_id, nil))`,
-the coalesce pattern of `uq_sales_agents_company_sales_agent` (`sales_agent.py:128-133`).
+Unique `(contact_id, follows_kind, coalesce(sales_agent_id, nil), coalesce(customer_id, nil),
+coalesce(sales_team_id, nil))` (the last term added by round 3), the coalesce pattern of `uq_sales_agents_company_sales_agent` (`sales_agent.py:128-133`).
 
 Why a table and not columns on `respond_contacts`: a contact may follow more than one thing (the
 owner follows the team and one key dealer), each with its own schedule, and the rows belong to an
@@ -437,7 +482,9 @@ uninstallable module. This is the second-case rule in `PRINCIPLES.md`, not specu
   each target the recipient follows that is active in the current month, the period target,
   achieved, %, gap and days left in the period; commission earned only when `show_commission`;
   pipeline only when `show_pipeline`; a `team` recipient gets team totals plus one line per agent.
-  A recipient never receives another subject's figures unless it follows `team`.
+  A recipient never receives another subject's figures unless it follows `team`. With a
+  `sales_team_id` (round 3, L2) the team recipient gets that team's own targets plus one line per
+  member agent, and never another team's lines.
 - **Send.** `send_text_or_template(db, identifier=contact.respond_io_id, text=...,
   use_case="sales_target_progress", context_vars={...}, respond_contact_id=contact.id)`; new use
   case in `TEMPLATE_DEFAULT_USE_CASES`; the owner gets the template approved by Meta (ops gate in
@@ -468,6 +515,80 @@ uninstallable module. This is the second-case rule in `PRINCIPLES.md`, not specu
   `salesOpportunityService.ts`, `salesRecipientService.ts`; hooks on the shared factories.
 - List-query adapter `sales_opportunities`. The Targets grid is one row per target period in the
   chosen month (tens of rows), served unpaged.
+- **Sales Agents moves into the Sales group (S1, Owner ruling 26 Sep (Lavish), L1).** The Sales
+  group sits under the existing `SALES` heading (`menu.config.tsx:78`) and carries **no
+  group-level `moduleKey`**; each child carries its own: Targets and Opportunities `'sales'`,
+  Sales Teams `'sales'` (S6), Sales Agents `'product'` (the module that owns its route,
+  `route-module-map.ts:14`). The filter at `sidebar-menu.tsx:78-86` then keeps Sales Agents
+  visible when `sales` is off. Sales Agents keeps its path and permission, and is removed from
+  Users & Access > People (`menu.config.tsx:694-698`) and from `MENU_SIDEBAR_COMPACT`
+  (:1561-1565) so it appears once. No route, page or permission changes. Order in the group:
+  Targets, Opportunities, Sales Teams, Sales Agents.
+- **Set target CTA (S1, Owner ruling 26 Sep (Lavish), L3).** The Targets page uses the shared
+  `PageHeader` with one primary action, **Set target**, at the top right on every tab and at 375,
+  shown to `sales.targets.add`. The month picker moves out of the header into the toolbar under
+  the tabs, so the CTA stands alone. From the header the modal opens with "Target for" (Agent,
+  Team from S6, Dealer) preset to the open tab's kind (Agent on Recipients) and an empty
+  searchable subject select; from a "No target" row it opens with that subject filled in and
+  read-only, as round 2 drew it. The Recipients tab keeps Add recipient and Add suggested in its
+  own toolbar.
+
+### 3.8 Sales teams and team targets (Owner ruling 26 Sep (Lavish), L2 and L4, slice S6)
+
+Two new tables in the `sales` module, both `CompanyScopedMixin`, in `public` (by the uninstall
+test they are business records of the module; they drop with it and nothing core points at them).
+
+`sales_teams`:
+
+| column | type | note |
+| --- | --- | --- |
+| `id`, `company_id` | | |
+| `name` | varchar(120) not null | unique per company, case-insensitive (`uq_sales_teams_company_lower_name`) |
+| `is_active` | bool not null default true | inactive: no "No target" row, not offered for new targets; existing targets still show |
+| `created_at`, `updated_at` | | |
+
+`sales_team_members`, `__audit_track__ = True` (a move changes team figures, so moves are exactly
+what people will ask about):
+
+| column | type | note |
+| --- | --- | --- |
+| `id`, `company_id` | | |
+| `sales_team_id` | uuid FK `sales_teams` ON DELETE CASCADE, not null | |
+| `sales_agent_id` | uuid FK `sales_agents` ON DELETE CASCADE, not null | |
+| `created_at` | | |
+
+Unique `(company_id, sales_agent_id)`: one team per agent per company (round 3 T2). The company
+term is there because `sales_agents` rows may be shared across companies (`company_id` NULL,
+`sales_agent.py:73`); a shared agent can sit in one team per company.
+
+**Why a member table and not a `sales_team_id` column on `sales_agents`.** One team per agent
+would normally be a column ("one preference does not need a table"). But `sales_agents` is the
+master data of module `product`, and `sales` is an installable module (header): a core table with
+an FK into a module table fails the uninstall test in `PRINCIPLES.md` "Modular architecture".
+The unique index gives the same one-team rule. **Why not the existing `teams`:** section 2 and
+round 3 T1; in short its members are users, its hierarchy grants access, and its rows feed
+round-robin, SLA and escalation pickers.
+
+No hierarchy (no parent team), no team leader, no dated membership. **Triggers:** a parent team
+when the owner asks for a region above teams; a leader column when a message or screen needs to
+name one; dated membership (`valid_from`, `valid_to`) when the owner moves agents between teams
+mid-year and wants past periods to stay with the old team (T2).
+
+**Team targets** reuse `sales_targets` with `subject_kind = 'team'` and `sales_team_id` (3.1), so
+periods, scope, basis, metric, duplicate, tiers (S4) and recipients (S5) all work unchanged.
+Achievement: 3.2. A team target is typed on its own, never derived from or split into agent
+targets (T3). **Trigger for a "sum of agents' targets" check column:** the owner finds team and
+agent targets drifting apart and asks to see both side by side.
+
+**Service and routes (S6).** `app/services/sales/team_service.py`: create, rename, activate,
+set members (moving an agent out of their old team in the same transaction, returning who moved
+from where), delete. Routes `app/api/v1/sales/teams.py`: `GET/POST /sales/teams`,
+`GET/PATCH/DELETE /sales/teams/{id}`, `PUT /sales/teams/{id}/members`. Targets list takes
+`subject=team` and `sales_team_id` (filter the Agents tab by team). Permissions
+`_crud("sales", "teams", "Sales Teams")`, grant sweep to admin and superadmin in the S6
+migration. FE: `salesTeamService.ts`, hooks on the shared factories, pages
+`app/(protected)/sales/teams/` and `[id]`, Teams tab on Targets, team option in the Set target
+modal.
 
 ## 4. Journey value order
 
@@ -476,12 +597,33 @@ salespeople logging opportunities in the portal (S2), pipeline beside the target
 (S4), the WhatsApp broadcast (S5). Each slice is one lane, one branch, one PR, so S1 ships before
 S2 is started and nothing waits on a bundle.
 
+Round 3 (Owner ruling 26 Sep (Lavish), L2) adds **S6, sales teams and team targets, built second**,
+between S1 and S2. Slice ids are kept stable so no AC is renumbered; the build order is S1, S6,
+S2, S3, S4, S5. Why not inside S1: S1's first value is "each agent against a live figure", which
+stands without teams, and S1 is already the largest lane (three tables, the achievement query,
+the modal, the detail page). Teams add two tables, a CRUD page and a third subject kind; folded
+in, they would delay the first screen the owner can use. Why straight after S1 and before
+opportunities: it extends the S1 code while it is fresh, and the owner asked for it on the first
+screen they reviewed. Round 3 T5 asks the owner to confirm. The Lavish points L1 (menu) and L3
+(CTA) are a few lines each and ride in S1.
+
 ## 5. Considered and not chosen
 
 - **Reuse `projects.leads` for opportunities.** Project leads belong to the Project Sales module
   (`projects` schema), are owned by a user (`owner_user_id`), and lead to project quotations.
   Dealer opportunities are owned by a sales agent who has no login. Kept apart; only the stage
   **table** is shared, which is what G5 asked for.
+- **Reuse the existing `teams` table for sales teams** (round 3, L4, T1). Its members are CRM
+  users (`team_members.user_id` FK `users.id`, `access.py:561`) and sales agents are not users;
+  its `parent_team_id` tree grants visibility and action over descendant teams' work
+  (`access.py:532-537`, `descendant_team_ids` in SLA and coverage scope); and its rows are what
+  round-robin, SLA tiers and escalation routing pick from (`agent_teams`, `access.py:589-648`;
+  `procurement_service.py:4888-4898`). Reusing it needs a second, agent-typed member table anyway,
+  and every sales team would then show in the Teams admin page and in Team Assignments and SLA
+  pickers, where choosing one routes work to a team nobody can log in to. It is also a `base`
+  table, while sales teams must drop with the `sales` module. Not chosen.
+- **A `sales_team_id` column on `sales_agents`.** See 3.8: a core table pointing into a module.
+- **Teams inside S1.** See section 4 and T5.
 - **Fixed stage constant.** Round 1's recommendation; ruled out by G5.
 - **A shared commission plan table.** See 3.3 and its trigger.
 - **Stored achievement.** See 3.1 and its trigger.
@@ -498,9 +640,18 @@ S2 is started and nothing waits on a bundle.
 Every slice is its own lane (one branch, one PR), in this order, and runs Phase 1 (FE against a
 mock service, all states tuned, browser checked) then Phase 2 (tester writes the UAC tests red,
 the one coder makes them green, mock swapped at the service boundary) then Phase 3 once. Track:
-full for all five (each has a migration or a new external surface).
+full for all six (each has a migration or a new external surface).
 
-### S1. Flexible targets with live achievement in the CRM (UAC S1-1 to S1-16)
+**Build order after round 3: S1, S6, S2, S3, S4, S5** (section 4). The sections below keep their
+round 2 order; S6 is written after S5 so no id moves.
+
+### S1. Flexible targets with live achievement in the CRM (UAC S1-1 to S1-18)
+
+Round 3 adds to this lane (Owner ruling 26 Sep (Lavish), L1 and L3), no backend change: the Sales
+group with Sales Agents moved into it, per-child `moduleKey` (3.7, S1-17); the header **Set
+target** CTA, the month picker moved to the toolbar, and the modal's "Target for" subject select
+when opened from the header (3.7, S1-18). The S1 migration's `subject_kind` check stays `agent`
+or `dealer`; S6 widens it.
 
 - Backend seam: migration (`sales_targets`, `sales_target_periods`, `sales_target_scope`,
   `ix_sales_orders_order_date`, `TGT` numbering rule, grant sweep); models
@@ -544,6 +695,7 @@ full for all five (each has a migration or a new external surface).
   month.
 - Tests: weighted golden set with configured probabilities; terminal stages excluded; a null
   probability counts 0 and is flagged; no opportunity ever in achievement.
+- Round 3 (L2, S3-5): team rows carry the sum of their current members' pipeline.
 - DoD: as S1.
 
 ### S4. Commission tiers (UAC S4-1 to S4-9)
@@ -555,6 +707,8 @@ full for all five (each has a migration or a new external surface).
   column with a breakdown popover.
 - Tests: golden numbers for flat, marginal, retroactive, quantity RM per unit, bonuses at 100%,
   the 99.99% boundary, rounding; vitest for the tier editor.
+- Round 3 (L2, T4, S4-10): tiers on a team target give a "Team pool" figure on the team row,
+  never split to agents.
 - DoD: the owner checks one agent's period against their own spreadsheet.
 
 ### S5. Per-contact WhatsApp broadcast (UAC S5-1 to S5-13)
@@ -567,9 +721,32 @@ full for all five (each has a migration or a new external surface).
 - Tests: next-run golden table (weekly across a week boundary, monthly last day, timezone), content
   flags (commission hidden, pipeline hidden, breakdown), a dealer never sees another dealer, skip
   rules, log on success and failure, idempotency, permission; agent-browser run.
+- Round 3 (L2, S5-14): `sales_team_id` on recipients; a team recipient follows one team or all
+  agents.
 - DoD: the Meta-approved template is mapped on prod before any recipient is enabled; the owner
   enables their own row after one Send now looks right; security-reviewer (outbound business
   figures to external contacts).
+
+### S6. Sales teams and team targets, built second (UAC S6-1 to S6-11)
+
+Owner ruling 26 Sep (Lavish), L2 and L4; written to round 3 T1 to T5.
+
+- Backend seam: migration (`sales_teams`, `sales_team_members`, `sales_targets.sales_team_id`,
+  the `subject_kind` check widened to `team` and the subject check rewritten, grant sweep for
+  `sales.teams.*`); models in `app/models/sales_target.py`; `team_service`; the team CTE in
+  `achievement_service`; `subject=team` and `sales_team_id` on the targets list; team routes.
+- Frontend seam: Sales > Sales Teams (DataGrid, team modal with a searchable agent multi-select
+  labelled with current team, team detail with Members and Targets sections, empty states,
+  `RecordNavigation`, deferred delete); Targets page Teams tab and Agents tab Team filter; "Team"
+  in the modal's Target for.
+- Tests: team golden set (sum of members, non-member excluded, quantity delivered with category
+  scope), equality with the per-agent sum, a move changes past periods (current membership), one
+  team per agent per company, name uniqueness, inactive team rules, delete cascade leaves agents,
+  403 per route, company scope; vitest for the team modal and the subject switch; agent-browser
+  run.
+- DoD: on the dev DB (prod copy), a team of two real agents shows the sum of their S1 rows for
+  September; 375 and 1280. security-reviewer joins, because the diff adds RBAC slugs and
+  company-scoped tables (CLAUDE.md "Development methodology" names both).
 
 ## 7. Risks
 
@@ -584,6 +761,11 @@ full for all five (each has a migration or a new external surface).
   is skipped; S5 DoD gate.
 - **Agent contact coverage.** Portal logging and agent broadcasts need `sales_agents.contact_id`;
   measure the count on prod before S2 and list the gaps for the owner.
+- **Team figures move with the agent** (round 3 T2). With current membership, moving an agent
+  rewrites the team's past periods too. The audit trail on `sales_team_members` shows when; dated
+  membership is the named trigger in 3.8.
+- **Two things called "Teams".** Users & Access > Teams (CRM users) and Sales > Sales Teams (sales
+  agents). The label "Sales Teams" and the separate menu group keep them apart; the guide says so.
 
 ## 8. Grill questions and the owner's rulings
 
@@ -637,6 +819,29 @@ ruling, quoted from the PR #1260 comment of 26 Sep 2026 05:25Z.
   opened to dealer salesperson first". Built as no `demand_class` filter on agent attribution
   (3.2); the portal kind is granted to dealer-channel salespeople first (3.5).
 
+### Owner's Lavish review of the mockup (PR #1260 comment, 26 Sep 2026 05:35Z)
+
+Verbatim and binding. Written after round 2 (commit 2f5ece4f), folded in by round 3.
+
+- **L1. On the Sales Agents nav item.**
+  **Owner ruling 26 Sep (Lavish):** "put sales agents under sales also". Built as Sales Agents
+  moving into the Sales group, with its own `moduleKey`, path and permission unchanged (3.7,
+  S1-17), in S1.
+- **L2. On "Team target RM 540,000".**
+  **Owner ruling 26 Sep (Lavish):** "need to be able to set multiple sales teams and put the sales
+  agents under the team and be able to set team target". Built as `sales_teams`,
+  `sales_team_members` and `subject_kind = 'team'` on `sales_targets`; team achievement is the sum
+  of its agents' orders under the target's own metric, basis and scope (3.2, 3.8, S6-1 to S6-11),
+  in its own slice S6, built second.
+- **L3. On "3. SET TARGET MODAL".**
+  **Owner ruling 26 Sep (Lavish):** "there should be a CTA Set Target at the top right". Built as
+  the one primary action in the Targets page header, every tab, 1280 and 375, opening the modal
+  with a subject select (3.7, S1-18), in S1.
+- **L4. On "Team target RM 540,000".**
+  **Owner ruling 26 Sep (Lavish):** "not sure if we should reuse our teams table in our system".
+  Answered as round 3 question T1 (section 10): recommend a new `sales_teams` table, reasons in
+  section 2 and section 5.
+
 ## 9. Round 2 questions (posted on PR #1260)
 
 - **R1. Who is a "dealer salesperson"?** Recommend: Sorento's own sales agents who sell to dealers
@@ -655,9 +860,34 @@ ruling, quoted from the PR #1260 comment of 26 Sep 2026 05:25Z.
 - **R5. Tier method default.** Recommend: `marginal` (the higher rate applies only to the part
   above each threshold), with `retroactive` selectable per target.
 
-## 10. Out of scope
+None of the Lavish points changes R1 to R5; they stand as written. R2 (person label) also widens
+each member agent of a team target (3.2).
+
+## 10. Round 3 questions (posted on PR #1260)
+
+- **T1. Reuse the existing `teams` table, or a new sales team table?** (Owner's L4.) Recommend: a
+  new `sales_teams` with `sales_team_members`. `teams` holds CRM users
+  (`team_members.user_id`, `access.py:561`) and sales agents are not users; its parent tree grants
+  access to descendant teams' work (`access.py:532-537`); its rows feed round-robin, SLA and
+  escalation routing (`agent_teams`, `access.py:589-648`), so a sales team would show in those
+  pickers; and it is a `base` table while sales teams belong to the installable `sales` module.
+  Cost of the new table: two small tables and one page.
+- **T2. How agents sit in teams.** Recommend: one team per agent (per company), and a team's
+  figures follow its current members, so moving an agent also moves their past orders to the new
+  team. Dated membership is added when a mid-year move needs history kept with the old team.
+- **T3. Team target vs the agents' targets.** Recommend: typed on its own, like Odoo's team
+  target, never split into or summed from the agents' targets; team achievement is always the sum
+  of the agents' orders.
+- **T4. Commission on a team target.** Recommend: tiers work as on an agent target and give one
+  "Team pool" figure per period on the team row; the CRM does not split it among agents.
+- **T5. When teams ship.** Recommend: their own lane S6, built right after S1 and before
+  opportunities, so S1 (each agent against a live figure) is not delayed; the Sales menu move and
+  the Set target button ride in S1.
+
+## 11. Out of scope
 
 A leaderboard, a kanban board for opportunities, opportunities over WhatsApp chat, a portal "My
 targets" page, stored snapshots, a shared commission plan table, a dimension engine, and the #1168
-stock asks log. Each has its trigger named above; deferred items go to
-`documentation/backlogs/backlog.md` once round 2 is answered.
+stock asks log. Round 3 adds: a team hierarchy, a team leader, dated team membership, splitting a
+team pool among agents, and a "sum of agents' targets" check column. Each has its trigger named
+above; deferred items go to `documentation/backlogs/backlog.md` once round 3 is answered.
