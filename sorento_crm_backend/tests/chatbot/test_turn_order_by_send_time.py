@@ -518,7 +518,6 @@ class TestOrderingOnTheWaitingRequest:
                 _stock_envelope(contact_id), session_factory=session_factory
             )
 
-        _seed_previous_turn(session_factory, contact_id, days_ago=1)
         self._ordering_on(monkeypatch, contact_id=contact_id, while_waiting=_stock_holds_the_slot)
 
         waiting = engine_mod.run_turn(self._photo_as_text(contact_id), session_factory=session_factory)
