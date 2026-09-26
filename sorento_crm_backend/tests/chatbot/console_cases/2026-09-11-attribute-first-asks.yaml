@@ -318,3 +318,23 @@ cases:
         expect:
           reply_contains: ["I don't know 't trap' as a trap. I know P trap and S trap."]
           reply_not_contains: ["s_trap", "Here are the matching products"]
+
+  # Reviewer pass at d6fa2b31 (round 5, B1): a plain product word before a head word is
+  # searched, never said back as an unknown value.
+  - name: round 5 B1 deck mounted bath mixer is searched
+    text: "any deck mounted bath mixer"
+    cold: true
+    expect:
+      reply_not_contains: ["I don't know 'deck mounted'"]
+
+  - name: round 5 B1 long spout basin tap is counted
+    text: "which long spout basin tap has stock"
+    cold: true
+    expect:
+      reply_not_contains: ["I don't know 'long spout'"]
+
+  - name: round 5 B1 grease trap is searched
+    text: "any grease trap"
+    cold: true
+    expect:
+      reply_not_contains: ["I don't know 'grease trap'"]

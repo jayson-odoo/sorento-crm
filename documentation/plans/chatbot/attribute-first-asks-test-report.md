@@ -233,6 +233,42 @@ worker error in that run did not reproduce on a rerun of `tests/chatbot`). Brand
 passed. `tests/test_cs_pinpoint_routing.py::test_resolver_valid_pin_returns_assignee` fails
 identically on 1683cb2f1, outside this lane. Live parser: not run (no parser key on this VM).
 
+## Round 5: reviewer pass at d6fa2b31 (26 Sep 2026), B1, S1 to S3, N1 to N4
+
+New tests: `tests/chatbot/test_attribute_asks_round5.py` (17), two Brands vitest cases in
+`BrandFormDialog.chatbotWeight.test.tsx` and one in `[id]/page.chatbotWeight.test.tsx`, one MCP
+presenter test. Red commits `a9ba79f14` (backend and MCP: 16 of 17 red on d6fa2b31e code, the one
+green is the "t trap" guard that must stay green) and `2d34a692d` (vitest: 3 red). N4 is a
+missing test for code that exists; its red is the kill test K12.
+
+Kill tests (a throwaway worktree, one mutation each): 12 of 12 RED.
+
+| Kill | Mutation | Result |
+|---|---|---|
+| K1 B1 | value-position check always true | RED, 7 |
+| K2 B1 | product-name check always false | RED, 1 |
+| K3 S1 | list values dropped from the near miss | RED, 2 |
+| K4 S1 | other total summed per value, not per product | RED, 2 |
+| K5 S2 | tag reads the helper without title case | RED, 1 |
+| K6 S3 | bcw_0001 test file loses `serial_ddl` | RED, 1 |
+| K7 N1 | list display_value not joined | RED, 1 |
+| K8 N2 | miss value always lower-cased | RED, 1 |
+| K9 N3 | dialog zod `.max(9999)` removed | RED, 1 |
+| K10 N3 | dialog input `max` removed | RED, 1 |
+| K11 N3 | record page Save not bounded | RED, 1 |
+| K12 N4 | presenter ignores `display_value` | RED, 1 |
+
+Gates (`scripts/cloud-env-setup.sh`, `SORENTO_ENV_FILE=.env.ci-tests`, CI flags `-n 4 --dist
+loadfile -m "not serial_ddl"`, `tests/ci_excluded.txt` ignores, `tests/test_migration_*.py`
+ignored): `tests/chatbot` plus brand weight route, predicate service, spec search and boost, spec
+registry, spec list, resolve predicate / spec fallback / unrecognized terms / raw text, company
+scope, spec listener, lookup resolver and the three dealer kit tag data files: 3247 passed, 214
+skipped, 33 xfailed, 0 failed. Serially (`-p no:xdist`): migrations bcw_0001, bcd_0001 and 511,
+19 passed; `-m serial_ddl` over the two brand migration files, 10 passed. Brands vitest 30 passed.
+MCP `tests/test_presenters.py` 117 passed. py3.12 compile on the touched .py files ok, dash guard
+0 hits, 1 alembic head (`bcw_0001_brand_chatbot_weight`). Live parser: not run (no parser key on
+this VM); the console yaml carries three round 5 B1 cases.
+
 ## Deviations
 
 - Phase 1 skipped by design: no UI surface. The lavish review page stands in for the mock.

@@ -1,6 +1,6 @@
 # PLAN: attribute-first asks, "which products have X", across every product and domain
 
-Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged, revive repairs R35 to R38 and owner ruling R39 (no paging) built, reviewer pass fix round done; owner hand test round 2 (W1 to W6: brand binding, plain-words header, readable rows, paging keeps the set, chatbot default brand, water basin) built tester first; owner hand test of round 2 (round 3, W1 to W6: vertical rows, a count after a page continues, a new class word starts a new set, no "(default)", brand scope proven) built red first; owner console test of round 3 (round 4, R1 to R7: brand weights, line-by-line header, two-line rows, a miss says what it searched, the clarify answer reruns the ask, unknown values said back, plain words) built red first; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
+Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged, revive repairs R35 to R38 and owner ruling R39 (no paging) built, reviewer pass fix round done; owner hand test round 2 (W1 to W6: brand binding, plain-words header, readable rows, paging keeps the set, chatbot default brand, water basin) built tester first; owner hand test of round 2 (round 3, W1 to W6: vertical rows, a count after a page continues, a new class word starts a new set, no "(default)", brand scope proven) built red first; owner console test of round 3 (round 4, R1 to R7: brand weights, line-by-line header, two-line rows, a miss says what it searched, the clarify answer reruns the ask, unknown values said back, plain words) built red first; reviewer pass at d6fa2b31 (round 5: B1 R6 fires only on a value-position word, S1 list values in the near miss, S2 one display helper, S3 serial_ddl, N1 to N4) fixed red first; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
 Test report: `attribute-first-asks-test-report.md`.
 UAC: `attribute-first-asks-acceptance-criteria.md`.
 Supersedes: `documentation/plans/_archive/chatbot/PLAN-spec-backward-search.md` (its backend half
@@ -467,6 +467,30 @@ reading of each turn is inferred from the reply the owner saw; the fixture says 
   found one more leak and it is fixed: the miss copy printed the domain key ("But no
   master_products matched these"), now "master products". Every reply in the round 4 tests
   is scanned for snake_case.
+
+## Reviewer pass at d6fa2b31, 26 Sep 2026 (round 5, B1, S1 to S3, N1 to N4)
+
+- B1 (AC-1376 amended): `unknown_spec_values` now needs two more things before it says a
+  value back. The modifier sits in a VALUE position (`_in_value_position`): a single letter
+  where the key's own modifiers before that head word are single letters ("t" beside "p" and
+  "s" before "trap"), or a one-edit slip of a known modifier of three letters or more ("wll"
+  for "wall"). And no active product carries the phrase in its name or description
+  (`_names_a_product`, one indexed LIKE per candidate, only reached after the shape check).
+  "deck mounted", "long spout", "ceiling mounted", "ceiling mount", "grease trap" and "click
+  clack waste" are searched again. The short circuit stays for a phrase that passes both: the
+  owner's exchange 8 answers only the known values.
+- S1 (AC-1374 amended): `_near_miss` expands a LIST value with `jsonb_array_elements_text`
+  (a scalar string is a list of one), groups by each element, and counts `other_total` as
+  distinct product families, so a dual-finish product is listed under both finishes and
+  counted once.
+- S2: `tag_data_service._spec_display_value` is `display_spec_value(..., title_case=True)`;
+  its own copy and acronym list are gone.
+- S3: both brand migration test files carry `pytestmark = pytest.mark.serial_ddl`.
+- N1: a list value's `display_value` is its values through `display_spec_value`, joined " / ".
+- N2: `near_miss_sentence` lower-cases the value only when it is not all capitals ("No PVC").
+- N3: chatbot weight is bounded 0 to 9999 on the dialog (zod `.max(9999)`, input `min`/`max`,
+  `noValidate` so the zod message shows) and on the record page (input `max`, Save disabled).
+- N4: MCP presenter test for `display_value`.
 
 ## Definition of done
 

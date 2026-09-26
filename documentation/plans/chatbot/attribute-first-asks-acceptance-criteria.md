@@ -442,7 +442,9 @@ fallback on; parser and MCP stubbed), which also replays the owner's eight excha
   offer: "No gunmetal wash basins with incoming stock (I looked for Finish or colour: Gunmetal
   among wash basins). 1 wash basin has incoming stock in another finish or colour: White 1.
   Would you like me to escalate to purchasing team?"; with none in any value, "No bathtubs have
-  a certificate in any finish or colour."
+  a certificate in any finish or colour." AMENDED 26 Sep 2026 (reviewer pass at d6fa2b31, S1): a
+  product carrying two values (a dual finish) is listed under each and counted once in the total;
+  an acronym value keeps its capitals ("No PVC wash basins", N2).
 - AC-1375 (R5, owner ruling 27 Sep 2026) The answer to "I don't know 'water tap basin' as a
   product type. Did you mean tap or wash basin?" that is one of the options re-runs the original
   ask with that word: "tap" answers "2 taps have stock." with the list, never a code search. A
@@ -451,7 +453,12 @@ fallback on; parser and MCP stubbed), which also replays the owner's eight excha
   back with the values it does, on a product ask and a set ask alike: "I don't know 't trap' as a
   trap. I know P trap and S trap." Nothing is listed; answering "p trap" re-runs the ask (AC-1375).
   Found from the registry's own synonyms (a key's head word), no word list in code; "water closet
-  p trap", "water closet trap 250mm" and "floor waste wc" are not unknown.
+  p trap", "water closet trap 250mm" and "floor waste wc" are not unknown. AMENDED 26 Sep 2026
+  (reviewer pass at d6fa2b31, B1): the word must sit in a value position (a single letter beside
+  single-letter values, or a one-edit slip of a known value word) and the phrase must be no
+  product's name or description; a plain product word before a head word ("deck mounted bath
+  mixer", "long spout basin tap", "ceiling mounted shower", "rain shower ceiling mount", "grease
+  trap", "click clack waste") is searched, never said back.
 - AC-1377 (R7, owner ruling 27 Sep 2026) Every value a reply shows is plain words: the registry's
   `value_labels`, else the stored slug in sentence case ("cold_only" -> "Cold only", "s_trap" ->
   "S trap", "pp" -> "PP"). Every enum value in the registry seed reads without "_". The product
