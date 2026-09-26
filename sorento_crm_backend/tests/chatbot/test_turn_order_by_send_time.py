@@ -954,13 +954,30 @@ class TestReviewRound2:
         assert facts.get("earlier_left_for_own_turns") == 0, facts
 
 
-def _arrived_an_hour_ago(session_factory, turn_id: str) -> None:
-    """The queued row reached `/chat/turn` before n8n's media call recorded the photo, so
-    it is not a turn that ran after the photo was first seen."""
-    db = session_factory()
-    row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).one()
-    row.started_at = row.started_at - timedelta(hours=1)
-    db.commit()
+def _queue_behind_this_turn(monkeypatch, session_factory, contact_id: int, **row) -> dict[str, str]:
+    """Review round 3, N1: the queued text reaches `/chat/turn` AFTER this turn's request,
+    as the per-contact FIFO ticket requires of any row still waiting behind it. So it is
+    inserted once this turn's own row exists (as the pre-step starts), never
+    backdated before it. Returns a holder the row's id lands in."""
+    real = engine_mod._answer_earlier_messages
+    holder: dict[str, str] = {}
+
+    def _then_answer(*args, **kwargs):
+        if "id" not in holder:
+            holder["id"] = _queued_row(session_factory, contact_id, **row)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(engine_mod, "_answer_earlier_messages", _then_answer)
+    return holder
+
+
+def _raise_on_wait(monkeypatch) -> None:
+    from app.services.chatbot import media_intake as media_intake_mod
+
+    def _raises(*args, **kwargs):
+        raise RuntimeError("database went away mid-poll")
+
+    monkeypatch.setattr(media_intake_mod, "await_existing_job", _raises)
 
 
 class TestReviewRound3:
@@ -970,8 +987,6 @@ class TestReviewRound3:
         """S1 (probe P2): the wait on the photo's job reads the DB on every poll, so a DB
         blip raises there. That is the photo not read: it is left, while the earlier text
         already answered keeps its reply and this turn still answers."""
-        from app.services.chatbot import media_intake as media_intake_mod
-
         contact_id = _fresh_contact_id()
         _seed_contact(session_factory, contact_id, focus_codes=[])
         _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
@@ -980,16 +995,16 @@ class TestReviewRound3:
         stub_access()
         calls: list[str] = []
         _install_parser(monkeypatch, calls)
-        first = _queued_row(
-            session_factory, contact_id, message_id="ZZT-before", sent_ms=PHOTO_SENT_MS - 1000, text_="hello"
-        )
-        _arrived_an_hour_ago(session_factory, first)
         _n8n_media_intake(session_factory, contact_id, monkeypatch)
-
-        def _raises(*args, **kwargs):
-            raise RuntimeError("database went away mid-poll")
-
-        monkeypatch.setattr(media_intake_mod, "await_existing_job", _raises)
+        first = _queue_behind_this_turn(
+            monkeypatch,
+            session_factory,
+            contact_id,
+            message_id="ZZT-before",
+            sent_ms=PHOTO_SENT_MS - 1000,
+            text_="hello",
+        )
+        _raise_on_wait(monkeypatch)
 
         result = engine_mod.run_turn(_stock_envelope(contact_id), session_factory=session_factory)
 
@@ -997,7 +1012,7 @@ class TestReviewRound3:
         texts = _texts(result.actions)
         assert engine_mod.GENERIC_ERROR_REPLY not in texts, texts
         assert len(texts) == 2, f"the earlier text's reply and Stock's: {texts}"
-        assert engine_mod._claim_own_row(session_factory, first) is False, "answered ahead"
+        assert engine_mod._claim_own_row(session_factory, first["id"]) is False, "answered ahead"
         assert _turn_for(session_factory, contact_id, PHOTO_MESSAGE_ID) is None
         assert _turn_for(session_factory, contact_id, STOCK_MESSAGE_ID).status == "done"
         facts = _received_facts(session_factory, contact_id, STOCK_MESSAGE_ID)
@@ -1005,19 +1020,25 @@ class TestReviewRound3:
         assert facts.get("earlier_left_for_own_turns") == 1, facts
         assert "photo_not_read" in str(facts.get("earlier_left_because")), facts
 
-    def _photo_then_text(self, session_factory, stub_access, monkeypatch, calls, *, worker_runs: bool):
+    def _photo_then_text(
+        self, session_factory, stub_access, monkeypatch, calls, *, worker_runs: bool, media_wait: int = 5
+    ):
         contact_id = _fresh_contact_id()
         _seed_contact(session_factory, contact_id, focus_codes=[])
         _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
-        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        _seed_settings(session_factory, media_sync_wait_seconds=media_wait)
         stub_access()
         _install_parser(monkeypatch, calls)
         _n8n_media_intake(session_factory, contact_id, monkeypatch, worker_runs=worker_runs)
-        # A text sent after the photo and before "Stock", still queued.
-        later = _queued_row(
-            session_factory, contact_id, message_id="ZZT-after-photo", sent_ms=_now_ms() + 5000, text_="hello"
+        # A text sent after the photo and before "Stock", queued behind "Stock".
+        later = _queue_behind_this_turn(
+            monkeypatch,
+            session_factory,
+            contact_id,
+            message_id="ZZT-after-photo",
+            sent_ms=_now_ms() + 5000,
+            text_="hello",
         )
-        _arrived_an_hour_ago(session_factory, later)
         stock = _base_envelope(
             contact_id,
             message_id=STOCK_MESSAGE_ID,
@@ -1026,11 +1047,26 @@ class TestReviewRound3:
         )
         return contact_id, later, stock
 
-    def test_a_photo_that_outlives_the_wait_ends_the_take(
+    def _assert_photo_left_and_text_answered_ahead(self, session_factory, contact_id, later, calls, reason):
+        assert [_message_line(c) for c in calls] == ["hello", "Stock"], (
+            "a known, earlier-sent text is never pushed behind this turn"
+        )
+        assert engine_mod._claim_own_row(session_factory, later["id"]) is False, "answered ahead"
+        assert _turn_for(session_factory, contact_id, PHOTO_MESSAGE_ID) is None, (
+            "the photo is left to its own delivery, with no row"
+        )
+        facts = _received_facts(session_factory, contact_id, STOCK_MESSAGE_ID)
+        assert facts.get("earlier_answered_ahead") == 1, facts
+        assert facts.get("earlier_left_for_own_turns") == 1, facts
+        assert reason in str(facts.get("earlier_left_because")), facts
+
+    def test_a_photo_still_being_read_is_left_and_a_later_known_text_is_still_answered_ahead(
         self, session_factory, stub_access, media_pipeline, monkeypatch
     ):
-        """S2 (probe P3): the photo is still being read, so it will run later as its own
-        turn. A text sent after it must not be answered ahead of it: the take stops there."""
+        """Round 3 S1 (probe P4): the photo outlives the wait, so it is still being read.
+        A ledger-only photo reaches `/chat/turn` after every queued row, or never, so
+        stopping at it gains the photo nothing and would put "hello" behind "Stock". It is
+        left alone and the take goes on."""
         import time as time_mod
 
         calls: list[str] = []
@@ -1043,13 +1079,39 @@ class TestReviewRound3:
 
         engine_mod.run_turn(stock, session_factory=session_factory)
 
-        assert [_message_line(c) for c in calls] == ["Stock"]
-        assert engine_mod._claim_own_row(session_factory, later) is True, "left for its own request"
-        assert _turn_for(session_factory, contact_id, PHOTO_MESSAGE_ID) is None
-        facts = _received_facts(session_factory, contact_id, STOCK_MESSAGE_ID)
-        assert facts.get("earlier_answered_ahead") == 0, facts
-        assert facts.get("earlier_left_for_own_turns") == 2, facts
-        assert "photo_not_read" in str(facts.get("earlier_left_because")), facts
+        self._assert_photo_left_and_text_answered_ahead(session_factory, contact_id, later, calls, "photo_not_read")
+
+    def test_a_raising_wait_on_a_photo_does_not_hold_back_a_later_known_text(
+        self, session_factory, stub_access, media_pipeline, monkeypatch
+    ):
+        """Round 3 S1: the same when the wait on the photo's job raises."""
+        calls: list[str] = []
+        media_pipeline.set_result(PHOTO_RESULT)
+        contact_id, later, stock = self._photo_then_text(
+            session_factory, stub_access, monkeypatch, calls, worker_runs=False
+        )
+        _raise_on_wait(monkeypatch)
+
+        engine_mod.run_turn(stock, session_factory=session_factory)
+
+        self._assert_photo_left_and_text_answered_ahead(session_factory, contact_id, later, calls, "photo_not_read")
+
+    def test_a_ledger_photo_over_the_media_budget_does_not_hold_back_a_later_known_text(
+        self, session_factory, stub_access, media_pipeline, monkeypatch
+    ):
+        """Round 3 S1, same shape in `send_order.within_bounds`: a ledger photo whose wait
+        would reach n8n's timeout is left, and the take goes on past it."""
+        calls: list[str] = []
+        media_pipeline.set_result(PHOTO_RESULT)
+        contact_id, later, stock = self._photo_then_text(
+            session_factory, stub_access, monkeypatch, calls, worker_runs=True, media_wait=90
+        )
+
+        engine_mod.run_turn(stock, session_factory=session_factory)
+
+        self._assert_photo_left_and_text_answered_ahead(
+            session_factory, contact_id, later, calls, "media_wait_budget"
+        )
 
     def test_a_failed_photo_does_not_hold_back_a_later_text(
         self, session_factory, stub_access, media_pipeline, monkeypatch
@@ -1064,9 +1126,40 @@ class TestReviewRound3:
 
         engine_mod.run_turn(stock, session_factory=session_factory)
 
-        assert [_message_line(c) for c in calls] == ["hello", "Stock"]
-        assert engine_mod._claim_own_row(session_factory, later) is False, "answered ahead"
-        assert _turn_for(session_factory, contact_id, PHOTO_MESSAGE_ID) is None
-        facts = _received_facts(session_factory, contact_id, STOCK_MESSAGE_ID)
-        assert facts.get("earlier_answered_ahead") == 1, facts
-        assert facts.get("earlier_left_for_own_turns") == 1, facts
+        self._assert_photo_left_and_text_answered_ahead(session_factory, contact_id, later, calls, "photo_not_read")
+
+
+class TestWithinBounds:
+    """Round 3 S1: only a ledger-only photo is skipped over; a queued row that does not fit
+    still ends the take, because its own request comes before this turn's successors."""
+
+    def _earlier(self, order_key: float, *, queued: bool):
+        from app.services.chatbot.send_order import Earlier
+
+        if queued:
+            return Earlier(order_key=order_key, row_id=f"row-{order_key}", carries_media=True)
+        return Earlier(order_key=order_key, message_id=f"m-{order_key}", job_id=f"j-{order_key}", carries_media=True)
+
+    def test_a_ledger_photo_over_budget_is_skipped_and_the_take_goes_on(self):
+        from app.services.chatbot.send_order import Earlier, within_bounds
+
+        photo = self._earlier(1, queued=False)
+        text_ = Earlier(order_key=2, row_id="row-text")
+        taken, left, reasons = within_bounds(
+            [photo, text_], media_wait_seconds=90, own_carries_media=False, budget_seconds=90
+        )
+        assert taken == [text_]
+        assert left == [photo]
+        assert reasons == ["media_wait_budget"]
+
+    def test_a_queued_media_row_over_budget_still_ends_the_take(self):
+        from app.services.chatbot.send_order import Earlier, within_bounds
+
+        queued_photo = self._earlier(1, queued=True)
+        text_ = Earlier(order_key=2, row_id="row-text")
+        taken, left, reasons = within_bounds(
+            [queued_photo, text_], media_wait_seconds=90, own_carries_media=False, budget_seconds=90
+        )
+        assert taken == []
+        assert left == [queued_photo, text_]
+        assert reasons == ["media_wait_budget"]
