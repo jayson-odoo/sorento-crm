@@ -627,3 +627,93 @@ PR per lane; this plan rides in the S0 PR. Every slice runs the full track and
 - Done when: each screen reached by sidebar clicks from `/`, every state (loading, empty, error,
   needs attention) seen at 375px and 1280px; Unlink is a deferred action; the view permission is
   swept onto existing roles.
+
+## 11. Risks, out of scope, named triggers
+
+### Risks
+
+- **Space derivation.** Portal rows are owned by `(contact_id, space_id)`; a user session derives
+  the space from the contact's workspace. A contact whose tokens were minted in a different space
+  would lose sight of rows under the old space. Pre-flight query 5 measures it; if any exist, S2
+  resolves the space from the contact's most recent verified token instead, and the plan is
+  corrected before S2 starts.
+- **WhatsApp template outside the 24h window.** A code to someone who has not messaged Sorento in
+  24 hours needs the approved template; a paused or rejected template stops every phone sign-in.
+  Mitigation: email + password stays available to anyone with one; S1 logs every send to
+  `integration_log` (AC-22) so a template failure is visible in the outbox the same day.
+- **Worker down means no codes** (as it already does for the portal). The system health page
+  already watches the worker; no new mechanism.
+- **A salesperson in the wrong segment gets a user.** The rule reads admin-maintained segments and
+  agents; the user has no CRM permission (AC-45), so the cost of a wrong user is a row in the list,
+  not access.
+- **Phone sign-in for admins.** A WhatsApp code is weaker than a password for `superadmin`
+  accounts (SIM swap). Q10 recommends allowing it for everyone; if the owner prefers, admin roles
+  are excluded by one check in request-code.
+- **Enumeration by timing.** request-code must do the same work for unknown numbers (enqueue
+  nothing, but answer after the same lookup); the S1 security review checks it.
+
+### Out of scope (with the trigger that would bring each in)
+
+- **SMS delivery.** Trigger: the first salesperson who must sign in and cannot receive WhatsApp,
+  or `integration_log` showing a sustained template failure rate. Then: one SMS provider behind
+  the same request-code route, chosen by the user's channel.
+- **A separate `identities` / `principals` table.** Trigger: a person who legitimately needs two
+  WhatsApp contacts (two numbers) under one user, or a login method that is not a user attribute
+  (for example a third-party identity provider with several accounts per person).
+- **Hashing session tokens at rest** (`user_sessions.token`, `portal_tokens.token` are plain
+  text today). A real gap measured in section 3.2, orthogonal to unification; logged to the backlog
+  as its own security lane.
+- **Migrating the ~150 existing actor columns** to `*_by_user_id`. #1281's per-module decision.
+- **Email sign-in by code (passwordless email).** Trigger: a user with email and no phone who
+  cannot keep a password.
+- **Self-signup.** The signup route exists but sends no email and is not linked from sign-in;
+  nothing in #1280 asks for public self-registration. Left as is.
+- **Dealers as tenants** (their own CRM): ADR 0007's flip condition; not this plan.
+- **Default project sales permissions for salespeople:** Q8's second half; a data change to the
+  `salesperson` role once the owner names them.
+
+## 12. Grill questions for the owner
+
+Each has a recommendation; the UAC is written to the recommendation. Answers get recorded here
+verbatim and on #1280, and any AC they change is rewritten before its slice starts.
+
+1. **Who is a "product salesperson" and a "retail salesperson"?** Nothing in the code defines
+   them. **Recommend:** a contact in any market segment flagged "Requested by / Salesperson"
+   selectable (today `retail` and `project`, reading "product" as "project"), plus any contact
+   linked to a sales agent. (AC-40)
+2. **Confirm #1280 overrides the 14 Aug 2026 ruling that salespeople get no user account.**
+   **Recommend:** yes; S3 records the supersession in `sales_agent.py` and the 24 Sep plan.
+3. **Dealer contacts: users up front, or at their first portal sign-in?** **Recommend:** at first
+   sign-in (role Portal), never in bulk; most dealer contacts never open the portal. (AC-35)
+4. **Does every portal contact become a user when it next signs in (the one session model)?**
+   **Recommend:** yes, silently behind the same WhatsApp code; nobody registers. (AC-34, AC-35)
+5. **May a user have no email (phone only)?** **Recommend:** yes, with at least one of email or
+   phone required; no made-up placeholder emails. (AC-02)
+6. **Code channel: WhatsApp only, or SMS too?** **Recommend:** WhatsApp only now (every one of
+   these people already talks to Sorento on WhatsApp, and there is no SMS provider); add SMS when
+   the trigger in section 11 arrives. (AC-22)
+7. **Sign-in screen: one "Email or phone number" field, or two tabs?** **Recommend:** one field;
+   the system tells email from phone, one fewer decision. (AC-20)
+8. **What can a salesperson user do in the CRM on day one?** **Recommend:** nothing (portal only),
+   through a protected Salesperson role that starts empty; when you name the project sales
+   permissions every salesperson should have, they go on that role once and reach everyone. Which
+   permissions, if any, should it carry from day one? (AC-45)
+9. **Where does someone land after signing in?** **Recommend:** CRM home if they hold any CRM
+   permission, otherwise their portal home; people with both get a Portal entry in the user menu
+   and an Open CRM link on the portal. (AC-28, AC-39)
+10. **Phone sign-in for staff and admins too?** **Recommend:** yes for every active user with a
+    verified phone, admins included; if you want admins password-only, it is one check. (AC-27)
+11. **Old portal sessions: keep forever or phase out?** **Recommend:** keep working until they
+    expire, stop extending them from the S2 deploy so they all end within 30 days; old WhatsApp
+    links keep working forever as sign-in links. (AC-36)
+12. **Admin "view as contact": keep it as is?** **Recommend:** keep it, and fix the audit so its
+    actions are recorded as the admin on behalf of the contact. (AC-11)
+13. **Lost phone: who fixes it?** **Recommend:** an admin changes the number on the user, which
+    signs that user out everywhere; the next sign-in verifies the new number. No self-service
+    number change without a code to the new number. (AC-54, section 5.3)
+14. **A salesperson contact whose phone already belongs to a staff user: same person?**
+    **Recommend:** yes, link to that user and add the Salesperson role, never a second user; a
+    phone owned by a user already linked to a different contact is shown to an admin, not
+    guessed. (AC-42, AC-43)
+15. **How long does a phone or portal sign-in last?** **Recommend:** 30 days, extended while in
+    use (what portal users have today). (AC-24)
