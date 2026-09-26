@@ -440,3 +440,121 @@ The four dead `chatbot_memory` keys become:
 
 Both dict builders of `system_settings` carry the two new keys (DoD 4); the card shows three
 controls. Grill question 11.
+
+## 6. Layer 3: turn context assembly and the token budget
+
+### 6.1 One assembler
+
+`turn/context.py::assemble(layers: ContextLayers, budget: Budget) -> (text, ContextReport)`,
+pure, no I/O. It replaces the string joining inside `build_user_block` and is the only place
+the parser's user block is built. The same function, with a smaller budget, builds the memory
+slice for the S4 clarifier call. Input is data already loaded at intake (profile row, frames,
+live turns, focus, open question, message); nothing is fetched inside it.
+
+Order in the block (most stable first, the live message last, so the model reads the current
+message after its context):
+
+```
+About this contact:            L5 profile slice
+Recent conversations:          L4 closed episode summaries
+Earlier in this conversation:  L3 live episode (earlier user messages)
+Previous response:             L3 (the bot's last reply, capped)
+Current subject:               L2 focus
+Pending / Open question options: L2
+Current user message:          L1 (text, reply-to, media read line)
+```
+
+### 6.2 The budget, per layer
+
+Tokens are estimated as `ceil(utf8_bytes / 3)`, which over-counts English (about 4 bytes per
+token) and is close to exact for Malay and safe for Chinese (3 bytes per character, at most
+one token each). Over-estimating is the safe direction: the cap can only be undershot.
+
+| layer | content | budget (est. tokens) | when over | never dropped |
+|---|---|---|---|---|
+| L0 system prompt | registry body + policy blocks + memory addendum | **22,100** hard ceiling (today's measured 21.2k + 0.9k); memory addendum at most 400, paid by cuts in the same slice (6.4) | CI fails (6.3) | |
+| L1 current message | text, `reply to:` quote (cut to 300 chars), media read line | 600 | quote cut first, then message cut at 1,500 chars with "(cut)" | the message itself |
+| L2 focus + open question | `Current subject:`, `Pending:`, options (frozen) | 350 | options beyond 10 dropped with "(+N more)"; today's roster cap is 10 | the open question kind |
+| L3 live episode | earlier user messages (max 3 x 200 chars) + `Previous response:` (600 chars) | 450 | oldest earlier message first, then the previous response is cut to 300 chars | the previous response's first 300 chars |
+| L4 episode summaries | last 3 closed, 30 days, 240 chars each | 250 | oldest summary first | |
+| L5 profile slice | parser-fed facts, fixed key order, values cut to 60 chars, list values max 3 | 150 | `note` first, then `project`, then `usual_sites` | `customer`, `segment`, `language` |
+| **user block total** | L1 to L5 | **1,800 hard cap** | L5, then L4, then L3 trimmed to their "never dropped" floor | L1 message, L2 open question |
+| output | `max_tokens` | 2,048 today, unchanged here (#1275 item 4 owns lowering it) | | |
+| recall re-parse | second full parser call | **0** (deleted; today up to +22.8k per recall turn) | | |
+
+What this adds, worst case: L3 +about 200 over today's uncapped previous reply, L4 +250, L5
++150 (today's `Profile:` line is about 10), plus the 400 addendum = **about +1,000 est.
+tokens on a turn with full memory**, about +4% of 24.8k. A first-time contact adds 0.
+
+### 6.3 How the budget is enforced (not just stated)
+
+1. **In code:** `assemble` never returns a block over 1,800 est. tokens; the truncation order is
+   the table above. Pure function, unit-tested on a worst-case fixture (every layer at 3x its
+   cap). AC-MEM060.
+2. **In CI, the system prompt:** `tests/chatbot/test_parser_prompt_budget.py` renders the
+   production parser prompt (registry fallback + the policy blocks seed) and fails over 22,100
+   est. tokens. This is the guard that would have caught the unexplained 13.4k to 22.8k jump
+   of 22 Sep (#1275). AC-MEM061.
+3. **In every trace:** the `understood` stage `facts` gain `prompt_tokens` and
+   `completion_tokens` from the provider (not only `total_tokens`), and a `context` event
+   records est. tokens per layer and what was dropped. `usage.py` logs the turn id. The
+   recall-overwrite bug (`engine.py:1508`) disappears with the re-parse. AC-MEM062, AC-MEM063.
+4. **In production, the gate:** S3 ships only if, over the first 3 weekdays after deploy,
+   p95 of `prompt_tokens + 2048` per turn is **not higher than** the 3 weekdays before (the
+   24.8k line), measured with the query in 8.2. If it is higher, the memory addendum is
+   cut or the L4 / L5 caps are lowered before anything else ships. AC-MEM064.
+
+### 6.4 Paying for the addendum (net zero on the static prompt)
+
+The memory addendum (about 400 tokens: what the three blocks mean, how to use them for
+references, that memory never overrides the current message) is paid for in the same slice by
+deleting text measured as dead or ruled out:
+
+| cut | est. tokens | evidence |
+|---|---|---|
+| the `previous_conversation_state` input description (never sent) | about 40 | section 2.1 |
+| the n8n JS expression literal | about 197 | #1275 item 4 ("owner already ruled cut"); `parser-prompt-inventory.md` "dead" class |
+| the 536-token section #1275 names, if the parser corpus stays green | about 536 | #1275 item 4 |
+| **total** | **about 770** | covers the 400 addendum with margin |
+
+The larger cut (finding the 9.4k added on 22 Sep) stays with #1275 item 4; this plan does not
+depend on it and does not duplicate it.
+
+Also in S3: move `CURRENT DATE: {{current_date}}` from character 595 to the end of the system
+prompt, so the 21k static prefix is byte-stable across days for OpenAI's automatic prefix
+cache (lower latency and cost on the cached part; whether cached tokens still count toward TPM
+is unverified for this tier, so no capacity claim is made for it).
+
+### 6.5 What the parser is asked to do with memory (the addendum, in substance)
+
+- Resolve a reference ("that one", "same as yesterday", "the usual", "the one in Kuching")
+  against, in order: the open question, `Current subject`, `Earlier in this conversation`,
+  `Recent conversations`, `About this contact`. Copy the resolved entity into `entities[]`
+  with `current_message: false`, exactly as focus carry works today.
+- Memory never overrides a code, customer or domain named in the current message.
+- `message_type` gains one value, `history_question`, for questions about the dealer's own
+  past with the bot ("what did I ask you last week", "which products did I check"). Routed to
+  the S4 history composer.
+- New optional output `profile_statement: {key, value} | null`, keys limited to `language`,
+  `role`, `usual_brands`, `usual_sites`, `project`, set only when the dealer states it about
+  themselves ("I'm the purchaser", "always show Kuching first", "reply in Malay"). Applied by
+  APPLY as a `stated` fact. Grill question 6.
+
+The parser's strict JSON schema grows by one enum value and one nullable key. Parser pins:
+`fixtures/parser_memory_phrases.json` in the style of `parser_growth_r1_phrases.json`, graded
+by a reachability test that each cue appears in the addendum (AC-MEM066).
+
+### 6.6 Latency budget
+
+| step | today | budget after | how measured |
+|---|---|---|---|
+| intake memory reads (profile row already read; last 3 frames by the new index; live turns, limit 4) | n/a | p95 <= 40 ms | `received` stage `ms`, new `memory_ms` fact |
+| gap close at intake (digest + one insert + embedding enqueue) | n/a | p95 <= 60 ms, only on the first turn after a gap | `received` facts `episode_closed_ms` |
+| parser call with +1,000 tokens | p50 2.6 s | p50 +0.05 s at most (measured slope: +0.25 s per 9.4k tokens) | `understood` `ms` |
+| recall re-parse | +2.6 s on each recall turn | 0 (deleted) | no `recall` event |
+| tail (`remembered`), topic-switch close + tally | p95 105 ms | p95 <= 150 ms | `remembered` `ms` |
+| S4 clarifier with memory slice | existing call | no added call; p50 +0.1 s at most | `routed`/`replied` `ms` on `low_signal` |
+| **CRM turn total** | p50 3.8 s | **p50 +0.1 s at most, p95 unchanged** | turn `finished_at - started_at` |
+
+The 10 s end-to-end target of #1275 is not moved by this plan either way; its limiters are
+the n8n pre-turn gap and the resolver miss path, owned there.
