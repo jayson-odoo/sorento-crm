@@ -1,6 +1,6 @@
 # PLAN: the Samantha case, slices 1 to 11 (issue #1262)
 
-Status: fix lane round 2 done (reviewer pass at 4719a829: B1, S1 to S4, N1 to N6 addressed), PR open. Track: full (migration for the prompt versions, MCP tool
+Status: fix lane round 3 done (reviewer pass round 2 at b219a730: B1-r2, B2, S5, N7 to N9 and the S2 mock console run addressed; round 2 at 4719a829 before it), PR open. Track: full (migration for the prompt versions, MCP tool
 argument, more than 300 lines). UAC: `chatbot-samantha-slices-26sep-acceptance-criteria.md`.
 
 Owner ruling 26 Sep ~11:05Z: "samantha one all also need to fix bro" - every slice of the
@@ -63,6 +63,16 @@ Code anchors are the scout's (issue #1262); lines may have drifted a little on m
     kind, most first, ties alphabetical.
 12. **Quantity lifetime (round 2, S1 nit):** the parser's quantity belongs to the message that
     typed it; a carried product row drops it (`turn/state.py::focus_from_wire`).
+13. **Brand carry (round 3, B1-r2):** the order brand is a carried axis like the customer. The
+    tool runner resolves it once per order fetch (typed brand words first, else the carried
+    `focus.outstanding_brand_ids`, kept only while still a live brand in scope), sends those
+    ids, writes them back to focus, and names the Brand line off the same live rows. It
+    carries until a later order turn types another brand; a new customer does not clear it.
+14. **Domain switch (round 3, B2):** "got eta" under an open outstanding offer keeps products,
+    customers, warehouse and brand, and clears only the dead question's document, status,
+    window and sales channel. A NEW ask naming its own entity still drops the old subject (R17).
+15. **Unlisted brand beside a live one (round 3, S5):** said back through the same "Couldn't
+    find" line as any unplaced token; the live brand still narrows the fetch.
 
 ## Tests
 
