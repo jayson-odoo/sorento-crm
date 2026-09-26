@@ -1,6 +1,7 @@
 /**
- * W5 (owner hand test round 2 on PR #833): the "Chatbot default brand" switch on the
- * create/edit dialog the Brands list mounts.
+ * R1 (owner console test of round 3 on PR #833, 27 Sep 2026): the "Chatbot brand weight"
+ * number on the create/edit dialog the Brands list mounts, in place of the retired
+ * "Chatbot default brand" switch.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -38,29 +39,31 @@ function fillRequiredFields() {
   });
 }
 
-describe('BrandFormDialog - Chatbot default brand switch (W5)', () => {
-  it('renders off by default for a new brand', () => {
+describe('BrandFormDialog - Chatbot brand weight (R1)', () => {
+  it('starts at 0 for a new brand, and there is no default switch', () => {
     render(<BrandFormDialog open onOpenChange={() => {}} />);
 
-    expect(screen.getByLabelText('Chatbot default brand')).toHaveAttribute(
-      'aria-checked',
-      'false',
-    );
+    expect(
+      (screen.getByLabelText('Chatbot brand weight') as HTMLInputElement).value,
+    ).toBe('0');
+    expect(screen.queryByLabelText('Chatbot default brand')).toBeNull();
   });
 
-  it('round-trips is_chatbot_default: true into the create payload after a toggle', async () => {
+  it('sends the typed weight as a number in the create payload', async () => {
     render(<BrandFormDialog open onOpenChange={() => {}} />);
     fillRequiredFields();
 
-    fireEvent.click(screen.getByLabelText('Chatbot default brand'));
+    fireEvent.change(screen.getByLabelText('Chatbot brand weight'), {
+      target: { value: '0.5' },
+    });
     fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
 
     await waitFor(() => expect(createMutateAsync).toHaveBeenCalled());
     const [payload] = createMutateAsync.mock.calls[0];
-    expect(payload.is_chatbot_default).toBe(true);
+    expect(payload.chatbot_weight).toBe(0.5);
   });
 
-  it('reflects the stored value on edit and an untouched submit keeps it', async () => {
+  it('reflects the stored weight on edit and an untouched submit keeps it', async () => {
     useBrandMock.mockReturnValue({
       data: {
         id: 'brand-1',
@@ -70,20 +73,33 @@ describe('BrandFormDialog - Chatbot default brand switch (W5)', () => {
         is_active: true,
         access_levels: [],
         flows_to_purchasing: true,
-        is_chatbot_default: true,
+        chatbot_weight: 1.5,
       },
       isLoading: false,
     });
 
     render(<BrandFormDialog open onOpenChange={() => {}} brandId="brand-1" />);
 
-    const toggle = await screen.findByLabelText('Chatbot default brand');
-    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'true'));
+    const input = (await screen.findByLabelText('Chatbot brand weight')) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe('1.5'));
 
     fireEvent.click(screen.getByRole('button', { name: /^Update$/i }));
 
     await waitFor(() => expect(updateMutateAsync).toHaveBeenCalled());
     const [{ data: payload }] = updateMutateAsync.mock.calls[0];
-    expect(payload.is_chatbot_default).toBe(true);
+    expect(payload.chatbot_weight).toBe(1.5);
+  });
+
+  it('refuses a negative weight', async () => {
+    render(<BrandFormDialog open onOpenChange={() => {}} />);
+    fillRequiredFields();
+
+    fireEvent.change(screen.getByLabelText('Chatbot brand weight'), {
+      target: { value: '-1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/i }));
+
+    await screen.findByText(/0 or more/i);
+    expect(createMutateAsync).not.toHaveBeenCalled();
   });
 });

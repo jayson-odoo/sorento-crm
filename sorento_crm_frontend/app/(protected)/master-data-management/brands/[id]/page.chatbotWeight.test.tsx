@@ -1,7 +1,8 @@
 /**
- * W5 (owner hand test round 2 on PR #833): the brand the chatbot answers first when a
- * customer names no brand, edited on the brand RECORD page (Master Data > Brands > a
- * brand > Edit), the page users actually edit a brand from.
+ * R1 (owner console test of round 3 on PR #833, 27 Sep 2026): "i want weights as brand
+ * preference instead of switch". Each brand carries a chatbot weight; the chatbot answers
+ * the highest weighted brand first and names the others in weight order. Edited on the
+ * brand RECORD page (Master Data > Brands > a brand > Edit).
  *
  * Pattern borrowed from `../../../inventory-management/warehouses/[id]/page.test.tsx`:
  * the page resolves `params` with `use()`, which suspends on the first render, and
@@ -36,7 +37,7 @@ function brand(over: Partial<Brand> = {}): Brand {
     is_active: true,
     access_levels: [],
     flows_to_purchasing: true,
-    is_chatbot_default: false,
+    chatbot_weight: 0,
     created_at: new Date('2026-01-05T02:00:00Z'),
     updated_at: new Date('2026-02-09T04:30:00Z'),
     product_count: 4,
@@ -111,49 +112,52 @@ beforeEach(() => {
   h.brand = brand();
 });
 
-describe('Brand detail - Chatbot default brand (W5)', () => {
-  it('view mode says Yes for the default brand', async () => {
-    h.brand = brand({ is_chatbot_default: true });
+describe('Brand detail - Chatbot brand weight (R1)', () => {
+  it('view mode shows the stored weight', async () => {
+    h.brand = brand({ chatbot_weight: 1.5 });
     await renderDetail();
 
     const page = (document.body.textContent ?? '').replace(/\s+/g, ' ');
-    expect(page).toMatch(/Chatbot default brand\s*Yes/);
+    expect(page).toMatch(/Chatbot brand weight\s*1\.5/);
+    expect(page).not.toMatch(/Chatbot default brand/);
   });
 
-  it('view mode says No for any other brand', async () => {
-    h.brand = brand({ is_chatbot_default: false });
+  it('view mode shows 0 for an unweighted brand', async () => {
+    h.brand = brand({ chatbot_weight: 0 });
     await renderDetail();
 
     const page = (document.body.textContent ?? '').replace(/\s+/g, ' ');
-    expect(page).toMatch(/Chatbot default brand\s*No/);
+    expect(page).toMatch(/Chatbot brand weight\s*0/);
   });
 
-  it('edit mode: the switch reflects the stored value', async () => {
-    h.brand = brand({ is_chatbot_default: true });
+  it('edit mode: the number input holds the stored weight', async () => {
+    h.brand = brand({ chatbot_weight: 0.5 });
     await renderDetail();
     await startEdit();
 
-    expect(screen.getByLabelText('Chatbot default brand')).toHaveAttribute(
-      'aria-checked',
-      'true',
-    );
+    const input = screen.getByLabelText('Chatbot brand weight') as HTMLInputElement;
+    expect(input.type).toBe('number');
+    expect(input.value).toBe('0.5');
   });
 
-  it('toggling it on sends is_chatbot_default: true', async () => {
-    h.brand = brand({ is_chatbot_default: false });
+  it('typing a weight sends it as a number', async () => {
+    h.brand = brand({ chatbot_weight: 0 });
     await renderDetail();
     await startEdit();
 
-    fireEvent.click(screen.getByLabelText('Chatbot default brand'));
+    fireEvent.change(screen.getByLabelText('Chatbot brand weight'), {
+      target: { value: '1.5' },
+    });
     fireEvent.click(screen.getByRole('button', { name: /save brand/i }));
 
     await waitFor(() => expect(h.updateMutate).toHaveBeenCalled());
     const [{ data: payload }] = h.updateMutate.mock.calls[0];
-    expect(payload.is_chatbot_default).toBe(true);
+    expect(payload.chatbot_weight).toBe(1.5);
+    expect(payload).not.toHaveProperty('is_chatbot_default');
   });
 
-  it('an untouched save keeps the stored value', async () => {
-    h.brand = brand({ is_chatbot_default: true });
+  it('an untouched save keeps the stored weight', async () => {
+    h.brand = brand({ chatbot_weight: 0.1 });
     await renderDetail();
     await startEdit();
 
@@ -161,6 +165,6 @@ describe('Brand detail - Chatbot default brand (W5)', () => {
 
     await waitFor(() => expect(h.updateMutate).toHaveBeenCalled());
     const [{ data: payload }] = h.updateMutate.mock.calls[0];
-    expect(payload.is_chatbot_default).toBe(true);
+    expect(payload.chatbot_weight).toBe(0.1);
   });
 });

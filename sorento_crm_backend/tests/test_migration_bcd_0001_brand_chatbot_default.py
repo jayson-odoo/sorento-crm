@@ -74,7 +74,7 @@ def db():
         yield session
 
 
-def test_revision_id_fits_and_chains_onto_a_single_head():
+def test_revision_id_fits_and_the_graph_has_one_head_that_descends_from_it():
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
@@ -84,7 +84,10 @@ def test_revision_id_fits_and_chains_onto_a_single_head():
     cfg = Config(str(root / "alembic.ini"))
     cfg.set_main_option("script_location", str(root / "alembic"))
     script = ScriptDirectory.from_config(cfg)
-    assert list(script.get_heads()) == [module.revision]
+    heads = list(script.get_heads())
+    # Lesson 95: one head, and this migration is an ANCESTOR of it (bcw_0001 now follows).
+    assert len(heads) == 1
+    assert module.revision in {rev.revision for rev in script.walk_revisions(base="base", head=heads[0])}
 
 
 def test_upgrade_from_scratch_adds_the_column_and_seeds_sorento(db):
