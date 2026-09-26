@@ -202,28 +202,64 @@ never a product code.
     its own, read exactly as any new stock question.
 
 == THE OPEN QUESTION AND open_question_answer ==
-A line "Open question: {...}" is the stock question as an object: "kind"
-"stock_quantities" (still asked) or "last_answer" (just answered), "items" its
-numbered lines (position, code, qty; qty null = still owed), "owed" the positions
-still owed. "Recent exchanges, oldest first" shows the last turns, so read a short
-reply against what was asked. Emit on every object:
-  "open_question_answer": {"mode": "fill"|"all"|"done"|"cancel"|null,
+A line "Open question: {...}" is the question the assistant just asked, as an object.
+"kind" is one of:
+  "pick_one": a numbered list; "options" [{position, code, label?}]. The customer may
+    still pick several ("both", "all of them", "1 and 3").
+  "confirm": a yes/no question, or a list of ONE option ("Did you mean ELP3754?").
+  "choose_brand": a numbered list of brands, answered like "pick_one".
+  "free": a question with no options; read the reply as usual.
+  "quantities": the stock quantity question; "status" "asked" (still asked) or
+    "answered" (just answered, may be revised); "items" its numbered lines (position,
+    code, qty; qty null = still owed); "owed" the positions still owed.
+"owed" also says what else the question still needs: "qty" means the stock check behind
+a pick has no quantity yet, "qty" on the object is the quantity already given.
+"Recent exchanges, oldest first" shows the last turns, so read a short reply against
+what was asked. Emit on every object:
+  "open_question_answer": {"mode": "pick"|"yes"|"no"|"fill"|"all"|"done"|"cancel"|null,
     "items": [{"position": n|null, "code": "..."|null, "qty": n|null}], "qty_for_all": n|null}
 mode null, items [], qty_for_all null when there is no Open question line or the
-message does not answer it. Fill entities and demand_qty as usual too.
+message does not answer it: then the message is its own ask, and its entities,
+domain_hint and demand_qty are filled as usual. Fill entities, demand_qty and
+reference_positions as usual in every case too; open_question_answer is read first.
+Over "pick_one", "choose_brand" or "confirm":
+  - The option(s) chosen -> "pick", one item per chosen option: its position, or its
+    code when the customer typed the code, and qty when the message gives a quantity.
+    Ordinals and numbers in any language name a position: "the first one", "the
+    second", "the 3rd", "last one", "yang pertama", "yang kedua", "nombor dua",
+    "dua", "satu", "第一个", "第二个", "一号", "the SH one" (the option whose code it
+    names).
+  - "the first one, I need 2", "1, I need 2", "yang pertama, 2 unit", "第一个要两个"
+    -> "pick", items [{"position": 1, "code": null, "qty": 2}]. One message may answer
+    the pick AND the quantity; never drop either half.
+  - "both", "1 and 3", "all of them", "semua", "两个都要" -> "pick", one item per option
+    named; "both, 3 each" -> qty_for_all 3.
+  - A bare number on a list: a number that is an option's position is that pick ("2");
+    a number with a quantity word ("2 units", "I need 2", "nak 2", "要两个", "san ge")
+    or off the list ("88") is a quantity: mode null, demand_qty the number, and the
+    assistant asks which one.
+  - "none of them", "no", "tak", "bukan", "不是", "neither" -> "no", items [].
+  - "yes", "ya", "ok", "betul", "对", "是" over "confirm" -> "yes"; "yes, 5 units" ->
+    "yes", qty_for_all 5.
+  - A product, customer or question NOT on the list -> mode null (a new ask as usual).
+Over "quantities":
   - Quantities for some lines ("1. 10, 2. 5", "SRTWC286-SH 10") -> "fill", one item
     per line. Numbers one per line with no line number ("10 / 20 / 30") are positions
-    in order: the first number is position 1.
+    in order: the first number is position 1. Numbers in words are numbers: "tiga",
+    "sepuluh", "san ge", "三个", "十个"; a typo of one ("tia" for "tiga") too.
+  - Over one line, a lone quantity in any wording ("10", "10 pcs", "I need 20",
+    "nak 5 unit", "要五个") -> "fill", that line at that quantity.
   - The list pasted back with some lines filled and the rest blank, with or without
     "check stock" in front -> "done", one item per FILLED line; blanks are skipped.
   - "that's it", "done", "that's all", "itu saja", "cukup" -> "done", items [].
   - "3 for all", "3 for all of them", "semua 3" -> "all", qty_for_all 3: every line,
-    also over a "last_answer".
-  - A line of a "last_answer" at a new quantity ("make line 2 10") -> "fill".
+    also over "answered".
+  - A line of an "answered" object at a new quantity ("make line 2 10", "1, I need
+    2") -> "fill".
   - "cancel", "never mind the stock check" -> "cancel".
-  - One bare number with no line and no "all": over "stock_quantities" -> mode null,
-    demand_qty the number; over a "last_answer" of two or more items -> mode null,
-    demand_qty the number (the assistant asks which).
+  - One bare number with no line and no "all" over two or more lines -> mode null,
+    demand_qty the number (every line still owed while "asked"; the assistant asks
+    which while "answered").
   - A product NOT on the list -> mode null, a new stock question as usual.
   - "asked_qty" on the object is the number the assistant just asked about ("Is 10
     for all 3 products, or for one of them?"): "all" -> "all", qty_for_all that

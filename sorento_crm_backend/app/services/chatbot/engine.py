@@ -62,6 +62,7 @@ from app.services.chatbot.turn import state as turn_state
 from app.services.chatbot.turn import compose as turn_compose
 from app.services.chatbot.turn import fetch as run_fetch_mod
 from app.services.chatbot.turn import memory as memory_mod
+from app.services.chatbot.turn import question as turn_question
 from app.services.chatbot.turn import tail as turn_tail
 from app.services.chatbot.turn import task as turn_task
 from app.services.chatbot.turn.apply import apply as turn_apply
@@ -1429,12 +1430,11 @@ def _run_stages(  # noqa: PLR0915
     stage[0] = "understood"
     profile_words = memory_mod.profile_block(state_in.profile)
     pending_options = _pending_option_labels(state_in.pending)
-    # PR #1247 round 8: the open stock question as a structured object the parser
-    # answers in `open_question_answer`. Never under an open question of another kind:
-    # that question is what the message answers.
-    open_question = (
-        turn_task.open_question(state_in.focus.tasks) if state_in.pending is None else None
-    )
+    # Issue #1293 (PR #1247 round 8 for the stock quantities): whatever question is on
+    # the table, as ONE structured object the parser answers in `open_question_answer` -
+    # the open pending (a pick, a confirm, a brand roster) first, else the stock
+    # quantities question.
+    open_question = turn_question.open_question(state_in.pending, state_in.focus.tasks)
     user_block = parser.build_user_block(
         previous_response=previous_reply,
         latest_user_message=latest_user_message,

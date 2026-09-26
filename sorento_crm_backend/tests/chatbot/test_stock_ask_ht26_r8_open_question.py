@@ -54,7 +54,10 @@ def test_open_question_answer_declared_strict_safe_and_tolerated_absent():
     assert prop["type"] == "object"
     assert prop["additionalProperties"] is False
     assert set(prop["required"]) == {"mode", "items", "qty_for_all"}
-    assert prop["properties"]["mode"]["enum"] == ["fill", "all", "done", "cancel", None]
+    # Issue #1293: pick / yes / no joined for the questions over options.
+    assert prop["properties"]["mode"]["enum"] == [
+        "pick", "yes", "no", "fill", "all", "done", "cancel", None
+    ]
     items_schema = prop["properties"]["items"]["items"]
     assert items_schema["additionalProperties"] is False
     assert set(items_schema["required"]) == {"position", "code", "qty"}
@@ -87,8 +90,10 @@ def test_open_question_for_an_open_task_lists_owed_positions():
         status=task_mod.OPEN,
     )
     result = task_mod.open_question((task,))
+    # Issue #1293: the "quantities" kind, "asked" (was "stock_quantities").
     assert result == {
-        "kind": "stock_quantities",
+        "kind": "quantities",
+        "status": "asked",
         "items": [
             {"position": 1, "code": "SRTWC286-SH", "qty": 10},
             {"position": 2, "code": "SRTWC286-SH-150", "qty": None},
@@ -103,7 +108,8 @@ def test_open_question_for_an_answered_task_has_no_owed():
         [("SRTWC286-SH", 10), ("SRTWC286-SH-150", 5)], status=task_mod.ANSWERED
     )
     result = task_mod.open_question((task,))
-    assert result["kind"] == "last_answer"
+    # Issue #1293: the "quantities" kind, "answered" (was "last_answer").
+    assert result["kind"] == "quantities" and result["status"] == "answered"
     assert result["owed"] == []
     assert result["items"] == [
         {"position": 1, "code": "SRTWC286-SH", "qty": 10},
@@ -138,7 +144,8 @@ def test_build_user_block_open_question_and_recent_exchanges_default_to_unchange
 
 def test_build_user_block_states_the_open_question_as_one_json_line():
     obj = {
-        "kind": "stock_quantities",
+        "kind": "quantities",
+        "status": "asked",
         "items": [{"position": 1, "code": "SRTWC286-SH", "qty": None}],
         "owed": [1],
     }
@@ -858,7 +865,7 @@ def test_engine_user_block_carries_the_open_question_line_for_a_multi_slot_task(
     )
     assert len(blocks) == 1
     assert "Open question: {" in blocks[0]
-    assert '"kind":"stock_quantities"' in blocks[0]
+    assert '"kind":"quantities","status":"asked"' in blocks[0]
 
 
 def test_engine_user_block_carries_recent_exchanges_on_a_second_turn(

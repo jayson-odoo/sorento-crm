@@ -668,8 +668,9 @@ def _revised(task: Task, verdict: dict[str, Any], turn_no: int) -> Task | None:
 
     PR #1247 round 8: lines of any answered check are revised by `SLOT_QUANTITIES`,
     which `apply._open_question_answer` writes from the parser's declared answer
-    (`open_question_answer`) to the "last_answer" object ("3 for all of them", "2. 10"). The other lines keep their
-    quantities, and the whole check is answered again."""
+    (`open_question_answer`) to the answered "quantities" object ("3 for all of them",
+    "2. 10"). The other lines keep their quantities, and the whole check is answered
+    again."""
     quantities = {key.strip().casefold(): qty for key, qty in _slot_quantities(verdict).items()}
     if quantities:
         if not any(slot.key.strip().casefold() in quantities for slot in task.slots):
@@ -787,19 +788,31 @@ def numbered(labels: list[str]) -> list[str]:
     return [f"{i}. {label}" for i, label in enumerate(labels, 1)]
 
 
-def pick_question(typed: str, labels: list[str], quantity: Any = None, count: int | None = None) -> str:
+def pick_question(
+    typed: str,
+    labels: list[str],
+    quantity: Any = None,
+    count: int | None = None,
+    *,
+    recognised: bool = True,
+) -> str:
     """The family pick (owner hand test 26 Sep, slice 2, the scout's wording), one
     numbered code per line. A number is read as a position only while this question is
     open. The list is not sticky (owner ruling 26 Sep, round 5): once one product is
     picked it is closed and forgotten, and a later bare number is that product's
-    quantity (`apply._bare_position_is_the_quantity`)."""
+    quantity (`apply._bare_position_is_the_quantity`).
+
+    `recognised` False is a did-you-mean's pick asked again (issue #1293): the typed code
+    matched nothing, so the header never repeats it ("STWC2867 x 2: which one?" was the
+    owner's complaint); the options are the recognised codes and they lead."""
     total = count if isinstance(count, int) and count > len(labels) else len(labels)
     qty = _number(quantity)
-    head = (
-        f"{typed} x {qty}: which one?"
-        if qty is not None
-        else f"{typed} matches {total} products. Which one?"
-    )
+    if not recognised:
+        head = f"Which one do you need {qty} of?" if qty is not None else "Which one do you mean?"
+    elif qty is not None:
+        head = f"{typed} x {qty}: which one?"
+    else:
+        head = f"{typed} matches {total} products. Which one?"
     lines = labels[:MAX_NAMED]
     tail = (
         [f"and {total - len(lines)} others, reply with the full code."]
@@ -1011,11 +1024,12 @@ def tasks_after_tool_status(
 
 
 def open_question(tasks: Any) -> dict[str, Any] | None:
-    """The stock question as the structured object the parser reads (PR #1247 round 8).
+    """The stock question as the structured object the parser reads (PR #1247 round 8;
+    issue #1293 names it the "quantities" kind of `turn/question.py`).
 
-    `kind` is "stock_quantities" while the quantities are still asked and "last_answer"
-    once the check is answered (a follow-up may revise it, "3 for all of them"); a parked
-    check is not offered. `asked_qty` is present only after "Is N for all K products, or
+    `status` is "asked" while the quantities are still asked and "answered" once the check
+    is answered (a follow-up may revise it, "3 for all of them"); a parked check is not
+    offered. `asked_qty` is present only after "Is N for all K products, or
     for one of them?". `items`
     are the question's numbered lines in their fixed order, `qty` null while owed, and
     `owed` names those positions. The parser answers it in `open_question_answer`.
@@ -1033,7 +1047,8 @@ def open_question(tasks: Any) -> dict[str, Any] | None:
             for i, slot in enumerate(task.slots, 1)
         ]
         return {
-            "kind": "last_answer" if task.status == ANSWERED else "stock_quantities",
+            "kind": "quantities",
+            "status": "answered" if task.status == ANSWERED else "asked",
             "items": items,
             "owed": [item["position"] for item in items if item["qty"] is None],
             **({"asked_qty": task.asked_qty} if task.asked_qty is not None else {}),

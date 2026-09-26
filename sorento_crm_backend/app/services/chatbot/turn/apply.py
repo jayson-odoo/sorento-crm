@@ -2086,6 +2086,149 @@ def _names_a_product(verdict: dict[str, Any]) -> bool:
     )
 
 
+#: Issue #1293: the modes of `open_question_answer` that answer a question over options
+#: (`turn/question.py`: pick_one, confirm, choose_brand).
+PICK_MODES = ("pick", "yes", "no")
+
+#: Issue #1293: the per-option quantities a pick was answered with, on the pick's own
+#: payload ({code, casefolded: quantity}), which `_spend_stock_pick` stamps on the fetch.
+PICKED_QTY = "picked_qty"
+
+
+def _option_names(option: dict[str, Any]) -> set[str]:
+    return {
+        str(value).strip().casefold()
+        for value in (option.get("code"), option.get("label"))
+        if value is not None and str(value).strip()
+    }
+
+
+def _placed_option(item: dict[str, Any], options: list[dict[str, Any]]) -> int | None:
+    """The option an answer item picks: its code (case-blind), else its position."""
+    code = item.get("code")
+    if isinstance(code, str) and code.strip():
+        wanted = code.strip().casefold()
+        for option in options:
+            if wanted in _option_names(option):
+                return option.get("position")
+    position = item.get("position")
+    if isinstance(position, (int, float)) and not isinstance(position, bool):
+        if any(option.get("position") == int(position) for option in options):
+            return int(position)
+    return None
+
+
+def _pick_answer(state: State, verdict: dict[str, Any], trace: Trace) -> tuple[State, bool]:
+    """Issue #1293: the parser's declared answer to an open question over options, first.
+
+    * pick: the items are the options picked (by code, else by position; several for
+      "both", "1 and 3", "all of them"), each with the quantity the message gave it
+      ("the first one, I need 2") or `qty_for_all` ("both, 3 each").
+    * yes: a confirm. One option (a one-option did-you-mean) is that option picked, with
+      its quantity; an escalation offer or a list is a plain yes.
+    * no: a decline ("no", "none of them", "tak", "不是").
+
+    Written onto the fields the pick path already reads (`reference_positions`,
+    `is_affirmative`) and the quantities onto the pick itself (`PICKED_QTY`), so nothing
+    downstream learns a second shape. Returns `(state, False)` untouched when the object
+    is absent, another mode, or not usable (an item that places on no option, the same
+    option twice, a quantity that is not above zero): then the shape rules decide.
+    Nothing here reads a word.
+    """
+    answer = verdict.get(OPEN_QUESTION_ANSWER)
+    pending = state.pending
+    if not isinstance(answer, dict) or pending is None:
+        return state, False
+    mode = answer.get("mode")
+    if mode not in PICK_MODES:
+        return state, False
+    options = [o for o in pending.options or [] if isinstance(o, dict)]
+    each = _positive(answer.get("qty_for_all"))
+    if answer.get("qty_for_all") is not None and each is None:
+        return state, False
+    items = [i for i in answer.get("items") or [] if isinstance(i, dict)]
+
+    if mode == "no":
+        verdict["is_affirmative"] = False
+        verdict["reference_positions"] = []
+        trace.rules_fired.append("open_question_answer_no")
+        return state, True
+    if mode == "yes" and (pending.kind in ESCALATION_OFFER_KINDS or len(options) != 1):
+        verdict["is_affirmative"] = True
+        verdict["reference_positions"] = []
+        trace.rules_fired.append("open_question_answer_yes")
+        return state, True
+    if mode == "yes":
+        # The one option IS what the yes accepts, with the quantity the yes carried.
+        items = [{**(items[0] if items else {}), "position": options[0].get("position"), "code": None}]
+
+    positions: list[int] = []
+    quantities: dict[str, int] = {}
+    for entry in items:
+        position = _placed_option(entry, options)
+        if position is None or position in positions:
+            return state, False
+        qty = _positive(entry.get("qty"))
+        if entry.get("qty") is not None and qty is None:
+            return state, False
+        positions.append(position)
+        qty = qty if qty is not None else each
+        if qty is not None:
+            option = next(o for o in options if o.get("position") == position)
+            for name in _option_names(option):
+                quantities[name] = qty
+    if not positions:
+        return state, False
+
+    picked = set().union(
+        *(_option_names(o) for o in options if o.get("position") in positions)
+    )
+    verdict["reference_positions"] = positions
+    verdict["demand_qty"] = None
+    # The picked codes and any bare line number are this answer, not a new ask.
+    verdict["entities"] = [
+        e
+        for e in verdict.get("entities") or []
+        if isinstance(e, dict)
+        and not (_codes_named(e) & picked)
+        and _line_number(e) is None
+    ]
+    if quantities and _stock_pick(pending):
+        state = replace(
+            state,
+            pending=replace(pending, payload={**pending.payload, PICKED_QTY: quantities}),
+        )
+    trace.rules_fired.append(f"open_question_answer_{mode}")
+    return state, True
+
+
+def _stock_pick_position_takes_quantity(
+    state: State, verdict: dict[str, Any], trace: Trace
+) -> State:
+    """The shape fallback for issue #1293, when the parser declared no answer object: a
+    position on the open stock pick's list beside a quantity is the pick at that quantity
+    ("1, I need 2" as `reference_positions` [1] and `demand_qty` 2). The quantity rides on
+    the pick (`stock_qty`), so `_stock_pick_requantified` does not ask the pick again and
+    `_spend_stock_pick` stamps it on the product picked."""
+    pending = state.pending
+    if not _stock_pick(pending):
+        return state
+    quantity = _stated_quantity(verdict.get("demand_qty"))
+    if quantity is None or quantity < 1 or _names_a_product(verdict):
+        return state
+    raw = verdict.get("reference_positions")
+    positions = [
+        int(p) for p in (raw if isinstance(raw, list) else [])
+        if isinstance(p, (int, float)) and not isinstance(p, bool)
+    ]
+    offered = {o.get("position") for o in pending.options or [] if isinstance(o, dict)}
+    if not positions or not set(positions) <= offered:
+        return state
+    verdict["demand_qty"] = None
+    trace.rules_fired.append("stock_pick_position_takes_quantity")
+    return replace(state, pending=replace(pending, payload={**pending.payload, "stock_qty": quantity}))
+
+
 def _stock_pick_requantified(state: State, verdict: dict[str, Any], trace: Trace):
     """A bare number under an open family pick ("88" under "SRTWC286 matches 10 products.
     Which one?") is the quantity, not a pick: the pick is asked again carrying it, and
@@ -2105,6 +2248,7 @@ def _stock_pick_requantified(state: State, verdict: dict[str, Any], trace: Trace
         [str(o.get("label")) for o in pending.options if o.get("label")],
         quantity,
         payload.get("count"),
+        recognised=not payload.get("did_you_mean"),
     )
     focus = copy.deepcopy(state.focus)
     focus.domains = ["inventory"]
@@ -2139,15 +2283,20 @@ def _spend_stock_pick(
         new_state.pending = None
     trace.rules_fired.append("stock_pick_spent")
     quantity = _stated_quantity(asked.payload.get("stock_qty"))
-    if quantity is None or _message_states_a_quantity(verdict):
+    # Issue #1293: a pick answered with its own quantities ("the first one, I need 2").
+    picked_qty = asked.payload.get(PICKED_QTY)
+    picked_qty = picked_qty if isinstance(picked_qty, dict) else {}
+    if (quantity is None and not picked_qty) or _message_states_a_quantity(verdict):
         return
     labels = {str(o.get("label")).strip().casefold() for o in asked.options if o.get("label")}
     for spec in specs:
-        stamped = {
-            str(e["uuid"]): quantity
-            for e in spec.entities
-            if isinstance(e, dict) and e.get("uuid") and _row_codes(e) & labels
-        }
+        stamped = {}
+        for e in spec.entities:
+            if not (isinstance(e, dict) and e.get("uuid") and _row_codes(e) & labels):
+                continue
+            own = next((picked_qty[c] for c in sorted(_row_codes(e)) if c in picked_qty), None)
+            if own is not None or quantity is not None:
+                stamped[str(e["uuid"])] = own if own is not None else quantity
         if stamped:
             spec.filters["requested_quantities"] = stamped
             trace.rules_fired.append("stock_pick_carries_quantity")
@@ -2165,11 +2314,15 @@ def apply(
     could not place (`turn_runtime.unplaced_tokens`, folded). It is read at one seam
     only: a roster is never built out of a word that matched nothing."""
     trace = Trace()
-    # PR #1247 round 8: the parser's declared answer to the open stock question comes
-    # first. The two shape rules below are the fallback, for a verdict that declares
+    # Issue #1293 and PR #1247 round 8: the parser's declared answer to the open question
+    # comes first - a pick, a confirm or a decline over the open pending, else the stock
+    # quantities. The shape rules below are the fallback, for a verdict that declares
     # none (a recorded emission, or a parser that left mode null).
     state, asked_qty = _take_asked_quantity(state)
-    if not _open_question_answer(state, verdict, trace, asked_qty):
+    state, picked = _pick_answer(state, verdict, trace)
+    if not picked:
+        state = _stock_pick_position_takes_quantity(state, verdict, trace)
+    if not picked and not _open_question_answer(state, verdict, trace, asked_qty):
         _asked_quantity_placed(state, verdict, trace, asked_qty)
         # Owner hand test 26 Sep, round 3, and the round 5 ruling ("make the picker not
         # sticky"): once the which-one pick is spent, a lone position is the product's

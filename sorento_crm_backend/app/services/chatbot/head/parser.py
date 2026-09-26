@@ -327,6 +327,10 @@ def _build_json_schema() -> dict[str, Any]:
             # Fixed keys and a list of fixed-shape items: strict-schema safe. Always an
             # object; `mode` null is "this message does not answer it". Read first by
             # `turn/apply.py::_open_question_answer`, the shape rules only as fallback.
+            # Issue #1293: EVERY question the bot asks is such an object
+            # (`turn/question.py`), so the modes gain pick / yes / no for a question over
+            # options ("the first one, I need 2" is one pick carrying its quantity), read
+            # first by `turn/apply.py::_pick_answer`.
             "open_question_answer": {
                 "type": "object",
                 "additionalProperties": False,
@@ -336,8 +340,10 @@ def _build_json_schema() -> dict[str, Any]:
                 "properties": {
                     "mode": {
                         "type": ["string", "null"],
-                        "enum": ["fill", "all", "done", "cancel", None],
+                        "enum": ["pick", "yes", "no", "fill", "all", "done", "cancel", None],
                         "description": (
+                            "pick: the options chosen, one item each (position or code, "
+                            "qty if stated); yes / no: a confirm, or no for none of them; "
                             "fill: quantities for some lines; done: these lines (or none) "
                             "then answer now, blanks skipped; all: qty_for_all for every "
                             "line; cancel: drop the question; null: not an answer to it."
@@ -589,7 +595,9 @@ def build_user_block(
     already?"): the stock question as a structured `Open question:` object
     (`task.open_question`), which the parser answers in `open_question_answer`, and the
     last three exchanges, so a short reply is read against what was actually asked.
-    Both omitted, and the block is unchanged.
+    Both omitted, and the block is unchanged. Issue #1293: `open_question` is whatever
+    question is on the table (`turn/question.py`), a pick list or a confirm as much as
+    the stock quantities.
     """
     import re
 
@@ -606,8 +614,11 @@ def build_user_block(
         # and a domain switch are judged against something. One line, omitted whole when
         # the focus is empty.
         lines.append(subject)
+    # The task hint points at the object only when the object IS the quantities question;
+    # under an open pick the object is the pick's, and the task prints its own lines.
+    quantities_shown = bool(open_question) and open_question.get("kind") == "quantities"
     for task_line in task_mod.hint_lines(
-        getattr(focus, "tasks", None), open_question_shown=bool(open_question)
+        getattr(focus, "tasks", None), open_question_shown=quantities_shown
     ):
         lines.append(task_line)
     if open_question:
