@@ -81,6 +81,20 @@ export type SearchableMultiSelectProps = {
   }) => React.ReactNode;
   /** Notified whenever the search text changes, in both modes. */
   onSearchChange?: (query: string) => void;
+  /**
+   * A first row offering to add the typed text as a value not yet in the list -
+   * mirrors `SearchableSelect.createOption`. Opt-in, so every existing caller is
+   * untouched: a picker over a fixed vocabulary must never invite someone to
+   * invent a member of it. Rendered ABOVE the option list (the words a rule
+   * multi-select offers are found by scanning, so the one action a search text
+   * does not already match belongs first, not buried under it). Picking it adds
+   * the value and clears the search box so the trigger's chips show it at once;
+   * the popover stays open, matching how every other pick here behaves.
+   */
+  createOption?: {
+    label: (query: string) => React.ReactNode | null;
+    onCreate: (query: string) => void;
+  };
 };
 
 export function SearchableMultiSelect({
@@ -101,6 +115,7 @@ export function SearchableMultiSelect({
   renderOption,
   renderTrigger,
   onSearchChange,
+  createOption,
 }: SearchableMultiSelectProps) {
   const isAsync = typeof fetchOptions === 'function';
   const [open, setOpen] = React.useState(false);
@@ -252,6 +267,17 @@ export function SearchableMultiSelect({
     onSearchChange?.(q);
   };
 
+  // Resolved once per render so the empty-state branch and the row itself cannot
+  // disagree, same reasoning as `SearchableSelect`.
+  const createQuery = query.trim();
+  const createLabel = createOption && createQuery ? createOption.label(createQuery) : null;
+  const createValue = createOption
+    ? () => {
+        createOption.onCreate(createQuery);
+        setQuery('');
+      }
+    : undefined;
+
   return (
     // See `needsDialogScrollLock` above - the two halves of this standard are kept
     // identical on purpose.
@@ -341,6 +367,18 @@ export function SearchableMultiSelect({
           )} align="start">
         <Command shouldFilter={false} className="max-h-full min-h-0 flex flex-col">
           <CommandInput placeholder="Search..." value={query} onValueChange={handleQueryChange} />
+          {!loading && createLabel ? (
+            <div className="border-b p-1">
+              <button
+                type="button"
+                data-slot="searchable-multi-select-create"
+                onClick={createValue}
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-start text-sm hover:bg-accent"
+              >
+                {createLabel}
+              </button>
+            </div>
+          ) : null}
           {!loading && selectable.length > 0 ? (
             <div className="border-b p-1">
               <button
@@ -364,7 +402,7 @@ export function SearchableMultiSelect({
               <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" /> Searching...
               </div>
-            ) : visibleOptions.length === 0 ? (
+            ) : visibleOptions.length === 0 && !createLabel ? (
               <CommandEmpty>{emptyMessage}</CommandEmpty>
             ) : null}
             {grouped.map(([groupKey, opts]) => (

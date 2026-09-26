@@ -1,0 +1,2920 @@
+{
+  "bar_count": [
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": 2,
+        "word": "DOUBLE TOWEL"
+      },
+      "match": "contains",
+      "pattern": "DOUBLE TOWEL",
+      "value": 2
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": 1,
+        "word": "SINGLE TOWEL"
+      },
+      "match": "contains",
+      "pattern": "SINGLE TOWEL",
+      "value": 1
+    }
+  ],
+  "bowl_count": [
+    {
+      "_seed": true,
+      "match": "regex",
+      "pattern": "\\bSINGLE\\s+BOWLS?\\b",
+      "value": 1
+    },
+    {
+      "_seed": true,
+      "match": "regex",
+      "pattern": "\\bDOUBLE\\s+BOWLS?\\b",
+      "value": 2
+    },
+    {
+      "_seed": true,
+      "match": "regex",
+      "pattern": "\\bTRIPLE\\s+BOWLS?\\b",
+      "value": 3
+    },
+    {
+      "_seed": true,
+      "match": "regex",
+      "pattern": "\\bONE\\s+BOWLS?\\b",
+      "value": 1
+    },
+    {
+      "_seed": true,
+      "match": "regex",
+      "pattern": "\\bTWO\\s+BOWLS?\\b",
+      "value": 2
+    },
+    {
+      "_seed": true,
+      "match": "regex",
+      "pattern": "\\bTHREE\\s+BOWLS?\\b",
+      "value": 3
+    },
+    {
+      "_seed": true,
+      "capture": 1,
+      "match": "regex",
+      "pattern": "(?<!\\d)(\\d)\\s*BOWLS?\\b"
+    }
+  ],
+  "brand": [
+    {
+      "_seed": true,
+      "builder": {
+        "field": "brand",
+        "kind": "from_field"
+      },
+      "match": "from_field",
+      "pattern": "brand"
+    }
+  ],
+  "capacity_litre": [
+    {
+      "_seed": true,
+      "capture": 1,
+      "match": "regex",
+      "pattern": "(?<![A-Z0-9])(?<![A-Z]-)(\\d+(?:\\.\\d+)?)\\s*(?:LITRES?|LITERS?|LTR|L)\\b",
+      "unit": "L"
+    }
+  ],
+  "capacity_oz": [
+    {
+      "_seed": true,
+      "capture": 1,
+      "match": "regex",
+      "pattern": "(?<![A-Z0-9])(\\d+(?:\\.\\d+)?)\\s*OZ\\b",
+      "unit": "oz"
+    }
+  ],
+  "class": [
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Bathroom Furniture",
+        "word": "MIRROR CABINET"
+      },
+      "match": "ends_with",
+      "pattern": "MIRROR CABINET",
+      "value": "Bathroom Furniture"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Bathroom Furniture",
+        "word": "VANITY CABINET"
+      },
+      "match": "ends_with",
+      "pattern": "VANITY CABINET",
+      "value": "Bathroom Furniture"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Cloth Hanger",
+        "word": "CLOTHES HANGER"
+      },
+      "match": "ends_with",
+      "pattern": "CLOTHES HANGER",
+      "value": "Cloth Hanger"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Squatting Pan",
+        "word": "SQUATTING PAN"
+      },
+      "match": "ends_with",
+      "pattern": "SQUATTING PAN",
+      "value": "Squatting Pan"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Flexible Hose",
+        "word": "FLEXIBLE HOSE"
+      },
+      "match": "ends_with",
+      "pattern": "FLEXIBLE HOSE",
+      "value": "Flexible Hose"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Squatting Pan",
+        "word": "SQUATING PAN"
+      },
+      "match": "ends_with",
+      "pattern": "SQUATING PAN",
+      "value": "Squatting Pan"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Water Closet",
+        "word": "WATER CLOSET"
+      },
+      "match": "ends_with",
+      "pattern": "WATER CLOSET",
+      "value": "Water Closet"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Kitchen Sink",
+        "word": "KITCHEN SINK"
+      },
+      "match": "ends_with",
+      "pattern": "KITCHEN SINK",
+      "value": "Kitchen Sink"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Kitchen Sink",
+        "word": "GRANITE SINK"
+      },
+      "match": "ends_with",
+      "pattern": "GRANITE SINK",
+      "value": "Kitchen Sink"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Cloth Hanger",
+        "word": "CLOTH HANGER"
+      },
+      "match": "ends_with",
+      "pattern": "CLOTH HANGER",
+      "value": "Cloth Hanger"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Tap",
+        "word": "KITCHEN TAP"
+      },
+      "match": "ends_with",
+      "pattern": "KITCHEN TAP",
+      "value": "Tap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Shower",
+        "word": "HAND SHOWER"
+      },
+      "match": "ends_with",
+      "pattern": "HAND SHOWER",
+      "value": "Shower"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Shower",
+        "word": "RAIN SHOWER"
+      },
+      "match": "ends_with",
+      "pattern": "RAIN SHOWER",
+      "value": "Shower"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Shower",
+        "word": "SHOWER HEAD"
+      },
+      "match": "ends_with",
+      "pattern": "SHOWER HEAD",
+      "value": "Shower"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Wash Basin",
+        "word": "WASH BASIN"
+      },
+      "match": "ends_with",
+      "pattern": "WASH BASIN",
+      "value": "Wash Basin"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Shower",
+        "word": "SHOWER SET"
+      },
+      "match": "ends_with",
+      "pattern": "SHOWER SET",
+      "value": "Shower"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Wash Basin",
+        "word": "ART BASIN"
+      },
+      "match": "ends_with",
+      "pattern": "ART BASIN",
+      "value": "Wash Basin"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Tap",
+        "word": "BASIN TAP"
+      },
+      "match": "ends_with",
+      "pattern": "BASIN TAP",
+      "value": "Tap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Tap",
+        "word": "MIXER TAP"
+      },
+      "match": "ends_with",
+      "pattern": "MIXER TAP",
+      "value": "Tap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Bathtub",
+        "word": "BATH TUB"
+      },
+      "match": "ends_with",
+      "pattern": "BATH TUB",
+      "value": "Bathtub"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Bathtub",
+        "word": "BATHTUB"
+      },
+      "match": "ends_with",
+      "pattern": "BATHTUB",
+      "value": "Bathtub"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Jacuzzi",
+        "word": "JACUZZI"
+      },
+      "match": "ends_with",
+      "pattern": "JACUZZI",
+      "value": "Jacuzzi"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Tap",
+        "word": "BIB TAP"
+      },
+      "match": "ends_with",
+      "pattern": "BIB TAP",
+      "value": "Tap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Water Closet",
+        "word": "TOILET"
+      },
+      "match": "ends_with",
+      "pattern": "TOILET",
+      "value": "Water Closet"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Urinal",
+        "word": "URINAL"
+      },
+      "match": "ends_with",
+      "pattern": "URINAL",
+      "value": "Urinal"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Tap",
+        "word": "FAUCET"
+      },
+      "match": "ends_with",
+      "pattern": "FAUCET",
+      "value": "Tap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Shower",
+        "word": "SHOWER"
+      },
+      "match": "ends_with",
+      "pattern": "SHOWER",
+      "value": "Shower"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Wash Basin",
+        "word": "BASIN"
+      },
+      "match": "ends_with",
+      "pattern": "BASIN",
+      "value": "Wash Basin"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Tap",
+        "word": "MIXER"
+      },
+      "match": "ends_with",
+      "pattern": "MIXER",
+      "value": "Tap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Tap",
+        "word": "TAP"
+      },
+      "match": "ends_with",
+      "pattern": "TAP",
+      "value": "Tap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_ends_with",
+        "value": "Water Closet",
+        "word": "WC"
+      },
+      "match": "ends_with",
+      "pattern": "WC",
+      "value": "Water Closet"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "name_head"
+      },
+      "match": "name_head",
+      "pattern": "class_tail"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "field": "category",
+        "kind": "from_field"
+      },
+      "match": "from_field",
+      "pattern": "category"
+    }
+  ],
+  "control_type": [
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "single_lever",
+        "word": "SINGLE LEVER"
+      },
+      "match": "contains",
+      "pattern": "SINGLE LEVER",
+      "value": "single_lever"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "single_lever",
+        "word": "SINGLE HANDLE"
+      },
+      "match": "contains",
+      "pattern": "SINGLE HANDLE",
+      "value": "single_lever"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "self_closing",
+        "word": "SELF CLOSING"
+      },
+      "match": "contains",
+      "pattern": "SELF CLOSING",
+      "value": "self_closing"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "self_closing",
+        "word": "SELF-CLOSING"
+      },
+      "match": "contains",
+      "pattern": "SELF-CLOSING",
+      "value": "self_closing"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "sensor",
+        "word": "SENSOR"
+      },
+      "match": "contains",
+      "pattern": "SENSOR",
+      "value": "sensor"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "two_way",
+        "word": "TWO WAY"
+      },
+      "match": "contains",
+      "pattern": "TWO WAY",
+      "value": "two_way"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "two_way",
+        "word": "2 WAY"
+      },
+      "match": "contains",
+      "pattern": "2 WAY",
+      "value": "two_way"
+    }
+  ],
+  "depth": [
+    {
+      "_seed": true,
+      "applies_when": {
+        "shape": [
+          "round",
+          "square"
+        ]
+      },
+      "builder": {
+        "kind": "size_triple",
+        "position": 2
+      },
+      "capture": 2,
+      "match": "regex",
+      "pattern": "(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?(?:\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?)?(?:\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?)?",
+      "source": "description"
+    }
+  ],
+  "diameter": [
+    {
+      "_seed": true,
+      "applies_when": {
+        "shape": [
+          "round",
+          "square"
+        ]
+      },
+      "builder": {
+        "kind": "size_triple",
+        "position": 1
+      },
+      "capture": 1,
+      "match": "regex",
+      "pattern": "(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?(?:\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?)?(?:\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?)?",
+      "source": "description"
+    }
+  ],
+  "dim_height": [
+    {
+      "_seed": true,
+      "builder": {
+        "field": "column:dimensions_height",
+        "kind": "from_field"
+      },
+      "match": "from_field",
+      "pattern": "column:dimensions_height",
+      "unless": {
+        "shape": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "size_triple",
+        "position": 3
+      },
+      "capture": 3,
+      "match": "regex",
+      "pattern": "(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?(?:\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?)?(?:\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?)?",
+      "source": "description",
+      "unless": {
+        "shape": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    {
+      "_seed": true,
+      "capture": 1,
+      "match": "regex",
+      "pattern": "H\\s*(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?",
+      "source": "flyer"
+    }
+  ],
+  "dim_length": [
+    {
+      "_seed": true,
+      "builder": {
+        "field": "column:dimensions_length",
+        "kind": "from_field"
+      },
+      "match": "from_field",
+      "pattern": "column:dimensions_length",
+      "unless": {
+        "shape": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "size_triple",
+        "position": 1
+      },
+      "capture": 1,
+      "match": "regex",
+      "pattern": "(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?(?:\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?)?(?:\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?)?",
+      "source": "description",
+      "unless": {
+        "shape": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    {
+      "_seed": true,
+      "capture": 1,
+      "match": "regex",
+      "pattern": "(?<![A-Z0-9X])(\\d{2,4})\\s*MM\\b",
+      "source": "size_text",
+      "unless": {
+        "shape": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    {
+      "_seed": true,
+      "capture": 1,
+      "match": "regex",
+      "pattern": "L\\s*(\\d+(?:\\.\\d+)?)\\s*[xX*]",
+      "source": "flyer"
+    }
+  ],
+  "dim_width": [
+    {
+      "_seed": true,
+      "builder": {
+        "field": "column:dimensions_width",
+        "kind": "from_field"
+      },
+      "match": "from_field",
+      "pattern": "column:dimensions_width",
+      "unless": {
+        "shape": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "size_triple",
+        "position": 2
+      },
+      "capture": 2,
+      "match": "regex",
+      "pattern": "(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?(?:\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?)?(?:\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?)?",
+      "source": "description",
+      "unless": {
+        "shape": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    {
+      "_seed": true,
+      "capture": 1,
+      "match": "regex",
+      "pattern": "W\\s*(\\d+(?:\\.\\d+)?)\\s*[xX*]",
+      "source": "flyer"
+    }
+  ],
+  "finish": [
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "rose_gold",
+        "word": "FULL ROSE GOLD"
+      },
+      "match": "contains",
+      "pattern": "FULL ROSE GOLD",
+      "value": "rose_gold"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "rose_gold",
+        "word": "ROSE GOLD"
+      },
+      "match": "contains",
+      "pattern": "ROSE GOLD",
+      "value": "rose_gold"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "golden_yellow",
+        "word": "GOLDEN YELLOW"
+      },
+      "match": "contains",
+      "pattern": "GOLDEN YELLOW",
+      "value": "golden_yellow"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "black",
+        "word": "MATT BLACK"
+      },
+      "match": "contains",
+      "pattern": "MATT BLACK",
+      "value": "black"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "gunmetal",
+        "word": "GUN METAL"
+      },
+      "match": "contains",
+      "pattern": "GUN METAL",
+      "value": "gunmetal"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "gunmetal",
+        "word": "GUNMETAL"
+      },
+      "match": "contains",
+      "pattern": "GUNMETAL",
+      "value": "gunmetal"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "nickel",
+        "word": "BRUSHED NICKEL"
+      },
+      "match": "contains",
+      "pattern": "BRUSHED NICKEL",
+      "value": "nickel"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "chrome",
+        "word": "CHROME"
+      },
+      "match": "contains",
+      "pattern": "CHROME",
+      "value": "chrome"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "nickel",
+        "word": "NICKEL"
+      },
+      "match": "contains",
+      "pattern": "NICKEL",
+      "value": "nickel"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "black",
+        "word": "BLACK"
+      },
+      "match": "contains",
+      "pattern": "BLACK",
+      "value": "black"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "white",
+        "word": "WHITE"
+      },
+      "match": "contains",
+      "pattern": "WHITE",
+      "value": "white"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "grey",
+        "word": "GREY"
+      },
+      "match": "contains",
+      "pattern": "GREY",
+      "value": "grey"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "satin_chrome",
+        "word": "SATIN"
+      },
+      "match": "contains",
+      "pattern": "SATIN",
+      "value": "satin_chrome"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "code_ends_with",
+        "value": "black",
+        "word": "MBL"
+      },
+      "match": "code_suffix",
+      "pattern": "MBL",
+      "value": "black"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "code_ends_with",
+        "value": "black",
+        "word": "BL"
+      },
+      "match": "code_suffix",
+      "pattern": "BL",
+      "value": "black"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "code_ends_with",
+        "value": "gunmetal",
+        "word": "GM"
+      },
+      "match": "code_suffix",
+      "pattern": "GM",
+      "value": "gunmetal"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "code_ends_with",
+        "value": "nickel",
+        "word": "NL"
+      },
+      "match": "code_suffix",
+      "pattern": "NL",
+      "value": "nickel"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "code_ends_with",
+        "value": "nickel",
+        "word": "NK"
+      },
+      "match": "code_suffix",
+      "pattern": "NK",
+      "value": "nickel"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "code_ends_with",
+        "value": "grey",
+        "word": "GY"
+      },
+      "match": "code_suffix",
+      "pattern": "GY",
+      "value": "grey"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "code_ends_with",
+        "value": "rose_gold",
+        "word": "RG"
+      },
+      "match": "code_suffix",
+      "pattern": "RG",
+      "value": "rose_gold"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "code_ends_with",
+        "value": "chrome",
+        "word": "CR"
+      },
+      "match": "code_suffix",
+      "pattern": "CR",
+      "value": "chrome"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "code_ends_with",
+        "value": "french_gold",
+        "word": "FRG"
+      },
+      "match": "code_suffix",
+      "pattern": "FRG",
+      "value": "french_gold"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "code_ends_with",
+        "value": "white",
+        "word": "WH"
+      },
+      "match": "code_suffix",
+      "pattern": "WH",
+      "value": "white"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "code_ends_with",
+        "value": "satin_chrome",
+        "word": "SC"
+      },
+      "match": "code_suffix",
+      "pattern": "SC",
+      "value": "satin_chrome"
+    }
+  ],
+  "flush_type": [
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "siphonic",
+        "word": "SIPHONIC"
+      },
+      "match": "contains",
+      "pattern": "SIPHONIC",
+      "value": "siphonic"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "siphonic",
+        "word": "SYPHONIC"
+      },
+      "match": "contains",
+      "pattern": "SYPHONIC",
+      "value": "siphonic"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "twister",
+        "word": "TWISTER FLUSHING"
+      },
+      "match": "contains",
+      "pattern": "TWISTER FLUSHING",
+      "value": "twister"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "twister",
+        "word": "TWISTER FLUSH"
+      },
+      "match": "contains",
+      "pattern": "TWISTER FLUSH",
+      "value": "twister"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "twister",
+        "word": "TWISTER"
+      },
+      "match": "contains",
+      "pattern": "TWISTER",
+      "value": "twister"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "washdown",
+        "word": "WASH-DOWN"
+      },
+      "match": "contains",
+      "pattern": "WASH-DOWN",
+      "value": "washdown"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "washdown",
+        "word": "WASH DOWN"
+      },
+      "match": "contains",
+      "pattern": "WASH DOWN",
+      "value": "washdown"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "washdown",
+        "word": "WASHDOWN"
+      },
+      "match": "contains",
+      "pattern": "WASHDOWN",
+      "value": "washdown"
+    }
+  ],
+  "furniture_type": [
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "basin_cabinet",
+        "word": "BASIN CABINET"
+      },
+      "match": "contains",
+      "pattern": "BASIN CABINET",
+      "value": "basin_cabinet"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "side_cabinet",
+        "word": "SIDE CABINET"
+      },
+      "match": "contains",
+      "pattern": "SIDE CABINET",
+      "value": "side_cabinet"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "tall_cabinet",
+        "word": "TALL CABINET"
+      },
+      "match": "contains",
+      "pattern": "TALL CABINET",
+      "value": "tall_cabinet"
+    }
+  ],
+  "has_chopping_board": [
+    {
+      "_seed": true,
+      "match": "present",
+      "pattern": "\\bCHOPPING\\s+BOARD\\b",
+      "value": true
+    }
+  ],
+  "has_dish_rack": [
+    {
+      "_seed": true,
+      "match": "present",
+      "pattern": "\\bDISH\\s+RACK\\b",
+      "value": true
+    }
+  ],
+  "has_diverter": [
+    {
+      "_seed": true,
+      "match": "present",
+      "pattern": "\\bDIVERTER\\b",
+      "value": true
+    }
+  ],
+  "has_drainer": [
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "word_present",
+        "word": "DRAINER"
+      },
+      "match": "present",
+      "pattern": "DRAINER",
+      "value": true
+    }
+  ],
+  "has_filter": [
+    {
+      "_seed": true,
+      "match": "present",
+      "pattern": "\\bFILTER\\s+TAP\\b",
+      "value": true
+    }
+  ],
+  "has_fixing_screw": [
+    {
+      "_seed": true,
+      "match": "present",
+      "pattern": "(?<!W/O )(?<!WITHOUT )SCREW",
+      "value": true
+    }
+  ],
+  "has_led": [
+    {
+      "_seed": true,
+      "match": "present",
+      "pattern": "\\bLED\\b",
+      "value": true
+    }
+  ],
+  "has_overflow": [
+    {
+      "_seed": true,
+      "match": "present",
+      "pattern": "OVER\\s*FLOW",
+      "value": true
+    }
+  ],
+  "has_pull_out_shower": [
+    {
+      "_seed": true,
+      "match": "present",
+      "pattern": "\\bPULL[\\s-]?OUT\\s+SHOWER\\b",
+      "value": true
+    }
+  ],
+  "has_shower_union": [
+    {
+      "_seed": true,
+      "match": "present",
+      "pattern": "\\bSHOWER\\s+UNION\\b",
+      "value": true
+    }
+  ],
+  "has_sliding_rail": [
+    {
+      "_seed": true,
+      "match": "present",
+      "pattern": "\\bSLIDING\\b",
+      "value": true
+    }
+  ],
+  "hose_length": [
+    {
+      "_seed": true,
+      "capture": 1,
+      "match": "regex",
+      "pattern": "\\b(\\d(?:\\.\\d)?)\\s*M\\b(?=[^A-Z]|$)",
+      "scale": 1000,
+      "unit": "mm"
+    }
+  ],
+  "is_frameless": [
+    {
+      "_seed": true,
+      "match": "present",
+      "pattern": "\\bFRAMELESS\\b",
+      "value": true
+    }
+  ],
+  "is_high_basin": [
+    {
+      "_seed": true,
+      "match": "present",
+      "pattern": "\\bHIGH\\s+BASIN\\b",
+      "value": true
+    }
+  ],
+  "is_honeycomb": [
+    {
+      "_seed": true,
+      "match": "present",
+      "pattern": "\\bHONEYCOMB\\b",
+      "value": true
+    }
+  ],
+  "is_rimless": [
+    {
+      "_seed": true,
+      "match": "present",
+      "pattern": "\\bRIMLESS\\b",
+      "value": true
+    }
+  ],
+  "is_smart": [
+    {
+      "_seed": true,
+      "match": "present",
+      "pattern": "INTELLIGENT|AUTO\\s*INDUCTION|SMART\\s*(?:TOILET|WC)",
+      "value": true
+    }
+  ],
+  "is_soft_close": [
+    {
+      "_seed": true,
+      "match": "present",
+      "pattern": "\\bSOFT[\\s-]?CLOS(?:E|ING)\\b",
+      "value": true
+    }
+  ],
+  "is_thermostatic": [
+    {
+      "_seed": true,
+      "match": "present",
+      "pattern": "\\bTHERMOSTATIC\\b",
+      "value": true
+    }
+  ],
+  "material": [
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "stainless_steel",
+        "word": "STAINLESS STEEL"
+      },
+      "match": "contains",
+      "pattern": "STAINLESS STEEL",
+      "value": "stainless_steel"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "stainless_steel",
+        "word": "S/STEEL"
+      },
+      "match": "contains",
+      "pattern": "S/STEEL",
+      "value": "stainless_steel"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "stainless_steel",
+        "word": "STAINLESS"
+      },
+      "match": "contains",
+      "pattern": "STAINLESS",
+      "value": "stainless_steel"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "glass",
+        "word": "TEMPERED GLASS"
+      },
+      "match": "contains",
+      "pattern": "TEMPERED GLASS",
+      "value": "glass"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "ceramic",
+        "word": "CERAMIC"
+      },
+      "match": "contains",
+      "pattern": "CERAMIC",
+      "value": "ceramic"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "ceramic",
+        "word": "PORCELAIN"
+      },
+      "match": "contains",
+      "pattern": "PORCELAIN",
+      "value": "ceramic"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "acrylic",
+        "word": "ACRYLIC"
+      },
+      "match": "contains",
+      "pattern": "ACRYLIC",
+      "value": "acrylic"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "glass",
+        "word": "GLASS"
+      },
+      "match": "contains",
+      "pattern": "GLASS",
+      "value": "glass"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "brass",
+        "word": "BRASS"
+      },
+      "match": "contains",
+      "pattern": "BRASS",
+      "value": "brass"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "pvc",
+        "word": "PVC"
+      },
+      "match": "contains",
+      "pattern": "PVC",
+      "value": "pvc"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "abs",
+        "word": "ABS"
+      },
+      "match": "contains",
+      "pattern": "ABS",
+      "value": "abs"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "nanograin",
+        "word": "NANOGRAIN"
+      },
+      "match": "contains",
+      "pattern": "NANOGRAIN",
+      "value": "nanograin"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "granite",
+        "word": "GRANITE"
+      },
+      "match": "contains",
+      "pattern": "GRANITE",
+      "value": "granite"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "marble",
+        "word": "MARBLE"
+      },
+      "match": "contains",
+      "pattern": "MARBLE",
+      "value": "marble"
+    }
+  ],
+  "mounting": [
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "counter_top",
+        "word": "TABLE TOP"
+      },
+      "match": "contains",
+      "pattern": "TABLE TOP",
+      "value": "counter_top"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "counter_top",
+        "word": "TABLETOP"
+      },
+      "match": "contains",
+      "pattern": "TABLETOP",
+      "value": "counter_top"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "wall_hung",
+        "word": "WALL HUNG"
+      },
+      "match": "contains",
+      "pattern": "WALL HUNG",
+      "value": "wall_hung"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "wall_hung",
+        "word": "WALL MOUNTED"
+      },
+      "match": "contains",
+      "pattern": "WALL MOUNTED",
+      "value": "wall_hung"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "wall_hung",
+        "word": "WALL MOUNT"
+      },
+      "match": "contains",
+      "pattern": "WALL MOUNT",
+      "value": "wall_hung"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "floor_standing",
+        "word": "FLOOR STANDING"
+      },
+      "match": "contains",
+      "pattern": "FLOOR STANDING",
+      "value": "floor_standing"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "floor_standing",
+        "word": "FLOOR MOUNTED"
+      },
+      "match": "contains",
+      "pattern": "FLOOR MOUNTED",
+      "value": "floor_standing"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "floor_standing",
+        "word": "FREE STANDING"
+      },
+      "match": "contains",
+      "pattern": "FREE STANDING",
+      "value": "floor_standing"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "under_counter",
+        "word": "UNDER COUNTER"
+      },
+      "match": "contains",
+      "pattern": "UNDER COUNTER",
+      "value": "under_counter"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "under_counter",
+        "word": "UNDERMOUNT"
+      },
+      "match": "contains",
+      "pattern": "UNDERMOUNT",
+      "value": "under_counter"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "under_counter",
+        "word": "UNDER MOUNT"
+      },
+      "match": "contains",
+      "pattern": "UNDER MOUNT",
+      "value": "under_counter"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "counter_top",
+        "word": "COUNTER TOP"
+      },
+      "match": "contains",
+      "pattern": "COUNTER TOP",
+      "value": "counter_top"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "counter_top",
+        "word": "COUNTERTOP"
+      },
+      "match": "contains",
+      "pattern": "COUNTERTOP",
+      "value": "counter_top"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "counter_top",
+        "word": "ABOVE COUNTER"
+      },
+      "match": "contains",
+      "pattern": "ABOVE COUNTER",
+      "value": "counter_top"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "counter_top",
+        "word": "TOP MOUNT"
+      },
+      "match": "contains",
+      "pattern": "TOP MOUNT",
+      "value": "counter_top"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "pillar_mounted",
+        "word": "PILLAR MOUNTED"
+      },
+      "match": "contains",
+      "pattern": "PILLAR MOUNTED",
+      "value": "pillar_mounted"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "pillar_mounted",
+        "word": "PILLAR MOUNT"
+      },
+      "match": "contains",
+      "pattern": "PILLAR MOUNT",
+      "value": "pillar_mounted"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "pillar_mounted",
+        "word": "PILLAR"
+      },
+      "match": "contains",
+      "pattern": "PILLAR",
+      "value": "pillar_mounted"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "semi_recessed",
+        "word": "SEMI RECESSED"
+      },
+      "match": "contains",
+      "pattern": "SEMI RECESSED",
+      "value": "semi_recessed"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "semi_recessed",
+        "word": "SEMI-RECESSED"
+      },
+      "match": "contains",
+      "pattern": "SEMI-RECESSED",
+      "value": "semi_recessed"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "concealed",
+        "word": "CONCEALED"
+      },
+      "match": "contains",
+      "pattern": "CONCEALED",
+      "value": "concealed"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "exposed",
+        "word": "EXPOSED"
+      },
+      "match": "contains",
+      "pattern": "EXPOSED",
+      "value": "exposed"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "pedestal",
+        "word": "PEDESTAL"
+      },
+      "match": "contains",
+      "pattern": "PEDESTAL",
+      "value": "pedestal"
+    }
+  ],
+  "no_overflow": [
+    {
+      "_seed": true,
+      "match": "present",
+      "pattern": "\\bW/?O\\s+OVERFLOW\\b|\\bWITHOUT\\s+OVERFLOW\\b",
+      "value": true
+    }
+  ],
+  "piece_count": [
+    {
+      "_seed": true,
+      "capture": 1,
+      "match": "regex",
+      "pattern": "\\b(\\d)\\s*IN\\s*1\\b"
+    }
+  ],
+  "power_hp": [
+    {
+      "_seed": true,
+      "capture": 1,
+      "match": "regex",
+      "pattern": "(\\d+(?:\\.\\d+)?)\\s*HP\\b",
+      "unit": "hp"
+    }
+  ],
+  "product_type": [
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "toilet_seat",
+        "word": "SEAT COVER"
+      },
+      "match": "contains",
+      "pattern": "SEAT COVER",
+      "value": "toilet_seat"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "toilet_seat",
+        "word": "TOILET SEAT"
+      },
+      "match": "contains",
+      "pattern": "TOILET SEAT",
+      "value": "toilet_seat"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "urinal",
+        "word": "URINAL"
+      },
+      "match": "contains",
+      "pattern": "URINAL",
+      "value": "urinal"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "toilet_brush",
+        "word": "TOILET BRUSH"
+      },
+      "match": "contains",
+      "pattern": "TOILET BRUSH",
+      "value": "toilet_brush"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "squatting_pan",
+        "word": "SQUATTING PAN"
+      },
+      "match": "contains",
+      "pattern": "SQUATTING PAN",
+      "value": "squatting_pan"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "squatting_pan",
+        "word": "SQUAT PAN"
+      },
+      "match": "contains",
+      "pattern": "SQUAT PAN",
+      "value": "squatting_pan"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "towel_ring",
+        "word": "TOWEL RING"
+      },
+      "match": "contains",
+      "pattern": "TOWEL RING",
+      "value": "towel_ring"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "dustbin",
+        "word": "DUSTBIN"
+      },
+      "match": "contains",
+      "pattern": "DUSTBIN",
+      "value": "dustbin"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "dustbin",
+        "word": "WASTE BIN"
+      },
+      "match": "contains",
+      "pattern": "WASTE BIN",
+      "value": "dustbin"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "basin_tap",
+        "word": "BASIN COLD TAP"
+      },
+      "match": "contains",
+      "pattern": "BASIN COLD TAP",
+      "value": "basin_tap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "basin_tap",
+        "word": "BASIN HOT TAP"
+      },
+      "match": "contains",
+      "pattern": "BASIN HOT TAP",
+      "value": "basin_tap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "drain_pipe",
+        "word": "DRAIN PIPE"
+      },
+      "match": "contains",
+      "pattern": "DRAIN PIPE",
+      "value": "drain_pipe"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "stop_cock",
+        "word": "STOP COCK"
+      },
+      "match": "contains",
+      "pattern": "STOP COCK",
+      "value": "stop_cock"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "stop_cock",
+        "word": "STOPCOCK"
+      },
+      "match": "contains",
+      "pattern": "STOPCOCK",
+      "value": "stop_cock"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "shower_seat",
+        "word": "SHOWER SEAT"
+      },
+      "match": "contains",
+      "pattern": "SHOWER SEAT",
+      "value": "shower_seat"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "handrail",
+        "word": "HANDRAIL"
+      },
+      "match": "contains",
+      "pattern": "HANDRAIL",
+      "value": "handrail"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "handrail",
+        "word": "HAND RAIL"
+      },
+      "match": "contains",
+      "pattern": "HAND RAIL",
+      "value": "handrail"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "bottle_trap",
+        "word": "BOTTLE TRAP"
+      },
+      "match": "contains",
+      "pattern": "BOTTLE TRAP",
+      "value": "bottle_trap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "hinge",
+        "word": "CABINET HINGES"
+      },
+      "match": "contains",
+      "pattern": "CABINET HINGES",
+      "value": "hinge"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "hinge",
+        "word": "HINGES"
+      },
+      "match": "contains",
+      "pattern": "HINGES",
+      "value": "hinge"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "hinge",
+        "word": "HINGE"
+      },
+      "match": "contains",
+      "pattern": "HINGE",
+      "value": "hinge"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "water_pump",
+        "word": "PRESSURE PUMP"
+      },
+      "match": "contains",
+      "pattern": "PRESSURE PUMP",
+      "value": "water_pump"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "water_pump",
+        "word": "BOOSTER PUMP"
+      },
+      "match": "contains",
+      "pattern": "BOOSTER PUMP",
+      "value": "water_pump"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "water_pump",
+        "word": "WATER PUMP"
+      },
+      "match": "contains",
+      "pattern": "WATER PUMP",
+      "value": "water_pump"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "angle_valve",
+        "word": "STOP VALVE"
+      },
+      "match": "contains",
+      "pattern": "STOP VALVE",
+      "value": "angle_valve"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "soap_dispenser",
+        "word": "SOAP HOLDER"
+      },
+      "match": "contains",
+      "pattern": "SOAP HOLDER",
+      "value": "soap_dispenser"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "soap_dispenser",
+        "word": "SOAP DISH"
+      },
+      "match": "contains",
+      "pattern": "SOAP DISH",
+      "value": "soap_dispenser"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "floor_grating",
+        "word": "FLOOR DRAIN"
+      },
+      "match": "contains",
+      "pattern": "FLOOR DRAIN",
+      "value": "floor_grating"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "corner_basket",
+        "word": "CORNER SHELF"
+      },
+      "match": "contains",
+      "pattern": "CORNER SHELF",
+      "value": "corner_basket"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "towel_bar",
+        "word": "TOWEL RACK"
+      },
+      "match": "contains",
+      "pattern": "TOWEL RACK",
+      "value": "towel_bar"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "towel_shelf",
+        "word": "GLASS SHELF"
+      },
+      "match": "contains",
+      "pattern": "GLASS SHELF",
+      "value": "towel_shelf"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "angle_valve",
+        "word": "ANGLE VALVE"
+      },
+      "match": "contains",
+      "pattern": "ANGLE VALVE",
+      "value": "angle_valve"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "bib_tap",
+        "word": "HOSE BIB TAP"
+      },
+      "match": "contains",
+      "pattern": "HOSE BIB TAP",
+      "value": "bib_tap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "bib_tap",
+        "word": "BIB TAP"
+      },
+      "match": "contains",
+      "pattern": "BIB TAP",
+      "value": "bib_tap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "basin_tap",
+        "word": "BASIN TAP"
+      },
+      "match": "contains",
+      "pattern": "BASIN TAP",
+      "value": "basin_tap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "kitchen_tap",
+        "word": "SINK TAP"
+      },
+      "match": "contains",
+      "pattern": "SINK TAP",
+      "value": "kitchen_tap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "kitchen_tap",
+        "word": "KITCHEN TAP"
+      },
+      "match": "contains",
+      "pattern": "KITCHEN TAP",
+      "value": "kitchen_tap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "shower_tap",
+        "word": "SHOWER TAP"
+      },
+      "match": "contains",
+      "pattern": "SHOWER TAP",
+      "value": "shower_tap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "mixer_tap",
+        "word": "MIXER TAP"
+      },
+      "match": "contains",
+      "pattern": "MIXER TAP",
+      "value": "mixer_tap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "mixer_tap",
+        "word": "MIXER"
+      },
+      "match": "contains",
+      "pattern": "MIXER",
+      "value": "mixer_tap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "hand_shower",
+        "word": "HAND SHOWER"
+      },
+      "match": "contains",
+      "pattern": "HAND SHOWER",
+      "value": "hand_shower"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "rain_shower",
+        "word": "RAIN SHOWER"
+      },
+      "match": "contains",
+      "pattern": "RAIN SHOWER",
+      "value": "rain_shower"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "shower_set",
+        "word": "SHOWER SET"
+      },
+      "match": "contains",
+      "pattern": "SHOWER SET",
+      "value": "shower_set"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "shower_head",
+        "word": "SHOWER HEAD"
+      },
+      "match": "contains",
+      "pattern": "SHOWER HEAD",
+      "value": "shower_head"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "close_coupled",
+        "word": "CLOSE-COUPLED"
+      },
+      "match": "contains",
+      "pattern": "CLOSE-COUPLED",
+      "value": "close_coupled"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "close_coupled",
+        "word": "CLOSE COUPLED"
+      },
+      "match": "contains",
+      "pattern": "CLOSE COUPLED",
+      "value": "close_coupled"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "one_piece",
+        "word": "ONE PIECE"
+      },
+      "match": "contains",
+      "pattern": "ONE PIECE",
+      "value": "one_piece"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "one_piece",
+        "word": "ONE-PIECE"
+      },
+      "match": "contains",
+      "pattern": "ONE-PIECE",
+      "value": "one_piece"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "art_basin",
+        "word": "ART BASIN"
+      },
+      "match": "contains",
+      "pattern": "ART BASIN",
+      "value": "art_basin"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "mirror_cabinet",
+        "word": "MIRROR CABINET"
+      },
+      "match": "contains",
+      "pattern": "MIRROR CABINET",
+      "value": "mirror_cabinet"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "pop_up_waste",
+        "word": "POP UP WASTE"
+      },
+      "match": "contains",
+      "pattern": "POP UP WASTE",
+      "value": "pop_up_waste"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "pop_up_waste",
+        "word": "POP-UP WASTE"
+      },
+      "match": "contains",
+      "pattern": "POP-UP WASTE",
+      "value": "pop_up_waste"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "pop_up_waste",
+        "word": "POPUP WASTE"
+      },
+      "match": "contains",
+      "pattern": "POPUP WASTE",
+      "value": "pop_up_waste"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "towel_shelf",
+        "word": "TOWEL SHELF"
+      },
+      "match": "contains",
+      "pattern": "TOWEL SHELF",
+      "value": "towel_shelf"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "towel_bar",
+        "word": "TOWEL BAR"
+      },
+      "match": "contains",
+      "pattern": "TOWEL BAR",
+      "value": "towel_bar"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "towel_bar",
+        "word": "TOWEL RACK"
+      },
+      "match": "contains",
+      "pattern": "TOWEL RACK",
+      "value": "towel_bar"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "hook_bar",
+        "word": "HOOK BAR"
+      },
+      "match": "contains",
+      "pattern": "HOOK BAR",
+      "value": "hook_bar"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "robe_hook",
+        "word": "ROBE HOOK"
+      },
+      "match": "contains",
+      "pattern": "ROBE HOOK",
+      "value": "robe_hook"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "corner_basket",
+        "word": "CORNER BASKET"
+      },
+      "match": "contains",
+      "pattern": "CORNER BASKET",
+      "value": "corner_basket"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "corner_basket",
+        "word": "CORNER RACK"
+      },
+      "match": "contains",
+      "pattern": "CORNER RACK",
+      "value": "corner_basket"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "paper_holder",
+        "word": "PAPER HOLDER"
+      },
+      "match": "contains",
+      "pattern": "PAPER HOLDER",
+      "value": "paper_holder"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "grab_bar",
+        "word": "GRAB BAR"
+      },
+      "match": "contains",
+      "pattern": "GRAB BAR",
+      "value": "grab_bar"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "soap_dispenser",
+        "word": "SOAP DISPENSER"
+      },
+      "match": "contains",
+      "pattern": "SOAP DISPENSER",
+      "value": "soap_dispenser"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "flexible_hose",
+        "word": "FLEXIBLE HOSE"
+      },
+      "match": "contains",
+      "pattern": "FLEXIBLE HOSE",
+      "value": "flexible_hose"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "flush_valve",
+        "word": "FLUSH VALVE"
+      },
+      "match": "contains",
+      "pattern": "FLUSH VALVE",
+      "value": "flush_valve"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "floor_grating",
+        "word": "FLOOR GRATING"
+      },
+      "match": "contains",
+      "pattern": "FLOOR GRATING",
+      "value": "floor_grating"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "floor_trap",
+        "word": "FLOOR TRAP"
+      },
+      "match": "contains",
+      "pattern": "FLOOR TRAP",
+      "value": "floor_trap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "cistern",
+        "word": "CISTERN"
+      },
+      "match": "contains",
+      "pattern": "CISTERN",
+      "value": "cistern"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "tumbler",
+        "word": "TUMBLER"
+      },
+      "match": "contains",
+      "pattern": "TUMBLER",
+      "value": "tumbler"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "mirror",
+        "word": "MIRROR"
+      },
+      "match": "contains",
+      "pattern": "MIRROR",
+      "value": "mirror"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "bidet",
+        "word": "BIDET"
+      },
+      "match": "contains",
+      "pattern": "BIDET",
+      "value": "bidet"
+    }
+  ],
+  "seat_material": [
+    {
+      "_seed": true,
+      "match": "regex",
+      "pattern": "\\bPP\\b[^.]*SEAT",
+      "source": "flyer",
+      "value": "pp"
+    },
+    {
+      "_seed": true,
+      "match": "regex",
+      "pattern": "\\bUF\\b[^.]*SEAT",
+      "source": "flyer",
+      "value": "uf"
+    },
+    {
+      "_seed": true,
+      "match": "regex",
+      "pattern": "UREA[^.]*SEAT",
+      "value": "uf"
+    },
+    {
+      "_seed": true,
+      "match": "regex",
+      "pattern": "DUROPLAST",
+      "value": "duroplast"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "code_contains",
+        "value": "uf",
+        "word": "-UF"
+      },
+      "match": "code_contains",
+      "pattern": "-UF",
+      "value": "uf"
+    }
+  ],
+  "shape": [
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "rectangular",
+        "word": "RECTANGULAR"
+      },
+      "match": "contains",
+      "pattern": "RECTANGULAR",
+      "value": "rectangular"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "round",
+        "word": "ROUND"
+      },
+      "match": "contains",
+      "pattern": "ROUND",
+      "value": "round"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "square",
+        "word": "SQUARE"
+      },
+      "match": "contains",
+      "pattern": "SQUARE",
+      "value": "square"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "oval",
+        "word": "OVAL"
+      },
+      "match": "contains",
+      "pattern": "OVAL",
+      "value": "oval"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "oval",
+        "word": "ELLIPSE"
+      },
+      "match": "contains",
+      "pattern": "ELLIPSE",
+      "value": "oval"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "square",
+        "word": "SQ"
+      },
+      "match": "contains",
+      "pattern": "SQ",
+      "value": "square"
+    }
+  ],
+  "spout_type": [
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "waterfall",
+        "word": "WATERFALL"
+      },
+      "match": "contains",
+      "pattern": "WATERFALL",
+      "value": "waterfall"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "double_flexible",
+        "word": "DOUBLE FLEXIBLE SPOUT"
+      },
+      "match": "contains",
+      "pattern": "DOUBLE FLEXIBLE SPOUT",
+      "value": "double_flexible"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "flexible",
+        "word": "FLEXIBLE HEAD"
+      },
+      "match": "contains",
+      "pattern": "FLEXIBLE HEAD",
+      "value": "flexible"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "flexible",
+        "word": "FLEXIBLE HOSE"
+      },
+      "match": "contains",
+      "pattern": "FLEXIBLE HOSE",
+      "value": "flexible"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "flexible",
+        "word": "FLEXIBLE"
+      },
+      "match": "contains",
+      "pattern": "FLEXIBLE",
+      "value": "flexible"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "pull_out",
+        "word": "PULL OUT"
+      },
+      "match": "contains",
+      "pattern": "PULL OUT",
+      "value": "pull_out"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "pull_out",
+        "word": "PULL-OUT"
+      },
+      "match": "contains",
+      "pattern": "PULL-OUT",
+      "value": "pull_out"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "swivel",
+        "word": "SWIVEL"
+      },
+      "match": "contains",
+      "pattern": "SWIVEL",
+      "value": "swivel"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "gooseneck",
+        "word": "GOOSENECK"
+      },
+      "match": "contains",
+      "pattern": "GOOSENECK",
+      "value": "gooseneck"
+    }
+  ],
+  "spray_functions": [
+    {
+      "_seed": true,
+      "capture": 1,
+      "match": "regex",
+      "pattern": "\\b(\\d)\\s*-?\\s*FUNCTIONS?\\b"
+    }
+  ],
+  "steel_grade": [
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "304",
+        "word": "S/STEEL 304"
+      },
+      "match": "contains",
+      "pattern": "S/STEEL 304",
+      "value": "304"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "304",
+        "word": "SUS304"
+      },
+      "match": "contains",
+      "pattern": "SUS304",
+      "value": "304"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "304",
+        "word": "SUS 304"
+      },
+      "match": "contains",
+      "pattern": "SUS 304",
+      "value": "304"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "304",
+        "word": "STAINLESS STEEL 304"
+      },
+      "match": "contains",
+      "pattern": "STAINLESS STEEL 304",
+      "value": "304"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "304",
+        "word": "304"
+      },
+      "match": "contains",
+      "pattern": "304",
+      "value": "304"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "201",
+        "word": "SUS201"
+      },
+      "match": "contains",
+      "pattern": "SUS201",
+      "value": "201"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "201",
+        "word": "S/STEEL 201"
+      },
+      "match": "contains",
+      "pattern": "S/STEEL 201",
+      "value": "201"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "201",
+        "word": "201"
+      },
+      "match": "contains",
+      "pattern": "201",
+      "value": "201"
+    }
+  ],
+  "thickness": [
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "size_triple",
+        "position": 4
+      },
+      "capture": 4,
+      "match": "regex",
+      "pattern": "(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?(?:\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?)?(?:\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?)?",
+      "source": "description",
+      "unless": {
+        "shape": [
+          "round",
+          "square"
+        ]
+      }
+    },
+    {
+      "_seed": true,
+      "applies_when": {
+        "shape": [
+          "round",
+          "square"
+        ]
+      },
+      "builder": {
+        "kind": "size_triple",
+        "position": 3
+      },
+      "capture": 3,
+      "match": "regex",
+      "pattern": "(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?(?:\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?)?(?:\\s*[xX*]\\s*(?:[LWHDlwhd]\\s*)?(\\d+(?:\\.\\d+)?)\\s*(?:MM|mm)?)?",
+      "source": "description"
+    }
+  ],
+  "trap_length": [
+    {
+      "_seed": true,
+      "capture": 1,
+      "match": "regex",
+      "pattern": "[SP]\\s*-?\\s*TRAP\\s*[:,]?\\s*(\\d+(?:\\.\\d+)?)\\s*MM",
+      "unit": "mm"
+    }
+  ],
+  "trap_type": [
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "p_trap",
+        "word": "P-TRAP"
+      },
+      "match": "contains",
+      "pattern": "P-TRAP",
+      "value": "p_trap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "p_trap",
+        "word": "P TRAP"
+      },
+      "match": "contains",
+      "pattern": "P TRAP",
+      "value": "p_trap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "s_trap",
+        "word": "S-TRAP"
+      },
+      "match": "contains",
+      "pattern": "S-TRAP",
+      "value": "s_trap"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "s_trap",
+        "word": "S TRAP"
+      },
+      "match": "contains",
+      "pattern": "S TRAP",
+      "value": "s_trap"
+    }
+  ],
+  "water_supply": [
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "cold_only",
+        "word": "COLD TAP"
+      },
+      "match": "contains",
+      "pattern": "COLD TAP",
+      "value": "cold_only"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "mixer",
+        "word": "MIXER TAP"
+      },
+      "match": "contains",
+      "pattern": "MIXER TAP",
+      "value": "mixer"
+    },
+    {
+      "_seed": true,
+      "builder": {
+        "kind": "text_contains",
+        "value": "mixer",
+        "word": "MIXER"
+      },
+      "match": "contains",
+      "pattern": "MIXER",
+      "value": "mixer"
+    }
+  ],
+  "way_count": [
+    {
+      "_seed": true,
+      "capture": 1,
+      "match": "regex",
+      "pattern": "\\b(\\d)\\s*-?\\s*WAYS?\\b"
+    }
+  ]
+}
