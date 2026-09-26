@@ -5,8 +5,11 @@ Status: grilled (owner rulings 26 Sep 2026 folded in, see "Owner rulings 26 Sep 
 S1 (backend, tester first, `tests/test_oi_no_double_count.py`) and S2 (FE wire, mocks removed)
 built on the same branch, 26 Sep; browser evidence under `evidence/oi-no-double-count-s2/`. Owner
 hand test of S1 + S2 (26 Sep ~11:20Z) asked for a line-level confirmed mark: fix round W1
-(AC-ND-33) built on the same branch, evidence under `evidence/oi-no-double-count-w1/`. S4
-(reviewer + owner pass on the stack) next. S3
+(AC-ND-33) built on the same branch, evidence under `evidence/oi-no-double-count-w1/`. Fix
+round 2 (26 Sep, the two reviewer passes on PR #1266): fold and count on the mirror line
+`so_line_id` (review S1), one waiting-used-row rule for To confirm, the tick and the sweep
+(review S2), tests for Unconfirm scope, the cross-pair sweep and `include_history` scope. S4
+(owner pass on the stack) next. S3
 (worklist) is dropped (G8). Track: feature (three-phase) - expected diff is over ~300 lines across FE and BE; no
 migration, no auth/RBAC change, no new ingest surface, so `security-reviewer` is expected to be
 skipped. Issue #1248. Docs branch `claude/oi-no-double-count-plan-kyf2l4` (draft PR; docs PRs are
@@ -294,7 +297,9 @@ the fold, the row, the tabs switch (tens a day: none), or the History icon.
   sales order line over every non-cancelled row, used and cancelled-line included; a row with no
   line counts as one), `qty_total` = the Lines tab's Requested footer (sum of live buy rows'
   `qty`, used and cancelled-line rows excluded), `lines_to_confirm` = distinct lines with a live
-  or used row in `awaiting` / `changed`.
+  or used row in `awaiting` / `changed`. Fix round 2 (review S1): the line key is the row's
+  mirror line `so_line_id`, else the row, so a line AutoCount has not reconciled yet is one
+  line; the two line joins stay only for the cancelled-line test in `qty_total`.
 - Confirm (G6): confirming a line's live rows also acknowledges that line's `redirected_to_pool`
   rows in `changed` on the same header, in the same transaction.
 - No `superseded_by` column (G9). No alembic revision.

@@ -32,6 +32,10 @@ Issue: #1248
   Owner ruling 26 Sep (G5): always one row per sales order line, whatever the split. S0 folds by
   `core_line_id` (the payload's resolved form of `so_line_id`), else `so_number` + `line_no`,
   else the row alone.
+  Fix round 2 (PR #1266 review S1, 26 Sep): the rows carry `so_line_id` (the mirror line) and
+  the fold keys on it, the same key the header's `lines_total` reads. A line not yet
+  reconciled to AutoCount (`core_sales_order_line_id` null) is still ONE line, and its SO Qty
+  counts once in the footer.
 - AC-ND-2 [FE] (journey 2) Rows sort by sales order line No. ascending; null-line rows sort last.
 - AC-ND-3 [FE] (journey 2, G4) Columns, in order: Select, No., Product, Qty, Buy, Delivery date,
   Location, Supplier, PO, SPO, Suggested, Instruction, State. The "SO line" column is gone from
@@ -62,7 +66,11 @@ Issue: #1248
   Qty (i) Was button and no "used" pill anywhere on the main grid. The used row of 2 is listed in
   History's Rows tab as "Used".
   "To confirm" is the line State whenever a live buy row's `ack_state` is `changed`; a fresh row
-  born `awaiting` still reads its own state (AC-ND-8 reads To buy). The Instruction cell shows the
+  born `awaiting` still reads its own state (AC-ND-8 reads To buy). Fix round 2 (review S2): a
+  line with a WAITING used row (not cancelled, ack `awaiting` or `changed`) reads "To confirm"
+  too, whether its live rows are already confirmed or it has none (then it is not greyed
+  until the used row is confirmed); a cancelled SO line still reads "Line cancelled". The
+  Instruction cell shows the
   pill only; the row's note ("Replaces 2 used ...") reads in History's Why, never on the grid.
 - AC-ND-8 [FE] (G5) Given a line with a partly linked row of 6 on PO-0031 and a fresh raised row
   of 4, then ONE row: Buy 10, PO cell "PO-0031", State "Partly on PO".
@@ -86,6 +94,11 @@ Issue: #1248
   not rows; a line with no live row cannot be ticked.
   Owner ruling 26 Sep (G6): Confirm also sends the ticked lines' used rows whose ack is
   `changed`.
+  Fix round 2 (review S2): a line whose only waiting rows are used ones can be ticked (a line
+  with no live row ticks its waiting used rows), and Confirm sends those used row ids; a line
+  with a live row still waiting sends its live rows and the server sweeps the used ones. Link,
+  Unlink, Reject and Unconfirm read live rows only, and a tick on a used-only line never
+  widens Unconfirm or Auto link to the whole OI.
 - AC-ND-13 [FE] (journey 5, G3) Every line row's State cell carries exactly ONE History icon
   button (aria-label "History"); no reserve History icon and no second decision-trail icon remain.
   Owner ruling 26 Sep (G3): accepted as written.
@@ -131,6 +144,10 @@ Issue: #1248
 - AC-ND-24 [BE][T] (G6) Confirming a line's live rows also moves that line's
   `redirected_to_pool` rows on the same header from `changed` to `acknowledged`, in the same
   call; `lines_to_confirm` for the header drops to 0 when nothing else waits.
+  Fix round 2 (review S2): ONE rule for a waiting used row - not cancelled, ack `awaiting` or
+  `changed` - read by `lines_to_confirm`, the line State and the sweep alike, so a used row
+  redirected before anyone read it (`awaiting`) is swept too. The (header, line) pair is
+  matched in SQL (review N1).
 - AC-ND-25 [BE][T] (G6) Confirming does not touch a used row on another sales order line or on
   another header.
 - AC-ND-26 [BE][T] (out of scope guard) No write path changes: a replan of the #1248 case still

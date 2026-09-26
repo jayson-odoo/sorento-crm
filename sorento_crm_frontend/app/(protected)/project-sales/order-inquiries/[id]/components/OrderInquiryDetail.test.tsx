@@ -50,7 +50,9 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 const acknowledgeFilterSpy = vi.fn(async () => ({ acknowledged: 0, results: [] }));
 const acknowledgeRowsSpy = vi.fn(async () => ({ acknowledged: 0, results: [] }));
 const autoPlaceSpy = vi.fn(async () => ({ linked: 0, results: [] }));
-const unacknowledgeSpy = vi.fn(async () => ({ unacknowledged: 0, results: [] }));
+const unacknowledgeSpy = vi.fn<(rowIds: unknown) => Promise<{ unacknowledged: number }>>(
+  async () => ({ unacknowledged: 0 }),
+);
 // Lane B (`PLAN-order-sheet-oi-reports-22sep.md`, AC-B1/AC-B5): Export Excel goes
 // async (My Downloads), never a blob save - and the gear gets a "Download history" item.
 const exportOrderInquiryXlsxSpy = vi.hoisted(() => vi.fn(async () => ({
