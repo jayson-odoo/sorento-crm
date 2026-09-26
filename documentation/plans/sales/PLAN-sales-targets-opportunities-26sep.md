@@ -1,7 +1,7 @@
 # PLAN: sales targets, opportunities and the WhatsApp achievement broadcast (#1170)
 
 Status: grilled, round 4 (owner's second Lavish review folded in, PR #1260 comment 06:01Z;
-round 4 questions Q1 to Q5 posted on the PR). Earlier rounds: round 1 answered by the owner
+round 4 questions Q1 to Q5 posted on the PR as comment 5843826713). Earlier rounds: round 1 answered by the owner
 26 Sep 2026, PR #1260 comment 05:25Z; round 2 questions posted on the PR; round 3 folded in the
 owner's first Lavish review, comment 05:35Z, and its questions T1 to T5 are comment 5843719967.
 Track: full track for every build lane (new tables, migrations, new permissions, a new module
@@ -1273,7 +1273,7 @@ each member agent of a team target (3.2).
   opportunities, so S1 (each agent against a live figure) is not delayed; the Sales menu move and
   the Set target button ride in S1.
 
-## 11. Round 4 questions (posted on PR #1260)
+## 11. Round 4 questions (posted on PR #1260, comment 5843826713)
 
 - **Q1. A breakdown inside a date range (N7).** Recommend: optional and off by default; when on,
   "every N days, weeks or months" with any N, each period with its own editable figure; the
