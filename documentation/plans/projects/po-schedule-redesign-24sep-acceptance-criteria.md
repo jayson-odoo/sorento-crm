@@ -105,6 +105,8 @@ R3's other terms -- one severity set, one verb, duplicates collapsed, the gate u
   "Override with a reason" and "Clear with a reason" (`dismissVerb.guard.test.ts`). The third
   string, "Dismiss as false signal", is still live on purpose in
   `DeliveryScheduleReconciliationList.tsx` - it is S5's to rename.
+  26 Sep 2026 (S5): renamed with the list's removal; `dismissVerb.guard.test.ts` now bans all
+  three strings.
 - **S3-3 [FE] (J4)** Findings with the same `code` about the same subject render as one row with
   a count. Subject key, first present wins: `line_id`, then `detail_json.customer_code_raw` (a
   schedule column; the unmapped-column finding carries one row per area), then
@@ -113,6 +115,9 @@ R3's other terms -- one severity set, one verb, duplicates collapsed, the gate u
   these keys never collapses.
   25 Sep 2026: `collapseFindings()` shipped with no caller yet, and R23's cross-code collapse is
   not implemented in it; both carried to S5 (schedule matrix) and S7 (SO lines list).
+  26 Sep 2026 (S5): the schedule matrix has nothing to collapse. Its flags are the per-column
+  verdicts (one entry per column already, addressed by `product_index`), not `SODraftFinding`
+  rows, so `collapseFindings()` has no caller there either; both it and R23 stay with S7.
 - **S3-4 [FE] (J4)** The dismiss dialog requires a reason of at least 3 characters (the service's
   existing rule) and names the count ("Dismiss 7").
 - **S3-5 [FE][BE] (J4)** The publish gate is unchanged: a pytest pins that warn findings leave an
@@ -172,6 +177,29 @@ Re-dating and Notes move into a secondary History panel rather than tabs of thei
   raw status number (R13).
 - **S5-6 [FE] (J3)** Every section renders when empty, with `-` per ADR 1e.
 - **S5-7 [E2E] (J3)** HQ/26/01/121 v2 at 1280 and 375 matches the approved mockup's callouts.
+
+Implementation notes, 26 Sep 2026 (S5, binding owner lessons from the S6 hand tests on PR #1237):
+
+- S5-3: the Flag cell is one pill plus a count, row height unchanged; the sentences, the product
+  picker, "Fix the quantities" and "Dismiss with a reason" sit in its popover (lesson (b)), not
+  in an Action column. Product and Flag are pinned; the matrix scrolls in its own container
+  (lesson (a)). The totals close each row as Schedule and PO, per the mockup; the printed TOTAL
+  QTY is named in the popover when it disagrees.
+- S5-4: "Only rows with a flag" reads "Need attention (N)" / "All rows (N)" (lesson (c)). Need
+  attention is exactly the columns `blocksConfirm()` returns, the same test the server's
+  `confirm` makes (not reconciled, a dismissal counting as reconciled), so the screen and the
+  server cannot disagree (lesson (e)). A shortfall warning ("Needs acknowledgement") does not
+  block on either side and is shown under All rows. On a partial read the confirm dialog now
+  asks for the acknowledgement the server already required.
+- S5-5: Documents holds the file only, nothing under it (lesson (d)).
+- Removed as more than the mockup (R22): the gear menu (the PO link moved to the meta line, the
+  document to its tab), the confirmed banner and its "Back to the project" button, the reading
+  time, the revision label and issuer in the meta line, the "N cells re-dated" chip, the
+  "Remembered code" pill and the inline "will resolve" note (now a toast). A confirmed version
+  that owes an amendment makes "Review the amendment" the one primary button.
+- S5-7: evidence in this lane is component-level (the real client rendered off its `?demo=`
+  fixture in Chromium; no live stack or login in the cloud lane). The pass on HQ/26/01/121 v2
+  stays owed on a local stack.
 
 ## S6. PO review screen (per approved `mockups/po-review.html`; page renamed from "PO confirm")
 

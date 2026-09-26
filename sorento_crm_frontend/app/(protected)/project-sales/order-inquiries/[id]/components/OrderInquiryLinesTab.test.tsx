@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('next/navigation', () => ({
@@ -58,3 +58,122 @@ describe('OrderInquiryLinesTab: "Raised via" is hidden by default (B2, round 3)'
     expect(screen.queryByRole('columnheader', { name: 'Raised via' })).not.toBeInTheDocument();
   });
 });
+
+/**
+ * `PLAN-oi-no-double-count-25sep.md` S0 (issue #1248), owner rulings 26 Sep 2026: the grid
+ * renders ONE row per sales order line (G5), sorted by No., a cancelled line greyed (G7),
+ * and a tick selects the line's live rows, never a used one (AC-ND-12).
+ */
+describe('AC-ND-1 / 2 / 10 / 12: one row per sales order line', () => {
+  const rows = [
+    line({ id: 'l2-linked', item_code: 'WC200', core_line_id: 'cl-2', line_no: 2, qty: '6', linked_qty: '6', state: 'partly_linked' }),
+    line({ id: 'l1-used', item_code: 'CKS1050', core_line_id: 'cl-1', line_no: 1, qty: '2', redirected_to_pool: true }),
+    line({ id: 'l1-fresh', item_code: 'CKS1050', core_line_id: 'cl-1', line_no: 1, qty: '5' }),
+    line({ id: 'l2-fresh', item_code: 'WC200', core_line_id: 'cl-2', line_no: 2, qty: '4' }),
+    line({ id: 'l5', item_code: 'BSN-40', core_line_id: 'cl-5', line_no: 5, qty: '4', line_cancelled: true }),
+    line({ id: 'l6-used', item_code: 'TAP-88', core_line_id: 'cl-6', line_no: 6, qty: '3', redirected_to_pool: true }),
+  ];
+
+  function renderLines(onRowSelectionChange = vi.fn()) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <OrderInquiryLinesTab
+          lines={rows}
+          isLoading={false}
+          rowSelection={{}}
+          onRowSelectionChange={onRowSelectionChange}
+        />
+      </QueryClientProvider>,
+    );
+    return onRowSelectionChange;
+  }
+
+  function bodyRows() {
+    return screen.getAllByRole('row').filter((row) => row.closest('tbody'));
+  }
+
+  it('renders one grid row per line, in line order, with No. and no SO line column', async () => {
+    renderLines();
+    expect(await screen.findByRole('columnheader', { name: 'No.' })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'SO line' })).not.toBeInTheDocument();
+    const products = bodyRows().map((row) => row.textContent ?? '');
+    expect(products).toHaveLength(4);
+    expect(products[0]).toContain('CKS1050');
+    expect(products[1]).toContain('WC200');
+    expect(products[2]).toContain('BSN-40');
+    expect(products[3]).toContain('TAP-88');
+  });
+
+  it('greys a cancelled line and a line with nothing to buy', async () => {
+    renderLines();
+    await screen.findByText('BSN-40');
+    const [first, , cancelled, retired] = bodyRows();
+    expect(first.className).not.toContain('opacity-60');
+    expect(cancelled.className).toContain('opacity-60');
+    expect(retired.className).toContain('opacity-60');
+    expect(within(retired).getByRole('checkbox')).toBeDisabled();
+  });
+
+  it('ticking a line hands back its live row ids, never the used one', async () => {
+    const onChange = renderLines();
+    await screen.findByText('CKS1050');
+    fireEvent.click(within(bodyRows()[1]).getByRole('checkbox'));
+    expect(onChange).toHaveBeenLastCalledWith({ 'l2-linked': true, 'l2-fresh': true });
+    fireEvent.click(within(bodyRows()[0]).getByRole('checkbox'));
+    expect(onChange).toHaveBeenLastCalledWith({ 'l1-fresh': true });
+  });
+});
+
+/**
+ * Review S2 (PR #1266 at a98e01cf, SF1 at d0d328d7f): a line whose only waiting row is a
+ * used row must be tickable, or no tick can confirm what the header counts (G6).
+ */
+describe('Review S2: a line whose only waiting row is used can be ticked', () => {
+  const rows = [
+    line({ id: 'l1-used', item_code: 'CKS1050', core_line_id: 'cl-1', line_no: 1, qty: '2', redirected_to_pool: true, ack_state: 'changed' }),
+    line({ id: 'l2-used', item_code: 'TAP-88', core_line_id: 'cl-2', line_no: 2, qty: '3', redirected_to_pool: true, ack_state: 'acknowledged' }),
+  ];
+
+  function bodyRows() {
+    return screen.getAllByRole('row').filter((row) => row.closest('tbody'));
+  }
+
+  it('ticks a used-only line in changed and hands back its used row id', async () => {
+    const onChange = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <OrderInquiryLinesTab
+          lines={rows}
+          isLoading={false}
+          rowSelection={{}}
+          onRowSelectionChange={onChange}
+        />
+      </QueryClientProvider>,
+    );
+    await screen.findByText('CKS1050');
+    const [waiting, done] = bodyRows();
+    expect(waiting.className).not.toContain('opacity-60');
+    expect(within(done).getByRole('checkbox')).toBeDisabled();
+    fireEvent.click(within(waiting).getByRole('checkbox'));
+    expect(onChange).toHaveBeenLastCalledWith({ 'l1-used': true });
+  });
+
+  it('reads a ticked used-only line back as ticked', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <OrderInquiryLinesTab
+          lines={rows}
+          isLoading={false}
+          rowSelection={{ 'l1-used': true }}
+          onRowSelectionChange={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    await screen.findByText('CKS1050');
+    expect(within(bodyRows()[0]).getByRole('checkbox')).toBeChecked();
+  });
+});
+

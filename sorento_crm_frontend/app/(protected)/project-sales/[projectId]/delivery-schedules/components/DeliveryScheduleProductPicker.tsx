@@ -56,6 +56,69 @@ export function poProductOptions(lines: POVersionLine[]): SearchableSelectOption
   return options;
 }
 
+/** A product code sits in a description as one token of letters and digits, e.g. `SRTW8613-RL`. */
+const CODE_TOKEN = /^(?=.*\d)(?=.*[a-z])[a-z0-9]+(?:-[a-z0-9]+)*$/i;
+
+/** Our own brand leads most of our descriptions and tells a reviewer nothing. */
+const HOUSE_BRAND = /^sorento$/i;
+
+/**
+ * A description as a short name: its first phrase and its size (W1, owner hand test 26 Sep,
+ * "too long already").
+ *
+ * A PO line's description is a spec sheet run together with dashes ("SORENTO SRTW8613-RL ONE
+ * PIECE WC - SET- Washdown ... - Size : 700 x 380 x 730mm- S-Trap ..."), five lines tall in a
+ * picker. What tells two options apart is the first phrase and the size, so that is the name;
+ * the brand and the code are dropped because the code is already printed beside it. The full
+ * description stays on the option, so search still matches it and hovering shows it.
+ */
+export function productShortName(description: string | null | undefined): string {
+  const text = (description ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  // A phrase ends at a dash with a space on either side of it; `One-Piece` and `SRTW8613-RL`
+  // are single words and keep theirs.
+  const phrases = text.split(/\s+-\s*|-\s+/).map((part) => part.trim()).filter(Boolean);
+  const words = (phrases[0] ?? '')
+    .split(' ')
+    .filter((word) => !HOUSE_BRAND.test(word) && !CODE_TOKEN.test(word));
+  let name = words.join(' ');
+  if (name && name === name.toUpperCase()) {
+    // A shouted spec line reads as a sentence; two-letter words (WC) are initialisms.
+    name = name
+      .toLowerCase()
+      .split(' ')
+      .map((word) => (word.replace(/[^a-z]/g, '').length <= 2 ? word.toUpperCase() : word))
+      .join(' ');
+    name = name.charAt(0).toUpperCase() + name.slice(1);
+  }
+  const size = phrases
+    .map((phrase) => /^size\s*:\s*(.+)$/i.exec(phrase)?.[1])
+    .find(Boolean)
+    ?.replace(/\s*mm$/i, '');
+  return [name || phrases[0], size].filter(Boolean).join(' ');
+}
+
+/**
+ * Wide enough for a code and its short name on one line (24rem), wider than the Flag popover
+ * it opens from, and never wider than the screen: the menu is portalled, and the select caps it
+ * at the space Radix measured.
+ */
+const MENU_CLASS = 'min-w-[280px] w-[max(var(--radix-popper-anchor-width),24rem)]';
+
+/**
+ * One line per option: the code, then the short name, clipped with an ellipsis if even that
+ * does not fit. The whole description is the row's hover title.
+ */
+function renderProductOption(option: SearchableSelectOption) {
+  const name = productShortName(option.description);
+  return (
+    <div className="flex min-w-0 flex-1 items-baseline gap-2" title={option.description}>
+      <span className="shrink-0 font-medium">{option.label}</span>
+      {name ? <span className="truncate text-xs text-muted-foreground">{name}</span> : null}
+    </div>
+  );
+}
+
 /**
  * Every word typed has to appear somewhere in the option, which is the same rule
  * `SearchableSelect` applies to a static list. Keeping the two the same means a PO list and a
@@ -168,7 +231,8 @@ export function DeliveryScheduleProductPicker({
         fetchOptions={fetchProducts}
         initialQuery={seed}
         emptyMessage={emptyMessage}
-        className="min-w-[280px]"
+        renderOption={renderProductOption}
+        className={MENU_CLASS}
         renderTrigger={({ disabled: isDisabled }) => (
           <button
             type="button"
@@ -203,8 +267,9 @@ export function DeliveryScheduleProductPicker({
         initialQuery={seed}
         placeholder={action}
         emptyMessage={emptyMessage}
+        renderOption={renderProductOption}
         triggerClassName="w-full"
-        className="min-w-[280px]"
+        className={MENU_CLASS}
       />
     </>
   );
