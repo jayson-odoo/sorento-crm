@@ -4,7 +4,9 @@
 (label parser keeps a value's own leading `*`, accepts `**Label:**` / `_Label:_`; full-width
 quoted titles; user's language kept in the extractor); fix lane round 2 folded (owner console
 test 26 Sep 14:09Z: W1 clean values from turn one, W2 no typed punctuation or typo in a value,
-W3 confirm before create; migration `ideation_confirm_prompts`). Pre-merge: confirm prod's
+W3 confirm before create; migration `ideation_confirm_prompts`); fix lane round 3 folded (main
+`dc10a1afb` merged, `ideation_reply_fmt_prompts` re-parented onto `sales_0002_team_leader`,
+single head `ideation_confirm_prompts`). Pre-merge: confirm prod's
 `production` label for `ideate_extractor` / `ideate_reply` is not an admin edit the migrations
 would replace. Track: small fix, with two
 data-only migrations (each publishes two prompt versions, no schema change); no auth/RBAC change, no
