@@ -70,7 +70,7 @@ Specifications.
 5. Below the price tag wording, a plain **Search** section (always open, no drawer) shows the
    product's description, "Search finds this product", what search matches, and "Read specs from
    a text". There is no "Read this product again": a product is read again by itself whenever its
-   description, flyer or category changes (owner ruling, 27 Sep 2026).
+   code, description, category or sizes change (owner ruling, 27 Sep 2026).
 
 What they hold at the end: correct specs, a checked stamp, and they never saw a pattern, a code
 name, the word "Derived" or a re-read button.
@@ -252,8 +252,10 @@ rule. Nothing asks them for a code name, a pattern, a source code or a re-read.
 - **D9 Product tab order**: checked line, values table, price tag wording (where it is today, owner
   ruling), then a plain **Search** section, always shown, not collapsed (description, search finds
   it or not, what search matches, read specs from a text). No "Read this product again": the
-  change listener already re-reads a product when its description, flyer or category changes
-  (section 2), so the button has nothing left to do (owner ruling, 27 Sep 2026). The Unverify
+  change listener already re-reads a product when its code, description, category or sizes change
+  (`DERIVATION_INPUTS`, section 2), so the button has nothing left to do (owner ruling, 27 Sep
+  2026). S2 starts by checking whether a new flyer reading re-reads the product the same way; if
+  it does not, the flyer save calls `rederive_codes` for that one code. The Unverify
   confirm dialog becomes a 5 s deferred Undo (PRINCIPLES D7).
 - **D10 Reading runs itself; no re-read concept on any screen** (owner ruling, 27 Sep 2026,
   answers Q8). How a changed rule reaches products without a visible re-read:

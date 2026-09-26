@@ -3,10 +3,26 @@
 **Companion to:** `PLAN-product-specs-non-technical-26sep.md` (design),
 `rule-engine-built-in-rules.md` (every built-in rule in the new form) and
 `UX-REVIEW-product-specifications-26sep.md` (diagnosis).
-**Status:** DRAFT, round 2, 26 Sep 2026. Rewritten to the owner rulings of 26 Sep 2026 (Brand
+**Status:** DRAFT, round 3, 27 Sep 2026. Rewritten to the owner rulings of 26 Sep 2026 (Brand
 specification removed; a simple rule engine, no Advanced; price tag wording where it is; one
-lane). ACs citing Q3, Q7, Q8, Q9, Q10 or Q11 follow the recommendation until the owner answers
-round 2; a different answer amends the ACs that cite it.
+lane) and the Lavish mockup rulings of 27 Sep 2026 (no re-read pill or button, which answers
+Q8; rules on their own tab, basic and non technical; no Advanced anywhere; every list of words
+or brands is a data grid; no brand spec or brand picker on the product tab). ACs citing Q3, Q7,
+Q9, Q10 or Q11 follow the recommendation until the owner answers or confirms; a different answer
+amends the ACs that cite it.
+
+**Owner rulings, 27 Sep 2026 (Lavish notes on mockups 01 to 05, verbatim in PR #1290):**
+- Mockup 01, "Needs a re-read" pill: "don't need this"; "Re-read" button: "dont' need this".
+  (AC-S3.4, AC-S3.5, AC-S2.5)
+- Mockup 02, "Advanced / Code capacity_oz / Built in / 1 rule": "rule should be in own tab and
+  don't need advanced, should be basic and non technical". (AC-S1.6, AC-S1.14, AC-S3.7)
+- Mockup 03, "Words customers say" per brand: "this should be tabulated with data grid"; on
+  "Advanced": "again don't need advanced, i want the system to be as basic as possible".
+  (AC-S1.15, AC-S1.12)
+- Mockup 04, "Changed here / Put back the built-in rules / Advanced / Pattern": "i don't need
+  advanced, i need it to be as basic as possible". (AC-S1.6, AC-S1.10)
+- Mockup 05, the brand picker on the Specifications tab: "we don't really need this spec at
+  all". (AC-S0.7, AC-S2.7)
 **Legend:** `[BE]` pytest (Postgres only) · `[FE]` vitest · `[E2E]` agent-browser evidence run
 (sidebar clicks from `/`, 375 and 1280) · `[MIG]` migration · `[T]` CI guard.
 
@@ -19,16 +35,18 @@ round 2; a different answer amends the ACs that cite it.
 2. Corrects a wrong value by picking from its list.
 3. Adds a missing specification from the Add specification dialog.
 4. Marks the product as checked; can Undo within 5 s.
-5. Opens **Reading and search** only when needed.
+5. Reads the plain **Search** section below the price tag wording when needed; never presses a
+   re-read.
 
 **B. Spec owner** (`master_data.spec_registry.*`), Master data > Product Specifications.
 
-1. Sees the list with Specification, Type, Choices, Products and one status pill; no Brand.
-2. Opens a spec; Back sits with the title; tabs Details, Choices and words, How it is read,
-   Products.
-3. Reads every rule as one sentence; no pattern exists to show.
+1. Sees the list with Specification, Type, Choices, Products; no Brand, no status pill, no
+   Re-read.
+2. Opens a spec; Back sits with the title; tabs Details, Choices and words, How it is read (the
+   rules tab), Products.
+3. Reads the rules as a data grid, one row per rule; no pattern exists to show.
 4. Adds a rule by picking Look in, Find and Answer (and optionally Only when), tries it on a
-   product, sees what would change, saves, re-reads the catalogue from the status pill.
+   product, sees what would change, saves; the changed products update by themselves.
 
 ## S0 - Remove the Brand specification (owner ruling, 26 Sep 2026, Q1, Q2, Q4)
 
@@ -89,9 +107,10 @@ four named in plan D5. (D5)
 answer on a Words or Code rule) is refused with a 400 naming the missing part in plain words.
 (D5)
 
-**AC-S1.6 [FE]** How it is read lists each rule as one numbered sentence built from its builder,
-in view and edit mode, and no screen renders a character of a regular expression, a code name, or
-a "shipped", "default", "Seed" or "User" badge. (D5, D8)
+**AC-S1.6 [FE]** How it is read shows the rules as a data grid (AC-S1.14), in view and edit mode,
+and no screen renders a character of a regular expression, a code name, an "Advanced" control,
+or a "shipped", "default", "built in", "Changed here", "Seed" or "User" badge. (D5, D8, D14;
+owner rulings 27 Sep 2026)
 
 **AC-S1.7 [FE]** Add a rule and Edit open a modal with, in order: Look in, Find (the five kinds),
 Answer (List specs: the spec's choices; Yes or no specs: Yes; hidden for Number, Size and
@@ -102,31 +121,60 @@ the modal updates as the form changes. (D5)
 "Reads nothing"; See what would change lists the products whose value would change before Save.
 (D5)
 
-**AC-S1.9 [FE]** Rules reorder by drag and by keyboard (move up, move down); the order saved is
-the order run. (D5)
+**AC-S1.9 [FE]** Rules reorder by drag and by keyboard (move up, move down) while the grid is
+sorted by Order; the order saved is the order run. Sorting by another column changes the view
+only and hides the drag handles. (D5, D14)
 
-**AC-S1.10 [FE]** A spec whose rules were changed shows "Changed here" above the list and **Put
-back the built-in rules**, a deferred 5 s action with Cancel. (D8)
+**AC-S1.10 [FE]** No "Changed here" pill and no "Put back the built-in rules" action render. Removing
+a rule is a deferred 5 s action with Cancel; no confirm dialog opens. (D8; owner ruling 27 Sep
+2026, mockup 04)
 
 **AC-S1.11 [FE]** Tabs read Details, Choices and words, How it is read, Products, in that order,
-the same in view and edit. (Q9)
+the same in view and edit. Rules render on How it is read and nowhere else. (Q9, pending
+confirmation; D14)
 
 **AC-S1.12 [FE]** Details shows Name, Unit (not on List specs), In use, Highest believable value
-(numbers), and "Other names for this specification" bound to `synonyms._self` /
-`user_synonyms._self`. Choices and words never renders `_self`, a "user" badge or a code name; a
-number spec shows an empty state pointing at Details. (D6, D7)
+(numbers), and "Other names for this specification" as a data grid bound to `synonyms._self` /
+`user_synonyms._self`. Details shows no code name, no "Built in / Added here", no rule count and
+no Advanced. Choices and words never renders `_self`, a "user" badge or a code name; a number
+spec shows an empty state pointing at Details. (D6, D7, D8, D13)
 
 **AC-S1.13 [E2E]** Browser run at 375 and 1280 on Finish or colour (add a Words rule, try it,
-see what would change, cancel), Capacity (oz) and Length: every rule reads as a sentence and the
-rule modal is usable without horizontal scroll at 375.
+see what would change, cancel; edit an Answer cell in place and cancel), Capacity (oz) and
+Length: the rules show as grid rows, the rule modal is usable without horizontal page scroll at
+375, and no screen shows Advanced, Re-read or a pattern.
+
+**AC-S1.14 [FE]** The rules grid has the columns Order, Looks in, Finds, Answer, Only when, a
+sortable header on each, and a row action menu (Edit, Move up, Move down, Remove). Finds renders
+the rule's blanks in plain words ("MATT BLACK", "the number before OZ", "code ends with -GM");
+Answer renders the choice or "the number it finds"; Only when renders "Shape is not Round or
+Square" or blank. Clicking a Finds or Answer cell edits it in place with the same validation as
+the modal; the pencil opens the full rule modal. The grid uses the DataGrid fixed, resizable
+layout with explicit column sizes and truncate plus title for long text. (D14; owner ruling 27
+Sep 2026, mockup 02)
+
+**AC-S1.15 [FE]** Choices and words is a data grid, one row per choice: Choice, Words customers
+say, Products, each header sortable. Clicking a Choice or Words cell edits it in place (words as a
+comma list); Add a choice adds a row; Remove is deferred 5 s. No chips, token pills or cards
+render for words at 1280 or 375; at 375 the grid keeps Choice and Words and scrolls inside its
+frame, never the page. The same grid shape is used for Other names (AC-S1.12) and, if D3 adds
+them, brand words on Master data > Brands. (D13; owner ruling 27 Sep 2026, mockup 03)
+
+**AC-S1.16 [BE]** Saving a rule, a spec's scope or its highest believable value re-reads exactly
+the products whose value changes, through `rederive_codes` (inline for a few, the `imports`
+queue above the inline limit), and the save response carries that count for the toast "Saved. N
+products updated." A test saves a Words rule over seeded products and asserts their stored value
+changed with no other call. (D10; owner ruling 27 Sep 2026, answers Q8)
 
 ## S2 - Product Specifications tab
 
-**AC-S2.1 [FE]** Top to bottom: checked line, values table, price tag wording, **Reading and
-search** (collapsed). (Q7; owner ruling 26 Sep 2026 for the price tag wording)
+**AC-S2.1 [FE]** Top to bottom: checked line, values table, price tag wording, **Search** (always
+shown, not collapsed, no disclosure control). (Q7, pending confirmation; owner ruling 26 Sep 2026
+for the price tag wording; owner ruling 27 Sep 2026, no Advanced anywhere)
 
 **AC-S2.2 [FE]** No "Derived" pill, no "Findable by description" pill, no footer sentence, no
-eyebrow above the values table, no raw search diagnosis. (Review T2, T3, T11, T15; D8)
+eyebrow above the values table, no raw search diagnosis, no Advanced. (Review T2, T3, T11, T15;
+D8)
 
 **AC-S2.3 [FE]** The checked line reads "Not checked yet" with **Mark as checked**, or
 "Checked by {name} on {date}" with Undo; "Needs checking again" with what moved when a value
@@ -135,19 +183,27 @@ changed after checking. (Review T5)
 **AC-S2.4 [FE]** Undo is a deferred 5 s action with Cancel; no confirm dialog opens (PRINCIPLES
 D7). (Review T5)
 
-**AC-S2.5 [FE]** Reading and search holds, in order: the product description (not monospace),
-"Search finds this product" or "Search cannot find this product yet", what search matches (empty:
-"Nothing yet. Read this product again to build it."), Read specs from a text, Read this product
-again. Closed by default and remembered per viewer. (Q7)
+**AC-S2.5 [FE]** Search holds, in order: the product description (not monospace), "Search finds
+this product" or "Search cannot find this product yet", what search matches (empty: "Nothing
+yet."), Read specs from a text. There is no "Read this product again" button: the product is
+re-read by itself when its code, description, category, sizes or flyer reading changes. (Q7; D9; owner ruling 27 Sep
+2026, no re-read concept)
 
 **AC-S2.6 [FE]** Price tag wording renders below the values, where it is today; empty reads "Not
-set, the price tag uses the product description" with Edit. (Owner ruling 26 Sep 2026; Q10)
+set, the price tag uses the product description" with Edit. (Owner ruling 26 Sep 2026; Q10,
+pending confirmation)
 
-**AC-S2.7 [FE]** The values table has no Brand row, and the source label never reads
-"Description" for a value that came from the product record. (D1; review T12)
+**AC-S2.7 [FE]** The values table has no Brand row, Add specification offers no Brand, and no
+brand picker renders anywhere on the tab; the source label never reads "Description" for a value
+that came from the product record. (D1; review T12; owner ruling 27 Sep 2026, mockup 05)
 
 **AC-S2.8 [E2E]** On SRTWC7604-SC-SH at 1280 the first values row is visible without scrolling
 below the tab strip; at 375 nothing is clipped and no horizontal page scroll appears.
+
+**AC-S2.9 [BE]** Editing a product's description (or its code, category or sizes), or saving a
+new flyer reading for it, re-reads its specifications with no button pressed; the existing
+listener tests stay green, and one test per trigger asserts the stored values changed after that
+edit alone. (D9, D10)
 
 ## S3 - List and navigation
 
@@ -159,18 +215,21 @@ Built in are available in the column chooser, hidden by default. (Q11)
 **AC-S3.3 [FE]** Choices for Product class equals the category class count; "-" for numbers and
 yes or no. (Review L9; Q3)
 
-**AC-S3.4 [FE]** One status pill: Up to date, Needs a re-read (with **Re-read** beside it), or
-Reading. The words "Never read" and "Rules changed since" do not render. (Q8)
+**AC-S3.4 [FE]** The list renders no status pill, no Re-read button, and none of the words
+"Never read", "Rules changed since", "Needs a re-read", "Re-read" or "Up to date". (Owner ruling
+27 Sep 2026, mockup 01; answers Q8; D10)
 
-**AC-S3.5 [BE]** The catalogue read finish time persists in the database; after an API restart the
-status reports the last finish time and Up to date when the fingerprint matches. (Q8)
+**AC-S3.5 [BE]** When the worker starts and the stored rules fingerprint differs from the running
+rules (a deploy changed the shipped rules), it queues one catalogue re-read and stores the new
+fingerprint when that finishes; when they match it queues nothing. Two tests, one per case. (D10)
 
 **AC-S3.6 [FE] [E2E]** On a spec's page the Back link sits in the page header inside the same
 side gutter as the title and card, reading "Back to specifications", at 375 and 1280, in the
 loading, not-found and loaded states. (Review R1)
 
 **AC-S3.7 [FE]** The record card shows the label once (page title) and one type chip; no code
-name, no "Unit None", no duplicate "Active". (Review R3, R4)
+name, no "Built in", no rule count, no "Unit None", no duplicate "Active", no Advanced. (Review
+R3, R4; owner ruling 27 Sep 2026, mockup 02)
 
 **AC-S3.8 [FE]** Built-in specs show no Delete item in the row menu or the gear; added specs keep
 a deferred delete. (Review L16)
