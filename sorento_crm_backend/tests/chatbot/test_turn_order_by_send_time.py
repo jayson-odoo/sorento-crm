@@ -136,12 +136,30 @@ def _photo_envelope(contact_id: int) -> Envelope:
     )
 
 
-def _n8n_media_intake(session_factory, contact_id: int) -> None:
+def _n8n_media_intake(session_factory, contact_id: int, monkeypatch) -> None:
     """What n8n's `sub-media-intake` does for the photo BEFORE it calls `/chat/turn`: one
     `/external/media/process` call through the real fast path (decide, meter, record,
-    enqueue; the `media_pipeline` fixture runs the job inline)."""
+    enqueue). The extraction is still RUNNING when "Stock" arrives, as it was for Mr Loo
+    (~20 s); the worker finishes it while the CRM's existing bounded media poll waits on
+    that same job, which is the first `time.sleep` of that poll."""
+    import app.api.v1.external.media as media_route
     from app.api.v1.external.media import _decide_meter_record_and_enqueue
     from app.schemas.external.media import MediaProcessRequest
+    from app.services.chatbot import media_intake as media_intake_mod
+
+    queued: list[tuple[Any, tuple]] = []
+    monkeypatch.setattr(
+        media_route,
+        "enqueue_job",
+        lambda func, *args, **kwargs: queued.append((func, args)) or type("FakeJob", (), {"id": "rq"})(),
+    )
+
+    def _worker_finishes(_seconds: float) -> None:
+        while queued:
+            func, args = queued.pop(0)
+            func(*args)
+
+    monkeypatch.setattr(media_intake_mod.time, "sleep", _worker_finishes)
 
     db = session_factory()
     _decide_meter_record_and_enqueue(
@@ -249,7 +267,7 @@ class TestPhotoStillInN8nMediaIntake:
         _install_parser(monkeypatch, calls)
 
         # 14:57:25 photo sent -> n8n starts its own media intake (the ledger row exists).
-        _n8n_media_intake(session_factory, contact_id)
+        _n8n_media_intake(session_factory, contact_id, monkeypatch)
         # 14:57:29 "Stock" sent -> forwarded at once, reaches /chat/turn FIRST.
         result = engine_mod.run_turn(_stock_envelope(contact_id), session_factory=session_factory)
 
@@ -284,7 +302,7 @@ class TestPhotoStillInN8nMediaIntake:
         calls: list[str] = []
         _install_parser(monkeypatch, calls)
 
-        _n8n_media_intake(session_factory, contact_id)
+        _n8n_media_intake(session_factory, contact_id, monkeypatch)
         engine_mod.run_turn(_stock_envelope(contact_id), session_factory=session_factory)
         parsed = len(calls)
 
@@ -294,12 +312,13 @@ class TestPhotoStillInN8nMediaIntake:
         assert late.duplicate is True
         assert len(calls) == parsed, "the photo must not be parsed or answered a second time"
 
-    def test_an_old_ledger_row_already_behind_a_later_turn_is_not_replayed(
+    def test_a_photo_whose_extraction_already_finished_is_not_replayed(
         self, session_factory, stub_access, media_pipeline, monkeypatch
     ):
-        """Bound, with no clock: only a media message the CRM heard about AFTER this
-        contact's previous turn is 'earlier and unanswered'. A photo n8n answered on its
-        own reply arm last week (no turn row) must never be answered again today."""
+        """A photo n8n answered on its own reply arm last week never became a turn, and
+        its job is finished. It is not on its way, so no later turn answers it again."""
+        from app.services.chatbot import media_intake as media_intake_mod
+
         contact_id = _fresh_contact_id()
         _seed_contact(session_factory, contact_id, focus_codes=[])
         _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
@@ -309,22 +328,37 @@ class TestPhotoStillInN8nMediaIntake:
         calls: list[str] = []
         _install_parser(monkeypatch, calls)
 
-        _n8n_media_intake(session_factory, contact_id)
+        _n8n_media_intake(session_factory, contact_id, monkeypatch)
+        media_intake_mod.time.sleep(0)  # the worker finished it back then
+
+        engine_mod.run_turn(_stock_envelope(contact_id), session_factory=session_factory)
+
+        assert [_message_line(c) for c in calls] == ["Stock"], [_message_line(c) for c in calls]
+        assert _turn_for(session_factory, contact_id, PHOTO_MESSAGE_ID) is None
+
+    def test_a_stranded_job_from_before_an_answered_turn_is_not_replayed(
+        self, session_factory, stub_access, media_pipeline, monkeypatch
+    ):
+        """Bound, with no clock: only a media message the CRM heard about AFTER this
+        contact's previous turn can be earlier and unanswered. A job stranded unfinished
+        before a turn that has since been answered is history."""
+        contact_id = _fresh_contact_id()
+        _seed_contact(session_factory, contact_id, focus_codes=[])
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
+        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        media_pipeline.set_result(PHOTO_RESULT)
+        stub_access()
+        calls: list[str] = []
+        _install_parser(monkeypatch, calls)
+
+        _n8n_media_intake(session_factory, contact_id, monkeypatch)
         db = session_factory()
         db.execute(
             text("UPDATE contact_media_usage SET created_at = :t WHERE respond_io_id = :c"),
             {"t": datetime.now() - timedelta(days=7), "c": str(contact_id)},
         )
         db.commit()
-        # A turn after that photo (last week's answered text).
-        engine_mod.run_turn(
-            _base_envelope(
-                contact_id, message_id="ZZT-old", sent_ms=STOCK_SENT_MS - 86_400_000,
-                inner={"type": "text", "text": "hello"},
-            ),
-            session_factory=session_factory,
-        )
-        calls.clear()
+        _seed_previous_turn(session_factory, contact_id, days_ago=6)
 
         engine_mod.run_turn(_stock_envelope(contact_id), session_factory=session_factory)
 
@@ -364,7 +398,9 @@ class TestBothInThePerContactQueue:
         assert "M210-GM" in _subject_line(calls[1])
         row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == waiting_id).first()
         assert row.status == "done", (row.status, row.stage, row.error)
-        assert "M210-GM" in _texts(result.actions)[0]
+        assert _texts(result.actions)[0] == _texts((row.response or {}).get("actions") or [])[0], (
+            "the earlier-sent message's reply goes out first"
+        )
 
         # Its own request, once it gets the slot, finds the row answered.
         assert engine_mod._claim_own_row(session_factory, waiting_id) is False
@@ -434,7 +470,9 @@ class TestStaleFocusOnABareDomainWord:
         assert "SRTWC8516" not in texts and "SRTWC8517" not in texts, (
             f"a bare 'Stock' must not answer yesterday's products: {texts!r}"
         )
-        assert "which product" in texts.lower(), texts
+        assert "give me a product code" in texts.lower(), (
+            f"it asks for the product, as it does with no subject at all: {texts!r}"
+        )
 
     def test_bare_stock_on_a_focus_named_today_still_answers_it(
         self, session_factory, stub_access, monkeypatch
@@ -447,4 +485,81 @@ class TestStaleFocusOnABareDomainWord:
         result, calls = self._stock_only(session_factory, contact_id, monkeypatch)
 
         assert "SRTWC8517" in _subject_line(calls[0])
-        assert "which product" not in " ".join(_texts(result.actions)).lower()
+        assert "give me a product code" not in " ".join(_texts(result.actions)).lower()
+
+
+class TestOrderingOnTheWaitingRequest:
+    """Ordering ON: the photo's own request is waiting for its ticket while "Stock" (which
+    arrived first but was sent later) holds the slot and answers the photo first. When the
+    photo's request gets its slot it must find its row answered and send nothing."""
+
+    def _ordering_on(self, monkeypatch, *, contact_id: int, while_waiting) -> None:
+        monkeypatch.setattr(engine_mod, "_s7_mode", lambda *args, **kwargs: True)
+        monkeypatch.setattr(engine_mod, "_ordering_redis", lambda: None)
+        monkeypatch.setattr(engine_mod.dispatch, "contact_ticket", lambda redis, contact: 2)
+        monkeypatch.setattr(engine_mod.dispatch, "mark_running", lambda *args: None)
+        monkeypatch.setattr(engine_mod.dispatch, "mark_done", lambda *args: None)
+        state = {"first": True}
+
+        def _wait(redis, contact, ticket, timeout_s):
+            if state["first"]:
+                state["first"] = False
+                while_waiting()
+
+        monkeypatch.setattr(engine_mod.dispatch, "wait_for_turn", _wait)
+
+    def _photo_as_text(self, contact_id: int) -> Envelope:
+        return _base_envelope(
+            contact_id,
+            message_id=PHOTO_MESSAGE_ID,
+            sent_ms=PHOTO_SENT_MS,
+            inner={"type": "text", "text": ", ".join(PHOTO_CODES)},
+        )
+
+    def test_the_waiting_photo_request_replays_the_answer_given_ahead_of_it(
+        self, session_factory, stub_access, monkeypatch
+    ):
+        contact_id = _fresh_contact_id()
+        _seed_contact(session_factory, contact_id, focus_codes=YESTERDAY_CODES)
+        stub_access()
+        calls: list[str] = []
+        _install_parser(monkeypatch, calls)
+        slot_holder: dict[str, Any] = {}
+
+        def _stock_holds_the_slot() -> None:
+            slot_holder["result"] = engine_mod.run_turn(
+                _stock_envelope(contact_id), session_factory=session_factory
+            )
+
+        self._ordering_on(monkeypatch, contact_id=contact_id, while_waiting=_stock_holds_the_slot)
+
+        waiting = engine_mod.run_turn(self._photo_as_text(contact_id), session_factory=session_factory)
+
+        assert [_message_line(c) for c in calls] == [", ".join(PHOTO_CODES), "Stock"]
+        assert waiting.duplicate is True, "its answer already went out on the Stock turn's response"
+        photo_row = _turn_for(session_factory, contact_id, PHOTO_MESSAGE_ID)
+        assert photo_row.status == "done"
+        assert _texts(slot_holder["result"].actions)[0] == _texts(photo_row.response["actions"])[0]
+
+    def test_a_queue_timeout_after_being_answered_ahead_sends_no_error_reply(
+        self, session_factory, stub_access, monkeypatch
+    ):
+        from app.services.chatbot import dispatch
+
+        contact_id = _fresh_contact_id()
+        _seed_contact(session_factory, contact_id, focus_codes=YESTERDAY_CODES)
+        stub_access()
+        calls: list[str] = []
+        _install_parser(monkeypatch, calls)
+
+        def _answered_then_timed_out() -> None:
+            engine_mod.run_turn(_stock_envelope(contact_id), session_factory=session_factory)
+            raise dispatch.QueueWait("the Stock turn took longer than the queue budget")
+
+        self._ordering_on(monkeypatch, contact_id=contact_id, while_waiting=_answered_then_timed_out)
+
+        waiting = engine_mod.run_turn(self._photo_as_text(contact_id), session_factory=session_factory)
+
+        assert waiting.duplicate is True
+        assert engine_mod.GENERIC_ERROR_REPLY not in _texts(waiting.actions)
+        assert _turn_for(session_factory, contact_id, PHOTO_MESSAGE_ID).status == "done"
