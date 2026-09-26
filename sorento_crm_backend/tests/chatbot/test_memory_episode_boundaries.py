@@ -475,11 +475,24 @@ class TestRetentionTrim:
         db = session_factory()
 
         now = datetime(2026, 9, 25, 0, 0)
-        # A-live: 20 frames, newest last. One is 400 days old but NOT the oldest of the
-        # 20 (it sits at index 5), so it must survive the trim.
+        # A-live: 20 frames, newest last. Index 0 is 500 days old (the TRUE oldest,
+        # the one the 21st write must trim); index 5 is 400 days old (the SECOND
+        # oldest - old, but not the oldest, so it must survive the trim). Every other
+        # index is recent (at most 18 days), so neither special age is accidentally
+        # beaten by an ordinary one. Coordinator fix, 26 Sep 2026: the prior version
+        # put the 400-day frame at index 5 while leaving every OTHER index at
+        # `19 - i` (<=19 days), which made the 400-day frame the chronological
+        # oldest of the 20 by nearly 400 days - the test then asserted the SAME id
+        # was both "trimmed" (`oldest_a_live_id`) and "must survive" (`the_400_day_id`),
+        # a self-contradiction that could never pass.
         a_live_ids = []
         for i in range(20):
-            when = now - timedelta(days=(400 if i == 5 else (19 - i)))
+            if i == 0:
+                when = now - timedelta(days=500)
+            elif i == 5:
+                when = now - timedelta(days=400)
+            else:
+                when = now - timedelta(days=(19 - i))
             fid = self._seed_closed_frame(
                 db, contact_respond_id=cid_a, is_test=False,
                 last_activity_at=when, turn_id=f"ZZT-mem25-a-live-{i}",

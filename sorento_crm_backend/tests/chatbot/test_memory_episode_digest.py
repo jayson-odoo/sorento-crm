@@ -190,7 +190,11 @@ class TestDigestOutputShape:
 class TestSummaryRules:
     def test_worked_example_two_stock_turns_then_an_incoming_miss(self) -> None:
         digest = _load_digest()
-        base = datetime(2026, 9, 25, 10, 2, tzinfo=timezone.utc)  # Thursday
+        # 25 Sep 2026 is a REAL Friday (`datetime.date(2026, 9, 25).strftime("%A")` -
+        # measured, not the plan's own fictional "Thu 25 Sep" worked example, which is
+        # narrative text, not tied to the real calendar). The digest must print the
+        # weekday of whatever date it is actually given.
+        base = datetime(2026, 9, 25, 10, 2, tzinfo=timezone.utc)  # Friday
         turns = [
             _turn(
                 "t1", base, domain="stock", entities=[{"canonical_code": "SRTWB1455"}],
@@ -211,13 +215,18 @@ class TestSummaryRules:
         summary = result["summary"]
 
         assert len(summary) <= 240, summary
-        assert summary.startswith("Thu 25 Sep, 3 turns:"), summary
+        assert summary.startswith("Fri 25 Sep, 3 turns:"), summary
         assert "SRTWB1455 (answered)" in summary, summary
         assert "M486-75-BL (not found)" in summary, summary
-        assert not re.search(r"\d{2,}", summary), (
-            f"no multi-digit figure may appear in a summary (quantities/prices are "
-            f"stale by the next day): {summary!r}"
-        )
+        # Coordinator fix, 26 Sep 2026: a blanket `not re.search(r"\d{2,}", summary)`
+        # contradicts the date ("25 Sep") and the product codes ("SRTWB1455",
+        # "M486-75-BL") this same test just asserted ARE in the summary - it could
+        # never pass. AC-MEM021's real rule is narrower: no ANSWER FIGURE (a
+        # quantity or a price from what a turn's tool returned) leaks in, which this
+        # asserts by naming the exact figures this test seeded, never a blanket
+        # digit-run ban.
+        assert "137" not in summary, f"a stock quantity must not leak into the summary: {summary!r}"
+        assert "45.90" not in summary, f"a price must not leak into the summary: {summary!r}"
 
     def test_no_digit_run_from_a_turns_figures_leaks_into_the_summary(self) -> None:
         digest = _load_digest()
@@ -398,6 +407,9 @@ class TestBackfillScript:
                 is_test=False,
                 status="done",
                 created_at=base + timedelta(hours=i),
+                # Coordinator fix, 26 Sep 2026: `ChatbotTurn.envelope` is NOT NULL
+                # (`app/models/chatbot_turn.py:83`) - a minimal, otherwise-unused stub.
+                envelope={},
                 trace=[
                     {"kind": "apply", "verdict": {"domain_hint": "stock", "topic_reset": True}, "plan": {"domains": ["stock"], "ask": None}},
                     {"stage": "looked_up", "status": "done", "facts": {"rows_found": 1}},

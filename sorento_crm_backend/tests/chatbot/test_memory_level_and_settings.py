@@ -146,7 +146,9 @@ class TestSettingsChatbotMemoryShape:
 
         resp = client.get(SETTINGS_ENDPOINT)
         assert resp.status_code == 200, resp.text
-        memory = resp.json().get("chatbot_memory") or {}
+        # Coordinator fix, 26 Sep 2026: GET nests the body under "settings"
+        # (`test_s8_settings_screen.py:236`'s own `resp.json()["settings"]`), not flat.
+        memory = resp.json()["settings"].get("chatbot_memory") or {}
         assert set(memory) == {"enabled", "default_level", "own_level_count"}, memory
 
     def test_put_default_level_off_is_rejected(self, api, db) -> None:
@@ -183,7 +185,7 @@ class TestSettingsChatbotMemoryShape:
         assert resp.status_code == 200, resp.text
 
         get_resp = client.get(SETTINGS_ENDPOINT)
-        memory = get_resp.json().get("chatbot_memory") or {}
+        memory = get_resp.json()["settings"].get("chatbot_memory") or {}
         assert memory.get("enabled") is True, memory
         assert memory.get("default_level") == "past", memory
 

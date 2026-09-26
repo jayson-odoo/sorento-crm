@@ -12,20 +12,12 @@ tests are red for a DIFFERENT reason for the same cause: a 404 is not a 403 eith
 they fail on the same missing-route basis, not because permission checking itself is
 broken.
 
-Lives under `sorento_crm_backend/tests/` (not `tests/chatbot/`) per the captain's brief,
-next to the codebase's other `test_contact_*` API tests.
-
-**Collection-order gotcha, measured while writing this file**: running this file
-EXPLICITLY BEFORE one or more `tests/chatbot/*.py` files in the same `pytest` invocation
-(e.g. `pytest tests/test_contact_chatbot_memory_api.py tests/chatbot/test_memory_engine_
-context.py`) makes `tests/chatbot/conftest.py`'s `session_factory` fixture vanish for
-those later files ("fixture 'session_factory' not found"). Running the same files with
-this one LAST, or letting a whole-suite `pytest` invocation collect `tests/chatbot/`
-first via its normal alphabetical directory-before-file ordering (`chatbot/` sorts before
-`test_contact_chatbot_memory_api.py` at the `tests/` level), shows no such error - every
-test here and in `tests/chatbot/` runs clean. Not chased further under this lane's time
-budget; flagged for whoever runs a hand-picked, out-of-order file list (a curated CI
-step, a local `pytest fileA fileB`) rather than the whole suite or a directory.
+Lives under `tests/chatbot/` (moved here by coordinator ruling, 26 Sep 2026: at
+`tests/test_contact_chatbot_memory_api.py` it tripped `test_import_boundary.py`'s
+`ALLOWED_PREFIXES` check - that guard only exempts `tests/chatbot/`, and this file's
+tombstone test imports `app.services.chatbot.turn.profile_facts` directly). Moving it
+here also drops the need for a locally duplicated `session_factory`: it now shares
+`tests/chatbot/conftest.py`'s fixture like every other file in this directory.
 
 Postgres only (blank scratch schema, same `db`/`client` pattern as
 `tests/chatbot/test_rearch_s0_contact_profile.py`); every customer/warehouse/brand/sales
@@ -53,63 +45,9 @@ from app.main import app
 from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
 from app.services.user_service import UserPermissionService
 
+from tests.chatbot.test_turns_admin_api import db  # noqa: F401 - shared blank-schema fixture
+
 BASE = "/api/v1/user-management/contacts"
-
-
-@pytest.fixture()
-def _blank_session_factory():
-    """Local copy of `tests/chatbot/conftest.py::session_factory` (a blank scratch
-    schema, one connection, savepoints per session) - NOT an
-    `from tests.chatbot.conftest import session_factory` re-export. Measured while
-    writing this file: importing that name directly into a module OUTSIDE
-    `tests/chatbot/` (this file lives at `tests/`, per the captain's brief) breaks
-    pytest's own conftest auto-discovery for `tests/chatbot/*.py` files collected in
-    the SAME run - `tests/chatbot/test_memory_engine_context.py`'s `session_factory`
-    fixture then goes missing with "fixture 'session_factory' not found" the moment
-    both files are passed to one `pytest` invocation. A fixture LOOKS shareable by
-    import (several `tests/chatbot/*.py` files import `stub_parser`/`stub_access`
-    from `test_engine.py` this way, within the same directory's conftest chain), but
-    importing an ACTUAL conftest.py module from a directory pytest does not treat as
-    an ancestor conftest of this file is a different case - flagged here instead of
-    silently duplicating code for no stated reason.
-    """
-    import contextlib
-    from typing import Any, Iterator
-
-    from sqlalchemy.orm import Session
-
-    from tests._pg_fixture import blank_schema_engine
-
-    connection = blank_schema_engine().connect()
-    transaction = connection.begin()
-    from tests import _pg_fixture
-
-    name = _pg_fixture._BLANK["name"]
-    connection.exec_driver_sql(
-        f'SET LOCAL search_path TO "{name}", "{name}_scm", "{name}_dealer_kit", '
-        f'"{name}_chatbot", "{name}_projects", "public"'
-    )
-    opened: list = []
-
-    def factory() -> Session:
-        session = Session(bind=connection, join_transaction_mode="create_savepoint")
-        opened.append(session)
-        return session
-
-    try:
-        yield factory
-    finally:
-        for session in opened:
-            with contextlib.suppress(Exception):
-                session.close()
-        transaction.rollback()
-        connection.close()
-
-
-@pytest.fixture()
-def db(_blank_session_factory):
-    return _blank_session_factory()
-
 
 VIEW_PERM = "user_management.contacts.view"
 EDIT_PERM = "user_management.contacts.edit"

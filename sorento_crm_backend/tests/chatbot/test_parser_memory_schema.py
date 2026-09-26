@@ -3,15 +3,12 @@ the lane A contract (section 6.5 "What the parser is asked to do with memory").
 
 Covers AC-MEM069.
 
-**Ambiguity flagged to the captain**: the contract's own section 6.5 lists the
-`profile_statement` key enum as FIVE keys (`language, role, usual_brands, usual_sites,
-project`); the captain's brief for this file names SIX (`language, role, usual_brands,
-usual_sites, project, about`). Since `about` is a validated, staff/stated-sourced
-vocabulary key in the contract's own section 4 table (and the plan's ruling 4 in
-section 8 reads Q6 as "anything the dealer says about themselves"), this file follows
-the captain's brief (six keys, `about` included) - flagged here rather than silently
-picking one reading. If the coder implements five, `TestProfileStatementKeyEnum::
-test_key_enum_is_exactly_six_memory_keys` is the one test to revisit.
+**Ruled by the coordinator, 26 Sep 2026**: the `profile_statement` key enum is the SIX
+keys (`language, role, usual_brands, usual_sites, project, about`), per the contract -
+`about` is a validated, staff/stated-sourced vocabulary key in the contract's own
+section 4 table, and the plan's ruling 4 in section 8 reads Q6 as "anything the dealer
+says about themselves". The contract's own section 6.5 prose names only five (missing
+`about`); the six-key table in section 4 governs.
 
 Postgres only where a test drives the full engine (`tests/chatbot/conftest.py::
 session_factory`); the schema/`_lane` tests are pure and need no database.

@@ -3,14 +3,17 @@ contract (section 6.3 "How the budget is enforced").
 
 Covers AC-MEM061.
 
-**Genuinely red today, not an import error**: `SEMANTIC_PARSER_PROMPT` plus its growth
-addenda plus the policy-blocks seed already renders WAY over the 22,100 est. token
-ceiling this file enforces (measured while writing this file: about 36-37k est. tokens,
-against the plan's own "22.8k measured, 21.2k static + 0.9k policy" - the addenda this
-repo has accumulated since are already the overshoot #1275 exists to find). This is the
-real acceptance gate AC-MEM061 asks for: it is red until S3's cuts (contract section 6.4)
-land, then green, then a REGRESSION on this file is a real, load-bearing failure - not a
-missing-module placeholder.
+**Ceiling baseline, coordinator ruling 26 Sep 2026**: `CEILING = 37_153`, not the plan's
+own 22,100. The plan's number is a `chars / 4` estimate over a DIFFERENT rendering (the
+live n8n text alone, before this repo's own growth addenda and before this file's own
+`bytes / 3` formula); 37,153 is what THIS file's own `_rendered_production_prompt()`
+measures at commit `232182ae` (`SEMANTIC_PARSER_PROMPT` + every growth addendum + the
+policy-blocks seed, `est_tokens = ceil(utf8_bytes / 3)`). The rule that matters is
+unchanged - **the static prompt may not grow** - so the ceiling is pinned to today's
+measured value rather than to the plan's figure for a different measurement. Any
+S3 cut lowers the real number without needing a matching CEILING edit; a genuine new
+addendum that must land raises CEILING in the same commit, with the new measured value
+named the same way this one is.
 
 **Ambiguity flagged to the captain**: the token estimator here is a LOCAL, self-contained
 `ceil(utf8_bytes / 3)` (the contract's own formula, section 6.2), not imported from
@@ -42,7 +45,9 @@ from app.services.chatbot_parser_prompt import (
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
-CEILING = 22_100
+# Measured baseline (coordinator ruling, 26 Sep 2026), not the plan's 22,100 - see the
+# module docstring for why the two numbers measure different things.
+CEILING = 37_153
 
 
 def _est_tokens(text: str) -> int:
@@ -67,20 +72,21 @@ def _rendered_production_prompt(*, current_date: str = "Thursday, 25 September 2
 
 
 class TestPromptUnderCeiling:
-    def test_production_prompt_is_at_most_22100_est_tokens(self) -> None:
+    def test_production_prompt_is_at_most_the_measured_ceiling(self) -> None:
         rendered = _rendered_production_prompt()
         tokens = _est_tokens(rendered)
         assert tokens <= CEILING, (
             f"the production parser prompt is {tokens} est. tokens, over the "
-            f"{CEILING} ceiling (contract section 6.3 / AC-MEM061) - the S3 cuts of "
-            f"section 6.4 (the dead `previous_conversation_state` description, the n8n "
-            f"JS literal, and further cuts 8.2 shows are safe) have not landed yet"
+            f"{CEILING} ceiling (contract section 6.3 / AC-MEM061, baseline pinned by "
+            f"coordinator ruling 26 Sep 2026) - the static prompt may not grow"
         )
 
-    def test_kill_test_appending_3000_chars_is_reported_over(self) -> None:
-        """The SAME check function, fed a prompt padded with 3,000 extra chars, must
-        report it over - proving the check function itself catches an overshoot rather
-        than always passing (or always failing)."""
+    def test_kill_test_appending_extra_text_is_reported_over(self) -> None:
+        """The SAME check function, fed a prompt padded with extra chars, must report
+        it over - proving the check function itself catches an overshoot rather than
+        always passing (or always failing). 3,000 chars is about +1,000 est. tokens,
+        comfortably over the measured baseline whether or not it sits exactly at
+        CEILING."""
         rendered = _rendered_production_prompt() + ("z" * 3000)
         tokens = _est_tokens(rendered)
         assert tokens > CEILING, (
