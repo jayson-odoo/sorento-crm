@@ -1,5 +1,5 @@
 """
-Two-way sync between docs/user-guides/ markdown and Outline collection.
+Two-way sync between documentation/user-guides/ markdown and Outline collection.
 
 Modes:
   push   repo -> Outline (default)
@@ -11,7 +11,7 @@ Env:
   OUTLINE_API_TOKEN         required
   OUTLINE_COLLECTION_ID     default 18f78b01-bf5a-4032-934c-d5679609d553 (Sorento CRM)
 
-State file: docs/user-guides/.outline-sync.json (path -> doc id mapping)
+State file: documentation/user-guides/.outline-sync.json (path -> doc id mapping)
 
 Mapping:
   README.md                 -> root doc "Overview"
@@ -43,7 +43,7 @@ from dotenv import load_dotenv
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-GUIDES_DIR = REPO_ROOT / "docs" / "user-guides"
+GUIDES_DIR = REPO_ROOT / "documentation" / "user-guides"
 STATE_FILE = GUIDES_DIR / ".outline-sync.json"
 
 DEFAULT_BASE_URL = "https://doc.foundryx.my"
