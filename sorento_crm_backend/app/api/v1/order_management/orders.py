@@ -16,7 +16,11 @@ from app.dependencies import (
     require_permission,
     require_permission_with_api_key,
 )
-from app.services.order_service import OrderService, stamp_so_outstanding_rows
+from app.services.order_service import (
+    OrderService,
+    narrow_product_ids_by_brand,
+    stamp_so_outstanding_rows,
+)
 from app.services.uuid_list_param import parse_uuid_list
 from app.config import settings as app_settings
 
@@ -204,42 +208,6 @@ def _normalize_entities(raw: Optional[list[str]]) -> Optional[list[str]]:
             seen.add(key)
             out.append(piece)
     return out or None
-
-
-def _narrow_product_ids_by_brand(
-    db: Session,
-    resolved_product_ids: Optional[list[str]],
-    resolved_brand_ids: Optional[list[str]],
-) -> Optional[list[str]]:
-    """#1262 slice 9 (F1a): a `brand_ids` filter narrows `product_ids` to that
-    brand's own products (`Product.brand_id`, the SAME join `product_ids`
-    already resolves through downstream - `OrderService.list_orders` /
-    `list_orders_by_product` filter order LINES on `product_id IN (...)`, so
-    resolving the brand to its product ids HERE reuses that join rather than
-    adding a second one deeper in the service).
-
-    `None` (no brand filter) returns `resolved_product_ids` untouched. A given
-    `resolved_product_ids` AND a brand both narrowing is the INTERSECTION - a
-    product must satisfy both to qualify; brand alone is the brand's own set.
-    """
-    if not resolved_brand_ids:
-        return resolved_product_ids
-    from app.models.product import Product
-
-    brand_product_ids = {
-        row[0]
-        for row in db.query(Product.id).filter(Product.brand_id.in_(resolved_brand_ids)).all()
-    }
-    narrowed = (
-        sorted(brand_product_ids)
-        if resolved_product_ids is None
-        else [pid for pid in resolved_product_ids if pid in brand_product_ids]
-    )
-    # An established pattern (`resources_service.py`'s own `Attachment.id ==
-    # "00000-...0"`): a brand that resolved to NO products (or intersected to
-    # none) must still filter to nothing, never fall through to the caller's
-    # `if product_ids:` truthiness check and read as "no product filter at all".
-    return narrowed or ["00000000-0000-0000-0000-000000000000"]
 
 
 def _parse_flex_date(value: Optional[str], *, end_of_day: bool = False) -> Optional[datetime]:
@@ -505,10 +473,21 @@ async def get_orders(
 
     try:
         _resolved_customer_ids = parse_uuid_list(customer_ids, param_name="customer_ids")
-        _resolved_product_ids = _narrow_product_ids_by_brand(
+        _resolved_brand_ids = parse_uuid_list(brand_ids, param_name="brand_ids")
+        # Review round (26 Sep 2026): the SAME cap `get_outstanding_report` already
+        # applies to its own `brand_ids` - an unbounded IN (...) from an external
+        # caller is an easy way to make the brand-narrowing query slow.
+        if _resolved_brand_ids is not None and len(_resolved_brand_ids) > 50:
+            raise AppException(
+                422,
+                "Too many values for 'brand_ids' (max 50)",
+                detail=f"got {len(_resolved_brand_ids)}",
+                code="too_many_values",
+            )
+        _resolved_product_ids = narrow_product_ids_by_brand(
             db,
             parse_uuid_list(product_ids, param_name="product_ids"),
-            parse_uuid_list(brand_ids, param_name="brand_ids"),
+            _resolved_brand_ids,
         )
 
         # A3 (AC-905): a DIFFERENT table (sales_order_lines, not orders), so a
@@ -884,11 +863,23 @@ async def get_orders_by_product(
         )
         norm_entities = _normalize_entities(entities)
         resolved_brand_ids = parse_uuid_list(brand_ids, param_name="brand_ids")
+        # Review round (26 Sep 2026): the SAME cap `get_outstanding_report` already
+        # applies to its own `brand_ids` - an unbounded IN (...) from an external
+        # caller is an easy way to make the brand-narrowing query slow.
+        if resolved_brand_ids is not None and len(resolved_brand_ids) > 50:
+            from app.services.error_handler import AppException
+
+            raise AppException(
+                422,
+                "Too many values for 'brand_ids' (max 50)",
+                detail=f"got {len(resolved_brand_ids)}",
+                code="too_many_values",
+            )
         # #1262 slice 9 (F1a): a brand ALONE counts as the product narrower this
         # endpoint requires, same as `product_ids` - the boolean check below is
         # widened, not bypassed, so an unrelated free-text `query` is still enough
         # on its own exactly as before.
-        parsed_product_ids = _narrow_product_ids_by_brand(
+        parsed_product_ids = narrow_product_ids_by_brand(
             db, parse_uuid_list(product_ids, param_name="product_ids"), resolved_brand_ids
         )
         # Endpoint is product-centric: require a product narrower to prevent

@@ -133,6 +133,46 @@ def resolve_warehouse_ids(db, warehouse_codes: Optional[list]) -> Optional[list]
     return [r[0] for r in rows]
 
 
+def narrow_product_ids_by_brand(
+    db: Session,
+    resolved_product_ids: Optional[list],
+    resolved_brand_ids: Optional[list],
+) -> Optional[list]:
+    """#1262 slice 9 (F1a), review round (26 Sep 2026): a `brand_ids` filter narrows
+    `product_ids` to that brand's own products (`Product.brand_id`, the SAME join
+    `product_ids` already resolves through downstream - `OrderService.list_orders` /
+    `list_orders_by_product` filter order LINES on `product_id IN (...)`, so
+    resolving the brand to its product ids HERE reuses that join rather than adding
+    a second one deeper in the service).
+
+    Moved out of `app/api/v1/order_management/orders.py` (a router hard-fail,
+    PRINCIPLES layering: a route must not run its own `db.query`) and rewritten to
+    narrow in ONE query instead of two - the previous shape fetched EVERY product
+    id the brand carries into Python and then re-tested each one against
+    `resolved_product_ids` in a Python set-membership loop, which pulls a brand's
+    whole catalogue into memory even when the caller only asked about three
+    products. `Product.brand_id.in_(...)` and (when given) `Product.id.in_(
+    resolved_product_ids)` sit on the SAME query, so Postgres computes the
+    intersection and only the ids that survive BOTH conditions are ever
+    materialised.
+
+    `None` (no brand filter) returns `resolved_product_ids` untouched. A given
+    `resolved_product_ids` AND a brand both narrowing is the INTERSECTION - a
+    product must satisfy both to qualify; brand alone is the brand's own set.
+    """
+    if not resolved_brand_ids:
+        return resolved_product_ids
+    query = db.query(Product.id).filter(Product.brand_id.in_(resolved_brand_ids))
+    if resolved_product_ids is not None:
+        query = query.filter(Product.id.in_(resolved_product_ids))
+    narrowed = [row[0] for row in query.all()]
+    # An established pattern (`resources_service.py`'s own `Attachment.id ==
+    # "00000-...0"`): a brand that resolved to NO products (or intersected to
+    # none) must still filter to nothing, never fall through to the caller's
+    # `if product_ids:` truthiness check and read as "no product filter at all".
+    return narrowed or ["00000000-0000-0000-0000-000000000000"]
+
+
 def _plain_number(v):
     """Decimal/float -> int when integral, else float. None stays None."""
     if v is None:
