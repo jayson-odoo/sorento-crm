@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -96,7 +96,11 @@ const UserAddDialog = ({
       superior_id: null,
       companyIds: [],
     },
-    mode: 'onTouched',
+    // Validate on submit: blurring the empty Name on the way to the WhatsApp contact
+    // field (the owner's first step) inserted "Name is required" above it, and the
+    // shifted trigger swallowed the click.
+    mode: 'onSubmit',
+    reValidateMode: 'onChange',
   });
 
   useEffect(() => {
@@ -139,6 +143,12 @@ const UserAddDialog = ({
   });
 
   const selectedContactId = form.watch('respond_contact_id');
+  // Stable across renders: an inline function re-keys the picker's fetch effect on every
+  // render of this form, and the popover's first open was lost to it.
+  const fetchContactOptions = useCallback(async (query: string, pageIndex: number) => {
+    const page = await getContacts({ pageIndex, pageSize: 20, searchQuery: query });
+    return page.data.map((c: RespondContact) => ({ value: c.id, label: contactLabel(c) }));
+  }, []);
   const isLocked = !!contact?.id;
 
   // The picked (or locked) contact's own record, so Name / Contact Number /
@@ -399,17 +409,7 @@ const UserAddDialog = ({
                         onChange={(v) => field.onChange(v || null)}
                         disabled={isLocked}
                         clearable={!isLocked}
-                        fetchOptions={async (query, pageIndex) => {
-                          const page = await getContacts({
-                            pageIndex,
-                            pageSize: 20,
-                            searchQuery: query,
-                          });
-                          return page.data.map((c: RespondContact) => ({
-                            value: c.id,
-                            label: contactLabel(c),
-                          }));
-                        }}
+                        fetchOptions={fetchContactOptions}
                         selectedOption={
                           field.value && linkedContactDetail
                             ? { value: field.value, label: contactLabel(linkedContactDetail) }
