@@ -313,14 +313,14 @@ def _idempotency_redis():
 def _reset_global_state():
     """Reset leak-prone process-global / contextvar state after every test so
     ordering can't pollute. The dominant offender: an impersonation test sets a
-    non-UUID audit actor (`set_audit_context("REAL_ADMIN")`) that, uncleared,
+    non-UUID audit actor (`stamp_actor(AuditActor(..., user_id="REAL_ADMIN"))`) that, uncleared,
     leaks into later live-Postgres tests whose audit writes cast it to `uuid`
     and fail. Also clears the lookup-binding TTL cache."""
     yield
     try:
-        from app.audit_context import set_audit_context
+        from app.audit_context import clear_actor
 
-        set_audit_context(None, None)
+        clear_actor()
     except Exception:
         pass
     try:

@@ -17,7 +17,7 @@ import uuid
 from pathlib import Path
 
 import app.main  # noqa: F401  registers every model and router
-from app.audit_context import clear_actor, get_actor, set_audit_context
+from app.audit_context import clear_actor, get_actor
 from app.models.audit import AuditLog
 from app.models.user import User
 from app.services.audit_service import log_audit, register_audit_listeners
@@ -165,19 +165,3 @@ def test_log_audit_with_no_user_no_contact_and_no_actor_is_system():
         db.commit()
 
         assert _rows(db, entity_id)[0].actor_type == "system"
-
-
-def test_flush_after_legacy_set_audit_context_is_a_user_row():
-    with blank_session() as db:
-        clear_actor(db)
-        someone = _seed_user(db, "Legacy Context User")
-        target = _seed_user(db, "Legacy Context Target")
-        set_audit_context(someone.id, "10.0.0.9")
-
-        target.name = "Renamed Under Legacy Context"
-        db.commit()
-
-        row = next(r for r in _rows(db, target.id) if r.action == "UPDATE")
-        assert row.actor_type == "user"
-        assert row.user_id == someone.id
-        assert row.real_user_id == someone.id

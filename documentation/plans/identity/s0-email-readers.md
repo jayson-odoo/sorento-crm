@@ -14,7 +14,7 @@ guarded in S0 with a test:
 | `app/schemas/sla.py` `UserSimple.email: str` | every SLA tracking list, detail, extend, resolve and event log response fails when the assignee has no email | `Optional[str]` |
 | `app/services/user_service.py` Respond agent sync, `email.strip().lower() == user.email.strip().lower()` | `AttributeError` for a phone-only user | compare `(user.email or "")`; with no email mark the sync failed with "User has no email" instead of raising |
 | `app/api/v1/user_management/users.py` `_send_invitation_link_for_user` | answers "Invitation link sent to None." while nothing is sent | refuse with 400 "User has no email" before writing a token; bulk resend skips it |
-| `app/services/user_service.py` role-conflict label `f"{u['name']} ({u['email']})"` | cosmetic "Name ()" | label is name, else email, else phone |
+| `app/services/user_service.py` role-conflict label `f"{u['name']} ({u['email']})"` | cosmetic "Name ()" | label is name, else email, else "another user" (never a phone number: a 409 must not disclose one) |
 | `app/schemas/auth.py` `LoginResponse.email: EmailStr` | safe today (login is by email); a phone login would 500 | `Optional[EmailStr]` (S1 relies on it) |
 
 Display fallbacks of the form `user.name or user.email` (about 80 sites) yield an empty label for

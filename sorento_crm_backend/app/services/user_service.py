@@ -516,6 +516,35 @@ class UserService:
                 code="CONTACT_ALREADY_LINKED",
             )
 
+    def _other_user(self, condition, exclude_user_id: Optional[str]):
+        q = self.db.query(User).filter(condition)
+        if exclude_user_id:
+            q = q.filter(User.id != exclude_user_id)
+        return q.first()
+
+    def _raise_identity_conflict(self, exc: IntegrityError, *, email: Optional[str],
+                                 respond_contact_id: Optional[str], exclude_user_id: Optional[str]) -> None:
+        """A write that passed the pre-checks but lost the race to the unique index
+        (a concurrent write in between) is the same 409, not a 500. Re-raises
+        anything else."""
+        self.db.rollback()
+        detail = str(getattr(exc, "orig", exc))
+        if "uq_users_email_lower" in detail and email:
+            other = self._other_user(func.lower(User.email) == email.lower(), exclude_user_id)
+            raise AppException(
+                status_code=409,
+                message=f"Email already belongs to {user_label(other)}",
+                code="EMAIL_TAKEN",
+            ) from exc
+        if "uq_users_respond_contact_id" in detail and respond_contact_id:
+            other = self._other_user(User.respond_contact_id == respond_contact_id, exclude_user_id)
+            raise AppException(
+                status_code=409,
+                message=f"WhatsApp contact already linked to {user_label(other)}",
+                code="CONTACT_ALREADY_LINKED",
+            ) from exc
+        raise exc
+
     def _user_create_data(self, user_data: UserCreate) -> dict:
         """Build User model dict from UserCreate, excluding role_ids/company_ids."""
         d = user_data.model_dump(exclude={"role_ids", "company_ids"})
@@ -550,20 +579,25 @@ class UserService:
             data["respond_user_id"] = rid
         if data.get("contact_number"):
             self._check_contact_number_unique(data["contact_number"], exclude_user_id=None)
-        user = User(**data)
-        self.db.add(user)
-        self.db.flush()
-        role_ids = user_data.role_ids
-        if not role_ids:
-            default_role = self.db.query(UserRole).filter(UserRole.is_default == True).first()
-            if default_role:
-                role_ids = [default_role.id]
-        for role_id in role_ids or []:
-            role = self.db.query(UserRole).filter(UserRole.id == role_id).first()
-            if role:
-                self.db.add(UserRoleAssignment(user_id=user.id, role_id=role_id))
-        self._grant_companies(user, user_data.company_ids)
-        self.db.commit()
+        try:
+            user = User(**data)
+            self.db.add(user)
+            self.db.flush()
+            role_ids = user_data.role_ids
+            if not role_ids:
+                default_role = self.db.query(UserRole).filter(UserRole.is_default == True).first()
+                if default_role:
+                    role_ids = [default_role.id]
+            for role_id in role_ids or []:
+                role = self.db.query(UserRole).filter(UserRole.id == role_id).first()
+                if role:
+                    self.db.add(UserRoleAssignment(user_id=user.id, role_id=role_id))
+            self._grant_companies(user, user_data.company_ids)
+            self.db.commit()
+        except IntegrityError as exc:
+            self._raise_identity_conflict(
+                exc, email=data.get("email"), respond_contact_id=data.get("respond_contact_id"), exclude_user_id=None
+            )
         self.db.refresh(user)
         return user
 
@@ -576,20 +610,25 @@ class UserService:
         data["password"] = None
         data["invited_by_user_id"] = invited_by_user_id
         data["status"] = "INACTIVE"
-        user = User(**data)
-        self.db.add(user)
-        self.db.flush()
-        role_ids = user_data.role_ids
-        if not role_ids:
-            default_role = self.db.query(UserRole).filter(UserRole.is_default == True).first()
-            if default_role:
-                role_ids = [default_role.id]
-        for role_id in role_ids or []:
-            role = self.db.query(UserRole).filter(UserRole.id == role_id).first()
-            if role:
-                self.db.add(UserRoleAssignment(user_id=user.id, role_id=role_id))
-        self._grant_companies(user, user_data.company_ids)
-        self.db.commit()
+        try:
+            user = User(**data)
+            self.db.add(user)
+            self.db.flush()
+            role_ids = user_data.role_ids
+            if not role_ids:
+                default_role = self.db.query(UserRole).filter(UserRole.is_default == True).first()
+                if default_role:
+                    role_ids = [default_role.id]
+            for role_id in role_ids or []:
+                role = self.db.query(UserRole).filter(UserRole.id == role_id).first()
+                if role:
+                    self.db.add(UserRoleAssignment(user_id=user.id, role_id=role_id))
+            self._grant_companies(user, user_data.company_ids)
+            self.db.commit()
+        except IntegrityError as exc:
+            self._raise_identity_conflict(
+                exc, email=data.get("email"), respond_contact_id=data.get("respond_contact_id"), exclude_user_id=None
+            )
         self.db.refresh(user)
         return user
 
@@ -671,7 +710,17 @@ class UserService:
             replace_scopes(self.db, user_id, scope_items or [])
 
         logger.info(f"Before commit - respond_user_id: {user.respond_user_id}, superior_id: {user.superior_id}")
-        self.db.commit()
+        # Read before the commit: after a failed flush the instance is expired.
+        email_for_conflict = user.email
+        try:
+            self.db.commit()
+        except IntegrityError as exc:
+            self._raise_identity_conflict(
+                exc,
+                email=email_for_conflict,
+                respond_contact_id=update_data.get("respond_contact_id"),
+                exclude_user_id=user_id,
+            )
         self.db.refresh(user)
         logger.info(f"After commit - respond_user_id: {user.respond_user_id}, superior_id: {user.superior_id}")
         if email_changed and old_email_for_notification is not None:

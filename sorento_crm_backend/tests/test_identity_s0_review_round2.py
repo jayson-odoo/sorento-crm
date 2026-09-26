@@ -204,7 +204,7 @@ def test_dead_legacy_actor_helpers_are_removed():
 # --------------------------------------------------------------------------- #
 # 4 and 5. The audit list's words                                              #
 # --------------------------------------------------------------------------- #
-def _fetch_row(db, entity_id: str) -> dict:
+def _fetch_row(db, entity_id: str, action: str | None = None) -> dict:
     def _override_db():
         yield db
 
@@ -214,7 +214,8 @@ def _fetch_row(db, entity_id: str) -> dict:
     real_app.dependency_overrides[get_db] = _override_db
     real_app.dependency_overrides[get_current_user_or_api_key] = _override_user
     try:
-        resp = TestClient(real_app).get("/api/v1/audit/logs/", params={"entity_id": entity_id})
+        params = {"entity_id": entity_id, **({"action": action} if action else {})}
+        resp = TestClient(real_app).get("/api/v1/audit/logs/", params=params)
     finally:
         real_app.dependency_overrides.clear()
     assert resp.status_code == 200, resp.text
@@ -271,3 +272,123 @@ def test_legacy_and_contact_rows_keep_contact_first_display_name():
         db.commit()
         assert _fetch_row(db, legacy_id)["user_display_name"] == "Portal Person"
         assert _fetch_row(db, contact_row_id)["user_display_name"] == "Portal Person"
+
+
+# --------------------------------------------------------------------------- #
+# 6. S1: bulk imports with a coarse job row suppress their per-row audit       #
+# --------------------------------------------------------------------------- #
+def _run_task_capturing_skip_set(task, service_cls, method_name, fake_result, args_after_job):
+    """Run the real task with its service entry point stubbed; return the session's
+    `skip_audit_entity_types` at the moment the per-row writes would happen."""
+    from unittest.mock import patch
+
+    from sqlalchemy import text
+
+    from app.models.job import ImportJob
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    seen: dict = {}
+
+    def _fake(self, *args, **kwargs):
+        seen["skip"] = set(self.db.info.get("skip_audit_entity_types") or ())
+        return fake_result
+
+    with blank_session() as session:
+        job_db_id = uuid.uuid4()
+        user_id = str(uuid.uuid4())
+        session.add(
+            ImportJob(
+                id=job_db_id, job_id=unique_code("r2job"), job_type="r2", user_id=user_id,
+                company_id=uuid.UUID(DEFAULT_COMPANY_ID), filename="r2.xlsx",
+            )
+        )
+        session.commit()
+        bind = session.get_bind()
+
+        def _session_on_this_connection():
+            db = Session(bind=bind, join_transaction_mode="create_savepoint")
+            db.execute(text("SELECT 1"))
+            return db
+
+        with patch("app.tasks.import_tasks.SessionLocal", _session_on_this_connection), \
+                patch.object(service_cls, method_name, _fake):
+            task(str(job_db_id), *args_after_job, user_id)
+    return seen.get("skip")
+
+
+def test_product_import_suppresses_per_row_product_audit():
+    from app.models.product import Product
+    from app.services.audit_service import _audit_entity_type
+    from app.services.product_service import ProductService
+    from app.tasks.import_tasks import process_product_import
+
+    assert Product.__audit_track__ is True, "nothing to suppress, so this proves nothing"
+    skip = _run_task_capturing_skip_set(
+        process_product_import, ProductService, "bulk_import_products",
+        {"created": 0, "updated": 0, "errors": []}, ([],),
+    )
+    assert skip is not None, "the stubbed import never ran"
+    assert _audit_entity_type(Product) in skip
+
+
+def test_order_tracking_import_suppresses_per_row_order_audit():
+    from app.models.order import Order
+    from app.services.audit_service import _audit_entity_type
+    from app.services.order_service import OrderService
+    from app.tasks.import_tasks import process_order_tracking_import
+
+    assert Order.__audit_track__ is True, "nothing to suppress, so this proves nothing"
+    skip = _run_task_capturing_skip_set(
+        process_order_tracking_import, OrderService, "import_excel_tracking",
+        {"created": 0, "updated": 0, "errors": [], "warnings": []}, (b"",),
+    )
+    assert skip is not None, "the stubbed import never ran"
+    assert _audit_entity_type(Order) in skip
+
+
+def test_container_status_import_suppresses_per_row_shipment_audit(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.models.procurement import InboundShipment
+    from app.services import container_status_import
+    from app.services.audit_service import _audit_entity_type
+    from app.services.container_status_service import ContainerStatusImportService
+    from app.tasks.import_tasks import process_container_status_import
+
+    assert InboundShipment.__audit_track__ is True, "nothing to suppress, so this proves nothing"
+    parsed = SimpleNamespace(rows=[], rejected=[], blocks=[], blank_row_count=0, warnings=[])
+    monkeypatch.setattr(container_status_import, "parse_container_status_workbook", lambda data: parsed)
+    monkeypatch.setattr(ContainerStatusImportService, "_errors_from", lambda self, p: [], raising=False)
+    skip = _run_task_capturing_skip_set(
+        process_container_status_import, ContainerStatusImportService, "apply",
+        {"updated": 0, "unchanged": 0, "skipped": 0, "rejected": 0}, (b"", "r2.xlsx"),
+    )
+    assert skip is not None, "the stubbed import never ran"
+    assert _audit_entity_type(InboundShipment) in skip
+
+
+# --------------------------------------------------------------------------- #
+# 7. S2: the audit list names the record, never by its UUID                    #
+# --------------------------------------------------------------------------- #
+def test_audit_list_row_carries_the_record_label_resolved_like_the_activity_feed():
+    with blank_session() as db:
+        record = _seed_user(db, name="Record Person")
+        db.add(AuditLog(entity_type="users", entity_id=record.id, action="UPDATE", actor_type="system"))
+        db.commit()
+        row = _fetch_row(db, record.id, action="UPDATE")
+        assert row["entity_label"] == "User Record Person"
+        assert record.id not in row["entity_label"]
+
+
+def test_audit_list_import_row_label_is_its_description_not_the_job_id():
+    with blank_session() as db:
+        job_id = str(uuid.uuid4())
+        db.add(
+            AuditLog(
+                entity_type="product", entity_id=job_id, action="IMPORT", actor_type="worker",
+                description="Product import items.xlsx",
+            )
+        )
+        db.commit()
+        row = _fetch_row(db, job_id)
+        assert row["entity_label"] == "Product import items.xlsx"
