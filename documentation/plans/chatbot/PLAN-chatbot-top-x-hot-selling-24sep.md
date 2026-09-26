@@ -519,8 +519,8 @@ Where S4 differs from the two sections above, and which ruling decides it.
   the presenter turns that body into the fixed refusal line. The customer picker still
   runs for a dealer's ambiguous customer word before the route refuses; trigger to move
   the check earlier: the first dealer contact holding the sales report key.
-  Fix lane (PR #1273, reviewer S2; ruling pending owner confirmation: a dealer never sees
-  another customer's name): moved earlier now. `engine._top_selling_dealer_scope` reads the
+  Fix lane (PR #1273, reviewer S2; owner ruling 26 Sep ~09:05Z, confirmed: a dealer never
+  sees another customer's name): moved earlier now. `engine._top_selling_dealer_scope` reads the
   contact's `respond_contact_customers` links (the route's own dealer test); a linked
   dealer's customer words never reach the generic resolver, words matching its own ledgers
   run on those ids (`dealer_customer_ids`), and any other word gets the refusal line with no

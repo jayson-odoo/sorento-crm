@@ -302,8 +302,8 @@ mirror `sorento_crm_mcp/tests/fixtures/top_selling/`.
 - **AC-1963 [BE][T]** A dealer contact naming a customer outside its own ledgers gets `Sorry,
   I can only share sales figures for your own account.`, no fetch, no picker. Evidence:
   pytest.
-  Ruling 26 Sep (S4 fix lane on PR #1273, reviewer S2), pending owner confirmation: a dealer
-  contact (linked to any customer) never sees another customer's name. It gets no customer
+  Owner ruling 26 Sep ~09:05Z (PR #1273, on reviewer S2, confirmed: "yeah correct, you
+  sohuld fix that"): a dealer contact (linked to any customer) never sees another customer's name. It gets no customer
   picker; its customer words are matched against its own ledgers only, and a word that does
   not resolve into them is refused with the line above before any lookup or fetch. Evidence:
   pytest `test_dealer_naming_another_customer_sees_no_names`,
