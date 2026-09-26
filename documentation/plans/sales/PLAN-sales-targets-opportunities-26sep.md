@@ -4,7 +4,7 @@ Status: **building.** Wave 1, S6, is on PR #1260 (wave 1: the `sales` module and
 membership, the Sales menu with Sales Agents moved in; section 15). S6 accepted on the owner's
 hand test (26 Sep ~13:25Z); fix lane round 2 on the same PR adds the team leader (W1) and lists
 a returning agent once (W2), section 15. Track: full. Wave 2: S2
-(opportunities) building on its own lane beside S1, contract in section 16. Ready to build since the owner accepted V1 to V3 as recommended (Owner ruling
+(opportunities) built on PR #1296 beside S1, contract in section 16, build record in section 17. Ready to build since the owner accepted V1 to V3 as recommended (Owner ruling
 26 Sep ~09:05, section 14).
 Earlier status: grilled, round 5 (the owner's answers to R1 to R5 and T1 to T5, PR #1260 comment
 5843775673 of 26 Sep 06:09Z, folded in as "Owner ruling 26 Sep 06:09" lines; section 13 says how
@@ -1934,3 +1934,41 @@ before the owner grants the portal kind:
   optional sales order select limited to the customer), every section rendered with an empty
   state; Edit in place; Delete deferred. Customer page: an **Opportunities** section in view and
   edit, "No opportunities yet" with **Log opportunity** (modal preset to the customer).
+
+## 17. S2 build record (26 Sep, PR #1296)
+
+Built to section 16: UAC S2-1 to S2-16. Subagents: planner (a brief contract check against the
+UAC), tester (red tests first, then two browser passes), one coder kept for the lane (backend,
+frontend, two fix rounds), reviewer (twice, with kill tests), security-reviewer (portal ingest,
+RBAC, company scope). Decisions taken while building, each the direct reading of the plan
+unless it says otherwise:
+
+- **Phases.** As S6: section 16 stood in for the Phase 1 mock contract; red tests came first.
+- **A relaunched session** rebased the lane onto main after #1260 merged (17:27Z) and added red
+  tests for the portal list and detail, the CRM hooks, the portal product lookup id and the grid
+  census (3da75d70). This lane's work was rebased onto it and pushed as a fast-forward; those
+  tests are green against it unchanged.
+- **Won on a prospect** takes the sales order's customer and keeps `prospect_name` (3.5,
+  round 4 Q2); the order select searches all non-cancelled orders of the company by `q`.
+- **Revision configs.** `sales_opportunity` joins `GRANTABLE_PORTAL_FORM_TYPES` but not
+  `REVISABLE_PORTAL_FORM_TYPES` (`revision_configs.py`): nothing reads a revision setting for
+  this kind, so the settings screen does not list it.
+- **Portal company.** A portal write stays inside the contact's own company scope: the
+  customer's company, else the agent's when it is inside that scope, else the scope's single
+  company (security review S2; a shared agent never widens it).
+- **Bounds.** Amounts `0 <= x < 10^13` at 2 dp, quantities `0 < q < 10^10`, prospect 200 and
+  lost reason 150 characters, ids as UUIDs, at most 100 lines (security review S3).
+- **Closed is closed.** Once Won or Lost, field edits are 422 `OPPORTUNITY_CLOSED` on both sides
+  and neither screen offers Edit.
+- **Stage pills** use `Badge status`; `lib/status-badge.ts` gains `qualified`, `proposal`,
+  `negotiation`, `won`, `lost`, which also colours any other screen whose status key is one of
+  them (a Qualified project lead was grey).
+- **Customer page.** The Opportunities section renders only with `sales.opportunities.view`
+  and the `sales` module on; Log opportunity needs `.add`.
+- **`SearchableSelect`** gains an optional `aria-label`.
+- **The portal product lookup** returns `product_id` (additive), which the opportunity lines
+  need.
+- **Agent contact coverage** (section 7) is still to be measured on the dev DB (section 16).
+- **Evidence:** `documentation/plans/sales/evidence/s2/` (portal at 375, CRM at 1280 and 375;
+  S2-14's recorded run is 01 to 11, then 12 to 24; after the fix rounds 25 onward).
+
