@@ -835,7 +835,7 @@ def _answer_earlier_messages(
     mine = envelope.model_dump(mode="json")
     my_message_id = _message_id(envelope)
     out: list[dict[str, Any]] = []
-    for index, item in enumerate(taken):
+    for item in taken:
         if item.row_id is None and item.job_id is not None:
             # Today's path (pre-S6): n8n's `media-route` replies on its own when its
             # extraction fails or outlives its wait. Answering such a photo here too
@@ -854,17 +854,15 @@ def _answer_earlier_messages(
                 )
                 status = None
             if status != "completed":
+                # Failed, still being read, or the wait raised: left to its own delivery,
+                # and the take goes on. A ledger-only photo reaches `/chat/turn` after
+                # every queued row, or never (n8n answers it on its reply arm), so
+                # stopping here would put a known, earlier-sent text behind this turn
+                # and gain the photo nothing (review round 3, S1).
                 if "photo_not_read" not in reasons:
                     reasons.append("photo_not_read")
-                if status == "failed":
-                    # n8n answers it on its reply arm; it never reaches `/chat/turn`,
-                    # so nothing later waits on it.
-                    left_count += 1
-                    continue
-                # Still being read: it runs later as its own turn, so nothing sent
-                # after it may be answered ahead of it (as in `within_bounds`).
-                left_count += len(taken) - index
-                break
+                left_count += 1
+                continue
         try:
             if item.row_id is not None:
                 earlier_envelope = Envelope.model_validate(item.envelope)

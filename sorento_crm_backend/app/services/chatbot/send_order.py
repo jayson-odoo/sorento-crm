@@ -180,21 +180,30 @@ def within_bounds(
     """Split `earlier` (oldest first) into what this turn answers and what it leaves.
 
     Two bounds, both counts: `MAX_EARLIER_PER_TURN`, and the worst-case media waits (this
-    turn's own included) staying below `budget_seconds`. The first message that does not
-    fit ends the take, so nothing later is answered ahead of one that was left.
-    Returns (taken, left, reasons), `reasons` naming each bound that left something.
+    turn's own included) staying below `budget_seconds`. A queued row that does not fit
+    ends the take, so nothing later is answered ahead of one whose own request comes
+    first. A ledger-only photo that does not fit is only skipped: it reaches `/chat/turn`
+    after every queued row, or never, so stopping there gains it nothing (review round 3,
+    S1). Returns (taken, left, reasons), `reasons` naming each bound that left something.
     """
     spent = media_wait_seconds if own_carries_media else 0.0
     taken: list[Earlier] = []
+    left: list[Earlier] = []
+    reasons: list[str] = []
     for index, item in enumerate(earlier):
         if len(taken) >= MAX_EARLIER_PER_TURN:
-            return taken, earlier[index:], ["count_bound"]
+            return taken, left + earlier[index:], reasons + ["count_bound"]
         cost = media_wait_seconds if item.carries_media else 0.0
         if cost and spent + cost >= budget_seconds:
-            return taken, earlier[index:], ["media_wait_budget"]
+            if "media_wait_budget" not in reasons:
+                reasons.append("media_wait_budget")
+            if item.row_id is None:
+                left.append(item)
+                continue
+            return taken, left + earlier[index:], reasons
         spent += cost
         taken.append(item)
-    return taken, [], []
+    return taken, left, reasons
 
 
 def _latest_finished_arrival(db: Session, *, contact_respond_id: str, me: ChatbotTurn) -> datetime | None:
