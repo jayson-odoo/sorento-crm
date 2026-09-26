@@ -108,6 +108,12 @@ def _require_from_attributes(parser_output: dict[str, Any]) -> dict[str, Any] | 
     An attribute word the table does not know is NOT guessed into a leg: it stays a
     plain requested attribute and the ordinary answer projects it, which is what a
     spec question ("what is its width") has always done.
+
+    A cert PHRASE ("PPS cert", "sirim certificate") is the same split an
+    `attachment_type` raw gets below (S2, AC-1303): the scheme is what is left once the
+    bare cert word is removed. Without it the phrase missed the one-word table, fell to
+    the bare leg, and "PPS" was then stripped from the remainder as a predicate word, so
+    nothing downstream could recover the scheme either.
     """
     for raw in parser_output.get("requested_attributes") or []:
         if not isinstance(raw, str):
@@ -115,6 +121,10 @@ def _require_from_attributes(parser_output: dict[str, Any]) -> dict[str, Any] | 
         leg = _LEG_BY_ATTRIBUTE_WORD.get(raw.strip().lower())
         if leg:
             return {leg: True}
+        words = [w for w in re.split(r"\s+", raw.strip()) if w]
+        if len(words) > 1 and _CERT_RE.search(raw):
+            scheme = _cert_scheme_from_raw(raw)
+            return {"certificate": {"scheme": scheme}} if scheme else {"certificate": True}
     return None
 
 
@@ -174,6 +184,14 @@ def derive_require(
     """
     from_attributes = _require_from_attributes(parser_output)
     if from_attributes is not None:
+        if from_attributes == {"certificate": True}:
+            # The attribute names only the bare leg; an attachment_type raw beside it
+            # may still carry the scheme ("certificate" + entity "PPS cert").
+            for raw in _attachment_type_raws(parser_output):
+                if _CERT_RE.search(raw):
+                    scheme = _cert_scheme_from_raw(raw)
+                    if scheme:
+                        return {"certificate": {"scheme": scheme}}
         return from_attributes
 
     intent = parser_output.get("intent_hint")

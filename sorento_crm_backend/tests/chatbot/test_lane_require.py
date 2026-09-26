@@ -68,6 +68,40 @@ def test_derive_require_maps_intents_and_entity_hints(parser_output, expected):
 
 
 # --------------------------------------------------------------------------- #
+# Revive 26 Sep (AC-1303 / AC-1313 under main's v3 verdict): `requested_attributes` #
+# is read BEFORE the intent, so a cert PHRASE there must split its scheme exactly   #
+# as an attachment_type raw does, and a bare "certificate" attribute must not hide  #
+# a scheme an attachment_type entity beside it carries.                             #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "parser_output, expected",
+    [
+        ({"requested_attributes": ["PPS cert"]}, {"certificate": {"scheme": "PPS"}}),
+        ({"requested_attributes": ["sirim certificate"]}, {"certificate": {"scheme": "sirim"}}),
+        ({"requested_attributes": ["cert"]}, {"certificate": True}),
+        ({"requested_attributes": ["certificate"]}, {"certificate": True}),
+        ({"requested_attributes": ["stock"]}, {"stock": True}),
+        ({"requested_attributes": ["incoming"]}, {"incoming": True}),
+        ({"requested_attributes": ["width"]}, None),
+        (
+            {
+                "requested_attributes": ["certificate"],
+                "intent_hint": "check_product_attachment",
+                "entities": [{"hint": "attachment_type", "raw": "PPS cert"}],
+            },
+            {"certificate": {"scheme": "PPS"}},
+        ),
+    ],
+)
+def test_derive_require_reads_v3_requested_attributes(parser_output, expected):
+    from app.services.chatbot.lanes.business.predicate import derive_require
+
+    assert derive_require(parser_output) == expected
+
+
+# --------------------------------------------------------------------------- #
 # B1/D2 - AC-1303 (S2 half): a scheme word is split off the SAME attachment_type   #
 # raw mechanically - no message-text matching beyond `_CERT_RE`, no DB lookup at   #
 # parse time (the `certificate_scheme` lookup set is read later, server-side, by   #
@@ -2737,7 +2771,21 @@ def test_certificate_predicate_suppresses_the_attachment_type_ask_when_it_qualif
     )
     stub_parser(
         _s4_cert_parser_output(
-            entities=[],
+            # Main's v3 verdict (the head normaliser that dropped both entities is
+            # retired): the class word is a `product_type` entity - without one the
+            # resolver never runs (`turn_runtime.resolve_kinds`) - and the verdict states
+            # what was asked ABOUT (`requested_attributes`), which is what satisfies
+            # `narrow_by_type`, so the engine's own "which kind of file?" never fires.
+            entities=[
+                {
+                    "raw": "tap",
+                    "hint": "product_type",
+                    "canonical_code": None,
+                    "current_message": True,
+                    "confident": True,
+                }
+            ],
+            requested_attributes=["PPS cert"],
             user_goal="any tap has PPS cert",
         )
     )
@@ -2754,6 +2802,7 @@ def test_certificate_predicate_suppresses_the_attachment_type_ask_when_it_qualif
     assert turn.status == "done", turn.error
     text = (turn.reply or {}).get("text") or ""
     assert "Please provide the attachment type" not in text, text
+    assert "Which kind of file do you need?" not in text, text
     assert re.search(r"\btaps?\b", text, re.IGNORECASE), text
     assert "PPS certificates" in text, text
 
@@ -2795,7 +2844,21 @@ def test_no_certificate_predicate_still_misses_honestly_with_no_attachment_type_
     )
     stub_parser(
         _s4_cert_parser_output(
-            entities=[],
+            # Main's v3 verdict (the head normaliser that dropped both entities is
+            # retired): the class word is a `product_type` entity - without one the
+            # resolver never runs (`turn_runtime.resolve_kinds`) - and the verdict states
+            # what was asked ABOUT (`requested_attributes`), which is what satisfies
+            # `narrow_by_type`, so the engine's own "which kind of file?" never fires.
+            entities=[
+                {
+                    "raw": "tap",
+                    "hint": "product_type",
+                    "canonical_code": None,
+                    "current_message": True,
+                    "confident": True,
+                }
+            ],
+            requested_attributes=["PPS cert"],
             user_goal="any tap has PPS cert",
         )
     )
@@ -2812,6 +2875,8 @@ def test_no_certificate_predicate_still_misses_honestly_with_no_attachment_type_
     assert turn.status == "done", turn.error
     text = (turn.reply or {}).get("text") or ""
     assert "Please provide the attachment type" not in text, text
+    assert "Which kind of file do you need?" not in text, text
+    assert "Couldn't find" in text or "don't know" in text.lower() or "on file" in text.lower(), text
 
 
 # --------------------------------------------------------------------------- #
@@ -2869,7 +2934,8 @@ def test_no_document_leg_at_all_still_asks_for_the_attachment_type(
     )
     assert turn.status == "done", turn.error
     text = (turn.reply or {}).get("text") or ""
-    assert "Please provide the attachment type" in text, text
+    # Main's turn engine asks this itself (`turn/compose._ASK_HEADERS["attachment_type_ask"]`).
+    assert "Which kind of file do you need?" in text, text
 
 
 def test_a_non_document_predicate_still_asks_for_the_attachment_type(
@@ -2929,7 +2995,8 @@ def test_a_non_document_predicate_still_asks_for_the_attachment_type(
     )
     assert turn.status == "done", turn.error
     text = (turn.reply or {}).get("text") or ""
-    assert "Please provide the attachment type" in text, text
+    # Main's turn engine asks this itself (`turn/compose._ASK_HEADERS["attachment_type_ask"]`).
+    assert "Which kind of file do you need?" in text, text
 
 
 def test_set_answer_writes_the_set_page_carry(session_factory, stub_parser, stub_access, monkeypatch):
@@ -4379,437 +4446,11 @@ def test_set_page_carry_page_arm_keeps_the_offset_when_the_fetch_never_rendered(
 
 
 # --------------------------------------------------------------------------- #
-# Owner regression (PR #833, R30, AC-1355): a set answer whose products were  #
-# described with spec words must carry the forward path's Match line          #
-# ("_Matched on: ..."), rendered by the SAME `_matched_on_line` (compile_     #
-# state.py) the forward path already uses - the set path's candidates carry   #
-# `matched_specs: []` on the require-only arm and the HAS turn never          #
-# populates `result["spec_asked"]` at all, so the line is skipped entirely.   #
+# R30/R31 (AC-1355, AC-1356), the "_Matched on:" line on a set answer: retired  #
+# with the line itself. Main's turn engine re-architecture (#952) deleted       #
+# `tail/compile_state._matched_on_line` and no reply carries a Match line any   #
+# more; the control below still pins that a set answer never grows one.         #
 # --------------------------------------------------------------------------- #
-
-
-def test_set_answer_carries_the_match_line_when_every_shown_product_matches(
-    session_factory, stub_parser, stub_access, monkeypatch
-):
-    """AC-1355/R30: "check stock water closet with s trap 250mm" against five
-    Water Closet products, all `trap_type=s_trap` / `trap_length=250`, all in
-    stock - the reply must carry the SAME "_Matched on: ..." line the forward
-    path renders for a spec-described product, naming trap type S Trap, trap
-    length 250 and class Water Closet (the renderer's own wording - class
-    verbatim with no key prefix, every other key as "<pretty key>: <value>",
-    `class` first).
-
-    RED: `resolve_product_set`'s require-only arm hardcodes `matched_specs:
-    []` on every candidate (measured in `product_predicate_service.py`), and
-    the resolver's HAS/require branch never sets `result["spec_asked"]` at
-    all (only the `spec_fallback` branch does, `references.py` ~line 2856) -
-    so `_matched_on_line`'s own `keys` list is empty for every shown row and
-    the whole line is skipped ("if not keys: return user_response"). The
-    reply text carries no "_Matched on:" substring at all.
-    """
-    contact_id = _s4_contact_id("matchline")
-    db = session_factory()
-
-    from app.models.inventory import Stock, Warehouse
-    from app.models.product import Product, ProductCategory, UnitOfMeasure
-    from app.models.product_spec import ProductSpecifications
-    from app.services.product_spec_derivation import derive_for_code
-    from tests._pg_fixture import unique_code
-
-    category_id, uom_id = _seed_category_and_uom(db)
-    _seed_registry(db)
-    warehouse = Warehouse(id=str(uuid.uuid4()), warehouse_code=unique_code("WH")[:50], warehouse_name="ZZT WH")
-    db.add(warehouse)
-    db.flush()
-
-    for _ in range(5):
-        code = unique_code("ZZTWC")[:50]
-        product = Product(
-            id=str(uuid.uuid4()),
-            product_code=code,
-            product_name=code,
-            description=f"{code} SORENTO CERAMIC WATER CLOSET",
-            category_id=category_id,
-            base_uom_id=uom_id,
-            list_price=10,
-            is_active=True,
-        )
-        db.add(product)
-        db.flush()
-        derive_for_code(db, code)
-        spec_row = (
-            db.query(ProductSpecifications).filter(ProductSpecifications.product_id == product.id).one()
-        )
-        values = dict(spec_row.values or {})
-        values["trap_type"] = {"value": "s_trap"}
-        values["trap_length"] = {"value": 250}
-        spec_row.values = values
-        db.add(
-            Stock(
-                id=str(uuid.uuid4()),
-                product_id=product.id,
-                warehouse_id=warehouse.id,
-                quantity_on_hand=5,
-                quantity_reserved=0,
-                quantity_damaged=0,
-            )
-        )
-    db.commit()
-
-    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
-    engine_mod = _s4_wire_engine(
-        session_factory,
-        monkeypatch,
-        resolve_entity=_s4_real_resolve_entity(db),
-        fetch_mcp_call=_stock_fake_call_tool(db),
-    )
-    stub_parser(
-        _s4_bare_parser_output(
-            message_type="business_query",
-            intent_hint="check_stock",
-            domain_hint="inventory",
-            match_mode="and",
-            entities=[
-                {
-                    "raw": "water closet",
-                    "hint": "product",
-                    "canonical_code": None,
-                    "current_message": True,
-                    "confident": True,
-                }
-            ],
-        )
-    )
-    stub_access()
-
-    turn = engine_mod.run_turn(
-        _s4_envelope(
-            contact_id=contact_id,
-            message_id="ZZT-matchline-1",
-            text="check stock water closet with s trap 250mm",
-        ),
-        session_factory=session_factory,
-    )
-    assert turn.status == "done", turn.error
-    text = (turn.reply or {}).get("text") or ""
-    assert "_Matched on:" in text, text
-    assert "Water Closet" in text, text
-    assert "S Trap" in text, text
-    assert "250" in text, text
-
-
-def test_matched_on_line_renders_when_last_result_set_is_the_set_page_carry_dict():
-    """AC-1356/R31 (amended, plan R31 row rewritten): the LIVE cause of the
-    missing Match line on a genuine multi-page set answer, measured on the
-    stored turn - not the promotion-noise shape below (kept as the secondary
-    case).
-
-    On a fresh set answer whose `qualifying_total` exceeds one page,
-    `_set_page_carry` (`compile_state.py`) writes `variables["last_result_set"]`
-    as the DICT-shaped "more" carry (`{kind: "set_page", qualifying_ids,
-    qualifying_total, offset, set_noun, require, domain, access_levels}`) -
-    documented in its own docstring as "a DICT-shaped kind, never the array
-    roster every OTHER `selection_context` carries". `_matched_on_line`'s own
-    `answered` gate requires `jsc.is_array(last_result_set) and
-    len(last_result_set) > 0` - `jsc.is_array` on a dict is False outright, so
-    `answered` is False and the function returns the reply UNCHANGED before it
-    ever reaches the `compatible_entities`/`spec_asked` logic - no Match line,
-    regardless of every shown row genuinely matching.
-
-    RED: calls the real `_set_page_carry` to produce the exact live carry
-    shape (qualifying_total=106, six product `compatible_entities`, so the
-    fresh arm fires), then feeds that DICT straight into `_matched_on_line` as
-    `last_result_set`, with `resolver_json` carrying `spec_search` matches for
-    every one of those products (class Water Closet, trap_type s_trap) - the
-    same shape a genuinely fully-matched shown set has. Today's function still
-    returns the user_response unchanged.
-    """
-    from app.services.chatbot.tail.compile_state import _matched_on_line, _set_page_carry
-
-    compatible_entities = [
-        {"uuid": f"ZZT-uuid-{i}", "entity_type": "product", "code": f"ZZT-WC-{i}"} for i in range(6)
-    ]
-    gate_json = {
-        "predicate": {
-            "qualifying_total": 106,
-            "class_labels": ["Water Closet"],
-            "require": {"stock": True},
-        },
-        "compatible_entities": compatible_entities,
-    }
-    variables: dict[str, Any] = {}
-    touched = _set_page_carry(
-        variables,
-        gate_json=gate_json,
-        gate_ran=True,
-        prev={},
-        qf={"domain_hint": "inventory"},
-        fetch_rendered_result=True,
-        access_levels_used=[],
-    )
-    assert touched is True
-    last_result_set = variables["last_result_set"]
-    assert isinstance(last_result_set, dict), last_result_set
-
-    resolver_json = {
-        "resolutions": [
-            {
-                "token": "water closet",
-                "matches": [
-                    {
-                        "uuid": e["uuid"],
-                        "canonical_code": e["code"],
-                        "match_tier": "spec_search",
-                        "display": {
-                            "matched_specs": ["class", "trap_type"],
-                            "specifications": {"class": "Water Closet", "trap_type": "s_trap"},
-                        },
-                    }
-                    for e in compatible_entities
-                ],
-            }
-        ],
-        "spec_asked": [{"key": "trap_type"}],
-    }
-
-    user_response = _matched_on_line(
-        "6 water closets have stock.",
-        qf={"message_type": "business_query"},
-        resolver_json=resolver_json,
-        gate_ran=True,
-        gate_json=gate_json,
-        is_escalate_branch=False,
-        include_response=True,
-        manual_response=False,
-        last_result_set=last_result_set,
-    )
-    assert "_Matched on:" in user_response, user_response
-    assert "Water Closet" in user_response, user_response
-    assert "S Trap" in user_response, user_response
-
-
-def test_matched_on_line_renders_on_the_forward_spec_fallback_path_too(monkeypatch):
-    """Reviewer round 5: no test anywhere asserted the Match line on a
-    FORWARD turn (a plain product description with no `require`/predicate at
-    all - the pre-existing `spec_fallback` path this feature never touched),
-    only on the newer HAS/require turns. `last_result_set` here is the
-    ORDINARY array shape (`indexed`, built off `compatible_entities` for a
-    plain business_query, `compile_state.py` ~line 461) - no `_set_page_carry`
-    dict involved, no `predicate` key in `gate_json` at all.
-
-    Also guards R31's fix on this path specifically: `gate_json.
-    compatible_entities` carries the one real product PLUS 30 unrelated
-    promotion-type rows (the same noise shape `test_set_answer_carries_the_
-    match_line_when_shown_entities_include_promotions` proves on the
-    require/predicate path) - the line must still render, counting the
-    product row only.
-
-    Green today - this is the ORIGINAL forward-answer contract
-    (spec-raw-text-migration), predating attribute-first asks entirely.
-    """
-    from app.services.chatbot.tail.compile_state import _matched_on_line
-
-    product_entity = {"uuid": "ZZT-fwd-uuid-1", "entity_type": "product", "code": "ZZT-WC-FWD"}
-    promotion_noise = [
-        {"uuid": f"ZZT-fwd-promo-{i}", "entity_type": "promotion", "code": None} for i in range(30)
-    ]
-    gate_json = {"compatible_entities": [product_entity, *promotion_noise]}
-    # The ordinary array `last_result_set`, exactly as a plain business_query's
-    # `indexed` roster shape carries it (idx/uuid/label/entity_type/...) - a
-    # forward turn never writes the dict-shaped set_page carry at all.
-    last_result_set = [
-        {
-            "idx": 1,
-            "uuid": product_entity["uuid"],
-            "label": product_entity["code"],
-            "entity_type": "product",
-        }
-    ]
-    resolver_json = {
-        "resolutions": [
-            {
-                "token": "water closet",
-                "matches": [
-                    {
-                        "uuid": product_entity["uuid"],
-                        "canonical_code": product_entity["code"],
-                        "match_tier": "spec_search",
-                        "display": {
-                            "matched_specs": ["class", "trap_type"],
-                            "specifications": {"class": "Water Closet", "trap_type": "s_trap"},
-                        },
-                    }
-                ],
-            }
-        ],
-        "spec_asked": [{"key": "trap_type"}],
-    }
-
-    user_response = _matched_on_line(
-        "1 water closet found.",
-        qf={"message_type": "business_query"},
-        resolver_json=resolver_json,
-        gate_ran=True,
-        gate_json=gate_json,
-        is_escalate_branch=False,
-        include_response=True,
-        manual_response=False,
-        last_result_set=last_result_set,
-    )
-    assert "_Matched on:" in user_response, user_response
-    assert "Water Closet" in user_response, user_response
-    assert "S Trap" in user_response, user_response
-
-
-def test_set_answer_carries_the_match_line_when_shown_entities_include_promotions(
-    session_factory, stub_parser, stub_access, monkeypatch
-):
-    """AC-1356/R31: the SAME world as
-    `test_set_answer_carries_the_match_line_when_every_shown_product_matches`
-    (five Water Closet products, all trap_type=s_trap/trap_length=250, all in
-    stock), but `compatible_entities` is augmented exactly as replayed on the
-    owner's local stack: alongside the five real product entities, 30 extra
-    `entity_type="promotion"` rows ride along (uuid-only, no canonical_code,
-    tier "substring") - noise from OTHER tokens ("water closet" as a category
-    word, "Sorento" as a brand word) that reached `compatible_entities` via
-    `gate.py`'s type-agnostic flattening of every `resolutions[].matches`
-    entry, not just the product ones the require leg itself qualified.
-
-    Patches `resolve_gate.run_gate` (not the resolver) to inject this shape
-    directly onto its returned `compatible_entities`, since `gate.py`'s own
-    `ALLOWED` matrix filters by domain BEFORE this bug's own code runs - a
-    live turn's domain is whatever the parser gave it (unrelated to this
-    bug), and this test's job is the renderer's handling of the noise once it
-    IS present, not re-deriving which domain lets it through.
-
-    The Match line must still render for the product rows shown; it must
-    count PRODUCTS only, not every entity type the resolver happened to
-    surface.
-
-    RED: `_matched_on_line` (`compile_state.py` ~line 1071) builds `shown_set`
-    from every `compatible_entities` row with no entity-type filter, then
-    requires ALL of them to be spec rows (`all_shown_are_spec`). The 30
-    injected promotion uuids are never in `spec_keys` (built only from
-    `match_tier == "spec_search"` matches), so `all_shown_are_spec` is False
-    and the whole line is skipped ("if not all_shown_are_spec: return
-    user_response") even though every PRODUCT shown matched.
-    """
-    contact_id = _s4_contact_id("matchlinepromo")
-    db = session_factory()
-
-    from app.models.inventory import Stock, Warehouse
-    from app.models.product import Product, ProductCategory, UnitOfMeasure
-    from app.models.product_spec import ProductSpecifications
-    from app.services.product_spec_derivation import derive_for_code
-    from tests._pg_fixture import unique_code
-
-    category_id, uom_id = _seed_category_and_uom(db)
-    _seed_registry(db)
-    warehouse = Warehouse(id=str(uuid.uuid4()), warehouse_code=unique_code("WH")[:50], warehouse_name="ZZT WH")
-    db.add(warehouse)
-    db.flush()
-
-    for _ in range(5):
-        code = unique_code("ZZTWC")[:50]
-        product = Product(
-            id=str(uuid.uuid4()),
-            product_code=code,
-            product_name=code,
-            description=f"{code} SORENTO CERAMIC WATER CLOSET",
-            category_id=category_id,
-            base_uom_id=uom_id,
-            list_price=10,
-            is_active=True,
-        )
-        db.add(product)
-        db.flush()
-        derive_for_code(db, code)
-        spec_row = (
-            db.query(ProductSpecifications).filter(ProductSpecifications.product_id == product.id).one()
-        )
-        values = dict(spec_row.values or {})
-        values["trap_type"] = {"value": "s_trap"}
-        values["trap_length"] = {"value": 250}
-        spec_row.values = values
-        db.add(
-            Stock(
-                id=str(uuid.uuid4()),
-                product_id=product.id,
-                warehouse_id=warehouse.id,
-                quantity_on_hand=5,
-                quantity_reserved=0,
-                quantity_damaged=0,
-            )
-        )
-    db.commit()
-
-    def _promotion_noise_entities() -> list[dict[str, Any]]:
-        return [
-            {
-                "uuid": str(uuid.uuid4()),
-                "entity_type": "promotion",
-                "code": None,
-            }
-            for _ in range(30)
-        ]
-
-    def _wrap_run_gate(real_run_gate: Any) -> Any:
-        def run_gate(*args: Any, **kwargs: Any) -> dict[str, Any]:
-            item = real_run_gate(*args, **kwargs)
-            if isinstance(item, dict):
-                item = dict(item)
-                item["compatible_entities"] = list(
-                    jsc.array(item.get("compatible_entities"))
-                ) + _promotion_noise_entities()
-            return item
-
-        return run_gate
-
-    from app.services.chatbot import jsc
-    from app.services.chatbot.lanes.business import resolve_gate as resolve_gate_mod
-
-    monkeypatch.setattr(resolve_gate_mod, "run_gate", _wrap_run_gate(resolve_gate_mod.run_gate))
-
-    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
-    engine_mod = _s4_wire_engine(
-        session_factory,
-        monkeypatch,
-        resolve_entity=_s4_real_resolve_entity(db),
-        fetch_mcp_call=_stock_fake_call_tool(db),
-    )
-    stub_parser(
-        _s4_bare_parser_output(
-            message_type="business_query",
-            intent_hint="check_stock",
-            domain_hint="inventory",
-            match_mode="and",
-            entities=[
-                {
-                    "raw": "water closet",
-                    "hint": "product",
-                    "canonical_code": None,
-                    "current_message": True,
-                    "confident": True,
-                }
-            ],
-        )
-    )
-    stub_access()
-
-    turn = engine_mod.run_turn(
-        _s4_envelope(
-            contact_id=contact_id,
-            message_id="ZZT-matchlinepromo-1",
-            text="check stock water closet with s trap 250mm",
-        ),
-        session_factory=session_factory,
-    )
-    assert turn.status == "done", turn.error
-    text = (turn.reply or {}).get("text") or ""
-    assert "_Matched on:" in text, text
-    assert "Water Closet" in text, text
-    assert "S Trap" in text, text
-    assert "250" in text, text
 
 
 def test_set_answer_with_no_spec_words_carries_no_match_line(
@@ -4819,11 +4460,8 @@ def test_set_answer_with_no_spec_words_carries_no_match_line(
     must carry NO "_Matched on:" line - the certificate leg names no spec
     key for `_matched_on_line` to intersect against.
 
-    Green today - `_matched_on_line` already returns the response unchanged
-    when `matched_specs` is empty for every shown row, which is already true
-    for a certificate-only HAS turn regardless of the R30 fix; kept as the
-    regression guard against the fix adding a Match line to every set answer
-    unconditionally.
+    Kept after main (#952) retired the Match line altogether: a set answer must
+    never grow one back.
     """
     contact_id = _s4_contact_id("nomatchline")
     db = session_factory()
