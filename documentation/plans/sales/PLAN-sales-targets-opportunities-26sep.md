@@ -1,7 +1,9 @@
 # PLAN: sales targets, opportunities and the WhatsApp achievement broadcast (#1170)
 
 Status: **building.** Wave 1, S6, is on PR #1260 (wave 1: the `sales` module and schema, Sales Teams with dated
-membership, the Sales menu with Sales Agents moved in; section 15). Track: full. Next: wave 2,
+membership, the Sales menu with Sales Agents moved in; section 15). S6 accepted on the owner's
+hand test (26 Sep ~13:25Z); fix lane round 2 on the same PR adds the team leader (W1) and lists
+a returning agent once (W2), section 15. Track: full. Next: wave 2,
 S1 beside S2. Ready to build since the owner accepted V1 to V3 as recommended (Owner ruling
 26 Sep ~09:05, section 14).
 Earlier status: grilled, round 5 (the owner's answers to R1 to R5 and T1 to T5, PR #1260 comment
@@ -917,6 +919,10 @@ name one; dated membership (`valid_from`, `valid_to`) when the owner moves agent
 mid-year and wants past periods to stay with the old team (T2).
 Round 5 (Owner ruling 26 Sep 06:09, T2): that trigger has arrived; dated membership is built in
 S6 as above. No parent team and no leader stay as they were (not asked).
+Owner ruling 26 Sep ~13:25Z (W1, S6 hand test): "I need it to be able to set a sales leader,
+which is also a sales agent". The leader trigger has arrived: `sales.teams.leader_sales_agent_id`,
+one of the team's agents, a current attribute (not dated), held by `trg_sales_teams_leader_is_member`
+(section 15). No parent team still (not asked).
 
 **Team targets** reuse `sales_targets` with `subject_kind = 'team'` and `sales_team_id` (3.1), so
 periods, scope, basis, metric, duplicate, tiers (S4) and recipients (S5) all work unchanged.
@@ -1779,4 +1785,26 @@ taken while building, each the direct reading of the plan unless it says otherwi
 - **Plan DoD not run here:** "every active agent can be placed in a team on the dev DB (prod
   copy)" needs the prod copy, which this cloud session does not have; the browser pass ran on a
   database built from zero with seven seeded agents.
+
+### Fix lane round 2 (26 Sep, after the owner's hand test; UAC S6-16 to S6-18)
+
+- **Team leader (W1).** Migration `sales_0002_team_leader` on `sales_0001_teams` (single head):
+  `sales.teams.leader_sales_agent_id`, nullable, `fk_sales_teams_leader_sales_agent_id` to
+  `sales_agents` ON DELETE SET NULL. **The membership rule is a trigger, not a check:** a check
+  constraint cannot read another table, and a foreign key cannot target the open-row partial
+  index (an agent can have several stays in one team). `trg_sales_teams_leader_is_member` is a
+  pair of DEFERRABLE INITIALLY DEFERRED constraint triggers (on `sales.teams` when the leader is
+  set, on `sales.team_members` when an open row closes or goes) sharing one function: at commit,
+  a team's leader must have an open membership row in that team. Deferred, because one save
+  closes the leader's row and clears the leader in either order. The DDL has one copy,
+  `app.models.sales.leader_rule_ddl`, used by the migration and by `create_all` (test schemas,
+  bootstrap_env). The service keeps the rule true: `save_members_and_leader` adds a leader who
+  is not a member to the agents (a Moves on if they come from another team), and `set_members`
+  clears the leader when they are left out or move away. `sales.teams.edit` covers it.
+- **One line per agent (W2).** The team read orders an agent's stays by start date and keeps
+  the latest, so a returning agent shows once, active; history is untouched.
+- **Screens.** The leader's pill leads the list row, reading "(Leader)": a word rather than a
+  crown icon, because DESIGN-LANGUAGE.md has no icon vocabulary for a role and a bare icon would
+  need a legend. The team page names the leader under the team name and tags the row; the modal
+  and the in-place edit have a clearable Leader `SearchableSelect` limited to the picked agents.
 

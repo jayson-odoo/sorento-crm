@@ -4,7 +4,7 @@ Plan: `documentation/plans/sales/PLAN-sales-targets-opportunities-26sep.md`. Moc
 `documentation/plans/sales/mockups/sales-targets.html`. Slice 1 of #1170 (a sales agent on a
 customer) shipped in PR #1177 and is not repeated here.
 
-Status: building. Wave 1, S6, is on PR #1260 (S6-1 to S6-3, S6-8, S6-9, S6-12 to S6-15, S1-17; plan section 15).
+Status: building. Wave 1, S6, is on PR #1260 (S6-1 to S6-3, S6-8, S6-9, S6-12 to S6-18, S1-17; plan section 15). S6 accepted on the owner's hand test (26 Sep ~13:25Z); fix lane round 2 adds S6-16 to S6-18 (team leader, a returning agent listed once).
 Earlier status: grilled. Round 1 answered by the owner 26 Sep 2026 (PR #1260 comment, 05:25Z); every AC
 is now written to the ruling, marked "(Owner ruling 26 Sep, G#)". Round 2 questions R1 to R5
 (plan section 9) may still adjust the ACs marked "(R#)"; each is written to its recommendation.
@@ -91,6 +91,11 @@ From the owner's answers to rounds 2 and 3 (PR #1260 comment, 26 Sep 06:09Z, ver
 - **T5, Owner ruling 26 Sep 06:09:** "the point is we need to do it now and not backlog or defer": every slice now, thin lanes in parallel waves, nothing to the backlog.
 - **Owner question 26 Sep 06:09:** "are we doing this in a new schema and module called sales?": recommended yes to both, module `sales` and schema `sales` (plan 3.7, V3).
 - **Owner ruling 26 Sep ~09:05 (chat):** "yeah I am okay with sales target": V1, V2 and V3 accepted as recommended; build S6 first.
+
+## Owner rulings 26 Sep, S6 hand test (fix lane round 2), one line each
+
+- **W2, Owner ruling 26 Sep ~13:05Z (chat), on reviewer nit N1:** "hmm shouldn't list twice la in my opinion": an agent who left a team and came back is listed once on the team page, as active; the earlier stay stays in the data (S6-18).
+- **W1, Owner ruling 26 Sep ~13:25Z (chat, S6 hand test):** "hand test for sales team S6 is okay, but I need it to be able to set a sales leader, which is also a sales agent": S6 accepted as tested; one leader per team, chosen from its agents, a current attribute and not dated history (S6-16, S6-17).
 
 ## Journey
 
@@ -682,6 +687,28 @@ S6-4 to S6-7 and S6-10 (team targets) build in S1's lane, and S6-12 and S6-13 ar
   during the period shown keeps a muted line with a "Left 14 Oct" pill, so the team's achieved
   figure is explained on screen. E2E: move an agent, see the pill, see the old team's past period
   unchanged.
+- **S6-16 [BE] (J13, Owner ruling 26 Sep ~13:25Z, W1)** `sales.teams.leader_sales_agent_id`
+  (nullable, foreign key to `sales_agents` ON DELETE SET NULL; migration `sales_0002_team_leader`
+  on `sales_0001_teams`). `POST /sales/teams` and `PATCH /sales/teams/{id}` take
+  `leader_sales_agent_id`: on PATCH, sent sets it and `null` clears it, left out keeps it. A
+  leader who is not among the team's agents is placed in the team the way Add agents places
+  anyone (from the beginning for a first team; a Moves on and a `moved` entry when they come
+  from another team). Another company's agent is 422. When the leader is removed from the team
+  or moves to another team, that team's leader clears. The database holds the rule for any
+  writer: `trg_sales_teams_leader_is_member`, deferred constraint triggers on `sales.teams` and
+  `sales.team_members`, refuses a leader without an open membership row in the team at commit.
+  List rows and the team read return `leader_sales_agent_id`; the team read adds `leader_label`.
+  Gated by `sales.teams.edit` (no new slug). Upgrade and downgrade both run.
+- **S6-17 [FE][E2E] (J13, W1)** The list row draws the leader's pill first, reading
+  "<agent> (Leader)". The team page names the leader on a line under the team name ("Leader:
+  <agent>", or "No leader") and tags the leader's row "Leader". The Add team modal and the
+  team page's in-place edit have a clearable **Leader** `SearchableSelect` offering only the
+  picked agents (in edit: the agents kept plus those being added); unpicking or removing the
+  leader clears it. 1280 and 375.
+- **S6-18 [BE][FE] (J13, Owner ruling 26 Sep ~13:05Z, W2)** The team page lists each agent once:
+  an agent who left and came back shows once, from the stay in force on the date shown (active);
+  when every stay in the month has ended, from the last one ("Left <date>"). The earlier stays
+  stay in `sales.team_members`.
 
 ## S7. Dealer targets (built third, round 4)
 
