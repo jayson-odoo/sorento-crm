@@ -92,61 +92,53 @@ export async function saveChatbotSettings(input: ChatbotSettings): Promise<Chatb
   return pickChatbotSettings(data?.data);
 }
 
-/** Settings > Chatbot > Memory card (chatbot turn re-architecture, AC-1513, AC-1561). */
+/**
+ * Settings > Chatbot > Memory card (chatbot memory lane A, round 3 mockup
+ * `chatbot-memory-27sep-mockup-settings.html`; contract sections 2 and 5).
+ *
+ * `system_settings.chatbot_memory` is now exactly `{enabled, default_level,
+ * own_level_count}` - the four dead settings this card used to carry (recall_default,
+ * episode_retention_days, profile_fields, focus_reset_events) are gone from the type,
+ * this service and the card itself; the S0 migration drops them from the column.
+ */
 export interface ChatbotMemorySettings {
-  recall_default: boolean;
-  episode_retention_days: number;
-  profile_fields: string[];
-  focus_reset_events: string[];
+  enabled: boolean;
+  /** Never `off`, never null - the select has no clear (contract section 2). */
+  default_level: 'conversation' | 'past' | 'full';
+  /** Read-only: contacts with their own level (contract section 2's per-contact override). */
+  own_level_count: number;
 }
 
 const MEMORY_FALLBACK: ChatbotMemorySettings = {
-  recall_default: false,
-  episode_retention_days: 180,
-  profile_fields: ['tier', 'language', 'default_ledgers'],
-  focus_reset_events: ['topic_switch'],
+  enabled: false,
+  default_level: 'full',
+  own_level_count: 0,
 };
 
-function pickChatbotMemory(row: Record<string, unknown> | null | undefined): ChatbotMemorySettings {
-  const memory = row?.chatbot_memory as Partial<ChatbotMemorySettings> | null | undefined;
-  if (!memory) return MEMORY_FALLBACK;
-  return {
-    recall_default: Boolean(memory.recall_default),
-    episode_retention_days:
-      typeof memory.episode_retention_days === 'number'
-        ? memory.episode_retention_days
-        : MEMORY_FALLBACK.episode_retention_days,
-    profile_fields: Array.isArray(memory.profile_fields)
-      ? memory.profile_fields
-      : MEMORY_FALLBACK.profile_fields,
-    focus_reset_events: Array.isArray(memory.focus_reset_events)
-      ? memory.focus_reset_events
-      : MEMORY_FALLBACK.focus_reset_events,
-  };
-}
+/*
+ * PHASE-1 MOCK: swap for apiFetch in Phase 2 (GET/PUT /api/v1/user-management/settings,
+ * contract section 5). The live settings row still carries the OLD `chatbot_memory` shape
+ * (recall_default/episode_retention_days/profile_fields/focus_reset_events) until the S0
+ * migration lands, so this card's read/save pair is mocked in full rather than reading a
+ * shape the backend does not send yet.
+ */
+let mockMemorySettings: ChatbotMemorySettings = { ...MEMORY_FALLBACK, own_level_count: 1 };
 
 export async function getChatbotMemorySettings(): Promise<ChatbotMemorySettings> {
-  const response = await apiFetch('/api/user-management/settings');
-  if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to load settings'));
-  }
-  const data = await response.json();
-  return pickChatbotMemory(data?.settings);
+  return { ...mockMemorySettings };
 }
 
 export async function saveChatbotMemorySettings(
   input: ChatbotMemorySettings,
 ): Promise<ChatbotMemorySettings> {
-  const response = await apiFetch('/api/user-management/settings/general', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chatbot_memory: input }),
-  });
-  if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to save memory settings'));
-  }
-  const data = await response.json();
-  return pickChatbotMemory(data?.data);
+  // own_level_count is read-only (set per-contact, on the contact's own card) - a save
+  // from here can never touch it.
+  mockMemorySettings = {
+    ...mockMemorySettings,
+    enabled: input.enabled,
+    default_level: input.default_level,
+  };
+  return { ...mockMemorySettings };
 }
 
 /** Office / Dealer / End user, orderable (AC-1502's tier axis; replaces the three

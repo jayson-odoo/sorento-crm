@@ -19,18 +19,35 @@ import ContactChatbotSection from './ContactChatbotSection';
 
 const useContactChatbotProfile = vi.fn();
 const mutate = vi.fn();
+const memoryMutate = vi.fn();
 
+// Chatbot memory lane A: `chatbot_memory_level` replaces `recall_enabled`, `language`
+// moved into the facts grid (`useContactChatbotMemory`) and `always_full_report` is
+// dead. The empty memory fixture below keeps every test in this file - none of which
+// assert on facts/conversations/open orders - rendering the same empty states those
+// new cards fall back to, rather than an undefined crash.
 vi.mock('../hooks/useContactChatbot', () => ({
   useContactChatbotProfile: (...a: unknown[]) => useContactChatbotProfile(...a),
   useSaveContactChatbotProfile: () => ({ mutate, isPending: false }),
+  useContactChatbotMemory: () => ({
+    data: {
+      level: { own: null, effective: 'off', system_default: 'off' },
+      facts: [],
+      vocabulary: [],
+      episodes: { kept: 0, limit: 20, current: null, rows: [] },
+      open_orders: { customer_name: null, rows: [] },
+    },
+    isLoading: false,
+    isError: false,
+  }),
+  useSaveContactFact: () => ({ mutate: memoryMutate, isPending: false }),
+  contactChatbotMemoryQueryKey: (contactId: string) => ['contact-chatbot-memory', contactId],
 }));
 
 const BASE_PROFILE = {
-  recall_enabled: false,
+  chatbot_memory_level: null,
   tier: null,
-  language: null,
   default_ledgers: [],
-  always_full_report: false,
   stock_allowed: true,
   notify_salesman: false,
   packing_list_allowed: false,
@@ -111,9 +128,8 @@ describe('ContactChatbotSection - contact toggles (S2, AC-SA205)', () => {
   it('toggling "Notify salesman" saves the whole profile with every other field unchanged', () => {
     const loaded = {
       ...BASE_PROFILE,
-      recall_enabled: true,
+      chatbot_memory_level: 'full',
       tier: 'dealer',
-      language: 'en',
       stock_allowed: true,
       notify_salesman: false,
       packing_list_allowed: true,
@@ -130,9 +146,8 @@ describe('ContactChatbotSection - contact toggles (S2, AC-SA205)', () => {
   it('toggling "Packing list allowed" saves the whole profile with every other field unchanged, including notify_salesman', () => {
     const loaded = {
       ...BASE_PROFILE,
-      recall_enabled: false,
+      chatbot_memory_level: null,
       tier: null,
-      language: null,
       stock_allowed: true,
       notify_salesman: true,
       packing_list_allowed: false,

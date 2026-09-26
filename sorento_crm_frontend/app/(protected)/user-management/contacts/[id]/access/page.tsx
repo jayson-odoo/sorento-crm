@@ -42,14 +42,11 @@ export default function ContactAccessPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Chatbot</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ContactChatbotSection contactId={contactId} />
-        </CardContent>
-      </Card>
+      {/* Chatbot memory lane A (round 3 mockup): ContactChatbotSection now renders its
+          OWN cards (Chatbot settings / What the bot knows / Conversations / Open
+          orders), matching the mockup's flat card list - no longer nested inside one
+          outer "Chatbot" card. */}
+      <ContactChatbotSection contactId={contactId} />
     </div>
   );
 }
