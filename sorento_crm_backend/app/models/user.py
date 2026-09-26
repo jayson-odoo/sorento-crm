@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID, ARRAY, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
+from app.models.audit import audit_columns_excluding_secrets
 import uuid
 
 
@@ -18,6 +19,10 @@ class UserStatus(str, enum.Enum):
 class User(Base):
     __tablename__ = "users"
     __audit_track__ = True  # who changed what (Sub-plan D Tier-2)
+    # `__audit_columns__` is set right after the class body: every column minus
+    # AUDIT_SECRET_KEYS, derived so a new column is audited without being listed.
+    # The bcrypt `password` hash was written into audit_logs on every user write,
+    # logins included (#1281).
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     email = Column(String, unique=True, nullable=False, index=True)
@@ -121,6 +126,9 @@ class User(Base):
         # One phone == one user. Postgres allows multiple NULLs, so unlinked users are fine.
         UniqueConstraint("contact_number", name="uq_users_contact_number"),
     )
+
+
+User.__audit_columns__ = audit_columns_excluding_secrets(User.__table__)
 
 
 class UserProductDiscontinuedScope(Base):

@@ -1,6 +1,6 @@
 """Audit logs API routes."""
 from datetime import datetime
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
@@ -10,8 +10,60 @@ from app.schemas.audit import AuditLogResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.models.user import User
 from app.models.access import RespondContact
+from app.services.user_service import UserPermissionService
+from app.services.error_handler import AppException
 
 router = APIRouter()
+
+# The audit log holds every audited change, its before/after values and the actor's
+# IP address, so reading it is a superadmin/admin act (#1281): the menu entries were
+# superadmin-only, the routes were open to any login or API key. The one exception is
+# a detail page's history panel, which reads ONE record's history and takes the
+# same view permission as the record's own page. Every FE reader of
+# `getAuditLogs({ entity_type, entity_id })` needs its entity type here.
+_PER_RECORD_VIEW_PERMISSION: dict[str, str] = {
+    "complaint": "complaint_management.complaints.view",
+    "stock_inquiry": "procurement.stock_inquiries.view",
+    "purchase_request": "procurement.purchase_requests.view",
+    "product": "master_data.products.view",
+    # Packing List detail, Timeline tab (usePackingLists.ts, R17).
+    "inbound_shipments": "procurement.packing_lists.view",
+}
+
+
+def _is_audit_admin(db: Session, user_id: str) -> bool:
+    slugs = UserPermissionService(db).get_user_role_slugs(user_id)
+    return bool(slugs & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"})
+
+
+def _forbidden() -> AppException:
+    return AppException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        message="Superadmin access is required to read the audit log.",
+        code="audit_admin_required",
+    )
+
+
+def require_audit_admin(
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Superadmin/admin only, whether the caller is a login or an API key's act-as user."""
+    if not _is_audit_admin(db, str(current_user["id"])):
+        raise _forbidden()
+    return current_user
+
+
+def _authorize_log_read(
+    db: Session, current_user: dict, entity_type: Optional[str], entity_id: Optional[str]
+) -> None:
+    user_id = str(current_user["id"])
+    if _is_audit_admin(db, user_id):
+        return
+    slug = _PER_RECORD_VIEW_PERMISSION.get(entity_type or "")
+    if slug and entity_id and UserPermissionService(db).check_user_has_permission(user_id, slug):
+        return
+    raise _forbidden()
 
 
 def _user_display_names(db: Session, user_ids: list[str]) -> dict[str, str]:
@@ -88,6 +140,7 @@ async def get_audit_logs(
     db: Session = Depends(get_db),
 ):
     """List audit log entries, optionally filtered by entity_type and entity_id (for per-record history)."""
+    _authorize_log_read(db, current_user, entity_type, entity_id)
     items, total = list_audit_logs(
         db,
         entity_type=entity_type,

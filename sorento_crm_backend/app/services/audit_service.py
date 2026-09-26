@@ -8,7 +8,7 @@ from typing import Optional, Any
 from datetime import datetime, date
 from decimal import Decimal
 from uuid import UUID
-from app.models.audit import AuditLog
+from app.models.audit import AUDIT_SECRET_KEYS, AuditLog
 
 
 def _is_uuid(value: str) -> bool:
@@ -24,6 +24,7 @@ def _is_uuid(value: str) -> bool:
 #   __audit_track__ = True
 #   __audit_entity_type__ = "entity_type"  # optional, default __tablename__
 #   __audit_columns__ = ["col1", "col2"]   # optional, default all columns
+# Keys in AUDIT_SECRET_KEYS are dropped either way (see log_audit).
 def _is_audited(obj: Any) -> bool:
     if obj is None:
         return False
@@ -106,6 +107,18 @@ def _model_to_audit_dict(obj: Any) -> dict[str, Any]:
         return {}
 
 
+# The deny list lives beside the model (app.models.audit.AUDIT_SECRET_KEYS) so a model
+# can derive its `__audit_columns__` from it. `__audit_columns__` is opt-in per model and
+# a model without it snapshots every column, so the deny list is the backstop.
+def _redact_secrets(values: Any) -> Any:
+    """Drop deny-listed keys at every depth: top level, nested JSON objects, lists of them."""
+    if isinstance(values, dict):
+        return {k: _redact_secrets(v) for k, v in values.items() if k not in AUDIT_SECRET_KEYS}
+    if isinstance(values, list):
+        return [_redact_secrets(v) for v in values]
+    return values
+
+
 def log_audit(
     db: Session,
     entity_type: str,
@@ -140,8 +153,8 @@ def log_audit(
         action=action.upper(),
         user_id=user_id,  # None for system/public actions (e.g. approval via public link)
         contact_id=contact_id if contact_id is not None else get_actor_contact_id(),
-        old_values=old_values,
-        new_values=new_values,
+        old_values=_redact_secrets(old_values),
+        new_values=_redact_secrets(new_values),
         description=description,
         ip_address=ip_address,
         company_id=company_id,
