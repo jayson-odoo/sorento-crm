@@ -558,3 +558,135 @@ by a reachability test that each cue appears in the addendum (AC-MEM066).
 
 The 10 s end-to-end target of #1275 is not moved by this plan either way; its limiters are
 the n8n pre-turn gap and the resolver miss path, owned there.
+
+## 7. Out-of-boundary replies
+
+### 7.1 The four kinds and where each goes
+
+| kind | example | parser signal | route | reply built by |
+|---|---|---|---|---|
+| small talk, thanks, off-topic | "morning boss", "what's the weather in Penang" | `message_type` casual / unknown, no domain | `low_signal` (existing) | clarifier writes the acknowledgement only; the engine adds the memory line and the offer |
+| follow-up that needs the previous episode | "any update on that?" the next morning | a domain plus entities resolved from `Recent conversations` | business (existing) | the normal composer; the reply opens with one line naming what was carried ("For the outstanding DOs of Chin Chun Trading from yesterday:") |
+| a question about their own history | "what did I ask you last week?" | `message_type = history_question` (new) | `history` (new, deterministic) | the history composer, from `conversation_frames` only |
+| a request the CRM cannot fulfil | "give me 10% off", "cancel my order", an unsupported domain | escalation / request_for_help / not supported | `out_of_scope` / `not_supported` (existing) | acknowledgement + what the CRM can do instead + the handover offer (existing team or member offer) |
+
+### 7.2 The reply shape (one contract for all four)
+
+```
+reply = ack            one sentence, human, may use the dealer's first name
+      + memory_line    optional, deterministic, from profile / episodes / live CRM data
+      + offer          the concrete next thing: a numbered choice, a re-run, or a handover
+```
+
+- Only `ack` is written by an LLM (the existing clarifier call, gpt-4.1-mini, now given the
+  L5 profile slice and L4 summaries under a 400-token memory budget). It returns
+  `{"ack": "..."}`, 25 words at most.
+- **Guard:** an `ack` that contains a digit, a product-code-shaped token, a price or a date
+  not present in its own input is replaced by the canned acknowledgement for the language
+  (`chatbot_reply_copy`, editable). Facts reach the dealer only through `memory_line` and the
+  composers, which read data. AC-MEM081.
+- `memory_line` and `offer` are templates in `chatbot_reply_copy` (en, ms, zh), picked by
+  profile `language`, else the language of the dealer's message as the clarifier reports it.
+- **Never a bare refusal, never silence, never an exception.** Every bot turn that is not
+  under human takeover sends one visible line. This fixes the 28 `out_of_scope` and 16
+  `escalation_declined` turns that sent nothing (#1275), and replaces
+  `"There is some error encountered by the AI: " + str(exc)` with the existing "Sorry, I ran
+  into a problem..." copy. AC-MEM084 to AC-MEM086.
+- A handover always names who: the linked salesperson (`salesperson` fact) when the ask is
+  commercial (discount, credit, price exception), else the domain's team from
+  `chatbot_domains`. It uses the existing offer and escalation path (`member_offer` /
+  `team_pick`), so routing, assignment, comment and SLA row are unchanged.
+
+### 7.3 Ten example exchanges
+
+The contact in all ten: Mr Tan, purchaser at Chin Chun Trading (CC001), dealer, language en
+unless stated, salesperson Aina. Memory holds: usual products SRTWB1455 and M486-75-BL, usual
+site Kuching; episodes "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not
+found); offered Stock team, declined." and "Tue 23 Sep: outstanding DO for CC001 Chin Chun
+Trading (answered)."
+
+**1. Greeting at the start of a day (small talk, memory used).**
+> Dealer: morning boss
+> Bot: Morning Mr Tan! Last time we looked at stock for SRTWB1455 and the incoming for
+> M486-75-BL. Want me to check either again, or something new?
+
+`low_signal`; ack from the clarifier ("Morning Mr Tan!"); memory_line from the newest summary;
+offer = re-run. Without memory today: "Hello! How can I help you?" or the clarify menu.
+
+**2. A follow-up that needs yesterday's episode.**
+> Dealer: any update on that DO?
+> Bot: For the outstanding DOs of Chin Chun Trading from Tuesday: (report, fetched now)
+
+The parser resolves "that DO" from `Recent conversations` to document DO, customer CC001,
+status outstanding; the business lane runs as normal; the carried-context line opens the
+reply. Without memory: "Which customer?" (the focus from Tuesday may have been reset).
+
+**3. A question about their own history.**
+> Dealer: what did I ask you last week?
+> Bot: Here's what you checked with me recently:
+> 1. Thu 25 Sep: stock SRTWB1455, incoming M486-75-BL (not found then)
+> 2. Tue 23 Sep: outstanding DOs for Chin Chun Trading
+> Reply with a number and I'll run it again with today's figures.
+
+`history_question`; deterministic from frames; no figures from the past. Without memory: the
+clarify menu, or a stock search for the word "ask".
+
+**4. A request the bot cannot fulfil (commercial).**
+> Dealer: can give 10% discount for SO-2409-0112?
+> Bot: I can't approve discounts myself, Mr Tan, but Aina can. Shall I send her SO-2409-0112
+> with your request? 1. Yes 2. No, it's okay
+
+`out_of_scope`, commercial, so the handover names the salesperson; existing member offer.
+Without memory: an internal note to a team and nothing sent to the dealer.
+
+**5. Off-topic.**
+> Dealer: hot today in Kuching ah
+> Bot: Very! Stay cool, Mr Tan. While you're here, want me to check Kuching stock for
+> SRTWB1455 or M486-75-BL?
+
+`low_signal`; offer uses `usual_sites` and `usual_products`. Without memory: a generic
+greeting or the clarify menu.
+
+**6. Frustration about a delivery.**
+> Dealer: my delivery late again, very frustrating
+> Bot: Sorry about that, Mr Tan, I understand. Chin Chun Trading has 2 open DOs: DO-2409-0331
+> and DO-2409-0350. Want me to check their status, or pass this to the Logistics team?
+> 1. Check status 2. Logistics team
+
+`low_signal` with a complaint tone; memory_line fetches open DOs live through the existing
+order tool (not a stored fact); offer is a two-option pick. Without memory: a clarify menu.
+
+**7. A stated fact (profile write).**
+> Dealer: I'm the new purchaser here, taking over from Mr Lim
+> Bot: Welcome aboard! I've noted you're the purchaser at Chin Chun Trading. What can I check
+> for you?
+
+`profile_statement {role: purchaser}`, source `stated`, visible to staff with a `Said` badge.
+No grant, scope or customer link changes (AC-MEM036). Without memory: the clarify menu.
+
+**8. "The usual".**
+> Dealer: stock for the usual
+> Bot: Your usual two: (stock for SRTWB1455 and M486-75-BL, Kuching first)
+
+The parser resolves "the usual" from `usual_products`; `usual_sites` orders the warehouses.
+Without memory: "Which product?"
+
+**9. Language preference (Malay).**
+> Dealer: boleh reply dalam Bahasa Melayu lepas ni?
+> Bot: Boleh, Encik Tan. Lepas ni saya balas dalam Bahasa Melayu. Ada apa-apa yang saya boleh
+> semak?
+
+`profile_statement {language: ms}`; later canned lines and templates use ms. Without memory:
+English replies continue.
+
+**10. Wants a person, mid-conversation.**
+> Dealer: I want to talk to a real person
+> Bot: Sure, Mr Tan. Aina looks after Chin Chun Trading; I'll ask her to message you here
+> about the incoming for M486-75-BL we were just checking. OK? 1. Yes 2. No, it's okay
+
+`request_for_help`; the handover carries the live episode's subject into the routed message
+(the existing escalation comment gets the summary line). Without memory: a team question with
+no context carried.
+
+Every example is a replay case in S4 (section 8.1); 1, 2, 3, 5, 8 and 10 go red with memory
+ablated.
