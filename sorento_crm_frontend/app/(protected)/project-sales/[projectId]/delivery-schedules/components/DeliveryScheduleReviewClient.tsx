@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { AlertTriangle, History, Loader2, RefreshCw } from 'lucide-react';
+import { AlertTriangle, History, RefreshCw } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -31,13 +31,13 @@ import {
 import { usePOVersion } from '../../../_shared/hooks/usePOIntake';
 import { useReviewOriginHref } from '../../../_shared/hooks/useReviewOrigin';
 import { resolveExtractionPhase } from '../../../_shared/types/deliverySchedule.types';
-import { describeWaitingFor } from '../../../_shared/lib/readingTime';
 import type {
   DeliveryScheduleConfirmBody,
   DeliveryScheduleVersion,
 } from '../../../_shared/types/deliverySchedule.types';
 import { DeliveryScheduleUploadDialog } from '../../components/DeliveryScheduleUploadDialog';
 import { POIntakeDocumentViewer } from '../../components/POIntakeDocumentViewer';
+import { POIntakeExtractionProgress } from '../../components/POIntakeExtractionStatus';
 import {
   demoScheduleVersionState,
   useDemoScheduleState,
@@ -66,6 +66,20 @@ import { DeliveryScheduleRevisionProposals } from './DeliveryScheduleRevisionPro
 
 type ReviewTab = 'schedule' | 'documents';
 type RowFilter = 'attention' | 'all';
+
+/**
+ * The chosen segment of "By area | By date" and "Need attention | All rows" (W2).
+ *
+ * Owner hand test, 26 Sep: the outline toggle's selected state, a slightly whiter background,
+ * left them unable to tell which segment was on. Filled with the accent and bold, the same
+ * selected style as the dealer-kit segmented control (`PrintBySelect`). The focus ring is a
+ * ring offset from the edge, never a fill, so focus and selection read as two things.
+ */
+const SEGMENT_CLASS =
+  'px-3 data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:font-semibold ' +
+  'data-[state=on]:text-primary-foreground data-[state=on]:hover:bg-primary/90 ' +
+  'data-[state=on]:hover:text-primary-foreground focus-visible:ring-2 focus-visible:ring-ring ' +
+  'focus-visible:ring-offset-2';
 
 /**
  * Reviewing one version of a delivery schedule (S5, mockups/delivery-schedule-review.html).
@@ -459,7 +473,7 @@ export function DeliveryScheduleReviewClient({
         </p>
       </PageHeader>
 
-      {readingNow && <ExtractionProgress version={version} />}
+      {readingNow && <POIntakeExtractionProgress version={version} />}
 
       {phase === 'failed' && (
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-8 text-center">
@@ -535,10 +549,10 @@ export function DeliveryScheduleReviewClient({
                     value={viewMode}
                     onValueChange={(next) => next && setViewMode(next as 'phase' | 'date')}
                   >
-                    <ToggleGroupItem value="phase" className="px-3">
+                    <ToggleGroupItem value="phase" className={SEGMENT_CLASS}>
                       By area
                     </ToggleGroupItem>
-                    <ToggleGroupItem value="date" className="px-3">
+                    <ToggleGroupItem value="date" className={SEGMENT_CLASS}>
                       By date
                     </ToggleGroupItem>
                   </ToggleGroup>
@@ -548,10 +562,10 @@ export function DeliveryScheduleReviewClient({
                     value={effectiveFilter}
                     onValueChange={(next) => next && chooseFilter(next as RowFilter)}
                   >
-                    <ToggleGroupItem value="attention" className="px-3">
+                    <ToggleGroupItem value="attention" className={SEGMENT_CLASS}>
                       {`Need attention (${blocking.length})`}
                     </ToggleGroupItem>
-                    <ToggleGroupItem value="all" className="px-3">
+                    <ToggleGroupItem value="all" className={SEGMENT_CLASS}>
                       {`All rows (${columns.length})`}
                     </ToggleGroupItem>
                   </ToggleGroup>
@@ -777,68 +791,6 @@ function DocumentEmptyState({ onReupload }: { onReupload?: () => void }) {
   );
 }
 
-/** Honest progress: page counts when the backend gives them, no invented percentage. */
-function ExtractionProgress({
-  version,
-}: {
-  version: {
-    extraction_state: string;
-    page_count?: number | null;
-    pages_extracted?: number | null;
-    extraction_started_at?: string | null;
-  };
-}) {
-  const read = version.pages_extracted;
-  const total = version.page_count;
-  const waitingFor = describeWaitingFor(version.extraction_started_at);
-  const detail =
-    version.extraction_state === 'queued'
-      ? typeof total === 'number'
-        ? `${total} page${total === 1 ? '' : 's'} waiting to be read.`
-        : 'Waiting to be read.'
-      : typeof read === 'number' && typeof total === 'number'
-        ? `Page ${Math.min(read + 1, total)} of ${total}.`
-        : 'Reading the document.';
-
-  return (
-    <Card>
-      <CardContent className="space-y-4 py-6">
-        <div className="flex items-center gap-2 text-sm">
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-          <span className="font-medium">
-            {version.extraction_state === 'queued' ? 'Queued' : 'Reading the schedule'}
-          </span>
-          <Badge variant="secondary" size="sm">
-            {detail}
-          </Badge>
-          {waitingFor ? (
-            <span className="text-xs text-muted-foreground">{waitingFor}</span>
-          ) : null}
-        </div>
-        <MatrixSkeleton />
-      </CardContent>
-    </Card>
-  );
-}
-
-function MatrixSkeleton() {
-  return (
-    <div className="space-y-2" aria-hidden>
-      <div className="flex gap-2">
-        <Skeleton className="h-9 w-[200px] shrink-0" />
-        <Skeleton className="h-9 flex-1" />
-      </div>
-      {[0, 1, 2, 3, 4].map((row) => (
-        <div key={row} className="flex gap-2">
-          <Skeleton className="h-7 w-[200px] shrink-0" />
-          <Skeleton className="h-7 flex-1" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** Matches the shape the page settles into, so nothing jumps when the data lands. */
 function ReviewSkeleton() {
   return (
     <div className="space-y-5">

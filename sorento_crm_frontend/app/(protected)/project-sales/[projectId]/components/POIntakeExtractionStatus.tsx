@@ -31,9 +31,24 @@ export function POIntakeSkeleton() {
 /**
  * Extraction is on a queue, so this says where it is rather than blocking the screen. The
  * bar is deliberately indeterminate on `queued`: we know the page count, not the progress,
- * and a fake percentage is a lie about a two minute wait.
+ * and a fake percentage is a lie about a two minute wait. Once pages land it is the pages
+ * read of the total, so it moves as the worker reports each one.
+ *
+ * Shared with the delivery schedule read (W3, PR #1265): both versions carry the same four
+ * fields, and the owner asked for the one progress bar on both screens.
  */
-export function POIntakeExtractionProgress({ version }: { version: POVersion }) {
+export function POIntakeExtractionProgress({
+  version,
+}: {
+  // Not `POVersion`: the schedule's version has `partial` in its state set and optional
+  // counts, and only these four fields are read.
+  version: {
+    extraction_state: string;
+    page_count?: number | null;
+    pages_extracted?: number | null;
+    extraction_started_at?: string | null;
+  };
+}) {
   const running = version.extraction_state === 'running';
   const waitingFor = describeWaitingFor(version.extraction_started_at);
   const read = version.pages_extracted;
@@ -46,6 +61,13 @@ export function POIntakeExtractionProgress({ version }: { version: POVersion }) 
       : total
         ? `${total} page${total === 1 ? '' : 's'}`
         : null;
+  // A sliver before the first page lands, so a running read never shows an empty bar.
+  const barValue =
+    running && typeof read === 'number' && typeof total === 'number' && total > 0
+      ? Math.max(5, Math.round((Math.min(read, total) / total) * 100))
+      : running
+        ? 60
+        : 15;
   return (
     <Card>
       <CardHeader className="block">
@@ -63,7 +85,7 @@ export function POIntakeExtractionProgress({ version }: { version: POVersion }) 
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        <Progress value={running ? 60 : 15} className="h-1.5" />
+        <Progress value={barValue} className="h-1.5" aria-label="Pages read" />
         <p className="text-xs text-muted-foreground">
           This page updates itself. You can leave it and come back.
         </p>
