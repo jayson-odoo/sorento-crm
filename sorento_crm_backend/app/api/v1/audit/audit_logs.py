@@ -12,6 +12,7 @@ from app.models.user import User
 from app.models.access import RespondContact
 from app.services.user_service import UserPermissionService
 from app.services.error_handler import AppException
+from app.models.base import get_company_scope
 
 router = APIRouter()
 
@@ -61,9 +62,20 @@ def _authorize_log_read(
     if _is_audit_admin(db, user_id):
         return
     slug = _PER_RECORD_VIEW_PERMISSION.get(entity_type or "")
-    if slug and entity_id and UserPermissionService(db).check_user_has_permission(user_id, slug):
-        return
-    raise _forbidden()
+    if not (slug and entity_id and UserPermissionService(db).check_user_has_permission(user_id, slug)):
+        raise _forbidden()
+    # The only company check downstream is admin_listing_company_filter, which is not
+    # fail-closed: UNSET or an empty set means "every company", safe only for an admin.
+    # A non-admin with no active company (no grant left after offboarding, a deleted
+    # company) must not read another company's record through this branch. None stays
+    # open: it is the deliberate all-companies principal (an X-API-Key, AC-F1).
+    scope = get_company_scope(db)
+    if scope is not None and (not isinstance(scope, frozenset) or not scope):
+        raise AppException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            message="An active company is required to read this record's history.",
+            code="audit_company_required",
+        )
 
 
 def _user_display_names(db: Session, user_ids: list[str]) -> dict[str, str]:
