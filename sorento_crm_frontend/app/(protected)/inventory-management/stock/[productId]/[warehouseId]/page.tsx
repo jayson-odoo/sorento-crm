@@ -26,7 +26,10 @@ import { Badge } from '@/components/ui/badge';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { getStockDetail, getStockLedgerByStock, exportStockBalance } from '../../services/stockService';
 import type { Stock } from '../../types/stock.types';
-import type { StockLedgerEntry } from '../../../stock-ledger/types/stockLedger.types';
+import {
+  stockLedgerTypeLabel,
+  type StockLedgerEntry,
+} from '../../../stock-ledger/types/stockLedger.types';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 type StockDetailPageProps = {
@@ -92,7 +95,7 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
         cell: ({ row }) => (
           <Badge variant="secondary">
-            {row.original.transaction_type}
+            {stockLedgerTypeLabel(row.original.transaction_type)}
           </Badge>
         ),
         size: 140,

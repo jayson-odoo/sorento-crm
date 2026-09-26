@@ -770,6 +770,9 @@ def ingest_masters(
         ingester = DocumentIngestService
     elif entity in STOCK_BALANCE_ENTITIES:
         ingester = StockBalanceIngestService
+        # Fix round 2 (#1257): its Stock Ledger rows name the integration's
+        # act-as user as `created_by`.
+        extra["actor_user_id"] = current_user.get("id")
     else:
         ingester = MasterIngestService
     service = ingester(
@@ -938,6 +941,7 @@ def delete_records(
             db,
             integration_id=current_user.get("integration_id"),
             company_id=company_id,
+            actor_user_id=current_user.get("id"),
         )
         result = service.delete(source_refs, pairs, dry_run=dry_run)
     else:

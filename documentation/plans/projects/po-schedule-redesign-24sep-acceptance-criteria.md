@@ -252,6 +252,47 @@ Rewritten after the lavish review: one lines list, not a Lines tab plus a Findin
 - **S7-4 [FE] (J4)** Summary card renders `-` for unknown values (ADR 1e).
 - **S7-5 [E2E] (J4)** PSO-000003 at 1280 and 375 matches the approved mockup.
 
+  Implementation notes, 26 Sep 2026 (S7 lane), applying the S6 owner lessons: a row's Flag is
+  one compact pill (most severe open item, plus a count when there are several) that opens a
+  popover with one entry per item, its source and its "Dismiss with a reason"; row height stays
+  one line. Lines opens on "Need attention (N)" beside "All lines (N)"; every row holding a
+  publish blocker is in Need attention. The count under Publish and the server's refusal share
+  one rule, `publishBlockers` in `_shared/lib/findings.ts` (this order's hard findings with no
+  `acknowledged_at`, the filter `blocking_findings` applies); a schedule-level finding is shown
+  but never counted, because the server never lets it block. R23's pairing (an unmapped schedule
+  column folded into the `schedule_short` finding for the product it names) is in
+  `buildFlagItems`. Assumption flagged for the owner: the per-order allocation grid now shows only
+  on a published order, so a draft's Lines tab is one table (R16).
+
+  Open for the owner, R22 (PR #1264 review SF3): the mockup's lines table has 6 columns (#,
+  Product, Qty, Value, Flag, Action); the shipped grid has 12 (#, Product, Flag, Description,
+  Qty, UOM, Unit price, Amount, Delivery, Area, Source line, Stock location), and the Lines tab
+  keeps the stock-location bulk-apply control. All of these predate S7 (they come from main),
+  and the edit view mirrors the same 12 headers by rule, so the S7 lane kept them rather than
+  cut working fields under R22 on its own call. Until the owner rules, R22 reads as unmet on
+  these extras; a trim is its own slice (read and edit columns together).
+
+  Review fixes, 26 Sep 2026 (PR #1264): a Flag pill, read and edit, leads with the most severe
+  open item (`leadFlagItem`), never the first raised; "All lines (N)" counts finding-only rows
+  too, so it equals the rows the view shows (lesson (c)); R23 pairs a product code with a
+  schedule column only where the code starts one of the column's segments and is at least 3
+  characters, the same floor the server's `_code_candidates` uses.
+
+  Owner hand test, 26 Sep 2026 ~07:15Z on :3081 (PR #1264, five binding notes), applied:
+  (1) the Lines table is one plain row per line in line order: no set heading row, no collapse,
+  no indented companion; a zero-priced set part reads "Part of #N" in its price cell (the
+  server's `parent_line_id`). Area, From PO line and Stock location leave BOTH the read and the
+  edit view, which closes the SF3 question above for those three; the nine left are the
+  editable fields plus #, Flag and Amount. (2) No Reorder lines toggle: every row carries its
+  handle while the order may be reordered, and a drop saves at once. (3) No "Stock location for
+  all lines" bar: the server derives the order's location from its customer's sales agent's
+  location group (`BRW-<group>`, master site from `project_allocation_brw_warehouse_code`) and
+  the header states it; a missing link is a "No stock location" flag naming it. (4) The project's
+  Sales orders list keeps every row one line; To review is one pill in the Flag pill's words.
+  (5) The three chips are gone; a footer row sums Value (labelled Page total past one page).
+  Evidence: `evidence/pr1264-owner-notes/` (1280 and 375, cloud-lane stack seeded from the test
+  builders, sidebar navigation, a real drag that saved).
+
 ## Out of scope (rulings)
 
 - **OOS-1** Any active-company indicator on lists (R8).
