@@ -1,8 +1,28 @@
 # PLAN - Chatbot memory: contact profile, episodes and turn context under a token budget
 
-Status: DRAFT 26 Sep 2026, awaiting the owner's answers to the grill questions at the end.
+Status: DRAFT round 2, 26 Sep 2026. Owner rulings of 26 Sep 23:45 MYT applied (grill
+questions 1, 2, 7, 10); questions 3, 4, 5, 6, 8, 9 re-asked on PR #1284; 11 to 18 still open.
 Track: full (migration, parser prompt change, staff screen, expected diff well over 300 lines).
-Recommended as two lanes (grill question 17): A = S0 to S3, B = S4.
+Recommended as two lanes (grill question 17): A = S0 to S3 plus the owner test slice S3T,
+B = S4.
+
+Owner rulings applied in round 2 (26 Sep 2026 23:45 MYT, verbatim in the PR comment "Owner
+rulings on the chatbot memory plan grill questions"):
+
+- **Owner ruling 26 Sep 2026 (Q1):** memory stays OFF by default. "off first i need to test
+  how it looks like to make sure no regression and carry forward of unnecessary memory". The
+  per-contact toggle stays default false; no migration flips it. A new slice S3T (section 9)
+  is the owner's test on a local stack, and any default-on decision is a separate later ruling
+  made on S3T's evidence.
+- **Owner ruling 26 Sep 2026 (Q2):** a conversation ends on a topic switch only. "i don't like
+  time gap, it can be topic switch". No idle gap, no minutes setting, no handover close.
+- **Owner ruling 26 Sep 2026 (Q7):** retention is not time based. "again i don't like time
+  based, very uncertain". Replaced by counts (section 5.5): the newest 20 conversations per
+  contact are kept, facts are kept until replaced, removed by staff, or the contact is deleted.
+  The same rule removes every other day window from memory (the 30-day summary window, the
+  90-day tally window, fact expiry dates, the nightly sweep).
+- **Owner ruling 26 Sep 2026 (Q10):** accepted as recommended. "okay". The bot never stays
+  silent.
 Issue #1282. UAC: `chatbot-memory-acceptance-criteria.md` (AC-MEM001 to AC-MEM099), written
 to the recommendations in "Grill questions for the owner"; an answer that differs rewrites the
 matching ACs before any code.
@@ -201,17 +221,18 @@ token it adds is paid for by a cut in the same slice (section 6).
 ## 3. What this plan changes, in one paragraph
 
 Keep the three shelves and their single writers; fill them with something worth reading, and
-feed them to the parser in a fixed, capped shape. Episodes get real boundaries (topic change
-**or** a 30 minute gap, closed lazily at the next turn's intake inside the per-contact ticket)
-and a deterministic written summary built from the turns' own trace (domains, entities,
+feed them to the parser in a fixed, capped shape. Episodes get real boundaries (a topic
+switch only, owner ruling 26 Sep 2026; no clock) and a deterministic written summary built from the turns' own trace (domains, entities,
 answers, offers, outcome): no extra LLM call, backfillable over the 4,414 live turns already
 in `chatbot.turns`. The profile gains a `facts` list inside the existing `chatbot_profile`
 JSONB (no new table): facts tallied from closed episodes, facts the dealer states, facts staff
-enter, each with source, last seen and expiry; CRM facts (customer, segment, salesperson) are
+enter, each with source and last seen, none with an expiry date; CRM facts (customer, segment, salesperson) are
 read live from the CRM links, never stored; staff see and edit it all on the Contact page. Every parse gets a capped context (profile slice, last three
 episode summaries, the live episode's earlier messages, focus, open question, current
 message) assembled by one pure function under a per-layer token budget, and the recall
-re-parse is deleted. The low-signal lane
+re-parse is deleted. All of this runs only for a contact whose memory toggle is on, and the
+toggle stays off by default until the owner has tested it (owner ruling 26 Sep 2026, S3T).
+The low-signal lane
 (small talk, "what did I ask you", "can you give me a discount") gets the same memory slice
 and a reply shape (acknowledge, use what memory knows, offer the concrete thing the CRM can
 do, or hand over), and never sends a raw error or nothing at all.
@@ -223,18 +244,21 @@ do, or hand over), and never sends a raw error or nothing at all.
 One closed vocabulary. A key not in this table is rejected by the writer (one validation
 function, `turn/profile_facts.py`). Staff can add a free-text note; nothing else is free-form.
 
-| key | example value | sources allowed | fed to the parser | expiry |
+| key | example value | sources allowed | fed to the parser | kept until |
 |---|---|---|---|---|
-| `customer` | "Chin Chun Trading (CC001)" | crm (read live, not stored) | yes | none (live join) |
-| `segment` | "dealer" / "project" / "end user" | crm (read live), staff | yes | none |
-| `salesperson` | "Aina" | crm (read live) | no (S4 handover only) | none |
-| `language` | "ms" | staff, stated | yes | none (staff) / 180 days (stated) |
-| `role` | "purchaser" | stated, staff | yes | 180 days / none |
-| `usual_products` | ["SRTWB1455", "M486-75-BL"] | tallied, staff | yes | 90 days after last seen |
-| `usual_brands` | ["Sorento"] | tallied, stated, staff | yes | 90 days after last seen |
-| `usual_sites` | ["Kuching"] | tallied, stated, staff | yes | 90 days after last seen |
-| `project` | "Aurora Residences block B" | stated, staff | yes | 180 days / none |
-| `note` | free text, max 200 chars | staff | yes | none |
+| `customer` | "Chin Chun Trading (CC001)" | crm (read live, not stored) | yes | n/a (live join) |
+| `segment` | "dealer" / "project" / "end user" | crm (read live), staff | yes | n/a / staff removes it |
+| `salesperson` | "Aina" | crm (read live) | no (S4 handover only) | n/a (live join) |
+| `language` | "ms" | staff, stated | yes | replaced by a newer statement, or removed by staff |
+| `role` | "purchaser" | stated, staff | yes | replaced, or removed by staff |
+| `usual_products` | ["SRTWB1455", "M486-75-BL"] | tallied, staff | yes | tallied: drops out of the last 10 conversations; staff: removed by staff |
+| `usual_brands` | ["Sorento"] | tallied, stated, staff | yes | as above |
+| `usual_sites` | ["Kuching"] | tallied, stated, staff | yes | as above |
+| `project` | "Aurora Residences block B" | stated, staff | yes | replaced, or removed by staff |
+| `note` | free text, max 200 chars | staff | yes | removed by staff |
+
+No fact carries an expiry date (owner ruling 26 Sep 2026, Q7: retention is not time based).
+Every fact also goes when the contact is deleted.
 
 Plus the existing settings keys stay where they are (`tier`, `default_ledgers`, the toggles):
 they are settings, not facts, and keep their current writer.
@@ -252,13 +276,12 @@ when a reply needs them (example 6 in section 7).
   "facts": [
     {"key": "usual_products", "value": ["SRTWB1455", "M486-75-BL"],
      "source": "tallied", "source_ref": "<frame id>", "first_seen": "2026-09-02",
-     "last_seen": "2026-09-25", "seen_count": 4, "expires_at": "2026-12-24",
-     "set_by": null},
+     "last_seen": "2026-09-25", "seen_count": 4, "set_by": null},
     {"key": "role", "value": "purchaser", "source": "stated",
      "source_ref": "<turn id>", "first_seen": "2026-09-26", "last_seen": "2026-09-26",
-     "seen_count": 1, "expires_at": "2027-03-25", "set_by": null},
+     "seen_count": 1, "set_by": null},
     {"key": "note", "value": "Prefers PDF quotes", "source": "staff",
-     "source_ref": null, "set_by": "<users.id>", "expires_at": null}
+     "source_ref": null, "set_by": "<users.id>"}
   ]
 }
 ```
@@ -277,7 +300,7 @@ contact whose usual brand is X" for a campaign).
 | source | writer | when |
 |---|---|---|
 | `crm` | none: `profile_facts.crm_view(contact)` reads them live at intake and on the staff screen | every read |
-| `tallied` | `profile_facts.tally(contact)`: a product, brand or warehouse present in the entities of 2 or more closed episodes in the last 90 days; top 3 by count then recency | right after each episode is written |
+| `tallied` | `profile_facts.tally(contact)`: a product, brand or warehouse present in the entities of 2 or more of the contact's last 10 closed episodes (a count, not a day window; owner ruling 26 Sep 2026, Q7); top 3 by count then recency; recomputed whole, so a value that drops out of the last 10 stops being "usual" | right after each episode is written |
 | `stated` | the parser's new optional `profile_statement` output (section 6.5), applied by APPLY into the tail's write | on the turn the dealer says it |
 | `staff` | `PUT /user-management/contacts/{id}/chatbot/facts/{key}` and `DELETE` of the same; the existing whole-profile PUT stops touching `facts` | on the Contact page |
 
@@ -309,10 +332,10 @@ Contact detail page, the existing Chatbot card (`ContactChatbotSection.tsx`) gai
 sections under the toggles, same layout on view and edit:
 
 - **What the bot knows** (a DataGrid): key label, value, source badge (`CRM`, `Learned`,
-  `Said`, `Staff`), last seen, expires. CRM rows are read-only and link to the customer. Staff
+  `Said`, `Staff`), last seen. CRM rows are read-only and link to the customer. Staff
   can Add (modal: key from a `SearchableSelect` of the vocabulary, value), edit a row in place,
   and Delete (deferred action, 10 s hard delete, no confirm dialog; D7). Confirming a `Learned`
-  or `Said` row turns it into `Staff` (no expiry). Empty state: "Nothing learned yet" plus the
+  or `Said` row turns it into `Staff` (the tally no longer replaces it). Empty state: "Nothing learned yet" plus the
   Add action.
 - **Recent conversations** (read-only DataGrid): episode date, topic (domains), summary line,
   turn count, close reason; the row opens that turn range in Chat History (`rowHref`).
@@ -328,19 +351,28 @@ Both dict builders (`contact_to_response_dict` and the chatbot GET) list `facts`
 Contact deletion: `conversation_frames` has no FK to `respond_contacts`, so the contact delete
 service also deletes the contact's frames (by `contact_respond_id`), and the facts go with the
 row. A PDPA erasure request is the same path. `chatbot.turns` keep their own retention
-(BL-054 still open), so the 90-day episode retention is not by itself a privacy guarantee.
+(BL-054 still open), so the episode count limit of 5.5 is not by itself a privacy guarantee.
 
 ## 5. Layer 2: episodes
 
 ### 5.1 What an episode is
 
-A contiguous run of one contact's turns about one thing. It is **closed** by the first of:
+A contiguous run of one contact's turns about one thing. It is **closed** by one trigger only:
 
 | trigger | close_reason | detected where |
 |---|---|---|
-| the parser says `topic_reset` (today's only trigger) | `topic_switch` | APPLY, written by the tail (unchanged seam) |
-| a gap: this turn arrives more than `episode_gap_minutes` (default 30) after the contact's previous turn (any status, same `is_test` side) | `idle` | intake, before the parser runs |
-| the envelope's `is_human_intervened` custom field is true at intake (`engine.py:268-276`, read at `:1206-1215`) | `handover` | intake; the flag is one-shot today (the engine clears it and the turn continues), so it closes the range once |
+| the parser says `topic_reset` (today's only trigger, kept as the only one) | `topic_switch` | APPLY, written by the tail (unchanged seam) |
+
+**Owner ruling 26 Sep 2026 (Q2): a conversation ends on a topic switch only.** The round 1
+draft also closed on a 30-minute gap and on the human-takeover flag; both are dropped. Time
+never closes a conversation: a dealer who asks about SRTWB1455 on Thursday and writes "and in
+kuching?" on Monday is still in the same conversation, and the parser sees Thursday's message
+as an earlier line (each earlier line is printed with its day, section 5.4, so the parser can
+tell it is old). A human takeover does not close it either: when the bot resumes, the topic is
+whatever it was. What bounds the context is the layer caps of section 6.2 (at most 3 earlier
+messages), not a clock. If the owner's S3T test shows old messages carried where they should
+not be, the fix is a sharper topic-switch signal from the parser (for example a greeting after
+a finished answer), never a time rule.
 
 There is **no open row**. The live episode is "this contact's turns created after the last
 frame's `last_activity_at`", where `last_activity_at` is set to the `created_at` of the
@@ -350,19 +382,14 @@ closed episode). On a topic switch the resetting turn opens the new episode; the
 the turns before it. An episode is written once, already closed, as `write_episode` does
 today.
 
-The previous turn's time is free: `previous_reply_text` (`turn_runtime.py:211-253`) already
-selects this contact's newest done turn on the same `is_test` side; it also returns
-`created_at`. The live episode's earlier messages are one more read of at most 4 rows.
+The live episode's earlier messages are one read of at most 4 rows (this contact's turns on the
+same `is_test` side created after the last frame's `last_activity_at`, newest first).
 
 Concurrency: the per-contact ticket serialises a contact's turns only in S7 mode, never on dry
 runs, and a Redis outage runs the turn unordered (`engine.py:831-860`). So the close is made
 idempotent in the database, not assumed: a unique index on
 `(contact_respond_id, is_test, (turn_ids[1]))`, and the writer inserts with
 `ON CONFLICT DO NOTHING`.
-
-Why 30 minutes: turns per contact per day are p50 4, p95 30 (#1275), and a WhatsApp dealer's
-burst is minutes long. Grill question 2 lets the owner pick another number; it is one value
-in the existing `system_settings.chatbot_memory` JSON (section 5.6).
 
 Console turns are dry runs (`console_service.py`: "D14: zero writes outside
 `chatbot.turns`"), and two named exceptions already exist (media among them). Their live
@@ -416,12 +443,12 @@ hand pass show a question the digest cannot answer. Grill question 3.
 ### 5.3 Backfill (DoD 2)
 
 `scripts/backfill_chatbot_episodes.py` (idempotent, run once at deploy, re-runnable): for each
-contact, walk live `chatbot.turns` of the last `episode_retention_days` (default 90) in order,
-cut episodes by the same two triggers (recorded `topic_reset` in the `apply` event, and the
-gap), write one frame per episode with its digest, and delete the placeholder frames whose
+contact, walk all live `chatbot.turns` in order (no day window), cut episodes by the same one
+trigger (recorded `topic_reset` in the `apply` event), write one frame per episode with its
+digest, keep the newest 20 per contact (5.5), and delete the placeholder frames whose
 summary matches `Closed the % topic.`. Key: the unique index of 5.1, so a second run changes
 nothing. About 4.4k turns from 74 contacts today: seconds, not minutes. After it
-runs, every dealer already has memory on day one.
+runs, every dealer already has conversations on file, used the day their toggle is switched on.
 
 ### 5.4 What the parser gets from episodes
 
@@ -429,54 +456,73 @@ Two blocks, both inside the budget (section 6):
 
 ```
 Earlier in this conversation (oldest first):
-- 10:02 you: stock SRTWB1455
-- 10:03 you: and in kuching?
+- Thu 10:02 you: stock SRTWB1455
+- Thu 10:03 you: and in kuching?
 Recent conversations:
 - Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.
 - Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).
 ```
 
 - "Earlier in this conversation": the live episode's user messages before the current one,
-  newest 3, each cut to 200 chars. The existing `Previous response:` line stays and is capped
-  at 600 chars. This is the "live episode instead of raw history" the owner asked for: the
-  parser has never seen a single earlier user message until now.
-- "Recent conversations": the last 3 closed episodes of the last 30 days, newest first in the
-  query, printed oldest first.
+  newest 3, each cut to 200 chars and prefixed with its day and time (the conversation has no
+  time limit, so the day tells the parser a line is old). The existing `Previous response:`
+  line stays and is capped at 600 chars. This is the "live episode instead of raw history" the
+  owner asked for: the parser has never seen a single earlier user message until now.
+- "Recent conversations": the last 3 closed episodes, however old (no day window; owner ruling
+  26 Sep 2026, Q7 "no time-based rule"), newest first in the query, printed oldest first.
 - Recall is replaced by this. The vector recall and its second parse (`engine.py:1487-1520`)
   are deleted in S3: every parse already carries the last three summaries, and a reference
   beyond three episodes is a history question the S4 history reply answers from the table.
   With no reader left, the frame embedding enqueue is also removed (it spends embedding calls
   for nothing; the n8n `/external/memory/frames/search` route filters on the old
   `contact_id` and there is no evidence n8n calls it). Grill question 5.
-- The per-contact `chatbot_recall_enabled` toggle becomes the memory opt-out for that
-  contact (label "Use conversation memory"), default ON: the column default flips to true
-  and a data migration sets it true on every existing contact (74 had live turns 9 to 25
-  Sep). Owner decision D3 of 15 Sep set "global default off" for recall; this plan asks to
-  flip it (grill question 1) because the new blocks cost no extra call and carry no other
-  contact's data.
+- The per-contact `chatbot_recall_enabled` toggle becomes the memory switch for that
+  contact (label "Use conversation memory"), and it stays **default OFF**. **Owner ruling 26
+  Sep 2026 (Q1): "off first i need to test how it looks like to make sure no regression and
+  carry forward of unnecessary memory".** No migration touches the column default or existing
+  rows. With the toggle off, the contact's parse is today's (AC-MEM049). The owner switches it
+  on for a test contact in S3T; turning it on for everyone is a later, separate ruling made on
+  S3T's evidence, and would be its own one-line migration then.
 
-### 5.5 Retention
+### 5.5 Retention (by count, never by time)
 
-A nightly sweep on the existing scheduler (`ENABLE_SCHEDULER` worker): deletes frames older
-than `episode_retention_days` (default 90) and drops expired `tallied` / `stated` facts
-(expired facts are also filtered at read, so the sweep is housekeeping, not correctness). It
-does not close idle episodes: the bot closes them lazily at the next turn, and the staff
-screen shows the unclosed tail as "current conversation", derived on read. The sweep is the
-only new scheduled job; turns keep their own retention item (BL-054).
+**Owner ruling 26 Sep 2026 (Q7): "again i don't like time based, very uncertain".** The round 1
+draft kept conversations and learned facts 90 days and stated facts 180 days. Replaced by:
 
-### 5.6 Settings card: wire or remove
+| what | kept until |
+|---|---|
+| closed conversations (frames) | the newest **20** per contact are kept. Writing the 21st deletes the oldest in the same transaction as the insert. |
+| tallied facts | recomputed from the last 10 conversations on every episode write; a value no longer in 2 of them stops being a fact |
+| stated facts | the dealer states a new value for the same key, or staff delete it |
+| staff facts | staff delete it |
+| everything above | the contact is deleted (4.5), which removes frames and facts |
 
-The four dead `chatbot_memory` keys become:
+Why 20: the bot reads at most 3 summaries per parse, the history answer lists 5, the staff
+screen shows 10, and the tally reads 10; 20 leaves room above every reader. At 7.4 turns per
+contact per day (#1275) that is weeks of conversations for a busy dealer and months for a quiet
+one, and it is the same for both whatever the calendar says. It is a constant in code
+(`turn/memory.py`, `KEEP_EPISODES = 20`, next to `write_episode`), not a setting. Trigger for a setting: the
+owner asks to change it without a deploy.
+
+No scheduled job: trimming happens on write, so the round 1 nightly sweep is dropped (one less
+moving part). Turns keep their own retention item (BL-054). The staff screen shows the
+unclosed tail as "current conversation", derived on read.
+
+### 5.6 Settings card: remove the four dead keys
+
+The four dead `chatbot_memory` keys all go, and with them the Memory settings card, since
+nothing would be left on it:
 
 | key today | becomes |
 |---|---|
-| `recall_default` | removed; the column default (true) is the default, no setting reads it |
-| `episode_retention_days` | wired: sweep and backfill window (default 90) |
+| `recall_default` | removed; the column default (false, Q1 ruling) is the default, no setting reads it |
+| `episode_retention_days` | removed; retention is a count (5.5, Q7 ruling) |
 | `profile_fields` | removed (the vocabulary is code; a field list that nothing reads is config for a hypothetical) |
-| `focus_reset_events` | removed; replaced by `episode_gap_minutes` (default 30) |
+| `focus_reset_events` | removed; a conversation ends on a topic switch only (5.1, Q2 ruling), so there is no gap setting to replace it with |
 
-Both dict builders of `system_settings` carry the two remaining keys (DoD 4); the card shows
-two controls. Grill question 11.
+Both dict builders of `system_settings` drop the key (DoD 4). Grill question 11 (not yet
+answered) is revised by rulings 2 and 7: the round 1 recommendation kept two controls, and
+both were time rules.
 
 ## 6. Layer 3: turn context assembly and the token budget
 
@@ -515,7 +561,7 @@ real turns (6.3 item 3), not trusted blindly. Every cap below is in est. tokens,
 | L1 current message | text (cut at 1,500 bytes with "(cut)"), `reply to:` quote (cut at 600 bytes), media read line | 600 | quote cut first, then the text | the first 1,500 bytes of the text |
 | L2 focus + open question | `Current subject:`, `Pending:`, options (frozen) | 350 | options beyond 10 dropped with "(+N more)"; today's roster cap is 10 | the open question kind |
 | L3 live episode | earlier user messages (max 3, 600 bytes each) + `Previous response:` (1,800 bytes) | 450 | oldest earlier message first, then the previous response is cut to 900 bytes | the previous response's first 900 bytes |
-| L4 episode summaries | last 3 closed, 30 days, 720 bytes each | 250 | oldest summary first | |
+| L4 episode summaries | last 3 closed (no day window), 720 bytes each | 250 | oldest summary first | |
 | L5 profile slice | parser-fed facts, fixed key order, values cut to 180 bytes, list values max 3 | 150 | `note` first, then `project`, then `usual_sites` | `customer`, `segment`, `language` |
 | **user block** | L1 to L5 | **1,800** = the sum of the layer caps; no separate global rule | each layer enforces its own cap, so the sum cannot be exceeded | |
 | output | `max_tokens` | 2,048 today, unchanged here (#1275 item 4 owns lowering it) | | |
@@ -545,10 +591,14 @@ instead of 8.06 (-2.4%) in the worst case; a first-time contact adds 0. Capacity
    `prompt_tokens - system_prompt_tokens(version)`; the estimator is checked against that.
    `usage.py` logs the turn id. The recall-overwrite bug (`engine.py:1508`) disappears with the
    re-parse. AC-MEM062, AC-MEM063.
-4. **In production, the gate:** over the first 3 weekdays after S3 deploys, p95 of
-   `prompt_tokens` per live turn is at most the p95 of the 3 weekdays before **plus 600** (the
-   stated worst case), measured with the query in 8.4. Over that, the L4 / L5 caps are lowered
-   before anything else ships. AC-MEM064. Grill question 8.
+4. **In production, the gate:** memory is off by default (owner ruling 26 Sep 2026, Q1), so
+   S3's deploy changes only the static prompt for almost every contact. Over the first 3
+   weekdays after S3 deploys, p95 of `prompt_tokens` per live turn is **not higher** than the
+   p95 of the 3 weekdays before (the static prompt is net zero). The **+600** worst case of the
+   memory blocks is measured on the owner's S3T turns (every trace carries the `context`
+   event) and re-measured with the query in 8.4 over the 3 weekdays after any later default-on
+   ruling. Over either bar, the L4 / L5 caps are lowered before anything else ships.
+   AC-MEM064. Grill question 8.
 
 ### 6.4 Paying for the addendum (net zero on the static prompt)
 
@@ -600,7 +650,6 @@ by a reachability test that each cue appears in the addendum (AC-MEM066).
 | step | today | budget after | how measured |
 |---|---|---|---|
 | intake memory reads (profile row already read; last 3 frames by the new index; live turns, limit 4) | n/a | p95 <= 40 ms | `received` stage `ms`, new `memory_ms` fact |
-| gap close at intake (digest + one insert) | n/a | p95 <= 60 ms, only on the first turn after a gap | `received` facts `episode_closed_ms` |
 | parser call with +1,000 tokens | p50 2.6 s | p50 +0.05 s at most (measured slope: +0.25 s per 9.4k tokens) | `understood` `ms` |
 | recall re-parse | +2.6 s on each recall turn | 0 (deleted) | no `recall` event |
 | tail (`remembered`), topic-switch close + tally | p95 105 ms | p95 <= 150 ms | `remembered` `ms` |
@@ -786,7 +835,7 @@ run (`test_turn_replay.py:845`; D14: no writes outside `chatbot.turns`), all on 
 Postgres connection (`tests/chatbot/conftest.py:24-48`), so seeded rows are visible. Replay
 therefore proves the ENGINE's READ side: assembly, routing, the history reply, the reply
 shape. The WRITE side (frames written with the right turn ids, facts on the profile after
-examples 7 and 9, the gap close) is proved by ordinary pytest on live-mode turns in
+examples 7 and 9, the topic-switch close, the trim to 20) is proved by ordinary pytest on live-mode turns in
 `tests/chatbot/test_memory_*.py`, not by replay. Each case carries
 `needs_memory: true`, and a meta-test re-runs every such case with memory ablated (a fixture
 that empties L3 to L5 and the frames and facts reads) and **asserts it now fails**. A memory
@@ -797,7 +846,7 @@ Cases per layer (minimum; each lands in its slice):
 
 | layer | cases | red without memory because |
 |---|---|---|
-| episodes (S1, S3) | gap close + summary text; topic-switch close with all turn ids; "same report as yesterday" re-runs without asking; "and in kuching?" carries the live product; "that one" resolves to the previous episode's product after a topic switch | prompt lacks the summary or earlier message; the recorded verdict's carried entity has no source line |
+| episodes (S1, S3) | topic-switch close with all turn ids and the summary text; a message days later without a topic switch stays in the same conversation; "same report as yesterday" re-runs without asking; "and in kuching?" carries the live product; "that one" resolves to the previous episode's product after a topic switch | prompt lacks the summary or earlier message; the recorded verdict's carried entity has no source line |
 | profile (S2, S3) | "the usual" (example 8); usual site ordering; stated role written (example 7); stated language used on the next canned line (example 9); a staff tombstone is not re-learned; "I'm the owner" grants nothing | no `About this contact` line; fact missing after the turn |
 | out-of-boundary (S4) | the ten examples of 7.3; the ack guard replaces a hallucinated number; no silent turn on `out_of_scope` / `escalation_declined`; no exception text | no memory_line / offer; silence |
 
@@ -845,7 +894,9 @@ group by 1 order by 1;
 Before S3 the same query uses `facts.tokens` (total) minus the completion estimate; S0 adds
 `prompt_tokens` to the facts early so the "before" window is measured the same way.
 
-Pass: p95 prompt tokens after <= p95 before + 600; `recall_turns` = 0; the estimator is never
+Pass after S3 (memory off by default): p95 prompt tokens after <= p95 before;
+`recall_turns` = 0. Pass after a later default-on ruling: p95 after <= p95 before + 600. In
+both, the estimator is never
 below the user block's real share (`prompt_tokens - system_prompt_tokens(version)`, 6.3) on
 the same window.
 
@@ -870,20 +921,22 @@ write routes on contacts and S3 changes what reaches an LLM from stored data.
 
 | slice | what | depends on | UAC |
 |---|---|---|---|
-| S0 | schema and write path: frame `is_test`, index and unique key; episode boundaries by turn time (topic switch, gap at intake, handover flag); every turn id recorded; trace `memory` event fixed; drawer contract fixed; `prompt_tokens` on the trace; usage logs carry turn id; contact delete removes frames | none | AC-MEM001 to AC-MEM013 |
-| S1 | episode summaries: `episode_digest`; summary rules (no figures); backfill script; retention sweep; settings card trimmed to two keys | S0 | AC-MEM020 to AC-MEM029 |
+| S0 | schema and write path: frame `is_test`, index and unique key; episode boundary by topic switch only (owner ruling 26 Sep 2026, Q2); trim to the newest 20 per contact on write (Q7); every turn id recorded; trace `memory` event fixed; drawer contract fixed; `prompt_tokens` on the trace; usage logs carry turn id; contact delete removes frames | none | AC-MEM001 to AC-MEM013 |
+| S1 | episode summaries: `episode_digest`; summary rules (no figures); backfill script; the four dead memory settings and the Memory card removed | S0 | AC-MEM020 to AC-MEM029 |
 | S2 | profile facts and staff screen: vocabulary, CRM view read live, tally, stated, staff, precedence, tombstones, single-key writes under lock, "facts never grant", tier pick writes, Contact card sections, facts routes | S1 (tally reads digests) | AC-MEM030 to AC-MEM050 |
-| S3 | prompt assembly under budget: `turn/context.py`, per-layer caps, memory addendum and its paid cuts, `history_question` and `profile_statement` in the schema, recall re-parse and frame embedding deleted, memory default flipped ON in the same migration, date moved to the end, budget CI test, production token gate | S1, S2 | AC-MEM060 to AC-MEM073 |
+| S3 | prompt assembly under budget: `turn/context.py`, per-layer caps, memory addendum and its paid cuts, `history_question` and `profile_statement` in the schema, recall re-parse and frame embedding deleted, toggle relabelled and still default OFF (Q1 ruling), date moved to the end, budget CI test, production token gate | S1, S2 | AC-MEM060 to AC-MEM073 |
+| S3T | owner memory test on a local stack (Q1 ruling): memory switched on for one test contact; regression run; carry-over cases that must NOT carry; the owner's verdict recorded verbatim. No default-on change in this slice | S3 | AC-MEM074 to AC-MEM079 |
 | S4 | out-of-boundary replies: reply shape, clarifier gets the memory slice and reports language, ack guard, history reply, handover names who, no silence, no exception text, new templates in en / ms / zh | S3 | AC-MEM080 to AC-MEM095 |
 
-The memory default flip (grill question 1) lands in S3, in the same commit that deletes the
-recall re-parse. Flipping it earlier would switch the double parser call on for every
-contact, because the same column gates recall today.
+No slice flips the memory default (owner ruling 26 Sep 2026, Q1). Until S3 deploys, the
+toggle still gates today's recall re-parse, so no contact's toggle is switched on for testing
+before S3 (it would test the old double call, not the new memory).
 
-Lane split (grill question 17): recommended as two lanes, A = S0 to S3 (ships, then the
-3-weekday token and latency gate runs), B = S4 (changes what dealers read; starts from the
-measured A). Each is its own branch and PR, which the lane merge rule allows because B's
-acceptance depends on a production measurement of A, not on code alone.
+Lane split (grill question 17): recommended as two lanes, A = S0 to S3 plus S3T (ships with
+memory off, then the 3-weekday static-prompt token and latency check runs, and the owner runs
+S3T), B = S4 (changes what dealers read; starts after the owner's S3T verdict). Each is its own
+branch and PR, which the lane merge rule allows because B's start depends on the owner's test
+of A, not on code alone. The S3T cases are re-run once B lands, before any default-on ruling.
 
 ### S0 - Schema and write path
 
@@ -893,11 +946,11 @@ acceptance depends on a production measurement of A, not on code alone.
   time (`scripts/alembic-reparent.sh`).
 - `_write_episode` takes the full turn range (turns created after the previous frame's
   `last_activity_at`), sets `last_activity_at` to the last turn's `created_at`, inserts with
-  `ON CONFLICT DO NOTHING`, writes on `topic_reset` and on a gap detected at intake; no write
-  when the range is empty; none on a dry run unless grill question 15 grants the `is_test`
-  frame exception.
-- Handover close: `is_human_intervened` true at intake closes the range.
-- `previous_reply_text` also returns the previous turn's `created_at` (the gap check).
+  `ON CONFLICT DO NOTHING`, writes on `topic_reset` only (owner ruling 26 Sep 2026, Q2: no
+  gap close, no handover close); no write when the range is empty; none on a dry run unless
+  grill question 15 grants the `is_test` frame exception.
+- In the same transaction as the insert, deletes the contact's frames beyond the newest
+  `KEEP_EPISODES = 20` on that `is_test` side (owner ruling 26 Sep 2026, Q7).
 - The contact delete service deletes the contact's frames.
 - The trace `memory` event records the frame WRITTEN this turn and the real profile before and
   after; `trace_detail._memory` and `TurnDetailDrawer` agree on one shape (backend shape wins;
@@ -909,29 +962,28 @@ acceptance depends on a production measurement of A, not on code alone.
   unchanged in S0.
 
 DoD: migration up and down on a prod copy; `pytest tests/chatbot -k "memory or episode"` green
-on Postgres; a three-topic conversation plus one 31-minute gap produces three frames with the
-right turn ids; drawer shows the Memory panel on a real turn at 375 and 1280 px
+on Postgres; a three-topic conversation with a three-day pause inside one topic produces two
+frames with the right turn ids (the pause closes nothing); a 21st frame deletes the oldest; drawer shows the Memory panel on a real turn at 375 and 1280 px
 (agent-browser, sidebar navigation); single alembic head.
 
 ### S1 - Episode summaries
 
 - `turn/episode_digest.py` (pure) and the summary line of 5.2, written by S0's writer.
-- `scripts/backfill_chatbot_episodes.py` over the retention window; deletes placeholder
-  frames; idempotent.
-- Nightly sweep: retention only (frames and expired facts).
-- Settings card: `episode_retention_days`, `episode_gap_minutes`; `recall_default`,
-  `profile_fields` and `focus_reset_events` removed from model, schema, both dict builders
-  and the card.
+- `scripts/backfill_chatbot_episodes.py` over all live turns, keeping the newest 20 frames per
+  contact; deletes placeholder frames; idempotent.
+- No nightly sweep (retention is a count, trimmed on write; Q7 ruling).
+- `recall_default`, `episode_retention_days`, `profile_fields` and `focus_reset_events`
+  removed from model, schema, both dict builders; the Memory settings card removed.
 
 DoD: digest golden tests over 10 recorded episodes from the 25 Sep dump (anonymised), each
 summary <= 240 chars with no figure; backfill run twice on a prod copy gives the same frame
-count; sweep deletes a 91-day frame and keeps an 89-day one; card saves and reloads each key;
-browser pass on the card at 375 and 1280 px.
+count and at most 20 frames per contact; browser pass that Settings > Chatbot renders
+without the Memory card at 375 and 1280 px.
 
 ### S2 - Profile facts and staff screen
 
 - `turn/profile_facts.py`: vocabulary, `crm_view` (live join), `tally`, `apply_statement`,
-  precedence, tombstones, expiry; every write a single-key `jsonb_set` under a row lock taken
+  precedence, tombstones (no expiry dates, Q7 ruling); every write a single-key `jsonb_set` under a row lock taken
   at write time; `tally` runs after `write_episode` commits, `apply_statement` in the tail.
 - Routes: `GET /user-management/contacts/{id}/chatbot/memory` (facts, last 10 episodes, top 5
   open orders); `PUT` and `DELETE .../chatbot/facts/{key}` (deferred-action delete). The
@@ -952,13 +1004,48 @@ delete (countdown, no dialog) a fact, at 375 and 1280 px; both dict builders car
 - Parser prompt: the memory addendum, the cuts of 6.4, the date moved to the end, the schema
   additions; published as a new registry version (Prompts page, one commit message).
 - Recall re-parse, its trace kind and the frame embedding enqueue deleted; the per-contact
-  toggle relabelled "Use conversation memory"; migration flips its column default to true and
-  sets it true on every existing contact (same commit as the deletion).
+  toggle relabelled "Use conversation memory", still default OFF, no data change (owner ruling
+  26 Sep 2026, Q1).
 - CI: `test_parser_prompt_budget.py`, the `assemble` worst-case test, the ablation meta-test.
 
 DoD: 8.1 memory cases green and red under ablation; 8.2 bars met and the parity list ruled on
-in the PR; the budget test green; after deploy, the 8.4 gate and 8.5 latency pass (the lane
-stays open, or a follow-up is filed, until the 3-weekday window is in).
+in the PR; the budget test green; after deploy, the 8.4 static-prompt gate and 8.5 latency
+pass (the lane stays open, or a follow-up is filed, until the 3-weekday window is in).
+
+### S3T - Owner memory test on a local stack (owner ruling 26 Sep 2026, Q1)
+
+The owner's words: "off first i need to test how it looks like to make sure no regression and
+carry forward of unnecessary memory". This slice is that test, made repeatable, and it comes
+before any default-on decision.
+
+- Stack: the owner's local stack (the four Dev-session services of CLAUDE.md) on a prod copy,
+  with an OpenAI key set (the local `.env` has none by default, and the console's live parser
+  needs it). Memory is switched on for one named test contact on its Contact card; every other
+  contact stays off.
+- `tests/chatbot/console_cases/2026-09-memory-owner.yaml`, run with
+  `scripts/chatbot_console_check.py` against that contact, in three groups:
+  1. **No regression.** The existing console case files re-run with the test contact's memory
+     ON give the same branch kind, tools and canned text as with it OFF; each difference is
+     listed in the PR for the owner to rule on.
+  2. **No unwanted carry-over** (each must NOT use memory): after "stock SRTWB1455" then
+     "outstanding DO for chin chun" (topic switch), "stock M483-BL" answers M483-BL only; a
+     message naming a new product never gets the old one added; "hi" after a finished answer
+     does not re-run the old question; a question about another customer does not inherit the
+     previous customer; a fact "said" by the dealer never changes what data he can see
+     (AC-MEM036); the same case with memory OFF gives today's reply.
+  3. **Memory helps** (each must use memory): "and in kuching?" carries the product; "same as
+     last time" re-runs the previous conversation's ask; "stock for the usual".
+- Every S3T turn's trace carries the `context` event, so the owner's run also records the
+  memory blocks' real token cost (the +600 bar of 6.3).
+- The owner's verdict is recorded verbatim in the PR, with the list of turns where memory
+  carried something it should not have. Each such turn becomes a replay case in
+  `replay_turns/memory/` that asserts the carry does NOT happen, and is fixed before any
+  default-on ruling (by a sharper topic-switch signal or a tighter layer, never a time rule).
+- Out: flipping the default. That is a separate owner ruling after this verdict; if it is yes,
+  it is a one-line migration in its own commit, followed by the 8.4 +600 gate.
+
+DoD: the YAML green on the owner's stack; the regression diff list ruled on; the owner's
+verdict in the PR; every carry-over turn the owner flags has a replay case.
 
 ### S4 - Out-of-boundary replies
 
@@ -973,8 +1060,11 @@ stays open, or a follow-up is filed, until the 3-weekday window is in).
 - Handover names the salesperson for commercial asks, the domain team otherwise; the routed
   message carries the live episode's summary line.
 
+With memory off for a contact (the default), the reply shape still holds with no
+`memory_line`: ack plus offer.
+
 DoD: the ten examples as replay cases (8.1) green, and red under ablation where 7.3 says so;
-console YAML green after deploy; the owner's hand pass (8.6) recorded; the #1275 no-reply
+console YAML green after deploy; the S3T cases re-run green; the owner's hand pass (8.6) recorded; the #1275 no-reply
 query shows 0 `out_of_scope` / `escalation_declined` turns without a send over 3 weekdays.
 
 ## 10. Simplest thing, not built (and the trigger that would build it)
@@ -993,16 +1083,21 @@ query shows 0 `out_of_scope` / `escalation_declined` turns without a send over 3
 
 - **Parser regression from the addendum.** Mitigated by the 8.2 parity run with every
   disagreement ruled on in the PR, and by keeping the addendum at or below 400 tokens.
-- **Stale memory misleads.** Summaries carry no figures; facts expire; the current message
-  always wins (addendum rule); a follow-up always re-fetches.
+- **Stale memory misleads.** Summaries carry no figures; earlier messages carry their day;
+  tallied facts follow the last 10 conversations; the current message always wins (addendum
+  rule); a follow-up always re-fetches. The owner's S3T test looks for exactly this before
+  memory is on for anyone.
+- **A conversation that never ends.** With no time rule, a dealer who never switches topic
+  stays in one conversation. Bounded by the 3-message cap of L3, and caught in S3T if it
+  misleads.
 - **Prompt injection through stored text.** Only staff write free text (`note`, 200 chars).
   Stated values are validated against masters: brands against the brand list, sites against
   warehouse names, role against a closed list (`purchaser`, `owner`, `sales`,
   `site_supervisor`, `other`), `project` cut to 60 chars with newlines stripped and printed
   quoted. `security-reviewer` checks this seam.
 - **Privacy (Malaysia PDPA).** Nothing new is collected: turns are stored today; episodes are
-  derived from them with a 90-day retention, and staff can see and delete every fact. The
-  opt-out toggle stays per contact.
+  derived from them, at most 20 per contact, and staff can see and delete every fact. The
+  toggle stays per contact and off by default.
 - **Concurrency.** The episode close is idempotent by a unique key, not by the ticket. Every
   fact write (tally, stated, staff) is a single-key `jsonb_set` under a row lock taken at
   write time, never a write-back of the snapshot read at intake, so a staff save during a
@@ -1013,7 +1108,7 @@ query shows 0 `out_of_scope` / `escalation_declined` turns without a send over 3
   #1275 prompt change to be deployed first, and its "before" window starts after that deploy.
   This plan cuts only the items of 6.4 and moves the date line; any larger cut is #1275's.
   Whichever lane merges second rebases the prompt text and re-runs 8.2.
-- **Backfill on production.** Read-heavy over 90 days of turns; runs per contact in batches,
+- **Backfill on production.** Read-heavy over all live turns; runs per contact in batches,
   idempotent, re-runnable; about 4.4k turns today.
 
 ## 12. Relation to "an enterprise version of Claude Code"
@@ -1024,7 +1119,7 @@ and what it does not:
 | Claude Code | Sorento chatbot after this plan |
 |---|---|
 | CLAUDE.md, the system prompt | the parser prompt plus the policy blocks rendered from `chatbot_domains` |
-| user memory (facts about the person) | profile facts (layer 1), with source and expiry, editable by staff |
+| user memory (facts about the person) | profile facts (layer 1), with source, editable by staff |
 | context compaction (older turns become a summary) | episodes (layer 2): closed segments become one digest line |
 | the context window budget | the per-layer token budget (layer 3), enforced in code and measured per turn |
 | tools | the MCP tools behind the fetch lanes |
@@ -1045,21 +1140,24 @@ to 9 (episode boundary by turn time, replay and console are dry runs, the one-sh
 flag, no per-language copy today, firm prompt cuts short of the addendum, the recall default
 flip must land with the recall deletion).
 
-1. **Memory for every contact by default?** Today recall is per contact, default off (your D3
-   of 15 Sep). **Recommendation: ON for every contact**, the toggle becomes a per-contact
-   opt-out ("Use conversation memory"). The new memory costs no extra call and never carries
-   another contact's data. Lands in S3 together with the recall deletion.
-2. **When does a conversation end?** **Recommendation: on a topic switch, or after 30 minutes
-   with no message** (dealer bursts are minutes long; turns per contact per day p50 4). One
-   setting, editable on the Memory card.
+Round 2 status: 1, 2, 7 and 10 are ruled (below); 3, 4, 5, 6, 8 and 9 were asked back as
+questions and are answered in plain language on PR #1284 ("Answers to the owner's questions
+(round 2)"), then re-asked; 11 to 18 are not yet answered.
+
+1. **RULED. Owner ruling 26 Sep 2026: memory OFF by default** until the owner has tested it on
+   a local stack for regressions and unwanted carry-over (slice S3T). The round 1
+   recommendation (ON for everyone) is withdrawn; default-on is a later ruling made on S3T's
+   evidence.
+2. **RULED. Owner ruling 26 Sep 2026: a conversation ends on a topic switch only.** No time
+   gap, no gap setting (5.1).
 3. **Who writes the episode summary?** **Recommendation: code, from what the turns recorded,
    no LLM call, and never a figure** (no stock count, price or ETA from the past; a follow-up
    always re-fetches). Zero tokens on the shared limit, replayable, backfillable, cannot invent
    a fact. It loses the colour of small talk; an LLM sentence is added only if a hand pass shows
    a question the code summary cannot answer.
 4. **How much history rides on every parse?** **Recommendation: the last 3 conversation
-   summaries of the last 30 days, plus the current conversation's last 3 messages from the
-   dealer** (the parser has never seen a single earlier dealer message until now). Older
+   summaries (no day window, per the Q7 ruling), plus the current conversation's last 3
+   messages from the dealer** (the parser has never seen a single earlier dealer message until now). Older
    history is answered on request ("what did I ask last week").
 5. **Delete the vector recall (the second parser call)?** **Recommendation: yes, and stop
    writing frame embeddings.** It doubles the tokens of the turns it fires on to hand the model
@@ -1069,10 +1167,12 @@ flip must land with the recall deletion).
    "always show Kuching first".) **Recommendation: yes, at once, from a closed list of five
    keys, validated against the masters, shown to staff as "Said" and deletable; never a
    grant.** "I'm the owner of Iborn" changes nothing about what he can see.
-7. **How long is memory kept?** **Recommendation: conversations and learned facts 90 days
-   after last seen; stated facts 180 days; staff facts until staff remove them.** Contact
-   delete removes all of it. Chat turns keep their own retention (BL-054), so this is not by
-   itself a privacy guarantee.
+7. **RULED. Owner ruling 26 Sep 2026: retention is not time based.** Adopted rule (5.5): the
+   newest 20 conversations per contact are kept (the 21st deletes the oldest); learned facts
+   follow the last 10 conversations; stated facts stay until replaced or deleted by staff;
+   staff facts until staff remove them; contact delete removes all of it. No expiry dates, no
+   nightly sweep. Chat turns keep their own retention (BL-054), so this is not by itself a
+   privacy guarantee.
 8. **What may memory cost in tokens?** **Recommendation: the static parser prompt may not grow
    at all (a CI test fails above 22,100 tokens, so the memory instructions are paid for by
    cutting dead text), and the per-turn memory block is capped at +600 tokens worst case;
@@ -1082,12 +1182,12 @@ flip must land with the recall deletion).
 9. **Who writes the out-of-boundary reply?** **Recommendation: the LLM writes only the one
    human sentence (the acknowledgement); every fact, name of a product, order or date comes
    from data, and a guard replaces an acknowledgement that invents a number or a code.**
-10. **May the bot ever stay silent?** Today 44 turns (28 out of scope, 16 declined offers)
-    sent nothing in 17 days. **Recommendation: no; every turn that reaches the reply stage
-    sends exactly one visible line, and an error never shows exception text.**
+10. **RULED. Owner ruling 26 Sep 2026: accepted.** The bot never stays silent: every turn
+    that reaches the reply stage sends exactly one visible line, and an error never shows
+    exception text.
 11. **The Memory settings card.** Four of its settings are saved and never read.
-    **Recommendation: keep two (retention days, conversation gap minutes), remove three**
-    (recall default, profile fields, focus reset events).
+    **Recommendation (revised by rulings 2 and 7): remove all four and the card**; the two
+    round 1 kept (retention days, conversation gap minutes) were both time rules.
 12. **Where do staff see the memory?** **Recommendation: inside the existing Chatbot card on
     the contact page**: "What the bot knows" (facts with source badges), "Recent
     conversations", and the live "Open orders". No new tab.
