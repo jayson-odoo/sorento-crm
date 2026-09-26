@@ -1807,4 +1807,9 @@ taken while building, each the direct reading of the plan unless it says otherwi
   crown icon, because DESIGN-LANGUAGE.md has no icon vocabulary for a role and a bare icon would
   need a legend. The team page names the leader under the team name and tags the row; the modal
   and the in-place edit have a clearable Leader `SearchableSelect` limited to the picked agents.
+- **Evidence.** `documentation/plans/sales/evidence/s6-round2/`: agent-browser at 1280 and 375
+  on a database built from zero (seven seeded agents; Kim left North on 5 Sep and returned on
+  20 Sep, and shows once). A leader changed in place, and a leader moved into a new team (whose
+  old team's leader cleared), both committed through the API, so the deferred rule ran at a real
+  commit; a direct `UPDATE` naming a non-member as leader was refused by it.
 
