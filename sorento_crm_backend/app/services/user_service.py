@@ -1772,11 +1772,17 @@ class AccessAgentService:
             drawn = members[next_idx]
             brand_matched = wanted_brand in (brands_by_member.get(str(drawn.id)) or set())
         self.db.commit()
-        return self._rr_assignee_payload(next_user_id, brand_matched)
+        return self._rr_assignee_payload(next_user_id, brand_matched, segment_key)
 
-    def _rr_assignee_payload(self, user_id: object, brand_matched: bool) -> dict:
+    def _rr_assignee_payload(
+        self, user_id: object, brand_matched: bool, cursor_key: Optional[str] = None
+    ) -> dict:
         """The drawn member as the caller's dict. Shared by the live draw and the preview,
-        so a preview cannot answer in a different shape from the turn it previews."""
+        so a preview cannot answer in a different shape from the turn it previews.
+
+        `cursor_key` is the round-robin cursor the draw used (the segment key, plus a
+        `~b:<brand>` suffix when the pool narrowed by brand). Echoed so a caller can record
+        WHICH rotation it drew from; the chatbot's escalation trace does (#865)."""
         user = self.db.query(User).filter(User.id == user_id).first()
         if not user:
             return {
@@ -1784,6 +1790,7 @@ class AccessAgentService:
                 "email": None,
                 "name": None,
                 "brand_matched": brand_matched,
+                "cursor_key": cursor_key,
             }
         return {
             "id": user.id,
@@ -1791,6 +1798,7 @@ class AccessAgentService:
             "name": user.name or user.email,
             "respond_user_id": user.respond_user_id,
             "brand_matched": brand_matched,
+            "cursor_key": cursor_key,
         }
 
     def preview_next_assignee(
@@ -1837,7 +1845,7 @@ class AccessAgentService:
         if wanted_brand:
             drawn = members[next_idx]
             brand_matched = wanted_brand in (brands_by_member.get(str(drawn.id)) or set())
-        return self._rr_assignee_payload(user_ids[next_idx], brand_matched)
+        return self._rr_assignee_payload(user_ids[next_idx], brand_matched, segment_key)
 
     def list_active_team_members_detail(
         self,
