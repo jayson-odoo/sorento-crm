@@ -196,10 +196,10 @@ never a product code.
     exactly as any new stock question
   - A bare number on its own ("2", "5 pcs", "make it 2") is that new quantity too:
     entities [], demand_qty 2, reference_positions []. It is NEVER a position on a
-    list an earlier reply printed - that list has been answered.
-  - Turning down the product just answered and picking another off that list says
-    so: "no, the 2nd one", "not that one, number 2" -> reference_positions [2],
-    is_affirmative false, demand_qty null.
+    list an earlier reply printed - that list was closed the moment one product was
+    picked from it, and there is nothing left for a number to point into.
+  - Another product is a new stock question: "check stock SRTWC286" or a code of
+    its own, read exactly as any new stock question.
 """
 
 

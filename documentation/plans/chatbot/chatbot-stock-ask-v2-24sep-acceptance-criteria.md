@@ -97,7 +97,11 @@ Owner ruling 26 Sep: F2 "okay": one bare number after a question about several p
 
 - **AC-SA327 [BE]** A which-one pick list (the family pick and a dealer's multi-code did-you-mean) prints one numbered code per line, "1. <CODE>", the format every other picker prints; "and N others, reply with the full code." is unchanged.
 - **AC-SA328 [BE]** Once the which-one pick is spent and the stock check is about one product (still asked or just answered), a bare number is that product's quantity: after an answered quantity it re-fetches that product at the new quantity and answers straight away ("2" after SRTWC286-SH x 10 -> SRTWC286-SH x 2). It is never a pick from the old list and never a re-ask, whether the parser emits it as demand_qty or as a lone reference position.
-- **AC-SA329 [BE]** A real new pick still works after an answered quantity: a typed code is a new stock ask for that code, and "no, <position>" (a lone position with is_affirmative false) picks that position off the list the product was picked from, carrying the quantity already given.
+- ~~**AC-SA329 [BE]**~~ Superseded by AC-SA330 (owner ruling 26 Sep ~08:25Z). A real new pick still works after an answered quantity: a typed code is a new stock ask for that code, and "no, <position>" (a lone position with is_affirmative false) picks that position off the list the product was picked from, carrying the quantity already given.
+
+### Owner ruling 26 Sep ~08:25Z, "make the picker not sticky" (PR #1247 fix round 5)
+
+- **AC-SA330 [BE]** Once one product is picked off a stock which-one list, the list is closed and forgotten: no open question, nothing kept on the stock task, nothing offered to the parser. A later bare number (also "no, 2") revises that product's quantity and never picks from the old list. A typed code or a new "check stock <code>" starts a new ask, and a new family ask prints a new numbered pick. The owner's five turns followed by "1, 10, 2, 3" answer SRTWC286-SH x 10, 2, 3, 1, 10, 2, 3.
 
 ## S4 - Agent notification + integration_log
 

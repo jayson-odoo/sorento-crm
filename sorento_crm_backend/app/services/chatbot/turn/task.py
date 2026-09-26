@@ -70,11 +70,6 @@ class Task:
     touched_at_turn: int = 0
     slots: tuple[Slot, ...] = ()
     not_checked: tuple[str, ...] = ()
-    #: Owner hand test 26 Sep, round 3: the which-one list this task's one product was
-    #: picked from (the stock pick's own options). Kept so "no, the 2nd one" can pick
-    #: again from it after the pick itself is spent (`apply._reopened_pick`); a bare
-    #: number never does (`apply._bare_position_is_the_quantity`).
-    picked_from: tuple[dict[str, Any], ...] = ()
 
 
 class TaskKind(Protocol):
@@ -416,7 +411,6 @@ def task_to_wire(task: Task) -> dict[str, Any]:
             for slot in task.slots
         ],
         "not_checked": list(task.not_checked),
-        "picked_from": [dict(option) for option in task.picked_from],
     }
 
 
@@ -446,9 +440,6 @@ def task_from_wire(raw: Any) -> Task | None:
         slots=tuple(slots),
         not_checked=tuple(
             str(name) for name in (raw.get("not_checked") or []) if name is not None
-        ),
-        picked_from=tuple(
-            option for option in (raw.get("picked_from") or []) if isinstance(option, dict)
         ),
     )
 
@@ -754,8 +745,9 @@ def numbered(labels: list[str]) -> list[str]:
 def pick_question(typed: str, labels: list[str], quantity: Any = None, count: int | None = None) -> str:
     """The family pick (owner hand test 26 Sep, slice 2, the scout's wording), one
     numbered code per line. A number is read as a position only while this question is
-    open and nothing has been picked from it yet (`apply._bare_position_is_the_quantity`
-    says what it is after that)."""
+    open. The list is not sticky (owner ruling 26 Sep, round 5): once one product is
+    picked it is closed and forgotten, and a later bare number is that product's
+    quantity (`apply._bare_position_is_the_quantity`)."""
     total = count if isinstance(count, int) and count > len(labels) else len(labels)
     qty = _number(quantity)
     head = (
@@ -780,7 +772,6 @@ def after_reply(
     named_products: bool = True,
     asked: list[dict[str, Any]] | None = None,
     demand_qty: Any = None,
-    picked_from: list[dict[str, Any]] | None = None,
 ) -> StockReply:
     """`tasks_after_reply`, plus what the reply should SAY when it is a question.
 
@@ -803,12 +794,7 @@ def after_reply(
         return StockReply(tasks=tasks)
     others = tuple(task for task in tasks if task.kind != "stock_qty")
     if not any(row.get("needs_quantity") is True for row in block):
-        return StockReply(
-            tasks=_rebuilt(
-                tasks, block, turn_no=turn_no, named_products=named_products,
-                picked_from=picked_from,
-            )
-        )
+        return StockReply(tasks=_rebuilt(tasks, block, turn_no=turn_no, named_products=named_products))
 
     rows = list(block)
     tokens = _asked_tokens(asked or []) if named_products else []
@@ -866,9 +852,7 @@ def after_reply(
                 },
             )
 
-    rebuilt = _rebuilt(
-        tasks, rows, turn_no=turn_no, named_products=named_products, picked_from=picked_from
-    )
+    rebuilt = _rebuilt(tasks, rows, turn_no=turn_no, named_products=named_products)
     stock = next((task for task in rebuilt if task.kind == "stock_qty"), None)
     text = None
     if stock is not None and StockQtyTask().missing(stock):
@@ -895,7 +879,6 @@ def _rebuilt(
     *,
     turn_no: int = 0,
     named_products: bool = True,
-    picked_from: list[dict[str, Any]] | None = None,
 ) -> tuple[Task, ...]:
     """The stock task, rebuilt from the stock tool's own `stock_availability` block.
 
@@ -946,13 +929,6 @@ def _rebuilt(
         # An answered entry with no quantity on it has nothing to revise.
         return others
     opened = existing.opened_at_turn if existing is not None else turn_no
-    # The list the one product was picked from: this turn's spent pick, else the one the
-    # task already carried - and only while the task is still about a product ON it.
-    listed = tuple(picked_from or ()) or (existing.picked_from if existing is not None else ())
-    if len(slots) != 1 or not any(
-        isinstance(o, dict) and str(o.get("uuid")) == slots[0].key for o in listed
-    ):
-        listed = ()
     return others + (
         Task(
             kind="stock_qty",
@@ -963,7 +939,6 @@ def _rebuilt(
             opened_at_turn=opened,
             touched_at_turn=turn_no,
             slots=tuple(slots),
-            picked_from=listed,
         ),
     )
 

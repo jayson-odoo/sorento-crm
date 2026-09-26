@@ -19,8 +19,8 @@ Rulings:
    (`turn/compose.py::compose_question`, `f"{position}. {label}"`).
 2. After a quantity has been answered, a bare number is a revised quantity for that
    same product ("2" -> SRTWC286-SH x 2, answered straight away), never a pick from the
-   old list and never a re-ask. A real new pick still works: a code, or "no, the 2nd
-   one".
+   old list and never a re-ask. A real new pick is a code or a new "check stock"
+   (round 5, owner ruling 26 Sep ~08:25Z: the picker is not sticky).
 
 Only the parser is stubbed. Each turn's verdict is the one the live parser's reading
 has to have been for the observed reply to come out of this engine: of every emission
@@ -238,11 +238,13 @@ def test_a_bare_position_while_the_quantity_is_still_asked_is_that_quantity():
 
 
 # --------------------------------------------------------------------------- #
-# A real new pick still works
+# After the pick: a code is a new ask, a number is never a pick
 # --------------------------------------------------------------------------- #
 
 
-def test_no_the_second_one_picks_it_off_the_list_with_the_quantity():
+def test_no_the_second_one_after_the_pick_is_the_quantity_not_a_pick():
+    """Round 4 reopened the list here. Owner ruling 26 Sep ~08:25Z (round 5): the picker
+    is not sticky, so the old list is forgotten and the number revises the quantity."""
     console = Console()
     console.first_ask("check stock srtwc286")
     console.say("1", verdict(reference_positions=[1], entities=[]))
@@ -250,11 +252,10 @@ def test_no_the_second_one_picks_it_off_the_list_with_the_quantity():
     text = console.say(
         "no, the 2nd one", verdict(reference_positions=[2], is_affirmative=False, entities=[])
     )
-    assert text == f"SRTWC286-SH-150 x 10: {TOO_BIG}"
-    assert "stock_pick_reopened" in console.plans[-1].trace.rules_fired
-    # and a bare number after THAT revises SRTWC286-SH-150
+    assert text == f"SRTWC286-SH x 2: {TOO_BIG}"
+    assert "stock_pick_reopened" not in console.plans[-1].trace.rules_fired
     text = console.say("5", verdict(reference_positions=[5], entities=[]))
-    assert text == f"SRTWC286-SH-150 x 5: {TOO_BIG}"
+    assert text == f"SRTWC286-SH x 5: {TOO_BIG}"
 
 
 def test_naming_a_code_after_an_answered_quantity_asks_about_that_code():
@@ -350,8 +351,7 @@ def test_a_correction_flag_beside_a_bare_position_is_still_the_quantity():
     assert console.transcript[7] == f"-> SRTWC286-SH x 2: {TOO_BIG}"
 
 
-def test_the_stock_task_addendum_teaches_the_bare_number_and_the_new_pick():
+def test_the_stock_task_addendum_teaches_the_bare_number():
     from app.services.chatbot_parser_prompt import STOCK_TASK_ADDENDUM
 
     assert "It is NEVER a position on a" in STOCK_TASK_ADDENDUM
-    assert '"no, the 2nd one"' in STOCK_TASK_ADDENDUM
