@@ -345,6 +345,9 @@ what shipped and what decides it.
 - `total_count`, not `total`; `totals {quantity, amount}` over the whole ranked set, so `n`
   never changes them. Rows carry `quantity` / `amount`, not `qty` / `amount`.
 - `rank_by` values are `quantity` | `amount` (not `qty`); missing is 422 `rank_by_required`.
+- Owner ruling 26 Sep ~07:40Z: "don't need to show name, just show code will do." Rows carry
+  `code` only, never `name` (AC-1902, AC-1928). `detail.name` is unaffected - the detail offer
+  is not a ranked row, and S4 still names the one code it was asked about.
 - No one-message setting (`chatbot_top_selling_one_message_rows`, AC-1933): the relaunch rule
   supersedes it. The route always returns every row when `n` is absent; the how-many question
   (AC-1911) is S4's, decided off `total_count`.

@@ -253,7 +253,7 @@ def test_rank_by_quantity_and_amount_with_tiebreak(client, db):
     body = by_qty.json()
     assert _codes(body) == ["ZZTRANK-B", "ZZTRANK-A", "ZZTRANK-C", "ZZTRANK-D"]
     assert [r["rank"] for r in body["rows"]] == [1, 2, 3, 4]
-    assert body["rows"][0]["name"] == "Name of ZZTRANK-B"
+    assert "name" not in body["rows"][0]
     assert body["rows"][0]["quantity"] == 10
     assert _money(body["rows"][0]["amount"]) == Decimal("300.00")
     assert body["rank_by"] == "quantity"
@@ -473,7 +473,8 @@ def test_date_default_is_current_calendar_year(client, db):
 
 
 def test_category_grain(client, db):
-    """group=category ranks categories, code = category_code, name = category_name."""
+    """group=category ranks categories, code = category_code (owner ruling 26 Sep
+    ~07:40Z: no name field on rows, code will do)."""
     sinks = _category(db, "ZZT Kitchen Sink")
     taps = _category(db, "ZZT Kitchen Tap")
     s1 = _product(db, category=sinks)
@@ -488,7 +489,7 @@ def test_category_grain(client, db):
     assert by_qty["group"] == "category"
     assert _codes(by_qty) == [sinks.category_code, taps.category_code]
     top = by_qty["rows"][0]
-    assert top["name"] == "ZZT Kitchen Sink"
+    assert "name" not in top
     assert top["quantity"] == 7
     assert _money(top["amount"]) == Decimal("700.00")
     assert by_qty["total_count"] == 2
@@ -647,8 +648,25 @@ def test_response_model_keeps_every_field(client, db):
     assert "detail" in body
     for key in ("customer_name", "category_name", "sales_agent", "channel", "dealer_scoped"):
         assert key in body["filters"], key
-    assert set(body["rows"][0]) == {"rank", "code", "name", "quantity", "amount"}
+    assert set(body["rows"][0]) == {"rank", "code", "quantity", "amount"}
     assert set(body["totals"]) == {"quantity", "amount"}
+
+
+def test_rows_have_no_name_key(client, db):
+    """Owner ruling 26 Sep ~07:40Z: "don't need to show name, just show code will
+    do". A ranked row carries code, never name, whichever grain is asked."""
+    cat = _category(db, "ZZT No Name Cat")
+    p = _product(db, "ZZTNONAME-P", category=cat)
+    _line(db, product_id=p.id, ordered=1, delivered=1, line_total=Decimal("1.00"))
+    db.commit()
+
+    by_item = _get(client, rank_by="quantity", group="item").json()
+    assert by_item["rows"][0]["code"] == "ZZTNONAME-P"
+    assert "name" not in by_item["rows"][0]
+
+    by_category = _get(client, rank_by="quantity", group="category").json()
+    assert by_category["rows"][0]["code"] == cat.category_code
+    assert "name" not in by_category["rows"][0]
 
 
 # --------------------------------------------------------------------- detail offer
