@@ -78,7 +78,7 @@ describe('SpreadsheetViewer', () => {
     const spy = vi
       .spyOn(Element.prototype, 'scrollIntoView')
       .mockImplementation(function (this: Element) {
-        scrolled.push(this.textContent ?? '');
+        scrolled.push(`${this.getAttribute('role')}:${this.textContent ?? ''}`);
       });
     render(<SpreadsheetViewer workbook={MANY} onActiveSheetChange={onActiveSheetChange} />);
 
@@ -102,7 +102,7 @@ describe('SpreadsheetViewer', () => {
     expect(screen.getByRole('tab', { name: 'Kohler Asia' })).toHaveAttribute('data-state', 'active');
     expect(screen.queryByPlaceholderText('Search sheets')).not.toBeInTheDocument();
     // The strip scrolls to the tab it opened.
-    expect(scrolled).toContain('Kohler Asia');
+    expect(scrolled).toContain('tab:Kohler Asia');
     spy.mockRestore();
   });
 

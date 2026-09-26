@@ -1,20 +1,10 @@
-import { Metadata } from 'next';
-import { Container } from '@/components/common/container';
-import RequireAccess from '@/app/components/common/RequireAccess';
-import { LowStockReportView } from './components/LowStockReportView';
+import { redirect } from 'next/navigation';
 
-export const metadata: Metadata = {
-  title: 'Low stock report',
-  description: 'The newest plan\'s low stock report, previewed before download.',
-};
-
-/** The sidebar's page (PLAN-excel-preview-26sep AC-16b): the newest completed run. */
+/**
+ * The low stock report is always one plan's, at `/scm/low-stock-report/<run>`: opened from
+ * Reorder planning > Actions or the daily email (owner hand test 26 Sep, W5; no sidebar item).
+ * This bare path names no plan, so an old bookmark lands on Reorder planning to pick one.
+ */
 export default function LowStockReportPage() {
-  return (
-    <RequireAccess permission="scm.reorder.run">
-      <Container width="fluid">
-        <LowStockReportView />
-      </Container>
-    </RequireAccess>
-  );
+  redirect('/scm/reorder');
 }

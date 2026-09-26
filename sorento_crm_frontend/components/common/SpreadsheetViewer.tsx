@@ -2,13 +2,25 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { observeElementRect, useVirtualizer } from '@tanstack/react-virtual';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { Ellipsis } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 
 /**
  * A workbook shown in our own grid style (PLAN-excel-preview-26sep, section 3): one line tab
- * per sheet, the header row frozen, the first column pinned, numbers right-aligned, and only
+ * per sheet, a "..." at the end of the tab strip that searches every sheet and jumps to the one
+ * picked (Excel's own sheet list; owner hand test 26 Sep), an optional row search, the header
+ * row frozen, the first column pinned, numbers right-aligned, and only
  * the rows in view in the DOM, so a 50,000-row sheet scrolls like a 50-row one.
  *
  * It renders a normalised model, never a file: S1 feeds it the low stock report's view (the
@@ -40,11 +52,12 @@ export interface SpreadsheetViewerProps {
   onActiveSheetChange?: (title: string) => void;
   /** Previous content kept on screen while the next arrives. */
   busy?: boolean;
+  /** Headers of the columns the row search reads; omitted, there is no search box. */
+  searchColumns?: string[];
+  searchPlaceholder?: string;
   className?: string;
 }
 
-/** Past this many sheets a tab strip is not scannable; a searchable picker joins it. */
-const GO_TO_SHEET_AFTER = 12;
 const ROW_HEIGHT = 32;
 /** Rows read when sizing columns: enough to see a typical cell, cheap on 50,000 rows. */
 const WIDTH_SAMPLE = 200;
@@ -90,17 +103,34 @@ export function SpreadsheetViewer({
   activeSheet,
   onActiveSheetChange,
   busy = false,
+  searchColumns,
+  searchPlaceholder = 'Search',
   className,
 }: SpreadsheetViewerProps) {
   const [localSheet, setLocalSheet] = useState<string | null>(null);
+  const [sheetListOpen, setSheetListOpen] = useState(false);
+  const [search, setSearch] = useState('');
   const requested = activeSheet !== undefined ? activeSheet : localSheet;
   const sheets = workbook.sheets;
   const sheet = sheets.find((s) => s.title === requested) ?? sheets[0];
 
+  // Opening a tab scrolls the strip to it: TabsList keeps the active tab in view.
   const select = (title: string) => {
     setLocalSheet(title);
     onActiveSheetChange?.(title);
   };
+
+  // The search stays as typed across sheets, so one code can be looked up sheet after sheet.
+  const needle = search.trim().toLowerCase();
+  const rows = useMemo(() => {
+    if (!sheet || !needle || !searchColumns) return sheet?.rows ?? [];
+    const cols = searchColumns
+      .map((header) => sheet.columns.indexOf(header))
+      .filter((col) => col >= 0);
+    return sheet.rows.filter((row) =>
+      cols.some((col) => cellText(row[col] ?? null).toLowerCase().includes(needle)),
+    );
+  }, [sheet, needle, searchColumns]);
 
   const numeric = useMemo(() => (sheet ? numericColumns(sheet) : []), [sheet]);
   const widths = useMemo(() => (sheet ? columnWidths(sheet) : []), [sheet]);
@@ -109,7 +139,7 @@ export function SpreadsheetViewer({
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
-    count: sheet?.rows.length ?? 0,
+    count: rows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 12,
@@ -117,11 +147,6 @@ export function SpreadsheetViewer({
     observeElementRect: (instance, callback) =>
       observeElementRect(instance, (rect) => callback(rect.height > 0 ? rect : FALLBACK_RECT)),
   });
-
-  const sheetOptions = useMemo(
-    () => sheets.map((s) => ({ value: s.title, label: s.title })),
-    [sheets],
-  );
 
   if (!sheet) return null;
 
@@ -134,37 +159,77 @@ export function SpreadsheetViewer({
 
   return (
     <div className={cn('flex min-w-0 flex-col', className)} data-slot="spreadsheet-viewer">
-      <Tabs value={sheet.title} onValueChange={select} className="min-w-0">
-        <TabsList variant="line" size="sm" className="px-2" aria-label="Sheets">
-          {sheets.map((s) => (
-            <TabsTrigger key={s.title} value={s.title}>
-              {s.flagged ? (
-                <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-warning" />
-              ) : null}
-              {s.title}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
+      <div data-slot="spreadsheet-sheet-bar" className="flex min-w-0 items-center gap-1 pe-2">
+        <Tabs value={sheet.title} onValueChange={select} className="min-w-0 flex-1">
+          <TabsList variant="line" size="sm" className="px-2" aria-label="Sheets">
+            {sheets.map((s) => (
+              <TabsTrigger key={s.title} value={s.title}>
+                {s.flagged ? (
+                  <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-warning" />
+                ) : null}
+                {s.title}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <Popover open={sheetListOpen} onOpenChange={setSheetListOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="All sheets"
+              title="All sheets"
+              className="size-7 shrink-0"
+            >
+              <Ellipsis />
+            </Button>
+          </PopoverTrigger>
+          <PopoverPortal>
+            <PopoverContent
+              align="end"
+              className="flex max-h-(--radix-popper-available-height) w-72 max-w-(--radix-popper-available-width) flex-col p-0"
+            >
+              <Command className="flex max-h-full min-h-0 flex-col">
+                <CommandInput placeholder="Search sheets" />
+                <CommandList className="min-h-0 flex-1 overflow-y-auto">
+                  <CommandEmpty>No sheet found</CommandEmpty>
+                  {sheets.map((s) => (
+                    <CommandItem
+                      key={s.title}
+                      value={s.title}
+                      onSelect={() => {
+                        select(s.title);
+                        setSheetListOpen(false);
+                      }}
+                      className={cn(s.title === sheet.title && 'font-medium')}
+                    >
+                      {s.flagged ? (
+                        <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-warning" />
+                      ) : null}
+                      <span className="min-w-0 break-words">{s.title}</span>
+                    </CommandItem>
+                  ))}
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </PopoverPortal>
+        </Popover>
+      </div>
 
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-2 py-1.5">
-        {sheets.length > GO_TO_SHEET_AFTER ? (
-          <div className="w-full max-w-64">
-            <label htmlFor="spreadsheet-go-to-sheet" className="sr-only">
-              Go to sheet
-            </label>
-            <SearchableSelect
-              id="spreadsheet-go-to-sheet"
-              size="sm"
-              value={sheet.title}
-              onChange={(value) => value && select(value)}
-              options={sheetOptions}
-              placeholder="Go to sheet"
-            />
-          </div>
+        {searchColumns ? (
+          <Input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={searchPlaceholder}
+            aria-label={searchPlaceholder}
+            className="h-8 w-full sm:w-64"
+          />
         ) : null}
         <span className="ms-auto text-xs tabular-nums text-muted-foreground">
-          {numberFormat.format(sheet.rows.length)} {sheet.rows.length === 1 ? 'row' : 'rows'}
+          {numberFormat.format(rows.length)} {rows.length === 1 ? 'row' : 'rows'}
         </span>
       </div>
 
@@ -180,7 +245,7 @@ export function SpreadsheetViewer({
         <div
           role="grid"
           aria-label={sheet.title}
-          aria-rowcount={sheet.rows.length + 1}
+          aria-rowcount={rows.length + 1}
           aria-colcount={sheet.columns.length}
           className="text-2sm"
           style={{ width: totalWidth, minWidth: '100%' }}
@@ -203,14 +268,14 @@ export function SpreadsheetViewer({
             ))}
           </div>
 
-          {sheet.rows.length === 0 ? (
+          {rows.length === 0 ? (
             <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-              {sheet.emptyText ?? 'No rows'}
+              {sheet.rows.length > 0 ? 'No matching rows' : (sheet.emptyText ?? 'No rows')}
             </div>
           ) : (
             <div className="relative" style={{ height: virtualizer.getTotalSize() }}>
               {virtualizer.getVirtualItems().map((item) => {
-                const row = sheet.rows[item.index];
+                const row = rows[item.index];
                 return (
                   <div
                     key={item.key}

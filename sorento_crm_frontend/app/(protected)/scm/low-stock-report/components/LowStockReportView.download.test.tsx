@@ -13,7 +13,7 @@ import userEvent from '@testing-library/user-event';
 import type { LowStockRequest, LowStockView } from '../types/lowStockReport.types';
 
 vi.mock('next/navigation', () => ({
-  usePathname: () => '/scm/low-stock-report',
+  usePathname: () => '/scm/low-stock-report/run-1',
   useRouter: () => ({ push: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
 }));
@@ -74,7 +74,7 @@ import { LowStockReportView } from './LowStockReportView';
 
 describe('LowStockReportView Download', () => {
   it('sends the request the view on screen answers, not the live split and filters', async () => {
-    render(<LowStockReportView />);
+    render(<LowStockReportView runId={RUN_ID} />);
 
     await userEvent.click(screen.getByRole('button', { name: /Download/ }));
 

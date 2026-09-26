@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { Download, Loader2 } from 'lucide-react';
+import BackToList from '@/components/common/BackToList';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
@@ -17,6 +18,9 @@ import { fmtInt, fmtWallStamp } from '../../lib/format';
 import { useLowStockDownload } from '../hooks/useLowStockDownload';
 import { useLowStockView } from '../hooks/useLowStockView';
 import type { LowStockFacet, LowStockView } from '../types/lowStockReport.types';
+
+/** The row search reads the product code and its description (owner hand test 26 Sep, W4). */
+const SEARCH_COLUMNS = ['Item code', 'Description'];
 
 /** Owner, 26 Sep 01:40Z: "default is split by both". */
 const SPLITS: { value: ExportSplit; label: string }[] = [
@@ -60,7 +64,7 @@ function FacetFilter({
   value: string[];
   onChange: (value: string[]) => void;
 }) {
-  const counts = useMemo(() => new Map(facets.map((f) => [f.key, f])), [facets]);
+  // Plain names (owner hand test 26 Sep, W1): the "N low of M" beside each was noise.
   const options = useMemo(() => facets.map((f) => ({ value: f.key, label: f.key })), [facets]);
   return (
     <div className="w-full min-w-0 sm:w-56">
@@ -83,19 +87,6 @@ function FacetFilter({
             `${fmtInt(selected.length)} ${many}`
           )
         }
-        renderOption={(option) => {
-          const facet = counts.get(option.value);
-          return (
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <span className="min-w-0 flex-1 break-words">{option.label}</span>
-              {facet ? (
-                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                  {fmtInt(facet.low)} low of {fmtInt(facet.rows)}
-                </span>
-              ) : null}
-            </div>
-          );
-        }}
       />
     </div>
   );
@@ -106,8 +97,12 @@ function FacetFilter({
  * is about to download, shown first. Split by supplier and category by default, narrowed by
  * suppliers and categories, one Download that gives exactly what is on screen. No reorder
  * planning grid or actions here (owner, 26 Sep 01:40Z: "too confusing").
+ *
+ * Always ONE plan's report, the `runId` in the URL: it is opened from Reorder planning >
+ * Actions or the daily email, never from the sidebar, and Back returns to that plan (owner
+ * hand test 26 Sep, W5 and W6).
  */
-export function LowStockReportView({ runId }: { runId?: string }) {
+export function LowStockReportView({ runId }: { runId: string }) {
   const [split, setSplit] = useState<ExportSplit>('supplier_category');
   const [suppliers, setSuppliers] = useState<string[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
@@ -162,13 +157,24 @@ export function LowStockReportView({ runId }: { runId?: string }) {
         activeSheet={activeSheet}
         onActiveSheetChange={setActiveSheet}
         busy={view.settling}
+        searchColumns={SEARCH_COLUMNS}
+        searchPlaceholder="Search product code"
       />
     );
   }
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Low stock report">
+      <PageHeader
+        title="Low stock report"
+        actions={
+          <BackToList
+            listPath={`/scm/reorder/${runId}`}
+            label="Back to Reorder planning"
+            appendListState={false}
+          />
+        }
+      >
         {data?.run.generated_at || data?.run.as_of ? (
           <p className="text-sm text-muted-foreground">
             Daily plan, {fmtWallStamp(data.run.generated_at ?? data.run.as_of)}
