@@ -1645,6 +1645,12 @@ def apply(
     named_count = _named_count(verdict)
     carried_set = dict(focus.set_page) if isinstance(focus.set_page, dict) else None
     new_state.focus.set_page = None
+    # W4 (owner hand test round 2): a set already LISTED in part (`shown` > 0) is carried
+    # too, and continues only on the customer's own "another N"
+    # (`turn_runtime.with_set_count_from_text` flags it); the bot never offers it.
+    if carried_set and int((carried_set.get("set_key") or {}).get("shown") or 0) > 0:
+        if not verdict.get("set_continue"):
+            carried_set = None
     if carried_set and named_count and not _names_a_subject(verdict):
         domain = (carried_set.get("set_key") or {}).get("domain")
         if domain:

@@ -82,7 +82,8 @@ def _product(db, *, brand_id: str, category_id: str, uom_id: str, noun: str, pre
 @pytest.fixture()
 def world(session_factory):
     """Sorento: 3 counter basins with stock and 1 without, 2 wall hung basins with stock,
-    1 wall hung water closet with stock, 2 taps with stock.
+    1 wall hung water closet with stock. (No taps: other suites count every tap with stock
+    in the shared database.)
     Mocha: 2 counter basins and 1 wall hung basin, all with stock."""
     from app.models.product import Brand
 
@@ -92,7 +93,6 @@ def world(session_factory):
         db.query(Brand).update({Brand.is_chatbot_default: False})
     _category_id, uom_id = _seed_category_and_uom(db)
     basin_category = _class_category(db, "WB")
-    tap_category = _class_category(db, "FT")
     wc_category = _class_category(db, "WC")
     sorento = _brand(db, f"Sorento{uuid.uuid4().hex[:4]}")
     mocha = _brand(db, f"Mocha{uuid.uuid4().hex[:4]}")
@@ -105,10 +105,9 @@ def world(session_factory):
     srt_basins = [make(sorento, basin_category, "WASH BASIN", "ZZSB", f"Sorento Counter Basin {i}") for i in range(4)]
     srt_wall = [make(sorento, basin_category, "WALL HUNG WASH BASIN", "ZZSW", f"Sorento Wall Basin {i}") for i in range(2)]
     srt_wc = [make(sorento, wc_category, "WALL HUNG WATER CLOSET", "ZZSC")]
-    srt_taps = [make(sorento, tap_category, "BASIN TAP", "ZZST") for _ in range(2)]
     mch_basins = [make(mocha, basin_category, "WASH BASIN", "ZZMB") for _ in range(2)]
     mch_wall = [make(mocha, basin_category, "WALL HUNG WASH BASIN", "ZZMW")]
-    for p in srt_basins[:3] + srt_wall + srt_wc + srt_taps + mch_basins + mch_wall:
+    for p in srt_basins[:3] + srt_wall + srt_wc + mch_basins + mch_wall:
         _stock_for(db, product_id=p.id, warehouse_id=wh.id)
     db.commit()
     return {
@@ -118,10 +117,9 @@ def world(session_factory):
         "srt_basins": srt_basins,
         "srt_wall": srt_wall,
         "srt_wc": srt_wc,
-        "srt_taps": srt_taps,
         "mch_basins": mch_basins,
         "mch_wall": mch_wall,
-        "every": srt_basins + srt_wall + srt_wc + srt_taps + mch_basins + mch_wall,
+        "every": srt_basins + srt_wall + srt_wc + mch_basins + mch_wall,
     }
 
 
@@ -476,3 +474,31 @@ def test_w4_a_count_that_moved_between_the_ask_and_the_page_is_said(chat, world,
     first = page.splitlines()[0]
     assert "6 wash basins have stock." in first, page
     assert "It was 5 when you asked." in first, page
+
+
+def test_w4_a_count_named_in_the_ask_itself_continues_on_another_n(chat, world, small_list):
+    brand = world["sorento"].brand_name
+    first = chat.say(
+        f"show 2 {brand.lower()} wash basins with stock",
+        _stock_verdict(_brand_entity_shapes(brand.lower(), "wash basin")[0], "show 2 wash basins with stock", top_n=2),
+    )
+    assert "5 wash basins have stock. Here are the first 2." in first.splitlines()[0], first
+    more = chat.say("another 2", _bare())
+    assert "5 wash basins have stock. Here are 3 to 4." in more.splitlines()[0], more
+    assert not set(_listed(first, world)) & set(_listed(more, world)), (first, more)
+
+
+@pytest.mark.parametrize(
+    "parser_reads", [{"reference_positions": [2]}, {"top_n": 2}], ids=["as_a_row", "as_a_count"]
+)
+def test_w4_a_bare_number_after_a_listed_page_is_not_read_as_another_page(chat, world, small_list, parser_reads):
+    brand = world["sorento"].brand_name
+    chat.say(
+        f"which {brand.lower()} wash basin has stock",
+        _stock_verdict(_brand_entity_shapes(brand.lower(), "wash basin")[0], "which wash basin has stock"),
+    )
+    chat.say("2", _bare())
+    before = len(chat.calls)
+    pick = chat.say("2", _bare(**parser_reads))
+    assert "Here are 3 to 4" not in pick and "Here are the first 2" not in pick, pick
+    assert not [c for c in chat.calls[before:] if len(c["args"].get("product_ids") or []) == 2], chat.calls[before:]

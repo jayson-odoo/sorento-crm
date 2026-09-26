@@ -2617,6 +2617,8 @@ def build_set_header(
     *,
     description: Any = None,
     not_understood: Any = None,
+    offset: int = 0,
+    previous_total: int | None = None,
 ) -> str:
     """AC-1316: "<qualifying_total> <set noun> have <predicate noun>." - the counted set's
     own line, ahead of the rows. No paging (owner ruling, 26 Sep 2026: no "Showing 5", no
@@ -2642,7 +2644,13 @@ def build_set_header(
     missed = not_understood_line(not_understood)
     if missed:
         header += f" {missed}"
-    if qualifying_total > shown:
+    if previous_total and previous_total != qualifying_total:
+        # W4: the page re-counted and the set moved since the question; say so.
+        header += f" It was {previous_total:,} when you asked."
+    if offset and shown > 0:
+        # W4: "another N" continues the list; the numbers say where.
+        header += f" Here are {offset + 1} to {offset + shown}."
+    elif qualifying_total > shown:
         if shown > 0:
             header += f" Here are the first {shown}."
         else:

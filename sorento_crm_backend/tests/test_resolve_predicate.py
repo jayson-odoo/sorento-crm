@@ -322,6 +322,8 @@ def test_predicate_matches_carry_the_shape_the_fetch_reads(client, db):
         "description",
         "class_labels",
         "brand",
+        "row_labels",
+        "set_key",
     }
 
 

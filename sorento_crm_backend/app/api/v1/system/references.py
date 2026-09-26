@@ -2756,6 +2756,8 @@ def resolve_reference_post(
         # `_SET_ID_CAP` (200) - never the ordinary LOOKUP page size
         # (`payload.limit`, 15), which would cut a 40-product set that fits one
         # message down to 15.
+        # Read BEFORE `_emit_spec_matches` adds the qualifying set to the resolutions.
+        lookup_ids = _collect_lookup_product_ids(result)
         outcome = resolve_product_set(
             db,
             # R14/AC-1338: the PROMOTED require (a bare `true` recovered a
@@ -2767,7 +2769,7 @@ def resolve_reference_post(
             free_terms=payload.free_terms,
             scope_terms=scope_terms,
             limit=max(payload.limit or 0, _SET_ID_CAP),
-            product_ids=_collect_lookup_product_ids(result) or None,
+            product_ids=lookup_ids or None,
             brand=brand,
             # SEC-S1/AC-1334: the promotion leg must see the caller's OWN tier,
             # not only the ordinary entity-resolution filter
@@ -2834,6 +2836,14 @@ def resolve_reference_post(
             ]
         if outcome.get("row_labels"):
             result["predicate"]["row_labels"] = outcome["row_labels"]
+        # W4: what a page of this set replays - the bound specs, the brand and the ids
+        # LOOKUP matched (the other half of the union) - so the page counts the same set.
+        if outcome["qualifying_total"]:
+            result["predicate"]["set_key"] = {
+                "specs": outcome.get("set_specs") or [],
+                "brand": outcome.get("brand"),
+                "product_ids": lookup_ids[:_SET_ID_CAP],
+            }
         _emit_spec_matches(result, outcome["candidates"], payload.query or "")
         # R2 only fires on a genuine HAS answer (qualifying_total > 0): the
         # existing zero-qualifying miss flow names its own candidate codes off

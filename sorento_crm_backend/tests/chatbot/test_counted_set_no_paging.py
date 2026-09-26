@@ -252,14 +252,15 @@ def test_answering_how_many_lists_that_many_and_then_more_pages_nothing(
     stub_parser(_bare_verdict(top_n=3, continuation=True, user_goal="show 3"))
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=2, text="3")
 
-    assert text.startswith("7 taps have certificates. Here are the first 3."), text
+    assert text.startswith("Product type: Tap. 7 taps have certificates. Here are the first 3."), text
     assert len(_s4_codes_in(text)) == 3, text
     assert len(calls) == before + 1 and len(calls[-1]["args"]["product_ids"]) == 3, calls
-    # Answered: nothing is left carried for a "more".
+    # W4 (owner hand test round 2): the set stays carried past what was listed, so the
+    # customer's own "another N" continues it; a bare "more" still pages nothing.
     import json
 
     stored = json.dumps(_s4_session_vars(session_factory, contact_id))
-    assert '"set_page": {' not in stored, stored
+    assert '"shown": 3' in stored, stored
 
     stub_parser(_bare_verdict(message_type="clarification", user_goal="more", continuation=True))
     text3 = _turn(engine_mod, session_factory, contact_id=contact_id, n=3, text="more")

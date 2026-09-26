@@ -611,9 +611,17 @@ def with_set_count_from_text(
     """
     if not isinstance(carried, dict) or not isinstance(message, str):
         return verdict
-    if named_count(verdict.get("top_n")) is not None:
-        return verdict
     if any(isinstance(e, dict) and e.get("current_message") is True for e in (verdict.get("entities") or [])):
+        return verdict
+    # W4: after a LISTED page (`shown` > 0) only an explicit "another N" continues the set,
+    # read whatever the parser made of it; a bare number there is a row pick, not a count.
+    shown = int((carried.get("set_key") or {}).get("shown") or 0)
+    more = set_continue_count(message)
+    if more is not None:
+        return {**verdict, "top_n": more, "reference_positions": [], SET_CONTINUE_KEY: True}
+    if shown > 0:
+        return verdict
+    if named_count(verdict.get("top_n")) is not None:
         return verdict
     # Line 1 is the customer's own text; a quoted "reply to: ..." rides on line 2
     # (`engine.build_latest_user_message`).
@@ -625,6 +633,31 @@ def with_set_count_from_text(
     if count <= 0:
         return verdict
     return {**verdict, "top_n": count, "reference_positions": []}
+
+
+#: Set on the verdict when the message asked for "another N" of the carried set;
+#: `turn/apply.py` pages a LISTED set only then.
+SET_CONTINUE_KEY = "set_continue"
+
+# "another 40", "can give another 40?", "40 more", "next 40", "lagi 10": the customer asks
+# for more of a list, naming how many (W4, owner hand test round 2). The bot never offers
+# this; it only answers it.
+_CONTINUE_COUNT_RE = re.compile(
+    r"\b(?:another|next|more|lagi|further)\s+(\d{1,4})\b|\b(\d{1,4})\s+(?:more|lagi|further)\b",
+    re.IGNORECASE,
+)
+
+
+def set_continue_count(message: Any) -> int | None:
+    """The count in an "another N" message, or None."""
+    if not isinstance(message, str):
+        return None
+    lines = message.strip().splitlines()
+    match = _CONTINUE_COUNT_RE.search(lines[0]) if lines else None
+    if not match:
+        return None
+    count = int(match.group(1) or match.group(2))
+    return count if count > 0 else None
 
 
 def with_routing_agent_default(
@@ -2026,7 +2059,7 @@ def make_tool_runner(
                 "fetch": {"has_result": False, "response": business_fetch.NO_RESULT_INTRO},
                 "outcome": "not_found",
             }
-        return envelope_of(
+        envelope = envelope_of(
             fragment,
             spec,
             entities,
@@ -2043,6 +2076,11 @@ def make_tool_runner(
             unplaced=unplaced,
             raw_fragment=fragment,
         )
+        if page_predicate is not None:
+            # W4: what an "another N" after this page continues from (None when the set
+            # is exhausted). The engine keeps it on `focus.set_page`.
+            envelope["set_carry"] = page_predicate.get("next_carry") if page_ids else None
+        return envelope
 
     return runner
 
@@ -2119,6 +2157,7 @@ def set_page_carry(
     scope_terms: list[str],
     *,
     access_levels: Any = None,
+    shown: int = 0,
 ) -> dict[str, Any] | None:
     """The set a too-long counted answer asked about, for `focus.set_page`.
 
@@ -2147,23 +2186,35 @@ def set_page_carry(
     ALWAYS written, empty list included - a promotion carry with no levels recorded is
     refused by `page_the_set` rather than read as "no restriction".
     """
-    if not predicate or not scope_terms:
+    # W4 (owner hand test round 2): the resolver's own description of the set it counted
+    # (`predicate.set_key`: the bound specs, the brand, the ids LOOKUP matched) is what a
+    # page replays, so "10" after "144 Sorento wall hung basins" pages THAT set, never
+    # the parser's class word re-read without its brand (which answered 334).
+    described = predicate.get("set_key") if isinstance(predicate, dict) else None
+    described = described if isinstance(described, dict) else {}
+    has_description = bool(described.get("specs") or described.get("brand") or described.get("product_ids"))
+    if not predicate or not (scope_terms or has_description):
         return None
     total = int(predicate.get("qualifying_total") or 0)
-    if total <= 0:
+    if total <= 0 or shown >= total:
         return None
     labels = [c for c in (predicate.get("class_labels") or []) if isinstance(c, str)]
     from app.services.chatbot.lanes.business.answer import set_noun_for
 
-    return {
-        "set_key": {
-            "require": predicate.get("require") or {},
-            "scope_terms": list(scope_terms),
-            "domain": spec.domain,
-            "set_noun": set_noun_for(labels),
-            "access_levels": _entitled_names(access_levels),
-        },
+    key: dict[str, Any] = {
+        "require": predicate.get("require") or {},
+        "scope_terms": list(scope_terms),
+        "domain": spec.domain,
+        "set_noun": predicate.get("set_noun") or set_noun_for(labels),
+        "access_levels": _entitled_names(access_levels),
+        "total": total,
+        "shown": int(shown),
     }
+    if has_description:
+        key["specs"] = list(described.get("specs") or [])
+        key["brand"] = described.get("brand")
+        key["product_ids"] = list(described.get("product_ids") or [])
+    return {"set_key": key}
 
 
 def _contact_stock_policy(db: Session, ctx: dict[str, Any], space_id: str | None):
@@ -2235,15 +2286,18 @@ def page_the_set(
             "entitlement_missing": True,
             "set_noun": key.get("set_noun") or "products",
         }, []
+    # W4: a carry that holds the resolver's own description replays it exactly (specs,
+    # brand, LOOKUP ids); an older carry falls back to its class words.
+    described = "specs" in key or "brand" in key or "product_ids" in key
     outcome = resolve_product_set(
         db,
         require=key.get("require") or {},
-        specs=[],
+        specs=list(key.get("specs") or []) if described else [],
         free_terms=None,
-        scope_terms=list(key.get("scope_terms") or []),
+        scope_terms=None if described else list(key.get("scope_terms") or []),
         limit=answer_mod.SET_ID_CAP,
-        product_ids=None,
-        brand=None,
+        product_ids=(list(key.get("product_ids") or []) or None) if described else None,
+        brand=key.get("brand") if described else None,
         access_levels=entitled,
         stock_policy=stock_policy,
     )
@@ -2255,7 +2309,9 @@ def page_the_set(
     ]
     ids = [i for i in ids if i]
     limit = answer_mod.SET_LIST_MAX if not size else min(int(size), answer_mod.SET_LIST_MAX)
-    page_ids = ids[:limit]
+    # "another N" continues from where the last list stopped.
+    offset = max(0, int(key.get("shown") or 0))
+    page_ids = ids[offset : offset + limit]
     predicate = {
         "require": outcome.get("require") or key.get("require") or {},
         "qualifying_total": total,
@@ -2264,8 +2320,20 @@ def page_the_set(
         "class_labels": [],
         "set_noun": key.get("set_noun") or "products",
     }
+    if offset:
+        predicate["offset"] = offset
+    # The count the question was asked over: said again when the page counts another.
+    asked_total = int(key.get("total") or 0)
+    if asked_total and asked_total != total:
+        predicate["previous_total"] = asked_total
+    for field in ("description", "row_labels", "brand"):
+        if outcome.get(field):
+            predicate[field] = outcome[field]
     if outcome.get("certificate_ids"):
         predicate["certificate_ids"] = outcome["certificate_ids"]
+    # The next page's carry: the same description, moved past what this page lists.
+    next_key = {**key, "total": total, "shown": offset + len(page_ids)}
+    predicate["next_carry"] = {"set_key": next_key} if page_ids and offset + len(page_ids) < total else None
     return predicate, page_ids
 
 

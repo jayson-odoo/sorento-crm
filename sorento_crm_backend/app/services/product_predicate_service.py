@@ -1057,6 +1057,13 @@ def resolve_product_set(
     description = describe_set(db, brand=brand, membership=verdict.get("membership") or {})
     if description:
         outcome["description"] = description
+    # W4: the set's own description, exactly as counted, so a page of it replays the
+    # SAME set (`turn_runtime.page_the_set`) instead of re-reading the parser's words.
+    outcome["set_specs"] = [
+        {"key": key, "value": value}
+        for key, values in (verdict.get("membership") or {}).items()
+        for value in values
+    ]
     # W3: a readable lead for every row the fetch will render.
     labels = row_labels(
         db, candidates, skip_keys={"class", "brand", "product_type", *(verdict.get("membership") or {})}

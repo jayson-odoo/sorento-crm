@@ -327,7 +327,7 @@ def test_the_recount_after_how_many_keeps_the_dealers_stock_visibility(
     stub_parser(_bare_verdict(top_n=1, continuation=True, user_goal="show 1"))
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=2, text="1")
 
-    assert text.startswith("2 taps have stock. Here are the first 1."), text
+    assert text.startswith("Product type: Tap. 2 taps have stock. Here are the first 1."), text
     asked = {pid for c in calls[before:] for pid in (c["args"].get("product_ids") or [])}
     assert taps[1].id not in asked, asked
     assert asked <= {taps[0].id, taps[2].id} and len(asked) == 1, asked
@@ -379,7 +379,7 @@ def test_a_bare_count_answers_the_question_whatever_the_parser_made_of_it(
     stub_parser(_bare_verdict(message_type="casual", user_goal="3", **parser_reads))
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=2, text="3")
 
-    assert text.startswith("7 taps have certificates. Here are the first 3."), text
+    assert text.startswith("Product type: Tap. 7 taps have certificates. Here are the first 3."), text
     assert len(_s4_codes_in(text)) == 3, text
     assert len(calls) == before + 1 and len(calls[-1]["args"]["product_ids"]) == 3, calls
 
@@ -437,4 +437,4 @@ def test_a_count_that_names_nothing_still_arms_the_question(
     stub_parser(_bare_verdict(top_n=3, continuation=True, user_goal="show 3"))
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=2, text="3")
 
-    assert text.startswith("7 taps have certificates. Here are the first 3."), text
+    assert text.startswith("Product type: Tap. 7 taps have certificates. Here are the first 3."), text

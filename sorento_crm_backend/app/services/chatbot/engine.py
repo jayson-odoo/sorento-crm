@@ -1747,7 +1747,12 @@ def _run_stages(  # noqa: PLR0915
         answer_parse_output: dict[str, Any] = (ctx.get("parse") or {}).get("output") or {}
         # SF-1: a refused sales-report ask never reaches the resolver at all - no
         # `resolve_gate.run` call, no roster built from what it would have found.
-        if not sales_report_grant_refused and (plan.fetch or plan.ask is not None):
+        # W4 (owner hand test round 2): a page of a carried set is answered off the carry
+        # alone (`turn_runtime.page_the_set`). Re-resolving the carried class word without
+        # the set's predicate placed nothing ("wash basin" is no product code), and that
+        # resolver's own not-found exit turned the page into "Couldn't find: wash basin".
+        set_page_turn = bool(plan.fetch) and isinstance(plan.fetch[0].filters.get("set_page"), dict)
+        if not sales_report_grant_refused and not set_page_turn and (plan.fetch or plan.ask is not None):
             # The REAL branch this plan belongs to, the SAME function "D ROUTE" below
             # calls on the (possibly reconciled) plan - not a literal "business_query"
             # for every turn, so a promotion ask reaches `resolve_gate.run` at
@@ -2487,25 +2492,40 @@ def _run_stages(  # noqa: PLR0915
 
                 class_terms = turn_runtime.class_scope_terms(verdict)
                 qualifying = int((predicate or {}).get("qualifying_total") or 0)
+                asked = named_count(verdict.get("top_n"))
                 withheld = (
                     predicate is not None
                     and plan.fetch
                     and spec_tier
                     and qualifying > business_answer.SET_LIST_MAX
-                    and named_count(verdict.get("top_n")) is None
+                    and asked is None
                 )
-                state_out.focus.set_page = (
-                    turn_runtime.set_page_carry(
+                # W4 (owner hand test round 2): a set listed only in part (the customer
+                # named fewer than qualify) is carried too, so their own "another N"
+                # continues it. The reply never offers that.
+                partly_listed = (
+                    predicate is not None
+                    and plan.fetch
+                    and spec_tier
+                    and asked is not None
+                    and min(asked, business_answer.SET_LIST_MAX) < qualifying
+                )
+                paged = bool(plan.fetch) and isinstance(plan.fetch[0].filters.get("set_page"), dict)
+                if paged:
+                    # A page of a carried set: the runner hands back where it stopped.
+                    state_out.focus.set_page = envelopes[0].get("set_carry") if envelopes else None
+                elif withheld or partly_listed:
+                    state_out.focus.set_page = turn_runtime.set_page_carry(
                         predicate,
                         plan.fetch[0],
                         class_terms,
                         access_levels=(
                             envelopes[0].get("access_levels_used") if envelopes else None
                         ),
+                        shown=0 if withheld else min(asked, business_answer.SET_LIST_MAX),
                     )
-                    if withheld
-                    else None
-                )
+                else:
+                    state_out.focus.set_page = None
                 turn_trace.record(
                     "looked_up",
                     summary="Looked the answer up.",

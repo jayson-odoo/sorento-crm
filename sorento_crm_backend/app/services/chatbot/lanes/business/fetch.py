@@ -2674,13 +2674,16 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             elif set_noun.endswith("s"):
                 set_noun = set_noun[:-1]
         named = _set_named_count(semantic_input)
+        # W4: a page that continues a list starts past what was already listed.
+        offset = int(jsc.get(predicate, "offset") or 0)
+        remaining = max(qualifying_total - offset, 0)
         if named is None and qualifying_total > answer_mod.SET_LIST_MAX:
             shown = 0
             set_withheld = True
         elif named is None:
-            shown = qualifying_total
+            shown = remaining
         else:
-            shown = min(named, answer_mod.SET_LIST_MAX, qualifying_total)
+            shown = min(named, answer_mod.SET_LIST_MAX, remaining)
         if not set_withheld:
             # Reviewer B3 on PR #833 (R8/AC-1330 restored): the header states what the
             # rows show, never what was asked for. A tool that still cut rows at its
@@ -2696,6 +2699,8 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             require,
             description=jsc.get(predicate, "description"),
             not_understood=jsc.get(predicate, "unrecognized_terms"),
+            offset=offset,
+            previous_total=jsc.get(predicate, "previous_total"),
         )
         set_header = header
         msg = header if set_withheld else f"{header}\n{msg}"
