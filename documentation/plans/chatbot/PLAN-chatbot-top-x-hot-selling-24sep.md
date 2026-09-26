@@ -486,6 +486,13 @@ Where S4 differs from the two sections above, and which ruling decides it.
   amount" / "ordered" under a ranking change only the axis they name; any other new ask
   leaves the ranking. A bare number the parser reads as a position, with no list open
   and a count awaited, is the count.
+  Fix lane (PR #1273, reviewer B2): "the last reply was a question" is RECORDED, not
+  inferred from an empty axis. The lane stamps `top_selling_asked` (group, metric, basis,
+  category, how_many) on its clarify and how-many replies, `engine.py` writes it onto the
+  slot after the fetch (`apply.record_top_selling_asked`) and clears it when a list, a single
+  row, a detail, a miss or a refusal goes out. A fresh ask completes the last one only when it
+  answers the clarify asked; otherwise it starts over and also drops the customer, channel
+  and date window it did not name. The count rule needs the how-many to have been asked.
 - No N named: the lane sends `count_only=true` (new route param, review N1) and the route
   returns the full count with no rows, one row kept as is; the presenter asks how many
   (owner, PR #1258 05:32Z). A named N over 100 is capped at 100 by the lane.
@@ -504,10 +511,25 @@ Where S4 differs from the two sections above, and which ruling decides it.
   the generic resolver, which is not even asked about them (the engine strips
   category-hinted entities from its input on a top selling ask; AC-1954's hazard). A word
   matching no category is a miss, never a silent widening.
+  Fix lane (PR #1273, reviewer S1): exact code or name (a plural folded) wins alone, else the
+  word must be a whole-word run of the name; the reverse containment is gone. Several
+  matches are asked with their codes, never all kept.
 - Dealer refusal: the route is the check (403 `customer_not_permitted`, no name oracle);
   the presenter turns that body into the fixed refusal line. The customer picker still
   runs for a dealer's ambiguous customer word before the route refuses; trigger to move
   the check earlier: the first dealer contact holding the sales report key.
+  Fix lane (PR #1273, reviewer S2; ruling pending owner confirmation: a dealer never sees
+  another customer's name): moved earlier now. `engine._top_selling_dealer_scope` reads the
+  contact's `respond_contact_customers` links (the route's own dealer test); a linked
+  dealer's customer words never reach the generic resolver, words matching its own ledgers
+  run on those ids (`dealer_customer_ids`), and any other word gets the refusal line with no
+  lookup and no fetch. An UNLINKED contact that is not office staff still reaches the picker
+  before the route refuses it; trigger: the owner confirms the ruling covers them too.
+- Nits fixed in the fix lane: N1 (the catalog steers a no-number ask to `count_only`), N2
+  (`DATE_PARAM_TOOLS` lists the tool) and kill R4 (`count_only` pinned to `n=1`). Not fixed:
+  N3 (picking the `Unassigned` category row sends the label; the route has no "no category"
+  filter, so the fix is not one line), N4 (downgrade on a fresh DB, informational), N5
+  (console only).
 - `top_selling` joins `resolve_gate.OUTSTANDING_ORDER_STATUS` (no DO hint on the picker,
   point 10) and `contracts.SALES_FIGURE_STATUSES` (grant before roster, point 5).
 - A no-subject miss prints the ranking's own header and `No sales found.` above the

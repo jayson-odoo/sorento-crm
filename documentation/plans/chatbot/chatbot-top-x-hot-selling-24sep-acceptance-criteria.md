@@ -22,6 +22,8 @@ categories, the salesperson master, and every SO line AutoCount has pushed.
    Owner ruling 26 Sep: the metric is required, so this exact message gets "By quantity or by
    amount?" first; with "by quantity" in it, the reply also names the basis (delivered), the
    full count of items with sales, and ends with the detail offer.
+   Owner ruling 26 Sep ~07:40Z (as built, S4 fix lane on PR #1273): each row is
+   `n. CODE: Qty q, RM v`, code only, never a name; the route sends no name either.
 2. They type "top 10 for hanlim this quarter". Same list filtered to the HANLIM ledgers; an
    ambiguous name goes through the existing customer picker and "1" / "all" continues this ask.
 3. They type "top 3 kitchen sinks in 2026". Same list filtered to that product category.
@@ -94,6 +96,9 @@ mirror `sorento_crm_mcp/tests/fixtures/top_selling/`.
   As built (PR #1263), owner ruling 26 Sep ~07:40Z (supersedes the row-keys reading above):
   "don't need to show name, just show code will do." A row carries `code` only; S1's
   presenter prints `n. CODE: Qty q, RM v` for both grains, never a name.
+  Owner ruling 26 Sep ~07:40Z (restored by the S4 fix lane on PR #1273, reviewer B1): the
+  route, the service and the MCP catalog return no product or category name on a ranked row;
+  `test_rows_have_no_name_key` pins it.
 - **AC-1903 [FE][T]** Any header axis absent from the body prints `all`, never an omitted
   line. `Channel` prints `Dealer`, `Project` or `all`. Evidence: pytest.
 - **AC-1904 [FE][T]** `rank_by: "qty"` prints `Ranked by: Quantity`; `"amount"` prints
@@ -127,6 +132,10 @@ mirror `sorento_crm_mcp/tests/fixtures/top_selling/`.
   `result_set`, one `{idx, label, code, name, entity_type}` row per printed line, `idx` the
   printed rank, label the product code (items) or the printed category name (categories).
   Evidence: pytest `test_envelope_carries_one_pick_row_per_printed_item` and siblings.
+  Owner ruling 26 Sep ~07:40Z (as built in S4, amended by the S4 fix lane on PR #1273): the
+  row is `{idx, label, code, entity_type}` with no `name`, and the label is the printed code
+  at both grains (the category code, not its name). Evidence: pytest
+  `test_pick_rows_carry_no_name_key`.
 - **AC-1912 [FE][T]** (Owner ruling 26 Sep) Every ranking hit ends with a blank line and the
   detail offer: `Reply with a rank number to see that item's customers and months.` at item
   grain, `Reply with a rank number to see that category's top items.` at category grain.
@@ -139,6 +148,9 @@ mirror `sorento_crm_mcp/tests/fixtures/top_selling/`.
 - **AC-1914 [FE][T]** (Owner ruling 26 Sep) `group: "category"` prints `*Top N selling
   categories*`, `Categories with sales: n`, and rows `n. NAME: Qty q, RM v` (the code when
   the name is null, `Unassigned` when both are). Evidence: golden `top-selling-categories`.
+  Owner ruling 26 Sep ~07:40Z (as built in S4, amended by the S4 fix lane on PR #1273): rows
+  are `n. CODE: Qty q, RM v` (the category code), `Unassigned` when the code is null; no
+  name is printed.
 - **AC-1915 [FE][T]** (Owner ruling 26 Sep) A body carrying `agent_fill_pct` prints `Note:
   only p% of sales orders in this period carry a sales agent.` directly under `Sales agent:`;
   absent, no line. Evidence: golden `top-selling-agent`.
@@ -244,12 +256,27 @@ mirror `sorento_crm_mcp/tests/fixtures/top_selling/`.
 - **AC-1954 [BE][T]** A parser entity `{hint: "category", hint_confident: true}` on a
   `top_selling` ask resolves against `product_categories` under domain `order`, never as a
   customer; `gate.ALLOWED["order"]` admits it. Evidence: pytest against the real resolver.
+  S4 fix lane on PR #1273 (reviewer S1; owner: cannot assume, clarify): a category word
+  matches on its exact code or name (a plural folded to its singular) or as a whole-word run
+  of the category name, never by the name being inside the word ("kitchen sinks" never takes
+  KIT). A word matching several categories is asked (`Which category do you mean? Reply with
+  one code: ...`, codes only) and nothing is fetched. Evidence: pytest
+  `test_category_word_matches_whole_words_never_reverse_containment`,
+  `test_a_word_matching_several_categories_is_asked`.
 - **AC-1955 [BE][T]** An ambiguous customer on a `top_selling` ask renders the existing picker
   with no `has DO` hint; "1" or "all" continues the ask with the original `top_n`, `rank_by`,
   dates and channel. Evidence: pytest.
 - **AC-1956 [BE][T]** A follow-up naming only a metric ("by amount") under a carried
   `focus.status == "top_selling"` re-runs with the carried customer / category / dates and the
   new `rank_by`; a follow-up naming a new subject is a new ask. Evidence: pytest.
+  S4 fix lane on PR #1273 (reviewer B2; owner: no silent defaults, metric required): a
+  fresh top selling ask (the message names the ranking itself) never inherits the previous
+  ask's category, customer, channel, dates or metric. It completes the previous ask only
+  when the last reply asked a clarify (grain, metric, basis, category) and this message
+  answers it. A single row sent as is and an unanswered how-many asked nothing a fresh ask
+  can answer. Evidence: pytest `test_a_fresh_ask_after_a_single_row_reply_drops_the_old_category`,
+  `test_a_fresh_ask_after_an_unanswered_how_many_asks_the_metric`,
+  `test_a_fresh_ask_after_a_single_row_reply_drops_the_old_customer`.
 - **AC-1957 [BE][T]** A miss (`has_result: false`) takes the not-found path so the escalate
   offer follows unchanged; a hit arms no pending and offers nothing. Owner ruling 26 Sep
   (superseding "offers nothing"): a hit arms the detail offer (AC-1964); the how-many reply
@@ -275,6 +302,12 @@ mirror `sorento_crm_mcp/tests/fixtures/top_selling/`.
 - **AC-1963 [BE][T]** A dealer contact naming a customer outside its own ledgers gets `Sorry,
   I can only share sales figures for your own account.`, no fetch, no picker. Evidence:
   pytest.
+  Ruling 26 Sep (S4 fix lane on PR #1273, reviewer S2), pending owner confirmation: a dealer
+  contact (linked to any customer) never sees another customer's name. It gets no customer
+  picker; its customer words are matched against its own ledgers only, and a word that does
+  not resolve into them is refused with the line above before any lookup or fetch. Evidence:
+  pytest `test_dealer_naming_another_customer_sees_no_names`,
+  `test_dealer_naming_its_own_customer_runs_on_its_own_ledger`.
 - **AC-1964 [BE][T]** After an item ranking, a bare rank number calls the tool with that
   row's `detail_code`; after a category ranking, it runs the item ranking filtered to that
   category. A number past the last row is a polite miss, not an error. Evidence: pytest.
@@ -286,6 +319,9 @@ mirror `sorento_crm_mcp/tests/fixtures/top_selling/`.
   for a later pick against the same list; it has no turn clock; it closes when every row
   was picked or a new ask about something else was answered. Evidence: pytest
   `tests/chatbot/test_top_selling_sticky_pick.py`.
+  Owner ruling 26 Sep ~07:40Z (as built in S4, amended by the S4 fix lane on PR #1273): the
+  label is the printed code, so a typed code picks the row; a typed category NAME does not
+  (the list never printed it). Evidence: pytest `test_a_typed_category_code_picks_that_row`.
 
 As built (S4), evidence per criterion, all in `tests/chatbot/test_top_selling_lane.py`
 unless named: AC-1950 `TestToolPick`; AC-1951 `TestNoGrant`; AC-1952
@@ -299,6 +335,8 @@ AC-1960 the existing order list tests, unchanged and green; AC-1961 to AC-1965
 `TestClarify`, `TestDealer`, `TestPickList`, `TestHowMany`; AC-1966 `TestPickList` plus
 `test_top_selling_sticky_pick.py`. AC-1963's "no fetch" is as built "no figures": the
 route is the check and answers 403, which the presenter prints as the refusal line.
+Amended by the S4 fix lane on PR #1273 (reviewer S2): for a linked dealer the lane now
+refuses first, with no picker and no fetch; the route stays the second check.
 
 ## Phase 2 - sales agent slot (S5; the gate on #1168 / #1170 is lifted, owner ruling 26 Sep)
 
