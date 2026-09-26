@@ -20,7 +20,7 @@ publish is skipped when a version already carries exactly this template.
 `publish(bind)` is module-level so it can be called outside alembic.
 
 Revision ID: sa2_r9_open_question
-Revises: oisl_0001_suggested_links
+Revises: sales_0002_team_leader
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ from app.services.ai_prompt_registry import PROMPT_KEYS
 from app.services.ai_prompt_seed import seed_prompt_registry
 
 revision = "sa2_r9_open_question"
-down_revision = "oisl_0001_suggested_links"
+down_revision = "sales_0002_team_leader"
 branch_labels = None
 depends_on = None
 
