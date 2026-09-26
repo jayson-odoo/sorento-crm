@@ -141,9 +141,27 @@ def _get_cost_or_404(db: Session, link_id: str, cost_id: str):
     return row
 
 
-def _validate_cost_body(unit_cost, start_date: Optional[date], end_date: Optional[date]) -> None:
+def _parse_date_or_422(value: Optional[str], *, field: str) -> Optional[date]:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except (TypeError, ValueError):
+        raise AppException(
+            422, f"Enter a valid {field}.", detail={"code": "invalid_date"}, code="invalid_date",
+        )
+
+
+def _validate_cost_body(
+    unit_cost, currency: Optional[str], start_date: Optional[date], end_date: Optional[date]
+) -> None:
     if unit_cost is not None and unit_cost < 0:
         raise AppException(422, "The price cannot be negative.", detail={"code": "negative_price"}, code="negative_price")
+    if currency and len(currency) > 3:
+        raise AppException(
+            422, "Currency must be a 3-letter code.",
+            detail={"code": "invalid_currency"}, code="invalid_currency",
+        )
     if start_date and end_date and end_date < start_date:
         raise AppException(422, "Valid to cannot be before Valid from.", detail={"code": "end_before_start"}, code="end_before_start")
 
@@ -154,9 +172,9 @@ def create_cost(db: Session, link_id: str, body: dict, current_user: dict):
 
     link = _get_link_or_404(db, link_id)
     unit_cost = body.get("unit_cost")
-    start_date = date.fromisoformat(body["start_date"]) if body.get("start_date") else None
-    end_date = date.fromisoformat(body["end_date"]) if body.get("end_date") else None
-    _validate_cost_body(unit_cost, start_date, end_date)
+    start_date = _parse_date_or_422(body.get("start_date"), field="start date")
+    end_date = _parse_date_or_422(body.get("end_date"), field="end date")
+    _validate_cost_body(unit_cost, body.get("currency"), start_date, end_date)
 
     row = ProductSupplierCost(
         product_supplier_id=link.id, unit_cost=unit_cost, currency=body.get("currency"),
@@ -182,14 +200,14 @@ def update_cost(db: Session, link_id: str, cost_id: str, body: dict, current_use
     unit_cost = body.get("unit_cost", row.unit_cost)
     currency = body.get("currency", row.currency)
     start_date = (
-        date.fromisoformat(body["start_date"]) if body.get("start_date") else
+        _parse_date_or_422(body["start_date"], field="start date") if body.get("start_date") else
         (None if "start_date" in body else row.start_date)
     )
     end_date = (
-        date.fromisoformat(body["end_date"]) if body.get("end_date") else
+        _parse_date_or_422(body["end_date"], field="end date") if body.get("end_date") else
         (None if "end_date" in body else row.end_date)
     )
-    _validate_cost_body(unit_cost, start_date, end_date)
+    _validate_cost_body(unit_cost, currency, start_date, end_date)
 
     row.unit_cost = unit_cost
     row.currency = currency

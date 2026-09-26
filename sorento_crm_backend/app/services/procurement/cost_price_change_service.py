@@ -14,6 +14,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Iterable, Optional
 
+from fastapi import Request
 from sqlalchemy.orm import Session
 
 import app.services.scm.proforma_invoice_service as pi_service
@@ -27,6 +28,36 @@ VIEW_PERM = "procurement.cost_price_changes.view"
 VERIFY_PERM = "procurement.cost_price_changes.verify"
 
 _UNRESOLVED_STATES = {"needs_attention"}
+
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def _require_uuid(value, *, field: str = "id", code: str = "invalid_id") -> str:
+    """A malformed id is a 422, not a 500 from a raw `WHERE id = :value` against a
+    UUID column (Nits, security review). Distinct from `validate_uuid_path`
+    (`app.services.uuid_path_param`), which answers 404 for a detail GET - every
+    OTHER route in this file (apply, submit, decide, patch, ...) reads a bad id as
+    a validation failure instead."""
+    s = str(value or "")
+    if not _UUID_RE.match(s):
+        raise AppException(422, f"Invalid {field}.", detail={"code": code}, code=code)
+    return s.lower()
+
+
+def _actor_id(request: Optional[Request], current_user: Optional[dict]) -> Optional[str]:
+    """The REAL user id for created_by/submitted_by/decided_by/applied_by/mapped_by and
+    every `log_audit` call (B2, security review): during an impersonation session
+    `current_user` is the EFFECTIVE (target) identity, and the real admin driving it
+    is on `request.state.real_user` - `get_actor_user_id` resolves that; outside
+    impersonation (or with no request, e.g. a background/worker caller) the two are
+    the same id."""
+    if request is not None:
+        from app.dependencies import get_actor_user_id
+
+        return get_actor_user_id(request, current_user or {})
+    return (current_user or {}).get("id")
 
 # `product_suppliers` and `product_supplier_costs` are `__audit_track__ = True` (#1288,
 # AC-AU-01) - production registers the listener once at `app.main`'s startup event, but a
@@ -276,6 +307,31 @@ def _create_change_set_code(db: Session, company_id: Optional[str]) -> str:
     return number or f"CPC-{datetime.utcnow().strftime('%H%M%S%f')[:8]}"
 
 
+#: S3 (security review): none of these belong in a real filename, and each is a
+#: building block of a `Content-Disposition` header parameter (`filename="..."`,
+#: `filename*=...`) - stripping them here means the stored name can never read
+#: back as a second parameter, whatever escaping `content_disposition` applies.
+_UNSAFE_FILENAME_RE = re.compile(r'["=;\r\n]')
+
+
+def _sanitize_filename(name: str) -> str:
+    return _UNSAFE_FILENAME_RE.sub("_", name or "")
+
+
+def _truncate_filename(name: str, max_len: int = 255) -> str:
+    """S3 (security review): `file_name` is `VARCHAR(255)` - a longer name 500s at
+    commit instead of truncating. Keeps the extension when there is a sane one."""
+    if not name or len(name) <= max_len:
+        return name
+    dot = name.rfind(".")
+    if 0 < dot < len(name) - 1 and len(name) - dot <= 20:
+        ext = name[dot:]
+        base_len = max_len - len(ext)
+        if base_len > 0:
+            return name[:base_len] + ext
+    return name[:max_len]
+
+
 def upload(
     db: Session,
     current_user: dict,
@@ -287,6 +343,7 @@ def upload(
     start_date: Optional[str],
     end_date: Optional[str],
     company_scope,
+    request: Optional[Request] = None,
 ) -> dict:
     from app.models.company import Company
     from app.models.cost_price import CostPriceChangeLine, CostPriceChangeSet
@@ -320,17 +377,22 @@ def upload(
     if not resolved_currency:
         raise AppException(422, "Enter the currency this price list is in.", detail={"code": "currency_required"}, code="currency_required")
 
-    start = date.fromisoformat(start_date) if start_date else None
-    end = date.fromisoformat(end_date) if end_date else None
+    try:
+        start = date.fromisoformat(start_date) if start_date else None
+        end = date.fromisoformat(end_date) if end_date else None
+    except ValueError:
+        raise AppException(422, "Enter a valid date.", detail={"code": "invalid_date"}, code="invalid_date")
     if start and end and end < start:
         raise AppException(422, "Valid to cannot be before Valid from.", detail={"code": "end_before_start"}, code="end_before_start")
 
+    actor_id = _actor_id(request, current_user)
+    filename = _truncate_filename(_sanitize_filename(filename))
     code = _create_change_set_code(db, company_id)
     cs = CostPriceChangeSet(
         code=code, supplier_id=supplier_id, channel="staff_upload", status="draft",
         currency=resolved_currency, start_date=start, end_date=end,
         file_name=filename, source_meta={"sheets": _sheets_summary(parsed), "letterhead": parsed.letterhead},
-        created_by_user_id=current_user.get("id"),
+        created_by_user_id=actor_id,
     )
     db.add(cs)
     db.flush()
@@ -357,7 +419,7 @@ def upload(
     log_audit(
         db, "cost_price_change_sets", _u(cs.id), "COST_SET_UPLOAD",
         new_values={"file_name": filename, "rows": parsed.total_rows},
-        user_id=current_user.get("id"),
+        user_id=actor_id,
     )
     db.commit()
     return get_detail(db, _u(cs.id), current_user)
@@ -366,13 +428,39 @@ def upload(
 # --------------------------------------------------------------------------- shared helpers
 
 
-def _get_set_or_404(db: Session, set_id: str):
+def _get_set_or_404(db: Session, set_id: str, *, for_update: bool = False):
     from app.models.cost_price import CostPriceChangeSet
 
-    cs = db.query(CostPriceChangeSet).filter(CostPriceChangeSet.id == set_id).first()
+    set_id = _require_uuid(set_id, field="id")
+    q = db.query(CostPriceChangeSet).filter(CostPriceChangeSet.id == set_id)
+    if for_update:
+        # Nits (security review): every MUTATING call (apply/return/submit/decide/
+        # patch) locks the set row first, closing the window where two requests
+        # race a status transition against each other.
+        q = q.with_for_update()
+    cs = q.first()
     if cs is None:
         raise AppException(404, "This price change was not found. It may have been discarded.", code="NOT_FOUND")
     return cs
+
+
+def _require_single_company_scope(db: Session, cs) -> None:
+    """B1 (security review): patch/apply must refuse unless the session's own
+    resolved scope is EXACTLY the set's company - not "the set happens to be
+    visible", which an all-companies admin/superadmin scope would also satisfy
+    while leaving cross-company writes unguarded."""
+    from app.models.base import get_company_scope
+
+    scope = get_company_scope(db)
+    if (
+        not isinstance(scope, (frozenset, set))
+        or len(scope) != 1
+        or next(iter(scope)) != str(cs.company_id)
+    ):
+        raise AppException(
+            422, "Pick one company before making this change.",
+            detail={"code": "pick_one_company"}, code="pick_one_company",
+        )
 
 
 def _display_name(db: Session, user_id: Optional[str]) -> Optional[str]:
@@ -401,11 +489,40 @@ def _verification_enabled(db: Session) -> bool:
     return bool(getattr(row, "cost_price_verification_enabled", False)) if row else False
 
 
-def _assert_not_same_person(cs, current_user: dict) -> None:
-    uid = (current_user or {}).get("id")
-    if uid and uid in {cs.created_by_user_id, cs.submitted_by_user_id}:
+def _line_mapper_ids(db: Session, set_id: str) -> set[str]:
+    from app.models.cost_price import CostPriceChangeLine
+
+    return {
+        str(row[0])
+        for row in (
+            db.query(CostPriceChangeLine.mapped_by_user_id)
+            .filter(
+                CostPriceChangeLine.change_set_id == set_id,
+                CostPriceChangeLine.mapped_by_user_id.isnot(None),
+            )
+            .distinct()
+            .all()
+        )
+    }
+
+
+def _assert_not_same_person(
+    db: Session, cs, current_user: dict, *, request: Optional[Request] = None
+) -> None:
+    """Four-eyes (B2/S5, security review): blocks whoever uploaded, submitted, OR
+    mapped any line of this set - checked against BOTH the effective principal
+    (`current_user`) and the REAL actor behind it (`_actor_id`, so an admin cannot
+    launder their own upload through an impersonated verifier's identity),
+    superadmin included (this is a manual set-membership check, never routed
+    through a permission bypass)."""
+    ids = {str(uid) for uid in ((current_user or {}).get("id"), _actor_id(request, current_user)) if uid}
+    if not ids:
+        return
+    blocked = {str(b) for b in (cs.created_by_user_id, cs.submitted_by_user_id) if b}
+    blocked |= _line_mapper_ids(db, cs.id)
+    if ids & blocked:
         raise AppException(
-            403, "You cannot verify a set you uploaded or submitted yourself.",
+            403, "You cannot verify a set you uploaded, submitted or mapped yourself.",
             code="SAME_PERSON_CANNOT_VERIFY",
         )
 
@@ -503,17 +620,25 @@ def get_detail(db: Session, set_id: str, current_user: Optional[dict]) -> dict:
     uid = (current_user or {}).get("id")
     holds_upload = _user_has_permission(db, uid, UPLOAD_PERM)
     holds_verify = _user_has_permission(db, uid, VERIFY_PERM)
-    is_same_person = bool(uid) and uid in {cs.created_by_user_id, cs.submitted_by_user_id}
+    is_same_person = bool(uid) and (
+        uid in {cs.created_by_user_id, cs.submitted_by_user_id} or uid in _line_mapper_ids(db, set_id)
+    )
 
     can_apply = can_submit = can_decide = can_return = False
     apply_blocked_reason = None
     if cs.status == "draft":
-        if not verification_enabled and holds_upload:
-            if unresolved:
-                apply_blocked_reason = f"{unresolved} row(s) still need you"
-            else:
-                can_apply = True
-        elif verification_enabled and holds_upload:
+        # S1 (security review): a non-staff-channel draft (a RETURNED supplier
+        # submission, back to draft) always needs a submit, whatever the global
+        # setting - only a `staff_upload` draft can ever apply straight from here.
+        if cs.channel == "staff_upload":
+            if not verification_enabled and holds_upload:
+                if unresolved:
+                    apply_blocked_reason = f"{unresolved} row(s) still need you"
+                else:
+                    can_apply = True
+            elif verification_enabled and holds_upload:
+                can_submit = not unresolved
+        elif holds_upload:
             can_submit = not unresolved
     elif cs.status == "pending_verification" and holds_verify and not is_same_person:
         can_decide = True
@@ -530,7 +655,10 @@ def get_detail(db: Session, set_id: str, current_user: Optional[dict]) -> dict:
         "currency": cs.currency,
         "start_date": cs.start_date.isoformat() if cs.start_date else None,
         "end_date": cs.end_date.isoformat() if cs.end_date else None,
-        "file_name": cs.file_name, "has_source_file": bool(cs.source_file_bytes),
+        # S4 (security review): `source_file_size` is a plain, non-deferred column -
+        # reading it (unlike `source_file_bytes`) never forces the retained
+        # spreadsheet's bytes to load on a list/detail read.
+        "file_name": cs.file_name, "has_source_file": bool(cs.source_file_size),
         "sheets": sheets,
         "total_rows": sum(s.get("rows", 0) for s in sheets),
         "uploaded_by_name": _display_name(db, cs.created_by_user_id),
@@ -690,10 +818,24 @@ def _recompute_line_price(db: Session, line, cs) -> None:
     line.current_currency = cur_ccy
 
 
-def patch_line(db: Session, set_id: str, line_id: str, body: dict, current_user: dict) -> dict:
+def _find_company_scoped_product(db: Session, product_id: str):
+    """Resolve `product_id` for a manual map, or `None` when it is not a real
+    product in the CALLER's own company (B1, security review). `Product` is
+    `CompanyScopedMixin`, so the query itself is already filtered to the
+    session's resolved scope - a foreign-company id simply is not found."""
+    from app.models.product import Product
+
+    return db.query(Product).filter(Product.id == product_id).first()
+
+
+def patch_line(
+    db: Session, set_id: str, line_id: str, body: dict, current_user: dict,
+    *, request: Optional[Request] = None,
+) -> dict:
     from app.models.cost_price import CostPriceChangeLine
 
-    cs = _get_set_or_404(db, set_id)
+    cs = _get_set_or_404(db, set_id, for_update=True)
+    _require_single_company_scope(db, cs)
     if cs.status != "draft":
         raise AppException(409, "Only a Draft set can be edited.", detail={"code": "not_draft"}, code="not_draft")
     line = (
@@ -704,10 +846,20 @@ def patch_line(db: Session, set_id: str, line_id: str, body: dict, current_user:
     if line is None:
         raise AppException(404, "Line not found.", code="NOT_FOUND")
 
+    actor_id = _actor_id(request, current_user)
+    mapped_now = False
+
     if "product_id" in body:
         product_id = body["product_id"]
         if product_id:
-            line.product_id = product_id
+            product_id = _require_uuid(product_id, field="product", code="invalid_product")
+            product = _find_company_scoped_product(db, product_id)
+            if product is None:
+                raise AppException(
+                    422, "That product was not found.",
+                    detail={"code": "invalid_product"}, code="invalid_product",
+                )
+            line.product_id = product.id
             line.match_outcome = "manual"
             line.match_rung = None
             _recompute_line_price(db, line, cs)
@@ -718,12 +870,28 @@ def patch_line(db: Session, set_id: str, line_id: str, body: dict, current_user:
             line.current_unit_cost = None
             line.current_currency = None
             line.line_state = "needs_attention"
+        mapped_now = True
     if "skipped" in body:
         line.skipped = bool(body["skipped"])
+        mapped_now = True
     if "skip_reason" in body:
         line.skip_reason = body["skip_reason"]
+        mapped_now = True
     if "new_link_lead_time_days" in body:
-        line.new_link_lead_time_days = body["new_link_lead_time_days"]
+        lead_time = body["new_link_lead_time_days"]
+        if lead_time is not None and lead_time < 0:
+            raise AppException(
+                422, "Lead time cannot be negative.",
+                detail={"code": "negative_lead_time"}, code="negative_lead_time",
+            )
+        line.new_link_lead_time_days = lead_time
+        mapped_now = True
+
+    # S5 (security review): whoever decided which product a code maps to (or
+    # skipped/adjusted the line) is not neutral either - `mapped_by_user_id`
+    # joins the same-person set `_assert_not_same_person` checks at decide/apply.
+    if mapped_now and actor_id:
+        line.mapped_by_user_id = actor_id
 
     db.flush()
     _recompute_duplicates(db, set_id)
@@ -749,7 +917,7 @@ def _notify_users(db: Session, user_ids: Iterable[str], cs, *, event_type: str, 
         )
 
 
-def _verifier_user_ids(db: Session) -> list[str]:
+def _verifier_user_ids(db: Session, company_id: Optional[str] = None) -> list[str]:
     from app.models.user import User, UserPermission, UserRoleAssignment, UserRolePermission
 
     rows = (
@@ -761,43 +929,59 @@ def _verifier_user_ids(db: Session) -> list[str]:
         .distinct()
         .all()
     )
-    return [r[0] for r in rows]
+    ids = [r[0] for r in rows]
+    if not company_id:
+        return ids
+    # Nits (security review): a verify-holder with no `user_companies` grant for
+    # the set's own company must not be notified about it, superadmin/admin
+    # (whose grant set is every company) included on the right side of this.
+    from app.services.company_scope_resolver import resolve_user_grant_ids
+
+    return [uid for uid in ids if str(company_id) in resolve_user_grant_ids(db, uid)]
 
 
-def submit(db: Session, set_id: str, current_user: dict) -> dict:
+def submit(db: Session, set_id: str, current_user: dict, *, request: Optional[Request] = None) -> dict:
     from app.services.audit_service import log_audit
 
-    cs = _get_set_or_404(db, set_id)
-    if not _verification_enabled(db):
+    cs = _get_set_or_404(db, set_id, for_update=True)
+    _require_single_company_scope(db, cs)
+    # S1 (security review): a supplier submission always waits for a Sorento
+    # verifier, whatever the global setting - only a `staff_upload` draft is ever
+    # gated on it (plan section 7.2).
+    if cs.channel == "staff_upload" and not _verification_enabled(db):
         raise AppException(409, "Verification is off; apply this set directly.", detail={"code": "verification_off"}, code="verification_off")
     if cs.status != "draft":
         raise AppException(409, "Only a Draft set can be submitted for verification.", detail={"code": "wrong_status"}, code="wrong_status")
     if _unresolved_count(db, set_id):
         raise AppException(422, "Some lines still need attention before this can be submitted.", detail={"code": "unresolved_lines"}, code="unresolved_lines")
 
+    actor_id = _actor_id(request, current_user)
     cs.status = "pending_verification"
-    cs.submitted_by_user_id = current_user.get("id")
+    cs.submitted_by_user_id = actor_id
     cs.submitted_at = datetime.utcnow()
-    log_audit(db, "cost_price_change_sets", _u(cs.id), "COST_SET_SUBMIT", user_id=current_user.get("id"))
+    log_audit(db, "cost_price_change_sets", _u(cs.id), "COST_SET_SUBMIT", user_id=actor_id)
     db.commit()
 
     _notify_users(
-        db, _verifier_user_ids(db), cs, event_type="submitted",
+        db, _verifier_user_ids(db, cs.company_id), cs, event_type="submitted",
         title=f"{cs.code} needs verification",
         body=f"A supplier price change ({cs.code}) is waiting for you to verify.",
     )
     return get_detail(db, set_id, current_user)
 
 
-def decide(db: Session, set_id: str, line_id: str, body: dict, current_user: dict) -> dict:
+def decide(
+    db: Session, set_id: str, line_id: str, body: dict, current_user: dict,
+    *, request: Optional[Request] = None,
+) -> dict:
     from app.models.cost_price import CostPriceChangeLine
 
-    cs = _get_set_or_404(db, set_id)
+    cs = _get_set_or_404(db, set_id, for_update=True)
     if cs.status != "pending_verification":
         raise AppException(409, "Only a Pending set can be decided.", detail={"code": "wrong_status"}, code="wrong_status")
     if not _user_has_permission(db, (current_user or {}).get("id"), VERIFY_PERM):
         raise AppException(403, "Permission required to decide.", code="FORBIDDEN")
-    _assert_not_same_person(cs, current_user)
+    _assert_not_same_person(db, cs, current_user, request=request)
     line = (
         db.query(CostPriceChangeLine)
         .filter(CostPriceChangeLine.id == line_id, CostPriceChangeLine.change_set_id == set_id)
@@ -815,7 +999,7 @@ def decide(db: Session, set_id: str, line_id: str, body: dict, current_user: dic
 
     line.decision = decision
     line.decision_reason = reason
-    line.decided_by_user_id = current_user.get("id")
+    line.decided_by_user_id = _actor_id(request, current_user)
     line.decided_at = datetime.utcnow()
     db.commit()
 
@@ -826,18 +1010,22 @@ def decide(db: Session, set_id: str, line_id: str, body: dict, current_user: dic
     }
 
 
-def decide_all(db: Session, set_id: str, decision: str, current_user: dict) -> dict:
+def decide_all(
+    db: Session, set_id: str, decision: str, current_user: dict,
+    *, request: Optional[Request] = None,
+) -> dict:
     from app.models.cost_price import CostPriceChangeLine
 
-    cs = _get_set_or_404(db, set_id)
+    cs = _get_set_or_404(db, set_id, for_update=True)
     if cs.status != "pending_verification":
         raise AppException(409, "Only a Pending set can be decided.", detail={"code": "wrong_status"}, code="wrong_status")
     if not _user_has_permission(db, (current_user or {}).get("id"), VERIFY_PERM):
         raise AppException(403, "Permission required to decide.", code="FORBIDDEN")
-    _assert_not_same_person(cs, current_user)
+    _assert_not_same_person(db, cs, current_user, request=request)
     if decision not in ("accepted", "rejected"):
         raise AppException(422, "Invalid decision.", code="VALIDATION_ERROR")
 
+    actor_id = _actor_id(request, current_user)
     now = datetime.utcnow()
     lines = (
         db.query(CostPriceChangeLine)
@@ -850,36 +1038,40 @@ def decide_all(db: Session, set_id: str, decision: str, current_user: dict) -> d
     )
     for ln in lines:
         ln.decision = decision
-        ln.decided_by_user_id = current_user.get("id")
+        ln.decided_by_user_id = actor_id
         ln.decided_at = now
     db.commit()
     return get_detail(db, set_id, current_user)
 
 
-def return_set(db: Session, set_id: str, reason: str, current_user: dict) -> dict:
+def return_set(
+    db: Session, set_id: str, reason: str, current_user: dict,
+    *, request: Optional[Request] = None,
+) -> dict:
     from app.models.cost_price import CostPriceChangeLine
     from app.services.audit_service import log_audit
 
-    cs = _get_set_or_404(db, set_id)
+    cs = _get_set_or_404(db, set_id, for_update=True)
     if cs.status != "pending_verification":
         raise AppException(409, "Only a Pending set can be returned.", detail={"code": "wrong_status"}, code="wrong_status")
     if not _user_has_permission(db, (current_user or {}).get("id"), VERIFY_PERM):
         raise AppException(403, "Permission required to return this set.", code="FORBIDDEN")
-    _assert_not_same_person(cs, current_user)
+    _assert_not_same_person(db, cs, current_user, request=request)
     if not (reason or "").strip():
         raise AppException(422, "A reason is required to return this set.", detail={"code": "reason_required"}, code="reason_required")
     if len(reason) > 500:
         raise AppException(422, "Reason is too long.", detail={"code": "reason_too_long"}, code="reason_too_long")
 
+    actor_id = _actor_id(request, current_user)
     cs.status = "draft"
     cs.returned_reason = reason
-    cs.returned_by_user_id = current_user.get("id")
+    cs.returned_by_user_id = actor_id
     cs.returned_at = datetime.utcnow()
     db.query(CostPriceChangeLine).filter(CostPriceChangeLine.change_set_id == set_id).update(
         {"decision": None, "decision_reason": None, "decided_by_user_id": None, "decided_at": None},
         synchronize_session=False,
     )
-    log_audit(db, "cost_price_change_sets", _u(cs.id), "COST_SET_RETURN", user_id=current_user.get("id"))
+    log_audit(db, "cost_price_change_sets", _u(cs.id), "COST_SET_RETURN", user_id=actor_id)
     db.commit()
 
     if cs.submitted_by_user_id:
@@ -905,18 +1097,24 @@ def _default_lead_time(db: Session, supplier_id: str) -> Optional[int]:
     return rows[0][0] if rows else None
 
 
-def apply(db: Session, set_id: str, current_user: dict) -> dict:
+def apply(db: Session, set_id: str, current_user: dict, *, request: Optional[Request] = None) -> dict:
     from app.models.cost_price import CostPriceChangeLine, ProductSupplierCost
     from app.models.procurement import ProductSupplier
     from app.models.scm import SupplierProductCodeAlias
     from app.services.audit_service import log_audit
     from app.services.procurement.supplier_cost_service import refresh_link
 
-    cs = _get_set_or_404(db, set_id)
+    cs = _get_set_or_404(db, set_id, for_update=True)
+    _require_single_company_scope(db, cs)
 
     if cs.status == "applied":
         raise AppException(409, "This set is already applied.", detail={"code": "already_applied"}, code="already_applied")
     if cs.status == "draft":
+        # S1 (security review): a non-staff-channel draft (a RETURNED supplier
+        # submission) always needs re-submitting - it never applies straight from
+        # draft, whatever the global setting says.
+        if cs.channel != "staff_upload":
+            raise AppException(409, "Submit for verification first.", detail={"code": "submit_first"}, code="submit_first")
         if _verification_enabled(db):
             raise AppException(409, "Submit for verification first.", detail={"code": "submit_first"}, code="submit_first")
         if not _user_has_permission(db, (current_user or {}).get("id"), UPLOAD_PERM):
@@ -927,7 +1125,7 @@ def apply(db: Session, set_id: str, current_user: dict) -> dict:
         # regardless of the setting (plan 7.2): holding `upload` is not enough.
         if not _user_has_permission(db, (current_user or {}).get("id"), VERIFY_PERM):
             raise AppException(403, "Permission required to apply.", code="FORBIDDEN")
-        _assert_not_same_person(cs, current_user)
+        _assert_not_same_person(db, cs, current_user, request=request)
         verified = True
     else:
         raise AppException(409, "Unexpected status.", detail={"code": "wrong_status"}, code="wrong_status")
@@ -948,6 +1146,16 @@ def apply(db: Session, set_id: str, current_user: dict) -> dict:
     )
     if verified:
         lines = [ln for ln in lines if ln.decision == "accepted"]
+
+    # B1 (security review): re-check every line's product before writing anything -
+    # a line bound to a foreign-company product some OTHER way (a future channel, a
+    # data-repair script) must refuse here independently of `patch_line`'s own gate.
+    for ln in lines:
+        if ln.product_id and _find_company_scoped_product(db, ln.product_id) is None:
+            raise AppException(
+                422, "A line is bound to a product that is not in this company.",
+                detail={"code": "invalid_product"}, code="invalid_product",
+            )
 
     links_by_line: dict[str, Optional["ProductSupplier"]] = {}
     stale: list[tuple] = []
@@ -998,6 +1206,7 @@ def apply(db: Session, set_id: str, current_user: dict) -> dict:
             code="stale_lines",
         )
 
+    actor_id = _actor_id(request, current_user)
     changes_summary = []
     for ln in lines:
         link = links_by_line.get(str(ln.id))
@@ -1013,16 +1222,34 @@ def apply(db: Session, set_id: str, current_user: dict) -> dict:
         db.add(ProductSupplierCost(
             product_supplier_id=link.id, unit_cost=ln.new_unit_cost, currency=cs.currency,
             start_date=cs.start_date, end_date=cs.end_date,
-            source_change_line_id=ln.id, created_by_user_id=current_user.get("id"),
+            source_change_line_id=ln.id, created_by_user_id=actor_id,
         ))
         db.flush()
         refresh_link(db, link)
 
         if ln.match_outcome == "manual":
-            db.add(SupplierProductCodeAlias(
-                supplier_id=cs.supplier_id, supplier_code=ln.supplier_code,
-                product_id=ln.product_id, source="manual", matched_by="cost_price_set",
-            ))
+            # Nits (security review): UPSERT the manual alias - a line remapped by
+            # hand through an EXISTING alias must update that same row, not insert
+            # a second one and hit `uq_scm_supplier_code_alias_identity`.
+            from sqlalchemy import func
+
+            existing_alias = (
+                db.query(SupplierProductCodeAlias)
+                .filter(
+                    SupplierProductCodeAlias.supplier_id == cs.supplier_id,
+                    func.upper(SupplierProductCodeAlias.supplier_code) == ln.supplier_code.upper(),
+                )
+                .first()
+            )
+            if existing_alias is not None:
+                existing_alias.product_id = ln.product_id
+                existing_alias.source = "manual"
+                existing_alias.matched_by = "cost_price_set"
+            else:
+                db.add(SupplierProductCodeAlias(
+                    supplier_id=cs.supplier_id, supplier_code=ln.supplier_code,
+                    product_id=ln.product_id, source="manual", matched_by="cost_price_set",
+                ))
         changes_summary.append({
             "supplier_code": ln.supplier_code,
             "old_unit_cost": float(ln.current_unit_cost) if ln.current_unit_cost is not None else None,
@@ -1033,10 +1260,10 @@ def apply(db: Session, set_id: str, current_user: dict) -> dict:
     # The ladder-bound codes are remembered NOW, exactly as the PI apply does (plan section 6).
     ladder_codes = {ln.supplier_code for ln in lines if ln.match_outcome == "ladder"}
     if ladder_codes:
-        matcher.resolve(db, cs.supplier_id, ladder_codes, remember=True, actor=current_user.get("id"))
+        matcher.resolve(db, cs.supplier_id, ladder_codes, remember=True, actor=actor_id)
 
     cs.status = "applied"
-    cs.applied_by_user_id = current_user.get("id")
+    cs.applied_by_user_id = actor_id
     cs.applied_at = datetime.utcnow()
     cs.verified = verified
     db.flush()
@@ -1044,7 +1271,7 @@ def apply(db: Session, set_id: str, current_user: dict) -> dict:
     log_audit(
         db, "cost_price_change_sets", _u(cs.id), "COST_SET_APPLY",
         new_values={"verified": verified, "changes": changes_summary},
-        user_id=current_user.get("id"),
+        user_id=actor_id,
     )
     db.commit()
     return get_detail(db, set_id, current_user)
@@ -1060,6 +1287,9 @@ def discard(db: Session, set_id: str) -> None:
 
 def get_source_file(db: Session, set_id: str) -> tuple[bytes, str]:
     cs = _get_set_or_404(db, set_id)
+    # S4 (security review): `source_file_bytes` is `deferred` - undefer it only
+    # here, the one place that actually needs the retained spreadsheet's bytes.
+    db.refresh(cs, attribute_names=["source_file_bytes"])
     if not cs.source_file_bytes:
         raise AppException(404, "No file is retained for this set.", code="NOT_FOUND")
     return bytes(cs.source_file_bytes), cs.file_name or "price-list.xlsx"
