@@ -35,7 +35,15 @@ def resolve_user_respond_contact(db: Session, user: User, *, cache: bool = True)
     if len(matches) != 1:
         return None
     rc = matches[0]
-    if cache:
+    # One WhatsApp contact == one user (identity S0, AC-01): a contact another user
+    # already holds is returned for this call but never cached onto this user.
+    held_by_other = (
+        db.query(User.id)
+        .filter(User.respond_contact_id == rc.id, User.id != user.id)
+        .first()
+        is not None
+    )
+    if cache and not held_by_other:
         try:
             user.respond_contact_id = rc.id
             db.commit()

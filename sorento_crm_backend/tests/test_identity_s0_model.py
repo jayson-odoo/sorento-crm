@@ -134,7 +134,9 @@ def test_ac01_resolve_user_respond_contact_never_caches_onto_a_contact_another_u
     from app.services.respond_link_service import resolve_user_respond_contact
 
     with blank_session() as db:
-        phone = _phone()
+        # Stored form: E.164 digits WITHOUT '+' (phone_utils.normalize_msisdn), which is
+        # what resolve_user_respond_contact matches against.
+        phone = _phone().lstrip("+")
         contact = _seed_contact(db, phone=phone)
         holder = User(id=str(uuid.uuid4()), email=f"{unique_code('h')}@x.com".lower(), name="Holder", status="ACTIVE", respond_contact_id=contact.id)
         seeker = User(id=str(uuid.uuid4()), email=f"{unique_code('s')}@x.com".lower(), name="Seeker", status="ACTIVE", contact_number=phone)
@@ -207,7 +209,8 @@ def test_ac03_created_email_is_stored_lowercased(api_client):
         json={"email": f"{stem}@ExAmPlE.CoM", "name": "Mixed Case"},
     )
     assert resp.status_code == 201, resp.text
-    assert resp.json()["email"] == f"{stem}@example.com"
+    # unique_code() returns an upper-case "ZZT-" stem, so the stored form lowercases it too.
+    assert resp.json()["email"] == f"{stem}@example.com".lower()
 
 
 def test_ac03_login_finds_user_by_case_insensitive_email():

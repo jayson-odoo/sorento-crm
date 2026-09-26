@@ -5,7 +5,10 @@ import logging
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.services.logging import log_api_request
-from app.audit_context import set_audit_context, set_trace_id
+from app.audit_context import AuditActor, stamp_actor, set_trace_id
+
+# Paths whose unauthenticated writes are a public link's (identity S0, plan 8.1).
+_PUBLIC_PREFIX = "/api/v1/public/"
 
 logger = logging.getLogger(__name__)
 
@@ -15,9 +18,18 @@ class LoggingMiddleware(BaseHTTPMiddleware):
     
     async def dispatch(self, request: Request, call_next):
         start_time = time.time()
-        # Set audit context so automatic audit logging has at least IP (user_id set by auth deps)
+        # Reset and default-stamp the audit actor before anything else runs, so no
+        # request inherits a previous one's. The auth dependencies stamp the real
+        # principal over this; a request that never authenticates keeps it.
         ip = request.client.host if request.client else None
-        set_audit_context(None, ip)
+        stamp_actor(
+            AuditActor(
+                actor_type="public_link" if request.url.path.startswith(_PUBLIC_PREFIX) else "system",
+                ip_address=ip,
+                user_agent=request.headers.get("user-agent"),
+            ),
+            request=request,
+        )
         # Correlation id for this request (honour an inbound X-Trace-Id if present,
         # else mint one). Copied onto every audit row written during the request.
         trace_id = request.headers.get("X-Trace-Id") or uuid.uuid4().hex[:16]

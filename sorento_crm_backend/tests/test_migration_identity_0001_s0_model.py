@@ -47,10 +47,19 @@ def _load():
 
 
 def _current_other_head() -> str:
-    """The single alembic head that is NOT this migration (computed, never hard-coded)."""
+    """The single alembic head of the graph WITHOUT this migration (computed, never
+    hard-coded). Once this migration exists it IS the head, so `get_heads()` minus
+    itself is empty; the head it must sit on is the one left when it is removed."""
     cfg = Config(str(Path(__file__).resolve().parent / ".." / "alembic.ini"))
     script = ScriptDirectory.from_config(cfg)
-    heads = [h for h in script.get_heads() if h != MODULE_NAME]
+    others = [r for r in script.walk_revisions() if r.revision != MODULE_NAME]
+    pointed_at: set[str] = set()
+    for rev in others:
+        down = rev.down_revision
+        if down is None:
+            continue
+        pointed_at.update(down if isinstance(down, (tuple, list)) else (down,))
+    heads = [r.revision for r in others if r.revision not in pointed_at]
     assert len(heads) == 1, f"expected exactly one other head, found {heads}"
     return heads[0]
 
@@ -76,13 +85,18 @@ def test_preflight_blocks_on_case_duplicate_emails_names_users_no_ids():
     with engine.connect() as raw:
         outer = raw.begin()
         try:
+            # The CI schema is already post-migration: strip it first, or
+            # uq_users_email_lower refuses the case-duplicate this test seeds.
+            _run(raw, module._downgrade)
             nested = raw.begin_nested()
             a_id, b_id = _mk_id(), _mk_id()
             stem = f"{PREFIX}-dup-{uuid.uuid4().hex[:6]}"
             raw.execute(
                 sa.text(
-                    "INSERT INTO users (id, email, name, status) VALUES "
-                    "(:a_id, :email_a, :name_a, 'ACTIVE'), (:b_id, :email_b, :name_b, 'ACTIVE')"
+                    "INSERT INTO users (id, email, name, status, is_trashed, is_protected, "
+                    "respond_synced, daily_sla_summary_subscribed) VALUES "
+                    "(:a_id, :email_a, :name_a, 'ACTIVE', false, false, 'pending', true), "
+                    "(:b_id, :email_b, :name_b, 'ACTIVE', false, false, 'pending', true)"
                 ),
                 {
                     "a_id": a_id,
@@ -94,7 +108,7 @@ def test_preflight_blocks_on_case_duplicate_emails_names_users_no_ids():
                 },
             )
             with pytest.raises(RuntimeError) as excinfo:
-                module._upgrade(concurrently=False)
+                _run(raw, lambda: module._upgrade(concurrently=False))
             message = str(excinfo.value)
             assert f"{PREFIX} Alice" in message
             assert f"{PREFIX} Bob" in message
@@ -110,7 +124,7 @@ def test_upgrade_backfills_links_seeds_roles_and_is_idempotent():
     with engine.connect() as raw:
         outer = raw.begin()
         try:
-            module._downgrade()
+            _run(raw, module._downgrade)
 
             stem = f"{PREFIX}-{uuid.uuid4().hex[:8]}"
             phone_a, phone_b, phone_trashed, phone_integration = (
@@ -130,28 +144,41 @@ def test_upgrade_backfills_links_seeds_roles_and_is_idempotent():
                 ),
                 {"id": c_held, "phone": phone_b, "name": f"{stem} Contact Held"},
             )
+            # users.contact_number is unique (uq_users_contact_number), so the trashed and
+            # the integration user each get their OWN phone, matching their own unique,
+            # unclaimed contact: the only reason left for not linking them is the rule.
+            for phone, label in ((phone_trashed, "Trashed"), (phone_integration, "Integration")):
+                raw.execute(
+                    sa.text(
+                        "INSERT INTO respond_contacts (id, phone_number, name) VALUES (:id, :phone, :name)"
+                    ),
+                    {"id": _mk_id(), "phone": phone, "name": f"{stem} Contact {label}"},
+                )
 
             user_a = _mk_id()  # unlinked, phone matches c1 uniquely -> gets linked
             user_d = _mk_id()  # already holds c_held
             user_b = _mk_id()  # phone matches c_held, but c_held is claimed -> stays unlinked
-            user_trashed = _mk_id()  # trashed, phone matches c1 -> stays unlinked
-            user_integration = _mk_id()  # is_integration, phone matches c1 -> stays unlinked
+            user_trashed = _mk_id()  # trashed, phone matches its own free contact -> stays unlinked
+            user_integration = _mk_id()  # is_integration, same -> stays unlinked
             raw.execute(
                 sa.text(
                     "INSERT INTO users (id, email, name, status, contact_number, respond_contact_id, "
-                    "is_trashed, is_integration) VALUES "
-                    "(:user_a, :e_a, :n_a, 'ACTIVE', :phone_a, NULL, false, false),"
-                    "(:user_d, :e_d, :n_d, 'ACTIVE', NULL, :c_held, false, false),"
-                    "(:user_b, :e_b, :n_b, 'ACTIVE', :phone_b, NULL, false, false),"
-                    "(:user_trashed, :e_t, :n_t, 'ACTIVE', :phone_a, NULL, true, false),"
-                    "(:user_integration, :e_i, :n_i, 'ACTIVE', :phone_a, NULL, false, true)"
+                    "is_trashed, is_integration, is_protected, respond_synced, "
+                    "daily_sla_summary_subscribed) VALUES "
+                    "(:user_a, :e_a, :n_a, 'ACTIVE', :phone_a, NULL, false, false, false, 'pending', true),"
+                    "(:user_d, :e_d, :n_d, 'ACTIVE', NULL, :c_held, false, false, false, 'pending', true),"
+                    "(:user_b, :e_b, :n_b, 'ACTIVE', :phone_b, NULL, false, false, false, 'pending', true),"
+                    "(:user_trashed, :e_t, :n_t, 'ACTIVE', :phone_t, NULL, true, false, false, 'pending', true),"
+                    "(:user_integration, :e_i, :n_i, 'ACTIVE', :phone_i, NULL, false, true, false, 'pending', true)"
                 ),
                 {
                     "user_a": user_a, "e_a": f"{stem}-a@example.com", "n_a": f"{stem} A", "phone_a": phone_a,
                     "user_d": user_d, "e_d": f"{stem}-d@example.com", "n_d": f"{stem} D", "c_held": c_held,
                     "user_b": user_b, "e_b": f"{stem}-b@example.com", "n_b": f"{stem} B", "phone_b": phone_b,
                     "user_trashed": user_trashed, "e_t": f"{stem}-t@example.com", "n_t": f"{stem} T",
+                    "phone_t": phone_trashed,
                     "user_integration": user_integration, "e_i": f"{stem}-i@example.com", "n_i": f"{stem} I",
+                    "phone_i": phone_integration,
                 },
             )
 
@@ -160,7 +187,7 @@ def test_upgrade_backfills_links_seeds_roles_and_is_idempotent():
                 sa.text("SELECT count(*) FROM user_role_assignments")
             ).scalar()
 
-            module._upgrade(concurrently=False)
+            _run(raw, lambda: module._upgrade(concurrently=False))
 
             def _contact_of(uid: str):
                 return raw.execute(
@@ -247,7 +274,7 @@ def test_upgrade_backfills_links_seeds_roles_and_is_idempotent():
 
             # Re-running the backfill logic must be a true no-op: no new link, no
             # duplicate audit row for the user already linked above.
-            module._upgrade(concurrently=False)
+            _run(raw, lambda: module._upgrade(concurrently=False))
             assert _contact_of(user_a) == c1
             audit_rows_again = raw.execute(
                 sa.text(

@@ -38,9 +38,23 @@ class AuditLog(Base):
     # (or a historical row from before this column existed). Filtered ONLY by the
     # admin audit listing via ``admin_listing_company_filter``.
     company_id = Column(UUID(as_uuid=False), nullable=True, index=True)
+    # Audit actor (identity S0, #1280; plan section 8). `user_id` is the EFFECTIVE
+    # actor; `real_user_id` is who was at the keyboard (differs only when an admin
+    # impersonates). `actor_type` is one of user | contact | integration | worker |
+    # scheduler | public_link | system; the server default `legacy` is what every
+    # pre-S0 row reads, and what a row the old image writes during a swap reads.
+    # No Python-side default on purpose: new code always stamps an explicit value.
+    actor_type = Column(String(20), nullable=True, server_default="legacy")
+    real_user_id = Column(UUID(as_uuid=False), nullable=True)
+    auth_method = Column(String(20), nullable=True)
+    session_id = Column(UUID(as_uuid=False), nullable=True)
+    integration_id = Column(UUID(as_uuid=False), nullable=True)
+    job_id = Column(String(128), nullable=True)
+    user_agent = Column(String(512), nullable=True)
 
     __table_args__ = (
         Index("ix_audit_logs_entity_type_entity_id", "entity_type", "entity_id"),
         Index("ix_audit_logs_changed_at", "changed_at"),
         Index("ix_audit_logs_user_id", "user_id"),
+        Index("ix_audit_logs_real_user_id", "real_user_id"),
     )

@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 @contextmanager
-def scheduler_session():
+def scheduler_session(name: str = "scheduler"):
     """A DB session for background ticks, explicitly scoped to ALL companies.
 
     Sessions default to ``UNSET``, which the company-scope filter treats as zero
@@ -37,11 +37,17 @@ def scheduler_session():
     Background work opts out of the filter, exactly as ``import_tasks`` and
     ``export_tasks`` already do. Per-row company still governs what each tick then
     does with what it read (an SLA tracker escalates up its own company's ladder).
+
+    Every write in the tick is audited as the `scheduler` actor with ``job_id`` =
+    ``name`` and no user (identity S0, AC-10); the previous actor is restored after.
     """
+    from app.audit_context import AuditActor, actor_scope
+
     db = SessionLocal()
     set_company_scope(db, None)
     try:
-        yield db
+        with actor_scope(AuditActor(actor_type="scheduler", job_id=name), db=db):
+            yield db
     finally:
         db.close()
 
@@ -482,7 +488,7 @@ def _ai_trace_sweep_tick():
     try:
         from app.services.ai_trace import sweep_expired_traces
 
-        with scheduler_session() as db:
+        with scheduler_session("ai_trace_sweep") as db:
             sweep_expired_traces(db)
     except Exception as e:
         logger.error("AI trace sweep tick failed: %s", e, exc_info=True)
@@ -495,7 +501,7 @@ def _spo_container_relink_sweep_tick():
     try:
         from app.services.rules.shipping_order_rules import nightly_relink_all_containers
 
-        with scheduler_session() as db:
+        with scheduler_session("spo_container_relink_sweep") as db:
             relinked = nightly_relink_all_containers(db)
             if relinked:
                 db.commit()
@@ -509,7 +515,7 @@ def _chatbot_delegated_sweep_tick():
     try:
         from app.services.chatbot_turn_sweep import sweep_stalled_delegated_turns
 
-        with scheduler_session() as db:
+        with scheduler_session("chatbot_delegated_sweep") as db:
             sweep_stalled_delegated_turns(db)
     except Exception as e:
         logger.error("Chatbot delegated sweep tick failed: %s", e, exc_info=True)
@@ -523,7 +529,7 @@ def _ideation_idle_sweep_tick():
     try:
         from app.services.ideation_turn_service import sweep_idle_ideation_drafts
 
-        with scheduler_session() as db:
+        with scheduler_session("ideation_idle_sweep") as db:
             sweep_idle_ideation_drafts(db)
     except Exception as e:
         logger.error("Ideation idle sweep tick failed: %s", e, exc_info=True)
@@ -538,7 +544,7 @@ def _autocount_pull_advance_tick():
     try:
         from app.services.autocount_pull_service import advance_building_pulls
 
-        with scheduler_session() as db:
+        with scheduler_session("autocount_pull_advance") as db:
             advance_building_pulls(db)
     except Exception as e:
         logger.error("AutoCount pull advance tick failed: %s", e, exc_info=True)
@@ -555,7 +561,7 @@ def process_pending_integration_logs():
     This function is called periodically by the scheduler.
     """
     try:
-        with scheduler_session() as db:
+        with scheduler_session("integration_log_retry") as db:
             service = IntegrationLogService(db)
             result = service.process_pending_logs()
 
@@ -571,7 +577,7 @@ def process_pending_integration_logs():
 def _scheduled_tasks_heartbeat():
     """Heartbeat: run due DB-configured scheduled tasks and persist run logs."""
     try:
-        with scheduler_session() as db:
+        with scheduler_session("scheduled_tasks_heartbeat") as db:
             run_due_tasks(db)
     except Exception as e:
         logger.error("Scheduled tasks heartbeat failed: %s", str(e), exc_info=True)
@@ -632,7 +638,7 @@ def start_scheduler():
     # bursts get throttled by the per-recipient cap inside drain_email_outbox.
     drain_seconds = 5
     try:
-        with scheduler_session() as db:
+        with scheduler_session("email_outbox_drainer_interval") as db:
             from app.models.user import SystemSetting
 
             settings_row = db.query(SystemSetting).first()

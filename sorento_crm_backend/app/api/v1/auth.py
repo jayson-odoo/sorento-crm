@@ -1,6 +1,7 @@
 """Authentication API routes."""
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 import bcrypt
 import secrets
@@ -50,9 +51,11 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
             headers={"Retry-After": str(gate.retry_after_seconds or login_throttle.LOCK_WINDOW_SECONDS)},
         )
 
+    # Case-insensitive (identity S0, AC-03): every stored email is lowercased and
+    # `uq_users_email_lower` keeps at most one match.
     user: User | None = (
         db.query(User)
-        .filter(User.email == payload.email)
+        .filter(func.lower(User.email) == str(payload.email).strip().lower())
         .first()
     )
 
@@ -124,12 +127,13 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
         remember=bool(payload.remember_me),
         user_agent=request.headers.get("user-agent"),
         ip_address=ip,
+        auth_method="password",
     )
 
     return LoginResponse(
         token=str(session_row.token),
         id=uid,
-        email=str(getattr(user, "email", "") or ""),
+        email=getattr(user, "email", None) or None,
         name=str(getattr(user, "name", "") or "") or None,
         avatar=str(getattr(user, "avatar", "") or "") or None,
         status=str(getattr(user, "status", "") or ""),
@@ -171,7 +175,8 @@ async def signup(
         # Already-registered email: do NOT reveal it (no 409). Equalise timing with
         # a throwaway hash so the response is indistinguishable from a fresh signup,
         # then return the same generic message without creating a duplicate.
-        existing = db.query(User).filter(User.email == payload.email).first()
+        signup_email = str(payload.email).strip().lower()
+        existing = db.query(User).filter(func.lower(User.email) == signup_email).first()
         if existing:
             try:
                 bcrypt.hashpw(payload.password.encode("utf-8"), bcrypt.gensalt())
@@ -197,7 +202,7 @@ async def signup(
         
         from app.models.user import UserRoleAssignment
         user = User(
-            email=payload.email,
+            email=signup_email,
             password=hashed_password,
             name=payload.name,
             status="INACTIVE"
@@ -266,7 +271,11 @@ async def reset_password(
                 headers={"Retry-After": str(gate.retry_after_seconds or app_settings.rate_limit_reset_window_seconds)},
             )
 
-        user = db.query(User).filter(User.email == payload.email).first()
+        user = (
+            db.query(User)
+            .filter(func.lower(User.email) == str(payload.email).strip().lower())
+            .first()
+        )
         if not user:
             # Don't reveal that the account is missing - same response as success.
             return ResetPasswordResponse(message=_GENERIC_RESET_MSG)

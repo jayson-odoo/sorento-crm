@@ -59,6 +59,10 @@ class ForkSafeWorker(Worker):
 
     ``perform_job`` runs in the child, so disposing here gives the work-horse a
     fresh pool; ``close=False`` leaves the parent's sockets untouched.
+
+    The job runs as the `worker` audit actor, on behalf of whoever enqueued it
+    (``job.meta["actor"]``, identity S0 AC-10), through the same helper the
+    in-process drain uses.
     """
 
     def perform_job(self, job, queue):  # noqa: ANN001
@@ -68,7 +72,10 @@ class ForkSafeWorker(Worker):
             engine.dispose(close=False)
         except Exception:
             logger.exception("ForkSafeWorker: engine.dispose(close=False) failed")
-        return super().perform_job(job, queue)
+        from app.services.queue_service import job_actor_scope
+
+        with job_actor_scope(job):
+            return super().perform_job(job, queue)
 
 
 def _maybe_start_scheduler():
