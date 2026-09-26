@@ -246,7 +246,7 @@ engine matches words and numbers (the same for every rule, not a setting): see p
 1. When the description or flyer says "RECTANGULAR", Shape is Rectangular. *(Words; today row 1)*
 2. When the description or flyer says "ROUND", Shape is Round. *(Words; today row 2)*
 3. When the description or flyer says "SQUARE", Shape is Square. *(Words; today row 3)*
-4. When the description or flyer says "OVAL" or "ELLIPSE", Shape is OVAL. *(Words; today rows 4 to 5)*
+4. When the description or flyer says "OVAL" or "ELLIPSE", Shape is Oval. *(Words; today rows 4 to 5)*
 5. When the description or flyer says "SQ", Shape is Square. *(Words; today row 6)*
 
 ### Product class
@@ -259,21 +259,21 @@ engine matches words and numbers (the same for every rule, not a setting): see p
 6. When the product name ends with "WATER CLOSET", Product class is Water closet. *(Words; today row 7)*
 7. When the product name ends with "KITCHEN SINK" or "GRANITE SINK", Product class is Kitchen sink. *(Words; today rows 8 to 9)*
 8. When the product name ends with "CLOTH HANGER", Product class is Cloth hanger. *(Words; today row 10)*
-9. When the product name ends with "KITCHEN TAP", Product class is TAP. *(Words; today row 11)*
+9. When the product name ends with "KITCHEN TAP", Product class is Tap. *(Words; today row 11)*
 10. When the product name ends with "HAND SHOWER" or "RAIN SHOWER" or "SHOWER HEAD", Product class is Shower. *(Words; today rows 12 to 14)*
 11. When the product name ends with "WASH BASIN", Product class is Wash basin. *(Words; today row 15)*
 12. When the product name ends with "SHOWER SET", Product class is Shower. *(Words; today row 16)*
 13. When the product name ends with "ART BASIN", Product class is Wash basin. *(Words; today row 17)*
-14. When the product name ends with "BASIN TAP" or "MIXER TAP", Product class is TAP. *(Words; today rows 18 to 19)*
+14. When the product name ends with "BASIN TAP" or "MIXER TAP", Product class is Tap. *(Words; today rows 18 to 19)*
 15. When the product name ends with "BATH TUB" or "BATHTUB", Product class is Bathtub. *(Words; today rows 20 to 21)*
 16. When the product name ends with "JACUZZI", Product class is Jacuzzi. *(Words; today row 22)*
-17. When the product name ends with "BIB TAP", Product class is TAP. *(Words; today row 23)*
+17. When the product name ends with "BIB TAP", Product class is Tap. *(Words; today row 23)*
 18. When the product name ends with "TOILET", Product class is Water closet. *(Words; today row 24)*
 19. When the product name ends with "URINAL", Product class is Urinal. *(Words; today row 25)*
-20. When the product name ends with "FAUCET", Product class is TAP. *(Words; today row 26)*
+20. When the product name ends with "FAUCET", Product class is Tap. *(Words; today row 26)*
 21. When the product name ends with "SHOWER", Product class is Shower. *(Words; today row 27)*
 22. When the product name ends with "BASIN", Product class is Wash basin. *(Words; today row 28)*
-23. When the product name ends with "MIXER" or "TAP", Product class is TAP. *(Words; today rows 29 to 30)*
+23. When the product name ends with "MIXER" or "TAP", Product class is Tap. *(Words; today rows 29 to 30)*
 24. When the product name ends with "WC", Product class is Water closet. *(Words; today row 31)*
 25. What the product's name says it is (its last noun, ignoring sizes and what it comes with). *(Product; today row 32)*
 26. The product category's class. *(Product; today row 33)*
@@ -289,14 +289,14 @@ engine matches words and numbers (the same for every rule, not a setting): see p
 7. When the description or flyer says "NICKEL", Finish or colour is Nickel. *(Words; today row 9)*
 8. When the description or flyer says "BLACK", Finish or colour is Black. *(Words; today row 10)*
 9. When the description or flyer says "WHITE", Finish or colour is White. *(Words; today row 11)*
-10. When the description or flyer says "GREY", Finish or colour is GREY. *(Words; today row 12)*
+10. When the description or flyer says "GREY", Finish or colour is Grey. *(Words; today row 12)*
 11. When the description or flyer says "SATIN", Finish or colour is Satin chrome. *(Words; today row 13)*
 12. When the product code ends with "-MBL", Finish or colour is Black. *(Code; today row 14)*
 13. When the product code ends with "-BL", Finish or colour is Black. *(Code; today row 15)*
 14. When the product code ends with "-GM", Finish or colour is Gunmetal. *(Code; today row 16)*
 15. When the product code ends with "-NL", Finish or colour is Nickel. *(Code; today row 17)*
 16. When the product code ends with "-NK", Finish or colour is Nickel. *(Code; today row 18)*
-17. When the product code ends with "-GY", Finish or colour is GREY. *(Code; today row 19)*
+17. When the product code ends with "-GY", Finish or colour is Grey. *(Code; today row 19)*
 18. When the product code ends with "-RG", Finish or colour is Rose gold. *(Code; today row 20)*
 19. When the product code ends with "-CR", Finish or colour is Chrome. *(Code; today row 21)*
 20. When the product code ends with "-FRG", Finish or colour is French gold. *(Code; today row 22)*

@@ -93,20 +93,42 @@ h2.frame-title{font-size:13px;margin:28px 0 10px;color:var(--muted);font-weight:
 .row375{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:#fff}
 .row375 .l{font-size:12px;color:var(--muted)}
 .row375 .v{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px}
+
+.modal{border:1px solid var(--line);border-radius:12px;background:#fff;box-shadow:0 12px 40px rgba(0,0,0,.14);width:640px;max-width:100%}
+.modal .mh{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);font-weight:600}
+.modal .mb{padding:16px 18px}
+.modal .mf{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--line)}
+.sentence{background:var(--primary-soft);color:#1e3a8a;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:14px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex-wrap:wrap}
+.seg span{padding:5px 12px;font-size:13px;border-right:1px solid var(--line);color:#3f3f46;background:#fff}
+.seg span:last-child{border-right:0}
+.seg span.on{background:var(--primary);color:#fff}
+.sel{display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);border-radius:6px;padding:6px 10px;font-size:13px;background:#fff;min-width:0}
+.tokbox{border:1px solid var(--line);border-radius:6px;padding:5px 6px 1px;background:#fff;min-height:34px}
+.tokbox .ph{color:var(--muted);font-size:12px;display:inline-block;padding:2px 4px}
+.chk{display:flex;align-items:center;gap:8px;font-size:13px;margin:4px 0}
+.chk i{width:14px;height:14px;border:1px solid #a1a1aa;border-radius:3px;display:inline-block;flex:none}
+.chk i.on{background:var(--primary);border-color:var(--primary)}
+.grip{color:#a1a1aa;cursor:grab;flex:none;width:12px;letter-spacing:-2px}
+.kinds{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.kcard{border:1px solid var(--line);border-radius:10px;background:#fff;padding:12px 14px;font-size:13px}
+.kcard h4{margin:0 0 8px;font-size:13px}
+.frm{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px 10px;align-items:center}
+.frm .k{color:var(--muted);font-size:12px}
+.hit{color:var(--green);font-weight:600}
 </style>
 </head>
 <body>
 <div class="doc">
 <h1>Mockup 2 of 5: a specification's Details tab</h1>
-<p class="sub">Issue #1286, slices S1 and S3. The first tab of a spec's page: plain field names, the words that name the spec itself, the technical facts behind Advanced, and the Back link where the title is.</p>
-<h2 class="frame-title">1280 wide, Capacity (oz), Details tab (Advanced shown open)</h2>
+<p class="sub">Issue #1286, slices S1 and S3, round 2. The first tab of a spec's page: plain field names, the words that name the spec itself, and the Back link where the title is. No Advanced.</p>
+<h2 class="frame-title">1280 wide, Capacity (oz), Details tab</h2>
 <div class="layout">
 <div class="scroll"><div class="frame w1280"><div class="shell"><div class="side"><div class="brand">Sorento</div>
-<div class="grp">Master data</div><div class="it">Products</div><div class="it">Brands</div>
-<div class="it">Categories</div><div class="it on">Product Specifications</div><div class="it">Spec Verification</div></div>
+<div class="grp">Master data</div><div class="it">Products</div><div class="it">Brands</div><div class="it">Categories</div><div class="it on">Product Specifications</div><div class="it">Spec Verification</div></div>
 <div class="main"><div class="topbar">Search menu... &nbsp; Sorento SRT</div><div class="content"><div class="phrow"><div><div class="crumbs">Master data &rsaquo; Product Specifications &rsaquo; Capacity (oz)</div>
 <h1>Capacity (oz) &nbsp;<span class="chipt" style="vertical-align:middle">Number (oz)</span></h1></div>
-<div class="actions"><span class="btn">&larr; Back to specifications</span><span class="co">1</span><span class="btn ghost">&lsaquo; 3 of 53 &rsaquo;</span><span class="btn ghost">&#9881;</span><span class="btn primary">Edit</span></div></div>
+<div class="actions"><span class="btn">&larr; Back to specifications</span><span class="co">1</span><span class="btn ghost">&lsaquo; 3 of 52 &rsaquo;</span><span class="btn ghost" aria-label="More actions">&#9881;</span><span class="btn primary">Edit</span></div></div>
 <div class="tabs"><span class="on">Details</span><span class="">Choices and words</span><span class="">How it is read</span><span class="">Products</span></div>
 <div class="card" style="max-width:820px"><div class="fields2">
 <div class="field"><div class="lbl">Name</div><div class="val">Capacity (oz)</div></div>
@@ -115,10 +137,9 @@ h2.frame-title{font-size:13px;margin:28px 0 10px;color:var(--muted);font-weight:
 <div class="field"><div class="lbl">Highest believable value</div><div class="val">No limit</div></div></div>
 <div class="field"><div class="lbl">Other names for this specification <span class="co">2</span></div>
 <div class="val"><span class="tok">oz</span><span class="tok">ounce</span><span class="tok">ounces</span></div></div>
-<div class="adv"><div class="hd">&#9662; Advanced</div><div class="bd"><div>Code <span class="mono">capacity_oz</span> &middot; Built in &middot; 1 rule</div></div></div> <span class="co">3</span>
+</div> <span class="co">3</span></div></div>
 </div></div></div>
-</div></div></div>
-<div class="notes"><ol><li><span class="co">1</span><div><b>Back sits with the title</b>Inside the same side gutter as the title and the card, not flush against the window edge. Lowercase copy like "Back to brands". The page header was rendered outside the Container that pads every other detail page.<span class="ref">AC-S3.6; review R1</span></div></li><li><span class="co">2</span><div><b>_self becomes a sentence</b>"Other names for this specification" holds the words for the spec itself (oz, ounce, ounces). Same stored words as the old "_self" card; it no longer pretends to be a value.<span class="ref">AC-S1.8; review H5, V4</span></div></li><li><span class="co">3</span><div><b>Advanced, closed by default</b>Code, Built in / Added here and the rule count. Shown open here for the review; closed by default and remembered per person. No "brand Unit None Active" small print, no Seed badge on the card.<span class="ref">AC-S1.11, AC-S3.7; review R3, R4</span></div></li></ol></div>
+<div class="notes"><ol><li><span class="co">1</span><div><b>Back sits with the title</b>Inside the same side gutter as the title and the card, not flush against the window edge. The page header was rendered outside the Container that pads every other detail page.<span class="ref">AC-S3.6; review R1</span></div></li><li><span class="co">2</span><div><b>_self becomes a field</b>"Other names for this specification" holds the words for the spec itself (oz, ounce, ounces). Same stored words as the old "_self" card; it no longer pretends to be a value.<span class="ref">AC-S1.12; plan D7</span></div></li><li><span class="co">3</span><div><b>No Advanced</b>The code name, Built in / Added here and the rule count are not on this page at all (owner ruling, 26 Sep 2026). Nothing on the card needs a maintainer to read it.<span class="ref">AC-S3.7; plan D8</span></div></li></ol></div>
 </div><h2 class="frame-title">375 wide, Details tab</h2>
 <div class="layout"><div class="frame w375 phone"><div class="top"><span>&#9776;</span><span>Specifications</span><span class="muted">&#8943;</span></div>
 <div class="content"><div class="crumbs">&larr; Back to specifications</div><h1 style="font-size:18px;margin:2px 0 6px">Capacity (oz) <span class="chipt">Number (oz)</span></h1>
@@ -126,8 +147,8 @@ h2.frame-title{font-size:13px;margin:28px 0 10px;color:var(--muted);font-weight:
 <div class="field"><div class="lbl">Name</div><div class="val">Capacity (oz)</div></div>
 <div class="field"><div class="lbl">Unit</div><div class="val">oz</div></div>
 <div class="field"><div class="lbl">In use</div><div class="val"><span class="pill green">Yes</span></div></div>
-<div class="field"><div class="lbl">Other names for this specification</div><div class="val"><span class="tok">oz</span><span class="tok">ounce</span><span class="tok">ounces</span></div></div>
-<div class="adv"><div class="hd">&#9656; Advanced</div></div></div></div></div>
+<div class="field"><div class="lbl">Highest believable value</div><div class="val">No limit</div></div>
+<div class="field"><div class="lbl">Other names for this specification</div><div class="val"><span class="tok">oz</span><span class="tok">ounce</span><span class="tok">ounces</span></div></div></div></div></div>
 </div>
 </body>
 </html>
