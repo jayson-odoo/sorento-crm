@@ -92,10 +92,14 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     # sales_channel` when a filter answer names a channel and to settle a fresh channel
     # word onto the focus directly. 35 declared keys -> 36.
     "sales_channel": "app/services/chatbot/turn/apply.py",
+    # 26 Sep 2026 (chatbot memory lane A S3, migration `mem_0002_parser_memory`):
+    # `profile_statement` joins the schema - `engine.py`'s tail reads it and applies it
+    # as a `stated` fact through `profile_facts.apply_statement`. 36 declared keys -> 37.
+    "profile_statement": "app/services/chatbot/engine.py",
 }
 
 
-def test_measured_read_set_matches_the_36_declared_keys():
+def test_measured_read_set_matches_the_37_declared_keys():
     """The table above is complete and has no typo - every declared key is measured read
     exactly once, and the table names nothing DECLARED_KEYS does not also carry. Catches a
     stale table before it can hide a real drift in the two tests below."""

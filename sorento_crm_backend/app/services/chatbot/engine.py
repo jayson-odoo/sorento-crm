@@ -60,6 +60,7 @@ from app.services.chatbot import session_state, turn_runtime
 from app.services.chatbot.turn import pending as turn_pending
 from app.services.chatbot.turn import state as turn_state
 from app.services.chatbot.turn import compose as turn_compose
+from app.services.chatbot.turn import context as context_mod
 from app.services.chatbot.turn import fetch as run_fetch_mod
 from app.services.chatbot.turn import memory as memory_mod
 from app.services.chatbot.turn import profile_facts as profile_facts_mod
@@ -1188,6 +1189,101 @@ def _fanout_domain_hint(domains: list[Any], entities: Any) -> Any:
     return None
 
 
+_WEEKDAY_ABBR = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _short_day_time(when: Any) -> str:
+    if when is None:
+        return ""
+    return f"{_WEEKDAY_ABBR[when.weekday()]} {when.strftime('%H:%M')}"
+
+
+def _memory_intake(db: Session, *, contact_respond_id: str, dry_run: bool) -> dict[str, Any]:
+    """Everything `context.assemble` needs beyond what `turn_runtime.load_profile`
+    already reads, loaded once at intake and timed as `memory_ms` (contract section
+    3/6.6): the effective level, the last 3 closed-frame summaries (level `past`/
+    `full`), the live episode's earlier messages (level `conversation`/`past`/
+    `full`), and the "About this contact" profile slice (level `full` only - the
+    one level the parser sees it at)."""
+    from app.models.access import RespondContact
+    from app.models.chatbot_turn import ChatbotTurn
+    from app.models.conversation_frame import ConversationFrame
+    from app.models.user import SystemSetting
+
+    started = time.perf_counter()
+    own_level = (
+        db.query(RespondContact.chatbot_memory_level)
+        .filter(RespondContact.respond_io_id == contact_respond_id)
+        .scalar()
+    )
+    system_memory = db.query(SystemSetting.chatbot_memory).scalar()
+    effective = memory_mod.effective_level(own_level, system_memory)
+
+    summaries: list[str] = []
+    read_frames: list[dict[str, Any]] = []
+    earlier_messages: list[dict[str, Any]] = []
+    profile_slice: str | None = None
+    newest_frame = None
+
+    if effective in ("past", "full"):
+        frames = (
+            db.query(ConversationFrame)
+            .filter(
+                ConversationFrame.contact_respond_id == contact_respond_id,
+                ConversationFrame.is_test.is_(dry_run),
+                ConversationFrame.status == "closed",
+            )
+            .order_by(ConversationFrame.last_activity_at.desc())
+            .limit(3)
+            .all()
+        )
+        summaries = [f.summary for f in frames if f.summary]
+        read_frames = [{"id": f.id} for f in frames]
+        newest_frame = frames[0] if frames else None
+
+    if effective in ("conversation", "past", "full"):
+        if newest_frame is None and effective == "conversation":
+            newest_frame = (
+                db.query(ConversationFrame)
+                .filter(
+                    ConversationFrame.contact_respond_id == contact_respond_id,
+                    ConversationFrame.is_test.is_(dry_run),
+                )
+                .order_by(ConversationFrame.last_activity_at.desc())
+                .first()
+            )
+        live_query = db.query(ChatbotTurn).filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.is_test.is_(dry_run),
+        )
+        if newest_frame is not None:
+            live_query = live_query.filter(ChatbotTurn.created_at > newest_frame.last_activity_at)
+        live_turns = live_query.order_by(ChatbotTurn.created_at.desc()).limit(3).all()
+        for row in reversed(live_turns):  # oldest first, per the L3 header
+            text_value = memory_mod._turn_message_text(row)
+            if text_value:
+                earlier_messages.append({"created_at": _short_day_time(row.created_at), "text": text_value})
+
+    if effective == "full":
+        contact_row = (
+            db.query(RespondContact).filter(RespondContact.respond_io_id == contact_respond_id).first()
+        )
+        if contact_row is not None:
+            merged = profile_facts_mod.merged_facts_for_display(db, contact_row)
+            crm = profile_facts_mod.crm_view(db, contact_row)
+            profile_slice = profile_facts_mod.parser_slice(merged, crm)
+
+    return {
+        "effective_level": effective,
+        "own_level": own_level,
+        "summaries": summaries,
+        "earlier_messages": earlier_messages,
+        "profile_slice": profile_slice,
+        "read_frames": read_frames,
+        "ms": int((time.perf_counter() - started) * 1000),
+    }
+
+
 def _run_stages(  # noqa: PLR0915
     envelope: Envelope,
     *,
@@ -1259,7 +1355,9 @@ def _run_stages(  # noqa: PLR0915
         # from, and handed down to `resolve_kinds` -> `resolve_gate.run` -> `gate.run_gate`
         # - the one place a roster is actually cut.
         roster_caps = {row.kind: row.roster_cap for row in policy.kinds}
-        profile, recall_enabled = turn_runtime.load_profile(db, contact_respond_id)
+        # `chatbot_recall_enabled` is no longer read (contract section 2: the recall
+        # re-parse is deleted; the column stays, untouched, per Q1 - no data change).
+        profile, _recall_enabled = turn_runtime.load_profile(db, contact_respond_id)
         known_phone = turn_runtime.contact_phone(db, contact_respond_id)
         turn_no = turn_runtime.turn_number(db, contact_respond_id)
         state_in = turn_runtime.load_state(session_block, profile=profile, turn_no=turn_no)
@@ -1273,6 +1371,11 @@ def _run_stages(  # noqa: PLR0915
             ingress=envelope.ingress,
             is_test=bool(dry_run),
         )
+        # Chatbot memory lane A (contract section 3/6.6): the last 3 closed-frame
+        # summaries, the live episode's earlier messages and the profile slice -
+        # everything `context.assemble` needs beyond the profile row already read
+        # above, off the SAME session, timed as `memory_ms`.
+        memory_intake = _memory_intake(db, contact_respond_id=contact_respond_id, dry_run=dry_run)
         # `parser_config` is resolved AFTER media intake, not here: AC-1810's "no
         # parser call" means no parser SETUP either - a media-denied turn (no API
         # key required to check a gate/quota/burst decision) must not fail because
@@ -1283,6 +1386,7 @@ def _run_stages(  # noqa: PLR0915
         summary="Received the message and loaded what the bot remembered.",
         why="Every turn starts from the contact's stored conversation state.",
         facts={
+            "memory_ms": memory_intake["ms"],
             "ingress": envelope.ingress,
             "remembered_keys": len([k for k, v in remembered_before.items() if v]),
             "quoted_a_message": _reply_to_message_id(envelope) is not None,
@@ -1433,16 +1537,28 @@ def _run_stages(  # noqa: PLR0915
     # overrode the parser's answer, are gone: APPLY is the one place a verdict becomes a
     # decision now.
     stage[0] = "understood"
-    profile_words = memory_mod.profile_block(state_in.profile)
     pending_options = _pending_option_labels(state_in.pending)
-    user_block = parser.build_user_block(
+    effective_level = memory_intake["effective_level"]
+    subject_full = parser.current_subject_line(state_in.focus)
+    subject_prefix = "Current subject: "
+    current_subject = (
+        subject_full[len(subject_prefix) :] if subject_full and subject_full.startswith(subject_prefix) else subject_full
+    )
+    context_layers = context_mod.ContextLayers(
+        level=effective_level,
+        profile_slice=memory_intake["profile_slice"],
+        summaries=memory_intake["summaries"],
+        earlier_messages=memory_intake["earlier_messages"],
         previous_response=previous_reply,
-        latest_user_message=latest_user_message,
+        current_subject=current_subject,
         pending_kind=state_in.pending.kind if state_in.pending is not None else None,
         pending_options=pending_options,
-        profile_block=profile_words,
-        focus=state_in.focus,
+        settings_profile_line=memory_mod.profile_block(state_in.profile),
+        current_message=latest_user_message,
+        reply_to=None,
+        media_line=None,
     )
+    user_block, context_report = context_mod.assemble(context_layers)
     # G6: a dry run may supply the emission instead of paying for it.
     parser_bypassed = dry_run and "mock_reformulator_output" in harness_present
     parse_started = time.perf_counter()
@@ -1499,41 +1615,11 @@ def _run_stages(  # noqa: PLR0915
             )
         return _failed_result(turn_id, "understood", message, actions, dry_run)
 
-    # -- recall: ONE re-parse, behind two flags (AC-1547) ------------------- #
-    # `anaphora.backward_reference` is the parser's own signal that the message points at
-    # something outside this turn's focus; `chatbot_recall_enabled` is the contact's own
-    # switch, off by default. Both, or neither: recall doubles the parser spend on the
-    # turns it fires, and it is never another contact's memory.
-    recalled: list[dict[str, Any]] = []
-    if recall_enabled and jsc.get(verdict.get("anaphora"), "backward_reference") is True:
-        with _session(session_factory) as db:
-            recalled = memory_mod.recall(contact_respond_id, verdict, db)
-        if recalled:
-            user_block = parser.build_user_block(
-                previous_response=previous_reply,
-                latest_user_message=latest_user_message,
-                pending_kind=state_in.pending.kind if state_in.pending is not None else None,
-                pending_options=pending_options,
-                profile_block=profile_words,
-                episodes_block=memory_mod.episodes_block(recalled),
-                focus=state_in.focus,
-            )
-            try:
-                parser_raw = parser.parse(parser_config, user_block)
-                verdict = dict(parser_raw)
-                parser_usage = getattr(parser_raw, "usage", {}) or {}
-            except parser.ParserError:
-                # The FIRST verdict is already a usable answer; a failed re-parse costs
-                # the episodes, never the turn.
-                logger.warning("chatbot turn %s: the recall re-parse did not answer", turn_id)
-        turn_trace.add(
-            "recall",
-            {
-                "frame_ids": [f.get("id") for f in recalled],
-                "frames": len(recalled),
-                "reparsed": bool(recalled),
-            },
-        )
+    # Chatbot memory lane A (contract section 3, Q5 ruling): the recall re-parse
+    # is gone - one parser call per turn, always. The frames `context.assemble`
+    # already folded into THIS call's user block (L4, level `past`/`full`) are
+    # what `episodes.read` on the `memory` trace event reports below.
+    recalled: list[dict[str, Any]] = memory_intake["read_frames"]
 
     turn_trace.record(
         "understood",
@@ -1567,6 +1653,12 @@ def _run_stages(  # noqa: PLR0915
         raw={"parser_raw": parser_raw, "derived": verdict},
     )
     turn_trace.add("prompt_text", {"text": user_block})
+    # Chatbot memory lane A (contract section 6): once per successful parse, never
+    # on a failed one - `TurnTrace.persisted()` places every `.add()` event AFTER
+    # every `.record()` stage, so an event added before a parse failure would
+    # itself become the trace's last entry instead of the failed `understood`
+    # stage (AC-105/R5/H44's own "no routing" shape).
+    turn_trace.add("context", context_report)
 
     # The routing default lands ONCE, here, after the last parse and before the access
     # read (finding 2b): every reader downstream - access, the lanes, the trace - sees
@@ -2955,29 +3047,41 @@ def _run_answer(
         facts_saved: list[dict[str, Any]] = list(remembered_before.get("_facts_tallied") or [])
         statement = verdict.get("profile_statement")
         if not dry_run and isinstance(statement, dict) and statement.get("key"):
-            from app.models.access import RespondContact as _RespondContactStated
-            from app.models.user import SystemSetting as _SystemSettingStated
+            stmt_key = statement.get("key")
+            stmt_spec = profile_facts_mod.VOCABULARY.get(stmt_key)
+            if stmt_spec is None or not stmt_spec.allow_stated:
+                # A `profile_statement` naming a key outside the six-key stated
+                # vocabulary (contract section 6.5) - traced regardless of the
+                # contact's own memory level, since this is the PARSER's emission
+                # being out of bounds, not a settings decision.
+                turn_trace.add(
+                    "profile_statement_dropped",
+                    {"key": stmt_key, "reason": "not a stated-vocabulary key"},
+                )
+            else:
+                from app.models.access import RespondContact as _RespondContactStated
+                from app.models.user import SystemSetting as _SystemSettingStated
 
-            own_level_row = (
-                db.query(_RespondContactStated.chatbot_memory_level)
-                .filter(_RespondContactStated.respond_io_id == contact_respond_id)
-                .scalar()
-            )
-            system_memory_row = db.query(_SystemSettingStated.chatbot_memory).scalar()
-            if memory_mod.effective_level(own_level_row, system_memory_row) != "off":
-                try:
-                    entry = profile_facts_mod.apply_statement(
-                        db,
-                        contact_respond_id,
-                        statement["key"],
-                        statement.get("value"),
-                        turn_id=turn_id,
-                    )
-                except Exception:  # noqa: BLE001 - a lost statement is never a lost turn
-                    logger.warning("chatbot: profile_statement apply did not run", exc_info=True)
-                    entry = None
-                if entry is not None:
-                    facts_saved.append({"key": entry["key"], "source": entry["source"]})
+                own_level_row = (
+                    db.query(_RespondContactStated.chatbot_memory_level)
+                    .filter(_RespondContactStated.respond_io_id == contact_respond_id)
+                    .scalar()
+                )
+                system_memory_row = db.query(_SystemSettingStated.chatbot_memory).scalar()
+                if memory_mod.effective_level(own_level_row, system_memory_row) != "off":
+                    try:
+                        entry = profile_facts_mod.apply_statement(
+                            db,
+                            contact_respond_id,
+                            stmt_key,
+                            statement.get("value"),
+                            turn_id=turn_id,
+                        )
+                    except Exception:  # noqa: BLE001 - a lost statement is never a lost turn
+                        logger.warning("chatbot: profile_statement apply did not run", exc_info=True)
+                        entry = None
+                    if entry is not None:
+                        facts_saved.append({"key": entry["key"], "source": entry["source"]})
 
         _record_memory_trace(
             db,

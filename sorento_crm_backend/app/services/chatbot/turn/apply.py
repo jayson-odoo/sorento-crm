@@ -970,7 +970,10 @@ def _reconcile_step(
 
 
 # The message types that carry no business question of their own (contract 49, 51).
-_CASUAL_TYPES = frozenset({"casual", "unknown", "confirmation"})
+# `history_question` joins them here (chatbot memory lane A, contract section 6.5):
+# a question about the dealer's own past with the bot routes to the SAME lane a
+# casual/unknown message does (`low_signal`) until S4's own history composer lands.
+_CASUAL_TYPES = frozenset({"casual", "unknown", "confirmation", "history_question"})
 #: The ideation domain's own name - the same literal `route._domain_branch` and
 #: `_HELP_EXEMPT_DOMAINS` already key on.
 IDEATE_DOMAIN = "ideate"

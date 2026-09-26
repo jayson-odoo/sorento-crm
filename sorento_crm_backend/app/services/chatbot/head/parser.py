@@ -303,6 +303,26 @@ def _build_json_schema() -> dict[str, Any]:
                 },
                 "required": ["backward_reference"],
             },
+            # Chatbot memory lane A (contract section 6.5): set only when the dealer
+            # states something about THEMSELVES ("I'm the purchaser", "reply in
+            # Malay") - `turn/apply.py` applies it as a `stated` fact through
+            # `profile_facts.apply_statement`, in the tail. ENUM'd (unlike the
+            # free-string `domain_hint` et al.) because this vocabulary is closed
+            # and small, and a value outside it is dropped by APPLY with a trace
+            # line rather than read as a fact (contract section 6.5's own six keys -
+            # `about` included, per the vocabulary table in section 4).
+            "profile_statement": {
+                "type": ["object", "null"],
+                "additionalProperties": False,
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "enum": ["language", "role", "usual_brands", "usual_sites", "project", "about"],
+                    },
+                    "value": {"type": ["string", "array"], "items": {"type": "string"}},
+                },
+                "required": ["key", "value"],
+            },
         },
         "required": [
             "message_type",
@@ -341,6 +361,7 @@ def _build_json_schema() -> dict[str, Any]:
             "asks",
             "topic_reset",
             "anaphora",
+            "profile_statement",
         ],
     }
 
@@ -365,7 +386,7 @@ DECLARED_KEYS: frozenset[str] = frozenset(PARSE_OUTPUT_JSON_SCHEMA["required"])
 #: addendum ever emits it - so every recorded emission and every `mock_reformulator_
 #: output` a console case carries lacks it, and reads as null.
 TOLERATED_ABSENT: frozenset[str] = frozenset(
-    {"broaden_to", "domain_in_message", "sales_channel"}
+    {"broaden_to", "domain_in_message", "sales_channel", "profile_statement"}
 )
 
 

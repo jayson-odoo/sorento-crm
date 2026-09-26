@@ -291,6 +291,23 @@ def _memory(records: list[dict[str, Any]]) -> dict[str, Any] | None:
     }
 
 
+def _context(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The per-layer token budget report (chatbot memory lane A, contract section
+    6): `{level, layers: [{layer, est_tokens, cap, dropped}], total_est_tokens,
+    cap}`, exactly as `turn/context.py::assemble` returns it - `None` on a turn
+    that never reached a successful parse (no `context` event was ever added)."""
+    entries = _kind_records(records, "context")
+    if not entries:
+        return None
+    entry = entries[-1]
+    return {
+        "level": entry.get("level"),
+        "layers": entry.get("layers") or [],
+        "total_est_tokens": entry.get("total_est_tokens"),
+        "cap": entry.get("cap"),
+    }
+
+
 def _order(row: ChatbotTurn, db: Session | None = None) -> dict[str, Any] | None:
     """The per-contact ordering ticket (chatbot memory lane A, contract section 6) -
     read-only, nothing to set. `ticket`/`waited_ms` come from the turn's own `queue`
@@ -380,7 +397,7 @@ def compose_trace_detail(row: ChatbotTurn, db: Session | None = None) -> dict[st
         "session": _session(records),
         "apply": _apply(records),
         "memory": _memory(records),
-        "context": None,  # S3 - the per-layer token budget is not built yet.
+        "context": _context(records),
         "order": _order(row, db),
         "prompt_text": _prompt_text(records),
     }

@@ -1171,17 +1171,23 @@ class TestParserPromptAndContractsTeachSalesReport:
         stays RETIRED on this lane (S0 dropped the dev/prod dual-body split; only ONE
         body ships now, `SEMANTIC_PARSER_PROMPT`) - main's own edit to the SLIM body
         is deliberately dropped, so the original "both texts ship" premise (dev vs
-        prod split) no longer applies. `SALES_REPORT_ADDENDUM` is still the newest
-        addendum, so it is still the tail of the one body that exists."""
+        prod split) no longer applies. `MEMORY_ADDENDUM` (chatbot memory lane A,
+        migration `mem_0002_parser_memory`) has since stacked AFTER `SALES_REPORT_
+        ADDENDUM` and is now the newest addendum, so it is the tail of the one body
+        that exists - `SALES_REPORT_ADDENDUM` is one peel beneath it."""
         from app.services.chatbot_parser_prompt import (
+            MEMORY_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
         )
 
-        assert SEMANTIC_PARSER_PROMPT.endswith(SALES_REPORT_ADDENDUM), (
-            "SEMANTIC_PARSER_PROMPT does not end with SALES_REPORT_ADDENDUM - it is "
+        assert SEMANTIC_PARSER_PROMPT.endswith(MEMORY_ADDENDUM), (
+            "SEMANTIC_PARSER_PROMPT does not end with MEMORY_ADDENDUM - it is "
             "the newest addendum, so it is the tail"
         )
+        assert SEMANTIC_PARSER_PROMPT.removesuffix(MEMORY_ADDENDUM).endswith(
+            SALES_REPORT_ADDENDUM
+        ), "SALES_REPORT_ADDENDUM must still stack beneath MEMORY_ADDENDUM"
 
     def test_the_addendum_stacks_after_low_stock(self) -> None:
         """The ORDER the existing pins' strip chains assume (`test_parser_prompt_is_live`,
@@ -1192,12 +1198,15 @@ class TestParserPromptAndContractsTeachSalesReport:
         `test_the_addendum_is_appended_to_the_single_body` above) - one body, not two."""
         from app.services.chatbot_parser_prompt import (
             LOW_STOCK_ADDENDUM,
+            MEMORY_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
         )
 
-        assert SEMANTIC_PARSER_PROMPT.removesuffix(SALES_REPORT_ADDENDUM).endswith(
-            LOW_STOCK_ADDENDUM
+        assert (
+            SEMANTIC_PARSER_PROMPT.removesuffix(MEMORY_ADDENDUM)
+            .removesuffix(SALES_REPORT_ADDENDUM)
+            .endswith(LOW_STOCK_ADDENDUM)
         ), "SALES_REPORT_ADDENDUM must stack AFTER LOW_STOCK_ADDENDUM"
 
 

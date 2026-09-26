@@ -586,18 +586,19 @@ def _raw_line_value(value: Any) -> str:
 
 
 def parser_slice(facts: list[dict[str, Any]], crm: list[dict[str, Any]]) -> str:
-    """The "About this contact" block handed to the parser at level `full` (contract
-    section 2, L5). No expiry (Q7 ruling) - a fact from 400 days ago is rendered
-    exactly like one from today; the DATE is what tells the reader it is old, never
-    a cutoff that drops it."""
-    lines = ["About this contact:"]
+    """The raw `"key value; key value"` segments `turn/context.py::_render_l5`
+    wraps in its own "About this contact:" header (contract section 2, L5) - no
+    header here, no newlines, so `assemble` can split, cap and drop by key on its
+    own. No expiry (Q7 ruling) - a fact from 400 days ago is rendered exactly like
+    one from today; the DATE is what tells the reader it is old, never a cutoff
+    that drops it."""
     by_key = {f.get("key"): f for f in facts if f.get("value") is not None}
     for fact in crm:
         by_key.setdefault(fact["key"], fact)
+    segments: list[str] = []
     for key in VOCABULARY:
         entry = by_key.get(key)
         if entry is None or entry.get("value") is None:
             continue
-        label = VOCABULARY[key].label
-        lines.append(f"{label}: {_raw_line_value(entry.get('value'))}")
-    return "\n".join(lines)
+        segments.append(f"{key.replace('_', ' ')} {_raw_line_value(entry.get('value'))}")
+    return "; ".join(segments)

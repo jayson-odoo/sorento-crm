@@ -29,6 +29,7 @@ from app.services.chatbot_parser_prompt import (
     LAST_COST_ADDENDUM,
     LIVE_SYSTEM_MESSAGE_SHA256,
     LOW_STOCK_ADDENDUM,
+    MEMORY_ADDENDUM,
     SALES_REPORT_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
 )
@@ -143,7 +144,16 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # every OTHER carried axis; `replace` drops the whole scope to this message's own
 # entities alone). Net +676. Measured via `_without_growth_r1_addendum
 # (SEMANTIC_PARSER_PROMPT)` against the coder's landed change, not derived.
-CONSTANT_CHARS = 63657
+# 63657 -> 62674 (26 Sep 2026, chatbot memory lane A S3, migration
+# `mem_0002_parser_memory`): three cuts pay for `MEMORY_ADDENDUM` (contract section
+# 6.4) - the `previous_conversation_state` input-description bullet (never sent, -127),
+# the dead n8n `{{ (() => {...})() }}` "Companies OFFERED" IIFE collapsed to a plain
+# sentence (-596), and the `CURRENT DATE` section moved out of the base body entirely,
+# to the end of `MEMORY_ADDENDUM` (AC-MEM071, -260). `MEMORY_ADDENDUM` itself now
+# stacks AFTER `SALES_REPORT_ADDENDUM` (`_without_growth_r1_addendum` peels it first),
+# so it is not part of this number. Net -983. Measured via `_without_growth_r1_
+# addendum(SEMANTIC_PARSER_PROMPT)`, not derived.
+CONSTANT_CHARS = 62674
 
 
 def _without_growth_r1_addendum(text: str) -> str:
@@ -152,14 +162,19 @@ def _without_growth_r1_addendum(text: str) -> str:
     `LAST_COST_ADDENDUM` (migration 511, 12 Sep 2026), then `LOW_STOCK_ADDENDUM`
     (PLAN-low-stock-report.md S7, 14 Sep 2026), then `SALES_REPORT_ADDENDUM`
     (PLAN-chatbot-sales-report.md S4 wiring point 1, migration
-    `519_chatbot_sales_report_vocab`) now stack AFTER `GROWTH_R1_ADDENDUM` on both
-    bodies, the same way this one stacked after the live text - so they come off
-    FIRST, newest outermost, before the `removesuffix` this function has always done. Each addendum is an APPENDED block, so both come off by suffix rather than by
-    the index slice the warehouse-arrival edit needs (that one sits INSIDE the
-    requested-attributes section). The assertion that `GROWTH_R1_ADDENDUM` really is the
-    tail once `LAST_COST_ADDENDUM` is off lives in
+    `519_chatbot_sales_report_vocab`), then `MEMORY_ADDENDUM` (chatbot memory lane A,
+    migration `mem_0002_parser_memory`, which also folds the moved CURRENT DATE
+    section into this same trailing block - AC-MEM071) now stack AFTER
+    `GROWTH_R1_ADDENDUM` on both bodies, the same way this one stacked after the live
+    text - so they come off FIRST, newest outermost, before the `removesuffix` this
+    function has always done. Each addendum is an APPENDED block, so both come off by
+    suffix rather than by the index slice the warehouse-arrival edit needs (that one
+    sits INSIDE the requested-attributes section). The assertion that
+    `GROWTH_R1_ADDENDUM` really is the tail once `LAST_COST_ADDENDUM` is off lives in
     `test_parser_growth_r1_reachability.py::test_the_addendum_is_appended_to_both_bodies`.
     """
+    if text.endswith(MEMORY_ADDENDUM):
+        text = text[: -len(MEMORY_ADDENDUM)]
     if text.endswith(SALES_REPORT_ADDENDUM):
         text = text[: -len(SALES_REPORT_ADDENDUM)]
     if text.endswith(LOW_STOCK_ADDENDUM):

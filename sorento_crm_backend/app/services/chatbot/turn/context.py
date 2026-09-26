@@ -1,0 +1,322 @@
+"""Turn context assembly under a token budget (chatbot memory lane A, contract
+section 6 / PLAN-chatbot-memory-26sep.md section 6). One pure function,
+`assemble`, replaces the string-joining `parser.build_user_block` used to do
+directly - that function becomes a caller of this one (level "off").
+
+No side effects. No database import of any kind, no provider call - every layer's
+content is handed in already loaded (a profile row, closed-frame summaries,
+live-episode messages, focus, the open question, the current message); this
+module only decides how much of it fits and in what order.
+
+Tokens are estimated as `ceil(utf8_bytes / 3)` (contract section 6.2) - a rough,
+declared-conservative count checked against the provider on real turns, never
+trusted as exact.
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from typing import Any
+
+#: Per-layer caps, est. tokens (contract section 6.2's own table).
+CAPS: dict[str, int] = {"L1": 600, "L2": 350, "L3": 450, "L4": 250, "L5": 150}
+
+#: The sum of the layer caps - no separate global rule (contract section 6.2).
+TOTAL_CAP = 1800
+
+_PREV_RESPONSE_CUT_BYTES = 600
+_EARLIER_MESSAGE_CUT_BYTES = 200
+_SUMMARY_CUT_BYTES = 720
+_CURRENT_MESSAGE_CUT_BYTES = 1500
+_MAX_EARLIER_MESSAGES = 3
+_MAX_PENDING_OPTIONS = 10
+
+#: L5 drop order when the profile slice is over its cap (contract section 6.2's
+#: own "note first, then project, then usual_sites" - continued past those three
+#: with the rest of the vocabulary's least-identifying keys, least critical first).
+_L5_DROP_ORDER: tuple[str, ...] = (
+    "note", "about", "project", "usual_sites", "usual_brands", "usual_products", "role",
+    "salesperson",
+)
+
+
+def est_tokens(value: str) -> int:
+    """`ceil(utf8_bytes / 3)` - the estimator every cap in this module is stated
+    in (contract section 6.2)."""
+    if not value:
+        return 0
+    return math.ceil(len(value.encode("utf-8")) / 3)
+
+
+def _cut_bytes(value: str, limit: int) -> str:
+    if limit <= 0:
+        return ""
+    encoded = value.encode("utf-8")
+    if len(encoded) <= limit:
+        return value
+    return encoded[:limit].decode("utf-8", errors="ignore")
+
+
+def _previous_response_normalized(value: str) -> str:
+    """The historic "Previous turn (kind)" -> "Previous turn" collapse
+    (`head/parser.py::build_user_block`'s own regex substitution), replicated
+    with plain string ops - the `turn/` package's own purity guard forbids the
+    module a regex library import would need."""
+    prefix = "previous turn ("
+    if not value.lower().startswith(prefix):
+        return value
+    close = value.find(")")
+    if close == -1:
+        return value
+    inner = value[len(prefix) : close]
+    if inner and all(ch.isalpha() or ch == "_" for ch in inner):
+        return "Previous turn" + value[close + 1 :]
+    return value
+
+
+@dataclass
+class ContextLayers:
+    """Everything `assemble` needs, already loaded - no I/O inside this module."""
+
+    level: str
+    profile_slice: str | None
+    summaries: list[str] | None
+    earlier_messages: list[dict[str, Any]] | None
+    previous_response: str | None
+    current_subject: str | None
+    pending_kind: str | None
+    pending_options: list[str] | None
+    settings_profile_line: str | None
+    current_message: str
+    reply_to: str | None
+    media_line: str | None
+
+
+def _render_l5(profile_slice: str | None) -> tuple[str, bool]:
+    if not profile_slice:
+        return "", False
+    header = "About this contact:"
+    segments = [s.strip() for s in profile_slice.split(";") if s.strip()]
+
+    def _fits(segs: list[str]) -> bool:
+        return est_tokens(header + "\n" + "; ".join(segs)) <= CAPS["L5"]
+
+    if _fits(segments):
+        return header + "\n" + "; ".join(segments), False
+
+    dropped = False
+    for key in _L5_DROP_ORDER:
+        # `profile_facts.parser_slice` renders the key with its underscore turned
+        # into a space ("usual sites Kuching"); a hand-built fixture (or a future
+        # caller) may still use the raw vocabulary spelling - either prefix drops.
+        prefixes = (key, key.replace("_", " "))
+        before = len(segments)
+        segments = [s for s in segments if not s.lower().startswith(prefixes)]
+        if len(segments) != before:
+            dropped = True
+        if _fits(segments):
+            return header + "\n" + "; ".join(segments), dropped
+
+    # An unstructured value (no recognised key prefixes left, still over cap) -
+    # a hard byte cut is the last resort.
+    dropped = True
+    body = "; ".join(segments)
+    header_bytes = len((header + "\n").encode("utf-8"))
+    body = _cut_bytes(body, max(0, CAPS["L5"] * 3 - header_bytes))
+    return header + "\n" + body, dropped
+
+
+def _render_l4(summaries: list[str] | None) -> tuple[str, bool]:
+    if not summaries:
+        return "", False
+    header = "Recent conversations:"
+    # `summaries` arrives newest-first (the natural order of "closed frames by
+    # recency, limit 3") - printed oldest first (AC-MEM065: "3 summaries printed
+    # oldest first, however old"), so the actual OLDEST entry is at the END of
+    # this reversed list and dropped from there first, never the newest.
+    ordered = [_cut_bytes(s, _SUMMARY_CUT_BYTES) for s in reversed(summaries)]
+
+    def _render(rows: list[str]) -> str:
+        return header + "\n" + "\n".join(f"- {r}" for r in rows)
+
+    dropped = False
+    text = _render(ordered)
+    while ordered and est_tokens(text) > CAPS["L4"]:
+        ordered.pop(0)
+        dropped = True
+        text = _render(ordered)
+    if not ordered:
+        return "", dropped
+    return text, dropped
+
+
+def _render_l3(level: str, earlier_messages: list[dict[str, Any]] | None, previous_response: str | None) -> tuple[str, bool]:
+    dropped = False
+    previous_text = ""
+    if previous_response:
+        raw = str(previous_response)
+        previous_text = _previous_response_normalized(_cut_bytes(raw, _PREV_RESPONSE_CUT_BYTES))
+        if len(raw.encode("utf-8")) > _PREV_RESPONSE_CUT_BYTES:
+            dropped = True
+
+    # `earlier_messages` arrives oldest first (the header names it so) - dropping
+    # the oldest one under budget pressure pops from the FRONT of this list.
+    messages: list[dict[str, Any]] = []
+    if level in ("conversation", "past", "full"):
+        messages = list((earlier_messages or [])[:_MAX_EARLIER_MESSAGES])
+        if earlier_messages and len(earlier_messages) > _MAX_EARLIER_MESSAGES:
+            dropped = True
+
+    def _render(rows: list[dict[str, Any]]) -> str:
+        parts = []
+        if rows:
+            lines = "\n".join(
+                f"- {row.get('created_at', '')} you: "
+                f"{_cut_bytes(str(row.get('text') or ''), _EARLIER_MESSAGE_CUT_BYTES)}"
+                for row in rows
+            )
+            parts.append("Earlier in this conversation (oldest first):\n" + lines)
+        if previous_text:
+            parts.append(f"Previous response: {previous_text}")
+        return "\n".join(parts)
+
+    text = _render(messages)
+    while messages and est_tokens(text) > CAPS["L3"]:
+        messages.pop(0)
+        dropped = True
+        text = _render(messages)
+    return text, dropped
+
+
+def _render_l2(current_subject: str | None, pending_kind: str | None, pending_options: list[str] | None) -> tuple[str, bool]:
+    dropped = False
+    options_line: str | None = None
+    if pending_options:
+        options = list(pending_options)
+        extra = 0
+        if len(options) > _MAX_PENDING_OPTIONS:
+            extra = len(options) - _MAX_PENDING_OPTIONS
+            options = options[:_MAX_PENDING_OPTIONS]
+            dropped = True
+        options_line = "Open question options: " + "; ".join(options)
+        if extra:
+            options_line += f" (+{extra} more)"
+
+    # "Kept whole: the open question kind" (contract section 6.2) - the pending
+    # line is never touched; only the subject shrinks under pressure.
+    pending_line = (
+        f"Pending: the assistant is waiting for a {pending_kind} reply." if pending_kind else None
+    )
+    subject_text = str(current_subject) if current_subject else None
+
+    def _render(subj: str | None) -> str:
+        parts = []
+        if subj:
+            parts.append(f"Current subject: {subj}")
+        if pending_line:
+            parts.append(pending_line)
+        if options_line:
+            parts.append(options_line)
+        return "\n".join(parts)
+
+    text = _render(subject_text)
+    subject_bytes = len((subject_text or "").encode("utf-8"))
+    while subject_text and est_tokens(text) > CAPS["L2"] and subject_bytes > 0:
+        subject_bytes = max(0, subject_bytes - 100)
+        subject_text = _cut_bytes(subject_text, subject_bytes) or None
+        dropped = True
+        text = _render(subject_text)
+    return text, dropped
+
+
+def _render_l1(current_message: str, reply_to: str | None, media_line: str | None) -> tuple[str, bool]:
+    raw_message = str(current_message or "")
+    message = _cut_bytes(raw_message, _CURRENT_MESSAGE_CUT_BYTES)
+    dropped = len(raw_message.encode("utf-8")) > _CURRENT_MESSAGE_CUT_BYTES
+
+    lines: list[str] = []
+    if reply_to:
+        # The quote is cut FIRST when the layer is over budget (contract section
+        # 6.2) - whatever room the (kept-whole) message left, capped at 600 bytes.
+        message_bytes = len(message.encode("utf-8"))
+        quote_budget = max(0, min(600, CAPS["L1"] * 3 - message_bytes))
+        quote = _cut_bytes(str(reply_to), quote_budget)
+        if quote:
+            lines.append(f"reply to: {quote}")
+        if len(str(reply_to).encode("utf-8")) > len(quote.encode("utf-8")):
+            dropped = True
+    if media_line:
+        lines.append(str(media_line))
+    lines.append(f"Current user message: {message}")
+    return "\n".join(lines), dropped
+
+
+def _assemble_off(layers: ContextLayers) -> tuple[str, dict[str, Any]]:
+    """Byte-identical to today's `parser.build_user_block` output - level `off`
+    carries none of the new layers, the settings `Profile:` line only when it has
+    a value (contract section 2)."""
+    previous = _previous_response_normalized(str(layers.previous_response or ""))
+    lines = [
+        f"Previous response: {previous}",
+        f"Current user message: {layers.current_message}",
+    ]
+    if layers.current_subject:
+        lines.append(f"Current subject: {layers.current_subject}")
+    if layers.pending_kind:
+        lines.append(f"Pending: the assistant is waiting for a {layers.pending_kind} reply.")
+    if layers.pending_options:
+        lines.append("Open question options: " + "; ".join(layers.pending_options))
+    if layers.settings_profile_line:
+        lines.append(layers.settings_profile_line)
+    text = "\n".join(lines)
+    report = {
+        "level": "off",
+        "layers": [
+            {"layer": name, "est_tokens": 0, "cap": cap, "dropped": False} for name, cap in CAPS.items()
+        ],
+        "total_est_tokens": est_tokens(text),
+        "cap": TOTAL_CAP,
+    }
+    return text, report
+
+
+def assemble(layers: ContextLayers) -> tuple[str, dict[str, Any]]:
+    """The parser's user block, under budget (contract section 6.1/6.2).
+
+    `level == "off"` is a completely separate, legacy-ordered path (today's
+    `build_user_block`, byte for byte) - every other level renders the new,
+    most-stable-first order: About this contact, Recent conversations, Earlier
+    in this conversation, Previous response, Current subject, Pending / options,
+    Current user message.
+    """
+    if layers.level == "off":
+        return _assemble_off(layers)
+
+    l5_text, l5_dropped = ("", False)
+    if layers.level == "full":
+        l5_text, l5_dropped = _render_l5(layers.profile_slice)
+
+    l4_text, l4_dropped = ("", False)
+    if layers.level in ("past", "full"):
+        l4_text, l4_dropped = _render_l4(layers.summaries)
+
+    l3_text, l3_dropped = _render_l3(layers.level, layers.earlier_messages, layers.previous_response)
+    l2_text, l2_dropped = _render_l2(layers.current_subject, layers.pending_kind, layers.pending_options)
+    l1_text, l1_dropped = _render_l1(layers.current_message, layers.reply_to, layers.media_line)
+
+    blocks = [b for b in (l5_text, l4_text, l3_text, l2_text, l1_text) if b]
+    text = "\n".join(blocks)
+
+    report = {
+        "level": layers.level,
+        "layers": [
+            {"layer": "L5", "est_tokens": est_tokens(l5_text), "cap": CAPS["L5"], "dropped": l5_dropped},
+            {"layer": "L4", "est_tokens": est_tokens(l4_text), "cap": CAPS["L4"], "dropped": l4_dropped},
+            {"layer": "L3", "est_tokens": est_tokens(l3_text), "cap": CAPS["L3"], "dropped": l3_dropped},
+            {"layer": "L2", "est_tokens": est_tokens(l2_text), "cap": CAPS["L2"], "dropped": l2_dropped},
+            {"layer": "L1", "est_tokens": est_tokens(l1_text), "cap": CAPS["L1"], "dropped": l1_dropped},
+        ],
+        "total_est_tokens": est_tokens(text),
+        "cap": TOTAL_CAP,
+    }
+    return text, report
