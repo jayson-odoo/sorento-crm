@@ -323,6 +323,11 @@ def test_manual_map_is_stored_and_aliases_written_only_on_apply(cost_price_env):
     supplier = e.supplier(name=LETTERHEAD_TEXT)
     exact_product = e.product(code="ZZCPC-MANUAL-EXACT")
     manual_target = e.product(code="ZZCPC-MANUAL-TARGET")
+    # Every line below binds a product with no existing link to this supplier (a
+    # `new_link` line, AC-S1-09), so without this the supplier has zero links and
+    # AC-S2-05 blocks Apply on `lead_time_required` - not what this test is pinning.
+    # One existing link gives the supplier a lead time to default new links to.
+    e.link(e.product(code="ZZCPC-MANUAL-EXISTING"), supplier, unit_cost=50, currency="CNY", lead_time_days=30)
 
     data = simple_price_list_workbook(
         [

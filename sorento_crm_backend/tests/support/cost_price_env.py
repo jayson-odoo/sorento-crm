@@ -68,17 +68,23 @@ class CostPriceEnv:
     def __init__(self, db):
         self.db = db
         from app.models.company import Company
+        from app.services.company_scope import DEFAULT_COMPANY_ID
 
+        # `company_a` is the INCUMBENT Sorento company, not a fresh one: tests/conftest.py's
+        # `after_begin` listener defaults an unset session scope to `DEFAULT_COMPANY_ID`
+        # (see that file), so anything seeded before the first request that sets a real
+        # scope (a `CostPriceEnv` fixture body, run before `e.as_user(...)`) lands there
+        # regardless of what `self.scope` is later set to. A fresh `company_a` here meant
+        # every such row was invisible the moment a request scoped to it - the harness
+        # hid its own seed data. `company_b` stays a genuinely different company, since
+        # AC-S1-17's multi-company refusal needs two real ones.
+        self.company_a = DEFAULT_COMPANY_ID
         tag = uuid.uuid4().hex[:8]
-        company = Company(
-            id=_u(), name=f"{MARKER} co {tag}", code=f"ZA{tag}"[:50], is_active=True
-        )
         other = Company(
             id=_u(), name=f"{MARKER} co B {tag}", code=f"ZB{tag}"[:50], is_active=True
         )
-        db.add_all([company, other])
+        db.add(other)
         db.flush()
-        self.company_a = str(company.id)
         self.company_b = str(other.id)
 
         self.client: TestClient | None = None

@@ -59,14 +59,18 @@ def test_named_events_written_for_upload_apply_submit_return(cost_price_env):
     assert submitted.status_code == 200, submitted.text
     assert _count("COST_SET_SUBMIT") == 1
 
+    # Return needs `verify` (contract 1.7) and refuses the uploader on their own set
+    # (AC-S2-03), so a second person does it.
+    verifier = e.user("procurement.cost_price_changes.verify", VIEW_PERM)
+    e.as_user(verifier)
     returned = e.return_set(set_id, "please recheck")
     assert returned.status_code == 200, returned.text
     assert _count("COST_SET_RETURN") == 1
 
+    e.as_user(uploader)
     resubmitted = e.submit(set_id)
     assert resubmitted.status_code == 200, resubmitted.text
 
-    verifier = e.user("procurement.cost_price_changes.verify", VIEW_PERM)
     e.as_user(verifier)
     line_id = e.lines(set_id).json()["data"][0]["id"]
     e.decide(set_id, line_id, {"decision": "accepted"})

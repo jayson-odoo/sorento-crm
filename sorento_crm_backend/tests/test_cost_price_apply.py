@@ -50,6 +50,13 @@ def test_verification_off_uploader_applies_directly(cost_price_env):
 
 
 def test_apply_writes_one_cost_row_per_line_with_set_dates_and_source(cost_price_env):
+    """AC-S1-27's row shape, with a FUTURE start date. The line's `current_unit_cost` (100)
+    was never backed by a cost list row - a plain `product_suppliers.unit_cost` a earlier
+    writer set directly - so the moment Apply gives the link its FIRST cost row, `unit_cost`
+    stops being that leftover value and starts being `price_in_force(link, today)` alone
+    (AC-CL-01, AC-CL-04): with only a future-dated row, nothing covers today, so the answer
+    is null, not the old number. `test_apply_without_dates_sets_unit_cost_to_new_price`
+    below is the undated counterpart, where the new row IS in force at once."""
     from app.models.cost_price import ProductSupplierCost
     from app.models.procurement import ProductSupplier
 
@@ -74,6 +81,29 @@ def test_apply_writes_one_cost_row_per_line_with_set_dates_and_source(cost_price
     assert row.currency == "CNY"
     assert str(row.start_date) == "2026-10-01"
     assert row.end_date is None
+
+    link = e.db.query(ProductSupplier).filter_by(product_id=product.id).one()
+    # Nothing covers today (the only cost row starts 2026-10-01): price_in_force is None.
+    assert link.unit_cost is None
+    assert link.currency is None
+
+
+def test_apply_without_dates_sets_unit_cost_to_new_price(cost_price_env):
+    """The undated (always) counterpart of the test above: with no start date the new
+    cost row is in force immediately, so `unit_cost` becomes the new price at once
+    (AC-CL-01, AC-CL-04)."""
+    from app.models.procurement import ProductSupplier
+
+    e = cost_price_env
+    user = e.user(UPLOAD_PERM, VIEW_PERM)
+    e.as_user(user)
+    e.seed_settings(cost_price_verification_enabled=False)
+
+    _, product, uploaded = _upload_one_changed_line(e, current=100, new=110)
+    set_id = uploaded["id"]
+
+    r = e.apply(set_id)
+    assert r.status_code == 200, r.text
 
     link = e.db.query(ProductSupplier).filter_by(product_id=product.id).one()
     assert link.unit_cost == Decimal("110.00")
