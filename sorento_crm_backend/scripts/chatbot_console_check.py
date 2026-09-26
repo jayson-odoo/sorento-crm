@@ -440,6 +440,9 @@ def _grade_parser(wanted: dict[str, Any], got: dict[str, Any]) -> list[str]:
     catch, and a subset test would call it a pass. A key the emission does not carry at
     all is reported as absent rather than as null, because the two mean different things
     about the prompt (a key it was never asked for versus one it declined to fill).
+
+    One other form: `{one_of: [...]}` passes on any listed value, for a key where more
+    than one emission is correct (#1262 N9: T5's `domain_hint` may be null or "order").
     """
     failures: list[str] = []
     if not got:
@@ -449,7 +452,10 @@ def _grade_parser(wanted: dict[str, Any], got: dict[str, Any]) -> list[str]:
             failures.append(f"parser emitted no {key!r} at all, expected {expected!r}")
             continue
         actual = got[key]
-        if actual != expected:
+        if isinstance(expected, dict) and set(expected) == {"one_of"}:
+            if actual not in (expected["one_of"] or []):
+                failures.append(f"parser {key} is {actual!r}, expected one of {expected['one_of']!r}")
+        elif actual != expected:
             failures.append(f"parser {key} is {actual!r}, expected {expected!r}")
     return failures
 

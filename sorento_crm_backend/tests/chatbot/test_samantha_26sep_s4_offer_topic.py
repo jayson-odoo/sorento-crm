@@ -456,3 +456,45 @@ class TestB2EngineT6SendsTheCarriedProductsToIncoming:
         assert set(args.get("product_ids") or []) == {self.P1[1], self.P2[1]}, (
             f"'got eta' is asked about the products just sent, never the whole book: {args}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Fix lane round 3, N9: the T5 console case grades the parser's `domain_hint`, and
+# slice 4 passes on two values (null or "order"). The harness grades by equality, so
+# it gains one form, `{one_of: [...]}`, and the case uses it.
+# --------------------------------------------------------------------------- #
+
+
+def _console_check_module():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "scripts" / "chatbot_console_check.py"
+    spec = importlib.util.spec_from_file_location("chatbot_console_check_n9", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_n9_grader_takes_one_of_for_a_parser_key() -> None:
+    grade = _console_check_module()._grade_parser
+    wanted = {"domain_hint": {"one_of": [None, "order"]}}
+    assert grade(wanted, {"domain_hint": None}) == []
+    assert grade(wanted, {"domain_hint": "order"}) == []
+    failures = grade(wanted, {"domain_hint": "incoming"})
+    assert failures and "incoming" in failures[0], failures
+    # Plain equality is unchanged.
+    assert grade({"domain_in_message": False}, {"domain_in_message": False}) == []
+    assert grade({"domain_in_message": False}, {"domain_in_message": True})
+
+
+def test_n9_t5_case_grades_domain_hint_null_or_order() -> None:
+    from pathlib import Path
+
+    import yaml
+
+    path = Path(__file__).resolve().parent / "console_cases" / "2026-09-26-samantha.yaml"
+    cases = yaml.safe_load(path.read_text(encoding="utf-8"))["cases"]
+    t5 = [c for c in cases if str(c.get("name", "")).startswith("T5")][0]
+    wanted = t5["turns"][1]["expect"]["parser"]
+    assert wanted.get("domain_hint") == {"one_of": [None, "order"]}, wanted
