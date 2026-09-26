@@ -324,11 +324,32 @@ TYPE_TO_PARAM: dict[str, str] = {
     # `crm_inventory_warehouses_list`, `crm_procurement_spo_allocations_last_receipt_list`
     # and `crm_procurement_po_last_cost_list`.
     "warehouse": "warehouse_ids",
+    # #1262 slice 9 (F1a), AC-S9-4/AC-S9-6: `crm_outstanding_report` and the order
+    # tools that already take `product_ids` (orders list, orders by product) all
+    # take `brand_ids` the same way.
+    "brand": "brand_ids",
 }
 
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z", re.IGNORECASE
 )
+
+
+def is_uuid(value: Any) -> bool:
+    """The one shape check for "is this a real uuid" (#1262 slice 2, F1c) - every seam
+    that writes a `uuid` field or a `*_ids` filter off a bare string calls this rather
+    than growing its own regex. A kind-pick's printed label ("Sorento (customer)") is
+    not one, and neither is an unresolved code the resolver never placed; only a real
+    `_UUID_RE`-shaped id is.
+    """
+    return bool(jsc.truthy(value) and _UUID_RE.match(jsc.js_string(value)))
+
+
+def _resolved_brand_ids(semantic_input: Any) -> list[str]:
+    """The brand ids `lanes/business/__init__._resolve_outstanding_brand_ids` resolved
+    for this turn off the live brand list (the key keeps its first caller's name), real
+    uuids only - the same `is_uuid` guard every other `<entity>_ids` argument uses."""
+    return [b for b in jsc.array(jsc.get(semantic_input, "outstanding_brand_ids")) if is_uuid(b)]
 
 
 def entity_has_resolved_uuid(entity: dict[str, Any]) -> bool:
@@ -341,7 +362,7 @@ def entity_has_resolved_uuid(entity: dict[str, Any]) -> bool:
     applies per entity before building `*_ids`.
     """
     uuid = jsc.get(entity, "uuid") if jsc.truthy(entity) else None
-    return bool(jsc.truthy(uuid) and _UUID_RE.match(jsc.js_string(uuid)))
+    return is_uuid(uuid)
 
 
 # Tools that answer a DOCUMENT request and must be given something to narrow by.
@@ -607,6 +628,17 @@ def entity_ids_transformer(
         warehouse_codes = jsc.get(semantic_input, "outstanding_warehouse_codes")
         if isinstance(warehouse_codes, list) and warehouse_codes:
             out["warehouse_codes"] = warehouse_codes
+        # #1262 slice 9 (F1a): the brand word(s) this turn named, already resolved to
+        # ids by `_resolve_report_product_and_location`'s own brand step (the token
+        # never reached the shared resolver, so this is the only place it becomes an
+        # id) - a brand alone is a valid subject for this report (AC-S9-4).
+        # N1 (security review, 26 Sep 2026): only real uuids ever forward - the same
+        # `is_uuid` guard every other `<entity>_ids` argument in this function uses,
+        # never a bare `isinstance(..., list)` check that would let a non-uuid string
+        # reach the tool call.
+        brand_ids = _resolved_brand_ids(semantic_input)
+        if brand_ids:
+            out["brand_ids"] = brand_ids
         # AC-1105 (review round, 13 Sep 2026): the WORD the customer typed, echoed by
         # the route onto its own body so the presenter can render "IB (BRW-IB, MWH-IB)".
         # The lane never re-renders that header itself: one writer, one wording.
@@ -624,8 +656,13 @@ def entity_ids_transformer(
         # AC-1132: the scope-answer's carried customer_ids are ALREADY resolved UUIDs
         # (restored by `head/output_exchange.py`, never re-parsed) - they win over
         # whatever THIS turn's own (empty) entity list produced.
-        carried_customers = jsc.get(semantic_input, "outstanding_carried_customer_ids")
-        if isinstance(carried_customers, list) and carried_customers:
+        # #1262 slice 2 (F1c): a session's carried customer subject is a resolved
+        # uuid or it is nothing - a kind-pick's printed label ("Sorento (customer)")
+        # riding on this same key must never reach the tool as a `customer_ids` filter.
+        carried_customers = [
+            u for u in jsc.array(jsc.get(semantic_input, "outstanding_carried_customer_ids")) if is_uuid(u)
+        ]
+        if carried_customers:
             out["customer_ids"] = carried_customers
         # AC-1138 (D10 on main): "1"/"2" against an open detail offer re-runs THIS
         # SAME tool with `detail=so|do` - the MCP layer swaps in the numbered list
@@ -653,8 +690,11 @@ def entity_ids_transformer(
         # AC-1132-equivalent: the offer's carried customer_ids are ALREADY resolved
         # UUIDs (restored by `head/output_exchange.py`, never re-parsed) - they win
         # over whatever THIS turn's own (empty) entity list produced.
-        carried_customers = jsc.get(semantic_input, "outstanding_carried_customer_ids")
-        if isinstance(carried_customers, list) and carried_customers:
+        # #1262 slice 2 (F1c): same uuid-only rule as `crm_outstanding_report` above.
+        carried_customers = [
+            u for u in jsc.array(jsc.get(semantic_input, "outstanding_carried_customer_ids")) if is_uuid(u)
+        ]
+        if carried_customers:
             out["customer_ids"] = carried_customers
         # R-B3 (reviewer finding, Phase 3 fix round): the turn's OWN sales_channel wins
         # when given; a pick or a refinement of an open sales_report_detail offer names
@@ -756,6 +796,15 @@ def entity_ids_transformer(
                 codes.append(jsc.js_string(code))
         if codes:
             out["warehouse_codes"] = codes
+
+    # #1262 fix lane round 2, B1 (AC-S9-6): the orders tools take the SAME resolved
+    # brand ids the outstanding report does. The live brand never reaches the shared
+    # resolver (`turn_runtime.resolve_kinds`'s order-domain strip), so it is never a
+    # gate row with a uuid and `TYPE_TO_PARAM["brand"]` alone could not carry it here.
+    if tool_name in ORDER_TOOLS:
+        brand_ids = _resolved_brand_ids(semantic_input)
+        if brand_ids:
+            out["brand_ids"] = brand_ids
 
     # order_status (order tools only): "outstanding" | "delivered" | "so_outstanding"
     # (A3, AC-905); omitted when null.
@@ -1299,6 +1348,13 @@ def _axis_labelled_subject(entities: Any) -> str:
         claimed |= types
         codes = [r["code"] for r in kept if r["type"] in types]
         if codes:
+            # #1262 slice 3 (F5), AC-S3-3: above 5, name the COUNT, never every one
+            # of them - a catalogue-wide sweep (5,857 products) joined every "match"
+            # into a single miss line that spanned three WhatsApp messages. At or
+            # under the cap the customer's own subject still prints in full.
+            if len(codes) > 5:
+                parts.append(f"the {len(codes)} {jsc.js_string(axis['label']).lower()}s searched")
+                continue
             # "A", "A and B", "A, B and C" - the last join is a word so the axis boundary
             # stays readable next to the comma that separates axes.
             listed = (
@@ -1802,14 +1858,18 @@ def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
             continue
         if e.get("entity_type") == "customer":
             uid = e.get("uuid")
-            if uid and uid not in customer_ids:
+            # #1262 slice 2 (F1c): never a kind-pick's printed label or an
+            # unresolved code, only a real uuid.
+            if is_uuid(uid) and uid not in customer_ids:
                 customer_ids.append(uid)
     if not customer_ids:
         # R13: a CUSTOMER-subject answering turn resolved no entity this turn - the ids
         # rode in on the carried filter set, and they have to ride back out on it too, or
         # the offer this hit arms loses the only subject it has.
         customer_ids = [
-            uid for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids")) if uid
+            uid
+            for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids"))
+            if is_uuid(uid)
         ]
     return {
         "product_code": product_codes[0] if product_codes else None,
@@ -1829,6 +1889,14 @@ def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
         # built - and a REFINEMENT of that offer ("this month only") has to re-run the
         # same scope rather than re-ask a question the customer already answered.
         "scope": semantic_input.get("outstanding_scope"),
+        # #1262 slice 9 (F1a) follow-up: the SAME already-resolved brand ids
+        # `_resolve_report_product_and_location` wrote onto this same `semantic_input`
+        # earlier in this fetch - the report just ran with them, so the detail offer
+        # (and any refinement of it) carries them forward the same way it does
+        # `customer_ids` above.
+        "brand_ids": [
+            b for b in jsc.array(semantic_input.get("outstanding_brand_ids")) if is_uuid(b)
+        ],
     }
 
 
@@ -1856,10 +1924,13 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
         has_result = envelope.get("has_result") is True
     else:
         # The render never happened (an MCP that returned the raw body, or a failure
-        # fallback). Nothing can be said about absence from a shape this function did
-        # not get, so the text stands and the turn is treated as an answer.
+        # fallback - #1262 slice 1, F2: a raised tool call's own error text, now that
+        # `call_tool` raises on `isError` instead of returning it as a string). A bare
+        # string here is never a rendered report, so it is never treated as a result -
+        # `has_result: True` for one is what let a tool-error string answer the miss
+        # lane and print "Error executing tool ..." verbatim.
         text = result if isinstance(result, str) else jsc.js_string(result)
-        has_result = bool(text.strip())
+        has_result = False
     offer = _outstanding_offer_from_text(text)
 
     outstanding_ask = (
@@ -1875,7 +1946,13 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
         else None
     )
     return {
-        "response": text,
+        # Review round (26 Sep 2026), SF1: `has_result: False` alone did not stop
+        # `turn/compose.py` printing this same bare string VERBATIM whenever it rode
+        # in on `lane_text` (only the literal substring "Error executing tool" was
+        # ever stripped, AC-S1-3's own narrow fix) - a bare, non-envelope string is
+        # NEVER a rendered report, so it must never reach `response` either, the
+        # same "never treated as a result" rule `has_result` already states above.
+        "response": text if "response" in envelope else "",
         "response_intro": None,
         "answers": [],
         "attachments": [],
@@ -1952,11 +2029,10 @@ def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
         text = jsc.js_string(envelope.get("response") or "")
         has_result = envelope.get("has_result") is True
     else:
-        # The render never happened (an MCP that returned the raw body, or a failure
-        # fallback). Nothing can be said about absence from a shape this function did
-        # not get, so the text stands and the turn is treated as an answer.
+        # Mirrors `_outstanding_report_output`'s own fix (#1262 slice 1, F2): a bare
+        # string here is never a rendered report, so it is never treated as a result.
         text = result if isinstance(result, str) else jsc.js_string(result)
-        has_result = bool(text.strip())
+        has_result = False
     offer = _outstanding_offer_from_text(text)
 
     outstanding_ask = (
@@ -1972,7 +2048,11 @@ def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
         else None
     )
     return {
-        "response": text,
+        # Mirrors `_outstanding_report_output`'s own SF1 fix (review round, 26 Sep
+        # 2026): a bare, non-envelope string is never a rendered report, so it must
+        # never reach `response` either - only "Error executing tool" ever got
+        # stripped downstream, so any other unrendered string rode through verbatim.
+        "response": text if "response" in envelope else "",
         "response_intro": None,
         "answers": [],
         "attachments": [],

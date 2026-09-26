@@ -87,13 +87,16 @@ def _entity(raw: str, confident: bool = True) -> MediaEntity:
 
 
 def test_caption_plus_confident_entities_renders_caption_with_raws_appended():
-    """PLAN 4.5 row 1."""
+    """PLAN 4.5 row 1. #1262 slice 5 (F4), owner ruling 1: the caption and the
+    codes are on SEPARATE lines, never glued "caption: codes" - a caption that is
+    itself only a quantity must reach the parser as its own line, not folded into
+    a code's raw."""
     extraction = MediaExtraction(entities=[_entity("SRTKS6647")])
     body = build_image_result_body(
         extraction, caption="check stock for these", max_entities=10
     )
 
-    assert body["rendered_text"] == "check stock for these: SRTKS6647"
+    assert body["rendered_text"] == "check stock for these\nSRTKS6647"
     assert body["needs_clarification"] is False
     assert body["confirmation_message"] == confirmation(extraction.entities, [], [])
 
@@ -124,13 +127,14 @@ def test_unclear_caption_intent_still_renders_caption_and_raws_and_asks():
     """PLAN 4.5 row 3, amended the same way as row 2 above: `rendered_text` is
     the caption with the raws appended, same shape row 1's happy path renders -
     only `needs_clarification`/`clarification_message` say the intent itself is
-    still unclear."""
+    still unclear. #1262 slice 5 (F4): the caption is its own line, never glued
+    onto the code (see row 1's own test above)."""
     extraction = MediaExtraction(entities=[_entity("SRTKS6647")], needs_clarification=True)
     body = build_image_result_body(
         extraction, caption="hmm what is this", max_entities=10
     )
 
-    assert body["rendered_text"] == "hmm what is this: SRTKS6647"
+    assert body["rendered_text"] == "hmm what is this\nSRTKS6647"
     assert body["needs_clarification"] is True
     assert body["clarification_message"] is not None
 

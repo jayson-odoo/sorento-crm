@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
 from app.models.order import Customer, Order, OrderLine, SalesOrder, SalesOrderLine
-from app.models.product import Product
+from app.models.product import Brand, Product
 from app.services.error_handler import handle_not_found
 from app.services.order_service import (
     _delivered_status_ids,
@@ -155,6 +155,27 @@ def _customer_echo(
     return customer_query
 
 
+def _brand_echo(db: Session, brand_ids: Optional[list[str]]) -> Optional[str]:
+    """What the reply's `Brand:` line says (#1262 slice 9, AC-S9-4) - the SAME
+    "read back the names, join by ', '" rule `_customer_echo` uses above, so a
+    multi-brand filter states every brand it covers rather than a bare uuid or
+    `Brand: all`. `None` (never printed) when no brand was named at all - unlike
+    `Customer:`/`Product:`, this line does not fall back to a query echo."""
+    if not brand_ids:
+        return None
+    name_by_id = {
+        row[0]: row[1]
+        for row in db.query(Brand.id, Brand.brand_name).filter(Brand.id.in_(brand_ids)).all()
+        if row[1]
+    }
+    names: list[str] = []
+    for brand_id in brand_ids:
+        name = name_by_id.get(brand_id)
+        if name and name not in names:
+            names.append(name)
+    return ", ".join(names) if names else None
+
+
 def outstanding_report(
     db: Session,
     *,
@@ -164,6 +185,7 @@ def outstanding_report(
     customer_query: Optional[str] = None,
     customer_ids: Optional[list[str]] = None,
     warehouse_codes: Optional[list[str]] = None,
+    brand_ids: Optional[list[str]] = None,
     order_date_from: DateLike = None,
     order_date_to: DateLike = None,
 ) -> dict:
@@ -192,6 +214,7 @@ def outstanding_report(
 
     warehouse_ids = resolve_warehouse_ids(db, warehouse_codes)
     customer_ids = [str(c).strip() for c in (customer_ids or []) if str(c).strip()] or None
+    brand_ids = [str(b).strip() for b in (brand_ids or []) if str(b).strip()] or None
     has_customer = bool(customer_ids) or bool((customer_query or "").strip())
 
     result: dict = {
@@ -199,6 +222,10 @@ def outstanding_report(
         # line joins several ledgers - the presenter prints this verbatim.
         "product_code": ", ".join(p.product_code for p in products) if products else None,
         "customer_name": _customer_echo(db, customer_query, customer_ids),
+        # #1262 slice 9 (F1a): a FILTER, never a breakdown-changing subject like
+        # product/customer above - the by_customer/by_product axis choice is untouched
+        # by it, the same way `warehouse_codes` narrows without adding its own axis.
+        "brand_name": _brand_echo(db, brand_ids),
         "warehouse_codes": [str(c).strip() for c in (warehouse_codes or []) if str(c).strip()],
         "order_date_from": _as_date(order_date_from),
         "order_date_to": _as_date(order_date_to),
@@ -218,13 +245,13 @@ def outstanding_report(
         _fill_so(
             db, products, result,
             customer_query=customer_query, customer_ids=customer_ids, warehouse_ids=warehouse_ids,
-            order_date_from=order_date_from, order_date_to=order_date_to,
+            brand_ids=brand_ids, order_date_from=order_date_from, order_date_to=order_date_to,
         )
     if scope in ("do", "both"):
         _fill_do(
             db, products, result,
             customer_query=customer_query, customer_ids=customer_ids, warehouse_ids=warehouse_ids,
-            order_date_from=order_date_from, order_date_to=order_date_to,
+            brand_ids=brand_ids, order_date_from=order_date_from, order_date_to=order_date_to,
         )
     return result
 
@@ -237,6 +264,7 @@ def _fill_so(
     customer_query: Optional[str],
     customer_ids: Optional[list],
     warehouse_ids: Optional[list],
+    brand_ids: Optional[list],
     order_date_from: DateLike,
     order_date_to: DateLike,
 ) -> None:
@@ -270,6 +298,10 @@ def _fill_so(
     # spans every product that customer is waiting for.
     if products:
         q = q.filter(SalesOrderLine.product_id.in_([p.id for p in products]))
+    # #1262 slice 9 (F1a): a brand-scoped ask narrows to that brand's products, the
+    # same join `Product` already carries for `product_code` above (no second join).
+    if brand_ids:
+        q = q.filter(Product.brand_id.in_(brand_ids))
     if customer_query:
         q = q.filter(
             Customer.customer_name.ilike(
@@ -421,6 +453,7 @@ def _fill_do(
     customer_query: Optional[str],
     customer_ids: Optional[list],
     warehouse_ids: Optional[list],
+    brand_ids: Optional[list],
     order_date_from: DateLike,
     order_date_to: DateLike,
 ) -> None:
@@ -463,6 +496,9 @@ def _fill_do(
     # R13: as on the SO side - the product narrows only when one was named.
     if products:
         q = q.filter(OrderLine.product_id.in_([p.id for p in products]))
+    # #1262 slice 9 (F1a): the same brand narrowing as the SO side above.
+    if brand_ids:
+        q = q.filter(Product.brand_id.in_(brand_ids))
     # `None` means no delivered status is configured at all, so every DO is outstanding
     # and no filter is needed (`_outstanding_clause`'s own docstring).
     if outstanding_clause is not None:

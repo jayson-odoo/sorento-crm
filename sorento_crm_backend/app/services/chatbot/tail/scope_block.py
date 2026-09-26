@@ -168,6 +168,20 @@ def _axis_words(
     return ", ".join(words) if words else None
 
 
+def live_brand_words(gate_json: Mapping[str, Any] | None) -> str | None:
+    """#1262 fix lane round 2, B1: the live brands an order turn is filtered by
+    (`turn_runtime.resolve_kinds` stamps `live_brands` on the gate), for the "Brand:"
+    line both order headers print - this one and the miss composer's in
+    `lanes/business/answer.py`."""
+    raw = gate_json.get("live_brands") if isinstance(gate_json, Mapping) else None
+    words: list[str] = []
+    for value in raw if isinstance(raw, list) else []:
+        printable = _printable(value)
+        if printable and printable not in words:
+            words.append(printable)
+    return ", ".join(words) if words else None
+
+
 def _focus_words(rows: Any) -> str | None:
     """The SAME axis, off the FOCUS carry - AC-1695's own case, which main has no
     equivalent for because main's header runs in the tail, where the session's
@@ -233,5 +247,8 @@ def search_scope_header(
             lines.append(f"{axis['label']}: {words or axis['all_text']}")
         elif words:
             lines.append(f"{axis['label']}: {words}")
+    brand_words = live_brand_words(gate_json)
+    if brand_words:
+        lines.append(f"Brand: {brand_words}")
     lines.append(f"Dates: {dates}")
     return "\n".join(lines)

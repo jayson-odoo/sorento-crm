@@ -33,6 +33,7 @@ from typing import Any, Literal
 
 from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business.fetch import DATE_PARAMS, space_id_or_default
+from app.services.chatbot.tail.scope_block import live_brand_words
 
 # The did-you-mean helpers the JS carries in BOTH bodies with a "keep in lockstep" note.
 # `miss_suggest` owns them because that is where their node lives; this file imports them
@@ -2571,20 +2572,24 @@ def _header_predicate_phrase(require: dict[str, Any]) -> str:
 
 
 def build_set_header(qualifying_total: int, shown: int, set_noun: str, require: dict[str, Any]) -> str:
-    """AC-1316 (work item E2): "<qualifying_total> <set noun> have <predicate noun>.
-    Showing <n>." - prepended, as its OWN line, ahead of the existing render (the
-    block below it is untouched). "Showing <n>" is dropped when every qualifying
-    product already fits on the page (`qualifying_total <= shown`).
+    """AC-1316 (work item E2): "<qualifying_total> <set noun> have <predicate
+    noun>." - prepended, as its OWN line, ahead of the existing render (the block
+    below it is untouched).
 
-    A pure string function: `qualifying_total` and `shown` are counts the caller
-    already has (the resolver's own `qualifying_total`, and the page the domain
-    tool actually rendered), never re-derived here.
+    #1262 slice 3 (F5), owner ruling: the chatbot never prints paging text in a
+    reply - "Showing <n>" USED to follow when the qualifying total outran the page
+    (`qualifying_total > shown`), which is what printed "5,857 products have
+    stock. Showing 0." over a stock ask that matched nothing at all (T10). A count
+    names what was counted; it never claims to have shown a page of it.
+    `shown` is kept as a parameter (unused here) rather than dropped from the
+    signature, so every call site - which still has it to hand for other reasons -
+    is untouched.
+
+    A pure string function: `qualifying_total` is the count the caller already has
+    (the resolver's own `qualifying_total`), never re-derived here.
     """
     verb = "has" if qualifying_total == 1 else "have"
-    header = f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}."
-    if qualifying_total > shown:
-        header += f" Showing {shown}."
-    return header
+    return f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}."
 
 
 # REV-N2/AC-1337 (third console pass): the irregular endings a bare "+s" gets
@@ -2690,8 +2695,17 @@ def not_found_error_message(
     resolved: dict[str, Any] | None,
     gate: dict[str, Any] | None,
     entitlement_levels: Any = None,
+    profile: Any = None,
 ) -> dict[str, Any]:
     """`not-found-error-message`: the miss reply, its search-scope header and its bullets.
+
+    `profile` (#1262 slice 11, F8 follow-up): the SAME staff-audience gate `turn/
+    compose.py` and `answer_bridge.py`'s cross-domain ladder already apply -
+    `is_staff_profile(profile)` suppresses the bot-initiated "Would you like me to
+    escalate to X team?" clause this function's own `build_breakdown_msg` closure
+    appends, never the rest of the miss sentence (a staff rep still reads "But no
+    order matched these", just with no offer tacked on). `None` (every caller that
+    predates this slice) reads as not-staff, byte-identical to before.
 
     H16 is structural here: `resolvedTypes` is `Object.keys(by_entity_type)` and every OTHER
     read of that object goes through `Object.values(...)`, so a metadata key on it can only
@@ -2706,6 +2720,9 @@ def not_found_error_message(
     q = parser if isinstance(parser, dict) else {}
     r = resolved if isinstance(resolved, dict) else {}
     g = gate if isinstance(gate, dict) else {}
+    from app.services.chatbot.turn.state import is_staff_profile
+
+    is_staff = is_staff_profile(profile)
 
     by_entity_type = jsc.get(r, "by_entity_type")
     resolved_types = list(by_entity_type.keys()) if isinstance(by_entity_type, dict) else []
@@ -2885,6 +2902,22 @@ def not_found_error_message(
             )
             suggested_team = domain_row.escalation_team_code if domain_row is not None else None
         team = _pretty_team(suggested_team if jsc.truthy(suggested_team) else "customer_service")
+
+        def _esc_offer(offer_team: Any = None) -> str:
+            """#1262 slice 11 (F8) follow-up (coordinator round 2): the ONE place every
+            "Would you like me to escalate to X team?" clause in this function is built -
+            AC-S11-1 names the outstanding-report miss explicitly, and this function has
+            ELEVEN such clauses (grepped, not guessed), each hand-written before this
+            slice. A per-branch `if is_staff: ... else: ...` at each site is exactly the
+            "one branch missed later" risk the coordinator flagged; routing every one of
+            them through this closure instead means a TWELFTH branch added after this
+            slice inherits the gate for free, rather than needing its own author to
+            remember it. `""` for a staff profile - the caller appends it only when
+            truthy, so no branch prints a dangling space or period-with-nothing-after.
+            """
+            t = offer_team if jsc.truthy(offer_team) else team
+            return "" if is_staff else f"Would you like me to escalate to {t} team?"
+
         is_active = jsc.get(q, "is_active")
         active_inactive = (
             " active"
@@ -3093,20 +3126,16 @@ def not_found_error_message(
                 for m in uniq
             )
             if not any_active:
-                return (
-                    f"{label} has ended, so there is nothing to send. "
-                    f"Would you like me to escalate to {team} team?"
-                )
+                esc = _esc_offer()
+                return f"{label} has ended, so there is nothing to send." + (f" {esc}" if esc else "")
             levels = [
                 jsc.js_string(x if jsc.truthy(x) else "").strip()
                 for x in jsc.array(entitlement_levels)
             ]
             levels = [x for x in levels if x]
             at = f" at your access level ({', '.join(levels)})" if levels else " to you"
-            return (
-                f"{label} is not available{at}. "
-                f"Would you like me to escalate to {team} team?"
-            )
+            esc = _esc_offer()
+            return f"{label} is not available{at}." + (f" {esc}" if esc else "")
 
         entitlement_miss = _entitlement_miss()
 
@@ -3144,6 +3173,26 @@ def not_found_error_message(
                 typed_order[group] = typed_seq
                 typed_seq += 1
 
+        # #1262 fix lane round 2, S1 (AC-S5-4): the parser's own per-entity quantity,
+        # printed beside the code it belongs to through the ONE label rule
+        # (`turn/state.py::focus_row_label`, "M210-GM (x5)") - never a regex.
+        from app.services.chatbot.turn.state import focus_row_label
+
+        qty_by_code: dict[str, Any] = {}
+        for entity in all_ents:
+            quantity = jsc.get(entity, "quantity") if jsc.truthy(entity) else None
+            if not jsc.truthy(quantity):
+                continue
+            for key in (jsc.get(entity, "raw"), jsc.get(entity, "canonical_code")):
+                if _type_norm(key):
+                    qty_by_code.setdefault(_type_norm(key), quantity)
+
+        def with_quantity(label: Any) -> str:
+            quantity = qty_by_code.get(_type_norm(bare_label(label)))
+            if quantity is None:
+                return jsc.js_string(label)
+            return jsc.js_string(focus_row_label({"raw": jsc.js_string(label), "quantity": quantity}))
+
         found_lines: list[str] = []
         for entity_type, codes in by_type.items():
             # The cap is over DISTINCT CODES, not over labels: a turn that resolved eight
@@ -3167,7 +3216,7 @@ def not_found_error_message(
                 else ""
             )
             rendered = ", ".join(
-                ", ".join(jsc.js_string(l) for l in by_code[b]) for b in named_codes
+                ", ".join(with_quantity(l) for l in by_code[b]) for b in named_codes
             )
             found_lines.append(f"• {jsc.js_string(entity_type)}: {rendered}{extra}")
         found_summary = "\n".join(found_lines)
@@ -3282,6 +3331,10 @@ def not_found_error_message(
                         head.append(f"{axis['label']}: {words or axis['allText']}")
                     elif words:
                         head.append(f"{axis['label']}: {words}")
+                # #1262 fix lane round 2, B1: the brand the fetch was filtered by.
+                brand_words = live_brand_words(g)
+                if brand_words:
+                    head.append(f"Brand: {brand_words}")
                 # Dates last, and stated even when no window was set: without it "no order
                 # matched these" never said whether it had looked at all dates or just a month.
                 if not start and not end:
@@ -3308,20 +3361,31 @@ def not_found_error_message(
                 if (is_order_scope and jsc.truthy(date_start) and jsc.truthy(date_end))
                 else date_range
             )
-            esc_ask = (
-                f"Reply 'all dates' to search without the date filter, or would you like me "
-                f"to escalate to {team} team?"
-                if (is_order_scope and (jsc.truthy(date_start) or jsc.truthy(date_end)))
-                else f"Would you like me to escalate to {team} team?"
-            )
-            parts.append(
-                entitlement_miss
-                if jsc.truthy(entitlement_miss)
-                else (
-                    f"But no{active_inactive} {domain_word}{miss_window}{access} "
-                    f"matched these{co_suffix}. {esc_ask}"
+            # #1262 slice 11 (F8) follow-up: the widen invite (a genuinely useful next
+            # step, never a bot-initiated offer) stays for every audience - `is_staff`
+            # (read once, at the top of this function, the SAME flag `_esc_offer` uses)
+            # only ever drops the ", or would you like me to escalate" half joined onto
+            # it. Bespoke rather than routed through `_esc_offer` because this is the
+            # ONE site where the clause is comma-joined mid-sentence rather than its own
+            # trailing sentence - `_esc_offer`'s own phrasing covers every OTHER site.
+            windowed = is_order_scope and (jsc.truthy(date_start) or jsc.truthy(date_end))
+            if windowed:
+                esc_ask = (
+                    "Reply 'all dates' to search without the date filter."
+                    if is_staff
+                    else (
+                        f"Reply 'all dates' to search without the date filter, or would you like me "
+                        f"to escalate to {team} team?"
+                    )
                 )
+            else:
+                esc_ask = _esc_offer()
+            miss_sentence = (
+                f"But no{active_inactive} {domain_word}{miss_window}{access} matched these{co_suffix}."
             )
+            if esc_ask:
+                miss_sentence = f"{miss_sentence} {esc_ask}"
+            parts.append(entitlement_miss if jsc.truthy(entitlement_miss) else miss_sentence)
             return "\n\n".join(parts)
 
         # vague-token clarify: among UNRESOLVED tokens only, map each back to a parser entity
@@ -3385,11 +3449,11 @@ def not_found_error_message(
                 schemes_text = (
                     ", ".join(jsc.js_string(s) for s in schemes) if schemes else "none on file yet"
                 )
+                esc = _esc_offer()
                 escalate_message = (
                     f"The register has no {scheme_word or 'that'} certificates. "
-                    f"Schemes on file: {schemes_text}. "
-                    f"Would you like me to escalate to {team} team?"
-                )
+                    f"Schemes on file: {schemes_text}."
+                ) + (f" {esc}" if esc else "")
             elif described_set_answers and "attachment_types_on_file" in predicate:
                 # R6/AC-1329 (console fix round 2): the unrecognised word is an
                 # ATTACHMENT LABEL ("photo"), not a class/product_type word - a
@@ -3515,11 +3579,11 @@ def not_found_error_message(
                     if checked_codes
                     else ""
                 )
+                esc = _esc_offer()
                 escalate_message = (
                     f"Couldn't find {subject_phrase} with "
-                    f"{_predicate_phrase(jsc.get(predicate, 'require') or {})}{checked}. "
-                    f"Would you like me to escalate to {team} team?"
-                )
+                    f"{_predicate_phrase(jsc.get(predicate, 'require') or {})}{checked}."
+                ) + (f" {esc}" if esc else "")
             elif domain_hint == "product_attachment":
                 # FIX B: natural, parser-driven phrasing - never leak the internal literal.
                 product_raws = [
@@ -3565,10 +3629,10 @@ def not_found_error_message(
                         subject = f"attachments for {prod_text}"
                     else:
                         subject = requested if jsc.truthy(requested) else "the requested item"
+                    esc = _esc_offer()
                     escalate_message = (
-                        f"Could not find{active_inactive} {subject}{date_range}{access}. "
-                        f"Would you like me to escalate to {team} team?"
-                    )
+                        f"Could not find{active_inactive} {subject}{date_range}{access}."
+                    ) + (f" {esc}" if esc else "")
             elif _outstanding_report_text(item):
                 # AC-1107 / S4 point 6, and the owner's approved miss mock: an outstanding
                 # report that came back empty ALREADY says what was searched and what was
@@ -3581,10 +3645,8 @@ def not_found_error_message(
                 # team picker behind it work exactly as they do on every other miss.
                 # THIS TOOL ONLY: no other miss reaches here, because no other answer
                 # carries `outstanding_report`.
-                escalate_message = (
-                    f"{_outstanding_report_text(item)}\n\n"
-                    f"Would you like me to escalate to {team} team?"
-                )
+                esc = _esc_offer()
+                escalate_message = f"{_outstanding_report_text(item)}" + (f"\n\n{esc}" if esc else "")
                 found_summary = _outstanding_report_text(item)
             else:
                 # status-filter-aware: one or more SPECIFIC orders resolved (the DO exists)
@@ -3641,7 +3703,9 @@ def not_found_error_message(
                     # AC-1863: one order must stay byte-identical to before this fix, so the
                     # escalate question is appended to the LAST line (a space, not a newline)
                     # and only the order lines themselves are newline-joined.
-                    order_lines[-1] = f"{order_lines[-1]} Would you like me to escalate to {team} team?"
+                    esc = _esc_offer()
+                    if esc:
+                        order_lines[-1] = f"{order_lines[-1]} {esc}"
                     escalate_message = "\n".join(order_lines)
                 elif use_breakdown:
                     escalate_message = build_breakdown_msg(
@@ -3652,17 +3716,17 @@ def not_found_error_message(
                     # promotions were searched and none matched - they were not: the gate
                     # dead-ends on the no-compatible-entity branch and the fetch never runs.
                     # Saying we searched sends the customer off correcting the wrong thing.
+                    esc = _esc_offer()
                     escalate_message = (
-                        f"Couldn't find: {', '.join(label_token(t) for t in not_found_raw)}. "
-                        f"Would you like me to escalate to {team} team?"
-                    )
+                        f"Couldn't find: {', '.join(label_token(t) for t in not_found_raw)}."
+                    ) + (f" {esc}" if esc else "")
                 else:
                     for_requested = f" for {requested}" if jsc.truthy(requested) else ""
+                    esc = _esc_offer()
                     escalate_message = (
                         f"Could not find{active_inactive} {status_label}"
-                        f"{jsc.js_string(domain_hint)}{for_requested}{date_range}{access}. "
-                        f"Would you like me to escalate to {team} team?"
-                    )
+                        f"{jsc.js_string(domain_hint)}{for_requested}{date_range}{access}."
+                    ) + (f" {esc}" if esc else "")
 
     # Q23: the customer named an access level they do not hold. The gate detects it; say so
     # here too, or an entitlement problem reads as an ordinary "couldn't find it".
@@ -3845,6 +3909,7 @@ def build_suggest_offer(
     sibling_transform: Any = None,
     get_results: Any = None,
     execution_id: Any = None,
+    profile: Any = None,
 ) -> dict[str, Any]:
     """`build-suggest-offer` (D1 / D2 / D3): the miss lane's offer composer.
 
@@ -3858,6 +3923,15 @@ def build_suggest_offer(
     identity - in the CRM that identity is the TURN id, which is the one permanent, already
     registered difference between this port and a captured n8n run
     (`tests/chatbot/worlds.py::WORLD_DROP_PATHS`).
+
+    `profile` (#1262 slice 11 review round, 26 Sep 2026): a did-you-mean/sibling roster is
+    a clarifying QUESTION, not an escalation offer (`pending.is_roster`, `answer_bridge.
+    answer_for`'s own audience gate keeps the roster itself for staff) - but every
+    `suggest_response` this function builds bakes its own "or would you like me to escalate
+    to X team?" tail straight into the SENTENCE, before that gate ever runs. `_esc_clause`
+    is the SAME closure pattern `not_found_error_message::_esc_offer` already uses (one
+    place every such clause in a function is built, so a later branch inherits the gate for
+    free) - `""` for staff, the full clause otherwise.
     """
     out = dict(item) if isinstance(item, dict) else {}
     for key in _DYM_CTRL_KEYS:
@@ -3875,6 +3949,15 @@ def build_suggest_offer(
         routing = jsc.get(q, "routing")
         company_team = jsc.get(routing, "suggested_team") if jsc.truthy(routing) else None
     team = _pretty_team(company_team if jsc.truthy(company_team) else "customer_service")
+    from app.services.chatbot.turn.state import is_staff_profile
+
+    is_staff = is_staff_profile(profile)
+
+    def _cont(lead_in: str, escalate_suffix: str) -> str:
+        """`lead_in + escalate_suffix` (the ", or ...escalate..." tail, several wordings
+        across this function's own branches) - staff get `f"{lead_in}."` alone, no
+        escalate offer (#1262 slice 11 review round, 26 Sep 2026)."""
+        return f"{lead_in}." if is_staff else f"{lead_in}{escalate_suffix}"
 
     def mk_offer(cands: Any) -> Any:
         """id = this turn's identity (stamped onto the picked entity as its dym slot, giving
@@ -3964,8 +4047,10 @@ def build_suggest_offer(
                 out["suggest_response"] = (
                     f"No incoming stock (ETA) found for {exact_list}. Related products:\n"
                     f"{numbered}\n"
-                    f"Reply with a number to check its incoming, or reply 'yes' to escalate "
-                    f"to {team} team."
+                    + _cont(
+                        "Reply with a number to check its incoming",
+                        f", or reply 'yes' to escalate to {team} team.",
+                    )
                 )
                 # Uncapped list means NO per-sibling buttons (respond.io's button cap);
                 # numbers are typed, so Yes / No are the only buttons.
@@ -4331,7 +4416,8 @@ def build_suggest_offer(
         out["suggest_response"] = (
             "Couldn't find some items:\n\n"
             + "\n".join(blocks)
-            + f"\n\nReply a number to pick, or 'yes' to escalate to {team}."
+            + "\n\n"
+            + _cont("Reply a number to pick", f", or 'yes' to escalate to {team}.")
         )
         out["suggest_quick_reply"] = _quick_reply([_YES, _NO])
         out["dym_offer"] = mk_offer(out["dym_candidates"])
@@ -4360,8 +4446,10 @@ def build_suggest_offer(
                 out["suggest_response"] = (
                     f'Couldn\'t pin down "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '
                     f"Here are the closest matches:\n{numbered}\n"
-                    f"Reply with a number to continue, or would you like me to escalate to "
-                    f"{team} team?"
+                    + _cont(
+                        "Reply with a number to continue",
+                        f", or would you like me to escalate to {team} team?",
+                    )
                 )
                 out["suggest_quick_reply"] = _quick_reply(
                     [str(i + 1) for i in range(len(picks))] + [_YES, _NO]
@@ -4428,15 +4516,19 @@ def build_suggest_offer(
                     out["suggest_response"] = (
                         f'Couldn\'t find "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '
                         f"Did you mean:\n" + "\n".join(dym_lines) + "\n"
-                        f"Reply with a code to continue, or would you like me to escalate to "
-                        f"{team} team?"
+                        + _cont(
+                            "Reply with a code to continue",
+                            f", or would you like me to escalate to {team} team?",
+                        )
                     )
                 else:
                     out["suggest_response"] = (
                         f'Couldn\'t find "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '
                         f"Did you mean {_bso_human_list(codes)}? "
-                        f"Reply with a code to continue, or would you like me to escalate to "
-                        f"{team} team?"
+                        + _cont(
+                            "Reply with a code to continue",
+                            f", or would you like me to escalate to {team} team?",
+                        )
                     )
                 out["suggest_quick_reply"] = _quick_reply([*codes, _YES, _NO])
                 out["suggest_last_result_set"] = [
@@ -4564,13 +4656,19 @@ def build_suggest_offer(
             summary = f"Here's what you want:\n{summary_text}\n\n" if summary_text else ""
             text = (
                 f"{summary}No delivery on {asked}. {jsc.js_string(cust)} has delivery on {near}. "
-                f"Reply with a date to continue, or would you like me to escalate to {team} team?"
+                + _cont(
+                    "Reply with a date to continue",
+                    f", or would you like me to escalate to {team} team?",
+                )
             )
         else:
             text = (
                 f"No {jsc.js_string(noun)} for {asked_label}. "
                 f"Try: {', '.join(jsc.js_string(v) for v in values)}. "
-                f"Reply with a code to continue, or would you like me to escalate to {team} team?"
+                + _cont(
+                    "Reply with a code to continue",
+                    f", or would you like me to escalate to {team} team?",
+                )
             )
 
         out["suggest_offer"] = True
@@ -4620,7 +4718,10 @@ def build_suggest_offer(
     out["suggest_selection_context"] = "suggest_offer"
     out["suggest_response"] = (
         f"No {jsc.js_string(noun)} for {asked_label}. Here are the closest matches:\n{numbered}\n"
-        f"Reply with a number to continue, or would you like me to escalate to {team} team?"
+        + _cont(
+            "Reply with a number to continue",
+            f", or would you like me to escalate to {team} team?",
+        )
     )
     out["suggest_quick_reply"] = _quick_reply(
         [str(i + 1) for i in range(len(alt_picks))] + [_YES, _NO]

@@ -16,7 +16,12 @@ from app.dependencies import (
     require_permission,
     require_permission_with_api_key,
 )
-from app.services.order_service import OrderService, stamp_so_outstanding_rows
+from app.services.order_service import (
+    OrderService,
+    has_product_filter,
+    narrow_product_ids_by_brand,
+    stamp_so_outstanding_rows,
+)
 from app.services.uuid_list_param import parse_uuid_list
 from app.config import settings as app_settings
 
@@ -319,6 +324,14 @@ async def get_orders(
         None,
         description="Filter to orders containing any of these product UUIDs (via order lines).",
     ),
+    brand_ids: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Canonical brand UUIDs (csv/JSON/repeated) - narrows to orders containing a "
+            "product of this brand (Product.brand_id via order lines). Intersects with "
+            "product_ids when both are given (#1262 slice 9, AC-S9-6)."
+        ),
+    ),
     transporter_ids: Optional[list[str]] = Query(
         None,
         description=(
@@ -461,7 +474,22 @@ async def get_orders(
 
     try:
         _resolved_customer_ids = parse_uuid_list(customer_ids, param_name="customer_ids")
-        _resolved_product_ids = parse_uuid_list(product_ids, param_name="product_ids")
+        _resolved_brand_ids = parse_uuid_list(brand_ids, param_name="brand_ids")
+        # Review round (26 Sep 2026): the SAME cap `get_outstanding_report` already
+        # applies to its own `brand_ids` - an unbounded IN (...) from an external
+        # caller is an easy way to make the brand-narrowing query slow.
+        if _resolved_brand_ids is not None and len(_resolved_brand_ids) > 50:
+            raise AppException(
+                422,
+                "Too many values for 'brand_ids' (max 50)",
+                detail=f"got {len(_resolved_brand_ids)}",
+                code="too_many_values",
+            )
+        _resolved_product_ids = narrow_product_ids_by_brand(
+            db,
+            parse_uuid_list(product_ids, param_name="product_ids"),
+            _resolved_brand_ids,
+        )
 
         # A3 (AC-905): a DIFFERENT table (sales_order_lines, not orders), so a
         # dedicated path rather than shoehorning it into `service.list_orders` -
@@ -717,6 +745,15 @@ async def get_orders_by_product(
         None,
         description="Canonical product UUIDs (csv/JSON/repeated). At least one required for this endpoint.",
     ),
+    brand_ids: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Canonical brand UUIDs (csv/JSON/repeated) - narrows to that brand's own "
+            "products (Product.brand_id). Counts as the product narrower this endpoint "
+            "requires (#1262 slice 9, AC-S9-6); intersects with product_ids when both "
+            "are given."
+        ),
+    ),
     customer_ids: Optional[list[str]] = Query(
         None,
         description="Optional customer UUIDs. OR-fallback to debtor_name for legacy rows without FK.",
@@ -826,13 +863,32 @@ async def get_orders_by_product(
             request, limit, cap=_EXTERNAL_ORDERS_AGG_LIMIT_CAP, date_scoped=_date_scoped
         )
         norm_entities = _normalize_entities(entities)
-        parsed_product_ids = parse_uuid_list(product_ids, param_name="product_ids")
+        resolved_brand_ids = parse_uuid_list(brand_ids, param_name="brand_ids")
+        # Review round (26 Sep 2026): the SAME cap `get_outstanding_report` already
+        # applies to its own `brand_ids` - an unbounded IN (...) from an external
+        # caller is an easy way to make the brand-narrowing query slow.
+        if resolved_brand_ids is not None and len(resolved_brand_ids) > 50:
+            from app.services.error_handler import AppException
+
+            raise AppException(
+                422,
+                "Too many values for 'brand_ids' (max 50)",
+                detail=f"got {len(resolved_brand_ids)}",
+                code="too_many_values",
+            )
+        # #1262 slice 9 (F1a): a brand ALONE counts as the product narrower this
+        # endpoint requires, same as `product_ids` - the boolean check below is
+        # widened, not bypassed, so an unrelated free-text `query` is still enough
+        # on its own exactly as before.
+        parsed_product_ids = narrow_product_ids_by_brand(
+            db, parse_uuid_list(product_ids, param_name="product_ids"), resolved_brand_ids
+        )
         # Endpoint is product-centric: require a product narrower to prevent
         # full-catalog enumeration. Accepts canonical UUIDs, legacy
         # product_code/SKU list, partial product text, free-text query, or
         # the deprecated entity bag.
         has_product_narrower = bool(
-            parsed_product_ids
+            has_product_filter(parsed_product_ids)
             or product_id
             or (product_query and product_query.strip())
             or (query and query.strip())
@@ -1429,6 +1485,15 @@ async def get_outstanding_report(
             "not here - this route only matches the exact codes it is given."
         ),
     ),
+    brand_ids: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Canonical brand UUIDs (csv/JSON/repeated) - `Product.brand_id`, the chatbot's "
+            "resolved brand entity (#1262 slice 9, AC-S9-4). A brand alone is a valid "
+            "subject (counts toward the product_code/customer_ids/customer_query "
+            "requirement below). The response echoes brand_name for the header."
+        ),
+    ),
     order_date_from: Optional[str] = Query(
         None,
         description=(
@@ -1483,21 +1548,28 @@ async def get_outstanding_report(
     from app.services.error_handler import AppException
     from app.services.outstanding_report_service import outstanding_report
 
-    # R13: the SUBJECT is a product, a customer, or both - but never nothing. An
-    # unfiltered report would sum every open sales order line in the company, which is
-    # not an answer to any question a customer can ask.
+    # #1262 slice 9 (F1a): `brand_ids` is a UUID param like `customer_ids` (S3 below),
+    # parsed before the subject check so a brand-only ask ("brand Sorento") counts as a
+    # subject the same way a product or customer does - never `subject_required` for it
+    # alone (AC-S9-4).
+    resolved_brand_ids = parse_uuid_list(brand_ids, param_name="brand_ids")
+
+    # R13: the SUBJECT is a product, a customer, a brand, or any combination - but never
+    # nothing. An unfiltered report would sum every open sales order line in the
+    # company, which is not an answer to any question a customer can ask.
     resolved_product_codes = _normalize_entities(product_codes)
     if (
         not (product_code or "").strip()
         and not resolved_product_codes
         and not customer_ids
         and not (customer_query or "").strip()
+        and not resolved_brand_ids
     ):
         raise AppException(
             422,
-            "This report needs a subject: give at least one of product_code, customer_ids "
-            "or customer_query",
-            detail="product_code, customer_ids, customer_query",
+            "This report needs a subject: give at least one of product_code, customer_ids, "
+            "customer_query or brand_ids",
+            detail="product_code, customer_ids, customer_query, brand_ids",
             code="subject_required",
         )
 
@@ -1523,6 +1595,7 @@ async def get_outstanding_report(
         (resolved_customer_ids, "customer_ids"),
         (resolved_warehouse_codes, "warehouse_codes"),
         (resolved_product_codes, "product_codes"),
+        (resolved_brand_ids, "brand_ids"),
     ):
         if values is not None and len(values) > 50:
             raise AppException(
@@ -1540,6 +1613,7 @@ async def get_outstanding_report(
         customer_query=customer_query,
         customer_ids=resolved_customer_ids,
         warehouse_codes=resolved_warehouse_codes,
+        brand_ids=resolved_brand_ids,
         order_date_from=_parse_flex_date(order_date_from),
         order_date_to=_parse_flex_date(order_date_to, end_of_day=True),
     )

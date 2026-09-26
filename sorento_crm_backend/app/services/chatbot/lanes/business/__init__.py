@@ -33,6 +33,7 @@ from app.services.chatbot.turn import policy_rows
 from app.services.chatbot.lanes.business.services import (
     FetchServices,
     ResolveGateServices,
+    outstanding_brand_echo,
     outstanding_customer_echo,
     resolve_warehouse_token,
 )
@@ -110,7 +111,9 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
             continue
         if e.get("entity_type") == "customer":
             uid = e.get("uuid")
-            if uid and uid not in customer_ids:
+            # #1262 slice 2 (F1c): never a kind-pick's printed label or an
+            # unresolved code, only a real uuid.
+            if fetch_mod.is_uuid(uid) and uid not in customer_ids:
                 customer_ids.append(uid)
     if not customer_ids:
         # R13/R15: the same fallback `fetch._outstanding_filters_from_ctx` makes. A turn
@@ -119,7 +122,9 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
         # filter set, already resolved, and they have to ride back out on it too or the
         # re-asked question loses the only subject it has.
         customer_ids = [
-            uid for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids")) if uid
+            uid
+            for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids"))
+            if fetch_mod.is_uuid(uid)
         ]
     return {
         "product_code": product_codes[0] if product_codes else None,
@@ -134,6 +139,14 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
         # answering turn prints the same `Location: IB (BRW-IB, MWH-IB)` header the
         # asking turn did instead of re-running over every warehouse.
         "location_token": semantic_input.get("outstanding_location_token"),
+        # #1262 slice 9 (F1a) follow-up: `semantic_input["outstanding_brand_ids"]` is
+        # ALREADY the resolved uuids by the time this runs - `run_fetch` calls
+        # `_resolve_report_product_and_location` (which resolves a fresh brand token OR
+        # falls back to `outstanding_carried_brand_ids`, R13/R15/D10) before ever
+        # reaching the scope-ask arm this feeds. No second fallback needed here.
+        "brand_ids": [
+            b for b in jsc.array(semantic_input.get("outstanding_brand_ids")) if fetch_mod.is_uuid(b)
+        ],
     }
 
 
@@ -228,7 +241,9 @@ def _outstanding_scope_ask(
     )
 
 
-def _outstanding_scope_filter_lines(filters: dict[str, Any], *, customer_name: str = "") -> list[str]:
+def _outstanding_scope_filter_lines(
+    filters: dict[str, Any], *, customer_name: str = "", brand_name: str = ""
+) -> list[str]:
     """The scope question's header: the SAME four lines the report prints, in the same
     order and the same words (`sorento_crm_mcp.presenters._outstanding_report`, the
     `Product:` / `Customer:` / `Location:` / `Order date:` block), one writer for every
@@ -257,6 +272,12 @@ def _outstanding_scope_filter_lines(filters: dict[str, Any], *, customer_name: s
     label with its company-code suffix ("CHIN CHUN HARDWARE SDN BHD (MCH, SRT)") while
     the report named the ledger rows. AC-1163's distinct, first-seen rule comes with
     it, because it lives in that one function.
+
+    `brand_name` (#1262 slice 9 follow-up, F1a): the SAME additive-only rule the MCP
+    presenter's `_outstanding_header_lines` uses for its own fifth `Brand:` line - it
+    prints ONLY when filled, never `all`, because an ordinary (no-brand) ask never named
+    one at all (unlike Product/Customer/Location/Order date, which are always one of
+    this report's four axes whether or not the customer named a value for it).
     """
     # The `Product:` line names every code the question is about, the way the `Customer:`
     # line names every ledger: "all" over a ten-variant roster is one question about ten
@@ -285,12 +306,16 @@ def _outstanding_scope_filter_lines(filters: dict[str, Any], *, customer_name: s
         filters.get("date_filter_start"), filters.get("date_filter_end")
     )
 
-    return [
+    lines = [
         f"Product: {product_code or 'all'}",
         f"Customer: {jsc.js_string(customer_name or '').strip() or 'all'}",
         f"Location: {location}",
         f"Order date: {order_date}",
     ]
+    brand_label = jsc.js_string(brand_name or "").strip()
+    if brand_label:
+        lines.append(f"Brand: {brand_label}")
+    return lines
 
 
 def order_date_text(start: Any, end: Any) -> str:
@@ -342,6 +367,12 @@ def _outstanding_scope_ask_from_filters(
             filters,
             customer_name=(
                 outstanding_customer_echo(db, filters.get("customer_ids")) if db is not None else ""
+            ),
+            # #1262 slice 9 follow-up: the SAME "db is None -> no-op" rule, one echo
+            # over one join, so the question and the report never name the brand
+            # differently either (R19b's own rule, extended).
+            brand_name=(
+                outstanding_brand_echo(db, filters.get("brand_ids")) if db is not None else ""
             ),
         )
     )
@@ -449,6 +480,37 @@ def _sales_report_not_enabled() -> dict[str, Any]:
         "keys_served": False,
         # AC-1139/S4 point 9's own marker: this reply carries nothing but itself, so
         # the generic search-scope header must not print above it either.
+        "outstanding_report": True,
+    }
+    item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
+    return {
+        "kind": "result",
+        "_fetch_arm": item["_fetch_arm"],
+        "delegate": DELEGATE,
+        "delegate_payload": {"fetch": item},
+        "fetch": item,
+    }
+
+
+def _which_customer_ask() -> dict[str, Any]:
+    """#1262 slice 2 (F1c), AC-S2-3: the turn's only customer subject is a stored id
+    that never resolved to a real uuid (a kind-pick's printed label, never re-typed) -
+    the report must not run over no customer at all ("Customer: all"). Same shape as
+    `_sales_report_not_enabled` (`has_result: True`, no `outstanding_ask`): nothing is
+    armed, so the miss lane and any escalation offer stay off this reply entirely.
+    """
+    structured: dict[str, Any] = {
+        "response": "Which customer is this outstanding report for?",
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": True,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
         "outstanding_report": True,
     }
     item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
@@ -792,6 +854,69 @@ def _refinement_product_resolves(db: Any, token: str) -> bool:
     )
 
 
+def _resolve_outstanding_brand_ids(
+    parse_output: dict[str, Any],
+    semantic_input: dict[str, Any],
+    *,
+    db: Any,
+) -> None:
+    """#1262 slice 9 (F1a), round 3 section 6 step 4: the brand word(s) this turn (or
+    a refinement) named, resolved to the live brand's OWN ids - the SAME live read
+    `turn_runtime.active_brands` uses (case-insensitive exact on name or code, the
+    one place "which brand does this word mean" is answered). `db` is None outside
+    a real turn (this module's own direct `run_fetch` tests), same no-op every
+    other db-gated read here already has. The token never reached the shared
+    resolver at all (`turn_runtime.resolve_kinds`'s own pre-resolver intercept), so
+    this is the FIRST and only place it becomes an id.
+
+    Review round (26 Sep 2026), SF4: split out of `_resolve_report_product_and_
+    location` and called EARLY in `run_fetch`, before the order-outstanding subject
+    gate reads `has_brand` - a brand-hinted entity naming a word that matches NO
+    live brand (an unlisted brand) must not count as a subject at all, and the only
+    way to tell "named a real brand" from "named a brand-shaped word" apart is to
+    actually resolve it here first.
+    """
+    if semantic_input.get("outstanding_brand_ids"):
+        return
+    brand_tokens = {
+        jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
+        for e in [
+            *jsc.array(parse_output.get("entities")),
+            *jsc.array(parse_output.get("outstanding_refinement_entities")),
+        ]
+        if isinstance(e, dict) and jsc.js_string(e.get("hint") or "").strip().lower() == "brand"
+    }
+    brand_tokens.discard("")
+    if brand_tokens and db is not None:
+        from app.services.chatbot.turn_runtime import active_brands
+
+        folded_tokens = {t.casefold() for t in brand_tokens}
+        brand_ids: list[str] = []
+        for row in active_brands(db):
+            name = jsc.js_string(row.get("brand_name") or "").strip().casefold()
+            code = jsc.js_string(row.get("brand_code") or "").strip().casefold()
+            if (name and name in folded_tokens) or (code and code in folded_tokens):
+                if row["id"] not in brand_ids:
+                    brand_ids.append(row["id"])
+        if brand_ids:
+            semantic_input["outstanding_brand_ids"] = brand_ids
+    if not semantic_input.get("outstanding_brand_ids"):
+        # R13/R15/D10, the same fallback the customer-id carry above and
+        # `_outstanding_filters_from`'s own docstring make: an ANSWERING turn (a scope
+        # pick, an out-of-range re-ask, a refinement) typed no brand word of its own -
+        # the ids rode in on the carried filter set, already resolved, and have to ride
+        # back out on it too or the re-run silently drops the very brand the question
+        # was scoped to.
+        # N1 (security review, 26 Sep 2026): a carried brand id is a resolved uuid or
+        # it is nothing - the same `is_uuid` guard the customer-id carry above uses,
+        # never a bare truthiness check that would let a non-uuid string through.
+        carried_brand_ids = [
+            b for b in jsc.array(parse_output.get("outstanding_carried_brand_ids")) if fetch_mod.is_uuid(b)
+        ]
+        if carried_brand_ids:
+            semantic_input["outstanding_brand_ids"] = carried_brand_ids
+
+
 def _resolve_report_product_and_location(
     parse_output: dict[str, Any],
     entities: Any,
@@ -915,6 +1040,8 @@ def _resolve_report_product_and_location(
         if isinstance(carried_wh_codes, list) and carried_wh_codes:
             semantic_input["outstanding_warehouse_codes"] = carried_wh_codes
             semantic_input["outstanding_location_token"] = carried_token or None
+
+    _resolve_outstanding_brand_ids(parse_output, semantic_input, db=db)
 
 
 def run_fetch(
@@ -1223,15 +1350,41 @@ def run_fetch(
         if isinstance(entities, list)
         else False
     )
+    # #1262 slice 9 (F1a), AC-S9-4: a brand alone is a valid subject for the
+    # outstanding report. Resolved here (not merely hinted): SF4 (review round, 26
+    # Sep 2026) - "brand XYZ" naming an unlisted word must never count as a subject,
+    # so this must test the RESOLVED `outstanding_brand_ids` (the SAME live lookup
+    # `_resolve_report_product_and_location` performs, called early here so its
+    # result is ready before the subject gate below reads it), never any
+    # brand-hinted entity regardless of whether it matched a live brand.
+    _resolve_outstanding_brand_ids(parse_output, semantic_input, db=db)
+    has_brand = bool(semantic_input.get("outstanding_brand_ids"))
+    # #1262 slice 2 (F1c): a carried customer id is a subject only when it is a real
+    # uuid - a kind-pick's printed label ("Sorento (customer)") riding on this same
+    # key is not a resolved customer, and must never count as one here either.
+    raw_carried_customer_ids = jsc.array(parse_output.get("outstanding_carried_customer_ids"))
+    carried_customer_ids = [u for u in raw_carried_customer_ids if fetch_mod.is_uuid(u)]
+    carried_customer_unusable = bool(raw_carried_customer_ids) and not carried_customer_ids
     # R13: on an ANSWERING turn the subject is whatever the stored filters carry - the
     # product code, the customer ids, or both - and neither needs resolving again: they
     # were resolved on the turn that asked.
-    carried_subject = bool(jsc.truthy(parse_output.get("outstanding_carried_product_code"))) or bool(
-        jsc.array(parse_output.get("outstanding_carried_customer_ids"))
+    carried_subject = (
+        bool(jsc.truthy(parse_output.get("outstanding_carried_product_code")))
+        or bool(carried_customer_ids)
     )
     if (
         domain == "order"
-        and (has_product or has_customer or carried_subject)
+        and not (has_product or has_customer or has_brand or carried_subject)
+        and carried_customer_unusable
+        and (order_status_raw == "outstanding" or order_status_raw in fetch_mod.ORDER_STATUS_TO_SCOPE)
+    ):
+        # AC-S2-3: the ONLY subject this turn has is an unusable stored customer (the
+        # label, never re-typed) - never run the report over no customer at all
+        # ("Customer: all"); ask, with no tool call.
+        return _which_customer_ask()
+    if (
+        domain == "order"
+        and (has_product or has_customer or has_brand or carried_subject)
         and (order_status_raw == "outstanding" or order_status_raw in fetch_mod.ORDER_STATUS_TO_SCOPE)
     ):
         tool_name = "crm_outstanding_report"

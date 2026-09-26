@@ -141,6 +141,11 @@ class OutstandingReportResponse(BaseModel):
     # R13: the SUBJECT may be a customer alone, so the product echo is nullable.
     product_code: Optional[str] = None
     customer_name: Optional[str] = None
+    # #1262 slice 9 (F1a): the brand(s) filtered by `brand_ids`, joined by ", " the same
+    # way `customer_name` joins several ledgers - `None` when no brand was named, never
+    # printed as "all" (the MCP presenter/chatbot header add the "Brand:" line only when
+    # this is filled).
+    brand_name: Optional[str] = None
     warehouse_codes: List[str] = []
     order_date_from: Optional[date] = None
     order_date_to: Optional[date] = None

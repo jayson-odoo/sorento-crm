@@ -82,7 +82,11 @@ ALLOWED: dict[str, list[str]] = {
     "inventory": ["product", "warehouse", "category", "brand"],
     # S4 point 7 (PLAN-chatbot-outstanding-report.md, D5): a location word narrows
     # crm_outstanding_report the same way it already narrows inventory/spo_allocation.
-    "order": ["order", "customer_order", "transporter", "customer", "product", "warehouse"],
+    # #1262 slice 9 (F1a): "brand" joins the matrix - resolved inside the chatbot
+    # against the live `brands` table (`turn_runtime.active_brands`,
+    # `resolve_gate.py`'s own pre-resolver intercept), never sent through the
+    # shared resolver's order-domain fan-out to customer/transporter.
+    "order": ["order", "customer_order", "transporter", "customer", "product", "warehouse", "brand"],
     "incoming": ["product", "inbound_shipment", "category", "brand"],
     "forms": ["form"],
     "portal_link": [],
@@ -170,8 +174,15 @@ _DC_NON_ALNUM = re.compile(r"[^a-z0-9]")
 _DF_SEPARATORS = re.compile(r"[^a-z0-9]+")
 _HAS_DIGIT = re.compile(r"[0-9]")
 # `‐-―` is the range U+2010..U+2015; the other three are U+2212, U+FE58, U+FE63, U+FF0D.
+# #1262 slice 3 (F5): ONE leading letter, not two - "M210-GM" (a real Mocha code) is
+# one letter then digits, and the two-letter rule read it as a DESCRIPTION word
+# ("bidet", "tap"), which is what let a bare "M210-GM" stock ask sweep the whole
+# catalogue unscoped (`require={"stock": true}` with nothing to withhold it). A
+# genuine description word still stays described - `_is_a_described_word`'s own
+# `_HAS_DIGIT` guard reads "tap"/"basin" as described regardless of this shape at
+# all, since neither carries a digit.
 _CODE_SHAPED = re.compile(
-    "^[A-Za-z][A-Za-z][A-Za-z0-9._/\\-‐-―−﹘﹣－]*\\Z"
+    "^[A-Za-z][A-Za-z0-9._/\\-‐-―−﹘﹣－]*\\Z"
 )
 
 
@@ -1663,11 +1674,20 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     )
 
     # ── Q23 - a stated access level the contact does not hold ───────────────
-    # Say so, then still show what they DO have. F5: `Aggregate` only runs on the promotion
-    # lane, so requiring the domain AND a real entitlement read is what stops a false
-    # "You don't have access to End User promotions" on a stock question.
+    # Say so, then still show what they DO have. F5: `Aggregate` (and `tier_gate`)
+    # only run on the promotion lane (`resolve_gate.run`'s own `entry == "access_
+    # check"` step, which only ever fires for `branch_kind == "check_promotion"`) -
+    # `tg is not None` IS that same condition, read directly off whether the node
+    # actually ran, rather than off `domain == "promotion"` (review round 2, 26 Sep
+    # 2026, security follow-up): a MIXED order+promotion turn sends `domain_hint:
+    # "order"` (the order half won the parser's own domain read) through this exact
+    # entry regardless, and the literal-string check discarded `tier_gate`'s own,
+    # correctly-computed `brand_gate_empty` for that shape - the SAME "You don't
+    # have access to Cabana promotions" the bare-promotion turn gets, silently
+    # replaced with "gate closed, no notice at all". A turn where tier_gate never
+    # ran (`tg is None`, the ELSE branch below) is unaffected either way.
     tg = tier_gate if isinstance(tier_gate, dict) else None
-    if domain == "promotion" and tg is not None:
+    if tg is not None:
         stated_t = tg["tier_stated"] if isinstance(tg.get("tier_stated"), list) else []
         ent_t = tg["entitled_tiers"] if isinstance(tg.get("entitled_tiers"), list) else []
         held_t = [t for t in stated_t if t in ent_t]

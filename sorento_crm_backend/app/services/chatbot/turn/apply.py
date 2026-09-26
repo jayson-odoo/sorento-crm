@@ -381,11 +381,24 @@ def _settle_question_subject(focus: Focus, pending: Pending, trace: Trace | None
             # code the question had been asked about (AC-1119,
             # `test_the_answer_turn_reports_the_typed_code`).
             trace.picked_kinds.append("product")
-    ids = [u for u in (filters.get("customer_ids") or []) if u]
+    # #1262 slice 2 (F1c): a stored `customer_ids` filter is a resolved uuid or it is
+    # nothing - a kind-pick's printed label ("Sorento (customer)") that got as far as
+    # this filter set must never be settled onto focus as if it were one.
+    from app.services.chatbot.lanes.business.fetch import is_uuid
+
+    ids = [u for u in (filters.get("customer_ids") or []) if is_uuid(u)]
     if ids:
         focus.customers = [
             {"uuid": uid, "hint": "customer", "current_message": False} for uid in ids
         ]
+    # #1262 slice 9 (F1a) follow-up: the SAME settle, for the brand the scope question
+    # was asked about - a stored `brand_ids` filter is already-resolved uuids or it is
+    # nothing (the brand never reaches a resolver that could mis-place it), onto the
+    # DEDICATED `outstanding_brand_ids` slot, never `focus.brands` (the tier-gate's own,
+    # unrelated field - see `Focus.outstanding_brand_ids`'s own docstring).
+    brand_ids = [b for b in (filters.get("brand_ids") or []) if is_uuid(b)]
+    if brand_ids:
+        focus.outstanding_brand_ids = brand_ids
     codes = [c for c in (filters.get("warehouse_codes") or []) if c]
     token = filters.get("location_token")
     if codes or token:
@@ -489,7 +502,13 @@ def _answer_outstanding(
         trace.outstanding = {"kind": pending.kind, "scope": decision.scope, "detail": None}
         return focus, pending, None, True
 
-    if decision.kind == NEW_ASK and decision.why == "names_its_own_entity":
+    if decision.kind == NEW_ASK and decision.why in (
+        "names_its_own_entity",
+        # #1262 slice 4 (F3), AC-S4-2: `decide()`'s own T6-half reading - a message
+        # naming ANOTHER domain, no entity at all, closes the offer exactly like a
+        # message that names its own entity does (owner ruling, hand pass 3 T6 half).
+        "domain_switch",
+    ):
         trace.rules_fired.append("outstanding_pending_dropped")
         _drop_question_subject(focus, pending)
         return focus, None, None, False
@@ -659,7 +678,48 @@ def _answer_pending(state: State, decision: Decision, trace: Trace):
         asked_status = pending.payload.get("status")
         if isinstance(asked_status, str) and asked_status:
             focus.status = asked_status
-        if is_roster(pending.kind):
+        # #1262 slice 8 (F1b siblings), owner ruling 6: a SECOND ambiguous token
+        # queued on THIS pick's own payload is asked NEXT, once this one is
+        # answered - never the same options re-printed (`with_answered_positions`,
+        # below, is right for every OTHER roster kind, but a kind_pick answered is
+        # a kind_pick DONE; what stays open is the next token's own pick, not this
+        # one's).
+        queued = pending.payload.get("queued_kind_picks") if pending.kind == "kind_pick" else None
+        if isinstance(queued, list) and queued:
+            next_options, *rest = queued
+            next_pending = pending_ask(
+                "kind_pick",
+                next_options,
+                team=pending.team,
+                asked_at_turn=pending.asked_at_turn,
+                payload={"queued_kind_picks": rest} if rest else {},
+            )
+            trace.rules_fired.append("kind_pick_queue_advanced")
+            # A kind_pick is a RECONCILIATION ask, never a domain-narrowing one, so
+            # `_narrow_and_plan`'s own `ask` (built fresh off `domains`, empty here -
+            # a kind_pick names no domain) would never re-mint it - the SAME reason
+            # `_reconcile_step`'s own first kind_pick short-circuits the whole turn
+            # rather than falling through to it.
+            return (
+                focus,
+                next_pending,
+                Plan(domains=[], fetch=[], ask=next_pending, denied=[], trace=trace),
+                True,
+            )
+        # #1262 slice 8 (F1b siblings) follow-up (coordinator round, 26 Sep 2026): a
+        # `kind_pick` is a ONE-SHOT disambiguation over a SINGLE ambiguous token, never
+        # a roster with more rows to pick over time (contract 36's sticky-roster rule
+        # is for product/customer/tier, which keep several USABLE options after their
+        # own pick) - the `queued` branch above is the only way a kind_pick answer
+        # stays open, and only onto the NEXT token's own fresh pick, never this one's.
+        # Falling through to `is_roster` here (true for `kind_pick`, `ROSTER_KINDS`)
+        # left the JUST-ANSWERED pick open forever, carrying its own unanswered
+        # sibling option (e.g. "Sorento (transporter)") for a later reader to echo
+        # even though nothing remains to disambiguate (measured via a full-engine
+        # replay: T4's reply printed "Transporter: Sorento" alongside the correct
+        # "Customer: Sorento", and `escalate_offered` got stamped onto a question with
+        # nothing left to ask).
+        if pending.kind != "kind_pick" and is_roster(pending.kind):
             return focus, with_answered_positions(pending, positions), None, True
         return focus, None, None, True
 
@@ -955,7 +1015,14 @@ def _reconcile_step(
     trace.reconciled = result.reconciled
 
     if result.kind_pick_options is not None:
-        pending = pending_ask("kind_pick", result.kind_pick_options, team=None, asked_at_turn=None)
+        # #1262 slice 8 (F1b siblings), owner ruling 6: a SECOND (or third...)
+        # ambiguous token in the same message queues on this pick's own payload,
+        # asked in turn once this one is answered (`_answer_pending`'s kind_pick
+        # arm below reads it) - never overwritten, never silently dropped.
+        payload = {"queued_kind_picks": result.queued_kind_picks} if result.queued_kind_picks else {}
+        pending = pending_ask(
+            "kind_pick", result.kind_pick_options, team=None, asked_at_turn=None, payload=payload
+        )
         return result.entities, None, Plan(domains=[], fetch=[], ask=pending, denied=[], trace=trace)
 
     domain_override = None
@@ -1533,13 +1600,33 @@ def apply(
         verdict_entities, resolved, policy, verdict, trace
     )
     if reconcile_short_circuit is not None:
-        return state, reconcile_short_circuit
+        # #1262 slice 8 (F1b siblings): a kind pick over ONE ambiguous token
+        # ("Sorento", customer or transporter) must not throw the WHOLE turn's
+        # entities away - a DIFFERENT token the same message resolved cleanly
+        # (Cheng Huat Sentul, one customer) is settled onto focus exactly as an
+        # ordinary turn would, before the pick is asked. Returning the bare INPUT
+        # `state` here (unchanged) is what dropped it along with the ambiguous word.
+        focus = _focus_rules(
+            copy.deepcopy(state.focus),
+            verdict,
+            entities,
+            decision,
+            domain_locked=False,
+            domain_override=domain_override,
+            trace=trace,
+        )
+        return replace(state, focus=focus), reconcile_short_circuit
 
     focus_after_pending, pending_after, pending_short_circuit, domain_locked = _answer_pending(
         state, decision, trace
     )
     if pending_short_circuit is not None:
-        unchanged = replace(state, pending=pending_after)
+        # #1262 slice 8 (F1b siblings): `focus_after_pending` carries this branch's
+        # OWN mutation (a queued kind_pick's settled sibling) where one exists - the
+        # other short-circuit branches above never mutate focus at all, so keeping
+        # it here rather than `state.focus` is a no-op for them and correct for
+        # this one.
+        unchanged = replace(state, pending=pending_after, focus=focus_after_pending)
         return unchanged, pending_short_circuit
 
     focus = _focus_rules(

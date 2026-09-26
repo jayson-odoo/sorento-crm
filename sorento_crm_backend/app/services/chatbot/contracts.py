@@ -538,6 +538,10 @@ class Focus(BaseModel):
     customers: list[dict[str, Any]] = Field(default_factory=list)
     warehouse: list[dict[str, Any]] = Field(default_factory=list)
     brands: list[str] = Field(default_factory=list)
+    # #1262 slice 9 (F1a) follow-up: the outstanding report's own brand carry - see
+    # `turn/state.py::Focus.outstanding_brand_ids`'s own docstring for why this is a
+    # dedicated field, never `brands` above.
+    outstanding_brand_ids: list[str] = Field(default_factory=list)
     tier: list[str] = Field(default_factory=list)
     domains: list[str] = Field(default_factory=list)
     document: list[str] = Field(default_factory=list)

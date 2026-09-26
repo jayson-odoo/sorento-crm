@@ -1,0 +1,94 @@
+# Console cases for the Samantha case (issue #1262), slices 1 to 11.
+#
+# `documentation/plans/chatbot/PLAN-chatbot-samantha-slices-26sep.md` /
+# `chatbot-samantha-slices-26sep-acceptance-criteria.md`.
+#
+# NOT collected by pytest. Run against a LOCAL lane backend on the prod-copy DB, with the
+# parser prompt version this PR publishes (it lands unlabelled; pass its id):
+#
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-26-samantha.yaml \
+#       --base-url http://127.0.0.1:8000 \
+#       --prompt-version <new chatbot_semantic_parser version id>
+#
+# Export EXTERNAL_API_KEY from the backend .env before running. The MCP tool search needs
+# OPENAI_API_KEY (chatbot-verification.md).
+#
+# WORDING: the scout report quotes only fragments of T2 to T4 ("brand Sorento", "Dealer :",
+# Cheng Huat Sentul), so those texts are reconstructions. The photo turns are sent as the
+# text the CRM now hands the parser for a photo (caption and code on separate lines), since
+# the console runner posts text; T10's code (M210-GM) and T9's (M488-75-PVD-GM) are real.
+#
+# DATA FACTS (prod copy): brand Sorento is an active brand; Cheng Huat Sentul is one
+# customer; M210-GM and M488-75-PVD-GM are Mocha products. Contact 477071892 is Samantha
+# (profile tier office, per the F8 ruling assumed in the PR).
+#
+contact: "477071892"
+
+cases:
+  - name: T2 to T4 - brand Sorento and a dealer, no customer pick, no kind pick (S7, S8, S9)
+    cold: true
+    turns:
+      - text: "outstanding brand Sorento dealer Cheng Huat Sentul"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Sorento", "CHENG HUAT"]
+          reply_not_contains: ["Which customer do you mean?", "(transporter)", "(customer)", "escalate", "Customer: all"]
+
+  # Fix lane round 2, S2 (reviewer pass at 4719a829): T5 has the same shape as T7 (a
+  # product-list photo, no domain word) but arrives while the outstanding offer is still
+  # OPEN, so it must narrow the report. Slice 4 reads the parser's own domain_hint: a
+  # "inventory" or "incoming" hint here makes it a new ask and the report stops
+  # narrowing. Run live with the new prompt version BEFORE the label moves, and pin the
+  # domain_hint it emits here (null or "order" passes slice 4; anything else is a
+  # prompt defect to fix before promoting).
+  - name: T5 - a product-list photo under the open outstanding offer narrows the report (S2, S4, S5)
+    cold: true
+    turns:
+      - text: "outstanding brand Sorento dealer Cheng Huat Sentul"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["CHENG HUAT"]
+      - text: "SRTBF 11502 x3\nSRTBF 11503 x4"
+        expect:
+          branch_kind: business_query
+          parser:
+            domain_in_message: false
+          reply_contains: ["CHENG HUAT", "SRTBF 11502", "SRTBF 11503"]
+          reply_not_contains: ["Incoming", "incoming stock", "Error executing tool", "Customer: all"]
+
+  - name: T6 - got eta closes the outstanding offer and prints no zero header (S4, S6)
+    cold: true
+    turns:
+      - text: "outstanding for M210-GM"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["M210-GM"]
+      - text: "got eta"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["M210-GM"]
+          reply_not_contains: ["0 products have incoming stock", "Error executing tool"]
+      - text: "X4\nM488-75-PVD-GM"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["M488-75-PVD-GM"]
+          reply_not_contains: ["Error executing tool", "INVALID_UUID", "X4:", "Outstanding for which document?"]
+
+  - name: T9 - caption quantity is not part of the code (S5)
+    cold: true
+    turns:
+      - text: "X4\nM488-75-PVD-GM"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["M488-75-PVD-GM (x4)"]
+          reply_not_contains: ["I could not find X4", "Error executing tool"]
+
+  - name: T10 - one-letter code, one answer, no sweep, no staff escalation (S3, S5, S11)
+    cold: true
+    turns:
+      - text: "X5\nM210-GM"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["M210-GM (x5)"]
+          reply_not_contains: ["5,857", "Showing", "no stock records found for product", "escalate to warehouse team"]

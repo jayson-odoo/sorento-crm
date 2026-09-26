@@ -142,6 +142,12 @@ def _build_json_schema() -> dict[str, Any]:
                         # hinted kind FIRST only when this is true; a low-confidence
                         # kind hint goes straight to reconciliation instead.
                         "hint_confident": {"type": ["boolean", "null"]},
+                        # #1262 slice 5 (F4), owner ruling 1: the parser OWNS quantity -
+                        # a leading/trailing "xN"/"N pcs" beside a product is this
+                        # entity's own count, never folded into `raw`/`canonical_code`
+                        # and never regex-stripped back out of them downstream. `null`
+                        # is "no quantity said" (every entity before this slice).
+                        "quantity": {"type": ["number", "null"]},
                     },
                     "required": [
                         "raw",
@@ -150,6 +156,7 @@ def _build_json_schema() -> dict[str, Any]:
                         "current_message",
                         "confident",
                         "hint_confident",
+                        "quantity",
                     ],
                 },
             },
@@ -474,6 +481,7 @@ def build_user_block(
     profile_block: str | None = None,
     episodes_block: str | None = None,
     focus: Any = None,
+    brands: list[dict[str, Any]] | None = None,
 ) -> str:
     """The user turn, in the same two lines the n8n `AI Agent` node sends.
 
@@ -490,6 +498,11 @@ def build_user_block(
     `focus` is the third (hand pass 3, 17 Sep 2026): the "Current subject" line, so a
     refinement and a domain switch are read against what the conversation is about rather
     than against the previous reply alone.
+
+    `brands` (#1262 slice 9, F1a): the live `Brand` rows for the contact's own
+    companies, read fresh by the caller every turn (no cache) - one `Known
+    brands:` line, `name (code)` pairs, deduped by name across companies, dropped
+    whole when the read comes back empty.
     """
     import re
 
@@ -524,6 +537,20 @@ def build_user_block(
         # AC-1547: the recalled frames, on the SECOND parse of a turn that pointed
         # backwards. Absent on every other turn, which keeps their block unchanged.
         lines.append(episodes_block)
+    if brands:
+        # #1262 slice 9 (F1a): deduped by name - a brand active in more than one of
+        # the contact's companies must still print once, not once per company.
+        seen: set[str] = set()
+        pairs: list[str] = []
+        for row in brands:
+            name = str((row or {}).get("brand_name") or "").strip()
+            code = str((row or {}).get("brand_code") or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            pairs.append(f"{name} ({code})" if code else name)
+        if pairs:
+            lines.append(f"Known brands: {', '.join(pairs)}")
     return "\n".join(lines)
 
 

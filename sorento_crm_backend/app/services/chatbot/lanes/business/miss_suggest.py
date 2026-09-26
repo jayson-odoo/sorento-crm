@@ -1328,6 +1328,7 @@ def run_miss_lane(
     execution_id: Any = None,
     dry_run: bool = False,
     roster_caps: Mapping[str, int] | None = None,
+    profile: Any = None,
 ) -> dict[str, Any]:
     """`sub-miss-suggest` end to end, from `not-found-error-message`'s payload to the exit.
 
@@ -1351,6 +1352,11 @@ def run_miss_lane(
     D14: `dry_run` suppresses WRITES, and there are none on this lane - every seam here is a
     READ, so a dry run makes exactly the same calls a live turn makes. The parameter is
     accepted so the caller does not have to know that.
+
+    `profile` (#1262 slice 11 review round, 26 Sep 2026) forwards straight to
+    `build_suggest_offer`'s own audience gate - a did-you-mean/sibling roster's own
+    "or would you like me to escalate to X team?" clause must not print for staff, the
+    same reason `not_found_error_message` already takes `profile`.
     """
     from app.services.chatbot.lanes.business.answer import build_suggest_offer
 
@@ -1365,6 +1371,7 @@ def run_miss_lane(
             sibling_probe=fragment.get("sibling-probe"),
             sibling_transform=fragment.get("sibling-transform"),
             execution_id=execution_id,
+            profile=profile,
         )
 
     payload = not_found_item if isinstance(not_found_item, dict) else {}
@@ -1382,15 +1389,24 @@ def run_miss_lane(
         query = jsc.js_string(jsc.get(base, "code")) if jsc.truthy(base) else ""
         family = services.family_fetch(query)
         transformed = sibling_transform(family, gate=gate)
-        probe = services.mcp_probe(
-            "crm_incoming_stock_list",
-            _probe_args(
-                transformed.get("siblings") or [],
-                parser=parser,
-                contact_id=contact_id,
-                space_id=space_id,
-            ),
-        )
+        try:
+            probe = services.mcp_probe(
+                "crm_incoming_stock_list",
+                _probe_args(
+                    transformed.get("siblings") or [],
+                    parser=parser,
+                    contact_id=contact_id,
+                    space_id=space_id,
+                ),
+            )
+        except Exception:  # noqa: BLE001 - review round (26 Sep 2026), SF2: this call
+            # carried no `onError` (a faithful n8n port, per this function's docstring
+            # below), which was fine while a failed tool call returned a string - now
+            # that `call_tool` genuinely RAISES (#1262 slice 1), an unwrapped probe here
+            # took the whole turn down instead of degrading to the bare did-you-mean
+            # offer the sibling `dym-probe` arm already falls back to.
+            logger.warning("chatbot: sibling incoming-stock probe did not run", exc_info=True)
+            probe = {"error": "probe failed"}
         return _compose(
             miss_suggest_result(payload, sibling_transform=transformed, sibling_probe=probe)
         )
@@ -1402,18 +1418,27 @@ def run_miss_lane(
     if plan.get("probe_predicate") == "row_present":
         # `if-promo-dym` TRUE: one call per candidate (`mode: each`).
         items = promo_dym_plan(plan)
-        results = [
-            services.mcp_probe(
-                plan.get("probe_tool"),
-                _probe_args(
-                    [row.get("probe_entity")] if row.get("probe_entity") is not None else [],
-                    parser=parser,
-                    contact_id=contact_id,
-                    space_id=space_id,
-                ),
-            )
-            for row in items
-        ]
+        results = []
+        for row in items:
+            try:
+                results.append(
+                    services.mcp_probe(
+                        plan.get("probe_tool"),
+                        _probe_args(
+                            [row.get("probe_entity")] if row.get("probe_entity") is not None else [],
+                            parser=parser,
+                            contact_id=contact_id,
+                            space_id=space_id,
+                        ),
+                    )
+                )
+            except Exception:  # noqa: BLE001 - review round (26 Sep 2026), SF2: same
+                # reasoning as the sibling probe above - unwrapped only while a failed
+                # tool call returned a string, not now that `call_tool` raises. One
+                # candidate's own probe failing degrades that candidate to the bare
+                # did-you-mean shape, not the whole turn.
+                logger.warning("chatbot: promo did-you-mean probe did not run", exc_info=True)
+                results.append({"error": "probe failed"})
         annotated = dym_annotate(
             results[0] if results else {},
             payload=payload,
@@ -1436,8 +1461,11 @@ def run_miss_lane(
         # The ONLY node in `sub-miss-suggest-live` (and the same node on the spine) with an
         # `onError`, and it is `continueRegularOutput`: a failed probe still emits an item,
         # `dym-annotate` runs on it, and the customer gets the BARE did-you-mean offer.
-        # `sibling-probe`, `promo-dym-probe` and `family-fetch` carry no `onError`, which is
-        # why their calls above are deliberately unwrapped.
+        # `sibling-probe` and `promo-dym-probe` above now degrade the SAME way (review
+        # round, 26 Sep 2026, SF2) - the n8n port's own `onError` shape no longer applies
+        # literally now that `call_tool` raises instead of returning an error string, and
+        # a probe failure must never take the whole turn down. `family-fetch` is not an
+        # MCP tool call at all (no probe to fail the same way), so it stays unwrapped.
         logger.warning("chatbot: did-you-mean probe did not run", exc_info=True)
         probe = {"error": "probe failed"}
     annotated = dym_annotate(probe, payload=payload, transform=plan)

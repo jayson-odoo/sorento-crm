@@ -319,12 +319,28 @@ def build_image_result_body(
         }
     )
 
+    # #1262 slice 5 (F4), owner ruling 1: the caption and the codes are kept on
+    # SEPARATE lines, never glued "caption: codes" - a caption that is itself only
+    # a quantity ("X5") must reach the parser as its own line, not folded into the
+    # code's raw, so the parser (which now owns quantity, not this code) can read
+    # them as separate things. Each code's own line also carries its own quantity
+    # attribute, AS TEXT beside it (e.g. "SRTBF 11502 x3") - the vision step
+    # already read the per-line quantity (`attributes[kind="quantity"]`, scoped by
+    # `entity_raw`); this only formats that reading for the parser, never strips
+    # one back out of a string.
+    def _quantity_text(raw: str) -> str:
+        for attribute in extraction.attributes:
+            if attribute.kind == "quantity" and attribute.entity_raw == raw:
+                return f"{raw} x{attribute.raw}"
+        return raw
+
     raws = [entity.raw for entity in extraction.entities]
+    entity_lines = [_quantity_text(raw) for raw in raws]
     rendered_text = (
-        f"{caption_text}: {', '.join(raws)}"
-        if caption_text and raws
-        else ", ".join(raws)
-        if raws
+        f"{caption_text}\n{chr(10).join(entity_lines)}"
+        if caption_text and entity_lines
+        else "\n".join(entity_lines)
+        if entity_lines
         else caption_text
     )
 

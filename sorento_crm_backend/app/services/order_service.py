@@ -7,7 +7,8 @@ from io import BytesIO
 from datetime import datetime
 
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_, and_, func, exists, false
+from sqlalchemy import or_, and_, func, exists, false, select
+from sqlalchemy.sql import Select
 from decimal import Decimal
 from app.utils.chunking import chunked
 from app.models.order import Order, OrderStatus, Customer, OrderLine, Transporter
@@ -133,6 +134,60 @@ def resolve_warehouse_ids(db, warehouse_codes: Optional[list]) -> Optional[list]
     return [r[0] for r in rows]
 
 
+def narrow_product_ids_by_brand(
+    db: Session,
+    resolved_product_ids: Optional[list],
+    resolved_brand_ids: Optional[list],
+):
+    """#1262 slice 9 (F1a): a `brand_ids` filter narrows `product_ids` to that brand's
+    own products (`Product.brand_id`).
+
+    Fix lane round 2, N3: returned as a `Product.brand_id` SUBQUERY, never read into
+    Python - a brand-only call used to materialise the brand's whole product id list
+    and bind it back as `IN (...)`. Every consumer below accepts either shape through
+    `has_product_filter` / `product_filter` / `merge_product_filters`, and a brand
+    that matches no products simply filters to nothing (no sentinel id needed).
+
+    `None` (no brand filter) returns `resolved_product_ids` untouched. A given
+    `resolved_product_ids` AND a brand both narrowing is the INTERSECTION. The company
+    predicate is ANDed in by hand, the same way `stamp_order_summary` does for its own
+    column queries: a subquery must not depend on the ORM listener reaching it.
+    """
+    if not resolved_brand_ids:
+        return resolved_product_ids
+    stmt = select(Product.id).where(Product.brand_id.in_(resolved_brand_ids))
+    predicate = build_company_predicate(Product, get_company_scope(db))
+    if predicate is not None:
+        stmt = stmt.where(predicate)
+    if resolved_product_ids is not None:
+        stmt = stmt.where(Product.id.in_(resolved_product_ids))
+    return stmt
+
+
+def has_product_filter(value) -> bool:
+    """A product filter is present: a brand subquery always is, a list when non-empty."""
+    return isinstance(value, Select) or bool(value)
+
+
+def product_filter(value):
+    """A typed product filter as the services keep it: the brand subquery as is, a
+    list copied as strings, nothing as None."""
+    if isinstance(value, Select):
+        return value
+    kept = [str(p) for p in (value or []) if p]
+    return kept or None
+
+
+def merge_product_filters(*values):
+    """The union of several product filters. Plain lists concatenate exactly as the
+    `[*a, *b]` they replace; once a brand subquery is among them, the union is one
+    `Product.id` subquery instead."""
+    kept = [v for v in values if has_product_filter(v)]
+    if not any(isinstance(v, Select) for v in kept):
+        return [p for v in kept for p in v]
+    return select(Product.id).where(or_(*(Product.id.in_(v) for v in kept)))
+
+
 def _plain_number(v):
     """Decimal/float -> int when integral, else float. None stays None."""
     if v is None:
@@ -184,7 +239,7 @@ def so_outstanding_rows(
     )
     if customer_ids:
         q = q.filter(SalesOrder.customer_id.in_(customer_ids))
-    if product_ids:
+    if has_product_filter(product_ids):
         q = q.filter(SalesOrderLine.product_id.in_(product_ids))
     rows = (
         q.order_by(SalesOrder.order_date.asc().nulls_last(), SalesOrder.so_number.asc())
@@ -229,7 +284,7 @@ def so_outstanding_summary(
     )
     if customer_ids:
         q = q.filter(SalesOrder.customer_id.in_(customer_ids))
-    if product_ids:
+    if has_product_filter(product_ids):
         q = q.filter(SalesOrderLine.product_id.in_(product_ids))
     qty, count = q.one()
     return {
@@ -273,7 +328,7 @@ def stamp_so_outstanding_rows(
     groups = summary.get("groups") if isinstance(summary.get("groups"), list) else []
     if not products and not groups:
         return
-    pids = [str(p) for p in (product_ids or []) if p]
+    pids = product_filter(product_ids)
     try:
         _scope = get_company_scope(db)
         _p_so = build_company_predicate(SalesOrder, _scope)
@@ -311,7 +366,7 @@ def stamp_so_outstanding_rows(
         )
         if customer_ids:
             q = q.filter(SalesOrder.customer_id.in_([str(c) for c in customer_ids]))
-        if pids:
+        if has_product_filter(pids):
             q = q.filter(SalesOrderLine.product_id.in_(pids))
         q = _scoped(_scoped(q, _p_so), _p_line)
         per_group: dict[tuple, dict[str, Any]] = {}
@@ -463,7 +518,7 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
     answer never dies because its headline could not be computed. An empty
     result gets no summary at all.
     """
-    pids = [str(p) for p in (product_ids or []) if p]
+    pids = product_filter(product_ids)
     try:
         # COMPANY SCOPE, EXPLICITLY. The session's do_orm_execute listener scopes ORM
         # ENTITIES via with_loader_criteria; every query below is column-only
@@ -546,7 +601,7 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
         # groups are ALWAYS emitted with an asked summary - a breakdown by product is
         # meaningful under any filter (it was the cross-product grand total that was
         # not). When the caller narrowed by product, the lines are restricted to it.
-        _line_scope = OrderLine.product_id.in_(pids) if pids else None
+        _line_scope = OrderLine.product_id.in_(pids) if has_product_filter(pids) else None
         prod_q = (
             db.query(
                 Product.product_code,
@@ -708,7 +763,7 @@ class OrderService:
         # cannot shadow them.
         _order_uuid_filter = list(order_ids) if order_ids else None
         _customer_uuid_filter = list(customer_ids) if customer_ids else None
-        _product_uuid_filter = list(product_ids) if product_ids else None
+        _product_uuid_filter = product_filter(product_ids)
         _transporter_uuid_filter = list(transporter_ids) if transporter_ids else None
 
         # Date-axis relaxation (§3.4) bookkeeping. `_customer_scoped` gates the
@@ -774,7 +829,7 @@ class OrderService:
                 )
             )
 
-        if _product_uuid_filter:
+        if has_product_filter(_product_uuid_filter):
             filters.append(
                 Order.lines.any(OrderLine.product_id.in_(_product_uuid_filter))
             )
@@ -1645,7 +1700,7 @@ class OrderService:
         applied as additional AND filters.
         """
         # Capture typed UUID kwargs before any local variable shadows them.
-        _product_uuid_filter = list(product_ids) if product_ids else None
+        _product_uuid_filter = product_filter(product_ids)
         _customer_uuid_filter = list(customer_ids) if customer_ids else None
         _transporter_uuid_filter = list(transporter_ids) if transporter_ids else None
 
@@ -1657,7 +1712,7 @@ class OrderService:
             .distinct()
         )
 
-        if _product_uuid_filter:
+        if has_product_filter(_product_uuid_filter):
             q = q.filter(OrderLine.product_id.in_(_product_uuid_filter))
 
         if _customer_uuid_filter:
@@ -1734,7 +1789,7 @@ class OrderService:
         # narrows by `product_ids` (the MCP/typed path) instead of the legacy
         # `product_id` token resolver below. The order-level filter is applied
         # separately above via _product_uuid_filter on `q`.
-        if _product_uuid_filter:
+        if has_product_filter(_product_uuid_filter):
             product_match_filters.append(
                 OrderLine.product_id.in_(_product_uuid_filter)
             )
@@ -1936,7 +1991,7 @@ class OrderService:
                 self.db,
                 payload,
                 [],
-                product_ids=[*(_product_uuid_filter or []), *(product_ids or [])],
+                product_ids=merge_product_filters(_product_uuid_filter, product_ids),
             )
             return payload
 
@@ -2020,14 +2075,14 @@ class OrderService:
                 self.db,
                 payload,
                 summary_q,
-                product_ids=[*(_product_uuid_filter or []), *(product_ids or [])],
+                product_ids=merge_product_filters(_product_uuid_filter, product_ids),
             )
             if include_pipeline and isinstance(payload.get("summary"), dict):
                 stamp_so_outstanding_rows(
                     self.db,
                     payload["summary"],
                     customer_ids=_customer_uuid_filter,
-                    product_ids=[*(_product_uuid_filter or []), *(product_ids or [])],
+                    product_ids=merge_product_filters(_product_uuid_filter, product_ids),
                 )
         # Per-company labelling when the lookup spans more than one company - on the
         # empty path too, so an empty answer can name the companies searched. Both
@@ -2037,7 +2092,7 @@ class OrderService:
             self.db,
             payload,
             orders,
-            product_ids=[*(_product_uuid_filter or []), *(product_ids or [])],
+            product_ids=merge_product_filters(_product_uuid_filter, product_ids),
         )
         if entity_buckets is not None:
             payload["resolved_entities"] = entity_buckets.as_echo()
