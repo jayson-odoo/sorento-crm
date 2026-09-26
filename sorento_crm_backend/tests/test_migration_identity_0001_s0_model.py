@@ -1,0 +1,261 @@
+"""Migration `identity_0001_s0_model` (#1280 S0): up/down against the REAL schema.
+
+`documentation/plans/identity/s0-contract.md` section 1. The module does not exist
+yet, so `_load()` raises `FileNotFoundError` and every test below fails on that -
+a missing migration file, not a fixture bug. Once it exists, this exercises the
+real DDL (email nullable + check constraint, the two unique indexes, the two new
+columns, the seeded roles) and the pre-flight / link-backfill logic, inside ONE
+rolled-back transaction on the real connection (`tests/test_migration_*.py` runs
+serially, outside xdist - LESSONS-LEARNT 97).
+
+By the time this migration exists, `scripts.bootstrap_env` builds the CI database
+from the (by-then updated) ORM models, so the schema this test's outer transaction
+starts from already IS the post-migration shape. `_downgrade()` strips it back
+inside the transaction, the test seeds its own scenario, `_upgrade(concurrently=False)`
+replays the real logic, and the whole thing rolls back at teardown either way.
+"""
+from __future__ import annotations
+
+import importlib.util
+import uuid
+from pathlib import Path
+
+import pytest
+import sqlalchemy as sa
+from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
+from alembic.script import ScriptDirectory
+
+from app.database import engine
+
+MODULE_NAME = "identity_0001_s0_model"
+VERSIONS = (Path(__file__).resolve().parent / ".." / "alembic" / "versions").resolve()
+PREFIX = "ZZT-mig-identity"
+
+
+def _load():
+    path = VERSIONS / f"{MODULE_NAME}.py"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} does not exist yet - alembic/versions/{MODULE_NAME}.py is S0's deliverable"
+        )
+    spec = importlib.util.spec_from_file_location(f"m_{MODULE_NAME}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _current_other_head() -> str:
+    """The single alembic head that is NOT this migration (computed, never hard-coded)."""
+    cfg = Config(str(Path(__file__).resolve().parent / ".." / "alembic.ini"))
+    script = ScriptDirectory.from_config(cfg)
+    heads = [h for h in script.get_heads() if h != MODULE_NAME]
+    assert len(heads) == 1, f"expected exactly one other head, found {heads}"
+    return heads[0]
+
+
+def _run(conn, fn):
+    ctx = MigrationContext.configure(conn)
+    with Operations.context(ctx):
+        fn()
+
+
+def _mk_id() -> str:
+    return str(uuid.uuid4())
+
+
+def test_revision_id_fits_alembic_version_and_sits_on_the_current_head():
+    module = _load()
+    assert len(module.revision) <= 32
+    assert module.down_revision == _current_other_head()
+
+
+def test_preflight_blocks_on_case_duplicate_emails_names_users_no_ids():
+    module = _load()
+    with engine.connect() as raw:
+        outer = raw.begin()
+        try:
+            nested = raw.begin_nested()
+            a_id, b_id = _mk_id(), _mk_id()
+            stem = f"{PREFIX}-dup-{uuid.uuid4().hex[:6]}"
+            raw.execute(
+                sa.text(
+                    "INSERT INTO users (id, email, name, status) VALUES "
+                    "(:a_id, :email_a, :name_a, 'ACTIVE'), (:b_id, :email_b, :name_b, 'ACTIVE')"
+                ),
+                {
+                    "a_id": a_id,
+                    "email_a": f"{stem}@example.com",
+                    "name_a": f"{PREFIX} Alice",
+                    "b_id": b_id,
+                    "email_b": f"{stem}@EXAMPLE.COM",
+                    "name_b": f"{PREFIX} Bob",
+                },
+            )
+            with pytest.raises(RuntimeError) as excinfo:
+                module._upgrade(concurrently=False)
+            message = str(excinfo.value)
+            assert f"{PREFIX} Alice" in message
+            assert f"{PREFIX} Bob" in message
+            assert a_id not in message
+            assert b_id not in message
+            nested.rollback()
+        finally:
+            outer.rollback()
+
+
+def test_upgrade_backfills_links_seeds_roles_and_is_idempotent():
+    module = _load()
+    with engine.connect() as raw:
+        outer = raw.begin()
+        try:
+            module._downgrade()
+
+            stem = f"{PREFIX}-{uuid.uuid4().hex[:8]}"
+            phone_a, phone_b, phone_trashed, phone_integration = (
+                f"+6011{uuid.uuid4().int % 10_000_000:07d}" for _ in range(4)
+            )
+            c1 = _mk_id()
+            raw.execute(
+                sa.text(
+                    "INSERT INTO respond_contacts (id, phone_number, name) VALUES (:id, :phone, :name)"
+                ),
+                {"id": c1, "phone": phone_a, "name": f"{stem} Contact One"},
+            )
+            c_held = _mk_id()
+            raw.execute(
+                sa.text(
+                    "INSERT INTO respond_contacts (id, phone_number, name) VALUES (:id, :phone, :name)"
+                ),
+                {"id": c_held, "phone": phone_b, "name": f"{stem} Contact Held"},
+            )
+
+            user_a = _mk_id()  # unlinked, phone matches c1 uniquely -> gets linked
+            user_d = _mk_id()  # already holds c_held
+            user_b = _mk_id()  # phone matches c_held, but c_held is claimed -> stays unlinked
+            user_trashed = _mk_id()  # trashed, phone matches c1 -> stays unlinked
+            user_integration = _mk_id()  # is_integration, phone matches c1 -> stays unlinked
+            raw.execute(
+                sa.text(
+                    "INSERT INTO users (id, email, name, status, contact_number, respond_contact_id, "
+                    "is_trashed, is_integration) VALUES "
+                    "(:user_a, :e_a, :n_a, 'ACTIVE', :phone_a, NULL, false, false),"
+                    "(:user_d, :e_d, :n_d, 'ACTIVE', NULL, :c_held, false, false),"
+                    "(:user_b, :e_b, :n_b, 'ACTIVE', :phone_b, NULL, false, false),"
+                    "(:user_trashed, :e_t, :n_t, 'ACTIVE', :phone_a, NULL, true, false),"
+                    "(:user_integration, :e_i, :n_i, 'ACTIVE', :phone_a, NULL, false, true)"
+                ),
+                {
+                    "user_a": user_a, "e_a": f"{stem}-a@example.com", "n_a": f"{stem} A", "phone_a": phone_a,
+                    "user_d": user_d, "e_d": f"{stem}-d@example.com", "n_d": f"{stem} D", "c_held": c_held,
+                    "user_b": user_b, "e_b": f"{stem}-b@example.com", "n_b": f"{stem} B", "phone_b": phone_b,
+                    "user_trashed": user_trashed, "e_t": f"{stem}-t@example.com", "n_t": f"{stem} T",
+                    "user_integration": user_integration, "e_i": f"{stem}-i@example.com", "n_i": f"{stem} I",
+                },
+            )
+
+            users_before = raw.execute(sa.text("SELECT count(*) FROM users")).scalar()
+            assignments_before = raw.execute(
+                sa.text("SELECT count(*) FROM user_role_assignments")
+            ).scalar()
+
+            module._upgrade(concurrently=False)
+
+            def _contact_of(uid: str):
+                return raw.execute(
+                    sa.text("SELECT respond_contact_id FROM users WHERE id = :id"), {"id": uid}
+                ).scalar()
+
+            assert _contact_of(user_a) == c1, "unique unclaimed phone match must be linked"
+            assert _contact_of(user_d) == c_held
+            assert _contact_of(user_b) is None, "already-claimed contact must not be double-linked"
+            assert _contact_of(user_trashed) is None, "a trashed user must not be backfilled"
+            assert _contact_of(user_integration) is None, "an integration user must not be backfilled"
+
+            audit_rows = raw.execute(
+                sa.text(
+                    "SELECT old_values, new_values, action, description FROM audit_logs "
+                    "WHERE entity_type = 'users' AND entity_id = :id AND actor_type = 'system'"
+                ),
+                {"id": user_a},
+            ).mappings().all()
+            assert len(audit_rows) == 1
+            row = audit_rows[0]
+            assert row["action"] == "UPDATE"
+            assert row["old_values"].get("respond_contact_id") is None
+            assert row["new_values"].get("respond_contact_id") == c1
+            assert MODULE_NAME in (row["description"] or "")
+
+            users_after = raw.execute(sa.text("SELECT count(*) FROM users")).scalar()
+            assignments_after = raw.execute(
+                sa.text("SELECT count(*) FROM user_role_assignments")
+            ).scalar()
+            assert users_after == users_before
+            assert assignments_after == assignments_before
+
+            for slug in ("salesperson", "portal_user"):
+                role = raw.execute(
+                    sa.text(
+                        "SELECT id, is_protected, is_default FROM user_roles WHERE slug = :slug"
+                    ),
+                    {"slug": slug},
+                ).mappings().first()
+                assert role is not None, f"migration must seed the {slug!r} role"
+                assert role["is_protected"] is True
+                assert role["is_default"] is False
+                perm_count = raw.execute(
+                    sa.text("SELECT count(*) FROM user_role_permissions WHERE role_id = :rid"),
+                    {"rid": role["id"]},
+                ).scalar()
+                assert perm_count == 0
+
+            insp = sa.inspect(raw)
+            cols = {c["name"] for c in insp.get_columns("users")}
+            assert "phone_verified_at" in cols
+            users_email_col = next(c for c in insp.get_columns("users") if c["name"] == "email")
+            assert users_email_col["nullable"] is True
+
+            constraint_names = {
+                r[0]
+                for r in raw.execute(
+                    sa.text(
+                        "SELECT conname FROM pg_constraint WHERE conrelid = 'users'::regclass"
+                    )
+                )
+            }
+            assert "ck_users_email_or_phone" in constraint_names
+
+            index_names = {
+                r[0]
+                for r in raw.execute(
+                    sa.text("SELECT indexname FROM pg_indexes WHERE tablename = 'users'")
+                )
+            }
+            assert "uq_users_email_lower" in index_names
+            assert "uq_users_respond_contact_id" in index_names
+
+            session_cols = {c["name"] for c in insp.get_columns("user_sessions")}
+            assert "auth_method" in session_cols
+
+            audit_cols = {c["name"] for c in insp.get_columns("audit_logs")}
+            for col in (
+                "actor_type", "real_user_id", "auth_method", "session_id",
+                "integration_id", "job_id", "user_agent",
+            ):
+                assert col in audit_cols
+
+            # Re-running the backfill logic must be a true no-op: no new link, no
+            # duplicate audit row for the user already linked above.
+            module._upgrade(concurrently=False)
+            assert _contact_of(user_a) == c1
+            audit_rows_again = raw.execute(
+                sa.text(
+                    "SELECT count(*) FROM audit_logs WHERE entity_type = 'users' "
+                    "AND entity_id = :id AND actor_type = 'system'"
+                ),
+                {"id": user_a},
+            ).scalar()
+            assert audit_rows_again == 1, "re-running the backfill must not duplicate the audit row"
+        finally:
+            outer.rollback()
