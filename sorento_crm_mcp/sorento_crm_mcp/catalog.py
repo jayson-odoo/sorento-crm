@@ -767,7 +767,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "Top selling ITEMS (or CATEGORIES) over a date window, ranked by quantity or by "
             "amount - the same sales_order_lines source, exclusions and bucket date as "
-            "crm_sales_report. Returns `rows[]` (rank, code, name, quantity, amount), "
+            "crm_sales_report. Returns `rows[]` (rank, code, quantity, amount - code alone, "
+            "no name, owner ruling 26 Sep), "
             "`total_count` (every ranked row, always the full count), `totals` over the whole "
             "set, the resolved `date_from`/`date_to`, `basis`, the applied `filters`, and "
             "`sales_agent_fill_rate` when a sales agent filter was used.\n\n"

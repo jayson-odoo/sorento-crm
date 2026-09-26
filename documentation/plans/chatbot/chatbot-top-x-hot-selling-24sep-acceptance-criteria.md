@@ -91,6 +91,9 @@ mirror `sorento_crm_mcp/tests/fixtures/top_selling/`.
   `rank`. A row with a null `product_name` prints the code alone before the colon.
   Owner ruling 26 Sep: the row keys are `code` / `name` so one shape serves both grains.
   Evidence: pytest, presenter.
+  As built (PR #1263), owner ruling 26 Sep ~07:40Z (supersedes the row-keys reading above):
+  "don't need to show name, just show code will do." A row carries `code` only; S1's
+  presenter prints `n. CODE: Qty q, RM v` for both grains, never a name.
 - **AC-1903 [FE][T]** Any header axis absent from the body prints `all`, never an omitted
   line. `Channel` prints `Dealer`, `Project` or `all`. Evidence: pytest.
 - **AC-1904 [FE][T]** `rank_by: "qty"` prints `Ranked by: Quantity`; `"amount"` prints
@@ -170,6 +173,8 @@ mirror `sorento_crm_mcp/tests/fixtures/top_selling/`.
   one is absent. Evidence: pytest, one seed with a foil per axis.
 - **AC-1928 [BE][T]** Every field of `TopSellingResponse` is declared and asserted present
   through the HTTP route. Evidence: pytest.
+  As built (PR #1263): owner ruling 26 Sep ~07:40Z drops `name` from a row - `TopSellingRow`
+  is `rank, code, quantity, amount`, no `name` field at all.
 - **AC-1929 [BE][T]** No credential 401; a user without `order_management.orders.view` 403;
   API key with act-as user 200; `contact_id` without `space_id` 422; a contact without
   `sales_orders.sales_report` 403 `sales_report_not_enabled`; a contact-scoped key sees only its

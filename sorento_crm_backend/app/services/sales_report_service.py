@@ -664,7 +664,6 @@ def top_selling(
         {
             "rank": i,
             "code": r.code,
-            "name": r.name,
             "quantity": _qty(r.quantity),
             "amount": _money_edge(r.amount),
         }

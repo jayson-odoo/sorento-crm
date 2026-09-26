@@ -273,13 +273,12 @@ class SalesReportResponse(BaseModel):
 
 
 class TopSellingRow(BaseModel):
-    """One ranked item (`group=item`: product code / name) or category
-    (`group=category`: category code / name). Rows arrive ranked; the presenter
-    prints them in order."""
+    """One ranked item (`group=item`: product code) or category (`group=category`:
+    category code). Rows arrive ranked; the presenter prints them in order.
+    Owner ruling 26 Sep ~07:40Z: no `name` field, code alone is enough."""
 
     rank: int
     code: Optional[str] = None
-    name: Optional[str] = None
     quantity: int
     amount: float
 
