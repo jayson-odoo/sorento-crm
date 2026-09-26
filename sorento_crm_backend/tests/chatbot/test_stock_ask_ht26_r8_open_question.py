@@ -53,8 +53,12 @@ def test_open_question_answer_declared_strict_safe_and_tolerated_absent():
     prop = schema["properties"]["open_question_answer"]
     assert prop["type"] == "object"
     assert prop["additionalProperties"] is False
-    assert set(prop["required"]) == {"mode", "items", "qty_for_all"}
-    assert prop["properties"]["mode"]["enum"] == ["fill", "all", "done", "cancel", None]
+    # Round 9 (issue #1293) widened the same object to every question kind: "pick",
+    # "yes", "no" and `picked` joined it (`test_stock_ask_ht26_r9_open_question_kinds`).
+    assert set(prop["required"]) == {"mode", "picked", "items", "qty_for_all"}
+    assert prop["properties"]["mode"]["enum"] == [
+        "pick", "yes", "no", "fill", "all", "done", "cancel", None
+    ]
     items_schema = prop["properties"]["items"]["items"]
     assert items_schema["additionalProperties"] is False
     assert set(items_schema["required"]) == {"position", "code", "qty"}
@@ -88,7 +92,7 @@ def test_open_question_for_an_open_task_lists_owed_positions():
     )
     result = task_mod.open_question((task,))
     assert result == {
-        "kind": "stock_quantities",
+        "kind": "quantities",
         "items": [
             {"position": 1, "code": "SRTWC286-SH", "qty": 10},
             {"position": 2, "code": "SRTWC286-SH-150", "qty": None},
@@ -138,7 +142,7 @@ def test_build_user_block_open_question_and_recent_exchanges_default_to_unchange
 
 def test_build_user_block_states_the_open_question_as_one_json_line():
     obj = {
-        "kind": "stock_quantities",
+        "kind": "quantities",
         "items": [{"position": 1, "code": "SRTWC286-SH", "qty": None}],
         "owed": [1],
     }
@@ -858,7 +862,7 @@ def test_engine_user_block_carries_the_open_question_line_for_a_multi_slot_task(
     )
     assert len(blocks) == 1
     assert "Open question: {" in blocks[0]
-    assert '"kind":"stock_quantities"' in blocks[0]
+    assert '"kind":"quantities"' in blocks[0]
 
 
 def test_engine_user_block_carries_recent_exchanges_on_a_second_turn(
