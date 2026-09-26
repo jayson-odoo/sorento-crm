@@ -5,7 +5,7 @@ by slice. Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` recorded agent-browser 
 test evidence named in the line. Every criterion names its evidence.
 
 Status: DRAFT 26 Sep 2026. **Written to the recommendations** of the plan's "Grill questions
-for the owner" (Q1 to Q14). Where the owner answers differently, the ACs tagged with that
+for the owner" (Q1 to Q18). Where the owner answers differently, the ACs tagged with that
 question (`(Qn)`) are rewritten before any code.
 
 Terms: "contact" = a Respond.io contact through `/api/v1/external/chat/turn`; "dealer" = the
@@ -64,28 +64,32 @@ what was dropped. The `understood` stage shows prompt and completion tokens.
 ### D. Owner watching the cost
 
 After S3 ships, the token query (plan 8.4) over the first three weekdays shows p95 prompt
-tokens per turn not higher than before, and zero recall re-parses.
+tokens per turn at most 600 above the three weekdays before, and zero recall re-parses.
 
 ## Owner decisions this UAC assumes (the plan's recommendations)
 
 | Q | Recommendation assumed |
 |---|---|
-| Q1 | Memory ON by default for every contact; the per-contact toggle becomes an opt-out (supersedes D3 "global default off"). |
+| Q1 | Memory ON by default for every contact; the per-contact toggle becomes an opt-out (supersedes D3 "global default off"); the flip lands in S3 with the recall deletion. |
 | Q2 | An episode closes on a topic switch or after a 30-minute gap. |
 | Q3 | Episode summaries are deterministic (from the turns' trace), no LLM call, no figures. |
 | Q4 | Each parse gets the last 3 episode summaries of the last 30 days and the live episode's last 3 earlier messages. |
-| Q5 | The vector recall re-parse is deleted; embeddings keep being written for the n8n search route. |
+| Q5 | The vector recall re-parse is deleted, and frame embeddings are no longer written. |
 | Q6 | Facts the dealer states (closed key list) are saved at once as `Said`, hints only, staff can delete. |
 | Q7 | Retention: episodes and learned facts 90 days after last seen; stated facts 180 days; staff facts never. |
-| Q8 | Token rule: the static prompt may not grow (addendum paid by cuts); user block hard cap 1,800 est. tokens; production p95 not higher than before. |
+| Q8 | Token rule: the static prompt may not grow (CI ceiling 22,100, addendum paid by cuts); user block capped at 1,800 est. tokens; production p95 prompt tokens at most +600. |
 | Q9 | Out-of-boundary replies: the LLM writes only the acknowledgement; facts and offers come from data. |
 | Q10 | Every bot turn not under human takeover sends a visible line. |
-| Q11 | Memory card: `memory_default`, `episode_retention_days`, `episode_gap_minutes`; `profile_fields` and `focus_reset_events` removed. |
+| Q11 | Memory card: `episode_retention_days` and `episode_gap_minutes`; `recall_default`, `profile_fields` and `focus_reset_events` removed. |
 | Q12 | The staff screen lives inside the existing Chatbot card on the contact page. |
 | Q13 | A commercial ask (discount, credit, price exception) is handed to the linked salesperson; everything else to the domain's team. |
 | Q14 | "Enterprise Claude Code" (write actions) becomes its own ideation issue; not in this lane. |
+| Q15 | A third named D14 exception: a console (`is_test`) turn may write an `is_test` episode row, never a fact. |
+| Q16 | Only the new memory lines get en / ms / zh; the ack follows the dealer's language; existing text is not translated here. |
+| Q17 | Two lanes: A = S0 to S3 with the production gate, B = S4. |
+| Q18 | Tallied facts, stated facts and history questions are built; S2 records today's counts from the 25 Sep dump as the baseline. |
 
-## S0 - Schema and write path (AC-MEM001 to AC-MEM012)
+## S0 - Schema and write path (AC-MEM001 to AC-MEM013)
 
 - AC-MEM001 [BE][T] Migration adds `conversation_frames.is_test boolean not null default
   false` and the index `(contact_respond_id, is_test, closed_at desc)`; upgrade and downgrade
@@ -93,21 +97,25 @@ tokens per turn not higher than before, and zero recall re-parses.
   run log in the PR; `check-migration-heads` green.
 - AC-MEM002 [BE][T] Given a live episode of turns T1 to T3 and T4 whose verdict has
   `topic_reset: true`, when T4 runs, then exactly one frame is written with
-  `turn_ids = [T1, T2, T3]`, `close_reason = topic_switch`. Evidence: pytest
-  `tests/chatbot/test_memory_episode_boundaries.py`.
-- AC-MEM003 [BE][T] (Q2) Given the contact's previous turn finished 31 minutes ago with an
-  unclosed live episode, when a new turn arrives, then that episode is closed at intake with
-  `close_reason = idle` BEFORE the parser runs, and the new turn starts a new live episode.
-  At 29 minutes nothing is closed. Evidence: pytest with a frozen clock, both sides of the
-  boundary.
-- AC-MEM004 [BE][T] Given a human takeover happened after the last bot turn, when the next bot
-  turn runs, the live episode is closed with `close_reason = handover`. Evidence: pytest.
-- AC-MEM005 [BE][T] An empty live episode writes nothing; a dry run writes nothing (LESSONS
-  #101); an `is_test` turn writes `is_test = true` frames and reads only `is_test` frames, and
-  a live turn never reads an `is_test` frame. Evidence: pytest, one test per clause.
-- AC-MEM006 [BE][T] The gap close runs inside the per-contact ticket: two turns of one contact
-  arriving in the same second produce one close, not two. Evidence: pytest with two threads on
-  Postgres.
+  `turn_ids = [T1, T2, T3]`, `close_reason = topic_switch`, `last_activity_at` = T3's
+  `created_at`; T4 is the first turn of the next live episode. Evidence: pytest
+  `tests/chatbot/test_memory_episode_boundaries.py` (live mode, not replay).
+- AC-MEM003 [BE][T] (Q2) Given the contact's previous turn (any status, same `is_test` side)
+  was created 31 minutes ago with an unclosed live episode, when a new turn arrives, then that
+  episode is closed at intake with `close_reason = idle` BEFORE the parser runs, and the new
+  turn starts a new live episode. At 29 minutes nothing is closed. The previous turn's time
+  comes from the existing `previous_reply_text` read (no extra query). Evidence: pytest with
+  injected `created_at`, both sides of the boundary.
+- AC-MEM004 [BE][T] Given the envelope's `is_human_intervened` custom field is true at intake,
+  the live episode is closed with `close_reason = handover`. Evidence: pytest.
+- AC-MEM005 [BE][T] An empty live episode writes nothing; a live turn never reads an
+  `is_test` frame and an `is_test` turn never reads a live one. (Q15) A console (`is_test`)
+  turn writes `is_test = true` frames and nothing else outside `chatbot.turns`; a replay step
+  writes nothing. Evidence: pytest, one test per clause.
+- AC-MEM006 [BE][T] Closing is idempotent in the database: two turns of one contact racing
+  (ticket off, as when Redis is down or S7 mode is off) produce one frame, via the unique key
+  `(contact_respond_id, is_test, turn_ids[1])` and `ON CONFLICT DO NOTHING`. Evidence: pytest
+  with two threads on Postgres.
 - AC-MEM007 [BE][T] The trace `memory` event records `episode_written` (frame id, turn count,
   close reason) when this turn wrote one, and the profile before and after as they really
   were. Evidence: pytest on the trace shape.
@@ -124,6 +132,8 @@ tokens per turn not higher than before, and zero recall re-parses.
   carries the turn id. Evidence: pytest.
 - AC-MEM012 [BE][T] S0 changes no reply text: the whole existing replay corpus
   (`tests/chatbot/replay_turns/**`) stays green with no new divergence entry. Evidence: CI.
+- AC-MEM013 [BE][T] Deleting a contact deletes its `conversation_frames` rows (no FK exists)
+  and its facts. Evidence: pytest.
 
 ## S1 - Episode summaries (AC-MEM020 to AC-MEM029)
 
@@ -146,29 +156,32 @@ tokens per turn not higher than before, and zero recall re-parses.
   one frame per episode cut by the same rules, deletes the placeholder frames, and a second
   run changes nothing (same count, same ids). Evidence: pytest on a seeded history; run log on
   a prod copy in the PR.
-- AC-MEM025 [BE][T] (Q7) The nightly sweep deletes a frame closed 91 days ago and keeps one
-  closed 89 days ago (with `episode_retention_days = 90`), and closes a live episode idle past
-  the gap. Evidence: pytest with a frozen clock.
-- AC-MEM026 [BE][T] (Q11) `system_settings.chatbot_memory` holds `memory_default` (default
-  true), `episode_retention_days` (default 90, 7 to 365), `episode_gap_minutes` (default 30,
-  5 to 720); `profile_fields` and `focus_reset_events` are gone from model, schema, both dict
-  builders and the card. Evidence: pytest on GET and PUT; 422 out of range.
+- AC-MEM025 [BE][T] (Q7) The nightly sweep deletes a frame whose last turn is 91 days old and
+  keeps one at 89 days (with `episode_retention_days = 90`), and drops expired facts; it does
+  not close live episodes. Evidence: pytest with a frozen clock.
+- AC-MEM026 [BE][T] (Q11) `system_settings.chatbot_memory` holds `episode_retention_days`
+  (default 90, 7 to 365) and `episode_gap_minutes` (default 30, 5 to 720); `recall_default`,
+  `profile_fields` and `focus_reset_events` are gone from model, schema, both dict builders
+  and the card. Evidence: pytest on GET and PUT; 422 out of range.
 - AC-MEM027 [BE][T] The engine reads `episode_gap_minutes` and `episode_retention_days` from
   settings (changing the value changes behaviour on the next turn). Evidence: pytest.
-- AC-MEM028 [FE][T] The Memory card shows the three controls, saves and reloads each.
+- AC-MEM028 [FE][T] The Memory card shows the two controls, saves and reloads each.
   Evidence: vitest on the hook; agent-browser Sidebar > User Management > Settings > Chatbot at
   375 and 1280 px.
-- AC-MEM029 [BE][T] A new contact's memory toggle starts at `memory_default`. Evidence: pytest.
+- AC-MEM029 [BE][T] The digest is deterministic: the frame the backfill writes for a recorded
+  episode equals (summary, entities, turn ids) the frame the live writer writes for the same
+  turns. Evidence: pytest.
 
-## S2 - Profile facts and staff screen (AC-MEM030 to AC-MEM049)
+## S2 - Profile facts and staff screen (AC-MEM030 to AC-MEM050)
 
 - AC-MEM030 [BE][T] The fact vocabulary is exactly the plan's table 4.1; a write with an
   unknown key or a disallowed source for that key is rejected (422 on the route, ignored with
   a trace line in the engine). Evidence: pytest parametrised over key x source.
-- AC-MEM031 [BE][T] `derive_crm` at each episode close writes `customer` (primary linked
-  customer first), `segment` (from `market_segment_code`) and `salesperson` (from the
-  customer's sales agent), replacing all previous `crm` facts. Evidence: pytest with a seeded
-  customer chain (CI DB has no data: seed it).
+- AC-MEM031 [BE][T] `crm_view` reads `customer` (primary linked customer first), `segment`
+  (from `market_segment_code`) and `salesperson` (from the customer's sales agent) live at
+  every read; none of the three is ever stored in `chatbot_profile`; changing the customer's
+  sales agent changes the next turn's slice. Evidence: pytest with a seeded customer chain
+  (CI DB has no data: seed it).
 - AC-MEM032 [BE][T] `tally` writes `usual_products`, `usual_brands`, `usual_sites` from
   entities present in 2 or more closed episodes in the last 90 days, top 3 by count then
   recency, with `seen_count`, `first_seen`, `last_seen`, `expires_at = last_seen + 90 days`.
@@ -196,9 +209,10 @@ tokens per turn not higher than before, and zero recall re-parses.
   one turns it into staff, no expiry); `DELETE` of the same is a hard delete through the
   deferred-action path; both 403 without `user_management.contacts.edit`; 422 on an unknown
   key or a value over its limit. Evidence: pytest per route: happy, 403, 422.
-- AC-MEM040 [BE][T] The existing whole-profile `PUT .../contacts/{id}/chatbot` no longer
-  writes or clears `facts`; a staff fact save and a concurrent turn's tally both survive.
-  Evidence: pytest with two sessions on Postgres.
+- AC-MEM040 [BE][T] Every fact write is a single-key `jsonb_set` under a row lock taken at
+  write time; the whole-profile `PUT .../contacts/{id}/chatbot` no longer writes or clears
+  `facts`; a staff fact saved while a turn is between intake and tail survives that turn's
+  writes, and so does the turn's stated fact. Evidence: pytest with two sessions on Postgres.
 - AC-MEM041 [BE][T] `facts` reaches the FE through both dict builders
   (`contact_to_response_dict` and the chatbot GET). Evidence: pytest asserting the field in
   both responses (a `response_model` would drop it silently).
@@ -225,8 +239,12 @@ tokens per turn not higher than before, and zero recall re-parses.
   is assembled for that contact (the user block is today's: previous response, current
   subject, open question, message; no earlier messages, summaries or facts), no fact is
   learned, episodes are still written for staff. Evidence: pytest.
+- AC-MEM050 [BE] (Q18) S2's PR records, from the 25 Sep dump, the count of live turns in 9 to
+  25 Sep that ask for "the usual" (or an equivalent), that state a fact about the dealer, and
+  that ask about their own history: the baseline S4 is measured against. Evidence: the query
+  and counts in the PR.
 
-## S3 - Prompt assembly under budget (AC-MEM060 to AC-MEM072)
+## S3 - Prompt assembly under budget (AC-MEM060 to AC-MEM073)
 
 - AC-MEM060 [BE][T] (Q8) `turn/context.assemble` is pure, renders the layers in the plan's
   order (profile, recent conversations, earlier in this conversation, previous response,
@@ -240,18 +258,20 @@ tokens per turn not higher than before, and zero recall re-parses.
 - AC-MEM062 [BE][T] Every parse records a `context` trace event with est. tokens per layer,
   the total, and what was dropped (layer, count). Evidence: pytest on the trace.
 - AC-MEM063 [BE][T] (Q5) The recall re-parse is gone: no turn makes two parser calls; the
-  `recall` trace kind is no longer written; `memory.recall` is deleted; the
-  `/external/memory/frames/search` route still answers. Evidence: pytest; grep guard.
+  `recall` trace kind is no longer written; `memory.recall` is deleted; no frame embedding
+  is enqueued; the `/external/memory/frames/search` route still answers. Evidence: pytest;
+  grep guard.
 - AC-MEM064 [BE] (Q8) Production gate: over the first 3 weekdays after deploy, p95 of
-  `prompt_tokens` per live turn is not higher than over the 3 weekdays before, and recall
-  turns = 0 (plan 8.4 query). Evidence: the query output pasted in the PR or its follow-up.
+  `prompt_tokens` per live turn is at most 600 above the 3 weekdays before (the "before"
+  window starts after any #1275 prompt change is deployed), and recall turns = 0 (plan 8.4
+  query). Evidence: the query output pasted in the PR or its follow-up.
 - AC-MEM065 [BE][T] (Q4) A parse carries at most the last 3 closed episodes of the last 30
   days (printed oldest first) and at most the live episode's last 3 earlier user messages,
   each cut to 200 chars; `Previous response` is cut to 600 chars. Evidence: pytest.
-- AC-MEM066 [BE][T] The memory addendum is at most 400 est. tokens and the prompt carries the
-  cuts of plan 6.4 (the `previous_conversation_state` description, the n8n JS literal, the
-  #1275 section when 8.2 stays green); `parser_memory_phrases.json` cues all appear in the
-  addendum. Evidence: reachability pytest in the style of `test_parser_growth_r1_reachability`.
+- AC-MEM066 [BE][T] The memory addendum is at most 400 est. tokens; the firm cuts of plan 6.4
+  (the `previous_conversation_state` description, the n8n JS literal) are made, and the
+  AC-MEM061 ceiling holds with the addendum in (by a further cut that 8.2 shows is safe, or a
+  shorter addendum); `parser_memory_phrases.json` cues all appear in the addendum. Evidence: reachability pytest in the style of `test_parser_growth_r1_reachability`.
 - AC-MEM067 [BE][T] Every case under `tests/chatbot/replay_turns/memory/` marked
   `needs_memory: true` passes, and FAILS when replayed with memory ablated (L3 earlier
   messages, L4, L5 and the frame and fact reads emptied). A case that passes under ablation
@@ -272,20 +292,26 @@ tokens per turn not higher than before, and zero recall re-parses.
 - AC-MEM072 [BE] Latency (plan 6.6): CRM turn p50 +0.1 s at most and p95 not higher over the
   same 3-weekday windows; `received` p95 +40 ms at most; `remembered` p95 <= 150 ms.
   Evidence: the #1275 A3 stage query output in the PR or its follow-up.
+- AC-MEM073 [BE][T] (Q1) One migration, in the same commit that deletes the recall re-parse,
+  flips `respond_contacts.chatbot_recall_enabled` to default true and sets it true on every
+  existing contact; the Contact card labels it "Use conversation memory". Evidence: pytest on
+  the column default and a migration test on seeded rows.
 
 ## S4 - Out-of-boundary replies (AC-MEM080 to AC-MEM095)
 
 - AC-MEM080 [BE][T] (Q9) The reply to a `low_signal`, `history`, `out_of_scope` or
   `not_supported` turn is `ack + optional memory_line + offer`; only `ack` comes from the
-  clarifier LLM, which returns `{"ack": "..."}` of at most 25 words and is given the profile
-  slice and the episode summaries under 400 est. tokens. Evidence: pytest on the lane with a
-  stubbed clarifier.
+  clarifier LLM, which returns `{"ack": "...", "language": "en|ms|zh"}` (ack at most 25
+  words) and is given the profile slice and the episode summaries under 400 est. tokens. The
+  ack may use the contact's stored `first_name`; code adds no honorific. Evidence: pytest on
+  the lane with a stubbed clarifier.
 - AC-MEM081 [BE][T] (Q9) Guard: an `ack` holding a digit, a product-code-shaped token, a price
   or a date not present in its own input is replaced by the canned acknowledgement for the
   language. Evidence: pytest, one case per class.
-- AC-MEM082 [BE][T] `history_question` routes to the history composer, which lists up to 5
-  recent episodes (date, asks) from `conversation_frames` only, with no figure, and ends
-  with a numbered re-run offer; "2" on the next turn re-runs episode 2's ask with fresh data.
+- AC-MEM082 [BE][T] `history_question` is answered in the `low_signal` lane (no new route):
+  the memory_line lists up to 5 recent episodes (date, asks) from `conversation_frames` only,
+  with no figure, numbered, ending with a re-run offer; "2" on the next turn is resolved by
+  the parser against `Recent conversations` and re-runs episode 2's ask with fresh data.
   Evidence: replay cases (plan 7.3 example 3) plus a two-turn pytest.
 - AC-MEM083 [BE][T] A follow-up resolved from `Recent conversations` opens its answer with one
   line naming what was carried ("For the outstanding DOs of Chin Chun Trading from Tuesday:").
@@ -293,20 +319,24 @@ tokens per turn not higher than before, and zero recall re-parses.
 - AC-MEM084 [BE][T] (Q10) An `out_of_scope` turn always sends the dealer a visible line with
   the handover offer or the handover confirmation; an `escalation_declined` turn sends the
   existing `offer_declined` copy. Evidence: pytest asserting a `send_message` action on each.
-- AC-MEM085 [BE][T] (Q10) Every bot turn not under human takeover ends with exactly one
+- AC-MEM085 [BE][T] (Q10) Every turn that reaches the reply stage ends with exactly one
   `send_message` action. Evidence: pytest over every branch kind; the #1275 no-reply query
-  after deploy shows 0 turns without a send outside takeover.
+  after deploy shows 0 done turns without a send.
 - AC-MEM086 [BE][T] The clarifier error path sends the existing "Sorry, I ran into a
   problem..." copy, never exception text; `CLARIFIER_ERROR_PREFIX` is deleted. Evidence:
   pytest raising inside the clarifier; grep guard.
 - AC-MEM087 [BE][T] (Q13) A commercial ask (discount, credit, price exception) offers the
   linked salesperson by name through the existing member offer; any other unfulfillable ask
-  offers the domain's team; with no salesperson fact, the team. Evidence: pytest, three cases.
+  offers the domain's team; with no linked salesperson, or one the member-offer path cannot
+  reach, the team. Evidence: pytest, four cases.
 - AC-MEM088 [BE][T] A handover's routed message carries the live episode's summary line so
   the human sees what was being discussed. Evidence: pytest on the escalation comment.
-- AC-MEM089 [BE][T] `memory_line` and `offer` come from `chatbot_reply_copy` templates in en,
-  ms and zh, picked by profile `language`, else the language the clarifier reports for the
-  message, else en. Evidence: pytest per language.
+- AC-MEM089 [BE][T] (Q16) The NEW `memory_line` and `offer` templates come from
+  `chatbot_reply_copy` keys with `.ms` / `.zh` variants (falling back to the bare key), picked
+  by profile `language`, else the clarifier's `language`, else en. Existing copy and the
+  escalation offer wording are byte-identical to before (the accepted-offer regex still
+  matches). Evidence: pytest per language; a test that the escalation regex still matches
+  every handover offer.
 - AC-MEM090 [BE][T] The ten exchanges of plan 7.3 exist as replay cases under
   `replay_turns/memory/`; examples 1, 2, 3, 4, 5, 8 and 10 are `needs_memory: true` (red under
   ablation); 7 and 9 assert the fact on the profile after the turn; 6 asserts the live open
@@ -314,13 +344,15 @@ tokens per turn not higher than before, and zero recall re-parses.
 - AC-MEM091 [BE][T] Small talk with memory ON and no episodes yet (a first-time contact)
   still gets a human greeting and a concrete offer (the domain menu), never an empty
   `memory_line` placeholder. Evidence: replay case.
-- AC-MEM092 [BE][T] A dealer's open orders in a reply (example 6) are fetched live through the
-  existing order tool at reply time, never from a stored fact or summary. Evidence: pytest
-  asserting the tool call.
+- AC-MEM092 [BE][T] The `low_signal` lane fetches nothing: example 6's offer names the customer
+  from the live CRM link, and picking "1" runs the normal order lane with fresh data; no
+  order figure ever comes from a stored fact or summary. Evidence: pytest asserting no tool
+  call in the lane and one in the next turn.
 - AC-MEM093 [BE][T] The out-of-boundary lanes persist session state and write the memory trace
   like every other lane (today `low_signal` persists nothing). Evidence: pytest.
 - AC-MEM094 [BE] Console check `tests/chatbot/console_cases/2026-09-memory.yaml` green against
-  the deployed stack (topic-switch carry case plus examples 1, 3, 4, 10). Evidence:
+  the deployed stack: the within-episode carry case always; (Q15) the topic-switch carry case
+  plus examples 1, 3, 4, 10. Evidence:
   `scripts/chatbot_console_check.py` output in the PR.
 - AC-MEM095 [E2E] Owner hand pass: the ten exchanges on the WhatsApp test number; the owner's
   verdict recorded verbatim in the PR. Evidence: the PR comment.

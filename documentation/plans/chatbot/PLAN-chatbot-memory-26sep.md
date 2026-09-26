@@ -2,6 +2,7 @@
 
 Status: DRAFT 26 Sep 2026, awaiting the owner's answers to the grill questions at the end.
 Track: full (migration, parser prompt change, staff screen, expected diff well over 300 lines).
+Recommended as two lanes (grill question 17): A = S0 to S3, B = S4.
 Issue #1282. UAC: `chatbot-memory-acceptance-criteria.md` (AC-MEM001 to AC-MEM099), written
 to the recommendations in "Grill questions for the owner"; an answer that differs rewrites the
 matching ACs before any code.
@@ -155,8 +156,9 @@ The profile holds settings, not knowledge. Nothing learned from a conversation e
 
 - The per-contact ticket is a Redis ordering ticket, not a table (`dispatch.py:54-57`, keys
   `chatbot:seq|done|running:{contact}`, TTL 3600 s). Taken at `engine.py:859` in S7 mode and
-  not on dry runs, released in a `finally`. It guarantees one turn per contact at a time, which
-  is what lets an episode be closed at intake without a lock race. #1275 measured its queue
+  not on dry runs, released in a `finally`. It serialises one contact's turns only in S7
+  mode and only while Redis is up, so this plan does not rely on it for correctness (5.1 makes
+  the episode close idempotent in the database instead). #1275 measured its queue
   wait at p99 0.05 s.
 - `chatbot.turns.trace` holds per-stage `ms` (latency per stage exists), a `prompt_text` event
   (the user block only, not the system prompt), `apply`, `memory`, `recall`. The `understood`
@@ -870,7 +872,7 @@ write routes on contacts and S3 changes what reaches an LLM from stored data.
 |---|---|---|---|
 | S0 | schema and write path: frame `is_test`, index and unique key; episode boundaries by turn time (topic switch, gap at intake, handover flag); every turn id recorded; trace `memory` event fixed; drawer contract fixed; `prompt_tokens` on the trace; usage logs carry turn id; contact delete removes frames | none | AC-MEM001 to AC-MEM013 |
 | S1 | episode summaries: `episode_digest`; summary rules (no figures); backfill script; retention sweep; settings card trimmed to two keys | S0 | AC-MEM020 to AC-MEM029 |
-| S2 | profile facts and staff screen: vocabulary, CRM view read live, tally, stated, staff, precedence, tombstones, single-key writes under lock, "facts never grant", tier pick writes, Contact card sections, facts routes | S1 (tally reads digests) | AC-MEM030 to AC-MEM049 |
+| S2 | profile facts and staff screen: vocabulary, CRM view read live, tally, stated, staff, precedence, tombstones, single-key writes under lock, "facts never grant", tier pick writes, Contact card sections, facts routes | S1 (tally reads digests) | AC-MEM030 to AC-MEM050 |
 | S3 | prompt assembly under budget: `turn/context.py`, per-layer caps, memory addendum and its paid cuts, `history_question` and `profile_statement` in the schema, recall re-parse and frame embedding deleted, memory default flipped ON in the same migration, date moved to the end, budget CI test, production token gate | S1, S2 | AC-MEM060 to AC-MEM073 |
 | S4 | out-of-boundary replies: reply shape, clarifier gets the memory slice and reports language, ack guard, history reply, handover names who, no silence, no exception text, new templates in en / ms / zh | S3 | AC-MEM080 to AC-MEM095 |
 
@@ -1001,10 +1003,11 @@ query shows 0 `out_of_scope` / `escalation_declined` turns without a send over 3
 - **Privacy (Malaysia PDPA).** Nothing new is collected: turns are stored today; episodes are
   derived from them with a 90-day retention, and staff can see and delete every fact. The
   opt-out toggle stays per contact.
-- **Concurrency.** Episode close and fact writes happen inside the per-contact ticket and the
-  tail's `FOR UPDATE`; the staff fact routes update one key with `jsonb_set` under the same
-  row lock, so a staff save never overwrites a learned fact (and the whole-profile PUT no longer
-  touches `facts`).
+- **Concurrency.** The episode close is idempotent by a unique key, not by the ticket. Every
+  fact write (tally, stated, staff) is a single-key `jsonb_set` under a row lock taken at
+  write time, never a write-back of the snapshot read at intake, so a staff save during a
+  turn's 2.6 s parser call is not overwritten (and the whole-profile PUT no longer touches
+  `facts`).
 - **Overlap with #1275.** Both touch the parser prompt, and a #1275 prompt cut landing inside
   S3's before/after window would hide or fake S3's token effect. This lane waits for any
   #1275 prompt change to be deployed first, and its "before" window starts after that deploy.
