@@ -44,8 +44,8 @@ why" about any record, days or months after the fact.
 ### Redaction
 
 - **AC-S0-05 [BE]** Given a write that changes `users.password`, `system_settings.smtp_password`
-  or an `*_ciphertext` / `*_token` / `key_hash` column, then the audit row holds the key with the
-  value `"[redacted]"` and the raw value appears nowhere in the row; the same holds for an explicit
+  or an `*_ciphertext` / `*_token` / `key_hash` column, then the key is absent from the audit row
+  (S-1's drop semantics) and the raw value appears nowhere in the row; the same holds for an explicit
   `log_audit` call and for a bulk UPDATE. (3)
 
 ### Bulk DML
@@ -65,36 +65,41 @@ why" about any record, days or months after the fact.
   write no audit rows; the last logs one INFO line. No app call site of that third shape exists
   at S0.
 
-### Request context, principal and source
+### Request context, actor and source
 
-- **AC-S0-10 [BE]** Given a request through `LoggingMiddleware` whose sync dependency calls
-  `set_audit_context(user, ip)` (the `get_current_user_or_api_key` shape), when the sync endpoint
-  writes an audited row, then the row's `user_id` is that user, not NULL. Red on main. (3)
+The actor columns are identity S0's (#1303, `PLAN-unified-identity-26sep.md` section 8); these
+ACs pin that S0's rows carry them on every write path (fix round 2, review B2).
+
+- **AC-S0-10 [BE]** Given a request through `LoggingMiddleware` whose sync dependency mutates the
+  request's context (the `get_current_user_or_api_key` shape), when the sync endpoint runs, then
+  it sees the mutation; an API-key write's `user_id` is the act-as user, not NULL. Red on main.
+  (3)
 - **AC-S0-11 [BE]** Given an API-key request through the real `get_current_user_or_api_key`, then
-  the audit row carries `principal_type = api_key`, `principal_id` = the integration id,
-  `user_id` = its act-as user, and `source` derived from the integration type (`automation` ->
-  `n8n`, `mcp` -> `mcp`, else `external_api`). (3)
-- **AC-S0-12 [BE]** Given a JWT request, then `principal_type = user`, `principal_id = user_id`,
-  `source = ui`. Given impersonation, then `user_id` = the real admin and `on_behalf_of_user_id` =
-  the target. (3)
-- **AC-S0-13 [BE]** Given a portal write (actor contact set), then `principal_type = contact`,
-  `principal_id` = the contact, `source = portal`. (3)
+  the audit row carries `actor_type = integration`, `integration_id` = the integration,
+  `auth_method = api_key`, `user_id` = `real_user_id` = its act-as user, and `source` derived
+  from the integration type (`automation` -> `n8n`, `mcp` -> `mcp`, else `external_api`). (3)
+- **AC-S0-12 [BE]** Given a JWT request, then `actor_type = user`, `user_id = real_user_id`,
+  `source = ui`. Given impersonation, then `user_id` = the TARGET and `real_user_id` = the admin
+  (identity plan 8.1), on the flush, after-flush and bulk paths alike. (3)
+- **AC-S0-13 [BE]** Given a portal write by a contact with no user, then `actor_type = contact`,
+  `contact_id` = the contact, `source = portal`. (3)
 - **AC-S0-14 [BE]** Given an inbound `X-Trace-Id` longer than 64 characters, then the stored
   `trace_id` is at most 64 characters and the write succeeds. An inbound `X-Correlation-Id`
   becomes `correlation_id` only once an integration key authenticates; otherwise
   `correlation_id` equals the request id, so an ordinary caller cannot stitch its writes into
   another action (security review S2). (4)
-- **AC-S0-15 [BE]** Given a write with no context at all (a script), then `principal_type =
-  system` and the write succeeds. Given a scheduler tick (`scheduler_session`), then
-  `principal_type = scheduler`, `source = scheduler` and a request id is set. (2)
+- **AC-S0-15 [BE]** Given a write with no context at all (a script), then `actor_type = system`
+  and the write succeeds. Given a scheduler tick (`scheduler_session(name)`), then
+  `actor_type = scheduler`, `job_id` = the tick name, `source = scheduler` and a correlation id
+  is set. (2)
 
 ### Worker
 
 - **AC-S0-16 [BE]** Given a job enqueued through `enqueue_job` inside a request context, then
-  `job.meta["audit_context"]` carries the user, correlation id and on-behalf-of. When the job runs
-  (`ForkSafeWorker.perform_job` or `run_sync_rq_jobs`), its audited writes carry that user and
-  correlation id, `principal_type = worker`, `source = import` on the `imports` queue (else
-  `worker`), and `trace_id` = the job id. (4)
+  `job.meta["actor"]` carries the user (#1303) and `job.meta["audit_context"]` the correlation
+  id. When the job runs (`ForkSafeWorker.perform_job` or `run_sync_rq_jobs`), its audited writes
+  carry that user and correlation id, `actor_type = worker`, `job_id` = the job id, and
+  `source = import` on the `imports` queue (else `worker`). (4)
 - **AC-S0-17 [T]** `worker.py`'s startup registers the audit listeners. (2)
 
 ### Review round 1 (security-reviewer and reviewer on PR #1299)
@@ -143,8 +148,9 @@ why" about any record, days or months after the fact.
 ### API
 
 - **AC-S0-23 [BE]** `GET /api/v1/audit/logs/` returns `request_id`, `correlation_id`, `event`,
-  `source`, `reason`, `principal_type`, `principal_id`, `on_behalf_of_user_id`,
-  `root_entity_type`, `root_entity_id` on each item (`response_model` would otherwise drop them).
+  `source`, `reason`, `root_entity_type`, `root_entity_id` on each item, beside #1303's actor
+  fields, and none of S0's dropped `principal_type`, `principal_id`, `on_behalf_of_user_id`
+  (`response_model` would otherwise drop them).
   (4)
 
 ### Migration
