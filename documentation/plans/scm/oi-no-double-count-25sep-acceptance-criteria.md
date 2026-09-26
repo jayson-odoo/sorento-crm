@@ -141,6 +141,25 @@ Issue: #1248
   Owner ruling 26 Sep (G8): DROPPED. The worklist is being discontinued; no worklist change.
   Kept here as the record.
 
+## Fix round W1 (owner hand test of S1 + S2, 26 Sep ~11:20Z)
+
+Owner, verbatim: "i just realized after we click confirm, at the line level can't really see it
+is confirmed, can we have an icon here to show it is confirmed?" (the gap between Product and SO
+Qty boxed).
+
+- AC-ND-33 [FE] A narrow, unsortable column between Product and SO Qty (header blank, named
+  "Confirmed" for screen readers and the Columns picker) carries the line's confirmation, read
+  over the same fold as the rest of the line (its live rows; cancelled and used rows ignored; a
+  rejected row is left out of the count):
+  - every counted row `acknowledged`: the worklist PO cell's confirmed mark (`CircleCheck`,
+    emerald), tooltip "Confirmed by <name> on <date>", the latest confirmer;
+  - some but not all: the worklist's pending mark (`CircleDashed`, muted), tooltip "n of m rows
+    confirmed";
+  - none confirmed yet, or a cancelled SO line: nothing (the State cell already says what
+    waits).
+  It updates in place after Confirm, with no reload (the Confirm mutation refetches the Lines).
+  Evidence: `evidence/oi-no-double-count-w1/`.
+
 ## Phase 3
 
 - AC-ND-30 [E2E] agent-browser, sidebar navigation from `/` to Order Inquiries, open an inquiry
