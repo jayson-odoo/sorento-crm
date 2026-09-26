@@ -283,8 +283,38 @@ describe('the Flag column and the Need attention filter (S7-3)', () => {
     expect(screen.getByText('ZZ900')).toBeInTheDocument();
     expect(screen.queryByText('SRTWCY8608')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('radio', { name: 'All lines (4)' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'All lines (5)' }));
     expect(screen.getByText('SRTWCY8608')).toBeInTheDocument();
+  });
+
+  it('leads the pill with the most severe open item, not the first (review B1)', () => {
+    const warnFirst: ProjectSalesOrderFinding = {
+      id: 'f-seat-warn',
+      severity: 'warn',
+      code: 'price_vs_quotation',
+      detail: 'Line 7 is priced below the quotation.',
+      line_id: 'seat',
+      line_no: 7,
+    };
+    renderTable({ flagItems: buildFlagItems([warnFirst, HARD_ON_SEAT], []) });
+
+    const row = screen.getByText('SRTWC8608-SC').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Blocks publish 2')).toBeInTheDocument();
+    expect(within(row).queryByText(/Needs acknowledgement/)).not.toBeInTheDocument();
+  });
+
+  it('counts every row All lines shows, finding-only rows included (review SF2)', () => {
+    renderTable({ flagItems: flagged(), defaultNeedsAttention: true });
+
+    fireEvent.click(screen.getByRole('radio', { name: 'All lines (5)' }));
+    expect(document.querySelectorAll('tbody tr')).toHaveLength(5);
+  });
+
+  it('still draws a finding-only row on an order with no lines (review N3)', () => {
+    renderTable({ lines: [], flagItems: buildFlagItems([], [SCHEDULE_OVER]) });
+
+    expect(screen.getByText('ZZ900')).toBeInTheDocument();
+    expect(screen.queryByText('This draft has no lines')).not.toBeInTheDocument();
   });
 
   it('has no filter to offer once nothing needs attention', () => {

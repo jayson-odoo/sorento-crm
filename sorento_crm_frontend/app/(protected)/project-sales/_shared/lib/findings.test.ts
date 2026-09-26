@@ -9,6 +9,7 @@ import {
   buildFlagItems,
   collapseFindings,
   FINDING_SEVERITY_LABEL,
+  leadFlagItem,
   needsAttention,
   publishBlockers,
 } from './findings';
@@ -199,6 +200,22 @@ describe('buildFlagItems (S7-3, R23)', () => {
     expect(withColumn?.lineId).toBe('line-2');
   });
 
+  it('R23: a short product code never swallows an unrelated column (review SF1)', () => {
+    const shortOf = (id: string, code: string) =>
+      finding({ ...SHORT, id, line_id: `line-${id}`, detail_json: { product_code: code } });
+    const column = finding({ ...COLUMN, detail_json: { customer_code_raw: 'BUI-HB-FH12SS' } });
+    // HB is a whole segment of the column, H12 sits inside one: neither names the column.
+    const items = buildFlagItems([shortOf('a', 'HB'), shortOf('b', 'SS'), shortOf('c', 'H12')], [column]);
+    expect(items).toHaveLength(4);
+    expect(items.every((item) => item.members.length === 1)).toBe(true);
+  });
+
+  it('R23: a code that starts a segment of the column still pairs, dashes and all', () => {
+    const short = finding({ ...SHORT, detail_json: { product_code: 'SRT382-6' } });
+    const column = finding({ ...COLUMN, detail_json: { customer_code_raw: 'BUI-HB-SRT382-6' } });
+    expect(buildFlagItems([short], [column])).toHaveLength(1);
+  });
+
   it('leaves a column that names no short product as its own schedule item', () => {
     const items = buildFlagItems(
       [SHORT],
@@ -230,5 +247,30 @@ describe('buildFlagItems (S7-3, R23)', () => {
     const covered = new Set(items.flatMap((item) => item.members.map((m) => m.finding.id)));
     for (const blocker of publishBlockers(orderFindings)) expect(covered.has(blocker.id)).toBe(true);
     expect(covered.has('i')).toBe(false);
+  });
+});
+
+describe('leadFlagItem (review B1)', () => {
+  it('leads with the most severe open item, not the first one', () => {
+    const items = buildFlagItems(
+      [
+        finding({ id: 'w', severity: 'warn', code: 'price_vs_quotation', line_id: 'line-1' }),
+        finding({ id: 'h', severity: 'hard', code: 'line_arithmetic', line_id: 'line-1' }),
+      ],
+      [],
+    );
+    expect(leadFlagItem(items)?.severity).toBe('hard');
+  });
+
+  it('skips dismissed items, and has no lead once all are dismissed', () => {
+    const items = buildFlagItems(
+      [
+        finding({ id: 'h', severity: 'hard', line_id: 'line-1', acknowledged_at: '2026-09-01T00:00:00' }),
+        finding({ id: 'w', severity: 'warn', code: 'x', line_id: 'line-1' }),
+      ],
+      [],
+    );
+    expect(leadFlagItem(items)?.severity).toBe('warn');
+    expect(leadFlagItem(items.filter((item) => !item.open))).toBeUndefined();
   });
 });

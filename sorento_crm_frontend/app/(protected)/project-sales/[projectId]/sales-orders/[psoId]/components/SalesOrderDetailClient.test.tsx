@@ -1037,6 +1037,8 @@ describe('SalesOrderDetailClient, the S7 review screen', () => {
 
     fireEvent.click(flag.getByRole('button', { name: 'Dismiss with a reason' }));
     const dialog = await screen.findByRole('dialog', { name: /Dismiss with a reason/ });
+    // Review N1: the reason is typed with both sentences in view, not only the first.
+    expect(dialog.textContent).toContain(COLUMN.detail);
     fireEvent.change(within(dialog).getByLabelText(/Reason/), {
       target: { value: 'Column remapped on the schedule, v3 due.' },
     });
