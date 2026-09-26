@@ -69,10 +69,7 @@ DOMAIN_BY_DOCUMENT: dict[str, str] = {
 
 def _named_count(verdict: dict[str, Any]) -> int | None:
     """The count this message named (`top_n`), or None."""
-    top_n = verdict.get("top_n")
-    if isinstance(top_n, bool) or not isinstance(top_n, int) or top_n <= 0:
-        return None
-    return top_n
+    return contracts.named_count(verdict.get("top_n"))
 
 
 def _names_a_subject(verdict: dict[str, Any]) -> bool:

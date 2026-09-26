@@ -32,7 +32,7 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.services.chatbot import jsc
-from app.services.chatbot.contracts import DEFAULT_SUGGESTED_AGENT, DEFAULT_SUGGESTED_TEAM
+from app.services.chatbot.contracts import DEFAULT_SUGGESTED_AGENT, DEFAULT_SUGGESTED_TEAM, named_count
 from app.services.chatbot.turn.decide import picked_positions
 from app.services.chatbot.turn.pending import OFFER_KINDS, Pending, from_wire, tick as tick_pending
 from app.services.chatbot.turn.plan import FetchSpec
@@ -584,6 +584,47 @@ def _accepted_pending_brand(pending: Pending | None, verdict: Mapping[str, Any])
     / `company_pick` already use. See `_accepted_pending_field`'s own docstring for
     the shared gate/accept-check/fall-through."""
     return _accepted_pending_field(pending, verdict, "brand_code")
+
+
+# A message that is ONLY a count: "10", "show 10", "the first 10", "10 please", "top 20".
+_BARE_COUNT_RE = re.compile(
+    r"^(?:(?:show|list|give|send|bagi|tunjuk)\s+(?:me\s+)?)?"
+    r"(?:(?:the\s+)?(?:first|top)\s+)?"
+    r"(\d{1,4})"
+    r"(?:\s+(?:please|pls|plz|only|je|sahaja))?[.!]?$",
+    re.IGNORECASE,
+)
+
+
+def with_set_count_from_text(
+    verdict: dict[str, Any], message: Any, *, carried: Any
+) -> dict[str, Any]:
+    """The verdict with `top_n` read off a bare count, while "how many should I show?"
+    is open (`focus.set_page`, armed only when a set was too long to list).
+
+    Reviewer S1 on PR #833. The follow-up read only the parser's `top_n`, and nothing
+    in the parser prompt covers a bare "10" given as the answer to a count question: a
+    null `top_n` answered nothing, and a `reference_positions: [10]` would pick row 10 of
+    a list that was never sent. With the question open and the message nothing BUT a
+    count, the count is that number and no position is picked. A message that names
+    anything else (a subject, a word the regex does not know) is left to the parser.
+    """
+    if not isinstance(carried, dict) or not isinstance(message, str):
+        return verdict
+    if named_count(verdict.get("top_n")) is not None:
+        return verdict
+    if any(isinstance(e, dict) and e.get("current_message") is True for e in (verdict.get("entities") or [])):
+        return verdict
+    # Line 1 is the customer's own text; a quoted "reply to: ..." rides on line 2
+    # (`engine.build_latest_user_message`).
+    lines = message.strip().splitlines()
+    match = _BARE_COUNT_RE.match(lines[0].strip()) if lines else None
+    if not match:
+        return verdict
+    count = int(match.group(1))
+    if count <= 0:
+        return verdict
+    return {**verdict, "top_n": count, "reference_positions": []}
 
 
 def with_routing_agent_default(

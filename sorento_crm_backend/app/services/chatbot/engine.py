@@ -43,6 +43,7 @@ from app.services.chatbot.contracts import (
     SELF_CLOSING_BRANCH_KINDS,
     TURN_FAILURE_STAGES,
     Envelope,
+    named_count,
 )
 from app.services.chatbot.delegate import enabled_lanes_from
 from app.services.error_handler import AppException
@@ -1556,6 +1557,12 @@ def _run_stages(  # noqa: PLR0915
     # below is made against the CARRIED agent, not the default. No `session=` (reviewer
     # round 1, SHOULD-4): no writer ever produces a prior-turn agent nest to read.
     verdict = turn_runtime.with_routing_agent_default(verdict, pending=state_in.pending)
+    # Reviewer S1 on PR #833: the answer to "how many should I show?" must not rest on
+    # the parser filling `top_n` for a bare "10" - its prompt has no example of one, and
+    # its positional rule pulls a bare number toward `reference_positions`.
+    verdict = turn_runtime.with_set_count_from_text(
+        verdict, latest_user_message, carried=state_in.focus.set_page
+    )
 
     # -- access, C APPLY, D ROUTE ------------------------------------------- #
     stage[0] = "access"
@@ -2485,7 +2492,7 @@ def _run_stages(  # noqa: PLR0915
                     and plan.fetch
                     and spec_tier
                     and qualifying > business_answer.SET_LIST_MAX
-                    and not isinstance(verdict.get("top_n"), int)
+                    and named_count(verdict.get("top_n")) is None
                 )
                 state_out.focus.set_page = (
                     turn_runtime.set_page_carry(
