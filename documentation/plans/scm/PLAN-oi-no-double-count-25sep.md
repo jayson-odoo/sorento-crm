@@ -1,8 +1,10 @@
 # PLAN: Order inquiry view without double counting - one row per sales order line, history behind the History icon
 
 Status: grilled (owner rulings 26 Sep 2026 folded in, see "Owner rulings 26 Sep 2026" below). S0
-(FE mock) built on `feat/oi-no-double-count-s0` (PR #1266), reviewer round 1 fixed (B1, B2, S1
-to S5, nits), awaiting the owner's hands-on; S1 next. S3
+(FE mock) built on `feat/oi-no-double-count-s0` (PR #1266), owner hand-tested and approved 26 Sep.
+S1 (backend, tester first, `tests/test_oi_no_double_count.py`) and S2 (FE wire, mocks removed)
+built on the same branch, 26 Sep; browser evidence under `evidence/oi-no-double-count-s2/`. S4
+(reviewer + owner pass on the stack) next. S3
 (worklist) is dropped (G8). Track: feature (three-phase) - expected diff is over ~300 lines across FE and BE; no
 migration, no auth/RBAC change, no new ingest surface, so `security-reviewer` is expected to be
 skipped. Issue #1248. Docs branch `claude/oi-no-double-count-plan-kyf2l4` (draft PR; docs PRs are
