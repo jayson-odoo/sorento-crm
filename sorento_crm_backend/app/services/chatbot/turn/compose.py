@@ -318,18 +318,6 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             if block == NO_RESULT_INTRO and codes:
                 subject_label = label.lower() if isinstance(label, str) else str(domain)
                 block = f"No {subject_label} found for {codes}."
-            elif not header_override:
-                # #1262 slice 6 (F6a): `header_override` withheld means this turn
-                # never described a class (`counted_set` was False) - the fetch's
-                # own baked header on the OTHER carrier is stale and must not
-                # contradict the rows right below it. The shape match itself lives
-                # in `turn_runtime` (this package may not call `re.` - purity test
-                # `test_turn_package_never_calls_re_dot_or_reads_dot_text`).
-                from app.services.chatbot.turn_runtime import is_counted_set_header_line
-
-                first_line, sep, rest = block.partition("\n")
-                if sep and is_counted_set_header_line(first_line):
-                    block = rest
         elif rows_text:
             block = header + "\n" + "\n\n".join(rows_text)
         elif env.get("denied"):

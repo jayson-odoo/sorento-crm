@@ -2787,21 +2787,6 @@ def domain_denial_text(db: Session, domain: str) -> str | None:
         return None
 
 
-#: #1262 slice 6 (F6a): the exact shape `answer.build_set_header` emits ("0 products
-#: have incoming stock.", "10 taps have PPS certificates. Showing 5."). `turn/
-#: compose.py` may not call `re.` itself (`turn` package purity,
-#: `test_turn_package_never_calls_re_dot_or_reads_dot_text`), so the match lives here
-#: and compose imports the plain function below.
-_COUNTED_SET_HEADER_LINE = re.compile(r"^\d[\d,]*\s+\S+\s+(?:has|have)\s+.+\.(?:\s+Showing\s+\d+\.)?$")
-
-
-def is_counted_set_header_line(text: str) -> bool:
-    """`turn/compose.py`'s own guard, one layer down: a `lane_text` first line that
-    matches `build_set_header`'s shape - used ONLY when `header_override` is itself
-    falsy (a real counted-set answer keeps its header exactly as today)."""
-    return bool(_COUNTED_SET_HEADER_LINE.match(text.strip()))
-
-
 def _lane_text_without_withheld_header(
     text: Any, set_header: Any, *, counted_set: bool
 ) -> Any:
