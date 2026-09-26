@@ -290,6 +290,7 @@ describe('ProductsList - Discontinued between filter (AC-TYPE-1, AC-FLT-5, AC-FL
     const chips = Array.isArray(rawSummary) ? rawSummary : rawSummary ? [rawSummary] : [];
     const chip = chips.find((c) => c.label?.startsWith('Discontinued:'));
     expect(chip).toBeTruthy();
+    expect(chip!.label).toBe('Discontinued: 1 Sep 26 - 26 Sep 26');
 
     act(() => {
       chip!.onClear();
@@ -344,5 +345,44 @@ describe('ProductsList - Discontinued between filter (AC-TYPE-1, AC-FLT-5, AC-FL
     const payload = exportConfig!.getPayload();
     expect(payload.discontinued_from).toBe('2026-09-01');
     expect(payload.discontinued_to).toBe('2026-09-26');
+  });
+
+  it('one-sided ranges read from X / to Y', async () => {
+    // A one-sided range cannot be TYPED (`parseRangeInput` always sets both ends
+    // together, or a single date sets from = to), so it is seeded the same way a
+    // Back navigation would: through the URL the list restores from
+    // (`useListStateFromUrl`), one field at a time.
+    nav.params = new URLSearchParams({ discontinued_from: '2026-09-01' });
+    renderList();
+    await waitFor(() => expect(toolbar.props).not.toBeNull());
+
+    const fromOnlyFilters = (toolbar.props as { filters?: Record<string, unknown> })?.filters;
+    const fromOnlySummary = fromOnlyFilters?.activeSummary as
+      | { label: string; onClear: () => void }
+      | { label: string; onClear: () => void }[]
+      | undefined;
+    const fromOnlyChips = Array.isArray(fromOnlySummary)
+      ? fromOnlySummary
+      : fromOnlySummary
+        ? [fromOnlySummary]
+        : [];
+    const fromOnlyChip = fromOnlyChips.find((c) => c.label?.startsWith('Discontinued:'));
+    expect(fromOnlyChip?.label).toBe('Discontinued: from 1 Sep 26');
+    cleanup();
+
+    nav.params = new URLSearchParams({ discontinued_to: '2026-09-26' });
+    renderList();
+    await waitFor(() => expect(toolbar.props).not.toBeNull());
+
+    const toOnlyFilters = (toolbar.props as { filters?: Record<string, unknown> })?.filters;
+    const toOnlySummary = toOnlyFilters?.activeSummary as
+      | { label: string; onClear: () => void }
+      | { label: string; onClear: () => void }[]
+      | undefined;
+    const toOnlyChips = Array.isArray(toOnlySummary) ? toOnlySummary : toOnlySummary ? [toOnlySummary] : [];
+    const toOnlyChip = toOnlyChips.find((c) => c.label?.startsWith('Discontinued:'));
+    expect(toOnlyChip?.label).toBe('Discontinued: to 26 Sep 26');
+
+    nav.params = new URLSearchParams();
   });
 });

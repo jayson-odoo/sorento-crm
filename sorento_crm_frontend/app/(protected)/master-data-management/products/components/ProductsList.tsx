@@ -82,13 +82,22 @@ const PRODUCT_IMPORT_COLUMNS: ColumnOption[] = [
   { key: 'Is Active', label: 'Is Active', selected: true },
 ];
 
+// Named here rather than left to `Intl`, whose `en-GB` short form spells
+// September "Sept" (see `boardChangeAnnotations.ts`'s own `SHORT_MONTHS`) -
+// the UAC's own wording is the 3-letter form ("Discontinued: 1 Sep 26 ...").
+const SHORT_MONTHS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
 /** `2026-09-26` -> `26 Sep 26` (chip), the shared `DateRangePicker`'s own ISO
- *  parser reused rather than a second one (same pattern as StockDebtClient's
- *  `formatDateChip`). */
+ *  parser reused rather than a second one (same shape as StockDebtClient's
+ *  `formatDateChip`, minus its `Intl` month name). */
 function formatDateChip(value: string): string {
   const date = parseIsoDate(value);
   if (!date) return value;
-  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' });
+  const year = String(date.getFullYear()).slice(-2);
+  return `${date.getDate()} ${SHORT_MONTHS[date.getMonth()]} ${year}`;
 }
 
 const ProductsList = () => {
