@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sales targets mockup</title>
+<!-- Issue #1170. Annotated mockup, not shipped code. Plain inline CSS so it opens from a file.
+     Plan: documentation/plans/sales/PLAN-sales-targets-opportunities-26sep.md
+     UAC:  documentation/plans/sales/sales-targets-opportunities-26sep-acceptance-criteria.md
+     Figures are illustrative. Numbered pins map to the notes beside each frame. -->
+<style>
+:root{
+  --bg:#f6f7f9; --card:#ffffff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --line-soft:#f1f2f4;
+  --primary:#1b84ff; --primary-soft:#e9f3ff;
+  --red:#dc2626; --red-soft:#fef2f2;
+  --amber:#b45309; --amber-soft:#fffbeb;
+  --green:#15803d; --green-soft:#f0fdf4;
+  --grey-soft:#f3f4f6; --callout:#e11d74; --radius:8px;
+  --wa-bg:#efeae2; --wa-in:#ffffff;
+  --font:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1760px;margin:0 auto;padding:24px 16px 64px}
+.doc>h1{font-size:22px;margin:0 0 4px}
+.doc>.sub{color:var(--muted);margin:0 0 20px;max-width:900px}
+h2.frame-title{font-size:15px;margin:28px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.scroll{overflow-x:auto;max-width:100%;border-radius:12px}
+.frame{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.06);position:relative;overflow:hidden}
+.w1280{width:1280px}.w375{width:375px;flex:none}.w560{width:560px;flex:none;max-width:100%}
+.notes{flex:1 1 320px;min-width:280px;max-width:520px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}
+.notes .ref{display:block;color:var(--muted);font-size:12px;margin-top:4px}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;box-shadow:0 0 0 2px #fff}
+.pin{position:absolute;z-index:5}
+/* app shell */
+.shell{display:flex;min-height:560px}
+.side{width:220px;border-right:1px solid var(--line);padding:16px 10px;background:#fbfbfc}
+.side .grp{font-size:11px;text-transform:uppercase;color:var(--muted);margin:14px 8px 6px;letter-spacing:.05em}
+.side a{display:block;padding:6px 10px;border-radius:6px;color:var(--fg);text-decoration:none}
+.side a.on{background:var(--primary-soft);color:var(--primary);font-weight:600}
+.main{flex:1;padding:20px 24px;min-width:0}
+.ph{display:flex;flex-direction:column;gap:12px;margin-bottom:14px}
+@media (min-width:640px){.ph{flex-direction:row;justify-content:space-between;align-items:center}}
+.ph h3{margin:0;font-size:20px}
+.ph .meta{color:var(--muted);font-size:13px}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 12px;font:inherit;font-size:13px;cursor:default}
+.btn.pri{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.sm{padding:3px 8px;font-size:12px}
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);margin-bottom:12px}
+.tabs span{padding:8px 0;color:var(--muted)}
+.tabs span.on{color:var(--fg);border-bottom:2px solid var(--primary);font-weight:600}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.kpi{border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px}
+.kpi .l{color:var(--muted);font-size:12px}.kpi .v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+th{font-size:12px;color:var(--muted);font-weight:600;background:#fafafa}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.bar{height:6px;background:var(--grey-soft);border-radius:3px;overflow:hidden;margin-top:4px}
+.bar i{display:block;height:100%;background:var(--primary)}
+.bar.ok i{background:var(--green)}
+.badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;background:var(--grey-soft);color:var(--muted)}
+.badge.ok{background:var(--green-soft);color:var(--green)}
+.badge.warn{background:var(--amber-soft);color:var(--amber)}
+.muted{color:var(--muted)}
+tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
+/* mobile card list */
+.m-head{padding:14px 16px;border-bottom:1px solid var(--line)}
+.m-card{padding:12px 16px;border-bottom:1px solid var(--line-soft)}
+.m-row{display:flex;justify-content:space-between;gap:8px}
+/* modal */
+.modal{padding:18px 20px}
+.modal h4{margin:0 0 14px;font-size:16px}
+.f{margin-bottom:12px}
+.f label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+.inp{border:1px solid var(--line);border-radius:6px;padding:7px 10px;background:#fff}
+.inp.ro{background:var(--grey-soft)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg span{padding:6px 12px}.seg span.on{background:var(--primary-soft);color:var(--primary);font-weight:600}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.foot{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
+/* whatsapp */
+.wa{background:var(--wa-bg);padding:16px;min-height:300px}
+.wa .top{background:#075e54;color:#fff;padding:10px 14px;font-weight:600}
+.bubble{background:var(--wa-in);border-radius:8px;padding:8px 10px;max-width:92%;box-shadow:0 1px 1px rgba(0,0,0,.1);white-space:pre-line;font-size:13.5px}
+.bubble .t{display:block;text-align:right;font-size:11px;color:var(--muted);margin-top:4px}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Sales targets (issue #1170)</h1>
+<p class="sub">The Targets screen at 1280 and 375, the Set target modal, and the WhatsApp message an agent and a dealer receive on Monday morning. Figures are made up. Every choice shown follows the recommended answers to the grill questions (G1 to G10) in the plan.</p>
+
+<h2 class="frame-title">1. Targets, Agents tab, 1280</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280">
+  <div class="shell">
+    <nav class="side">
+      <div class="grp">Order Management</div><a>Customers</a><a>Sales Orders</a>
+      <div class="grp">Sales</div><a class="on">Targets</a><a>Opportunities</a>
+      <div class="grp">Master Data</div><a>Sales Agents</a>
+    </nav>
+    <div class="main">
+      <span class="pin co" style="left:420px;top:26px">1</span>
+      <div class="ph">
+        <div><h3>Sales targets</h3><div class="meta">September 2026 &middot; 8 days left &middot; achievement = ordered value, tax inclusive</div></div>
+        <div style="display:flex;gap:8px">
+          <span class="btn">&lsaquo; Aug</span><span class="btn">September 2026</span><span class="btn">Oct &rsaquo;</span>
+          <span class="btn">Copy last month</span>
+          <span class="pin co" style="right:20px;top:60px">3</span>
+        </div>
+      </div>
+      <div class="tabs"><span class="on">Agents</span><span>Dealers</span></div>
+      <div class="kpis">
+        <div class="kpi"><div class="l">Team target</div><div class="v">RM 540,000</div></div>
+        <div class="kpi"><div class="l">Achieved</div><div class="v">RM 461,010</div></div>
+        <div class="kpi"><div class="l">% achieved</div><div class="v">85%</div></div>
+        <div class="kpi"><div class="l">Pipeline this month (weighted)</div><div class="v">RM 96,250</div></div>
+      </div>
+      <span class="pin co" style="left:880px;top:218px">2</span>
+      <table>
+        <colgroup><col style="width:210px"><col style="width:120px"><col style="width:120px"><col style="width:150px"><col style="width:140px"><col style="width:160px"><col style="width:100px"></colgroup>
+        <thead><tr><th>Sales agent</th><th class="n">Target</th><th class="n">Achieved</th><th>% achieved</th><th class="n">Pipeline</th><th class="n">Commission</th><th></th></tr></thead>
+        <tbody>
+          <tr><td>ALI - Ali Hassan</td><td class="n">RM 150,000</td><td class="n">RM 158,420</td><td><span class="badge ok">106%</span><div class="bar ok"><i style="width:100%"></i></div></td><td class="n">RM 12,500 (2)</td><td class="n">RM 3,960 + RM 500</td><td><span class="btn sm">&hellip;</span></td></tr>
+          <tr><td>MEI - Tan Mei Ling</td><td class="n">RM 120,000</td><td class="n">RM 88,300</td><td><span class="badge">74%</span><div class="bar"><i style="width:74%"></i></div></td><td class="n">RM 41,000 (5)</td><td class="n">RM 2,208</td><td><span class="btn sm">&hellip;</span></td></tr>
+          <tr><td>RAJ - Rajesh Kumar</td><td class="n">RM 150,000</td><td class="n">RM 101,150</td><td><span class="badge warn">67%</span><div class="bar"><i style="width:67%"></i></div></td><td class="n">RM 30,750 (4)</td><td class="n">RM 2,529</td><td><span class="btn sm">&hellip;</span></td></tr>
+          <tr><td>SIT - Siti Aminah</td><td class="n">RM 120,000</td><td class="n">RM 84,000</td><td><span class="badge">70%</span><div class="bar"><i style="width:70%"></i></div></td><td class="n">RM 12,000 (1)</td><td class="n"><span class="muted">-</span></td><td><span class="btn sm">&hellip;</span></td></tr>
+          <tr><td>WON - Wong Kah Wai</td><td class="n muted">No target</td><td class="n">RM 22,600</td><td class="muted">-</td><td class="n">RM 0</td><td class="n muted">-</td><td><span class="btn sm pri">Set target</span></td></tr>
+          <tr class="unassigned"><td>Unassigned (no agent on order)</td><td class="n">-</td><td class="n">RM 6,540</td><td>-</td><td class="n">-</td><td class="n">-</td><td></td></tr>
+        </tbody>
+      </table>
+      <span class="pin co" style="left:1225px;top:300px">4</span>
+      <span class="pin co" style="left:200px;top:470px">5</span>
+    </div>
+  </div>
+</div></div>
+<div class="notes"><ol>
+  <li><span class="co">1</span><div><b>Opens on this month, nothing to choose.</b>Sidebar Sales &gt; Targets. Every active agent is listed, target or not, so a missing target is visible.<span class="ref">J1 &middot; S1-3, S1-7</span></div></li>
+  <li><span class="co">2</span><div><b>Achieved comes from sales orders; Pipeline is shown beside it, never added.</b>Pipeline = open opportunities closing this month x stage probability, with the count in brackets; it links to the filtered Opportunities list.<span class="ref">J7 &middot; S5-1 to S5-3 &middot; G1</span></div></li>
+  <li><span class="co">3</span><div><b>Copy last month</b> appears only while this month has no targets, then disappears.<span class="ref">J3 &middot; S2-1, S2-5</span></div></li>
+  <li><span class="co">4</span><div><b>Row menu:</b> Edit, Send now (WhatsApp this agent's progress), Delete (deferred countdown, no dialog). Send now is disabled with the reason in its title when the agent has no WhatsApp contact.<span class="ref">J8 &middot; S6-7, S6-8</span></div></li>
+  <li><span class="co">5</span><div><b>Unassigned row.</b> Orders AutoCount sent with no agent code are totalled, not silently dropped.<span class="ref">S1-11 &middot; G2</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="frame-title">2. Same screen, 375</h2>
+<div class="layout">
+<div class="frame w375">
+  <div class="m-head"><b style="font-size:17px">Sales targets</b><div class="muted" style="font-size:12px">September 2026 &middot; 8 days left</div>
+    <div style="display:flex;gap:6px;margin-top:10px"><span class="btn sm">&lsaquo;</span><span class="btn sm" style="flex:1;justify-content:center">September 2026</span><span class="btn sm">&rsaquo;</span></div>
+    <div class="tabs" style="margin:10px 0 0"><span class="on">Agents</span><span>Dealers</span></div></div>
+  <div class="m-card"><div class="m-row"><b>ALI - Ali Hassan</b><span class="badge ok">106%</span></div><div class="bar ok"><i style="width:100%"></i></div><div class="m-row muted" style="font-size:12px;margin-top:6px"><span>RM 158,420 of RM 150,000</span><span>Pipeline RM 12,500</span></div></div>
+  <div class="m-card"><div class="m-row"><b>MEI - Tan Mei Ling</b><span class="badge">74%</span></div><div class="bar"><i style="width:74%"></i></div><div class="m-row muted" style="font-size:12px;margin-top:6px"><span>RM 88,300 of RM 120,000</span><span>Pipeline RM 41,000</span></div></div>
+  <div class="m-card"><div class="m-row"><b>WON - Wong Kah Wai</b><span class="btn sm pri">Set target</span></div><div class="muted" style="font-size:12px;margin-top:6px">No target &middot; RM 22,600 achieved</div></div>
+</div>
+<div class="notes"><ol>
+  <li><span class="co">6</span><div><b>At phone width the grid keeps its columns and scrolls sideways inside the DataGrid,</b> as every other listing does; this card view is only the minimum that must stay readable. The coder picks whichever the shared DataGrid already supports at 375, no new component.<span class="ref">PRINCIPLES "Responsive" &middot; S1-10</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="frame-title">3. Set target modal</h2>
+<div class="layout">
+<div class="frame w560"><div class="modal">
+  <h4>Set target</h4>
+  <div class="two">
+    <div class="f"><label>Sales agent</label><div class="inp ro">WON - Wong Kah Wai</div></div>
+    <div class="f"><label>Month</label><div class="inp ro">September 2026</div></div>
+  </div>
+  <div class="f"><label>Measure</label><div class="seg"><span class="on">Amount (RM)</span><span>Quantity</span></div></div>
+  <div class="f"><label>Target (RM)</label><div class="inp">100,000</div></div>
+  <div class="two">
+    <div class="f"><label>Commission % (optional)</label><div class="inp">2.5</div></div>
+    <div class="f"><label>Incentive at 100% (RM, optional)</label><div class="inp">500</div></div>
+  </div>
+  <div class="foot"><span class="btn">Cancel</span><span class="btn pri">Save</span></div>
+</div></div>
+<div class="notes"><ol>
+  <li><span class="co">7</span><div><b>One decision: the number.</b> Agent and month come from the row. Commission and incentive pre-fill from the agent's previous month.<span class="ref">J2 &middot; S1-8</span></div></li>
+  <li><span class="co">8</span><div><b>Quantity</b> swaps the unit to "units" and adds a required, searchable product category select.<span class="ref">G4 &middot; S2-4, S2-7</span></div></li>
+  <li><span class="co">9</span><div><b>Dealer targets</b> use the same modal from the Dealers tab, with a searchable dealer select (code - name) as the first field instead of the fixed agent.<span class="ref">J4 &middot; S2-6</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="frame-title">4. The Monday WhatsApp message</h2>
+<div class="layout">
+<div class="frame w375"><div class="wa" style="padding:0"><div class="top">Sorento</div><div style="padding:16px">
+  <div class="bubble">Hi Tan Mei Ling, your September sales so far:
+Target: RM 120,000
+Achieved: RM 88,300 (74%)
+To go: RM 31,700 in 8 days
+Commission earned so far: RM 2,208
+
+Open opportunities closing this month: 5 (RM 41,000 weighted).<span class="t">Mon 09:00</span></div>
+</div></div></div>
+<div class="frame w375"><div class="wa" style="padding:0"><div class="top">Sorento</div><div style="padding:16px">
+  <div class="bubble">Hi Kedai Paip Maju, your September purchases with Sorento so far:
+Target: RM 40,000
+Achieved: RM 27,450 (69%)
+To go: RM 12,550 in 8 days
+
+Thank you for your support. Your sales agent: Ali Hassan.<span class="t">Mon 09:00</span></div>
+</div></div></div>
+<div class="notes"><ol>
+  <li><span class="co">10</span><div><b>Agent message (left).</b> Own figures only, with commission (G6) and pipeline. Sent to the agent's WhatsApp contact on the Sales Agents master.<span class="ref">J8 &middot; S6-1, S6-2 &middot; G7, G8</span></div></li>
+  <li><span class="co">11</span><div><b>Dealer message (right).</b> Own figures only, never commission, sent to the dealer's primary WhatsApp contact.<span class="ref">J8 &middot; S6-1, S6-2 &middot; G8</span></div></li>
+  <li><span class="co">12</span><div><b>Outside the 24 hour window this must be an approved WhatsApp template,</b> so the wording above is what goes to Meta for approval; changing it later means a new approval.<span class="ref">Plan 3.3 &middot; S6-5</span></div></li>
+</ol></div>
+</div>
+</div>
+</body>
+</html>
