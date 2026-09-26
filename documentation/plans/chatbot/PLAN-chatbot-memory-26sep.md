@@ -195,3 +195,119 @@ what was said before.
 
 The consequence for this plan: **memory must not add net tokens to the parser call.** Every
 token it adds is paid for by a cut in the same slice (section 6).
+
+## 3. What this plan changes, in one paragraph
+
+Keep the three shelves and their single writers; fill them with something worth reading, and
+feed them to the parser in a fixed, capped shape. Episodes get real boundaries (topic change
+**or** a 30 minute gap, closed lazily at the next turn's intake inside the per-contact ticket)
+and a deterministic written summary built from the turns' own trace (domains, entities,
+answers, offers, outcome): no extra LLM call, backfillable over the 4,414 live turns already
+in `chatbot.turns`. The profile gains a `facts` list inside the existing `chatbot_profile`
+JSONB (no new table): facts derived from CRM links, facts tallied from closed episodes, facts
+the dealer states, facts staff enter; each with source, last seen and expiry; staff see and
+edit them on the Contact page. Every parse gets a capped context (profile slice, last three
+episode summaries, the live episode's earlier messages, focus, open question, current
+message) assembled by one pure function under a per-layer token budget, and the recall
+re-parse is deleted, which pays for the added lines several times over. The low-signal lane
+(small talk, "what did I ask you", "can you give me a discount") gets the same memory slice
+and a reply shape (acknowledge, use what memory knows, offer the concrete thing the CRM can
+do, or hand over), and never sends a raw error or nothing at all.
+
+## 4. Layer 1: contact profile
+
+### 4.1 What it holds
+
+One closed vocabulary. A key not in this table is rejected by the writer (one validation
+function, `turn/profile_facts.py`). Staff can add a free-text note; nothing else is free-form.
+
+| key | example value | sources allowed | fed to the parser | expiry |
+|---|---|---|---|---|
+| `customer` | "Chin Chun Trading (CC001)" | crm | yes | live (re-derived at each episode close) |
+| `segment` | "dealer" / "project" / "end user" | crm, staff | yes | live |
+| `salesperson` | "Aina" | crm | no (S4 composer only) | live |
+| `language` | "ms" | staff, stated | yes | none (staff) / 180 days (stated) |
+| `role` | "purchaser" | stated, staff | yes | 180 days / none |
+| `usual_products` | ["SRTWB1455", "M486-75-BL"] | tallied, staff | yes | 90 days after last seen |
+| `usual_brands` | ["Sorento"] | tallied, stated, staff | yes | 90 days after last seen |
+| `usual_sites` | ["Kuching"] | tallied, stated, staff | yes | 90 days after last seen |
+| `project` | "Aurora Residences block B" | stated, staff | yes | 180 days / none |
+| `note` | free text, max 200 chars | staff | yes | none |
+
+Plus the existing settings keys stay where they are (`tier`, `default_ledgers`, the toggles):
+they are settings, not facts, and keep their current writer.
+
+**Open orders are not a profile fact.** They change every hour, the business lane already
+fetches them fresh, and putting a count in the prompt would be stale by the next turn. The
+staff screen shows them live (from the linked customer), and the S4 composer fetches them
+when a reply needs them (example 6 in section 7).
+
+### 4.2 Shape (inside the existing JSONB, no migration for the shape)
+
+```json
+"chatbot_profile": {
+  "tier": "dealer", "language": "ms", "default_ledgers": [],          // existing settings
+  "facts": [
+    {"key": "usual_products", "value": ["SRTWB1455", "M486-75-BL"],
+     "source": "tallied", "source_ref": "<frame id>", "first_seen": "2026-09-02",
+     "last_seen": "2026-09-25", "seen_count": 4, "expires_at": "2026-12-24",
+     "set_by": null},
+    {"key": "role", "value": "purchaser", "source": "stated",
+     "source_ref": "<turn id>", "first_seen": "2026-09-26", "last_seen": "2026-09-26",
+     "seen_count": 1, "expires_at": "2027-03-25", "set_by": null},
+    {"key": "note", "value": "Prefers PDF quotes", "source": "staff",
+     "source_ref": null, "set_by": "<users.id>", "expires_at": null}
+  ]
+}
+```
+
+Why no table: one contact holds at most about 12 facts, nothing queries facts across contacts,
+and the row is already locked `FOR UPDATE` by the tail. Trigger for a table (written down per
+PRINCIPLES): the first feature that must query facts across contacts (for example "every
+contact whose usual brand is X" for a campaign).
+
+### 4.3 Writers (each source has exactly one)
+
+| source | writer | when |
+|---|---|---|
+| `crm` | `profile_facts.derive_crm(contact)` from `respond_contact_customers` (primary first), `customers.market_segment_code`, `customers.sales_agent_id` | at each episode close, in the same transaction; replaces all `crm` facts |
+| `tallied` | `profile_facts.tally(contact)`: a product, brand or warehouse present in the entities of 2 or more closed episodes in the last 90 days; top 3 by count then recency | at each episode close |
+| `stated` | the parser's new optional `profile_statement` output (section 6.5), applied by APPLY into the tail's write | on the turn the dealer says it |
+| `staff` | `PUT /user-management/contacts/{id}/chatbot/facts/{key}` and `DELETE` of the same; the existing whole-profile PUT stops touching `facts` | on the Contact page |
+
+Precedence when two sources hold the same key: `staff` > `stated` > `crm` > `tallied`. A staff
+delete of a learned fact records a tombstone (`{"key": ..., "source": "staff", "value": null}`)
+so the tally does not re-learn it the next day.
+
+**Hard rule: facts are hints, never grants.** No fact changes `access_levels`, company scope,
+the linked customers or any reveal gate. A dealer who says "I'm the owner of Iborn" gets
+`role: owner` as a hint and exactly the same data access as before. Test AC-MEM036.
+
+### 4.4 The fix list carried from section 2.3
+
+- A tier pick in chat writes `tier` to the profile (plan line 78 promised this). Via the tail,
+  source `stated`.
+- `always_full_report` is removed from the FE (no reader).
+- An empty profile renders no `Profile:` line at all.
+
+### 4.5 Staff screen
+
+Contact detail page, the existing Chatbot card (`ContactChatbotSection.tsx`) gains two
+sections under the toggles, same layout on view and edit:
+
+- **What the bot knows** (a DataGrid): key label, value, source badge (`CRM`, `Learned`,
+  `Said`, `Staff`), last seen, expires. CRM rows are read-only and link to the customer. Staff
+  can Add (modal: key from a `SearchableSelect` of the vocabulary, value), edit a row in place,
+  and Delete (deferred action, 10 s hard delete, no confirm dialog; D7). Confirming a `Learned`
+  or `Said` row turns it into `Staff` (no expiry). Empty state: "Nothing learned yet" plus the
+  Add action.
+- **Recent conversations** (read-only DataGrid): episode date, topic (domains), summary line,
+  turn count, close reason; the row opens that turn range in Chat History (`rowHref`).
+  Empty state with a link to Chat History.
+- **Open orders** (read-only, live from the linked customer, top 5): shown here because staff
+  asked "what does the bot know about this person" and orders are part of that answer; not a
+  fact, not stored.
+
+Permissions: view needs the existing `user_management.contacts.view`; add, edit and delete
+need the existing `user_management.contacts.edit`. No new permission, so no grant sweep.
+Both dict builders (`contact_to_response_dict` and the chatbot GET) list `facts` (DoD 4).
