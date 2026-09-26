@@ -15,8 +15,9 @@ earlier-sent message of this contact the CRM already knows about and has not ans
 itself. The earlier message's own delivery later comes back `duplicate: true`, so n8n sends
 nothing twice.
 
-The last class is the stale-focus guard (round 3 N6 / R3-6): a bare "Stock" with no product,
-on a focus left over from an earlier day, asks which product instead of answering yesterday.
+Owner ruling, 26 Sep 2026 (issue #1262): no stale-focus guard. Carried focus is never dropped
+on a calendar-day or clock rule, so a bare "Stock" on yesterday's focus answers from it,
+exactly as on main. `TestCarriedFocusAcrossDays` pins that.
 """
 from __future__ import annotations
 
@@ -247,11 +248,6 @@ def _turn_for(session_factory, contact_id: int, message_id: str) -> ChatbotTurn 
     )
 
 
-def _stale_focus_fired(session_factory, contact_id: int, message_id: str) -> bool:
-    row = _turn_for(session_factory, contact_id, message_id)
-    return any(entry.get("kind") == "stale_focus" for entry in (row.trace or []))
-
-
 def _texts(actions: list[dict[str, Any]]) -> list[str]:
     return [str(a.get("text") or "") for a in actions if a.get("kind") == "send_message"]
 
@@ -264,9 +260,6 @@ class TestPhotoStillInN8nMediaIntake:
     ):
         contact_id = _fresh_contact_id()
         _seed_contact(session_factory, contact_id, focus_codes=YESTERDAY_CODES)
-        # Turn 377 was yesterday: the stale-focus guard must still let "Stock" read the
-        # photo's products, because the photo's turn (today) ran just before it.
-        _seed_previous_turn(session_factory, contact_id, days_ago=1)
         _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
         _seed_settings(session_factory, media_sync_wait_seconds=5)
         media_pipeline.set_result(PHOTO_RESULT)
@@ -297,10 +290,6 @@ class TestPhotoStillInN8nMediaIntake:
         texts = _texts(result.actions)
         assert len(texts) >= 2, texts
         assert "M210-GM" in texts[0], f"the photo's reply is sent first: {texts}"
-        # The photo's turn finished today, so the focus "Stock" reads is today's: the
-        # stale-focus guard must not drop the photo's products. (Its reply in this blank
-        # database is still the no-placed-subject ask, because no M-code exists here.)
-        assert not _stale_focus_fired(session_factory, contact_id, STOCK_MESSAGE_ID)
 
     def test_the_photos_own_late_delivery_is_a_duplicate_and_sends_nothing(
         self, session_factory, stub_access, media_pipeline, monkeypatch
@@ -459,46 +448,31 @@ def _seed_previous_turn(session_factory, contact_id: int, *, days_ago: int) -> N
     db.commit()
 
 
-class TestStaleFocusOnABareDomainWord:
-    """Round 3 N6 / R3-6, turn 378: "Stock" alone, with only yesterday's products in focus."""
+class TestCarriedFocusAcrossDays:
+    """Owner ruling, 26 Sep 2026: nothing drops carried focus on a calendar-day rule."""
 
-    def _stock_only(self, session_factory, contact_id, monkeypatch):
+    def test_bare_stock_on_a_focus_from_an_earlier_kuala_lumpur_day_still_answers_it(
+        self, session_factory, stub_access, monkeypatch
+    ):
+        contact_id = _fresh_contact_id()
+        _seed_contact(session_factory, contact_id, focus_codes=YESTERDAY_CODES)
+        # The last turn finished two days ago, so it is on an earlier Kuala Lumpur
+        # calendar day whatever the local time of this run.
+        _seed_previous_turn(session_factory, contact_id, days_ago=2)
+        stub_access()
         calls: list[str] = []
         _install_parser(monkeypatch, calls)
+
         result = engine_mod.run_turn(_stock_envelope(contact_id), session_factory=session_factory)
-        return result, calls
 
-    def test_turn_378_bare_stock_on_yesterdays_focus_asks_which_product(
-        self, session_factory, stub_access, monkeypatch
-    ):
-        contact_id = _fresh_contact_id()
-        _seed_contact(session_factory, contact_id, focus_codes=YESTERDAY_CODES)
-        _seed_previous_turn(session_factory, contact_id, days_ago=1)
-        stub_access()
-
-        result, calls = self._stock_only(session_factory, contact_id, monkeypatch)
-
-        texts = " ".join(_texts(result.actions))
-        assert "SRTWC8516" not in texts and "SRTWC8517" not in texts, (
-            f"a bare 'Stock' must not answer yesterday's products: {texts!r}"
+        assert [_message_line(c) for c in calls] == ["Stock"]
+        assert "SRTWC8517" in _subject_line(calls[0]), (
+            f"'Stock' reads the carried products: {_subject_line(calls[0])!r}"
         )
-        assert "give me a product code" in texts.lower(), (
-            f"it asks for the product, as it does with no subject at all: {texts!r}"
-        )
-        assert _stale_focus_fired(session_factory, contact_id, STOCK_MESSAGE_ID)
-
-    def test_bare_stock_on_a_focus_named_today_still_answers_it(
-        self, session_factory, stub_access, monkeypatch
-    ):
-        contact_id = _fresh_contact_id()
-        _seed_contact(session_factory, contact_id, focus_codes=YESTERDAY_CODES)
-        _seed_previous_turn(session_factory, contact_id, days_ago=0)
-        stub_access()
-
-        result, calls = self._stock_only(session_factory, contact_id, monkeypatch)
-
-        assert "SRTWC8517" in _subject_line(calls[0])
-        assert "give me a product code" not in " ".join(_texts(result.actions)).lower()
+        texts = " ".join(_texts(result.actions)).lower()
+        assert "give me a product code" not in texts, f"no re-ask for a product: {texts!r}"
+        row = _turn_for(session_factory, contact_id, STOCK_MESSAGE_ID)
+        assert row.status == "done", (row.status, row.error)
 
 
 class TestOrderingOnTheWaitingRequest:
@@ -691,22 +665,3 @@ class TestReviewRound1:
         assert [_message_line(c) for c in calls] == ["Stock"]
         assert _turn_for(session_factory, contact_id, PHOTO_MESSAGE_ID) is None
         assert engine_mod._claim_own_row(session_factory, queued) is True
-
-    def test_a_dry_run_judges_focus_age_by_the_live_turns_that_left_it(
-        self, session_factory, stub_access, monkeypatch
-    ):
-        """Turn 378 must be reproducible from the Prompts screen: the dry run reads the
-        live focus, so the live turns decide its age."""
-        contact_id = _fresh_contact_id()
-        _seed_contact(session_factory, contact_id, focus_codes=YESTERDAY_CODES)
-        _seed_previous_turn(session_factory, contact_id, days_ago=1)
-        stub_access()
-        calls: list[str] = []
-        _install_parser(monkeypatch, calls)
-
-        test_turn = _stock_envelope(contact_id)
-        test_turn.is_test = True
-        result = engine_mod.run_turn(test_turn, session_factory=session_factory)
-
-        row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
-        assert any(entry.get("kind") == "stale_focus" for entry in (row.trace or []))

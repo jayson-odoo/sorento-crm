@@ -35,7 +35,6 @@ import copy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import update
 from sqlalchemy.orm import Session
@@ -43,10 +42,6 @@ from sqlalchemy.orm import Session
 from app.models.chatbot_turn import ChatbotTurn
 
 QUEUED_STAGE = "queued"
-
-# The contact's calendar day, for the stale-focus guard. Same zone the media ledger keys
-# its periods on.
-_LOCAL_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
 
 def sent_at_ms(envelope_message: Any) -> int | None:
@@ -262,51 +257,3 @@ def ledger_envelope(my_envelope: dict[str, Any], earlier: Earlier) -> dict[str, 
     inner["message"] = {"type": "attachment", "attachment": attachment}
     body["message"] = inner
     return envelope
-
-
-# --------------------------------------------------------------------------- #
-# Stale focus (round 3 N6 / R3-6)
-# --------------------------------------------------------------------------- #
-
-
-def previous_turn_on_earlier_day(
-    db: Session, *, contact_respond_id: str, turn_id: str, is_test: bool, now: datetime
-) -> bool:
-    """Was the focus left by a turn that finished on an earlier local day than today?
-
-    Read on LIVE turns even for a dry run: a test turn reads the live contact's
-    `session_vars`, so it is the live turns that left that focus (reading writes nothing,
-    D14 holds). Any finished turn counts, a casual one included: "good morning" today
-    means the conversation is today's, and the owner can tighten that if needed.
-
-    The focus is written when a turn finishes, so the last FINISHED turn is the one that
-    left it. Read by finish, not by arrival: an earlier-sent photo answered inside this
-    very turn (above) arrived after it but finished just now, and the focus it left is
-    today's. No finished turn means the age is unknown, and the focus is left alone.
-    """
-    previous = (
-        db.query(ChatbotTurn.finished_at)
-        .filter(
-            ChatbotTurn.contact_respond_id == contact_respond_id,
-            ChatbotTurn.is_test.is_(False),
-            ChatbotTurn.id != turn_id,
-            ChatbotTurn.finished_at.isnot(None),
-        )
-        .order_by(ChatbotTurn.finished_at.desc())
-        .first()
-    )
-    if previous is None or previous[0] is None:
-        return False
-    return previous[0].astimezone(_LOCAL_TZ).date() < now.astimezone(_LOCAL_TZ).date()
-
-
-def is_bare_ask(verdict: dict[str, Any]) -> bool:
-    """A business ask that names nothing and leans on the subject ("stock", "price")."""
-    if verdict.get("message_type") != "business_query":
-        return False
-    if verdict.get("entities") or verdict.get("reference_positions"):
-        return False
-    if verdict.get("entity_op") != "reuse":
-        return False
-    answers = verdict.get("answers_open_question")
-    return not (isinstance(answers, dict) and answers.get("resolved"))

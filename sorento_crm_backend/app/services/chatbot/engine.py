@@ -1461,15 +1461,6 @@ def _run_stages(  # noqa: PLR0915
         known_phone = turn_runtime.contact_phone(db, contact_respond_id)
         turn_no = turn_runtime.turn_number(db, contact_respond_id)
         state_in = turn_runtime.load_state(session_block, profile=profile, turn_no=turn_no)
-        # Round 3 N6 / R3-6 (issue #1262): whether the focus was left by a turn on an
-        # EARLIER day. Read here, with the other contact facts; used after the parse.
-        focus_from_earlier_day = send_order.previous_turn_on_earlier_day(
-            db,
-            contact_respond_id=contact_respond_id,
-            turn_id=turn_id,
-            is_test=bool(dry_run),
-            now=_now(),
-        )
         remembered_before = session_state.five_keys(session_block)
         # The parser's `Previous response:` line. Read here, at `received`, with the
         # other contact facts and off the SAME session: it is what the bot last said to
@@ -1778,18 +1769,6 @@ def _run_stages(  # noqa: PLR0915
     # below is made against the CARRIED agent, not the default. No `session=` (reviewer
     # round 1, SHOULD-4): no writer ever produces a prior-turn agent nest to read.
     verdict = turn_runtime.with_routing_agent_default(verdict, pending=state_in.pending)
-
-    # Round 3 N6 / R3-6 (issue #1262, Mr Loo turn 378): a bare "stock" / "price" that
-    # names no product never answers products carried over from an earlier day. The
-    # stale products are dropped before APPLY, so the turn asks which product, exactly
-    # as it does for a contact with no focus at all.
-    if focus_from_earlier_day and state_in.focus.products and send_order.is_bare_ask(verdict):
-        turn_trace.add(
-            "stale_focus",
-            {"dropped_products": len(state_in.focus.products), "reason": "focus_from_an_earlier_day"},
-        )
-        state_in.focus.products = []
-        state_in.focus.set_page = None
 
     # -- access, C APPLY, D ROUTE ------------------------------------------- #
     stage[0] = "access"
