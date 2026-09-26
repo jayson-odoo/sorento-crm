@@ -526,6 +526,14 @@ one search box over the existing preview search; `SpecExtractPanel` no longer mo
 11. Why hide the Code, Rules and Built in columns? Answered there. Recommendation: hidden by
     default in the column chooser, not deleted.
 
+### New in round 4 (asked on the alignment page)
+
+13. "Read specs from a text" leaves the product tab under the 27 Sep 2026 00:45 MYT ruling
+    ("simplify this, too messy"; the read values and one search box, nothing else). Agreed?
+    Recommendation: yes; the extract endpoint stays, so the panel can return if a merchandiser
+    asks (D9). Under the other choice it returns as a third item under the search box, a paste
+    box with one "Read specs from this" button.
+
 ## 9. Mockups (for the owner's Lavish review before build)
 
 Each file has a 1280 frame, a 375 frame and numbered notes citing the UAC ids. Round 3
