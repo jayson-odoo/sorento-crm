@@ -646,6 +646,8 @@ export function worklistParams(params: OrderInquiryWorklistParams, limit: number
       // `PLAN-oi-header-list-detail.md`, S3/AC-DT-02: the OI detail page's own Lines
       // tab and whole-OI Export Excel - every non-cancelled row of ONE header.
       inquiry_id: params.inquiry_id,
+      // S2 (`PLAN-oi-no-double-count-25sep.md`, AC-ND-20): the Lines tab's cancelled rows.
+      include_history: params.include_history ? 'true' : undefined,
       delivery_month: params.delivery_month,
       raised_date: params.raised_date,
       state: params.state,
@@ -912,8 +914,9 @@ export async function getOrderInquiryHeader(
  * first. `limit` is the backend's own `MAX_PAGE_LIMIT` (1000); a header past that many
  * lines (max measured, 242) pages again rather than truncating.
  *
- * Cancelled lines are NOT filtered here; the Lines tab hides them the same way the
- * worklist does (S5), client-side.
+ * `PLAN-oi-no-double-count-25sep.md` S2 (AC-ND-20): `include_history` brings the
+ * header's cancelled rows in the same read. The Lines tab folds them into their line's
+ * History, never into a line row of their own, so the History dialog reads nothing more.
  */
 export async function getOrderInquiryHeaderLines(
   id: string,
@@ -923,7 +926,12 @@ export async function getOrderInquiryHeaderLines(
   let rows: OrderInquiryWorklistRow[] = [];
   for (;;) {
     // Pages are read in order, not fanned out - each one depends on the last.
-    const envelope = await listOrderInquiryWorklist({ inquiry_id: id, limit, page });
+    const envelope = await listOrderInquiryWorklist({
+      inquiry_id: id,
+      include_history: true,
+      limit,
+      page,
+    });
     rows = rows.concat(envelope.data);
     if (envelope.data.length === 0 || rows.length >= envelope.total) break;
     page += 1;

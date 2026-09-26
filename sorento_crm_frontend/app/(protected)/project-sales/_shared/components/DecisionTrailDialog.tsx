@@ -53,6 +53,57 @@ function ActorLine({ entry }: { entry: DecisionTrailEntry }) {
   );
 }
 
+/**
+ * The trail itself, without the dialog around it: `DecisionTrailDialog` below renders it,
+ * and so does the OI detail's per-line History dialog as its Decisions tab
+ * (`PLAN-oi-no-double-count-25sep.md`, owner ruling 26 Sep, G3) - one trail, two frames.
+ */
+export function DecisionTrailEntries({
+  entries,
+  isLoading,
+  error,
+  emptyText = 'No trail recorded yet.',
+}: {
+  entries: DecisionTrailEntry[];
+  isLoading?: boolean;
+  error?: string | null;
+  emptyText?: string;
+}) {
+  return (
+    <div className="space-y-2">
+      {isLoading ? (
+        <div className="space-y-2" data-testid="decision-trail-loading">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+      ) : error ? (
+        <p className="text-sm text-destructive">{error}</p>
+      ) : entries.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{emptyText}</p>
+      ) : (
+        entries.map((entry, index) => (
+          // The entry's own identity - kind + when it happened - never the array
+          // index ALONE, which reorders on refetch; `at` alone still collides when
+          // two rows are raised in the same call (S2, round 3: `at` shares a second
+          // between them), so the index breaks that tie too.
+          <div
+            key={`${entry.kind}-${entry.at ?? ''}-${index}`}
+            className="rounded-md border border-border p-2 text-xs"
+          >
+            <div className="font-medium">
+              {DECISION_TRAIL_KIND_LABEL[entry.kind] ?? entry.kind}
+              {entry.detail ? ` · ${entry.detail}` : ''}
+            </div>
+            <div className="text-muted-foreground">
+              <ActorLine entry={entry} />
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 export function DecisionTrailDialog({
   open,
   onOpenChange,
@@ -84,36 +135,8 @@ export function DecisionTrailDialog({
             Who saved, confirmed and raised this line
           </DialogDescription>
         </DialogHeader>
-        <DialogBody className="space-y-2">
-          {isLoading ? (
-            <div className="space-y-2" data-testid="decision-trail-loading">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-            </div>
-          ) : error ? (
-            <p className="text-sm text-destructive">{error}</p>
-          ) : entries.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No trail recorded yet.</p>
-          ) : (
-            entries.map((entry, index) => (
-              // The entry's own identity - kind + when it happened - never the array
-              // index ALONE, which reorders on refetch; `at` alone still collides when
-              // two rows are raised in the same call (S2, round 3: `at` shares a second
-              // between them), so the index breaks that tie too.
-              <div
-                key={`${entry.kind}-${entry.at ?? ''}-${index}`}
-                className="rounded-md border border-border p-2 text-xs"
-              >
-                <div className="font-medium">
-                  {DECISION_TRAIL_KIND_LABEL[entry.kind] ?? entry.kind}
-                  {entry.detail ? ` · ${entry.detail}` : ''}
-                </div>
-                <div className="text-muted-foreground">
-                  <ActorLine entry={entry} />
-                </div>
-              </div>
-            ))
-          )}
+        <DialogBody>
+          <DecisionTrailEntries entries={entries} isLoading={isLoading} error={error} />
         </DialogBody>
       </DialogContent>
     </Dialog>
