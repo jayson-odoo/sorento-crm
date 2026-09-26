@@ -111,7 +111,8 @@ def test_api_call_log_actor_label_names_real_and_effective_user():
     assert label == f"user:{admin_id}/as:{target_id}"
     assert len(label) <= 128
     assert _actor_label({"audit_actor": plain}) == f"user:{target_id}"
-    assert _actor_label({"audit_actor": integration}) == f"integration:{admin_id}"
+    # Plan 8.2: user_id and integration_id both (reviewer pass at 03d3b474, N1).
+    assert _actor_label({"audit_actor": integration}) == f"integration:{admin_id}/as:{target_id}"
 
 
 # --------------------------------------------------------------------------- #
