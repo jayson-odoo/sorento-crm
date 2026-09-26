@@ -28,20 +28,33 @@ import { PhoneSignIn } from './components/phone-signin';
 type SigninMode = 'email' | 'phone';
 
 /**
+ * A same-origin, path-only `callbackUrl` - never a protocol-relative or
+ * backslash-smuggled one (security round S3, #1280: `/\evil.com` passed the
+ * old `startsWith('/') && !startsWith('//')` check because a leading
+ * backslash isn't a leading slash, and some browsers then read the whole
+ * thing as `//evil.com`, an open redirect). `startsWith('/')` plus "no
+ * backslash anywhere" rejects the smuggling attempts outright; the `new URL`
+ * origin check is the actual same-origin proof for anything that survives
+ * those two.
+ */
+export function isSafeCallbackUrl(cb: string | null | undefined): cb is string {
+  if (!cb || typeof cb !== 'string') return false;
+  if (!cb.startsWith('/') || cb.includes('\\')) return false;
+  try {
+    return new URL(cb, window.location.origin).origin === window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * A `callbackUrl` the user may open wins; otherwise the session's own
  * `homePath` (a salesperson's portal home, the CRM home for anyone with a
  * permission, else the portal home) - never a bare `/` when the backend
  * already knows better (AC-28).
  */
 async function resolveLandingUrl(callbackUrl: string | null): Promise<string> {
-  const safeUrl =
-    callbackUrl &&
-    typeof callbackUrl === 'string' &&
-    callbackUrl.startsWith('/') &&
-    !callbackUrl.startsWith('//')
-      ? callbackUrl
-      : null;
-  if (safeUrl) return safeUrl;
+  if (isSafeCallbackUrl(callbackUrl)) return callbackUrl;
   const session = await getSession();
   return session?.user?.homePath || '/';
 }
