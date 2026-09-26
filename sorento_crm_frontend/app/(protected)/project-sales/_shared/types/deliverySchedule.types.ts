@@ -161,6 +161,8 @@ export interface DeliveryScheduleVersion {
   po_version_no: number | null;
   extraction_state: ScheduleExtractionState;
   document_url: string | null;
+  /** The schedule file's attachment, so the viewer can read its bytes same-origin. */
+  attachment_id?: string | null;
   schedule_date: string | null;
   phases: DeliverySchedulePhase[];
   products: DeliveryScheduleProduct[];
