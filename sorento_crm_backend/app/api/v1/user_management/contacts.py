@@ -267,7 +267,12 @@ async def update_contact_chatbot(
             # body never touches `facts`" - a whole-profile PUT sends `tier`/
             # `default_ledgers`, never the facts list, so a bare replace would
             # silently wipe every learned/said/staff fact on the very next save.
+            # S1 (security review 26 Sep 2026): drop whatever `facts` the body
+            # itself carries UNCONDITIONALLY, then restore what is actually
+            # stored - none stored means none in the saved profile too, never
+            # whatever a caller's body happened to send.
             merged_profile = dict(body.chatbot_profile)
+            merged_profile.pop("facts", None)
             existing_facts = (contact.chatbot_profile or {}).get("facts")
             if existing_facts is not None:
                 merged_profile["facts"] = existing_facts
@@ -297,6 +302,15 @@ async def update_contact_chatbot(
         raise handle_internal_error(str(e))
 
 
+#: Security review 26 Sep 2026 (S3): a `GET .../chatbot/memory` caller who holds
+#: only `user_management.contacts.view` still gets facts and open orders, but
+#: `episodes` (free-text conversation summaries) is `null` unless they ALSO hold
+#: this - the same "chat trace" slug `ai_assistant.py`'s prompt-test route already
+#: requires on top of its own edit slug. The safer of the two options the review
+#: offered: null out the one sensitive field rather than blocking the whole route.
+_CHATBOT_EPISODES_VIEW = "system.chat_history.view"
+
+
 @router.get("/{contact_id}/chatbot/memory")
 async def get_contact_chatbot_memory(
     contact_id: str,
@@ -305,9 +319,13 @@ async def get_contact_chatbot_memory(
 ):
     """Facts, episodes and open orders (chatbot memory lane A, contract section 5).
     Router is HTTP only - `ContactService.get_chatbot_memory` owns every read."""
-    _ = current_user
+    from app.services.user_service import UserPermissionService
+
+    can_view_episodes = UserPermissionService(db).check_user_has_permission(
+        current_user["id"], _CHATBOT_EPISODES_VIEW
+    )
     try:
-        return ContactService(db).get_chatbot_memory(contact_id)
+        return ContactService(db).get_chatbot_memory(contact_id, include_episodes=can_view_episodes)
     except HTTPException:
         raise
     except Exception as e:
@@ -316,7 +334,10 @@ async def get_contact_chatbot_memory(
 
 
 class ContactFactUpdate(BaseModel):
-    value: object
+    # S4 (security review 26 Sep 2026): every fact value in the vocabulary is
+    # either free text or a short list of strings (`profile_facts.VOCABULARY`) -
+    # `object` accepted anything, including a nested structure no fact ever needs.
+    value: str | list[str]
 
 
 @router.put("/{contact_id}/chatbot/facts/{key}")

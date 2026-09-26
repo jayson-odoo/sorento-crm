@@ -289,13 +289,20 @@ def merged_facts_for_display(db: Session, contact: Any) -> list[dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 
 
-def tally(db: Session, contact_respond_id: str, *, is_test: bool = False) -> list[dict[str, Any]]:
+def tally(
+    db: Session, contact_respond_id: str, *, is_test: bool = False, contact_pk: str | None = None
+) -> list[dict[str, Any]]:
     """Recompute the tallied facts over the newest `TALLY_WINDOW` closed episodes -
     an entity in at least `TALLY_MIN_COUNT` of them, top `TALLY_TOP_N` by count then
     recency, survives; every other value (including one that just aged out of the
     window) is dropped on the next call. A key a staff or stated entry already owns
     is left alone entirely, in the RETURN value too - a caller asking what changed
-    should never be told about a key it did not touch."""
+    should never be told about a key it did not touch.
+
+    `contact_pk` locks the write by the `respond_contacts.id` the CALLER already
+    resolved safely (security review 26 Sep 2026, B1) - `contact_respond_id` alone
+    is not unique across workspaces. `None` keeps the old respond_io_id lookup, for
+    a direct/unit-test caller that has not gone through intake's resolution."""
     frames = (
         db.query(ConversationFrame)
         .filter(
@@ -307,8 +314,17 @@ def tally(db: Session, contact_respond_id: str, *, is_test: bool = False) -> lis
         .limit(TALLY_WINDOW)
         .all()
     )
+    known_brands = _known_brand_names(db) if frames else set()
+    known_warehouses = _known_warehouse_names(db) if frames else set()
     out: list[dict[str, Any]] = []
     for entity_kind, fact_key in _TALLY_ENTITY_TO_FACT.items():
+        known = (
+            known_brands
+            if entity_kind == "brand"
+            else known_warehouses
+            if entity_kind == "warehouse"
+            else None
+        )
         counts: dict[str, dict[str, Any]] = {}
         for frame in frames:
             entities = frame.entities if isinstance(frame.entities, dict) else {}
@@ -316,6 +332,11 @@ def tally(db: Session, contact_respond_id: str, *, is_test: bool = False) -> lis
             when = frame.started_at
             for raw_value in values:
                 value = str(raw_value)
+                # S2: a tallied brand/site goes through the SAME master-list check a
+                # stated or staff write already does - a decommissioned or misspelled
+                # value from old frame data never becomes a fact.
+                if known is not None and value.lower() not in known:
+                    continue
                 bucket = counts.setdefault(
                     value, {"count": 0, "first": when, "last": when, "frame_id": frame.id}
                 )
@@ -334,7 +355,8 @@ def tally(db: Session, contact_respond_id: str, *, is_test: bool = False) -> lis
         first_seen = _as_date_str(min((bucket["first"] for _, bucket in top), default=None))
         entry = _write_fact(
             db,
-            by_respond_id=contact_respond_id,
+            by_respond_id=contact_respond_id if contact_pk is None else None,
+            by_pk=contact_pk,
             key=fact_key,
             value=top_values,
             source="tallied",
@@ -378,11 +400,17 @@ def _known_warehouse_names(db: Session) -> set[str]:
     return {name.strip().lower() for (name,) in db.query(Warehouse.warehouse_name).all() if name}
 
 
+#: S4: a staff `usual_products` item is free text (no master list backs it), so it
+#: is capped by length rather than validated - the same 60-char ceiling `project`
+#: gets, one item.
+_USUAL_PRODUCT_MAX_LENGTH = 60
+
+
 def _normalize_usual_products(value: Any, max_items: int) -> list[str] | None:
     items = value if isinstance(value, list) else [value]
     out: list[str] = []
     for item in items:
-        candidate = _collapse_whitespace(item)
+        candidate = _collapse_whitespace(item)[:_USUAL_PRODUCT_MAX_LENGTH]
         if not candidate:
             continue
         if candidate not in out:
@@ -414,12 +442,22 @@ def _normalize_for_stated(key: str, spec: FactSpec, value: Any, db: Session) -> 
 
 
 def apply_statement(
-    db: Session, contact_respond_id: str, key: str, value: Any, *, turn_id: str
+    db: Session,
+    contact_respond_id: str,
+    key: str,
+    value: Any,
+    *,
+    turn_id: str,
+    contact_pk: str | None = None,
 ) -> dict[str, Any] | None:
     """A parser `profile_statement` (contract section 4, Q6 ruling). Rejects a key
     the vocabulary does not allow a stated write for, or a value that fails that
     key's own validation - never raises, since a rejected statement is simply not
-    learned, not a failed turn."""
+    learned, not a failed turn.
+
+    `contact_pk` locks the write by the primary key the caller already resolved
+    (security review 26 Sep 2026, B1); `None` keeps the old respond_io_id lookup
+    for a direct/unit-test caller."""
     spec = VOCABULARY.get(key)
     if spec is None or not spec.allow_stated:
         return None
@@ -428,7 +466,8 @@ def apply_statement(
         return None
     return _write_fact(
         db,
-        by_respond_id=contact_respond_id,
+        by_respond_id=contact_respond_id if contact_pk is None else None,
+        by_pk=contact_pk,
         key=key,
         value=normalized,
         source="stated",
@@ -509,28 +548,13 @@ def delete_fact(db: Session, contact_pk: str, key: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# AC-MEM037: a tier resolved in chat, a plain `chatbot_profile` SETTING - the
-# vocabulary table does not cover it (PLAN 4.1 keeps tier where the existing
-# settings already are).
-# --------------------------------------------------------------------------- #
-
-
-def set_tier(db: Session, contact_respond_id: str, tier: str) -> None:
-    locked = _lock_row(db, respond_id=contact_respond_id)
-    if locked is None:
-        return
-    contact_pk, _profile = locked
-    db.execute(
-        text(
-            "UPDATE respond_contacts SET chatbot_profile = jsonb_set("
-            "coalesce(chatbot_profile, '{}'::jsonb), '{tier}', to_jsonb(:tier::text)) "
-            "WHERE id = :i"
-        ),
-        {"tier": tier, "i": contact_pk},
-    )
-    db.commit()
-
-
+# Owner ruling, hand pass 10 (21 Sep 2026) supersedes AC-MEM037: a fresh
+# promotion ask that names no access level of its own must re-open the tier
+# roster rather than settle on a previously picked tier. Security review
+# 26 Sep 2026 removed the chat-side tier write this contradicted (`set_tier`
+# and its engine call site) rather than special-casing it - a resolved tier is
+# never persisted onto `chatbot_profile`, and `system_settings.chatbot_tier_
+# order` stays read only by `turn/policy.py::load_policy`, its original reader.
 # --------------------------------------------------------------------------- #
 # AC-MEM035: no expiry - the parser's own read of the profile slice
 # --------------------------------------------------------------------------- #
@@ -585,16 +609,38 @@ def _raw_line_value(value: Any) -> str:
     return str(value)
 
 
-def parser_slice(facts: list[dict[str, Any]], crm: list[dict[str, Any]]) -> str:
-    """The raw `"key value; key value"` segments `turn/context.py::_render_l5`
-    wraps in its own "About this contact:" header (contract section 2, L5) - no
-    header here, no newlines, so `assemble` can split, cap and drop by key on its
-    own. No expiry (Q7 ruling) - a fact from 400 days ago is rendered exactly like
-    one from today; the DATE is what tells the reader it is old, never a cutoff
-    that drops it."""
+def _merge_by_vocabulary(facts: list[dict[str, Any]], crm: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     by_key = {f.get("key"): f for f in facts if f.get("value") is not None}
     for fact in crm:
         by_key.setdefault(fact["key"], fact)
+    return by_key
+
+
+def structured_slice(facts: list[dict[str, Any]], crm: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The same merge `parser_slice` renders as a flat string, kept STRUCTURED -
+    `turn/context.py::_render_l5` builds "About this contact:" straight from this
+    (security review 26 Sep 2026, S2), never by re-splitting a joined string on
+    `;`, which corrupts the moment a free-text value contains one itself. One
+    `{"key", "value"}` entry per vocabulary key that has a value, in vocabulary
+    order - the same order `_L5_DROP_ORDER` drops by."""
+    by_key = _merge_by_vocabulary(facts, crm)
+    out: list[dict[str, Any]] = []
+    for key in VOCABULARY:
+        entry = by_key.get(key)
+        if entry is None or entry.get("value") is None:
+            continue
+        out.append({"key": key, "value": entry.get("value")})
+    return out
+
+
+def parser_slice(facts: list[dict[str, Any]], crm: list[dict[str, Any]]) -> str:
+    """The raw `"key value; key value"` segments (legacy shape - `turn/context.py`
+    no longer reads this for L5, `structured_slice` above does; this stays for the
+    parser's own direct callers, e.g. `AC-MEM035`'s no-expiry contract, which have
+    no need for the structured form). No header here, no newlines. No expiry (Q7
+    ruling) - a fact from 400 days ago is rendered exactly like one from today; the
+    DATE is what tells the reader it is old, never a cutoff that drops it."""
+    by_key = _merge_by_vocabulary(facts, crm)
     segments: list[str] = []
     for key in VOCABULARY:
         entry = by_key.get(key)

@@ -1204,25 +1204,83 @@ def _memory_intake(db: Session, *, contact_respond_id: str, dry_run: bool) -> di
     3/6.6): the effective level, the last 3 closed-frame summaries (level `past`/
     `full`), the live episode's earlier messages (level `conversation`/`past`/
     `full`), and the "About this contact" profile slice (level `full` only - the
-    one level the parser sees it at)."""
+    one level the parser sees it at).
+
+    Security review 26 Sep 2026 (B1): `respond_io_id` is unique WITHIN a workspace
+    only, never globally, so this resolves the ONE `respond_contacts` row through
+    `turn_runtime.resolve_contact_pk` (workspace first, NULL-workspace fallback)
+    before touching anything - an ambiguous or absent id degrades memory to `off`
+    for this turn (no fact write, no frame read) rather than guessing whose row it
+    is. `contact_pk` rides on the returned dict so every later fact write in this
+    same turn (tier, tally, `profile_statement`) locks by PRIMARY KEY, never by the
+    ambiguous string again. Never raises: a memory failure degrades to `off` with a
+    trace note, it does not fail the turn.
+    """
+    from app.models.chatbot_turn import ChatbotTurn
+    from app.models.conversation_frame import ConversationFrame
+    from app.models.user import SystemSetting
+    from app.services.chatbot import turn_runtime as turn_runtime_mod
+
+    started = time.perf_counter()
+
+    def _degraded(reason: str) -> dict[str, Any]:
+        return {
+            "effective_level": "off",
+            "own_level": None,
+            "contact_pk": None,
+            "summaries": [],
+            "earlier_messages": [],
+            "profile_facts": None,
+            "read_frames": [],
+            "ms": int((time.perf_counter() - started) * 1000),
+            "degraded_reason": reason,
+        }
+
+    try:
+        space_id = default_space_id(db)
+        resolved = turn_runtime_mod.resolve_contact_pk(db, contact_respond_id, space_id)
+    except Exception:  # noqa: BLE001 - a resolution failure degrades, never fails the turn
+        logger.warning("chatbot: memory contact resolution failed", exc_info=True)
+        return _degraded("resolution_error")
+    if resolved is None:
+        return _degraded("ambiguous_or_missing_contact")
+    contact_pk, own_level = resolved
+
+    try:
+        return _memory_intake_resolved(
+            db,
+            contact_respond_id=contact_respond_id,
+            contact_pk=contact_pk,
+            own_level=own_level,
+            dry_run=dry_run,
+            started=started,
+        )
+    except Exception:  # noqa: BLE001 - a memory read failure degrades, never fails the turn
+        logger.warning("chatbot: memory intake failed", exc_info=True)
+        return _degraded("intake_error")
+
+
+def _memory_intake_resolved(
+    db: Session,
+    *,
+    contact_respond_id: str,
+    contact_pk: str,
+    own_level: str | None,
+    dry_run: bool,
+    started: float,
+) -> dict[str, Any]:
     from app.models.access import RespondContact
     from app.models.chatbot_turn import ChatbotTurn
     from app.models.conversation_frame import ConversationFrame
     from app.models.user import SystemSetting
 
-    started = time.perf_counter()
-    own_level = (
-        db.query(RespondContact.chatbot_memory_level)
-        .filter(RespondContact.respond_io_id == contact_respond_id)
-        .scalar()
-    )
     system_memory = db.query(SystemSetting.chatbot_memory).scalar()
     effective = memory_mod.effective_level(own_level, system_memory)
 
     summaries: list[str] = []
     read_frames: list[dict[str, Any]] = []
     earlier_messages: list[dict[str, Any]] = []
-    profile_slice: str | None = None
+    profile_facts_list: list[dict[str, Any]] | None = None
     newest_frame = None
 
     if effective in ("past", "full"):
@@ -1265,20 +1323,22 @@ def _memory_intake(db: Session, *, contact_respond_id: str, dry_run: bool) -> di
                 earlier_messages.append({"created_at": _short_day_time(row.created_at), "text": text_value})
 
     if effective == "full":
-        contact_row = (
-            db.query(RespondContact).filter(RespondContact.respond_io_id == contact_respond_id).first()
-        )
+        contact_row = db.query(RespondContact).filter(RespondContact.id == contact_pk).first()
         if contact_row is not None:
             merged = profile_facts_mod.merged_facts_for_display(db, contact_row)
             crm = profile_facts_mod.crm_view(db, contact_row)
-            profile_slice = profile_facts_mod.parser_slice(merged, crm)
+            # Security review 26 Sep 2026 (S2): structured, not the old joined
+            # string - `context.py::_render_l5` builds "About this contact:"
+            # straight from this, never by re-splitting a string on `;`.
+            profile_facts_list = profile_facts_mod.structured_slice(merged, crm)
 
     return {
         "effective_level": effective,
         "own_level": own_level,
+        "contact_pk": contact_pk,
         "summaries": summaries,
         "earlier_messages": earlier_messages,
-        "profile_slice": profile_slice,
+        "profile_facts": profile_facts_list,
         "read_frames": read_frames,
         "ms": int((time.perf_counter() - started) * 1000),
     }
@@ -1376,6 +1436,11 @@ def _run_stages(  # noqa: PLR0915
         # everything `context.assemble` needs beyond the profile row already read
         # above, off the SAME session, timed as `memory_ms`.
         memory_intake = _memory_intake(db, contact_respond_id=contact_respond_id, dry_run=dry_run)
+        # Security review 26 Sep 2026 (B1): the ONE contact this turn resolved to,
+        # already workspace-scoped and lock-safe - every later fact write in this
+        # turn (tier, tally, `profile_statement`) reads this instead of re-deriving
+        # an ambiguous lookup by `respond_io_id`. `None` when intake degraded.
+        remembered_before["_contact_pk"] = memory_intake.get("contact_pk")
         # `parser_config` is resolved AFTER media intake, not here: AC-1810's "no
         # parser call" means no parser SETUP either - a media-denied turn (no API
         # key required to check a gate/quota/burst decision) must not fail because
@@ -1546,7 +1611,7 @@ def _run_stages(  # noqa: PLR0915
     )
     context_layers = context_mod.ContextLayers(
         level=effective_level,
-        profile_slice=memory_intake["profile_slice"],
+        profile_facts=memory_intake["profile_facts"],
         summaries=memory_intake["summaries"],
         earlier_messages=memory_intake["earlier_messages"],
         previous_response=previous_reply,
@@ -1988,24 +2053,17 @@ def _run_stages(  # noqa: PLR0915
             branch_kind = turn_route(plan)
         item = _stamp_item(access, branch_kind, {})
 
-        # AC-MEM037: a tier this turn's narrowing just resolved (a fresh roster
-        # pick, or the customer naming it outright) is the contact's own from now
-        # on. `narrow.py`'s own `profile.tier` check (turn/narrow.py:452,467) is
-        # what makes the NEXT ask silent once this lands - `load_profile` reads it
-        # straight back next turn, so nothing else has to change to suppress a
-        # repeat ask. A resolved LIST ("1 and 2") is not one tier and is not
-        # persisted.
-        resolved_tier: str | None = None
-        for fetch_spec in plan.fetch:
-            tier_value = fetch_spec.filters.get("tier")
-            if isinstance(tier_value, str) and tier_value:
-                resolved_tier = tier_value
-                break
-        if resolved_tier is not None and resolved_tier != state_in.profile.tier:
-            try:
-                profile_facts_mod.set_tier(db, contact_respond_id, resolved_tier)
-            except Exception:  # noqa: BLE001 - a lost tier write is never a lost turn
-                logger.warning("chatbot: tier persist did not run", exc_info=True)
+        # Owner ruling, hand pass 10 (21 Sep 2026, `test_rearch_r10_handpass10_
+        # replay.py::TestHandPass10PromotionAskRepeatsAfterATierPick`): a fresh
+        # promotion ask that names no access level of its own must RE-OPEN the
+        # tier roster, never settle on the last picked tier. AC-MEM037 (chat-side
+        # tier persistence, "a tier pick writes `chatbot_profile.tier` so the next
+        # turn does not ask again") conflicts with that older, binding ruling -
+        # security review 26 Sep 2026 removed the write entirely rather than
+        # special-case it: `profile_facts.set_tier` and this call site are gone,
+        # a resolved tier is never persisted onto the contact row, and every ask
+        # still resolves fresh off `narrow.py`'s own turn-scoped state.
+        contact_pk = remembered_before.get("_contact_pk")
 
         # AC-1546 / chatbot memory lane A (contract section 3): the episode belongs to
         # the topic that just CLOSED, and a topic closes because the customer changed
@@ -2056,19 +2114,21 @@ def _run_stages(  # noqa: PLR0915
         # themselves are written whatever the level, staff still see them.
         # Stashed on `before` the same way `_episode_written` is, so `_run_answer`'s
         # tail can fold it into the turn's own `facts_saved` trace line.
-        if written_frame is not None:
+        if written_frame is not None and not dry_run and contact_pk is not None:
             try:
                 from app.models.access import RespondContact as _RespondContact
                 from app.models.user import SystemSetting as _SystemSetting
 
                 own_level_row = (
                     db.query(_RespondContact.chatbot_memory_level)
-                    .filter(_RespondContact.respond_io_id == contact_respond_id)
+                    .filter(_RespondContact.id == contact_pk)
                     .scalar()
                 )
                 system_memory_row = db.query(_SystemSetting.chatbot_memory).scalar()
                 if memory_mod.effective_level(own_level_row, system_memory_row) != "off":
-                    tallied = profile_facts_mod.tally(db, contact_respond_id, is_test=dry_run)
+                    tallied = profile_facts_mod.tally(
+                        db, contact_respond_id, is_test=dry_run, contact_pk=contact_pk
+                    )
                     remembered_before["_facts_tallied"] = [
                         {"key": f["key"], "source": f["source"]} for f in tallied
                     ]
@@ -3059,29 +3119,43 @@ def _run_answer(
                     {"key": stmt_key, "reason": "not a stated-vocabulary key"},
                 )
             else:
-                from app.models.access import RespondContact as _RespondContactStated
-                from app.models.user import SystemSetting as _SystemSettingStated
+                # Security review 26 Sep 2026 (B1): lock by the primary key intake
+                # already resolved for this turn, never re-derive by the ambiguous
+                # `respond_io_id`. An intake that degraded (no pk resolved) writes
+                # nothing.
+                tail_contact_pk = remembered_before.get("_contact_pk")
+                if tail_contact_pk is None:
+                    turn_trace.add(
+                        "profile_statement_dropped",
+                        {"key": stmt_key, "reason": "contact resolution degraded"},
+                    )
+                else:
+                    from app.models.access import RespondContact as _RespondContactStated
+                    from app.models.user import SystemSetting as _SystemSettingStated
 
-                own_level_row = (
-                    db.query(_RespondContactStated.chatbot_memory_level)
-                    .filter(_RespondContactStated.respond_io_id == contact_respond_id)
-                    .scalar()
-                )
-                system_memory_row = db.query(_SystemSettingStated.chatbot_memory).scalar()
-                if memory_mod.effective_level(own_level_row, system_memory_row) != "off":
-                    try:
-                        entry = profile_facts_mod.apply_statement(
-                            db,
-                            contact_respond_id,
-                            stmt_key,
-                            statement.get("value"),
-                            turn_id=turn_id,
-                        )
-                    except Exception:  # noqa: BLE001 - a lost statement is never a lost turn
-                        logger.warning("chatbot: profile_statement apply did not run", exc_info=True)
-                        entry = None
-                    if entry is not None:
-                        facts_saved.append({"key": entry["key"], "source": entry["source"]})
+                    own_level_row = (
+                        db.query(_RespondContactStated.chatbot_memory_level)
+                        .filter(_RespondContactStated.id == tail_contact_pk)
+                        .scalar()
+                    )
+                    system_memory_row = db.query(_SystemSettingStated.chatbot_memory).scalar()
+                    if memory_mod.effective_level(own_level_row, system_memory_row) != "off":
+                        try:
+                            entry = profile_facts_mod.apply_statement(
+                                db,
+                                contact_respond_id,
+                                stmt_key,
+                                statement.get("value"),
+                                turn_id=turn_id,
+                                contact_pk=tail_contact_pk,
+                            )
+                        except Exception:  # noqa: BLE001 - a lost statement is never a lost turn
+                            logger.warning(
+                                "chatbot: profile_statement apply did not run", exc_info=True
+                            )
+                            entry = None
+                        if entry is not None:
+                            facts_saved.append({"key": entry["key"], "source": entry["source"]})
 
         _record_memory_trace(
             db,

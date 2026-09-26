@@ -50,6 +50,11 @@ _CLOSE_REASON = "topic_switch"
 
 _SUMMARY_CHAR_CAP = 240
 _LAST_MESSAGE_CHAR_CAP = 200
+#: A `raw` (unresolved) entity token is a customer's own typed text, not a
+#: catalog-checked value - capped and whitespace-collapsed (security review 26
+#: Sep 2026, S2) so a pasted block of text never turns one entity into a
+#: multi-line digest entry or blows out the summary's own char cap.
+_ENTITY_TOKEN_CHAR_CAP = 40
 
 _MONTH_ABBR = (
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -98,14 +103,24 @@ def _turn_domain(turn: dict[str, Any]) -> str | None:
     return domains[0] if domains else None
 
 
+def _entity_token(value: Any) -> str:
+    """Whitespace-collapsed and capped at `_ENTITY_TOKEN_CHAR_CAP` (S2) - a
+    `canonical_code` is already a short catalog code, but `raw` is whatever the
+    customer typed, unbounded and possibly multi-line."""
+    return " ".join(str(value).split())[:_ENTITY_TOKEN_CHAR_CAP]
+
+
 def _entity_display(entities: list[Any]) -> list[str]:
     out: list[str] = []
     for e in entities or []:
         if not isinstance(e, dict):
             continue
         value = e.get("canonical_code") or e.get("raw")
-        if value and value not in out:
-            out.append(str(value))
+        if not value:
+            continue
+        token = _entity_token(value)
+        if token and token not in out:
+            out.append(token)
     return out
 
 
@@ -120,10 +135,13 @@ def _entity_bucket(entities: list[Any]) -> dict[str, list[str]]:
         value = e.get("canonical_code") or e.get("raw")
         if not value:
             continue
+        token = _entity_token(value)
+        if not token:
+            continue
         key = str(e.get("hint") or "entity")
         bucket = buckets.setdefault(key, [])
-        if str(value) not in bucket:
-            bucket.append(str(value))
+        if token not in bucket:
+            bucket.append(token)
     return buckets
 
 

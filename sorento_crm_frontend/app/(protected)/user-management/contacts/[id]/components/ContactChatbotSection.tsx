@@ -685,6 +685,12 @@ function ConversationsCard({
     enableColumnResizing: true,
   });
 
+  // Security review 26 Sep 2026 (S3): `episodes` is `null` (never an empty list)
+  // when the caller lacks `system.chat_history.view` - loaded but withheld, not
+  // "no conversations yet". The section stays, with its own explicit empty state,
+  // rather than being hidden.
+  const noAccess = !isLoading && memory !== undefined && episodes === null;
+
   return (
     <DataGrid
       table={table}
@@ -697,7 +703,11 @@ function ConversationsCard({
       // opened straight into the turn's own drawer rather than searched for in the
       // WhatsApp message list.
       rowHref={(row) => `/system-management/chat-history?turn=${row.first_turn_id}`}
-      emptyMessage="No conversations recorded yet. See Chat History for the raw transcript."
+      emptyMessage={
+        noAccess
+          ? "You do not have permission to view this contact's conversation history."
+          : 'No conversations recorded yet. See Chat History for the raw transcript.'
+      }
     >
       <Card>
         <CardHeader>

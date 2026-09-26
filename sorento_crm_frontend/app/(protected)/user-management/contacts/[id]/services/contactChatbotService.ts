@@ -115,12 +115,16 @@ export interface ContactChatbotMemory {
   };
   facts: ContactChatbotFact[];
   vocabulary: ContactChatbotVocabularyEntry[];
+  // `null` when the caller lacks `system.chat_history.view` on top of this page's
+  // own view permission (security review 26 Sep 2026, S3) - conversation summaries
+  // are gated separately from the rest of the memory card, never hidden as an
+  // empty list (which would read as "no conversations" rather than "no access").
   episodes: {
     kept: number;
     limit: number;
     current: ContactChatbotEpisodeCurrent | null;
     rows: ContactChatbotEpisodeRow[];
-  };
+  } | null;
   open_orders: {
     customer_name: string | null;
     rows: ContactChatbotOpenOrderRow[];

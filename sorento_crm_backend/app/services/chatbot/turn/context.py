@@ -14,9 +14,16 @@ trusted as exact.
 """
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 from typing import Any
+
+#: security review 26 Sep 2026 (S2): L5's project/about/note/list values are
+#: JSON-quoted so a value carrying `;` or a newline can never be mistaken for a
+#: segment boundary or a line of its own - the SAME reason L5 is built from a
+#: structured fact list rather than a joined string re-split on `;` below.
+_JSON_QUOTED_KEYS: frozenset[str] = frozenset({"project", "about", "note"})
 
 #: Per-layer caps, est. tokens (contract section 6.2's own table).
 CAPS: dict[str, int] = {"L1": 600, "L2": 350, "L3": 450, "L4": 250, "L5": 150}
@@ -46,6 +53,14 @@ def est_tokens(value: str) -> int:
     if not value:
         return 0
     return math.ceil(len(value.encode("utf-8")) / 3)
+
+
+def _collapse_whitespace(value: str) -> str:
+    """Newlines and repeated whitespace folded to single spaces (security review
+    26 Sep 2026, S2) - a multi-line entity or fact value must never break this
+    module's own line-based structure, and stray formatting is not something the
+    parser needs to see."""
+    return " ".join(value.split())
 
 
 def _cut_bytes(value: str, limit: int) -> str:
@@ -79,7 +94,10 @@ class ContextLayers:
     """Everything `assemble` needs, already loaded - no I/O inside this module."""
 
     level: str
-    profile_slice: str | None
+    #: A list of `{"key", "value"}` dicts, in vocabulary order - the structured
+    #: shape `profile_facts.structured_slice` returns (security review 26 Sep
+    #: 2026, S2). `None`/empty means no profile slice at all.
+    profile_facts: list[dict[str, Any]] | None
     summaries: list[str] | None
     earlier_messages: list[dict[str, Any]] | None
     previous_response: str | None
@@ -92,35 +110,52 @@ class ContextLayers:
     media_line: str | None
 
 
-def _render_l5(profile_slice: str | None) -> tuple[str, bool]:
-    if not profile_slice:
+def _l5_segment(fact: dict[str, Any]) -> str:
+    """One fact rendered as `"key value"` - `project`/`about`/`note` and any
+    list-kind value are JSON-quoted (security review 26 Sep 2026, S2), so a `;`,
+    a newline or a quote inside the value can never be mistaken for a boundary
+    between two of this layer's own segments or lines. Whitespace is collapsed
+    first either way."""
+    key = fact.get("key", "")
+    value = fact.get("value")
+    label = key.replace("_", " ")
+    if key in _JSON_QUOTED_KEYS or isinstance(value, list):
+        if isinstance(value, list):
+            value = [_collapse_whitespace(str(v)) for v in value]
+        else:
+            value = _collapse_whitespace(str(value))
+        return f"{label} {json.dumps(value)}"
+    return f"{label} {_collapse_whitespace(str(value))}"
+
+
+def _render_l5(profile_facts: list[dict[str, Any]] | None) -> tuple[str, bool]:
+    if not profile_facts:
         return "", False
     header = "About this contact:"
-    segments = [s.strip() for s in profile_slice.split(";") if s.strip()]
+    # Structured facts, in the caller's own (vocabulary) order - never a joined
+    # string re-split on `;`, which corrupts the moment a JSON-quoted value
+    # carries one inside its own quotes (S2).
+    facts = list(profile_facts)
 
-    def _fits(segs: list[str]) -> bool:
-        return est_tokens(header + "\n" + "; ".join(segs)) <= CAPS["L5"]
+    def _fits(rows: list[dict[str, Any]]) -> bool:
+        return est_tokens(header + "\n" + "; ".join(_l5_segment(f) for f in rows)) <= CAPS["L5"]
 
-    if _fits(segments):
-        return header + "\n" + "; ".join(segments), False
+    if _fits(facts):
+        return header + "\n" + "; ".join(_l5_segment(f) for f in facts), False
 
     dropped = False
     for key in _L5_DROP_ORDER:
-        # `profile_facts.parser_slice` renders the key with its underscore turned
-        # into a space ("usual sites Kuching"); a hand-built fixture (or a future
-        # caller) may still use the raw vocabulary spelling - either prefix drops.
-        prefixes = (key, key.replace("_", " "))
-        before = len(segments)
-        segments = [s for s in segments if not s.lower().startswith(prefixes)]
-        if len(segments) != before:
+        before = len(facts)
+        facts = [f for f in facts if f.get("key") != key]
+        if len(facts) != before:
             dropped = True
-        if _fits(segments):
-            return header + "\n" + "; ".join(segments), dropped
+        if _fits(facts):
+            return header + "\n" + "; ".join(_l5_segment(f) for f in facts), dropped
 
-    # An unstructured value (no recognised key prefixes left, still over cap) -
-    # a hard byte cut is the last resort.
+    # Every droppable key is gone and it is still over cap - a hard byte cut on
+    # what is left is the last resort.
     dropped = True
-    body = "; ".join(segments)
+    body = "; ".join(_l5_segment(f) for f in facts)
     header_bytes = len((header + "\n").encode("utf-8"))
     body = _cut_bytes(body, max(0, CAPS["L5"] * 3 - header_bytes))
     return header + "\n" + body, dropped
@@ -134,7 +169,7 @@ def _render_l4(summaries: list[str] | None) -> tuple[str, bool]:
     # recency, limit 3") - printed oldest first (AC-MEM065: "3 summaries printed
     # oldest first, however old"), so the actual OLDEST entry is at the END of
     # this reversed list and dropped from there first, never the newest.
-    ordered = [_cut_bytes(s, _SUMMARY_CUT_BYTES) for s in reversed(summaries)]
+    ordered = [_cut_bytes(_collapse_whitespace(s), _SUMMARY_CUT_BYTES) for s in reversed(summaries)]
 
     def _render(rows: list[str]) -> str:
         return header + "\n" + "\n".join(f"- {r}" for r in rows)
@@ -172,7 +207,7 @@ def _render_l3(level: str, earlier_messages: list[dict[str, Any]] | None, previo
         if rows:
             lines = "\n".join(
                 f"- {row.get('created_at', '')} you: "
-                f"{_cut_bytes(str(row.get('text') or ''), _EARLIER_MESSAGE_CUT_BYTES)}"
+                f"{_cut_bytes(_collapse_whitespace(str(row.get('text') or '')), _EARLIER_MESSAGE_CUT_BYTES)}"
                 for row in rows
             )
             parts.append("Earlier in this conversation (oldest first):\n" + lines)
@@ -294,7 +329,7 @@ def assemble(layers: ContextLayers) -> tuple[str, dict[str, Any]]:
 
     l5_text, l5_dropped = ("", False)
     if layers.level == "full":
-        l5_text, l5_dropped = _render_l5(layers.profile_slice)
+        l5_text, l5_dropped = _render_l5(layers.profile_facts)
 
     l4_text, l4_dropped = ("", False)
     if layers.level in ("past", "full"):

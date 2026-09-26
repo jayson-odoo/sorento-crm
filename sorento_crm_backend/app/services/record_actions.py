@@ -1901,11 +1901,18 @@ register(
 
 def _delete_contact_chatbot_fact(db: Session, payload: dict):
     from app.services.contact_service import ContactService
+    from app.services.error_handler import handle_unprocessable
 
     # Chatbot memory lane A (contract section 5): `entity_id` is `"<contactId>:<key>"`
     # - one fact of one contact, so a composite id rather than a payload key, the same
     # shape `ContactAccessAgentsTable.tsx` already builds for this action.
-    contact_id, _, key = _entity_id(payload).partition(":")
+    # N1 (security review 26 Sep 2026): a composite id missing its `:` is 422, the
+    # same as an unknown key - not a 404 against whatever the whole string happens
+    # to look like as a contact id.
+    entity_id = _entity_id(payload)
+    contact_id, sep, key = entity_id.partition(":")
+    if not sep or not key:
+        raise handle_unprocessable(f"{entity_id!r} is not a valid contact fact id.")
     return ContactService(db).delete_contact_fact(contact_id, key)
 
 

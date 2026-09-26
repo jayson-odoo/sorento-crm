@@ -202,6 +202,65 @@ def _profile_rows(db: Session, contact_respond_id: str, space_id: str | None) ->
     )
 
 
+_MEMORY_COLUMNS = "c.id, c.chatbot_memory_level FROM respond_contacts c"
+
+
+def resolve_contact_pk(
+    db: Session, contact_respond_id: str, space_id: str | None
+) -> tuple[str, str | None] | None:
+    """The ONE `respond_contacts` row this `contact_respond_id` resolves to -
+    workspace first, then the NULL-workspace fallback, exactly `_profile_rows`'s
+    own two-tier lookup (chatbot memory lane A, security review 26 Sep 2026, B1).
+
+    Returns `(id, chatbot_memory_level)`, or `None` when the id is ambiguous (more
+    than one row) or absent. `None` is not "pick one" - every caller reads it as
+    "cannot safely touch this contact's memory": no fact write, no frame read, the
+    turn's own memory degrades to `off` rather than risking another workspace's
+    namesake. Memory reads/writes are stricter than `load_profile`'s own stock/
+    recall resolution (which still answers a single ambiguous match by denying
+    just those two flags) because a wrong pick here would leak or corrupt a
+    DIFFERENT contact's stored profile facts and episodes, not just this turn's
+    business answer.
+    """
+    if not space_id:
+        rows = list(
+            db.execute(
+                text(f"SELECT {_MEMORY_COLUMNS} WHERE c.respond_io_id = :cid LIMIT 2"),
+                {"cid": contact_respond_id},
+            ).fetchall()
+        )
+    else:
+        scoped = list(
+            db.execute(
+                text(
+                    f"SELECT {_MEMORY_COLUMNS} "
+                    "JOIN respond_workspaces w ON w.id = c.workspace_id "
+                    "WHERE c.respond_io_id = :cid AND w.space_id = :space LIMIT 2"
+                ),
+                {"cid": contact_respond_id, "space": str(space_id)},
+            ).fetchall()
+        )
+        rows = scoped or list(
+            db.execute(
+                text(
+                    f"SELECT {_MEMORY_COLUMNS} "
+                    "WHERE c.respond_io_id = :cid AND c.workspace_id IS NULL LIMIT 2"
+                ),
+                {"cid": contact_respond_id},
+            ).fetchall()
+        )
+    if len(rows) != 1:
+        if len(rows) > 1:
+            logger.warning(
+                "chatbot: respond_io_id %s matches %s contacts; memory degraded to "
+                "off for this turn rather than picking one",
+                contact_respond_id,
+                len(rows),
+            )
+        return None
+    return str(rows[0][0]), rows[0][1]
+
+
 # `console` is its own world: a console turn replays against the operator's own thread
 # and must never read the customer's live reply as its "previous response" (nor the other
 # way round). Every other ingress - webhook, poller, retry - is the same live stream.
