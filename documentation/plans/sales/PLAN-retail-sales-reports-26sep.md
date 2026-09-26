@@ -1,45 +1,286 @@
-# PLAN: retail sales reports, one query layer for the report screens and the chatbot (#1267)
+# PLAN: retail sales reports on the reports kernel, one query layer for the screens and the chatbot (#1267)
 
-Status: draft, pre-grill (26 Sep 2026). Grill questions G1 to G10 are in section 9 and posted on
-the docs PR #1269 as comment 5843859424. Track: full for S1 to S5 (a new permission slug in S1, a migration and
-a changed external ingest field in S3, a new chatbot tool in S1). S0 is a measurement with no code.
-Nothing built.
-Domain: sales. Classification: **CORE extension of `order_management`** (no new module key). The
-reports read `sales_orders` / `sales_order_lines`, which `order_management` owns, and they mount on
-the sales report's own router (`sales_report_router`, `app/api/v1/order_management/orders.py`).
-The `sales` module #1260 proposes does not exist yet; when it lands, these routes can move under
-its key with no data change (named trigger, section 7).
+Status: draft, round 2 (26 Sep 2026). The owner's Lavish review of the mockup (26 Sep 06:27Z, 10
+notes, PR #1269) is folded in: section 0 applies each note, and the design (section 5) and the
+slices (section 6) are rewritten on the existing reports kernel. The grill questions G1 to G10
+(section 9, PR #1269 comment 5843859424) are **not answered yet**: their recommendations stand as
+recommendations, not rulings. The round 2 questions Q1 to Q5 are in section 9.1. Track: full for
+S1, S2, S3 and S4 (S1 adds a permission slug, a chatbot tool and kernel changes; S3 a migration
+and an ingest field). S5 is now the small fix track (shared views and an owner check, no
+migration). S0 is a measurement with no code. Nothing built.
+Domain: sales. Classification (round 2, note 2): **the Sales module** (`sales`, the module key
+#1260 creates) for the menu, the permission and the chatbot route; **no new table**, so there is
+nothing to put in a Postgres schema (section 0.2). The reports are two definitions registered on
+the existing reports kernel (`app/services/reports/`), which the sponsorship report uses today.
 UAC: `retail-sales-reports-26sep-acceptance-criteria.md` alongside (the contract; the journey J1
 to J9 lives there and is not repeated here).
-Mockup: `mockups/retail-sales-reports.html` (report A with its charts, report B, report C, the
-export, and the chatbot replies, each at 1280 and 375).
+Mockup: `mockups/retail-sales-reports.html` (round 2: Yearly comparison and the Sales report on
+the kernel's report page, Sorento and Mocha, My Downloads, and the chatbot replies with the file
+or text rule, each at 1280 and 375).
 Issue: #1267.
 
 Backend paths are under `sorento_crm_backend/`, frontend under `sorento_crm_frontend/`, MCP under
 `sorento_crm_mcp/`. Line numbers are on origin/main 46711c61 unless a PR branch is named.
 
+## 0. Round 2: the owner's Lavish review (26 Sep 06:27Z)
+
+The ten notes are verbatim in PR #1269 (comment starting "Owner Lavish review of the retail sales
+reports mockup"). Each has one ruling line here, and the same line is repeated where it changes
+the UAC and the mockup.
+
+- **Owner ruling 26 Sep 06:27 (Lavish) 1**, on the yearly comparison header: "see if we can reuse
+  our reporting module component ... I don't want too many new componetns". Applied: both
+  reports are `ReportPage` screens driven by kernel definitions (0.1). The round 1
+  `SalesReportPage`, `SalesReportDocument`, `sales_grid` and `sales_reports_layout.py` are
+  dropped (table in 0.1).
+- **Owner ruling 26 Sep 06:27 (Lavish) 2**, on "Menu under Sales > Reports": "is this under
+  sales module and sales schema? our sponsorhisp form got a reporting function, see if we can
+  reuse that". Applied: the sponsorship report's function **is** the reports kernel, and it is
+  reused whole (0.1). Module and schema answer in 0.2.
+- **Owner ruling 26 Sep 06:27 (Lavish) 3**, on the Sorento by account header: the same two asks
+  as notes 1 and 2. Applied: as 1 and 2.
+- **Owner ruling 26 Sep 06:27 (Lavish) 4**, on "Mocha sales report by account": "same like
+  sorento report ... don't call it sorento by account la, call it sales report ... applicable in
+  both companies". Applied: one report, **Sales report**, with **Company** as a filter. Report B
+  (Sorento by account) and report C (Mocha by account) are the same definition; their sections
+  become shared saved views of it. Report A stays **Yearly comparison**, the same for both
+  companies, also with the Company filter (0.3).
+- **Owner ruling 26 Sep 06:27 (Lavish) 5**, on the Excel export: "make sure the downloading
+  follows our principle of putting in my downloads". Applied: Export to Excel is the kernel's
+  export, which already queues the workbook and lands it in **My Downloads** (0.4). The round 1
+  sync streamed `/export` route is dropped.
+- **Owner ruling 26 Sep 06:27 (Lavish) 6**, on the WhatsApp dealer year comparison: "i expect
+  the reprot to be sent instead of text, just like lowstock report". Applied: that answer is an
+  Excel file with a short text header, sent the way the low stock report is (0.6).
+- **Owner ruling 26 Sep 06:27 (Lavish) 7**, on "Sales by account ... SEAN": "this one okay can
+  send text". Applied: text (0.6).
+- **Owner ruling 26 Sep 06:27 (Lavish) 8**, on "Mocha sales by agent": "thsi one also can send
+  text". Applied: text (0.6).
+- **Owner ruling 26 Sep 06:27 (Lavish) 9**, on "SEAN I or SEAN III?": "i expect is both, sean.1
+  and sean iii are saem person". Applied: an agent is a **person**. When a person label exists,
+  the bot never asks which code; it sums every code under the label and names the codes in the
+  header (0.5).
+- **Owner ruling 26 Sep 06:27 (Lavish) 10**, on the chatbot frame: "we need to gauge whether to
+  send a file or text, or we should do text + files so available in differne formats?" Applied:
+  a rule by answer shape, with a recommendation on the default (0.6, question Q2).
+
+### 0.1 What is reused (notes 1, 2, 3), and what is still new
+
+**The reporting module is the reports kernel**, built for the sponsorship report
+(`PLAN-reporting-foundation`, archived under `documentation/plans/_archive/reports/`). It is
+generic: every route, hook and component takes a report key, and "report #2 is a two-line route
+wrapper over this file" (`components/reports/ReportPage.tsx:265-269`).
+
+The sponsorship form's reporting function, and what each piece gives these reports:
+
+| Piece (the sponsorship report uses it today) | file:line | Reused for |
+|---|---|---|
+| The page: `ReportPage({ reportKey, breadcrumb })` | `components/reports/ReportPage.tsx:270-276` | Both screens. Header actions (views menu, Configure summary, Export to Excel) :439-465; filter bar :515-520; capped warning :524-541; empty state with "Reset to report default" :563-581; Detail and Summary line tabs :584-646 |
+| Route wrapper page | `app/(protected)/procurement-management/sponsorship-forms/report/page.tsx:3,17-24` | Copied twice with a new key; it is the only new frontend file per report |
+| Filter bar: date basis, period (year, month chips, custom), selects | `components/reports/ReportFilterBar.tsx:134-144`, `MonthChips` :81 | Company, Channel, Basis, Sales agent, Debtor type, Set apart, Exclude customers, Period |
+| Pivot table: one row dimension x one column dimension, row, column and grand totals, first column pinned, sideways scroll | `components/reports/ReportPivotTable.tsx:46` | Every table (year x month, agent x debtor type, agent x quarter) |
+| Saved views: Mine and Shared, publish, set default (`reports.views.publish`) | `components/reports/ReportViewsMenu.tsx:34-46`; `app/services/reports/views_service.py:53-77` | Report B's and C's sections become shared views (0.3); the HANLIM set and the named project debtors are stored in a view (G7) |
+| Configure summary: rows, columns, measures from the catalogue | `components/reports/ConfigureSummaryDialog.tsx:17-29` | Any other cut the owner wants, with no code |
+| Detail tab: a `DataGrid` of the lines with a totals footer | `ReportPage.tsx:598-641` | The sales order lines behind every figure (the drill the PDFs cannot give) |
+| Export: `POST /reports/{key}/export` creates a `report_xlsx` My Downloads row and queues `generate_report_xlsx` | `app/api/v1/reports/reports.py:216-261`; `app/tasks/report_export_tasks.py:32`; `hooks/useReports.ts:108-123` | Export to Excel on both screens (note 5) and the chatbot file (note 6) |
+| Workbook: title block, money cells, totals as values, a SUMMARY sheet plus one sheet per month of the period | `app/services/reports/xlsx_renderer.py:410-439`, `_render_summary` :306-408; `engine._month_sheets` :734-761 | The Sales report's per-month tables (report B's "Monthly" section) come out as the month sheets with no new code |
+| Declaration: `Column`, `Dataset`, `DateBasisParam`, `PeriodParam`, `SelectParam`, `PivotLayout`, `WorkbookSpec`, `ReportDefinition` | `app/services/reports/registry.py:71-99, 111-150, 156-187, 257-260, 263-290, 296-308` | One new dataset, two new definitions |
+| Engine: params, predicates, `_pivot` (SUM, `(blank)` bucket, 5,000 cell cap) | `app/services/reports/engine.py:156-221, 227-236, 529-620, 47-48` | Every figure on the screens, the exports and the chatbot (one query layer) |
+| Routes: catalogue, meta, run, export, views | `app/api/v1/reports/reports.py:133, 148, 184, 216, 267-343` | No new report route |
+| Frontend service and hooks | `services/reportService.ts:267-356`; `hooks/useReports.ts:32-123` | Unchanged |
+
+`QueryContext.values` (`engine.py:235`) already carries the resolved filter values to every
+column expression, so a "set apart" dimension (HANLIM as its own row) is a dataset column, not an
+engine change.
+
+**Round 1 pieces dropped:** `sales_analysis_service.sales_grid`, `sales_reports_layout.py` and
+its `SalesReportDocument`, the `SalesReportPage` component, the routes `GET /sales-reports/{key}`
+and the sync `/export`, and the per-report line tabs. The round 1 argument for a separate
+primitive (section 5.1 of round 1: "`_pivot` binds to one definition with one period ... the
+shapes are reused, the engine is not") is withdrawn: the owner asked for the kernel, and the
+gaps below are small enough to close in it.
+
+**What is still new, and why** (the whole list):
+
+| New | Kind | Why nothing existing does it |
+|---|---|---|
+| `app/services/reports/datasets/sales_order_lines.py` | dataset (backend) | The kernel has one dataset, sponsorship forms. The sales order lines, with the sales report's money rule (`sales_report_service._per_line_exprs` :198-220 and `_common_filters` :236-271 imported, not copied) |
+| `definitions/sales.py`, `definitions/sales_yearly.py` | two definitions (backend) | One per report: "Sales report" and "Yearly comparison" |
+| `app/(protected)/sales/reports/page.tsx`, `app/(protected)/sales/yearly-comparison/page.tsx` | two route wrappers (frontend) | Each is the sponsorship `page.tsx` with a new key |
+| `ReportPivotChart` (`components/reports/ReportPivotChart.tsx`) | **the one new component** | The yearly comparison's line chart under the table. Nothing draws a chart from a `ReportPivotLayout`; it wraps the existing recharts wrapper `components/ui/chart.tsx:5`, as `SLAKpiDashboardContent.tsx:15` does |
+| Variance row: `PivotLayout.variance = "last_two_rows"`, `ReportPivotLayout.variance_row`, one extra row in `ReportPivotTable` and `_render_summary` | kernel extension | The kernel only derives row, column and grand totals (`engine.py:551-575`); the PDF's VARIANCE row is a difference |
+| Fixed column values on a `Column` (`fixed_values`, JAN to DEC) | kernel extension | A month-of-year axis must print twelve columns even when October to December have no sales yet; `_pivot` lists only the values present unless the axis is the period's own `YYYY-MM` months (`engine.py:578-585`) |
+| `PivotLayout.chart = "line"` and a native openpyxl `LineChart` under the summary | kernel extension | The PDF prints a chart under each block; the renderer writes none today |
+| `WorkbookSpec.month_sheets: bool` (default true) | kernel extension | A three-year yearly comparison must not write 33 month sheets (`engine._month_sheets` :734-761) |
+| `WorkbookSpec.sheet_per` (one sheet per value of a filter) | kernel extension, only if Q1 is (b) | Both channel blocks in one file |
+| `ReportDefinition.module_key` and a per-report module check | kernel extension | The reports router sits under the procurement guard "while the sponsorship report is the only one ... it moves when a second module owns a report" (`app/api/v1/__init__.py:234-241`, `reports.py:7-9`). This is that trigger |
+| The company arm made fail-closed, and the company passed into the export job | kernel fix | The TODO says to do it "the day a dataset declares scope='company'" (`engine.py:311-315`); this dataset is the first. The export task has no enqueuer company (`report_export_tasks.py:39-45`) |
+| `GET /api/v1/sales/analysis` and MCP tool `crm_sales_analysis` | chatbot seam | The MCP server wraps backend GETs; the kernel's run is a POST. The route calls `engine.run` for the `sales` definition, so the screens and the bot share one query |
+| The chatbot report file sender | chatbot seam | Generalises the low stock push (`app/tasks/export_tasks.py:1003-1089`) from one kind to the kernel's `report_xlsx`. The second case pays for the generalisation (CLAUDE.md "Simplest thing") |
+
+No new table, no registry, no rule engine.
+
+### 0.2 Module and schema (note 2): "is this under sales module and sales schema?"
+
+**How the codebase organises this, measured:**
+- **Module keys** are `app/modules/<key>/bootstrap.py` files; there are 21 (dealer_kit, projects,
+  automation, scm, audit, order, procurement, chatbot, notifications, public_view_links,
+  inventory, activities, marketing, complaints, resources, base, product, tickets, sla, forms,
+  email_templates). **No `sales` key exists.** Sales orders belong to `order`
+  (`app/modules/order/manifest.py:4-24`), mounted at `/order-management` behind
+  `require_module_enabled_with_api_key("order")` (`app/api/v1/__init__.py:66-71`). A slug prefix
+  maps to a module in `app/modules/runtime/permission_module_map.py:17-35` (no `sales` entry).
+- **Postgres schemas** are used by four modules only: `projects`
+  (`alembic/versions/354_projects_schema_move.py:362`), `scm` (`273_scm_module_schema.py:42`),
+  `dealer_kit` (`app/models/dealer_kit.py:42`) and `chatbot` (`472_chatbot_turns.py:46`).
+  Everything else is in `public`, including `sales_orders` (`app/models/order.py:480`, no schema),
+  `sales_order_lines`, `sales_agents` and `customers`. **No `sales` schema exists.**
+- **Navigation**: `config/menu.config.tsx:78` is the `SALES` heading (Project Sales :80, Delivery
+  Orders :142, Marketing :164). The sponsorship report is under OPERATIONS > Project Sales Admin
+  (:620-624, `moduleKey: 'procurement'`). A child can carry its own `moduleKey` inside a group
+  (`app/components/layouts/demo1/components/sidebar-menu.tsx:78-86`).
+- **#1260 (sales targets, PR #1260, plan on `claude/sales-targets-opportunities-plan-7behob`)**
+  creates the `sales` module: `app/modules/sales/bootstrap.py`, `"sales": "sales"` in the
+  permission map, slugs `sales.*`, routers under `/api/v1/sales/*`, and a **Sales** group under
+  the SALES heading with Targets, Opportunities, Sales Teams and Sales Agents (its section 3.7,
+  :626-661, and :206-214). It keeps its tables in `public` by the uninstall test ("durable
+  business records ... stay in `public`", its :11-13 and :676-677).
+
+**Recommendation (Q5 confirms): Sales module yes, sales schema no.**
+- **Module**: the two reports declare `module_key = "sales"`; the slug is `sales.reports.view`
+  (the owner's "sales reports: view", G10); the chatbot route is `GET /api/v1/sales/analysis`
+  behind `require_module_enabled_with_api_key("sales")`; the menu items **Sales report** and
+  **Yearly comparison** sit in #1260's Sales group, after Sales Agents, with `moduleKey:
+  'sales'`. Whichever lane lands first (#1260 S6 or this S1) creates
+  `app/modules/sales/bootstrap.py`, the catalogue row and the permission map entry; the other
+  reuses it. Reason: the owner reads these as sales functions next to targets and agents, and
+  one Sales group matches #1260.
+- **Schema**: this plan adds **no table** (the one new column, `customers.debtor_type` in S3,
+  belongs on the customer's own table in `public`). The data stays where the `order` module keeps
+  it. A `sales` Postgres schema would hold nothing, and #1260 already chose `public` for its own
+  tables. Named trigger: if #1260 ever moves its tables to a `sales` schema, nothing here moves,
+  because nothing here is a table.
+- **Why not the `order` module**: round 1 put the routes under `order_management` because the
+  `sales` module did not exist. Now that #1260 creates it and the owner asked, the reports go
+  where the owner looks for them. The data stays owned by `order`; the report only reads it.
+
+### 0.3 One Sales report for both companies (note 4)
+
+- **Sales report** (`key = "sales"`), title "Sales report", replaces report B (Sorento by
+  account) and report C (Mocha by account). **Company** is a single-select filter (the caller's
+  granted companies, default the current company). Every section of both PDFs is a view of the
+  same definition:
+
+| Shared view | Rows x columns | From |
+|---|---|---|
+| By account (default) | agent (person) x debtor type | B monthly and year tables, C "by account" |
+| By month | agent x month | C |
+| Debtor type by month | debtor type x month | C |
+| Dealer vs set apart | seller group (DEALER - SALESMAN, then each set-apart group) x month | B's DEALER - SALESMAN vs HANLIM table |
+| By quarter | agent x quarter | C |
+| Set apart customers by month | customer x month, filtered to the set-apart list | C's project debtors |
+
+  A view stores its filters too, so each company's views carry its own set-apart list (HANLIM for
+  Sorento) and exclusion list (DILOOMA, PINTAR for Mocha). The per-month tables of report B are
+  the workbook's month sheets (0.1); on screen, the month chips of the period filter show one
+  month.
+- **Yearly comparison** (`key = "sales_yearly"`) stays report A: rows year, columns JAN to DEC,
+  the variance row, the chart. The same for both companies, with the Company filter. The two
+  blocks (DEALER, PROJECT TEAM) are the Channel filter; how both reach one Excel file is Q1.
+- **Mocha before S4**: the Company filter lists Mocha as soon as the user is granted it. With no
+  Mocha sales orders the page shows the kernel's empty state ("No sales orders for Mocha in this
+  period"), never a hidden menu item. The round 1 rule "hide Mocha by account while
+  `so_feed_live` is false" is withdrawn, because there is no Mocha-only menu item any more.
+
+### 0.4 Downloads (note 5)
+
+The principle is written as owner rulings, not in `PRINCIPLES.md`: "our export of the excel and
+pdf needs to use My Downloads process, similar to other downloading buttons"
+(`documentation/plans/scm/po-spo-site-pool-and-order-sheet-downloads-acceptance-criteria.md:6-7`,
+10 Sep; AC-19 at :149-151 retires the browser blob save). The helper is the My Downloads flow:
+- backend: `DownloadService.create(kind="report_xlsx")` then `enqueue_job(generate_report_xlsx)`
+  (`app/api/v1/reports/reports.py:238-253`);
+- frontend: `useReportExport` invalidates `MY_DOWNLOADS_QUERY_KEY` and toasts "`<file>` is being
+  prepared in My Downloads" (`hooks/useReports.ts:108-123`); the drawer row downloads through
+  `fetchDownloadUrl` (`services/myDownloadsService.ts:69-77`, `components/my-downloads/DownloadRow.tsx:87-98`).
+
+Both reports use it unchanged. No `saveBlobAs`
+(`app/(protected)/project-sales/_shared/services/fileDownload.ts:19-31`), which is the retired
+pattern. The file name is the kernel's `<title>-<period>.xlsx` (`reports.py:201-213`), for
+example `Sales report-JAN-SEP'26.xlsx`.
+
+### 0.5 An agent is a person (note 9)
+
+- A person is `COALESCE(person_label, sales_agent)` (`order_inquiry_header_service.py:105`), and
+  every code sharing a label counts (#1260 R2, owner-confirmed on #1260 06:09Z: "yeah").
+- **The bot never asks which code when a label exists.** "Sean" resolves to the label SEAN and
+  every code under it; the header names them ("Sales agent: SEAN (SEAN I, SEAN III)").
+- **When no label exists yet** (0 of 80 today), the bot groups codes by the name split the model
+  already documents, "(name, I|III|IV)" (`app/models/sales_agent.py:56-59`): SEAN I and SEAN III
+  are both SEAN, and are summed and named in the header. It asks only when the typed name matches
+  two **different** names (for example "Tan" matching TAN KH and TAN WL).
+- S2's backfill: the same split pre-fills `person_label` for every code with a roman suffix, and
+  the owner corrects any on the Sales Agents screen (Q3).
+
+### 0.6 Chatbot: file, text, or text + file (notes 6, 7, 8, 10)
+
+**The rule, by the answer's shape** (counted after the query, before the reply):
+- **Text** when the answer is a **list**: one value column (one figure per row), any number of
+  rows. "Sean's sales this month by brand" (3 rows x 1) and "Mocha Q2 by agent" (8 rows x 1) are
+  lists. Long lists are not the bot's problem: n8n chunks a long WhatsApp message (owner, PR
+  #1258 26 Sep 05:32Z; the outstanding report D8, `PLAN-chatbot-outstanding-report.md:39`).
+- **Text** when the answer is a **small grid**: two or more value columns and at most 12 value
+  cells (rows x value columns), printed as `label: a | b | c` lines. Example: "HANLIM this year vs
+  last year" (1 row x 3).
+- **File** when the answer is a **grid over 12 value cells**: "compare dealer sales 2025 vs 2026
+  by month" is 12 months x 3 columns = 36 cells, so it goes as the Excel workbook, the way the low
+  stock report does. The file always comes with a short text header (company, channel, basis,
+  period, the totals line, "Full table in the attached Excel"), because the low stock report's
+  text "explains the files" (`app/services/chatbot/engine.py:4584-4587`).
+- **Asked for a format**: "in Excel", "as a file" or "send the report" forces the file; "as text"
+  forces text. That is the only override.
+
+**Recommendation on the default (Q2): not text + file for everything.** A file costs a worker job,
+up to a few seconds' wait and a 24 hour window check, and a three-line answer with an attachment
+is noise. So lists and small grids are text only, grids are text header + file (which is "text +
+file", where it helps), and any answer can be re-sent as a file on request.
+
+**The file path, reused from the low stock report**: the route creates a `report_xlsx` My
+Downloads row owned by the CRM user linked to the contact (as `low_stock_report.py:437-444,
+470-476` does), enqueues the kernel's `generate_report_xlsx` on `imports`, waits up to the same
+sync window (`low_stock_report.py:120-146`, capped at 7 seconds), and returns `attachments` when
+ready (`:313-342`); the presenter passes them through and the engine adds `send_attachments`
+after `send_message` (`app/services/chatbot/engine.py:4602-4614`). When it is not ready, the reply
+says "Preparing the Excel, it will be sent here when ready." and the worker pushes the file
+(`_push_low_stock_to_chat`, `app/tasks/export_tasks.py:1003-1089`, generalised to take the
+download kind; `respond_chat_template_service.send_chat_attachment_for` :682, 24 hour window
+:697-720). The file also lands in that user's My Downloads.
+
 ## 1. In plain words (for the owner)
 
 You keep three spreadsheets by hand. The CRM already holds every Sorento sales order line that
 AutoCount sends, with the customer, the sales agent code, the dealer or project class and the
-amount. So:
+amount. Round 2 builds them on the report screen you already have for sponsorship forms:
 
-- **Report A (yearly comparison)** can be built now from data we already have: dealer and project
-  sales per month for 2024, 2025 and 2026, the variance row and a line chart per block.
-- **Report B (Sorento by account)** needs two things we do not hold today: the sales agent as a
-  **person** (AutoCount has one code per person per account, e.g. `SEAN I` and `SEAN III`, and
-  nobody has grouped them yet), and the **debtor type** of each customer (SORENTO, BRAVAT,
-  CERAMIC, CABANA, PROJECT, SAMPLE). AutoCount sends the debtor type, but the CRM throws it away
-  today because it only keeps "retail" or "project". Fixing that is one column.
-- **Report C (Mocha by account)** needs Mocha's sales orders, and **Mocha has none in the CRM**:
-  its AutoCount sales order feed was never connected. Until it is, report C cannot be produced.
+- **Yearly comparison** (was report A) can be built now: dealer or project sales per month for
+  2024, 2025 and 2026, the variance row and a line chart. The same screen for Sorento and Mocha.
+- **Sales report** (was reports B and C) is **one report for both companies**, with Company as a
+  filter. Its tables (by account, by month, by quarter, HANLIM set apart, Dilooma and Pintar left
+  out) are saved views you pick from the Views menu. It needs two things we do not hold today:
+  the sales agent as a **person** (SEAN I and SEAN III are one person, Sean) and the **debtor
+  type** of each customer, which AutoCount sends and the CRM throws away today.
+- **Mocha** has no sales orders in the CRM yet: its AutoCount sales order feed was never
+  connected. Mocha shows an empty report until it is (S4).
+- **Export to Excel** lands in **My Downloads**, like every other export.
+- **On WhatsApp**, short answers come as text; a table (such as dealer sales 2025 vs 2026 by
+  month) comes as an Excel file with a short summary, like the low stock report.
 
 Every figure is a **sales order** figure, not an invoice figure: the CRM has no customer invoice
 table. Your spreadsheets look like invoiced sales. Section 4 says what that means and G1 asks you
 to choose.
 
-The report screens and the chatbot both call **one** function, so "Sean's sales this month by
-brand" on WhatsApp and the Report B screen can never disagree.
+The report screens and the chatbot both call **one** query (the report engine), so "Sean's sales
+this month by brand" on WhatsApp and the Sales report screen can never disagree.
 
 ## 2. Measured facts (read only)
 
@@ -255,299 +496,232 @@ the gap in S0 on three months against the PDF totals, and name the trigger for a
 ingest lane is planned (cross-repo ESB work plus one `sales_invoices` table), and the reports gain
 an `invoiced` basis on the same query layer.** Not built before that.
 
-## 5. Design: one query layer
+## 5. Design: two kernel definitions on one dataset (round 2)
 
-**One new service function, one new route, three layout functions, one xlsx writer, one MCP
-tool, one migration column (S3). No registry, no rule engine, no new table.**
+**One new dataset, two definitions, two route wrapper pages, one new component
+(`ReportPivotChart`), five small kernel extensions, one chatbot route, one MCP tool, the report
+file sender, one migration column (S3). No registry, no rule engine, no new table.** Section 0.1
+lists every reuse and every new piece with file:line.
 
-### 5.1 The primitive: `sales_grid`
+### 5.1 The dataset: `sales_order_lines`
 
-New module `app/services/sales_analysis_service.py`, next to the sales report, importing
-`_per_line_exprs` and `_common_filters` from `sales_report_service` so the money and the
-exclusions are the sales report's own.
+`app/services/reports/datasets/sales_order_lines.py`, declared like `datasets/sponsorship_forms.py`
+(`COLUMNS` :219-279, `DATASET` :281-292):
 
-```python
-def sales_grid(
-    db, *,
-    rows: str,                      # one axis, required
-    cols: str | None,               # one axis or None (a single column "Total")
-    basis: str,                     # "ordered" | "delivered", required
-    date_from: date, date_to: date, # required, inclusive, on sales_orders.order_date (G1)
-    company_id: str,                # required; one company per grid
-    channel: str | None = None,     # "dealer" | "project"
-    sales_agent_ids: list[str] | None = None,  # already widened to the person's codes
-    customer_ids: list[str] | None = None,
-    exclude_customer_ids: list[str] | None = None,
-    set_apart_customer_ids: list[str] | None = None,  # their sales leave the agent rows
-    debtor_types: list[str] | None = None,
-) -> ReportPivotLayout
-```
+- `base(ctx)`: `sales_order_lines` joined to `sales_orders`, `sales_agents`, `customers` and
+  `products` / `product_categories`, with `sales_report_service._common_filters` (cancelled SO and
+  line out, :241-242) and the per-line money of `_per_line_exprs` (:198-220), imported, not
+  copied.
+- `scope = "company"`, `company_column = sales_orders.company_id`, **plus** a required Company
+  select (below). The kernel's company arm becomes fail-closed in S1 (the `engine.py:311-315`
+  TODO names this day), and a Company value outside the caller's grant is 403.
+- One date basis: `order_date` ("Order date", G1). The period is the kernel's `PeriodParam`
+  (year, month chips, custom from and to).
+- **Measures** (money): `ordered_value` ("Ordered RM") and `delivered_value` ("Delivered RM", the
+  confirmed value). The Basis filter picks which one the default view shows (G1: delivered).
+- **Dimensions** (the round 1 axes, now columns): `year`; `month_of_year` (JAN to DEC, with
+  `fixed_values`); `year_month` (the period's own months, `period_months=True`); `quarter` (Q1 to
+  Q4, fixed); `channel` (dealer / project / `(blank)`, from `demand_class`); `agent` (the person,
+  0.5); `agent_code`; `debtor_type` (S3); `customer`; `brand` (the category prefix,
+  `product_class_signal.py:30-37`); `seller_group` (the set-apart group name when the line's
+  customer is in the Set apart filter, else "DEALER - SALESMAN").
+- **Filters** (`SelectParam`, `registry.py:175-187`): Company (single, required), Channel
+  (multi), Basis (single, required), Sales agent (multi, by person), Debtor type (multi, S3),
+  Set apart (multi customer, feeds the `agent` and `seller_group` dimensions through
+  `QueryContext.values`, so set-apart lines leave every agent row and appear as one row per group,
+  sorted last), Exclude customers (multi customer, `notin_`; the header names them).
 
-Axes (a closed set, one `case` in the function, not a registry): `year`, `quarter`, `month`
-(month of year, JAN to DEC, so years line up), `year_month`, `agent` (the person label, else the
-code), `agent_code`, `debtor_type`, `channel`, `customer`, `brand` (product category prefix).
+### 5.2 Two definitions
 
-- One grouped SQL statement per grid (`GROUP BY rows, cols`), sums of per-line cents (S15 of the
-  sales report), totals computed from the grouped rows in Python exactly as `engine._pivot` does
-  (`engine.py:560-576`), blanks grouped under `BLANK_VALUE` ("(blank)") and sorted last, never
-  dropped, so every grid's grand total equals the unfiltered total.
-- Returns the kernel's `ReportPivotLayout` (`app/schemas/report.py:73`), so the frontend renders
-  every table with the existing `ReportPivotTable` and the xlsx writer reuses the kernel's cell
-  helpers.
-- `set_apart_customer_ids` removes those customers' lines from every agent row and returns them
-  as one extra row labelled with the group's name (report B's HANLIM row), outside the agent
-  subtotal and inside the grand total.
-- Company: the grid always names one company. The ORM listener already scopes to the caller's
-  granted companies; a `company_id` outside the caller's grant is 403. Not the kernel's
-  `scope="company"` arm, which is not fail-closed (`engine.py:310-315`).
-- Why not the kernel's engine: `_pivot` binds to one `ReportDefinition` with one period and one
-  date basis, and has no set-apart row, no year-over-year axis and no exclusion list. Adding them
-  would change a shipped engine for one report family. The shapes are reused, the engine is not.
-  Named trigger for folding `sales_grid` into the kernel: a second report family needs
-  set-apart rows or year-over-year columns.
+- **`sales`**, "Sales report", permission `sales.reports.view`, `module_key = "sales"`. Default
+  pivot `rows=agent, cols=debtor_type, measures=[delivered_value]`; the shared views of 0.3.
+  `WorkbookSpec` with the report title "Weekly Sales by Debtor Type by Sales Agent" in the title
+  block and the company's name from the Company filter; month sheets on (report B's monthly
+  tables).
+- **`sales_yearly`**, "Yearly comparison", same permission and module. Default pivot
+  `rows=year, cols=month_of_year, measures=[delivered_value]`, `variance="last_two_rows"`,
+  `chart="line"`, period custom from 1 January two years back to today ("as at" is the period's
+  end). `WorkbookSpec.month_sheets = False`. Block titles `<COMPANY NAME> - DEALER` / `- PROJECT
+  TEAM` from the Channel filter (G4).
+- Both are registered by importing their modules in `app/services/reports/__init__.py:10`.
 
-### 5.2 Three layouts, composed from grids
+### 5.3 Kernel extensions (all small, all generic)
 
-`app/services/sales_reports_layout.py`, one function per report, each returning a
-`SalesReportDocument`: an ordered list of `sections` (title, one `ReportPivotLayout`, optional
-`variance` row, optional `chart` series, optional `note`) plus a header (company name, report
-title, period, as-at date, basis).
+1. `ReportDefinition.module_key`: the reports router drops the single procurement guard
+   (`app/api/v1/__init__.py:234-241`) and checks the definition's module per request (the
+   sponsorship definition declares `procurement`, so it is unchanged).
+2. Company arm fail-closed (`engine.py:311-315`) and the enqueuer's company passed to
+   `generate_report_xlsx`.
+3. `Column.fixed_values`: the axis prints every value in order, empty or not; a cell with no
+   lines is blank, never 0. Months after the period's end print blank.
+4. `PivotLayout.variance = "last_two_rows"` adds `ReportPivotLayout.variance_row` (last row minus
+   the one before, per column, and its total over the columns the last row has, which is G5 (a));
+   `ReportPivotTable` renders it under the rows in the muted row style, negatives in brackets;
+   `_render_summary` writes it.
+5. `PivotLayout.chart = "line"`: `ReportPage` renders `ReportPivotChart` under the Summary table
+   (one line per row value, columns on x); the renderer adds an openpyxl `LineChart` under the
+   summary. `WorkbookSpec.month_sheets` (default true) turns the month sheets off.
 
-- **A `yearly_comparison(company, as_at, years=3, basis)`**: per channel (dealer, project), one
-  grid `rows=year, cols=month` over 1 Jan of the first year to `as_at`; the variance row is the
-  last year minus the one before, per month and total, computed from the grid's cells; the chart
-  series are the grid's rows. Months after the as-at month print blank for the current year, not
-  zero. G5 decides whether the total variance compares full year or year to date.
-- **B `sorento_by_account(as_at, basis, set_apart)`**: for each month from January to the as-at
-  month, one grid `rows=agent, cols=debtor_type, channel=dealer?` (G4) with `set_apart` = the
-  HANLIM ledgers; then one `rows=agent, cols=debtor_type` over the year to date; then one
-  `rows=[dealer salesman, HANLIM], cols=month` (the set-apart split as rows).
-- **C `mocha_by_account(as_at, basis, named_debtors)`**: `rows=agent, cols=debtor_type` per month;
-  per debtor type one `rows=agent, cols=month`; `rows=agent, cols=month`; `rows=debtor_type,
-  cols=month`; `rows=customer, cols=month` limited to the named debtors (DILOOMA, PINTAR);
-  `rows=agent, cols=quarter` plus a closing row "Total sales without Dilooma and Pintar
-  (project)" from the same grid with `exclude_customer_ids` = the named debtors.
+### 5.4 Screens
 
-The HANLIM set and the named project debtors are **parameters**, not hard-coded names. Their
-defaults are stored as a saved view of the report (`views_service.py`, the kernel's own saved
-views), so no table is added for them. G7.
-
-### 5.3 Routes
-
-On `sales_report_router` (`app/api/v1/order_management/orders.py:1580`), permission
-`order_management.sales_reports.view` (new slug, `app/rbac/permission_registry.py`), plus the
-`sales_orders.sales_report` reveal key re-check for API-key callers exactly as the sales report
-does (:1713-1726):
-
-- `GET /api/v1/order-management/sales-analysis`: one `sales_grid` call, every parameter in 5.1 as
-  query params, plus `n` (1 to 100) that cuts ranked rows **after** `total_count` and totals are
-  taken (PR #1263's rule). This is the chatbot's route.
-- `GET /api/v1/order-management/sales-reports/{key}`: `key` in `yearly-comparison`,
-  `sorento-by-account`, `mocha-by-account`; params `as_at`, `basis`, `company` (A only), plus the
-  saved view id. Returns the `SalesReportDocument`.
-- `GET /api/v1/order-management/sales-reports/{key}/export`: the same document rendered to
-  `.xlsx`, streamed. A sync download: the largest workbook (C) is under 2,000 cells. Named
-  trigger for the kernel's RQ export path: an export over the sync timeout on the prod copy.
-
-422 on an unknown axis, `rows == cols`, `date_from > date_to`, a missing basis, more than 50 ids
-in a list, or an unknown key; 403 on a company outside the caller's grant.
-
-### 5.4 Screens, Excel and charts
-
-- Menu: Sales > Reports > Yearly comparison, Sorento by account, Mocha by account
-  (`config/menu.config.tsx` SALES heading :78; the #1260 Sales group), each gated on
-  `order_management.sales_reports.view`. Mocha by account is hidden while Mocha has no SO feed
-  (`companies.so_feed_live`), not shown empty.
-- One page component `SalesReportPage` renders a `SalesReportDocument`: `PageHeader` with the
-  title, a filter row (as-at date, basis, company for A, saved view), Export to Excel as the one
-  primary action, then each section as a card holding a `ReportPivotTable`. A: a recharts
-  `LineChart` under each block (one line per year, months on x, the current year solid and the
-  earlier years in the palette's secondary tokens). B and C: line tabs per group of sections
-  (Monthly, Year to date, Dealer vs HANLIM for B; By account, By debtor type, By month, Project
-  debtors, By quarter for C), tab strips scrolling at 375.
-- Numbers right aligned, tabular, whole ringgit on screen (the export keeps cents), negatives in
-  brackets `(12,345)` as the PDF prints them, blank for no sales, `(blank)` group last. A grid
-  wider than its card (twelve months of 7-digit figures at 1280 with the sidebar open, every
-  month grid at 375) scrolls sideways inside the card with the first column sticky; no cell is
-  cut.
-- Excel: one sheet per report, sections stacked in the PDF's order, the kernel's title block
-  (company, report title, as-at date), header bold, number format `#,##0.00;(#,##0.00)`, totals as
-  **values, never formulas** (kernel docstring `xlsx_renderer.py:14-16`), report A with a native
-  openpyxl `LineChart` under each block. Every text cell passes a formula-injection guard (the
-  pattern of `summary_order_service._xlsx_safe_text`, `app/services/scm/summary_order_service.py:1491`).
-- The basis and the "sales orders, not invoices" line print in the header of every page and sheet.
-- Empty state: a section with no sales prints its table with blanks and a "No sales in this
-  period" line, never a missing section.
+- Menu: SALES heading > Sales group (#1260) > **Sales report** and **Yearly comparison**, after
+  Sales Agents, `moduleKey: 'sales'`, permission `sales.reports.view`. Routes `/sales/reports`
+  and `/sales/yearly-comparison`.
+- Each page is `ReportPage` with the new key: `PageHeader` title and crumbs, the views menu,
+  Configure summary, **Export to Excel** as the one primary button; the filter bar; the Detail
+  tab (sales order lines, `DataGrid`) and the Summary tab (the pivot, and for the yearly
+  comparison the variance row and the chart under it).
+- The basis line prints under the filter bar on both screens and in the workbook's title block:
+  "Basis: Delivered (transferred to DO), by sales order date. Sales orders, not invoices." (G1)
+- Numbers: whole ringgit on screen as the kernel prints them, the workbook keeps sen; negatives in
+  brackets; blank for no sales; `(blank)` group last. Tables scroll sideways inside their card
+  with the first column pinned (`ReportPivotTable.tsx` pinned classes); the page never scrolls
+  sideways, at 375 or 1280.
 
 ### 5.5 The chatbot seam
 
-- **MCP tool** `crm_sales_analysis` (new `ToolSpec`, `sorento_crm_mcp/sorento_crm_mcp/catalog.py:15`
-  shape) over `GET /sales-analysis`: domain orders, the `sales_orders.sales_report` reveal key (no
-  new key), no paging params, `related_tools=("crm_sales_report", "crm_top_selling_report")`.
-  Added to `PRESENTER_TOOLS` (`presenters.py:38`), `CHATBOT_READ_ONLY_TOOLS`
-  (`app/services/chatbot/lanes/business/fetch.py:965`), `mcp_tool_domains` and the order domain
-  seed in `app/services/chatbot/turn/policy_rows.py` (as PR #1263 did, with one migration that
-  updates the live `chatbot_domains` row).
-- **Parser** (`app/services/chatbot_parser_prompt.py`): `group_by` already exists (:83-98); it
-  gains the values `agent`, `debtor_type`, `brand`, `month`, `quarter`, `year`. New nullable keys:
-  `compare_years` (a list of years), `exclude_customers` (names, resolved by the entity resolver
-  like any customer), `sales_basis` (ordered | delivered | unclear). The `sales_agent` entity kind
-  and the `company` word come from the top X lane (#1175 S5) and the multi-company reply clarity
-  work.
-- **Person resolution**: "Sean" resolves to every code whose `person_label` is SEAN; with no label
-  and more than one code starting with SEAN, the bot asks which ("SEAN I or SEAN III?"), never
-  sums them silently.
-- **Clarify, never assume** (owner rulings 26 Sep, carried from #1175): before any fetch, in this
-  order, the lane asks:
-  1. the company, when the contact is granted both and did not name one (`Sorento or Mocha?`);
-  2. the period, when none was said (G6);
-  3. the basis, when the message is ambiguous between ordered and delivered (G1 decides the
-     default when it is simply unsaid; the header always prints it);
-  4. the axis, when "by brand" could mean the debtor type column or the product brand (G3).
-- **Counts and length**: every reply header states the full row count ("Agents with sales: 14").
-  A grid that fits one WhatsApp message (the top X setting `chatbot_top_selling_one_message_rows`,
-  default 50, reused rather than a second setting) is sent in full. A longer one with no N gets the
-  header and "That list is too long for one message. How many agents do you want to see?". Never
-  "more", "next" or "lagi".
-- **Dealer contacts**: this tool is staff only. A contact linked to a customer
-  (`respond_contact_customers`) gets "Sorry, I can only share sales figures for your own account."
-  and nothing is fetched, because every answer here compares agents or accounts.
-- Reply shapes (goldens, S1 to S5) are drawn in the mockup, frame 6.
+- **Route** `GET /api/v1/sales/analysis` (new `app/api/v1/sales/analysis.py`, behind
+  `require_module_enabled_with_api_key("sales")`, permission `sales.reports.view`, plus the
+  `sales_orders.sales_report` reveal key re-check for API-key callers exactly as the sales report
+  does, `app/api/v1/order_management/orders.py:1713-1726`). Query params are the `sales`
+  definition's filters plus `rows`, `cols` and `n` (1 to 100, cut after `total_count` and totals,
+  PR #1263's rule). It calls `engine.run` for the `sales` definition, so it is the screens' query.
+  With `deliver=file` it also queues the workbook (0.6) and returns `attachments` or `pending`.
+- **MCP tool** `crm_sales_analysis` (new `ToolSpec`, `catalog.py:15` shape), domain orders, the
+  `sales_orders.sales_report` reveal key, no paging params, `related_tools=("crm_sales_report",
+  "crm_top_selling_report")`; in `PRESENTER_TOOLS` (`presenters.py:38`),
+  `CHATBOT_READ_ONLY_TOOLS` (`app/services/chatbot/lanes/business/fetch.py:965`), the order
+  domain seed in `app/services/chatbot/turn/policy_rows.py`, and one migration for the live
+  `chatbot_domains` row (as PR #1263 did).
+- **Parser** (`app/services/chatbot_parser_prompt.py:83-98`): `group_by` gains `agent`,
+  `debtor_type`, `brand`, `month`, `quarter`, `year`; new nullable keys `compare_years`,
+  `exclude_customers`, `sales_basis` (ordered | delivered | unclear), `reply_format` (file | text
+  | unsaid).
+- **Shape rule** (0.6): the presenter counts rows x value columns and picks text, or text header
+  + file.
+- **Person** (0.5): a label wins; no "which code" question when one exists.
+- **Clarify, never assume** (owner rulings 26 Sep from #1175): company when both are granted and
+  none named; the period only when the words are ambiguous (none said = the current calendar
+  year, the top X ruling; G6); the basis when ambiguous; the axis when "by brand" could be the
+  debtor type or the product brand (G3).
+- **Long answers**: no one-message setting and no "how many?" for a breakdown. Every row is sent;
+  n8n chunks (owner, PR #1258 05:32Z, which amends the 01:55Z reading round 1 relied on). A
+  **ranked** ask with no N ("best agents this year") follows the top X rule: the header states the
+  count and the bot asks how many. Never "more", "next" or "lagi".
+- **Dealer contacts**: staff only; a contact linked to a customer gets "Sorry, I can only share
+  sales figures for your own account." and nothing is fetched.
 
 ### 5.6 Access
 
-- Screens: new slug `order_management.sales_reports.view` (covers export). Grant sweep in the
-  migration of S1 to the roles that hold `order_management.orders.view` today and are named by the
-  owner (DoD). `security-reviewer` runs on S1 (new slug, company parameter) and S3 (ingest field).
-- Chatbot: the existing `sales_orders.sales_report` reveal key, staff only (5.5).
+- `sales.reports.view` (covers both screens, their export and the chatbot route). Grant sweep in
+  S1's migration to admin and superadmin, others through the role editor (#1260's rule, its
+  3.7). `security-reviewer` runs on S1 (new slug, company parameter, the per-report module check,
+  the fail-closed company arm) and S3 (ingest field).
+- Saved views: the kernel's own rules; publishing a shared view needs `reports.views.publish`
+  (`ReportViewsMenu.tsx:30-33`).
 
-## 6. Slices (thin, vertical, ordered for early owner value)
+## 6. Slices (round 2; thin, vertical, ordered for early owner value)
 
-Each slice is its own lane and PR. Every lane is full track (PRINCIPLES.md "Small fix track" does
-not apply: new slug, migration, ingest or chatbot tool), Phase 1 frontend mock first, Phase 2
-tester-first, Phase 3 reviewer plus browser at 1280 and 375.
+Each slice is its own lane and PR, Phase 1 frontend mock first, Phase 2 tester-first, Phase 3
+reviewer plus browser at 1280 and 375.
 
 ### S0. Measure (captain, read-only SQL on the prod copy; no code, no PR)
 
-Paste into the UAC "Measured" before the grill closes:
-- SOs and `SUM(line_total)` per month by company, January 2023 to September 2026, cancelled
-  excluded: where does complete history start?
-- For three months the owner picks: dealer and project totals on both bases and both date rules
-  (order date vs delivery bucket) against the PDF's own totals; the gap in RM and percent.
-- The raw `Debtor.DebtorType` values in the masters push payloads (`integration_log` rows of the
-  customers push) with counts, and how many are dropped as `segment_unknown`.
-- `sales_agents`: codes per company, `person_label` fill (expected 0), codes with no SO in 2026.
-- HANLIM's 6 ledger customer ids; Mocha SO count (expected 0) and `so_feed_live`.
-- `EXPLAIN ANALYZE` of a three-year `rows=year, cols=month` grid: the trigger for an
-  `order_date` index is over one second.
+Unchanged from round 1: history depth per company per month, three months against the PDF on
+both bases and both date rules, the raw `Debtor.DebtorType` values, person label fill and the
+codes the name split would group, HANLIM's ledger ids, Mocha SO count and `so_feed_live`, and an
+`EXPLAIN ANALYZE` of a three-year year x month pivot through `engine.run`.
 
-### S1. Report A, yearly comparison (dealer and project), screen, chart, Excel, chatbot compare
+### S1. The sales dataset and Yearly comparison, the kernel extensions, the chatbot file (full)
 
-- Backend: `sales_grid` with the axes `year`, `month`, `year_month`, `channel`; `GET
-  /sales-analysis`; `yearly_comparison` layout; `GET /sales-reports/yearly-comparison` and
-  `/export`; new slug and grant sweep migration.
-- Frontend: Phase 1 mock of `SalesReportPage` for A with both blocks, variance row and the two
-  charts, menu entry, export button, 375 and 1280; then wired.
-- Chatbot: `crm_sales_analysis` ToolSpec (axes of S1 only), presenter goldens for "compare dealer
-  sales 2025 vs 2026 by month" and "total project sales this year", parser keys `compare_years`
-  and `group_by` month / year, the company and period clarify lines.
-- Tests: pytest `tests/test_sales_grid.py` (sums equal `sales_report`'s ordered and confirmed
-  figures for the same window to the cent; cancelled excluded; month and year buckets on
-  `order_date`; null `demand_class` lands in `(blank)` and in the total; company scope 403 and
-  isolation between two companies; variance math and brackets); route tests (401, 403 without the
-  slug, API key without the reveal key 403, 422 table); xlsx test (cell positions, values not
-  formulas, number format, the chart object present); vitest for `SalesReportPage` (sections,
-  empty state, blank future months, export call); MCP catalog and presenter tests with goldens;
-  chatbot lane tests for the clarify lines and the no-paging rule; agent-browser evidence via the
+- Backend: the `sales` module (unless #1260 S6 landed first), `sales.reports.view` and its grant
+  sweep; the `sales_order_lines` dataset with the dimensions `year`, `month_of_year`,
+  `year_month`, `channel` and the filters Company, Channel, Basis; `sales_yearly` definition;
+  kernel extensions 1 to 5 (5.3); `GET /sales/analysis`; the report file sender.
+- Frontend: `/sales/yearly-comparison` page wrapper, `ReportPivotChart`, the variance row in
+  `ReportPivotTable`, the menu items (Sales report is added in S2).
+- Chatbot: `crm_sales_analysis` (S1 axes), "compare dealer sales 2025 vs 2026 by month" as the
+  **file** answer (note 6), "total project sales this year" as text, the company and period
+  clarify lines.
+- Tests: dataset sums equal `sales_report`'s ordered and confirmed figures to the sen; cancelled
+  out; February SO with a March line counted in February; null `demand_class` in `(blank)` and the
+  total; the company arm fail-closed (no scope = no rows) and 403 outside the grant; the
+  sponsorship report unchanged under the per-report module check; fixed months blank not 0;
+  variance math and brackets; workbook has no month sheets, has the chart, totals are values; the
+  export lands a `report_xlsx` row in My Downloads; route 401 / 403 / 422; presenter goldens for
+  the file answer (text header + attachment) and the pending line; agent-browser evidence via the
   sidebar at 1280 and 375.
-- DoD: figures for three months reconcile with S0's measured totals on the prod copy; the owner
-  reads report A beside the PDF.
+- DoD: three months reconcile with S0 on the prod copy; the owner reads the yearly comparison
+  beside the PDF.
 
-### S2. Sales by agent as a person (report B without the account columns)
+### S2. The Sales report: person, set apart, exclude, quarter, both companies (full)
 
-- Backend: axes `agent`, `agent_code`, `customer`; `set_apart_customer_ids`; person resolution
-  (`COALESCE(person_label, sales_agent)`, one person = every code sharing the label, #1260 R2);
-  `sorento_by_account` layout with only the TOTAL column (debtor type columns land in S3), the
-  HANLIM row, TOTAL SALES, the year-to-date table and the DEALER - SALESMAN vs HANLIM month table.
-- Frontend: report B page with the Monthly, Year to date and Dealer vs HANLIM tabs; the HANLIM set
-  as a saved view parameter (a `SearchableMultiSelect` of customers).
-- Chatbot: "Sean's sales this month", "sales by agent this year", "top 5 agents this year" (N
-  named: cut after the count), the which-code clarify.
-- Tests: person grouping (two codes one label; no label falls back to the code; an SO with no agent
-  lands in `(blank)` and in the total), set-apart (HANLIM leaves every agent row, appears once,
-  grand total unchanged), presenter goldens, the how-many golden for a long list with no N.
-- DoD (backfill): every active Sorento code has a `person_label`, entered by the owner or the
-  captain on the Sales Agents screen from the owner's own agent list (the report B rows); the
-  count is pasted in the PR.
+- Backend: `sales` definition; dimensions `agent`, `agent_code`, `customer`, `quarter`,
+  `seller_group`; filters Sales agent, Set apart, Exclude customers; person resolution (0.5);
+  the `person_label` pre-fill migration (Q3); the shared views of 0.3 for Sorento, published.
+- Frontend: `/sales/reports` page wrapper and its menu item. Nothing else: the views menu, the
+  filters and the tables are the kernel's.
+- Chatbot: "Sean's sales this month" (text, no which-code question), "sales by agent this year"
+  (text, every row), "top 5 agents this year", "HANLIM this year vs last year" (small grid, text).
+- Tests: two codes one label = one row; no label groups by the name split; a typed name matching
+  two different names asks; set apart leaves every agent row, appears once, last, grand total
+  unchanged; exclude removes the customers from every cell and total and the header names them;
+  quarter buckets; the monthly sheets sum to the summary; the shape rule (1 value column = text,
+  12 cells = text, 13 cells = file, "in Excel" = file).
+- DoD: every active Sorento code has a `person_label` after the owner's review of the pre-fill;
+  the count is pasted in the PR.
 
-### S3. Debtor type (the account columns), report B complete, chatbot "by account"
+### S3. Debtor type (the account columns) and the chatbot "by account" (full)
 
-- Backend: migration adds `customers.debtor_type` varchar(50) null; the masters push and the
-  document back-create write AutoCount `Debtor.DebtorType` raw into it on every push (AutoCount
-  owns it; the existing fold onto `market_segment_code` is unchanged); the column reaches both
-  customer dict builders and the customer schemas (LESSONS-LEARNT: both manual builders); axis
-  `debtor_type` and filter `debtor_types`; report B gains its SORENTO .. SAMPLE columns in the
-  owner's order (G3).
-- Frontend: report B's columns; the customer detail shows the debtor type read-only in the header
-  (AutoCount owns it).
-- Chatbot: "Sean's sales this month by brand" (by debtor type, or the product brand axis, per G3),
-  "HANLIM by account this year".
-- Tests: ingest writes the raw value on insert and on update, an unknown value is still stored
-  (no fold), the segment fold is unchanged; grid by debtor type; `(blank)` for customers with none.
-- DoD (backfill): a full customers masters re-push from AutoCount (ESB side) fills
-  `debtor_type`; the fill rate per company is pasted in the PR. `security-reviewer`: yes (ingest).
+Unchanged from round 1 except that the axis is a dataset dimension and the columns are the
+default "By account" view: migration `customers.debtor_type` varchar(50) null, written raw on the
+masters push and the document back-create, both customer dict builders, the customer header
+read-only, the Debtor type filter; "Sean's sales this month by brand" (text, note 7).
+`security-reviewer`: yes (ingest).
 
 ### S4. Mocha sales order feed (dependency, mostly outside this repo)
 
-- The AutoCount ESB pushes db2 (Mocha) SOs through the existing `POST /external/ingest/sales_orders`
-  with Mocha's company code (`app/api/v1/external/company_anchor.py:39,135-174`). CRM side: verify
-  the push lands under Mocha, flip `so_feed_live` for Mocha, and measure history depth (S0 rows).
-- Tests: an ingest test that a Mocha-coded SO lands under Mocha and is invisible to a Sorento-only
-  user. Nothing else changes in the CRM.
-- DoD: Mocha SO count and first month pasted; the owner confirms three months against the PDF.
+Unchanged from round 1. The only CRM-visible change: Mocha's figures appear in the same two
+reports through the Company filter (no menu item appears; there is none to hide).
 
-### S5. Report C, Mocha by account, quarter and named project debtors
+### S5. Mocha on the Sales report (small fix track)
 
-- Backend: axis `quarter`; `exclude_customer_ids`; `mocha_by_account` layout; the named debtors as
-  a saved view parameter.
-- Frontend: report C with its five tabs; the "Total sales without Dilooma and Pintar (project)"
-  row.
-- Chatbot: "Mocha Q2 by agent without Dilooma", "Mocha ACCOUNT II by month".
-- Tests: quarter buckets; exclusion leaves count and totals consistent (the excluded customers are
-  named in the header); report C sections sum to each other.
-- DoD: the owner reads report C beside the PDF.
+Was "Report C", now a configuration lane: Mocha's shared views (the same six, with Exclude =
+DILOOMA, PINTAR on "By quarter" and Set apart = the named project debtors), published; the
+chatbot golden "Mocha Q2 by agent without Dilooma" (text, note 8); the owner reads the Sales
+report for Mocha beside the PDF. Under 300 lines, no migration, no permission change: small fix
+track.
 
 ### After S5 (only on a ruling)
 
-- Weekly delivery of report B (the PDF is "produced weekly"): G9.
-- Footnotes: G8.
+Weekly delivery (G9), footnotes (G8).
 
 ## 7. What is not built, and the trigger for each
 
 - **An invoice (IV) feed and an invoiced basis**: S0 gap above the G1 tolerance.
-- **Folding `sales_grid` into the reports kernel**: a second report family needs set-apart rows or
-  year-over-year columns.
-- **Moving the routes under a `sales` module key**: #1260's `sales` module lands.
-- **An `order_date` index**: the S0 `EXPLAIN ANALYZE` of the three-year grid is over one second.
-- **The RQ export path**: an export over the sync timeout on the prod copy.
-- **A quantity measure**: an owner ask; quantities across debtor types and brands mix basins with
-  screws, so the reports are RM only.
-- **Dated person labels** (a code that moves between people mid-year): an owner ask.
+- **A separate sales query primitive** (round 1's `sales_grid`): the kernel cannot express an ask
+  the owner makes, after the extensions of 5.3.
+- **Pinned row order** (the owner's own agent order, round 1 AC-S2-5): the owner asks for it
+  after seeing the alphabetical order; then a `Column.sort_order` from the view.
+- **An `order_date` index**: the S0 `EXPLAIN ANALYZE` is over one second.
+- **A quantity measure**: an owner ask.
+- **Dated person labels**: an owner ask.
+- **Text + file on every answer**: the owner rules Q2 the other way.
 
 ## 8. Risks
 
-- **SO is not invoice.** The owner may read a mismatch as a bug. Mitigated by the basis line on
-  every output, S0's measured gap, and G1's tolerance.
-- **Debtor type source unproven.** If AutoCount's DebtorType is Trade / Cash / Local for Sorento,
-  the account columns need another source (the ledger name suffix, or a mapping per customer set by
-  hand). S0 and G3 decide before S3 starts.
-- **Person labels are manual.** Report B is only as right as the 80 labels; a missing label shows
-  the raw code as its own row, never a merged guess.
-- **Mocha is blocked on an external feed.** S4 depends on the ESB team; S5 cannot start before it.
-- **Null `demand_class`** (170 SOs in 2026): shown as `(blank)` in report A so the totals still
-  reconcile, never dropped.
-- **Tax inclusive amounts.** `line_total` is Total (Inc); the PDFs may be ex-tax. S0 measures,
-  G1 decides.
+- **SO is not invoice.** Mitigated by the basis line on every output, S0's measured gap, and G1.
+- **Debtor type source unproven.** S0 and G3 decide before S3 starts.
+- **Kernel changes touch the sponsorship report.** Every extension defaults off, and S1 carries a
+  test that the sponsorship report's meta, run and workbook are unchanged.
+- **The per-report module check** replaces a router-wide guard: a definition with no
+  `module_key` must fail closed (403), tested in S1.
+- **Person labels from the name split** may merge two people who share a first name. The owner
+  reviews the pre-fill (Q3) and the report shows the codes under each person in the Detail tab.
+- **Mocha is blocked on an external feed.** S4 depends on the ESB team.
+- **The chatbot file needs the 24 hour window** for the worker push; outside it the pending
+  reply is the only message, as for the low stock report (`respond_chat_template_service.py:697-720`).
+- **Tax inclusive amounts.** `line_total` is Total (Inc). S0 measures, G1 decides.
 
 ## 9. Grill questions (posted on the PR, at most 10)
 
@@ -591,8 +765,44 @@ Paste into the UAC "Measured" before the grill closes:
   by role, and on WhatsApp staff only with the existing Sales report grant; (b) sales agents see
   only their own rows. **Recommend (a)**; (b) when agents are given access.
 
+
+Round 2 note: G1 to G10 are still unanswered and stay recommendations. Round 2 changes only their
+wording where a name changed: "report B" and "report C" now read "the Sales report" for Sorento
+and for Mocha; G7's saved view is the kernel's shared view (0.3); G10's "sales reports: view" is
+the slug `sales.reports.view` (0.2). G6's recommendation (b) matches the top X owner ruling
+("No date said = the current calendar year").
+
+### 9.1 Round 2 questions (posted on PR #1269 as "Round 2")
+
+- **Q1. The yearly comparison's two blocks in one Excel file.** The screen shows one channel at a
+  time (Channel filter; two shared views "Dealer" and "Project team"). Options: (a) the Excel
+  holds the channel on screen, so two exports make the two blocks; (b) with both channels ticked,
+  the Excel writes one block per channel, one under the other on one sheet, like the PDF
+  (`WorkbookSpec.sheet_per`, a small kernel extension). **Recommend (b)**: the PDF is one page with
+  both blocks, and the extension is generic (any report can split by a filter).
+- **Q2. Chatbot file or text.** The rule in 0.6: a list (one figure per row) is text, however
+  long; a table of up to 12 figures is text; a larger table is a short text summary plus the Excel
+  file; "in Excel" or "as text" in the message overrides. **Recommend this rule, and not text +
+  file on every answer**: a file for a three-line answer is noise and waits on a worker job. Say
+  if the threshold should be another number than 12.
+- **Q3. Person labels pre-filled.** 0 of 80 codes have a person label. Options: (a) S2 fills them
+  from the code's name part (SEAN I and SEAN III become SEAN), and you correct any on the Sales
+  Agents screen; (b) you type all 80 by hand. **Recommend (a)**: it matches your note that SEAN I
+  and SEAN III are the same person, and you only fix the exceptions.
+- **Q4. Report sections as saved views.** Report B's and C's sections (by account, by month,
+  debtor type by month, dealer vs HANLIM, by quarter, set apart customers) become shared views in
+  the report's Views menu, not tabs; the per-month tables are the Excel's month sheets, and one
+  month on screen is one month chip. **Recommend this**: it is the sponsorship report's own
+  mechanism, and you can add a view without a code change. The other way is fixed tabs, which
+  would be new components.
+- **Q5. Sales module, not a sales schema.** The two reports go in the Sales menu group from the
+  sales targets plan (#1260), under the `sales` module and a `sales.reports.view` permission; the
+  data stays in the sales order tables, and no table is added, so there is no sales schema (the
+  targets plan keeps its tables in the main schema too). **Recommend this.** Whichever of this
+  lane or #1260's first lane lands first creates the Sales module.
+
 ## 10. Out of scope
 
-A report designer, a dashboard of KPIs, a quantity measure, targets and commissions (#1260), an
-invoice feed (named trigger, section 7), a scheduled send (G9), footnote storage (G8), and any
-change to the existing sales report or top X answers.
+A report designer beyond the kernel's Configure summary, a dashboard of KPIs, a quantity measure,
+targets and commissions (#1260), an invoice feed (named trigger, section 7), a scheduled send
+(G9), footnote storage (G8), and any change to the existing sales report or top X answers.
