@@ -1,7 +1,7 @@
 # UAC: retail sales reports, one query layer for the screens and the chatbot (#1267)
 
 Plan: `PLAN-retail-sales-reports-26sep.md`. Track: full (S1 to S4, and S6 from round 3); S5 small fix track (round 2); S0 is a measurement.
-Status: draft, round 2 (26 Sep 2026). The owner's Lavish review of the mockup (26 Sep 06:27Z, 10
+Status: draft, round 4 (26 Sep 2026); round 2 status kept below. Round 2 (26 Sep 2026). The owner's Lavish review of the mockup (26 Sep 06:27Z, 10
 notes) is applied: each note has an "Owner ruling 26 Sep 06:27 (Lavish) <n>" line in the section
 "Round 2" below, and every criterion it changes keeps its text and gains a "Round 2:" note. No
 criterion is deleted. G1 to G10 are still unanswered: their recommendations are written in as the
@@ -13,6 +13,13 @@ criterion it changes keeps its text and gains a "Round 3:" note. No criterion is
 mark on an answered question is now a ruling, not a recommendation, except G7, which is asked again
 (recommendation (a) stays written in). Round 2's Q1 to Q4 stay recommendations; Q5 is re-answered
 (AC-R3-1). The round 3 questions Q6 to Q8 (plan R3.6) are written in and marked `(Q<n>)`.
+Round 4 (26 Sep 2026): the owner answered round 2's Q1 to Q5 (PR #1269 comment 5844192717, 26 Sep
+07:16:21Z). Each answer has an "Owner ruling 26 Sep 07:16 Q<n>" line in the section "Round 4"
+below, and each criterion it changes keeps its text and gains a "Round 4:" note. No criterion is
+deleted. A `(Q1)` to `(Q5)` mark is now a ruling. Q2 was ruled against the recommendation: every
+chatbot answer is text plus the Excel file, with no cutoff (AC-R4-1 to AC-R4-6). Round 3's Q6 to
+Q8 stay open and Q9 is new (plan R4.6); Q6's written-in behaviour changes to the new
+recommendation (AC-R4-11).
 Mockups: `documentation/plans/sales/mockups/retail-sales-reports.html`.
 Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` browser via agent-browser, `[T]` has a named test.
 
@@ -38,16 +45,20 @@ holding the Sales report grant.
 - **J7.** On WhatsApp asks "compare dealer sales 2025 vs 2026 by month" and gets the months with
   both years and the difference, the basis and the count in the header.
   - Round 2: Owner ruling 26 Sep 06:27 (Lavish) 6: the answer is a short text header plus the Excel file, like the low stock report (plan 0.6).
+  - Round 4: Owner ruling 26 Sep 07:16 Q2: the text carries the months, both years and the difference (the whole answer), and the Excel file follows.
 - **J8.** Asks "Sean's sales this month by brand" and gets Sean's accounts, all of Sean's codes
   counted, and the total.
   - Round 2: Owner ruling 26 Sep 06:27 (Lavish) 7 and 9: text; all of Sean's codes are counted with no "which code" question.
+  - Round 4: Owner ruling 26 Sep 07:16 Q2: text plus the Excel file.
 - **J9.** Asks "Mocha Q2 by agent without Dilooma" and gets every agent, the excluded customer
   named in the header, and the total.
   - Round 2: Owner ruling 26 Sep 06:27 (Lavish) 8: text.
+  - Round 4: Owner ruling 26 Sep 07:16 Q2: text plus the Excel file.
 - **J10.** (Round 3, Owner ruling 26 Sep 07:06 G9) Every Monday at 09:00 a named sales manager
   gets the Sales report's "By account" view as an Excel file, year to date as at that day, by
   email or on WhatsApp; the same file is in their My Downloads. The owner set it up once from the
   report's Views menu.
+  - Round 4: on WhatsApp outside the 24 hour window the person gets the template text and, on replying, the file (Q6, recommended).
 
 Decisions asked of the user: the as-at date and basis (both pre-filled), the company on report A,
 and on WhatsApp only what the message leaves ambiguous (company, period per G6, basis, axis, which
@@ -107,6 +118,7 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
   year row.
   - Round 3: Owner ruling 26 Sep 07:06 G4: DEALER and PROJECT TEAM are the sales order's `demand_class` (retail, project).
   - Round 2: the two blocks are the Channel filter on one kernel pivot; both blocks in one Excel file is Q1 (recommended: one block per ticked channel, one under the other).
+  - Round 4: Owner ruling 26 Sep 07:16 Q1: "okay", one block per ticked channel, one under the other (AC-R4-7).
 - **AC-S1-12 [FE][E2E]** From `/`, Sales > Reports > Yearly comparison opens the page (sidebar
   click, never a deep URL). A user without the slug does not see the menu item.
   - Round 2: Owner ruling 26 Sep 06:27 (Lavish) 2: the path is Sales > Yearly comparison (SALES heading, Sales group).
@@ -140,8 +152,10 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
   `sales-analysis-compare.txt`: header (company, channel, basis, period, "Months: 12"), one line
   per month with both years and the difference, a total line. No "more", "next" or "lagi".
   - Round 2: Owner ruling 26 Sep 06:27 (Lavish) 6: the golden is now the text header plus an attachment (AC-R2-13, AC-R2-14); the header and total lines stay; the month lines move into the file.
+  - Round 4: Owner ruling 26 Sep 07:16 Q2: the month lines come back into the text (the text is the whole answer) and the attachment stays (AC-R4-1).
 - **AC-S1-21 [BE][T]** A contact granted both companies who names none gets `Sorento or Mocha?`
   and nothing is fetched.
+  - Round 4: a clarify question carries no file (AC-R4-3).
 - **AC-S1-22 [BE][T]** No period in the message = the current calendar year, printed in the
   header (G6). An ambiguous period ("last quarter" in January) gets `Which period: last quarter of
   2025, or Q1 2026?`.
@@ -177,6 +191,7 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
   - Round 2: Owner ruling 26 Sep 06:27 (Lavish) 5: through My Downloads; the title block keeps "Weekly Sales by Debtor Type by Sales Agent".
 - **AC-S2-8 [BE][T]** Chatbot "Sean's sales this month" resolves SEAN to every code with that label
   and prints the golden `sales-analysis-agent.txt` (the codes named in the header).
+  - Round 4: Owner ruling 26 Sep 07:16 Q2: plus the Excel file (AC-R4-1).
 - **AC-S2-9 [BE][T]** "Sean" with no labels and two codes starting SEAN gets `SEAN I or SEAN III?`
   and nothing is fetched.
   - Round 2: Owner ruling 26 Sep 06:27 (Lavish) 9: superseded by AC-R2-11 and AC-R2-12. With a label, or with codes that share a name (SEAN I, SEAN III), the bot sums them and never asks.
@@ -187,6 +202,7 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
 - **AC-S2-11 [T]** DoD: every active Sorento code has a `person_label`; the count is pasted in the
   PR.
   - Round 2: the labels are pre-filled by the name split and reviewed by the owner (Q3, AC-R2-18).
+  - Round 4: Owner ruling 26 Sep 07:16 Q3: "okay"; the pre-fill is the ruling.
 
 ## S3. Debtor type and the account columns
 
@@ -206,6 +222,7 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
   `sales-analysis-agent-by-account.txt` (one line per account with sales, "Accounts with sales: 3",
   a total).
   - Round 3: Owner ruling 26 Sep 07:06 G3: with the product brand now its own axis, "by brand" alone is ambiguous, so the bot first asks `Debtor type or product brand?` (AC-R3-6, the owner's "clarify, never assume" ruling from #1175); this golden is the reply after "debtor type", and "Sean's sales this month by account" prints it with no question.
+  - Round 4: Owner ruling 26 Sep 07:16 Q2: the golden reply also carries the Excel file (AC-R4-1).
 - **AC-S3-7 [T]** DoD: after the full masters re-push, `debtor_type` fill per company is pasted in
   the PR; the owner reads report B beside the PDF.
 
@@ -236,6 +253,7 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
   `sales-analysis-exclude.txt`: header with `Company: Mocha`, `Excluded: DILOOMA ...`, `Agents with
   sales: 8`, one line per agent, the total.
   - Round 2: Owner ruling 26 Sep 06:27 (Lavish) 8: stays text.
+  - Round 4: Owner ruling 26 Sep 07:16 Q2: text plus the Excel file (AC-R4-1).
 - **AC-S5-6 [FE][E2E]** At 375 and 1280, report C is usable and not clipped; export matches the
   PDF's section order.
 
@@ -272,6 +290,7 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
 - **AC-R2-6 [T]** (S1 to S5) No new table and no `sales` Postgres schema; the only schema change of
   the whole plan is `customers.debtor_type` (S3) (Q5).
   - Round 3: superseded by AC-R3-1 (Q5 re-answered to align with #1260 round 5): the plan's one new table, `sales.report_subscriptions` (S6), is in the `sales` schema. It still holds for S1 to S5.
+  - Round 4: Owner ruling 26 Sep 07:16 Q5: "we need a sales schema and a sales module"; superseded by AC-R4-8 to AC-R4-10. S1 to S5 still add no table, but the `sales` schema is created by the lane that creates the module.
 
 ### One Sales report (note 4)
 
@@ -288,6 +307,7 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
   By month, Debtor type by month, Dealer vs set apart, By quarter, Set apart customers by month
   (plan 0.3). Sorento's carry Set apart = the HANLIM ledgers; Mocha's "By quarter" carries
   Exclude = DILOOMA, PINTAR (Q4).
+  - Round 4: Owner ruling 26 Sep 07:16 Q4: "okay"; shared views are the ruling.
 - **AC-R2-17 [FE][T]** (S1) The yearly comparison's Summary tab shows the VARIANCE row under the
   year rows (muted row, brackets for negatives, blank after the as-at month) and the line chart
   under the table, one line per year, the current year in the primary colour.
@@ -302,6 +322,7 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
 - **AC-R2-18 [BE][T]** (S2) The pre-fill migration sets `person_label` from the name split on every
   code with a roman suffix and a null label, never overwrites a typed label, and is idempotent
   (Q3).
+  - Round 4: Owner ruling 26 Sep 07:16 Q3: "okay".
 
 ### Chatbot file or text (notes 6, 7, 8, 10)
 
@@ -311,13 +332,16 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
   "compare dealer sales 2025 vs 2026 by month" (36 cells, file), "Sean's sales this month by
   brand" (3 x 1, text), "Mocha Q2 by agent without Dilooma" (8 x 1, text), "HANLIM this year vs
   last year" (1 x 3, text).
+  - Round 4: Owner ruling 26 Sep 07:16 Q2: "always text + file, no cutoff"; superseded by AC-R4-1 and AC-R4-2. The four goldens stay, each now text plus the file.
 - **AC-R2-14 [BE][T]** (S1) A file answer creates a `report_xlsx` My Downloads row owned by the CRM
   user linked to the contact, queues `generate_report_xlsx`, and when ready within the sync window
   returns `attachments` so the engine adds `send_attachments` after `send_message`; otherwise the
   reply is `Preparing the Excel, it will be sent here when ready.` and the worker pushes the file
   once (one-shot claim, as the low stock push).
+  - Round 4: Owner ruling 26 Sep 07:16 Q2: this path now serves every answer; the pending line reads `The Excel follows here.` (AC-R4-4).
 - **AC-R2-15 [BE][T]** (S1) "in Excel", "as a file" or "send the report" forces the file for any
   answer; "as text" forces text for any answer.
+  - Round 4: Owner ruling 26 Sep 07:16 Q2: superseded by AC-R4-5. No override words: the file always comes, and "as text" is dropped.
 - **AC-R2-16 [BE][T]** (S2) No one-message setting exists; "sales by agent this year" with 61 agents
   sends every row (n8n chunks); "best agents this year" with no N states the count and asks how
   many (the top X rule).
@@ -343,6 +367,7 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
   it; a purge invariants test shows uninstall deletes its rows and never drops the schema. Saved
   views stay `report_views` rows; `sales_orders`, `sales_order_lines`, `sales_agents` and
   `customers` stay in `public`. Single alembic head.
+  - Round 4: Owner ruling 26 Sep 07:16 Q5: ruled. The purge file is `sorento_crm_frontend/modules/sales/purge_tables.json` (AC-R4-9).
 - **AC-R3-2 [BE][T]** (S1 or #1260 S6, whichever lands first) One `sales` module: one
   `bootstrap.py`, one `MODULE_MANIFEST` entry, one `"sales": "sales"` permission map entry; the
   second lane adds none of them again.
@@ -390,7 +415,8 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
   download's file as the attachment. A user with no email is skipped and logged.
 - **AC-R3-14 [BE][T]** (S6) WhatsApp, window open: the text header, then the file through
   `send_chat_attachment_for`. Window closed: the `sales_report_scheduled` template text with the
-  totals line and "The Excel is in your My Downloads." (Q6). No linked contact, or
+  totals line and "The Excel is in your My Downloads." (Q6).
+  - Round 4: under Owner ruling 26 Sep 07:16 Q2 the window-closed branch is re-recommended; AC-R4-11 carries the new expected behaviour (Q6 still open). The window-open branch is unchanged. No linked contact, or
   `outbound_enabled` false: skipped and logged. Each send writes an `integration_log` row with
   `business_table` `sales.report_subscriptions`.
 - **AC-R3-15 [BE][T]** (S6) **Send now** sends one message for that row in a worker job whatever
@@ -404,6 +430,72 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
 - **AC-R3-18 [T]** (S6) DoD: the Meta-approved `sales_report_scheduled` template is mapped on prod
   before any WhatsApp row is enabled; the owner receives one Send now by email and one by WhatsApp
   and enables their own row.
+
+## Round 4: the owner's answers to round 2's Q1 to Q5 (26 Sep 07:16Z)
+
+- Owner ruling 26 Sep 07:16 Q1: "okay", (b): both channel blocks in one Excel, one under the other.
+- Owner ruling 26 Sep 07:16 Q2: "always text + file, no cutoff": every chatbot answer sends the text and the Excel file; no 12 figure rule, no override words.
+- Owner ruling 26 Sep 07:16 Q3: "okay": person labels pre-filled from the code's name part; the owner corrects exceptions.
+- Owner ruling 26 Sep 07:16 Q4: "okay": report sections are shared saved views.
+- Owner ruling 26 Sep 07:16 Q5: "we need a sales schema and a sales module so we are more modular": module `sales` and Postgres schema `sales`; every new table of this plan in `sales`.
+
+### Text + file on every answer (Q2)
+
+- **AC-R4-1 [BE][T]** (S1, S2, S3, S5) Every answer of `crm_sales_analysis` sends the text and the
+  Excel file of the same query: 1 cell ("total project sales this year"), 3 x 1 ("Sean's sales
+  this month by brand"), 1 x 3 ("HANLIM this year vs last year"), 12 x 3 ("compare dealer sales
+  2025 vs 2026 by month") and 61 x 1 ("sales by agent this year") each assert a text golden and
+  one `report_xlsx` attachment. No cell count decides the format.
+- **AC-R4-2 [BE][T]** (S1) The text is the whole answer: the header, one line per row (`label: RM
+  a`, or `label: a | b | c` under a column name line), the totals line; never "Full table in the
+  attached Excel" in place of rows. Every row is sent whatever the count (n8n chunks). The
+  width of a wide table's lines follows Q9 (recommended: every column).
+- **AC-R4-3 [BE][T]** (S1, S2, S3) A clarify question (`Sorento or Mocha?`, `Which Tan: TAN KH or
+  TAN WL?`, `Debtor type or product brand?`, a ranked ask with no N), the dealer contact refusal
+  and an error line carry no attachment and create no My Downloads row.
+- **AC-R4-4 [BE][T]** (S1) The file is a `report_xlsx` My Downloads row owned by the contact's
+  linked CRM user (else the act-as user, the low stock rule); ready within the sync window, it is
+  returned as `attachments`; otherwise the text ends `The Excel follows here.` and the worker
+  pushes the file exactly once (`deliver_to_contact_id` claim; a retried job sends nothing). A
+  failed build sends the failure notice as text. The text is sent without waiting for the file.
+- **AC-R4-5 [BE][T]** (S1) The parser has no `reply_format` key and the route no `deliver`
+  switch; "as text", "in Excel", "as a file" and "send the report" change nothing (text + file
+  either way).
+- **AC-R4-6 [T]** (S1) The file name is the kernel's `<title>-<period>.xlsx`, and the file's
+  figures equal the text's to the sen (one query, two formats).
+
+### The yearly comparison's two blocks (Q1)
+
+- **AC-R4-7 [BE][T]** (S1) With Channel = Dealer and Project, the export writes the DEALER block,
+  then the PROJECT TEAM block, one under the other on one sheet, each with its variance row and
+  chart (`WorkbookSpec.sheet_per`); with one channel, one block. The sponsorship workbook is
+  unchanged.
+
+### The sales module and the sales schema (Q5)
+
+- **AC-R4-8 [BE][T]** (S1 or #1260 S6, whichever creates the module) The migration that creates
+  the `sales` module runs `CREATE SCHEMA IF NOT EXISTS sales`; after `alembic upgrade head` the
+  schema exists; running it after #1260's migration is a no-op; `alembic/env.py` is unchanged
+  and autogenerate proposes no DROP of `sales`. Single alembic head.
+- **AC-R4-9 [BE][T]** (S6) `ReportSubscription` is in `app/models/sales.py` with
+  `__table_args__` `{"schema": "sales"}`; its FKs into core (`report_views`, `users`,
+  `companies`) are unqualified; `sorento_crm_frontend/modules/sales/purge_tables.json` lists
+  `sales.report_subscriptions`; a purge invariants test (as
+  `tests/test_projects_module_purge_invariants.py`) shows uninstall deletes its rows and never
+  issues `DROP SCHEMA`.
+- **AC-R4-10 [T]** (every slice) No new table of this plan is outside `sales`: a test lists the
+  tables the plan's migrations create and asserts each has schema `sales`. Saved views stay
+  `report_views` rows, person labels stay `sales_agents.person_label`, the debtor type is a
+  column on `customers`.
+
+### The scheduled WhatsApp send outside the window (Q6, still open)
+
+- **AC-R4-11 [BE][T]** (S6) (Q6, recommended (b)) Window closed: the `sales_report_scheduled`
+  template text with the totals line ending `Reply to this message and the Excel is sent here.`;
+  the `report_xlsx` row is written with `deliver_to_contact_id` set. On that contact's next chat
+  turn within 7 days the file is pushed once; a second turn sends nothing; after 7 days nothing is
+  pushed and the file stays in My Downloads. The reply itself is answered as a normal message.
+  Email is unchanged and always carries the file.
 
 ## Every slice
 
@@ -419,6 +511,9 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
 
 Invoice feed, quantity measure, scheduled weekly send (G9), footnote storage (G8), dated person
 labels, targets and commissions (#1260), text + file on every chatbot answer (Q2).
+
+Round 4: text + file on every chatbot answer is now in scope (Owner ruling 26 Sep 07:16 Q2,
+AC-R4-1 to AC-R4-6). Out: a text-only reply ("as text").
 
 Round 3: the scheduled weekly send is now in scope (Owner ruling 26 Sep 07:06 G9, S6, AC-R3-7 to
 AC-R3-18). Still out: invoice feed, quantity measure, footnote storage (G8 (c)), dated person
