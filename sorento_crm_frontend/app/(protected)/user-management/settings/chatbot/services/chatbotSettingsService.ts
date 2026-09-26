@@ -115,30 +115,52 @@ const MEMORY_FALLBACK: ChatbotMemorySettings = {
   own_level_count: 0,
 };
 
-/*
- * PHASE-1 MOCK: swap for apiFetch in Phase 2 (GET/PUT /api/v1/user-management/settings,
- * contract section 5). The live settings row still carries the OLD `chatbot_memory` shape
- * (recall_default/episode_retention_days/profile_fields/focus_reset_events) until the S0
- * migration lands, so this card's read/save pair is mocked in full rather than reading a
- * shape the backend does not send yet.
- */
-let mockMemorySettings: ChatbotMemorySettings = { ...MEMORY_FALLBACK, own_level_count: 1 };
+function pickChatbotMemory(row: Record<string, unknown> | null | undefined): ChatbotMemorySettings {
+  const memory = row?.chatbot_memory as Partial<ChatbotMemorySettings> | null | undefined;
+  if (!memory) return MEMORY_FALLBACK;
+  return {
+    enabled: Boolean(memory.enabled),
+    default_level:
+      memory.default_level === 'conversation' ||
+      memory.default_level === 'past' ||
+      memory.default_level === 'full'
+        ? memory.default_level
+        : MEMORY_FALLBACK.default_level,
+    own_level_count: typeof memory.own_level_count === 'number' ? memory.own_level_count : 0,
+  };
+}
 
+// S0 migration landed (contract section 5): `chatbot_memory` is the real two-key shape
+// plus a live `own_level_count`, so this card reads/saves through the same GET/PUT the
+// Switches card already uses.
 export async function getChatbotMemorySettings(): Promise<ChatbotMemorySettings> {
-  return { ...mockMemorySettings };
+  const response = await apiFetch('/api/user-management/settings');
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load settings'));
+  }
+  const data = await response.json();
+  return pickChatbotMemory(data?.settings);
 }
 
 export async function saveChatbotMemorySettings(
   input: ChatbotMemorySettings,
 ): Promise<ChatbotMemorySettings> {
-  // own_level_count is read-only (set per-contact, on the contact's own card) - a save
-  // from here can never touch it.
-  mockMemorySettings = {
-    ...mockMemorySettings,
-    enabled: input.enabled,
-    default_level: input.default_level,
-  };
-  return { ...mockMemorySettings };
+  // own_level_count is read-only (set per-contact, on the contact's own card) - never
+  // sent; the backend 422s an unrecognised chatbot_memory key regardless.
+  const response = await apiFetch('/api/user-management/settings/general', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chatbot_memory: { enabled: input.enabled, default_level: input.default_level },
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save memory settings'));
+  }
+  // The PUT's own response echoes the stored `{enabled, default_level}` only -
+  // `own_level_count` is a live count the GET dict builder merges in, so a fresh GET
+  // is what actually reflects it (never 0, freshly reset, right after a save).
+  return getChatbotMemorySettings();
 }
 
 /** Office / Dealer / End user, orderable (AC-1502's tier axis; replaces the three

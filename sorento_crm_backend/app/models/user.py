@@ -623,22 +623,17 @@ class SystemSetting(Base):
         server_default='["dealer", "office", "end_user"]',
         default=lambda: _default_tier_order(),
     )
-    # Chatbot turn re-architecture (AC-1513, AC-1561): the Memory card's four settings,
-    # in ONE JSONB rather than four columns - they are one decision ("how much does the
-    # bot remember") made on one card, and a column each would be four migrations for a
-    # screen that shows them together. `recall_default` is the per-contact toggle's
-    # default for a NEW contact (the contact's own `chatbot_recall_enabled` always wins);
-    # `episode_retention_days` is how long a closed frame is worth recalling;
-    # `profile_fields` is which profile slots the parser is told about; and
-    # `focus_reset_events` is what clears the focus besides an explicit topic reset.
+    # Chatbot memory lane A (contract section 2/5): the Memory card's system switch and
+    # default context level, in ONE JSONB. `enabled` gates whether a contact with no
+    # level of its own gets any memory at all (default OFF, Q1 ruling); `default_level`
+    # is the level such a contact gets once switched on (never "off", never null - the
+    # settings select has no clear). Replaces the four dead keys the chatbot turn
+    # re-architecture shipped here (recall_default/episode_retention_days/profile_fields/
+    # focus_reset_events) - none of them were ever read.
     chatbot_memory = Column(
         JSONB,
         nullable=False,
-        server_default=(
-            '{"recall_default": false, "episode_retention_days": 180, '
-            '"profile_fields": ["tier", "language", "default_ledgers"], '
-            '"focus_reset_events": ["topic_switch"]}'
-        ),
+        server_default='{"enabled": false, "default_level": "full"}',
         default=lambda: _default_chatbot_memory(),
     )
     # Which lanes the CRM is allowed to FINISH, by `branch_kind`, one at a time.

@@ -9,7 +9,8 @@
  * 4 (profile facts) and 5 (HTTP contract).
  *
  * ---------------------------------------------------------------------------
- * THE CONTRACT (Phase 2 wires this exactly - see the PHASE-1 MOCK markers below)
+ * THE CONTRACT (the first two routes are REAL, S0 landed; the rest are still the
+ * PHASE-1 MOCK markers below, pending S2)
  * ---------------------------------------------------------------------------
  *
  * GET  /api/v1/user-management/contacts/{id}                       -> RespondContact
@@ -28,10 +29,13 @@
  *   lapses, same mechanism every other delete uses) -> 204.
  */
 
+import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import { getProductsForLineSelect } from '@/app/(protected)/master-data-management/products/services/productService';
 import { getBrands } from '@/app/(protected)/master-data-management/brands/services/brandService';
 import { getWarehouses } from '@/app/(protected)/inventory-management/warehouses/services/warehouseService';
 import type { SearchableMultiSelectOption } from '@/components/common/SearchableMultiSelect';
+import { getContact } from './contactService';
 
 export type ChatbotMemoryLevel = 'off' | 'conversation' | 'past' | 'full';
 
@@ -121,13 +125,19 @@ export interface ContactChatbotMemory {
 }
 
 /* ============================================================================
- * PHASE-1 MOCK: swap for apiFetch in Phase 2, once the S0 migration lands
- * `chatbot_memory_level`, `chatbot_profile.facts`, `conversation_frames.is_test` and the
- * memory/facts routes (contract section 5). One in-memory record per contact id, seeded
- * with the round 3 mockup's sample (Tan Wei Liang / Chin Chun Trading, CC001) - the
- * settings card and the memory read share the SAME record, so editing the level in one
- * place is reflected in the other, exactly as the real GET/PUT and GET .../memory will
- * once they read the same `respond_contacts` row.
+ * PHASE-1 MOCK: swap for apiFetch in Phase 2, once `chatbot_profile.facts` and the
+ * dedicated memory/facts routes exist (contract section 5) - the S0 migration and
+ * `GET/PUT .../chatbot`'s own `chatbot_memory_level` already landed, so
+ * `getContactChatbotProfile`/`saveContactChatbotProfile` above are real; only the
+ * facts grid, conversations and open orders below still read this in-memory record.
+ * One in-memory record per contact id, seeded with the round 3 mockup's sample (Tan
+ * Wei Liang / Chin Chun Trading, CC001).
+ *
+ * KNOWN, TEMPORARY seam: `level.own`/`level.system_default` below (read by "What the
+ * bot knows") are still this mock's own state, independent of the REAL
+ * `chatbot_memory_level` the settings card now saves - the two can disagree in this
+ * lane until S2's memory GET reads the same `respond_contacts` row the settings PUT
+ * now writes.
  * ========================================================================== */
 
 interface MockFactEntry {
@@ -391,17 +401,53 @@ function toMemory(state: MockContactState): ContactChatbotMemory {
 
 export type ContactChatbotSaveInput = ContactChatbotProfile;
 
+function profileFromContact(contact: {
+  chatbot_profile?: { tier?: string | null; default_ledgers?: string[] | null } | null;
+  chatbot_memory_level?: ChatbotMemoryLevel | null;
+  chatbot_stock_allowed?: boolean;
+  notify_salesman?: boolean;
+  packing_list_allowed?: boolean;
+}): ContactChatbotProfile {
+  const profile = contact.chatbot_profile ?? null;
+  return {
+    chatbot_memory_level: contact.chatbot_memory_level ?? null,
+    tier: profile?.tier ?? null,
+    default_ledgers: profile?.default_ledgers ?? [],
+    stock_allowed: contact.chatbot_stock_allowed !== false,
+    notify_salesman: Boolean(contact.notify_salesman),
+    packing_list_allowed: Boolean(contact.packing_list_allowed),
+  };
+}
+
+// The S0 migration landed `chatbot_memory_level` on GET/PUT .../chatbot (contract
+// section 5) - this half of the card is real; `getContactChatbotMemory`/
+// `saveContactFact` below stay mocked until S2's own routes exist.
 export async function getContactChatbotProfile(contactId: string): Promise<ContactChatbotProfile> {
-  return { ...stateFor(contactId).profile };
+  const contact = await getContact(contactId);
+  return profileFromContact(contact);
 }
 
 export async function saveContactChatbotProfile(
   contactId: string,
   input: ContactChatbotSaveInput,
 ): Promise<ContactChatbotProfile> {
-  const state = stateFor(contactId);
-  state.profile = { ...input };
-  return { ...state.profile };
+  const response = await apiFetch(`/api/v1/user-management/contacts/${contactId}/chatbot`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      // The route replaces the whole `chatbot_profile` dict (never a merge), so every
+      // field the contact already had is sent back, not just the one edited here.
+      chatbot_profile: { tier: input.tier, default_ledgers: input.default_ledgers },
+      chatbot_memory_level: input.chatbot_memory_level,
+      chatbot_stock_allowed: input.stock_allowed,
+      notify_salesman: input.notify_salesman,
+      packing_list_allowed: input.packing_list_allowed,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save chatbot settings'));
+  }
+  return profileFromContact(await response.json());
 }
 
 export async function getContactChatbotMemory(contactId: string): Promise<ContactChatbotMemory> {

@@ -44,8 +44,13 @@ def record_parser_usage(
     response_time_ms: int,
     contact_respond_id: str,
     answered: bool,
+    chatbot_turn_id: str | None = None,
 ) -> None:
-    """One `ai_assistant_usage_logs` row for one parser call."""
+    """One `ai_assistant_usage_logs` row for one parser call.
+
+    `chatbot_turn_id` (chatbot memory lane A, contract section 7) is which
+    `chatbot.turns` row this call billed - every chatbot-parser row carries one.
+    """
     try:
         from app.models.access import RespondContact
         from app.models.ai_assistant import AIAssistantUsageLog
@@ -70,6 +75,7 @@ def record_parser_usage(
                 tool_calls_count=0,
                 response_time_ms=int(response_time_ms),
                 was_answered=bool(answered),
+                chatbot_turn_id=chatbot_turn_id,
             )
         )
         db.commit()
