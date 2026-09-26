@@ -74,10 +74,16 @@ export const SALES_OPPORTUNITY_KIND = 'sales_opportunity' as const;
 export const ADDITIONAL_LANDING_KINDS: readonly (PortalLandingKind | typeof SALES_OPPORTUNITY_KIND)[] =
   [...LANDING_KINDS.filter((k) => !isSubmissionKind(k)), SALES_OPPORTUNITY_KIND];
 
+/**
+ * `sales_opportunity` is deliberately NOT a match here (reviewer should-fix 9): it has no
+ * tab, no entry in `LANDING_LABELS`/`EMPTY_LISTS`, none of what this predicate exists to
+ * gate - a caller that means "does this route to a bespoke portal page" should ask that
+ * directly, not read it off the generic-submission-tab predicate.
+ */
 export function isLandingKind(
   value: string | null | undefined,
 ): value is PortalLandingKind {
-  return (LANDING_KINDS as readonly string[]).includes(value ?? '') || value === SALES_OPPORTUNITY_KIND;
+  return (LANDING_KINDS as readonly string[]).includes(value ?? '');
 }
 
 export const SUBMISSION_LABELS: Record<PortalSubmissionKind, string> = {
