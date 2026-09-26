@@ -3,7 +3,6 @@ import { toast } from '@/lib/toast';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   createSalesOpportunity,
-  deleteSalesOpportunity,
   getSalesOpportunities,
   getSalesOpportunity,
   getSalesOpportunityAgentOptions,
@@ -94,17 +93,5 @@ export function useSaveSalesOpportunity() {
       toast.success(variables.id ? 'Opportunity saved' : 'Opportunity logged');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to save opportunity'),
-  });
-}
-
-export function useDeleteSalesOpportunity() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deleteSalesOpportunity(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: SALES_OPPORTUNITIES_KEY });
-      queryClient.invalidateQueries({ queryKey: SALES_OPPORTUNITY_KEY });
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to delete opportunity'),
   });
 }

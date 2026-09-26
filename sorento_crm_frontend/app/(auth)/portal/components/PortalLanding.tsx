@@ -332,8 +332,10 @@ export function PortalLanding({ slug }: { slug?: string }) {
   useEffect(() => {
     const t = searchParams?.get('type');
     // `landingKinds.includes` too (the same guard the default-tab effect above uses):
-    // `isLandingKind` alone now also answers true for `sales_opportunity` (its own bespoke
-    // pages, never a tab here), which this contact may not even have offered.
+    // `isLandingKind` only proves `t` is a valid tab kind at all (reviewer should-fix 9,
+    // Phase 3: it does NOT match `sales_opportunity`, which has no tab here to begin
+    // with) - `landingKinds` is the narrower, per-contact set this contact was actually
+    // granted, which a `?type=` query param can name without ever having been offered.
     if (isLandingKind(t) && landingKinds.includes(t) && t !== activeTab) setActiveTab(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);

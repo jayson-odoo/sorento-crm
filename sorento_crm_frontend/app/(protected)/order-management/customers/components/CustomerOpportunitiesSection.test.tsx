@@ -118,4 +118,44 @@ describe('CustomerOpportunitiesSection', () => {
     render(<CustomerOpportunitiesSection customerId="cust-1" />);
     expect(screen.queryByRole('button', { name: /log opportunity/i })).toBeNull();
   });
+
+  it('fix2 nit: the query only runs with view permission AND the module on', () => {
+    hooks.useCustomerOpportunities.mockReturnValue({ data: [], isLoading: false, isError: false });
+    render(<CustomerOpportunitiesSection customerId="cust-1" />);
+    expect(hooks.useCustomerOpportunities).toHaveBeenLastCalledWith('cust-1');
+  });
+
+  it('fix2 nit: the query does not run without sales.opportunities.view', () => {
+    permissionState.granted = new Set(['sales.opportunities.add']);
+    hooks.useCustomerOpportunities.mockReturnValue({ data: [], isLoading: false, isError: false });
+    render(<CustomerOpportunitiesSection customerId="cust-1" />);
+    expect(hooks.useCustomerOpportunities).toHaveBeenLastCalledWith(null);
+  });
+
+  it('fix2 nit: the query does not run when the sales module is off', () => {
+    moduleState.enabledModuleKeys = new Set(['order_management']);
+    hooks.useCustomerOpportunities.mockReturnValue({ data: [], isLoading: false, isError: false });
+    render(<CustomerOpportunitiesSection customerId="cust-1" />);
+    expect(hooks.useCustomerOpportunities).toHaveBeenLastCalledWith(null);
+  });
+
+  it('fix2 should-fix 3: the stage pill colours from stage_key', () => {
+    hooks.useCustomerOpportunities.mockReturnValue({
+      data: [
+        {
+          id: 'opp-1',
+          opportunity_no: 'OPP-000001',
+          title: 'ZZT Deal',
+          stage_key: 'lost',
+          stage_label: 'Lost',
+          expected_amount: '1000.00',
+          expected_close_date: '2026-11-01',
+        },
+      ],
+      isLoading: false,
+      isError: false,
+    });
+    render(<CustomerOpportunitiesSection customerId="cust-1" />);
+    expect(screen.getByText('Lost').className).toMatch(/--color-destructive-soft/);
+  });
 });

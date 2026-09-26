@@ -10,7 +10,6 @@
 
 import { Trash2 } from 'lucide-react';
 import type { RecordAction, RecordActionSet } from '@/components/common/recordActions';
-import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { SALES_OPPORTUNITIES_KEY, SALES_OPPORTUNITY_KEY } from './hooks/useSalesOpportunities';
@@ -59,11 +58,4 @@ export function useSalesOpportunityActions(
   }
 
   return { actions, dialogs: null, pending: deletion.countdown };
-}
-
-/** The list row's "..." cell - the same items the opportunity page's gear shows. */
-export function SalesOpportunityRowActions({ opportunity }: { opportunity: OpportunityRef }) {
-  const { actions } = useSalesOpportunityActions(opportunity, { surface: 'toast' });
-  if (actions.length === 0) return null;
-  return <RowActionsMenu actions={actions} ariaLabel="sales opportunity" />;
 }

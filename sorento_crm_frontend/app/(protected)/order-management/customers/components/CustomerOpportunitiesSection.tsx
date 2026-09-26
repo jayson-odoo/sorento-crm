@@ -39,7 +39,12 @@ export default function CustomerOpportunitiesSection({
     modulesLoading || enabledModuleKeys == null || enabledModuleKeys.has('sales');
   const canView = useHasPermission('sales.opportunities.view');
   const canAdd = useHasPermission('sales.opportunities.add');
-  const { data, isLoading, isError } = useCustomerOpportunities(canView ? customerId : null);
+  // Phase 3 fix2 nit: gated on the module too, not view alone - a query fired the
+  // moment `salesModuleEnabled` flips false below still ran once, for a module the
+  // viewer has no business reading opportunities from.
+  const { data, isLoading, isError } = useCustomerOpportunities(
+    canView && salesModuleEnabled ? customerId : null,
+  );
   const opportunities = data ?? [];
 
   if (!salesModuleEnabled || !canView) return null;
@@ -82,7 +87,7 @@ export default function CustomerOpportunitiesSection({
                   {opp.title}
                 </Link>
                 <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                  <Badge appearance="light" size="sm">
+                  <Badge status={opp.stage_key} appearance="light" size="sm">
                     {opp.stage_label}
                   </Badge>
                   <span>{formatCurrency(opp.expected_amount)}</span>
