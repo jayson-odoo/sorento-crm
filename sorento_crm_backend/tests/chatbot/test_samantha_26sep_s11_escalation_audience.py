@@ -110,3 +110,106 @@ def test_dealer_stock_miss_keeps_the_warehouse_offer():
     assert answer.offer is not None
     assert answer.offer.teams == ["warehouse"]
     assert "Would you like me to escalate to warehouse team?" in answer.text
+
+
+# --------------------------------------------------------------------------- #
+# AC-S11-1's OTHER offer path: the cross-domain zero-stock ladder. This is a
+# SEPARATE mechanism from `turn/compose.py`'s own offer arm above -
+# `answer_bridge.py::apply_crossdomain_hit` (~165-272) appends `tail/compose.py::
+# crossdomain_compose`'s (~86-103) locked "Would you like me to escalate to X
+# team?" phrase whenever the ladder block is non-empty, and neither function reads
+# `state.profile.tier` (or any audience signal at all) - a fix scoped to
+# `turn/compose.py` alone does not reach this path. Same harness as
+# `test_rearch_r11_zero_stock_ladder.py` (a real `engine.run_turn`, Postgres blank
+# schema, resolver + MCP tool runner stubbed).
+# --------------------------------------------------------------------------- #
+from sqlalchemy import text as _sql_text
+
+from tests.chatbot.test_engine import CONTACT_ID as _CONTACT_ID
+from tests.chatbot.test_engine import stub_access, stub_parser  # noqa: F401 - fixtures by name
+from tests.chatbot.test_rearch_r11_zero_stock_ladder import (
+    EMPTY_PO,
+    WAREHOUSE_OFFER,
+    ZERO_CODE,
+    ZERO_UUID,
+    _incoming_rows,
+    _run as _run_zero_stock_turn,
+    _stock_hit,
+    _stock_row,
+)
+
+
+def _seed_contact_with_tier(session_factory, *, tier: str) -> None:
+    """The same `respond_contacts.chatbot_profile` seed
+    `test_rearch_s3_profile_hints.py::_seed_with_profile` uses - a bare row (as
+    `test_engine.seeded` inserts) never sets a tier, so this test controls it
+    directly rather than depending on that fixture's default.
+    """
+    import json as _json
+
+    db = session_factory()
+    db.execute(
+        _sql_text(
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars, "
+            "chatbot_profile) "
+            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb), CAST(:p AS jsonb))"
+        ),
+        {
+            "cid": str(_CONTACT_ID),
+            "phone": "+60000000011",
+            "sv": _json.dumps({"variables": {}}),
+            "p": _json.dumps({"tier": tier, "language": "en", "default_ledgers": []}),
+        },
+    )
+    db.commit()
+
+
+def test_staff_ladder_rung_gets_no_warehouse_escalation_offer(
+    session_factory, stub_parser, stub_access, system_settings_row, monkeypatch
+):
+    """AC-S11-1, the ladder path: an `office`-tier contact (a staff sales rep) whose
+    stock answer climbs the zero-stock -> incoming rung must get no "escalate"
+    sentence and no offer - the SAME rule the composer's own offer follows, applied
+    to the OTHER mechanism that prints it.
+
+    Red today: `answer_bridge.apply_crossdomain_hit` has no `profile`/tier parameter
+    at all and appends the locked phrase whenever `crossdomain_zeroset` found
+    something to climb to, regardless of who is asking.
+    """
+    _seed_contact_with_tier(session_factory, tier="office")
+
+    result, said, probes = _run_zero_stock_turn(
+        session_factory, monkeypatch, stub_parser, stub_access,
+        codes={ZERO_CODE: ZERO_UUID},
+        stock=_stock_hit([_stock_row(ZERO_CODE, 0, "compact")], "compact"),
+        incoming=_incoming_rows(ZERO_CODE),
+        po=EMPTY_PO,
+    )
+
+    assert result.status == "done", result.error
+    assert probes, "the ladder must still climb and answer for a staff rep"
+    assert WAREHOUSE_OFFER not in said, (
+        f"a staff rep must get no bot-initiated escalation offer off the ladder rung: {said!r}"
+    )
+    assert "escalate" not in said.lower(), said
+
+
+def test_dealer_ladder_rung_keeps_the_warehouse_offer(
+    session_factory, stub_parser, stub_access, system_settings_row, monkeypatch
+):
+    """Guard (R6): a dealer contact's ladder-rung offer is UNCHANGED by the S11 fix.
+    Must be GREEN today and stay green.
+    """
+    _seed_contact_with_tier(session_factory, tier="dealer")
+
+    result, said, probes = _run_zero_stock_turn(
+        session_factory, monkeypatch, stub_parser, stub_access,
+        codes={ZERO_CODE: ZERO_UUID},
+        stock=_stock_hit([_stock_row(ZERO_CODE, 0, "compact")], "compact"),
+        incoming=_incoming_rows(ZERO_CODE),
+        po=EMPTY_PO,
+    )
+
+    assert result.status == "done", result.error
+    assert probes
+    assert WAREHOUSE_OFFER in said, said
