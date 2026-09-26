@@ -774,6 +774,10 @@ describe('W1 line confirmation column', () => {
     expect(mark).toHaveAttribute('aria-label', expectedLabel);
     expect(mark).toHaveAttribute('title', expectedLabel);
     expect(screen.queryByTestId('line-partly-confirmed-mark')).not.toBeInTheDocument();
+    // Review N5: the worklist's confirmed mark, not just any icon.
+    const icon = mark.querySelector('svg');
+    expect(icon).toHaveClass('lucide-circle-check');
+    expect(icon).toHaveClass('text-emerald-600');
   });
 
   it('W1: a partly confirmed line shows the half-state mark reading n of m', () => {
@@ -787,6 +791,9 @@ describe('W1 line confirmation column', () => {
     const mark = screen.getByTestId('line-partly-confirmed-mark');
     expect(mark).toHaveAttribute('aria-label', '1 of 2 rows confirmed');
     expect(mark).toHaveAttribute('title', '1 of 2 rows confirmed');
+    const icon = mark.querySelector('svg');
+    expect(icon).toHaveClass('lucide-circle-dashed');
+    expect(icon).toHaveClass('text-muted-foreground');
     expect(screen.queryByTestId('line-confirmed-mark')).not.toBeInTheDocument();
   });
 
@@ -810,8 +817,10 @@ describe('W1 line confirmation column', () => {
     expect(soQtyIndex).toBe(confirmationIndex + 1);
     const confirmationColumn = result.current.find(
       (c) => (c as { id?: string }).id === 'confirmation',
-    ) as { enableSorting?: boolean; size?: number } | undefined;
+    ) as { enableSorting?: boolean; size?: number; meta?: { draggable?: boolean } } | undefined;
     expect(confirmationColumn?.enableSorting).toBe(false);
+    // Review N4: a blank header carries no lone drag grip.
+    expect(confirmationColumn?.meta?.draggable).toBe(false);
     expect(confirmationColumn?.size ?? 0).toBeLessThanOrEqual(48);
   });
 });

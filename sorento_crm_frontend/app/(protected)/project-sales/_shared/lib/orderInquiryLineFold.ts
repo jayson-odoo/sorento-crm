@@ -265,11 +265,11 @@ export type LineConfirmation =
  * W1 (PR #1266, owner, 26 Sep: "after we click confirm, at the line level can't really see
  * it is confirmed"): the same fold rule as the rest of the line - its live rows only, so a
  * cancelled or used row never holds the mark back. A rejected row has nothing left to
- * confirm and is left out of n of m; a cancelled line and a line nobody has confirmed any
- * of read none (its State already says what waits).
+ * confirm and is left out of n of m; a line nobody has confirmed any of reads none (its
+ * State already says what waits). A cancelled SO line is marked like any other (review
+ * SF1): its rows wait on Confirm too (G7), and its State reads "Line cancelled" either way.
  */
 export function lineConfirmationOf(line: OrderInquiryLine): LineConfirmation {
-  if (line.lineCancelled) return { kind: 'none' };
   const counted = line.liveRows.filter((row) => row.ack_state !== 'rejected');
   const confirmed = counted.filter((row) => row.ack_state === 'acknowledged');
   if (confirmed.length === 0) return { kind: 'none' };

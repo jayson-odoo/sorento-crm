@@ -38,6 +38,8 @@ Issue: #1248
   the detail. "Raised via" stays hidden by default.
   Owner ruling 26 Sep (G4): columns in order: Expand, Select, No., Product, SO Qty, Requested,
   Taken, Remaining, Delivery date, Supplier, PO, SPO, Suggested, Location, Instruction, State.
+  Owner ruling 26 Sep (W1): a narrow Confirmed mark column sits between Product and SO Qty
+  (AC-ND-33).
 - AC-ND-4 [FE] (G4) Qty shows the sales order line's own Qty (`so_line_qty`), the number the
   sales order's Lines grid shows for that line.
   Owner ruling 26 Sep (G4): the column is titled "SO Qty". S0 mocks it (`so_line_qty` when
@@ -155,8 +157,14 @@ Qty boxed).
     emerald), tooltip "Confirmed by <name> on <date>", the latest confirmer;
   - some but not all: the worklist's pending mark (`CircleDashed`, muted), tooltip "n of m rows
     confirmed";
-  - none confirmed yet, or a cancelled SO line: nothing (the State cell already says what
-    waits).
+  - none confirmed yet: nothing (the State cell already says what waits);
+  - a cancelled SO line is marked like any other line (review SF1): its rows go back to
+    `changed` and wait on Confirm (G7), and its State reads "Line cancelled" before and after,
+    so the mark is the only place Confirm shows on it.
+  Two choices named here for the owner (review N1, N2): a rejected row is left out of n of m, so
+  1 confirmed + 1 rejected reads the check; a used (`redirected_to_pool`) row is not counted,
+  the same fold rule as the rest of the line, even though the header's `lines_to_confirm`
+  counts a used row still in `changed` (Confirm sweeps it with its line, G6).
   It updates in place after Confirm, with no reload (the Confirm mutation refetches the Lines).
   Evidence: `evidence/oi-no-double-count-w1/`.
 

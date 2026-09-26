@@ -468,7 +468,8 @@ export function useOrderInquiryHeaderLinesColumns({
         minSize: 44,
         enableSorting: false,
         enableResizing: false,
-        meta: { headerTitle: 'Confirmed' },
+        // Review N4: a blank header with a lone drag grip reads as stray chrome.
+        meta: { headerTitle: 'Confirmed', draggable: false },
         cell: ({ row }) => <LineConfirmationMark line={lineOf(row.original)} />,
       },
       // AC-ND-3..5b (owner ruling 26 Sep, G4): SO Qty, Requested, Taken, Remaining - the

@@ -390,17 +390,6 @@ describe('W1 line confirmation', () => {
     ]);
     expect(lineConfirmationOf(everyAwaiting)).toEqual({ kind: 'none' });
 
-    const [cancelledLine] = foldInquiryLines([
-      row({
-        id: 'c',
-        core_line_id: 'cl-4',
-        line_no: 4,
-        line_cancelled: true,
-        ack_state: 'acknowledged',
-      }),
-    ]);
-    expect(lineConfirmationOf(cancelledLine)).toEqual({ kind: 'none' });
-
     const [onlyRejected] = foldInquiryLines([
       row({ id: 'd', core_line_id: 'cl-5', line_no: 5, ack_state: 'rejected' }),
     ]);
@@ -413,5 +402,31 @@ describe('W1 line confirmation', () => {
       row({ id: 'f', core_line_id: 'cl-6', line_no: 6, ack_state: 'rejected' }),
     ]);
     expect(lineConfirmationOf(rejectedLeftOut)).toEqual({ kind: 'confirmed', by: 'Aisyah', at: '2026-09-26T09:00:00Z' });
+  });
+  // Review SF1: a cancelled SO line flips its rows back to `changed` and waits on Confirm
+  // (G7, C1). Its State reads "Line cancelled" before and after, so the mark is the only
+  // place Confirm shows on it.
+  it('W1 SF1: a cancelled SO line reads none while it waits and confirmed once confirmed', () => {
+    const [waiting] = foldInquiryLines([
+      row({ id: 'c', core_line_id: 'cl-4', line_no: 4, line_cancelled: true, ack_state: 'changed' }),
+    ]);
+    expect(lineConfirmationOf(waiting)).toEqual({ kind: 'none' });
+
+    const [confirmed] = foldInquiryLines([
+      row({
+        id: 'c',
+        core_line_id: 'cl-4',
+        line_no: 4,
+        line_cancelled: true,
+        ack_state: 'acknowledged',
+        acknowledged_by_name: 'Aisyah',
+        acknowledged_at: '2026-09-26T11:30:00Z',
+      }),
+    ]);
+    expect(lineConfirmationOf(confirmed)).toEqual({
+      kind: 'confirmed',
+      by: 'Aisyah',
+      at: '2026-09-26T11:30:00Z',
+    });
   });
 });
