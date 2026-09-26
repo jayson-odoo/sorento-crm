@@ -358,6 +358,9 @@ def create_target(db: Session, payload, *, user_id: Optional[str] = None) -> Sal
     agent_ids = [f.sales_agent_id for f in figures]
     if len(set(agent_ids)) != len(agent_ids):
         raise _unprocessable("An agent is listed twice.", "AGENT_REPEATED")
+    # Another company's agent is 422, the `_visible_agent` rule `add_child` applies, in one read.
+    if len(_agents_by_id(db, company_id, agent_ids)) != len(agent_ids):
+        raise _unprocessable("That sales agent was not found.", "UNKNOWN_SALES_AGENT")
     members = _stays_overlapping(db, team.id, payload.start_date, payload.end_date)
     if any(agent_id not in members for agent_id in agent_ids):
         raise _unprocessable(
@@ -774,7 +777,7 @@ def list_targets(
         for team_members in members_of.values():
             team_members.sort(key=lambda m: m["label"])
 
-    achieved = ach.achieved_by_period(db, _specs(db, company_id, pairs))
+    achieved = ach.achieved_by_period(db, _specs(db, company_id, pairs), company_id)
     scopes = _scope_labels(db, {t.id for t, _ in pairs})
 
     def subject_fields(subject_id: str) -> dict:
@@ -842,15 +845,15 @@ def list_targets(
     return {
         "on": on,
         "rows": rows,
-        "unassigned_amount": float(ach.unassigned_amount(db, on)),
+        "unassigned_amount": float(ach.unassigned_amount(db, on, company_id)),
         "no_team_count": no_team_count,
     }
 
 
-def counts_label(db: Session, basis: str) -> str:
+def counts_label(db: Session, basis: str, company_id: str) -> str:
     if basis == "ordered":
         return "Ordered"
-    return "Delivered (by DO date)" if ach.any_do_linked(db) else "Delivered"
+    return "Delivered (by DO date)" if ach.any_do_linked(db, company_id) else "Delivered"
 
 
 def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None) -> dict:
@@ -858,7 +861,9 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
     on = on or _today()
     company_id = target.company_id
     periods = _periods(db, target.id)
-    achieved = ach.achieved_by_period(db, _specs(db, company_id, [(target, p) for p in periods]))
+    achieved = ach.achieved_by_period(
+        db, _specs(db, company_id, [(target, p) for p in periods]), company_id
+    )
 
     team_name = None
     if target.subject_kind == "agent":
@@ -884,12 +889,17 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
     if target.subject_kind == "team":
         children = _children(db, target.id)
         child_count = len(children)
-        agents = _agents_by_id(
-            db,
-            company_id,
-            {c.sales_agent_id for c in children}
-            | set(_stays_overlapping(db, target.sales_team_id, target.start_date, target.end_date)),
-        )
+        members = _stays_overlapping(db, target.sales_team_id, target.start_date, target.end_date)
+        agents = _agents_by_id(db, company_id, {c.sales_agent_id for c in children} | set(members))
+        # Every child's periods in one read, not one per child.
+        child_periods: Dict[str, List[SalesTargetPeriod]] = {}
+        if children:
+            for period in (
+                db.query(SalesTargetPeriod)
+                .filter(SalesTargetPeriod.target_id.in_([c.id for c in children]))
+                .order_by(SalesTargetPeriod.period_start)
+            ):
+                child_periods.setdefault(period.target_id, []).append(period)
         for child in children:
             agent = agents.get(child.sales_agent_id)
             children_out.append(
@@ -900,12 +910,12 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
                     "label": agent_label(agent) if agent else "",
                     "periods": [
                         {"id": p.id, "period_start": p.period_start, "target_value": float(p.target_value)}
-                        for p in _periods(db, child.id)
+                        for p in child_periods.get(child.id, [])
                     ],
                 }
             )
         with_figure = {c.sales_agent_id for c in children}
-        for agent_id in _stays_overlapping(db, target.sales_team_id, target.start_date, target.end_date):
+        for agent_id in members:
             agent = agents.get(agent_id)
             if agent is not None and agent_id not in with_figure:
                 without_figure.append({"sales_agent_id": agent_id, "label": agent_label(agent)})
@@ -931,7 +941,7 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
         "end_date": target.end_date,
         "split_every": target.split_every,
         "split_unit": target.split_unit,
-        "counts_label": counts_label(db, target.basis),
+        "counts_label": counts_label(db, target.basis, company_id),
         "scope": [
             {"id": item_id, "label": label}
             for item_id, label in _scope_labels(db, [target.id])[target.id]

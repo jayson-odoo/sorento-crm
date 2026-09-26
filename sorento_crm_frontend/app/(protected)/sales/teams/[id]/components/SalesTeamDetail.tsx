@@ -362,9 +362,10 @@ export function SalesTeamDetail({ id }: { id: string }) {
           {teamLines.length === 0 ? (
             <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed py-8 text-center">
               <span className="text-sm font-medium">No team target</span>
+              {/* Outline: the header's Set target is the page's one primary action. */}
               {canSetTarget ? (
                 <Button
-                  variant="primary"
+                  variant="outline"
                   size="sm"
                   onClick={() => setSetTarget({ kind: 'team', subjectId: team.id })}
                 >

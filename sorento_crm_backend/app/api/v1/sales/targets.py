@@ -6,6 +6,7 @@ needs `.delete`. Plain `def` handlers: nothing here awaits (LESSONS-LEARNT).
 """
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Literal, Optional
 
@@ -23,11 +24,12 @@ from app.schemas.sales import (
     SalesTargetPeriodUpdate,
     SalesTargetUpdate,
 )
-from app.services.error_handler import AppException, handle_internal_error
+from app.services.error_handler import AppException
 from app.services.sales import target_service
 from app.services.uuid_path_param import validate_uuid_path
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 VIEW = "sales.targets.view"
 ADD = "sales.targets.add"
@@ -37,10 +39,16 @@ DELETE = "sales.targets.delete"
 
 def _reraise(db: Session, exc: Exception):
     # A refusal (AppException) is raised before or inside the write's savepoint, which has
-    # already been rolled back, so the rest of the session stays as it was.
-    if not isinstance(exc, AppException):
-        db.rollback()
-    raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+    # already been rolled back, so the rest of the session stays as it was. Anything else is
+    # logged here and answered with a generic message: the body never carries the error text,
+    # which for a database error holds the statement and its parameters.
+    if isinstance(exc, AppException):
+        raise exc
+    db.rollback()
+    logger.exception("sales targets request failed")
+    raise AppException(
+        status_code=500, message="Something went wrong. Please try again.", code="INTERNAL_ERROR"
+    ) from exc
 
 
 def _user_id(user: dict) -> Optional[str]:

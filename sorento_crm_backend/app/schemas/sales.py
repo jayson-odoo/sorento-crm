@@ -1,11 +1,12 @@
 """Request and response shapes of the `sales` module (plan 3.7, 3.8; slices S6 and S1)."""
 from __future__ import annotations
 
+import uuid
 from datetime import date as DateType
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Annotated, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
 
 def _clean_name(value: Optional[str]) -> Optional[str]:
@@ -120,6 +121,21 @@ class SalesTeamAgentOption(BaseModel):
 # Targets (slice S1; plan 3.1, 3.2, 3.8, 16.3)
 # --------------------------------------------------------------------------------------
 
+def _uuid_str(value):
+    """A UUID, kept as the canonical string the models use. Anything else is a 422."""
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if not isinstance(value, str):
+        raise ValueError("must be a UUID")
+    try:
+        return str(uuid.UUID(value))
+    except ValueError as exc:
+        raise ValueError("must be a UUID") from exc
+
+
+#: An id sent by the client: validated as a UUID so a bad one is 422, never a database error.
+UuidStr = Annotated[str, BeforeValidator(_uuid_str)]
+
 Metric = Literal["amount", "quantity"]
 Basis = Literal["ordered", "delivered"]
 ProductScope = Literal["all", "categories", "products"]
@@ -138,7 +154,7 @@ def _clean_target_name(value: Optional[str]) -> Optional[str]:
 class SalesTargetAgentFigure(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    sales_agent_id: str
+    sales_agent_id: UuidStr
     #: The agent's figure for each period of the team target.
     target_value: float = Field(..., ge=0)
 
@@ -149,14 +165,14 @@ class SalesTargetCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     subject_kind: Literal["agent", "team"]
-    sales_agent_id: Optional[str] = None
-    sales_team_id: Optional[str] = None
+    sales_agent_id: Optional[UuidStr] = None
+    sales_team_id: Optional[UuidStr] = None
     name: str = Field(..., max_length=120)
     metric: Metric
     basis: Basis = "ordered"
     product_scope: ProductScope = "all"
-    category_ids: List[str] = Field(default_factory=list)
-    product_ids: List[str] = Field(default_factory=list)
+    category_ids: List[UuidStr] = Field(default_factory=list, max_length=500)
+    product_ids: List[UuidStr] = Field(default_factory=list, max_length=500)
     start_date: DateType
     end_date: DateType
     split_every: Optional[int] = Field(None, ge=1, le=99)
@@ -164,7 +180,7 @@ class SalesTargetCreate(BaseModel):
     #: Agent targets: the figure written to every period. Rejected on a team target (T3).
     target_value: Optional[float] = Field(None, ge=0)
     #: Team targets: one child agent target per entry; the team figure is their sum (S1-27).
-    agent_figures: Optional[List[SalesTargetAgentFigure]] = None
+    agent_figures: Optional[List[SalesTargetAgentFigure]] = Field(None, max_length=200)
 
     @field_validator("name")
     @classmethod
@@ -181,8 +197,8 @@ class SalesTargetUpdate(BaseModel):
     metric: Optional[Metric] = None
     basis: Optional[Basis] = None
     product_scope: Optional[ProductScope] = None
-    category_ids: Optional[List[str]] = None
-    product_ids: Optional[List[str]] = None
+    category_ids: Optional[List[UuidStr]] = Field(None, max_length=500)
+    product_ids: Optional[List[UuidStr]] = Field(None, max_length=500)
     start_date: Optional[DateType] = None
     end_date: Optional[DateType] = None
     #: Sent as null (both): the split is turned off.
@@ -193,6 +209,16 @@ class SalesTargetUpdate(BaseModel):
     @classmethod
     def _name(cls, value):
         return _clean_target_name(value)
+
+    @model_validator(mode="after")
+    def _no_null_for_required(self):
+        # Leaving a field out keeps it; sending null for one the header cannot be without is
+        # a 422 here, never a NOT NULL violation at the database. Only the split may be null
+        # (it turns the split off).
+        for key in ("name", "metric", "basis", "product_scope", "start_date", "end_date"):
+            if key in self.model_fields_set and getattr(self, key) is None:
+                raise ValueError(f"{key} cannot be empty")
+        return self
 
 
 class SalesTargetPeriodUpdate(BaseModel):
@@ -206,7 +232,7 @@ class SalesTargetChildCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    sales_agent_id: str
+    sales_agent_id: UuidStr
     target_value: float = Field(0, ge=0)
 
 

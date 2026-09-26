@@ -6,6 +6,7 @@ import { Check, LoaderCircleIcon, Plus, SquarePen, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -316,10 +317,6 @@ export function SalesTargetDetail({
     return (
       <Card className="flex flex-col items-center gap-3 p-10 text-center">
         <div className="text-sm font-semibold">Target not found</div>
-        <p className="max-w-md text-sm text-muted-foreground">
-          This target does not exist, or it was deleted after this link was
-          made.
-        </p>
       </Card>
     );
   }
@@ -513,8 +510,11 @@ export function SalesTargetDetail({
           <DatesEditor draft={draft} set={set} />
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Field label="Start date">{shortDate(target.start_date)}</Field>
-            <Field label="End date">{shortDate(target.end_date)}</Field>
+            <div className="sm:col-span-2">
+              <Field label="Start and end date">
+                {`${shortDate(target.start_date)} to ${shortDate(target.end_date)}`}
+              </Field>
+            </div>
             <Field label="Split">
               {splitSummary(target.split_every, target.split_unit)}
             </Field>
@@ -778,25 +778,20 @@ function DatesEditor({
 }) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-      <Field label="Start date" htmlFor="target-edit-start">
-        <Input
-          id="target-edit-start"
-          type="date"
-          value={draft.start}
-          onChange={(e) => set({ start: e.target.value })}
-          className="h-8"
-        />
-      </Field>
-      <Field label="End date" htmlFor="target-edit-end">
-        <Input
-          id="target-edit-end"
-          type="date"
-          min={draft.start || undefined}
-          value={draft.end}
-          onChange={(e) => set({ end: e.target.value })}
-          className="h-8"
-        />
-      </Field>
+      <div className="sm:col-span-2">
+        <Field label="Start and end date" htmlFor="target-edit-dates">
+          <DateRangePicker
+            id="target-edit-dates"
+            aria-label="Start and end date"
+            from={draft.start || null}
+            to={draft.end || null}
+            onChange={({ from, to }) =>
+              set({ start: from ?? '', end: to ?? '' })
+            }
+            className="sm:w-72"
+          />
+        </Field>
+      </div>
       <Field label="Split">
         <div className="flex flex-wrap items-center gap-2">
           <Switch

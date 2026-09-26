@@ -14,7 +14,7 @@ import { Card, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -28,11 +28,15 @@ import {
   useDebouncedSearch,
 } from '@/hooks/useDebouncedSearch';
 import { useHasPermission } from '@/hooks/usePermissions';
-import { todayMalaysiaYyyyMmDd } from '@/lib/helpers';
+import {
+  formatLocalDateToYyyyMmDd,
+  todayMalaysiaYyyyMmDd,
+} from '@/lib/helpers';
 import { useSalesTargets } from '../hooks/useSalesTargets';
 import { foldBySubject, type FoldedRow } from '../lib/fold';
 import {
   BASIS_LABEL,
+  dateFromYmd,
   METRIC_LABEL,
   formatFigure,
   formatPct,
@@ -272,12 +276,14 @@ export default function SalesTargetsView() {
                   >
                     Active on
                   </Label>
-                  <Input
+                  <DatePicker
                     id="targets-active-on"
-                    type="date"
-                    value={on}
-                    onChange={(e) => changeOn(e.target.value)}
-                    className="w-44"
+                    value={dateFromYmd(on)}
+                    onChange={(d) =>
+                      d && changeOn(formatLocalDateToYyyyMmDd(d))
+                    }
+                    required
+                    className="w-52"
                   />
                 </div>
                 <ListSearchInput
