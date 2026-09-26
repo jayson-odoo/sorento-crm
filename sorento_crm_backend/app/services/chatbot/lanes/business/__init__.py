@@ -110,7 +110,9 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
             continue
         if e.get("entity_type") == "customer":
             uid = e.get("uuid")
-            if uid and uid not in customer_ids:
+            # #1262 slice 2 (F1c): never a kind-pick's printed label or an
+            # unresolved code, only a real uuid.
+            if fetch_mod.is_uuid(uid) and uid not in customer_ids:
                 customer_ids.append(uid)
     if not customer_ids:
         # R13/R15: the same fallback `fetch._outstanding_filters_from_ctx` makes. A turn
@@ -119,7 +121,9 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
         # filter set, already resolved, and they have to ride back out on it too or the
         # re-asked question loses the only subject it has.
         customer_ids = [
-            uid for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids")) if uid
+            uid
+            for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids"))
+            if fetch_mod.is_uuid(uid)
         ]
     return {
         "product_code": product_codes[0] if product_codes else None,
@@ -449,6 +453,37 @@ def _sales_report_not_enabled() -> dict[str, Any]:
         "keys_served": False,
         # AC-1139/S4 point 9's own marker: this reply carries nothing but itself, so
         # the generic search-scope header must not print above it either.
+        "outstanding_report": True,
+    }
+    item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
+    return {
+        "kind": "result",
+        "_fetch_arm": item["_fetch_arm"],
+        "delegate": DELEGATE,
+        "delegate_payload": {"fetch": item},
+        "fetch": item,
+    }
+
+
+def _which_customer_ask() -> dict[str, Any]:
+    """#1262 slice 2 (F1c), AC-S2-3: the turn's only customer subject is a stored id
+    that never resolved to a real uuid (a kind-pick's printed label, never re-typed) -
+    the report must not run over no customer at all ("Customer: all"). Same shape as
+    `_sales_report_not_enabled` (`has_result: True`, no `outstanding_ask`): nothing is
+    armed, so the miss lane and any escalation offer stay off this reply entirely.
+    """
+    structured: dict[str, Any] = {
+        "response": "Which customer is this outstanding report for?",
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": True,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
         "outstanding_report": True,
     }
     item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
@@ -1223,12 +1258,29 @@ def run_fetch(
         if isinstance(entities, list)
         else False
     )
+    # #1262 slice 2 (F1c): a carried customer id is a subject only when it is a real
+    # uuid - a kind-pick's printed label ("Sorento (customer)") riding on this same
+    # key is not a resolved customer, and must never count as one here either.
+    raw_carried_customer_ids = jsc.array(parse_output.get("outstanding_carried_customer_ids"))
+    carried_customer_ids = [u for u in raw_carried_customer_ids if fetch_mod.is_uuid(u)]
+    carried_customer_unusable = bool(raw_carried_customer_ids) and not carried_customer_ids
     # R13: on an ANSWERING turn the subject is whatever the stored filters carry - the
     # product code, the customer ids, or both - and neither needs resolving again: they
     # were resolved on the turn that asked.
-    carried_subject = bool(jsc.truthy(parse_output.get("outstanding_carried_product_code"))) or bool(
-        jsc.array(parse_output.get("outstanding_carried_customer_ids"))
+    carried_subject = (
+        bool(jsc.truthy(parse_output.get("outstanding_carried_product_code")))
+        or bool(carried_customer_ids)
     )
+    if (
+        domain == "order"
+        and not (has_product or has_customer or carried_subject)
+        and carried_customer_unusable
+        and (order_status_raw == "outstanding" or order_status_raw in fetch_mod.ORDER_STATUS_TO_SCOPE)
+    ):
+        # AC-S2-3: the ONLY subject this turn has is an unusable stored customer (the
+        # label, never re-typed) - never run the report over no customer at all
+        # ("Customer: all"); ask, with no tool call.
+        return _which_customer_ask()
     if (
         domain == "order"
         and (has_product or has_customer or carried_subject)

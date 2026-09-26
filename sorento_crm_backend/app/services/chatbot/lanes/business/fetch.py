@@ -331,6 +331,16 @@ _UUID_RE = re.compile(
 )
 
 
+def is_uuid(value: Any) -> bool:
+    """The one shape check for "is this a real uuid" (#1262 slice 2, F1c) - every seam
+    that writes a `uuid` field or a `*_ids` filter off a bare string calls this rather
+    than growing its own regex. A kind-pick's printed label ("Sorento (customer)") is
+    not one, and neither is an unresolved code the resolver never placed; only a real
+    `_UUID_RE`-shaped id is.
+    """
+    return bool(jsc.truthy(value) and _UUID_RE.match(jsc.js_string(value)))
+
+
 def entity_has_resolved_uuid(entity: dict[str, Any]) -> bool:
     """The single-entity half of `entity_ids_transformer`'s own `missing_or_bad_uuid`
     read, lifted out so a second caller can ask the SAME question rather than a second
@@ -341,7 +351,7 @@ def entity_has_resolved_uuid(entity: dict[str, Any]) -> bool:
     applies per entity before building `*_ids`.
     """
     uuid = jsc.get(entity, "uuid") if jsc.truthy(entity) else None
-    return bool(jsc.truthy(uuid) and _UUID_RE.match(jsc.js_string(uuid)))
+    return is_uuid(uuid)
 
 
 # Tools that answer a DOCUMENT request and must be given something to narrow by.
@@ -624,8 +634,13 @@ def entity_ids_transformer(
         # AC-1132: the scope-answer's carried customer_ids are ALREADY resolved UUIDs
         # (restored by `head/output_exchange.py`, never re-parsed) - they win over
         # whatever THIS turn's own (empty) entity list produced.
-        carried_customers = jsc.get(semantic_input, "outstanding_carried_customer_ids")
-        if isinstance(carried_customers, list) and carried_customers:
+        # #1262 slice 2 (F1c): a session's carried customer subject is a resolved
+        # uuid or it is nothing - a kind-pick's printed label ("Sorento (customer)")
+        # riding on this same key must never reach the tool as a `customer_ids` filter.
+        carried_customers = [
+            u for u in jsc.array(jsc.get(semantic_input, "outstanding_carried_customer_ids")) if is_uuid(u)
+        ]
+        if carried_customers:
             out["customer_ids"] = carried_customers
         # AC-1138 (D10 on main): "1"/"2" against an open detail offer re-runs THIS
         # SAME tool with `detail=so|do` - the MCP layer swaps in the numbered list
@@ -653,8 +668,11 @@ def entity_ids_transformer(
         # AC-1132-equivalent: the offer's carried customer_ids are ALREADY resolved
         # UUIDs (restored by `head/output_exchange.py`, never re-parsed) - they win
         # over whatever THIS turn's own (empty) entity list produced.
-        carried_customers = jsc.get(semantic_input, "outstanding_carried_customer_ids")
-        if isinstance(carried_customers, list) and carried_customers:
+        # #1262 slice 2 (F1c): same uuid-only rule as `crm_outstanding_report` above.
+        carried_customers = [
+            u for u in jsc.array(jsc.get(semantic_input, "outstanding_carried_customer_ids")) if is_uuid(u)
+        ]
+        if carried_customers:
             out["customer_ids"] = carried_customers
         # R-B3 (reviewer finding, Phase 3 fix round): the turn's OWN sales_channel wins
         # when given; a pick or a refinement of an open sales_report_detail offer names
@@ -1802,14 +1820,18 @@ def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
             continue
         if e.get("entity_type") == "customer":
             uid = e.get("uuid")
-            if uid and uid not in customer_ids:
+            # #1262 slice 2 (F1c): never a kind-pick's printed label or an
+            # unresolved code, only a real uuid.
+            if is_uuid(uid) and uid not in customer_ids:
                 customer_ids.append(uid)
     if not customer_ids:
         # R13: a CUSTOMER-subject answering turn resolved no entity this turn - the ids
         # rode in on the carried filter set, and they have to ride back out on it too, or
         # the offer this hit arms loses the only subject it has.
         customer_ids = [
-            uid for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids")) if uid
+            uid
+            for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids"))
+            if is_uuid(uid)
         ]
     return {
         "product_code": product_codes[0] if product_codes else None,

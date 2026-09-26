@@ -1357,6 +1357,8 @@ def candidates_by_kind(
     each one ("has incoming"). Deduped on identity, in the resolver's own order - the
     order the customer will read the numbers in.
     """
+    from app.services.chatbot.lanes.business.fetch import is_uuid as is_uuid_value
+
     stamps = gate.get("incoming_by_code") if isinstance(gate.get("incoming_by_code"), dict) else {}
     grouped: dict[str, list[dict[str, Any]]] = {}
     seen: dict[str, set[str]] = {}
@@ -1371,10 +1373,14 @@ def candidates_by_kind(
         if identity in seen.setdefault(kind, set()):
             continue
         seen[kind].add(identity)
+        # #1262 slice 2 (F1c): `uuid` is a real uuid or nothing - falling back to
+        # `code` here is how a kind-pick's printed label ("Sorento (customer)") ended
+        # up as a candidate's own `uuid`.
+        row_uuid = row.get("uuid")
         built: dict[str, Any] = {
             "raw": code or row.get("raw"),
             "canonical_code": code or None,
-            "uuid": row.get("uuid") or code,
+            "uuid": row_uuid if is_uuid_value(row_uuid) else None,
             "hint": kind,
         }
         family = row.get("uuids")
@@ -1496,7 +1502,12 @@ def outstanding_carry(
         out["outstanding_carried_product_code"] = carried_codes[0]
         if len(carried_codes) > 1:
             out["outstanding_carried_product_codes"] = carried_codes
-    ids = [e["uuid"] for e in focus.customers if isinstance(e, dict) and e.get("uuid")]
+    # #1262 slice 2 (F1c): only a real uuid rides out as a carried customer id - a
+    # kind-pick's printed label ("Sorento (customer)") settled onto `focus.customers`
+    # must never reach the next turn's `outstanding_carried_customer_ids`.
+    from app.services.chatbot.lanes.business.fetch import is_uuid as _is_uuid
+
+    ids = [e["uuid"] for e in focus.customers if isinstance(e, dict) and _is_uuid(e.get("uuid"))]
     if ids:
         out["outstanding_carried_customer_ids"] = ids
     for entity in focus.warehouse:
@@ -2530,7 +2541,13 @@ def _spec_row(entity: dict[str, Any]) -> dict[str, Any]:
     product word ("cheaper") reached this fallback with neither, and every downstream
     code reader then sent it to the tool verbatim as `product_code=cheaper`.
     """
-    uuid = entity.get("uuid") or entity.get("canonical_code")
+    # #1262 slice 2 (F1c): `uuid` is a real uuid or it is absent - never `canonical_code`
+    # promoted into it, which is how a kind-pick's printed label ("Sorento (customer)")
+    # ended up in `uuid` here (the diagnosis transcript's own recorded state).
+    from app.services.chatbot.lanes.business.fetch import is_uuid as _is_uuid
+
+    raw_uuid = entity.get("uuid")
+    uuid = raw_uuid if _is_uuid(raw_uuid) else None
     settled_raw = entity.get("raw") if uuid else None
     return {
         "entity_type": entity.get("hint"),

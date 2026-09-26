@@ -381,7 +381,12 @@ def _settle_question_subject(focus: Focus, pending: Pending, trace: Trace | None
             # code the question had been asked about (AC-1119,
             # `test_the_answer_turn_reports_the_typed_code`).
             trace.picked_kinds.append("product")
-    ids = [u for u in (filters.get("customer_ids") or []) if u]
+    # #1262 slice 2 (F1c): a stored `customer_ids` filter is a resolved uuid or it is
+    # nothing - a kind-pick's printed label ("Sorento (customer)") that got as far as
+    # this filter set must never be settled onto focus as if it were one.
+    from app.services.chatbot.lanes.business.fetch import is_uuid
+
+    ids = [u for u in (filters.get("customer_ids") or []) if is_uuid(u)]
     if ids:
         focus.customers = [
             {"uuid": uid, "hint": "customer", "current_message": False} for uid in ids
