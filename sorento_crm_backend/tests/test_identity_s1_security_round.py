@@ -69,6 +69,31 @@ def _eligible_chain(db):
     return ws, contact, user, digits
 
 
+def _seed_signin_code(db, contact) -> str:
+    """S1 moved OTP creation out of the request-code route and into the
+    background job; tests that need a REAL code on the test's own
+    (blank_session) db call `create_and_dispatch_otp` directly with a fake
+    inline task, exactly mirroring what that job does, without touching the
+    real Respond.io send or the real Redis queue."""
+    from app.services.phone_signin_service import SIGNIN_OTP_TEXT
+
+    captured: dict = {}
+
+    def _fake_task(otp_id, identifier, message_text, otp_code, space_id):
+        captured["code"] = otp_code
+        return {"status": "success"}
+
+    space_id = ""
+    workspace = getattr(contact, "workspace", None)
+    if workspace is not None:
+        space_id = getattr(workspace, "space_id", None) or ""
+
+    PortalService(db).create_and_dispatch_otp(
+        contact, space_id, SIGNIN_OTP_TEXT, _fake_task, dispatch_inline=True
+    )
+    return captured["code"]
+
+
 class _client_ctx:
     def __init__(self, db):
         self.db = db
@@ -338,6 +363,10 @@ def test_b2_redis_counter_is_incremented_before_the_code_is_compared(rate_limit_
         with _client_ctx(db) as client:
             with patch("app.services.queue_service.enqueue_job"):
                 client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
+            # S1 moved OTP creation into the (here, mocked-out) background
+            # job - seed a real row the same way that job would, via the
+            # same create_and_dispatch_otp the route no longer calls inline.
+            _seed_signin_code(db, contact)
             with patch("hmac.compare_digest", side_effect=_fake_compare):
                 resp = client.post(
                     "/api/v1/auth/phone/verify", json={"phone": digits, "code": "000000"}
