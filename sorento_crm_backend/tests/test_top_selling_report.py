@@ -121,13 +121,11 @@ def _category(db, name: str) -> ProductCategory:
     return row
 
 
-def _product(db, code: str | None = None, *, category: ProductCategory | None = None, uncategorised=False) -> Product:
+def _product(db, code: str | None = None, *, category: ProductCategory | None = None) -> Product:
     row = product(db, company_id=DEFAULT_COMPANY_ID, code=code or unique_code("SKU"))
     row.product_name = f"Name of {row.product_code}"
     if category is not None:
         row.category_id = category.id
-    if uncategorised:
-        row.category_id = None
     db.flush()
     return row
 
@@ -425,13 +423,12 @@ def test_category_grain(client, db):
 
 
 def test_category_filter(client, db):
-    """AC-1924: category_ids filters products.category_id; an uncategorised product
-    is absent under the filter and present without it; the echo names the category."""
+    """AC-1924: category_ids filters products.category_id (NOT NULL in this schema,
+    so every product has one); the echo names the category."""
     sinks = _category(db, "ZZT Sink Filter")
     inside = _product(db, "ZZTCATF-IN", category=sinks)
     outside = _product(db, "ZZTCATF-OUT")
-    loose = _product(db, "ZZTCATF-NONE", uncategorised=True)
-    for p in (inside, outside, loose):
+    for p in (inside, outside):
         _line(db, product_id=p.id, ordered=1, delivered=1, line_total=Decimal("1.00"))
     db.commit()
 
@@ -440,7 +437,7 @@ def test_category_filter(client, db):
     assert body["filters"]["category_name"] == "ZZT Sink Filter"
 
     unfiltered = _get(client, rank_by="quantity").json()
-    assert sorted(_codes(unfiltered)) == ["ZZTCATF-IN", "ZZTCATF-NONE", "ZZTCATF-OUT"]
+    assert sorted(_codes(unfiltered)) == ["ZZTCATF-IN", "ZZTCATF-OUT"]
     assert unfiltered["filters"]["category_name"] is None
 
 
