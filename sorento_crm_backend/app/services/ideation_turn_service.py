@@ -41,7 +41,13 @@ from app.services.conversation_variables_service import (
     get_for_contact,
     overwrite_for_contact,
 )
-from app.services.ideation_extractor import IdeateExtraction, extract_ideate_turn
+from app.services.ideation_extractor import (
+    IdeateExtraction,
+    derive_confirm,
+    extract_ideate_turn,
+    normalise_field_value,
+    normalise_title,
+)
 from app.services.ideation_media_service import (
     MediaCandidate,
     MediaClients,
@@ -106,11 +112,20 @@ _RECAP_FIELD_ORDER: tuple[tuple[str, str], ...] = (
 
 _QUESTION_MARKS = "?？"  # ASCII ? and full-width ？ (AC-1302)
 
+# #1279 round 2 (owner rulings, 26 Sep 2026):
+# - a captured value the extractor never produced (the intake seeds its required
+#   `problem` from the raw message when the extractor sent none) is never echoed;
+#   the recap says the field is still being worked out instead;
+# - the review turn always ends with this confirm question, and only a yes submits.
+_STILL_WORKING = "still being worked out"
+_CONFIRM_LINE = "Submit this idea? Reply yes to submit, or tell me what to change."
+
 # #1277: a field line, read regardless of the marker wrapped around its LABEL
 # ("Problem: x", "*Problem:* x", "*Problem*: x", Markdown "**Problem:** x",
 # italic "_Problem:_ x") - group 2 the label, group 3 the value. The closing
 # marker must repeat the opening one, so a value's own leading "*" is kept.
 _RECAP_LABELS = tuple(label for _key, label in _RECAP_FIELD_ORDER)
+_LABEL_TO_KEY = {label: key for key, label in _RECAP_FIELD_ORDER}
 _FIELD_LINE_RE = re.compile(
     r"^\s*(\*\*|\*|_)?\s*(" + "|".join(_RECAP_LABELS) + r")\s*(?:\1)?\s*:\s*(?:\1)?\s*(.*?)\s*$"
 )
@@ -136,15 +151,38 @@ _IDEA_TOKEN_RE = re.compile(r"\bIDEA[-\s]?(\d+)", re.I)
 _DUPLICATE_MENTION = "Similar idea exists:"
 
 
-def _ideate_reply_facts(result: dict[str, Any]) -> dict[str, Any]:
+def _same_value(a: Any, b: Any) -> bool:
+    return " ".join(str(a or "").casefold().split()) == " ".join(str(b or "").casefold().split())
+
+
+def _display_captured(
+    captured: dict[str, Any], clean_fields: dict[str, str] | None
+) -> dict[str, Any]:
+    """W1 (#1279 round 2): the captured values a recap may show. A value is shown
+    only when it is one the extractor produced (``clean_fields``, carried on the
+    pointer); anything else - the intake's own seed of ``problem`` from the raw
+    message on the first turn - shows as still being worked out. ``None`` (a
+    caller with no record) trusts ``captured`` as it is."""
+    if clean_fields is None:
+        return dict(captured)
+    return {
+        key: (value if not value or _same_value(value, clean_fields.get(key)) else _STILL_WORKING)
+        for key, value in captured.items()
+    }
+
+
+def _ideate_reply_facts(
+    result: dict[str, Any], clean_fields: dict[str, str] | None = None
+) -> dict[str, Any]:
     """The FACTS block for the S3 composer (R5) - status, title, captured
     answers, the next field to ask, any duplicate candidate, the idea number and
     the link. Never the model's own words: these are read straight off the
-    shared-service response."""
+    shared-service response, with a value the extractor never produced replaced
+    by the still-being-worked-out wording (W1)."""
     return {
         "status": str(result.get("status") or ""),
         "title": result.get("title") or "",
-        "captured": result.get("captured") or {},
+        "captured": _display_captured(result.get("captured") or {}, clean_fields),
         "next_field": result.get("next_field"),
         "duplicate_candidate": result.get("duplicate_candidate") or None,
         "idea_number": result.get("idea_number"),
@@ -174,8 +212,13 @@ def _format_ideate_reply(text_out: str, facts: dict[str, Any]) -> str:
       other status drops a line that is only the title. The duplicate
       candidate's "Similar idea exists: <title>" line is not the draft title and
       stays.
+
+    #1279 round 2: a field line always carries the FACT's value (the template
+    fallback echoes the intake's stored value, which may be a raw seed - W1), and
+    a ``review`` reply is the recap followed by the confirm question (W3).
     """
     title = str(facts.get("title") or "").strip()
+    captured = facts.get("captured") or {}
     drop_title = bool(title) and facts.get("status") != "complete"
     lines_out: list[str] = []
     for line in (text_out or "").splitlines():
@@ -184,12 +227,41 @@ def _format_ideate_reply(text_out: str, facts: dict[str, Any]) -> str:
         field = _field_line(line)
         if field:
             label, value = field
+            fact_value = captured.get(_LABEL_TO_KEY[label])
+            if fact_value:
+                value = str(fact_value)
             line = f"*{label}:* {value}".rstrip()
         # A dropped title line can leave two blank lines meeting; keep one.
         if not line.strip() and lines_out and not lines_out[-1].strip():
             continue
         lines_out.append(line)
+    if facts.get("status") == "review":
+        return _review_reply(lines_out, captured)
     return "\n".join(lines_out).strip()
+
+
+def _review_reply(lines: list[str], captured: dict[str, Any]) -> str:
+    """W3 (#1279 round 2, owner ruling 26 Sep 2026): every field is filled, so the
+    review reply asks for nothing but the confirmation. Any short prose line the
+    composer wrote (an answer to the user's question) stays on top; every
+    question it wrote goes (reply 3 of the owner's session asked for the
+    department here, and reply 4's only '?' was a typed one inside the
+    department value); then the recap in the fixed order; then the confirm
+    question, always last."""
+    prose = [
+        line
+        for line in lines
+        if line.strip()
+        and not _field_line(line)
+        and line.strip() != _CONFIRM_LINE
+        and not any(ch in line for ch in _QUESTION_MARKS)
+    ]
+    recap = [
+        f"*{label}:* {captured[key]}" for key, label in _RECAP_FIELD_ORDER if captured.get(key)
+    ]
+    if not recap:
+        recap = [line for line in lines if _field_line(line)]
+    return "\n".join(prose + recap + [_CONFIRM_LINE])
 
 
 def _ends_in_one_question(text_out: str) -> bool:
@@ -268,6 +340,12 @@ def _passes_reply_checks(text_out: str, facts: dict[str, Any]) -> bool:
 
     if not _facts_not_fabricated(text_out, facts, status):
         return False
+
+    # W3 (#1279 round 2): the review reply's recap and its confirm question are
+    # rebuilt from the facts by `_format_ideate_reply`, so its shape is not the
+    # model's to get right - only that it invented nothing.
+    if status == "review":
+        return True
 
     lines = [line.strip() for line in text_out.splitlines() if line.strip()]
 
@@ -405,14 +483,22 @@ def _compose_ideate_reply_from_facts(
     return composed
 
 
-def compose_ideate_reply(db: Session, *, result: dict[str, Any], user_message: str) -> str:
+def compose_ideate_reply(
+    db: Session,
+    *,
+    result: dict[str, Any],
+    user_message: str,
+    clean_fields: dict[str, str] | None = None,
+) -> str:
     """S3: compose the WhatsApp reply for a ``create_idea`` response from its
     FACTS (R5), falling back to the shared-service ``reply_text`` template on any
     LLM failure or a reply that fails the deterministic checks (AC-1301 to
     AC-1305, AC-1310, AC-1311). Either way the text goes through
-    ``_format_ideate_reply`` (#1277: bold labels, title only on ``complete``)."""
+    ``_format_ideate_reply`` (#1277: bold labels, title only on ``complete``;
+    #1279 round 2: fact values only, the confirm question on ``review``).
+    ``clean_fields`` is the values the extractor produced for this draft (W1)."""
     fallback_text = str(result.get("reply_text") or "")
-    facts = _ideate_reply_facts(result)
+    facts = _ideate_reply_facts(result, clean_fields)
     composed = _compose_ideate_reply_from_facts(
         db, facts=facts, user_message=user_message, fallback_text=fallback_text
     )
@@ -736,6 +822,17 @@ def handle_turn(
     # produced them. Threaded to the extractor as context so it can EXTEND a
     # field instead of losing what was captured earlier (AC-1219).
     prior_captured = ideation_state.get("captured") or {}
+    # W1 (#1279 round 2): the values the extractor produced for this draft, so a
+    # captured value it never produced (the intake's raw seed) is never echoed.
+    # `None` for a draft opened before this field existed: its captured values are
+    # trusted as they are rather than all hidden.
+    prior_clean_fields: dict[str, str] | None
+    if "clean_fields" in ideation_state:
+        prior_clean_fields = dict(ideation_state.get("clean_fields") or {})
+    elif ideation_state.get("draft_id"):
+        prior_clean_fields = None
+    else:
+        prior_clean_fields = {}
     prior_transcript = ideation_state.get("transcript") or []
     pending_media = ideation_state.get("pending_media") or None
     seen_media_ids: set[str] = set(ideation_state.get("seen_media_ids") or [])
@@ -755,6 +852,7 @@ def handle_turn(
         prior_duplicate_candidate = None
         prior_title = None
         prior_captured = {}
+        prior_clean_fields = {}
         prior_transcript = []
         pending_media = None
         seen_media_ids = set()
@@ -848,6 +946,29 @@ def handle_turn(
         prior_title=prior_title,
     )
 
+    # W2 (#1279 round 2): every value goes through the deterministic normaliser (no
+    # typed '?', no quotes, a Title Case department) whatever the model emitted,
+    # and `confirm` is derived here again from the normalised result so a plain yes
+    # submits even when the extraction came back empty (owner ruling 26 Sep 2026).
+    fields = {
+        key: cleaned
+        for key, value in extraction.fields.items()
+        if (cleaned := normalise_field_value(key, value))
+    }
+    title = normalise_title(extraction.title)
+    confirm = derive_confirm(
+        prior_status,
+        message_text,
+        fields=fields,
+        remove=extraction.remove,
+        review_action=extraction.review_action,
+    )
+    clean_fields: dict[str, str] | None = (
+        None if prior_clean_fields is None else {**prior_clean_fields, **fields}
+    )
+    for key in extraction.remove:
+        (clean_fields or {}).pop(key, None)
+
     # (4) build the §5.1 input deterministically. Captions fold into message_text so
     # create_idea's semantic collection/dedup sees the visual content (DC-6/9).
     message_for_intake = fold_captions_into_text(message_text, attachments)
@@ -859,17 +980,17 @@ def handle_turn(
         "submitter_contact_id": contact.phone_number,
         "message_text": message_for_intake,
         "raw_transcript": raw_transcript,
-        "fields": extraction.fields,
+        "fields": fields,
         "remove": extraction.remove,
         "skip": extraction.skip,
-        "confirm": extraction.confirm,
+        "confirm": confirm,
         # Always present, true or false: the shared service keys its board filter on it.
         "is_test": bool(is_test),
     }
     if effective_submitter_name:
         payload["submitter_name"] = effective_submitter_name
-    if extraction.title:
-        payload["title"] = extraction.title
+    if title:
+        payload["title"] = title
     if attachments:
         payload["attachments"] = attachments
     if draft_id:  # omitted on turn 1 (AC-12); passed through on continuation (AC-13/17)
@@ -907,7 +1028,9 @@ def handle_turn(
     result_draft_id = result.get("draft_id") or draft_id
     # S3: the LLM composes the reply from the response's FACTS, in the user's
     # language, falling back to the shared-service template on any failure (R5).
-    reply_text = compose_ideate_reply(db, result=result, user_message=message_text)
+    reply_text = compose_ideate_reply(
+        db, result=result, user_message=message_text, clean_fields=clean_fields
+    )
     link = result.get("link")
 
     # The media menu is appended to THIS reply (DC-8) - the create_idea echo first,
@@ -940,6 +1063,13 @@ def handle_turn(
             # `captured: {}` (a `remove` emptying the draft) with the stale
             # prior turn's answers - key presence decides, not truthiness.
             "captured": result["captured"] if "captured" in result else prior_captured,
+            # W1 (#1279 round 2): what the extractor produced for this draft (a
+            # legacy draft's trusted captured values seed it on its first turn here).
+            "clean_fields": (
+                clean_fields
+                if clean_fields is not None
+                else {**(result.get("captured") or prior_captured), **fields}
+            ),
             # Persist the running transcript so the NEXT turn appends to it (WS-B).
             "transcript": transcript_list,
             "updated_at": _now_iso(),

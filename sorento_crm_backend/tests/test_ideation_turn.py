@@ -240,7 +240,8 @@ def test_input_shape_and_extraction_passthrough(wired):
     assert p["submitter_contact_id"] == "+60123456789"
     assert "submitter" not in p
     assert p["message_text"] == "module is procurement, forget who"
-    assert p["fields"] == {"module": "procurement"}
+    # #1279 round 2 (W2): values are normalised (first letter capitalised).
+    assert p["fields"] == {"module": "Procurement"}
     assert p["remove"] == ["who"]
     assert p["confirm"] is False
 
@@ -543,7 +544,8 @@ def test_department_passthrough_as_typed_free_text(wired):
         {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
     )
     _turn(message_text="i have an idea, our warehouse team needs stock alerts")
-    assert wired.payloads[0]["fields"]["department"] == "warehouse team"
+    # Free text, no lookup - only normalised to a Title Case name (#1279 round 2, W2).
+    assert wired.payloads[0]["fields"]["department"] == "Warehouse Team"
 
 
 # --------------------------------------------------------------------------- #
@@ -628,7 +630,7 @@ def test_change_request_in_review_does_not_confirm(wired):
     )
     _turn(message_text="change the impact to faster checkout")
     assert wired.payloads[0]["confirm"] is False
-    assert wired.payloads[0]["fields"]["impact"] == "faster checkout"
+    assert wired.payloads[0]["fields"]["impact"] == "Faster checkout"  # normalised (#1279 round 2, W2)
 
 
 # --------------------------------------------------------------------------- #
@@ -1497,7 +1499,8 @@ def test_1277_recap_replay_bolds_labels_and_drops_title(wired):
         "*Solution:* dashboard widget\n"
         "*Impact:* faster visibility\n"
         "*Department:* sales\n"
-        "Is that right?"
+        # #1279 round 2 (W3): review asks the owner's confirm question.
+        "Submit this idea? Reply yes to submit, or tell me what to change."
     )
 
 

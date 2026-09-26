@@ -898,7 +898,13 @@ def test_format_drops_title_line_for_non_complete_status(title_line, status):
     text = f"{title_line}\nProblem: x\nWhat next?"
     out = _format_ideate_reply(text, facts)
     assert "sales order KPI tracking" not in out
-    assert out == "*Problem:* x\nWhat next?"
+    # #1279 round 2 (W3): a review reply always ends with the confirm question.
+    last = (
+        "Submit this idea? Reply yes to submit, or tell me what to change."
+        if status == "review"
+        else "What next?"
+    )
+    assert out == f"*Problem:* x\n{last}"
 
 
 def test_format_keeps_title_line_on_complete():

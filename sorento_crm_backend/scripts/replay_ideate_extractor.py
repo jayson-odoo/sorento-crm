@@ -1,4 +1,4 @@
-"""Replay the #1277 owner transcript through the ideation extractor (live LLM).
+"""Replay the owner's ideation transcripts through the ideation extractor (live LLM).
 
 Prints what the extractor emits for each user turn of the owner's 26 Sep 2026 console
 test, and the captured draft after each turn, so the Problem statement the recap would
@@ -13,7 +13,14 @@ No database, no shared service: the provider config comes from the environment a
 shared service's field merge is simulated as "latest value per key wins", which is what
 the intake does with ``fields`` (the extractor sends the FULL merged value).
 
-    OPENAI_API_KEY=sk-... venv/bin/python scripts/replay_ideate_extractor.py
+    OPENAI_API_KEY=sk-... venv/bin/python scripts/replay_ideate_extractor.py            # #1277, 26 Sep ~12:00Z
+    OPENAI_API_KEY=sk-... venv/bin/python scripts/replay_ideate_extractor.py 1409z      # PR #1279 round 2
+
+The ``1409z`` session also simulates the intake's own seeding of ``problem`` from the raw
+message when the extractor sends none (the root cause of the raw first capture), and
+prints each recap line the way ``handle_turn`` would show it: values normalised,
+a value the extractor never produced shown as "still being worked out", and whether
+the turn would submit (only a plain yes in review).
     # optional: IDEATE_REPLAY_PROVIDER=anthropic IDEATE_REPLAY_API_KEY=... IDEATE_REPLAY_MODEL=...
 """
 from __future__ import annotations
@@ -27,6 +34,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.services import ai_prompt_registry, ideation_extractor  # noqa: E402
+from app.services.ideation_turn_service import _RECAP_FIELD_ORDER, _display_captured  # noqa: E402
 
 # The owner's turns, verbatim from #1277. "both" answered the media menu, so it never
 # reached the extractor on the live turn either (media_selection path); it is kept here
@@ -38,6 +46,18 @@ TURNS = [
     "i guess, it will boost sales?",
     "will be sales manager",
     "yea",
+]
+
+# PR #1279 round 2: the owner's 26 Sep 14:09Z console session. Turns 1, 4 and 5 are
+# verbatim from the bot's echoes; turns 2, 3 and 6 are reconstructed from the replies
+# (the media menu answer, the impact answer, the final go-ahead).
+TURNS_1409Z = [
+    "i have an idea, i think we should implemnt production line",
+    "none",
+    "it will reduce our supply chain constraints",
+    "the manufactuirng?",
+    "manufacturing?",
+    "ok",
 ]
 
 FIELD_LABELS = {
@@ -58,15 +78,18 @@ def _config() -> SimpleNamespace:
 
 
 def main() -> None:
+    session = sys.argv[1] if len(sys.argv) > 1 else "1277"
+    turns = TURNS_1409Z if session == "1409z" else TURNS
     config = _config()
     prompt = ai_prompt_registry.PROMPT_KEYS["ideate_extractor"].fallback()
     captured: dict[str, str] = {}
+    clean_fields: dict[str, str] = {}
     title = ""
     status = None
     with patch.object(
         ideation_extractor, "AIAssistantConfigService", lambda _db: SimpleNamespace(get=lambda: config)
     ), patch.object(ideation_extractor.ai_prompt_registry, "render", lambda _db, _name: (prompt, None)):
-        for turn in TURNS:
+        for turn in turns:
             next_field = None
             if captured:
                 next_field = next(
@@ -82,15 +105,29 @@ def main() -> None:
                 captured=dict(captured),
                 prior_title=title or None,
             )
-            captured.update({k: v for k, v in out.fields.items() if v})
-            title = out.title or title
-            status = "review" if "impact" in captured else "collecting"
+            # The same deterministic pass handle_turn applies (W2, W3).
+            fields = {
+                k: c for k, v in out.fields.items() if (c := ideation_extractor.normalise_field_value(k, v))
+            }
+            confirm = ideation_extractor.derive_confirm(
+                status, turn, fields=fields, remove=out.remove, review_action=out.review_action
+            )
+            captured.update(fields)
+            clean_fields.update(fields)
+            if session == "1409z" and "problem" not in captured:
+                captured["problem"] = turn  # the intake's seed of its required field
+            title = ideation_extractor.normalise_title(out.title) or title
             print(f"> {turn}")
             print(f"  fields: {out.fields}")
-            print(f"  title: {title!r}  review_action: {out.review_action}")
-            for key in ("problem", "proposed_solution", "impact", "department"):
-                if key in captured:
-                    print(f"  {key}: {captured[key]}")
+            print(f"  title: {title!r}  review_action: {out.review_action}  confirm: {confirm}")
+            shown = _display_captured(captured, clean_fields)
+            for key, label in _RECAP_FIELD_ORDER:
+                if key in shown:
+                    print(f"  *{label}:* {shown[key]}")
+            if confirm:
+                print("  -> submitted")
+                break
+            status = "review" if "impact" in captured else "collecting"
             print()
 
 

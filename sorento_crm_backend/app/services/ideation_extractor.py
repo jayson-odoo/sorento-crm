@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -127,8 +128,9 @@ IDEATE_EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
             "type": "string",
             "enum": sorted(_REVIEW_ACTIONS),
             "description": (
-                "Only meaningful while the draft status is 'review'. 'submit' for "
-                "an explicit yes/ok/boleh/submit/confirm. 'change' when the user "
+                "Only meaningful while the draft status is 'review'. 'submit' ONLY "
+                "for a plain yes: yes, ok, ya, boleh, 好, 可以 (or submit/confirm). "
+                "A question, a hesitation or an edit is never submit. 'change' when the user "
                 "is editing a captured field this turn (put the edit in fields and "
                 "the request in change_text). 'cancel' when the user wants to drop "
                 "the draft - this one is honoured at ANY draft status, not only "
@@ -177,6 +179,96 @@ class IdeateExtraction:
     confirm: bool = False
 
 
+# #1279 round 2 (owner ruling, 26 Sep 2026): "only a yes creates the idea", in the
+# owner's languages. `submit` / `confirm` stay accepted (R3, AC-1208).
+_YES_WORDS = {"yes", "ok", "okay", "ya", "yup", "yeah", "boleh", "submit", "confirm", "好", "好的", "可以"}
+# Particles that may ride along a bare yes ("ok lah", "yes please") without making it
+# anything more than a yes.
+_YES_FILLERS = {"lah", "la", "please", "pls"}
+_WORD_RE = re.compile(r"[a-z]+|[\u4e00-\u9fff]+")
+
+# W2: punctuation a user types at either end of an answer ("manufacturing?") is
+# never part of the value. Sentence-final "." and "。" are kept on a sentence field.
+_EDGE_PUNCT = "?？!！,，;；:："
+_QUOTES = "\"'“”‘’「」『』"
+_DEPARTMENT_ARTICLES = ("the ", "our ", "my ")
+
+
+def _yes_tokens(message_text: str) -> list[str]:
+    return _WORD_RE.findall((message_text or "").lower())
+
+
+def derive_confirm(
+    status: str | None,
+    message_text: str,
+    *,
+    fields: dict[str, str],
+    remove: list[str],
+    review_action: str,
+) -> bool:
+    """The one place that decides ``confirm`` (AC-1201), per the owner's ruling of
+    26 Sep 2026: only a yes, while the draft is in ``review``, creates the idea.
+
+    - never outside ``review`` (AC-1211), never alongside a field edit or removal
+      (that is a change request and re-enters the recap), never on change/cancel;
+    - a bare yes (``yes``, ``ok``, ``ya``, ``boleh``, ``好``, ``可以``, optionally with
+      ``lah`` / ``please``) confirms on its own, so an extractor outage cannot
+      strand a draft at the confirm question;
+    - a longer message confirms only when the model read it as ``submit`` AND it
+      carries a yes word ("ok that's correct", "can you just submit it already").
+    """
+    if status != "review" or fields or remove or review_action in ("change", "cancel"):
+        return False
+    tokens = _yes_tokens(message_text)
+    if not tokens:
+        return False
+    if all(t in _YES_WORDS or t in _YES_FILLERS for t in tokens) and any(t in _YES_WORDS for t in tokens):
+        return True
+    return review_action == "submit" and any(t in _YES_WORDS for t in tokens)
+
+
+def _strip_edges(value: str) -> str:
+    text = (value or "").strip()
+    previous = None
+    while text != previous:
+        previous = text
+        text = text.strip().strip(_QUOTES).strip().strip(_EDGE_PUNCT).strip()
+    return text
+
+
+def _title_case_word(word: str) -> str:
+    # Keep an acronym ("IT", "HR") as typed; otherwise capitalise the first letter.
+    if len(word) > 1 and word.isupper():
+        return word
+    return word[:1].upper() + word[1:].lower()
+
+
+def normalise_field_value(key: str, value: str) -> str:
+    """W2 (#1279 round 2): the deterministic clean-up every extracted value goes
+    through before it reaches the intake. The prompt's CLEAN VALUES rule does the
+    wording and the spelling; this guarantees the mechanical part whatever the
+    model emitted: no quotes or typed ``?``/``!`` at either end, a first capital,
+    and a department as a short Title Case name without a leading "the"/"our"."""
+    text = _strip_edges(value)
+    if not text:
+        return ""
+    if key == "department":
+        lowered = text.lower()
+        for article in _DEPARTMENT_ARTICLES:
+            if lowered.startswith(article):
+                text = text[len(article):].strip()
+                break
+        return " ".join(_title_case_word(w) for w in text.split())
+    return text[:1].upper() + text[1:]
+
+
+def normalise_title(title: str) -> str:
+    """W2: the title is a label - no quotes, no trailing punctuation, first
+    letter capitalised, at most 8 words (AC-1202)."""
+    text = _strip_edges(title).rstrip(".。").strip()
+    return _cut_title(text[:1].upper() + text[1:])
+
+
 def _cut_title(title: str) -> str:
     """At most 8 words (AC-1202) - a longer model output is cut to its first 8."""
     words = (title or "").split()
@@ -198,9 +290,11 @@ def extract_ideate_turn(
     """Extract the ideate NLU output from ``message_text`` given the draft context.
 
     Never raises - degrades to an empty extraction on any failure. ``confirm`` is
-    derived here (AC-1201): true only when ``review_action == "submit"`` AND
-    ``status == "review"`` (D-CONFIRM / AC-1208 / AC-1211) - a confirmation only
-    means anything once the draft is being reviewed. ``cancel`` has no such gate:
+    derived here (AC-1201) by ``derive_confirm``: only a yes while ``status ==
+    "review"`` (D-CONFIRM / AC-1208 / AC-1211, owner ruling 26 Sep 2026) - a
+    confirmation only means anything once the draft is being reviewed. ``handle_turn``
+    derives it again after its own normalisation, so an empty (failed) extraction
+    still lets a plain yes submit. ``cancel`` has no such gate:
     the caller reads ``review_action == "cancel"`` directly and honours it at any
     status (AC-1211).
     """
@@ -299,10 +393,11 @@ def extract_ideate_turn(
     if duplicate_choice not in _DUPLICATE_CHOICES:
         duplicate_choice = "none"
 
-    # AC-1208/AC-1211: submit only counts while the draft is under review - the
-    # existing D-CONFIRM guard, moved here now that the model no longer emits
-    # `confirm` directly.
-    confirm = bool(review_action == "submit" and status == "review")
+    # AC-1208/AC-1211, narrowed by the owner's ruling of 26 Sep 2026 (#1279 round
+    # 2): only a yes while the draft is under review confirms.
+    confirm = derive_confirm(
+        status, raw, fields=fields, remove=remove, review_action=review_action
+    )
 
     return IdeateExtraction(
         fields=fields,
