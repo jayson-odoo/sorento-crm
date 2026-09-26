@@ -313,3 +313,73 @@ class TestS5UnlistedBrandBesideALiveOneIsSaidBack:
             f"an unlisted brand word beside a live one must be said back, never "
             f"silently filtered away: {reply!r}"
         )
+
+
+class TestS6TypedUnlistedBrandEndsTheCarry:
+    """Fix lane round 4, S6 (reviewer pass round 3 at 21d77994, probe P2): plan ruling 13
+    says the brand carries until a later order turn types another brand. A typed brand
+    that is not on the live list is that turn: it ends the carried brand, and is said
+    back, never answered with the carried brand's rows."""
+
+    def _run(self, session_factory, monkeypatch, tool_body):
+        chat = _Chat(session_factory, monkeypatch, attributes=[], tool_body=tool_body)
+        first = chat.say(
+            "delivery orders brand Sorento for Cheng Huat Sentul",
+            _delivered_orders_qf([_brand("Sorento"), _cheng_huat()]),
+        )
+        mark = len(chat.captured)
+        second = chat.say(
+            "delivery orders brand XYZ for Cheng Huat Sentul",
+            _delivered_orders_qf([_brand("XYZ"), _cheng_huat()]),
+        )
+        return chat, first, second, chat.calls_since(mark)
+
+    def _assert_no_carried_brand(self, chat, first, second, calls) -> None:
+        assert "Brand: Sorento" in first, first
+        order_calls = [(n, a) for n, a in calls if n in fetch_mod.ORDER_TOOLS]
+        assert order_calls, f"the second turn must call an orders tool: {calls}"
+        _, args = order_calls[0]
+        assert args.get("customer_ids") == [CHENG_HUAT_UUID], args
+        assert not args.get("brand_ids"), (
+            f"a typed brand that is not on the list ends the carried brand; it must "
+            f"never filter by the brand the earlier turn typed: {args}"
+        )
+        assert "Brand: Sorento" not in second, second
+        assert "XYZ" in second, f"the unlisted brand must be said back: {second!r}"
+
+    def test_miss_drops_the_carried_brand_and_names_xyz(self, session_factory, monkeypatch) -> None:
+        self._assert_no_carried_brand(*self._run(session_factory, monkeypatch, _MISS))
+
+    def test_hit_drops_the_carried_brand_and_names_xyz(self, session_factory, monkeypatch) -> None:
+        self._assert_no_carried_brand(*self._run(session_factory, monkeypatch, _HIT))
+
+    def test_the_next_bare_turn_does_not_bring_the_old_brand_back(
+        self, session_factory, monkeypatch
+    ) -> None:
+        chat, _first, _second, _calls = self._run(session_factory, monkeypatch, _MISS)
+        mark = len(chat.captured)
+        third = chat.say("what about August", _august_qf())
+        order_calls = [(n, a) for n, a in chat.calls_since(mark) if n in fetch_mod.ORDER_TOOLS]
+        assert order_calls, f"the follow-up must call an orders tool: {chat.captured}"
+        assert not order_calls[0][1].get("brand_ids"), order_calls[0][1]
+        assert "Brand: Sorento" not in third, third
+
+
+class TestN11BrandLookupFailureIsLogged:
+    """Fix lane round 4, N11: a real error reading the live brands must not drop the
+    carried brand in silence; the swallowed failure is logged at warning."""
+
+    def test_a_brand_lookup_error_logs_a_warning(self, monkeypatch, caplog) -> None:
+        import logging
+
+        from app.services.chatbot import turn_runtime
+
+        def boom(db):
+            raise RuntimeError("brands table unreachable")
+
+        monkeypatch.setattr(turn_runtime, "active_brands", boom)
+        with caplog.at_level(logging.WARNING, logger=turn_runtime.logger.name):
+            ids, names = turn_runtime.order_brand_filter(object(), {"entities": [_brand("Sorento")]}, None)
+        assert (ids, names) == ([], [])
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warnings and "brand" in warnings[0].getMessage().lower(), caplog.records

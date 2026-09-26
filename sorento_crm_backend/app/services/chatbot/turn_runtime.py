@@ -411,6 +411,8 @@ def order_brand_filter(
         live = {row["id"]: row for row in active_brands(db)}
     except Exception:  # noqa: BLE001 - a test double with no real session has no
         # brands either; the fetch then runs exactly as it did before this seam.
+        # Round 4, N11: logged, so a real DB error dropping the brand is visible.
+        logger.warning("order_brand_filter: live brand lookup failed", exc_info=True)
         return [], []
     ids = [b for b in jsc.array(semantic.get("outstanding_brand_ids")) if b in live]
     names = [
@@ -1945,6 +1947,10 @@ def make_tool_runner(
             brand_ids, brand_names = order_brand_filter(db, lane_out, focus)
             if brand_ids:
                 lane_out = {**lane_out, "outstanding_brand_ids": brand_ids}
+            from app.services.chatbot.lanes.business import typed_brand_words
+
+            if brand_ids or typed_brand_words(lane_out):
+                # Round 4, S6: a typed brand off the list ends the carry (ruling 13).
                 focus.outstanding_brand_ids = list(brand_ids)
         lane_ctx = {
             **ctx,

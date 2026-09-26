@@ -854,6 +854,20 @@ def _refinement_product_resolves(db: Any, token: str) -> bool:
     )
 
 
+def typed_brand_words(parse_output: dict[str, Any]) -> set[str]:
+    """The brand-hinted words this turn (or a refinement) typed, listed or not."""
+    words = {
+        jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
+        for e in [
+            *jsc.array(parse_output.get("entities")),
+            *jsc.array(parse_output.get("outstanding_refinement_entities")),
+        ]
+        if isinstance(e, dict) and jsc.js_string(e.get("hint") or "").strip().lower() == "brand"
+    }
+    words.discard("")
+    return words
+
+
 def _resolve_outstanding_brand_ids(
     parse_output: dict[str, Any],
     semantic_input: dict[str, Any],
@@ -878,15 +892,7 @@ def _resolve_outstanding_brand_ids(
     """
     if semantic_input.get("outstanding_brand_ids"):
         return
-    brand_tokens = {
-        jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
-        for e in [
-            *jsc.array(parse_output.get("entities")),
-            *jsc.array(parse_output.get("outstanding_refinement_entities")),
-        ]
-        if isinstance(e, dict) and jsc.js_string(e.get("hint") or "").strip().lower() == "brand"
-    }
-    brand_tokens.discard("")
+    brand_tokens = typed_brand_words(parse_output)
     if brand_tokens and db is not None:
         from app.services.chatbot.turn_runtime import active_brands
 
@@ -900,7 +906,10 @@ def _resolve_outstanding_brand_ids(
                     brand_ids.append(row["id"])
         if brand_ids:
             semantic_input["outstanding_brand_ids"] = brand_ids
-    if not semantic_input.get("outstanding_brand_ids"):
+    if not brand_tokens and not semantic_input.get("outstanding_brand_ids"):
+        # #1262 fix lane round 4, S6: only a turn that typed NO brand word rides the
+        # carried brand. A typed brand that matched no live row is still "another
+        # brand" (plan ruling 13): it ends the carry, and is said back as unplaced.
         # R13/R15/D10, the same fallback the customer-id carry above and
         # `_outstanding_filters_from`'s own docstring make: an ANSWERING turn (a scope
         # pick, an out-of-range re-ask, a refinement) typed no brand word of its own -
