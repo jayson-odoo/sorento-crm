@@ -37,10 +37,8 @@ vi.mock('@/lib/toast', () => ({
 
 const exportOrderSheet = vi.fn();
 const getOrderSummaryDemand = vi.fn();
-// PLAN-low-stock-export-split-25sep: the page now always mounts `LowStockExportDialog`
-// (closed), which reads `getLowStockPreview`/`previewLowStockExport` off this same module -
-// `importActual` keeps those (and `exportLowStockReport`/`exportOiWorksheet`, unused here)
-// real rather than undefined, while `exportOrderSheet`/`getOrderSummaryDemand` stay stubbed.
+// `importActual` keeps the module's other exports (`exportOiWorksheet`, unused here) real
+// rather than undefined, while `exportOrderSheet`/`getOrderSummaryDemand` stay stubbed.
 vi.mock('../services/summaryOrderService', async () => {
   const actual = await vi.importActual<typeof import('../services/summaryOrderService')>(
     '../services/summaryOrderService',
