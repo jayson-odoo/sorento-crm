@@ -8,14 +8,28 @@ This is NOT a live-parser console pass. The cloud lane has no LLM key and an emp
 so the parser verdict for each turn is stubbed, and so are the shared resolver and the MCP
 tool results (the same doubles `tests/chatbot/` uses). Everything after the parser is the real
 code: `engine.run_turn`, `resolve_gate`, `turn/decide.py`, `turn/apply.py`, fetch, compose,
-and the session read/write on Postgres. "Before" is origin/main `253dafaf1`; "after" is this
-branch at `9935664f3`. The after run seeds a real company scope, the contact at profile tier
-`office`, and an active brand `Sorento (SRT)` in the `brands` table, so brand resolution runs
-through the live brand list, not a stub.
+and the session read/write on Postgres.
+
+"After" was regenerated in fix lane round 2 (reviewer finding S4) at this branch's head after
+the origin/main merge (`f2392887`), as ONE conversation for one contact, turn after turn. The
+run seeds:
+
+- a real company scope and the contact at profile tier `office`;
+- an active brand `Sorento (SRT)` in `brands`, so brand resolution runs through the live list;
+- a real `customers` row `CHENG HUAT SENTUL`, so the report and scope-question headers read
+  the name back from the table. The first version of this document seeded no customer row,
+  which is why it printed `Customer: all`. That was a replay artifact, not a product defect.
+- the products `SRTBF 11502`, `SRTBF 11503` and `M210-GM`.
+
+The stubbed report returns a rendered body with the list offer (so T5 runs under an open
+offer, as in the real chat); stock and incoming return no rows.
+
+"Before" is unchanged from the first version of this document (origin/main `253dafaf1`) and
+was not re-run.
 
 The live-parser pass is still owed: `sorento_crm_backend/tests/chatbot/console_cases/2026-09-26-samantha.yaml`,
 run against a local lane backend on the prod copy with the new prompt version id (see the
-file header).
+file header). It now carries T5 (reviewer finding S2).
 
 ## T2 / T3 "outstanding brand Sorento dealer Cheng Huat Sentul"
 
@@ -29,11 +43,11 @@ Which one do you mean?
 
 (Cheng Huat Sentul dropped from focus while the pick is open.)
 
-After (turn 1 of the exchange; the scope question is the existing Contract 38 rule):
+After, turn 1 (the scope question is the existing Contract 38 rule; no tool call yet):
 
 ```
 Product: all
-Customer: all
+Customer: CHENG HUAT SENTUL
 Location: all
 Order date: all
 Brand: Sorento
@@ -44,19 +58,43 @@ Outstanding for which document?
 ```
 
 No customer pick and no kind pick. Answering "3" calls `crm_outstanding_report` with
-`brand_ids` = Sorento's id and `customer_ids` = [Cheng Huat Sentul]
-(`test_samantha_26sep_s9_brand_resolve.py`, two-turn test). Open item: the scope question's
-own header prints `Customer: all` although the customer rides on the filters (see the PR).
+`customer_ids` = [CHENG HUAT SENTUL] and `brand_ids` = [Sorento], `scope: both`.
+
+## T5 photo list "SRTBF 11502 x3 / SRTBF 11503 x4" under the open offer
+
+After (parser verdict stubbed with `domain_hint: null`, `domain_in_message: false`):
+
+```
+Product: SRTBF 11502, SRTBF 11503
+Customer: CHENG HUAT SENTUL
+Location: all
+Order date: all
+Brand: Sorento
+...
+```
+
+Tool call: `crm_outstanding_report` with `product_codes` = both codes, the carried customer
+and the carried brand. The live parser's `domain_hint` on this turn is what the console case
+pins (S2): an `inventory` or `incoming` hint here would make it a new ask.
 
 ## T6 "got eta" under the open outstanding offer
 
-Before and after both print the incoming rows in this replay (the "0 products have incoming
-stock." header needs the real predicate search, which the stub does not run; it is pinned by
-`test_samantha_26sep_s6_incoming_header.py` at `envelope_of`). After: the outstanding offer is
-closed by the domain switch (`test_samantha_26sep_s4_offer_topic.py`), so the next photo is its
-own question.
+The offer closes on the domain switch (`test_samantha_26sep_s4_offer_topic.py`), and no
+"0 products have incoming stock." header prints (`test_samantha_26sep_s6_incoming_header.py`).
 
-## T7 / T9 photo, caption X5 / X4
+After:
+
+```
+Could not find incoming.
+```
+
+Tool call: `crm_incoming_stock_list` with NO product filter. The domain switch drops the
+closed offer's whole subject (`turn/apply.py::_drop_question_subject`), products included, so
+"got eta" is not asked about the two products the customer just sent. Found while
+regenerating this document and reported on the PR as a new finding. This round does not
+fix it.
+
+## T7 photo "X5 / M210-GM" (incoming)
 
 Before:
 
@@ -69,21 +107,21 @@ Outstanding for which document?
 I could not find X5: M210-GM.
 ```
 
-After:
+After (T6 closed the offer, so this is its own incoming ask):
 
 ```
-Product: M210-GM
-Customer: all
-...
-Outstanding for which document?
-...
+Here's what you want:
+• product: M210-GM (x5)
+
+But no incoming matched these.
+No incoming and no stock for M210-GM.
 ```
 
-The code is no longer glued to the caption, and no "Error executing tool" text appears. The raw
-INVALID_UUID leak itself is pinned by `test_samantha_26sep_s1_tool_error.py` and
-`test_samantha_26sep_s2_uuid_only.py`.
+The code is no longer glued to the caption, the parser's quantity prints beside the code
+(S1), no "Error executing tool" text appears, and there is no escalation offer (profile tier
+office, slice 11).
 
-## T10 photo X5 M210-GM, stock ask, staff
+## T10 photo "X5 / M210-GM", stock ask, staff
 
 Before:
 
@@ -97,6 +135,9 @@ Would you like me to escalate to warehouse team?
 After:
 
 ```
-No stock found for M210-GM.
-Nothing on incoming stock either.
+Here's what you want:
+• product: M210-GM (x5)
+
+But no inventory matched these.
+No stock and no incoming for M210-GM.
 ```
