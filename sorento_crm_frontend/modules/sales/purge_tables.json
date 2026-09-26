@@ -1,8 +1,10 @@
 {
   "moduleKey": "sales",
   "tables": [
+    "sales.opportunity_lines",
+    "sales.opportunities",
     "sales.team_members",
     "sales.teams"
   ],
-  "description": "Sales teams and their membership history. Sales agents and sales orders are core records and are not touched."
+  "description": "Sales teams and their membership history, and opportunities logged by salespeople. Sales agents, customers, products and sales orders are core records and are not touched."
 }
