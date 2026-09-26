@@ -11,7 +11,9 @@ Reuses the pickers' OWN mechanism, no second one:
 * `turn/decide.py::picked_positions` - a bare "2" arrives as `reference_positions`, a
   typed code or category name matches the option's label exactly.
 * `turn/apply.py` - the same close rules: a list whose every row was picked closes on
-  entry, and a new ask about something else closes it.
+  entry (pinned below), and a new ask about something else closes it
+  (`new_ask_closes_stale_roster`, which reads no kind, so it is inherited as is and pinned
+  by the pickers' own tests rather than again here).
 
 The rows come from the MCP envelope's `result_set` (`presenters._top_selling_envelope`),
 one per printed line, `idx` = the printed rank.
