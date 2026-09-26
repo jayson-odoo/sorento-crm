@@ -361,16 +361,47 @@ MCP stubbed), plus the console cases in `console_cases/2026-09-11-attribute-firs
   wash basins have stock." The count noun is the set's class. A word that was not understood
   is said ("I did not understand "zzqx", so it is not part of this search.").
 - AC-1362 (W3) Each set row is one line: product name (key spec) | code | the tool's fields.
+  AMENDED by AC-1366 (round 3): the row is a vertical block, never one line.
 - AC-1363 (W4) A bare count after the count question pages the set just asked, brand
   included; "another N" after a list continues from where it stopped with the header
-  repeated ("Here are 3 to 4."); a bare number after a listed page is not a page; the count
+  repeated ("Here are 3 to 4."); a bare number after a listed page is not a page (AMENDED
+  by AC-1367, round 3: it is); the count
   does not change between ask and page, and when stock moved the page says so. The bot never
   offers "more"/"next".
 - AC-1364 (W5) One chatbot default brand per company, seeded to Sorento, edited on Master Data >
   Brands. No brand named: "Brand: Sorento (default), ... Other brands: Mocha 3, name one to
-  see them."; a named brand answers that brand only; a page keeps the default; a default the
+  see them." (AMENDED by AC-1369, round 3: no "(default)", the other brands close the reply); a named brand answers that brand only; a page keeps the default; a default the
   set does not reach leaves the set whole. Evidence also `tests/test_brand_chatbot_default_route.py`,
   `tests/test_migration_bcd_0001_brand_chatbot_default.py`, and vitest
   `brands/[id]/page.chatbotDefault.test.tsx`, `brands/components/BrandFormDialog.chatbotDefault.test.tsx`.
 - AC-1365 (W6) "water basin" is Wash Basin even where the category lacks the synonym; a
   section header never lists more than five codes in one line.
+
+## J. Owner hand test of round 2 (26 Sep 2026 13:07Z to 13:11Z, contact 487555417) [BE]
+
+Evidence for each: `tests/chatbot/test_attribute_asks_round3.py` (whole turns through
+`engine.run_turn`, real resolver, class vocabulary and brands table, MCP stubbed), plus the
+round 3 console cases in `console_cases/2026-09-11-attribute-first-asks.yaml`.
+
+- AC-1366 (W1) Every set list reads top to bottom. A row is a block: line 1 "N. <product
+  name>" (the description when the name is only the code, never spec values), then one
+  "*Label:* value" line per field: Product Code, the key specs the header does not already
+  say, then the tool's fields (Total, each location; attachment type, file, certificate; ETA).
+  A blank line between products, no "|" anywhere in a set reply, the header one line, the
+  tool's own intro not repeated under it. Stock, certificate and incoming lists alike.
+- AC-1367 (W2) After a listed page, a bare count ("10") continues the SAME set in the same
+  layout ("Here are 31 to 40." over rows 31 to 40), whatever the parser read the number as
+  (null, `top_n`, a position). After the last page, a count answers "<header>. That is all
+  62." with no tool call. The bot never offers "more"/"next".
+- AC-1368 (W3) A class word the message names starts a new set: the earlier turn's class,
+  spec, brand and product entities the parser hands back (`current_message: false`) are
+  dropped. "which basin has cert" after a water closet set answers the wash basin
+  certificate set; it never blends the classes and never names the old codes.
+- AC-1369 (W4) No "(default)". No brand named and the company default applies: the header
+  reads "Brand: Sorento, Product type: Wash basin." and the reply's last line reads "Other
+  brands with stock: Bravat 79, Cabana 57. Name one to see them." ("with certificates" /
+  "with incoming" for those asks). A named brand answers that brand only.
+- AC-1370 (W5) Every listed product belongs to the header's brand, read off
+  `Product.brand_id` through the brands table, on the first answer and on a page. The GB
+  glass basin line is Sorento's in the catalogue (`brand_name` SORENTO, category `SRT-WB`,
+  e.g. GB3011B "SORENTO GLASS BASIN ONLY GB3011B").

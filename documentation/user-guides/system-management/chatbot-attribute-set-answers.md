@@ -37,8 +37,19 @@ Reply with a number ("10") and the bot lists that many from the start of the set
 Or narrow the question instead ("which sorento tap has cert") and the bot answers the smaller
 set. Naming a number in the question itself works the same way ("show 20 taps with cert").
 
-There is no paging: "more", "next" or "lagi" does not fetch another batch. Ask again with a
-number or a narrower question.
+Another number after a list continues the same set from where it stopped ("10" after the
+first 30 lists 31 to 40, "Here are 31 to 40."), and once every product has been listed the bot
+says "That is all 62." The bot never offers "more" or "next" itself. A new product type or a
+new question ("which basin has cert" after a water closet list) starts a new set.
+
+Each product is listed top to bottom: its name, then one line per field (product code, the key
+specs the first line does not already say, then stock, certificate or incoming details), with a
+blank line between products.
+
+When the question names no brand and the company has a chatbot default brand (Master Data >
+Brands), the answer covers that brand ("Brand: Sorento, Product type: Wash basin. ...") and the
+last line names the other brands with their counts: "Other brands with stock: Bravat 79,
+Cabana 57. Name one to see them."
 
 A dealer on an **Availability only** stock visibility policy asking "which tap got stock" is
 counted over the locations their policy allows only, and is never shown a quantity: each product

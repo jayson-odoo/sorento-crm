@@ -214,7 +214,7 @@ cases:
     cold: true
     expect:
       reply_contains: ["Brand: Sorento, Product type: Wash basin", "wash basins have stock"]
-      reply_not_contains: ["products have stock", "(default)"]
+      reply_not_contains: ["products have stock", "(default)", "Other brands"]
 
   - name: owner turns 9 then 10, the page keeps the brand set (W1, W4)
     cold: true
@@ -233,7 +233,9 @@ cases:
     turns:
       - text: "which wash basin has stock"
         expect:
-          reply_contains: ["Brand: Sorento (default)", "Other brands:"]
+          # Round 3 W4: no "(default)"; the other brands close the reply.
+          reply_contains: ["Brand: Sorento, Product type: Wash basin", "Other brands with stock:", "Name one to see them."]
+          reply_not_contains: ["(default)"]
       - text: "10"
         expect:
           reply_contains: ["Here are the first 10."]
@@ -241,4 +243,44 @@ cases:
         expect:
           reply_contains: ["Here are 11 to 50."]
           reply_not_contains: ["more", "next"]
+
+  # Owner hand test of round 2 (26 Sep 13:07Z to 13:11Z, contact 487555417), round 3 fixes.
+  - name: round 3 owner turns 1 to 3, a count after a page continues the same set (W1, W2)
+    cold: true
+    turns:
+      - text: "which water closet has stock, p trap"
+        expect:
+          reply_contains: ["Brand: Sorento, Product type: Water closet, Trap: P trap", "water closets have stock", "How many should I show"]
+          reply_not_contains: ["(default)", "|"]
+      - text: "30"
+        expect:
+          reply_contains: ["Here are the first 30.", "*Product Code:*"]
+          reply_not_contains: ["|", "Stock summary"]
+          no_uuid: true
+      - text: "10"
+        expect:
+          reply_contains: ["Brand: Sorento, Product type: Water closet, Trap: P trap", "Here are 31 to 40.", "*Product Code:*"]
+          reply_not_contains: ["|", "Stock summary"]
+          no_uuid: true
+
+  - name: round 3 owner turn 4, a new class word after a set is a new certificate set (W3)
+    cold: true
+    turns:
+      - text: "which water closet has stock, p trap"
+        expect:
+          reply_contains: ["water closets have stock"]
+      - text: "30"
+        expect:
+          reply_contains: ["Here are the first 30."]
+      - text: "which basin has cert"
+        expect:
+          reply_contains: ["Product type: Wash basin", "wash basins have certificates"]
+          reply_not_contains: ["Product: ", "Water closet", "|"]
+
+  - name: round 3 owner turns 7 and 9, incoming lists read top to bottom (W1, W4)
+    text: "which bathtub has incoming"
+    cold: true
+    expect:
+      reply_contains: ["have incoming stock", "*Product Code:*"]
+      reply_not_contains: ["|", "(default)"]
 

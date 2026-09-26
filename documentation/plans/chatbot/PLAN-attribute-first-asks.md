@@ -1,6 +1,6 @@
 # PLAN: attribute-first asks, "which products have X", across every product and domain
 
-Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged, revive repairs R35 to R38 and owner ruling R39 (no paging) built, reviewer pass fix round done; owner hand test round 2 (W1 to W6: brand binding, plain-words header, readable rows, paging keeps the set, chatbot default brand, water basin) built tester first; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
+Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged, revive repairs R35 to R38 and owner ruling R39 (no paging) built, reviewer pass fix round done; owner hand test round 2 (W1 to W6: brand binding, plain-words header, readable rows, paging keeps the set, chatbot default brand, water basin) built tester first; owner hand test of round 2 (round 3, W1 to W6: vertical rows, a count after a page continues, a new class word starts a new set, no "(default)", brand scope proven) built red first; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
 Test report: `attribute-first-asks-test-report.md`.
 UAC: `attribute-first-asks-acceptance-criteria.md`.
 Supersedes: `documentation/plans/_archive/chatbot/PLAN-spec-backward-search.md` (its backend half
@@ -362,6 +362,32 @@ then green, then kill-tested; tests in `tests/chatbot/test_attribute_asks_round2
 - W6 (AC-1365): `resolve_classes_for_term` also reads the shipped `CLASS_SYNONYMS` for a class
   the catalogue has, so "water basin" is Wash Basin on a database that never got 511's
   synonym; a section header names at most five subjects, past that it counts them.
+
+## Owner hand test of round 2, 26 Sep 2026 13:07Z (round 3, W1 to W6)
+
+The owner's run on console :3084 (contact 487555417), verbatim on the PR: "the message too
+long already, i prefer it to be line by line ... it needs to be vertical, don't use |, and
+why when i say 10, it gives some other answer, and ... when i ask which basin has cert, it
+gives weird answer, what does sorento (default) mean". Tests in
+`tests/chatbot/test_attribute_asks_round3.py`, each red first, then kill-tested.
+
+- W1 (AC-1366): `row_labels` returns `{name, specs[]}` per code; `fetch._set_item_block`
+  renders the vertical block. The attachments presenter's unkeyed "Product Code" is read as
+  the code. The tool's intro is dropped under a set header.
+- W2 (AC-1367): `turn_runtime.with_set_count_from_text` reads a bare count after a listed
+  page as a continuation; `page_the_set` keeps the carry after the last page and marks it
+  `exhausted`, and the runner answers "That is all N." without a tool call. Supersedes
+  round 2's "a bare number after a listed page is a row pick" (a set answer mints no roster).
+- W3 (AC-1368): `turn_runtime.with_new_set_words` drops earlier-turn set entities when the
+  message names a class word. Live cause of turn 4, reproduced: the parser handed back the
+  listed water closet codes, and the turn asked for the attachment type of a water closet.
+- W4 (AC-1369): `describe_set` loses "(default)"; `answer.other_brands_line` closes the
+  reply.
+- W5 (AC-1370): no code change. The brand scope is `Product.brand_id` joined to `brands`;
+  the GB glass basins are Sorento's in the catalogue sample
+  (`tests/fixtures/spec_derivation_golden_sample.json`: all 17 `GB*` codes under `SRT-WB`
+  carry `brand_name` SORENTO). Pinned by tests that list a Mocha GB-coded basin beside them.
+- W6: console bold/underline rendering is #1279's `WhatsAppText`; nothing duplicated here.
 
 ## Definition of done
 
