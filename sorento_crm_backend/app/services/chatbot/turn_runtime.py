@@ -281,8 +281,9 @@ def recent_exchanges(
     (PR #1247 round 8: the owner's "is the context too less already?").
 
     Read from the same rows and under the same three scopes as `previous_reply_text`,
-    so the newest pair's answer IS the Previous response. A row with no reply text or
-    no message text is skipped. A lookup failure is no exchanges, never a failed turn.
+    so the newest pair's answer IS the Previous response. A row with no reply text is
+    skipped; a row whose envelope carries no text (a photo or voice note) is "(media)".
+    A lookup failure is no exchanges, never a failed turn.
     """
     from app.models.chatbot_turn import ChatbotTurn
 
@@ -306,10 +307,9 @@ def recent_exchanges(
     for envelope, response in rows:
         reply = response.get("reply") if isinstance(response, dict) else None
         answer = reply.get("text") if isinstance(reply, dict) else None
-        said = _envelope_text(envelope)
-        if not (isinstance(answer, str) and answer.strip()) or said is None:
+        if not (isinstance(answer, str) and answer.strip()):
             continue
-        pairs.append((said, answer))
+        pairs.append((_envelope_text(envelope) or "(media)", answer))
         if len(pairs) == limit:
             break
     return list(reversed(pairs))

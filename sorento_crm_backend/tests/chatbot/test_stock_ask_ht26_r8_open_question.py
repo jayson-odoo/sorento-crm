@@ -631,11 +631,8 @@ def test_the_owner_round7_session_replayed():
     assert text3 == expected3
 
     # Row 4: "check stock" + the list pasted back, line 1 = 10, line 2 = 5, rest
-    # blank. A real "check stock" would reopen the family fresh via the resolver;
-    # the Console has none, so the task is reset to fresh-blank by hand first.
-    console.state = replace(
-        console.state, focus=replace(console.state.focus, tasks=(_task([None] * 10),))
-    )
+    # blank, chained straight on row 3 (review B1: no reset). The paste is the whole
+    # answer, so row 3's 30, 40 and 5 on lines 3 to 5 are skipped with the blanks.
     v4 = verdict(
         domain_hint="inventory",
         intent_hint="check_stock",
@@ -660,13 +657,10 @@ def test_the_owner_round7_session_replayed():
     )
     assert text4 == expected45
 
-    # Row 5: the same list pasted back again, no prefix. The brief's own precondition
-    # for this row is "the owner's row 4 state" - an open 10-line task with lines 1
-    # and 2 filled - set explicitly for the same reason as row 4 above.
-    console.state = replace(
-        console.state,
-        focus=replace(console.state.focus, tasks=(_task([10, 5] + [None] * 8),)),
-    )
+    assert console.plans[-1].fetch[0].filters.get("not_checked") == OWNER_FAMILY[2:]
+
+    # Row 5: the same list pasted back again, no prefix, chained: the check row 4
+    # answered is the "last_answer" now, and its two lines are answered again.
     v5 = verdict(
         entities=[],
         open_question_answer={
@@ -683,19 +677,18 @@ def test_the_owner_round7_session_replayed():
     )
     assert text5 == expected45
 
-    # Row 6: "that's it" - same open 10-line state, done with no items: answer what
-    # is filled, ask nothing new.
-    console.state = replace(
-        console.state,
-        focus=replace(console.state.focus, tasks=(_task([10, 5] + [None] * 8),)),
-    )
+    # Row 6: "that's it", chained: nothing is open any more (row 4 answered it), so it
+    # is a sign-off. Nothing is fetched and nothing asked; the real engine hands it to
+    # the casual lane. The owner's own row 6 (under the still-open list) is
+    # `test_row6_thats_it_under_the_open_list_answers_what_is_filled`.
     v6 = verdict(
         message_type="casual",
         entities=[],
         open_question_answer={"mode": "done", "items": [], "qty_for_all": None},
     )
-    text6 = console.say("that's it", v6)
-    assert text6 == expected45
+    console.say("that's it", v6)
+    assert console.plans[-1].fetch == [] and console.plans[-1].trace.task_question is None
+    assert not any("open_question_answer" in r for r in console.plans[-1].trace.rules_fired)
 
     # Row 7 (approximated): a single-product ask for SRTWC286-SH-150, no resolver.
     console.state = replace(
@@ -790,6 +783,13 @@ def test_the_owner_round7_session_replayed():
     # bigger list and never a blind fetch.
     text12 = console.say("10", verdict(demand_qty=10, entities=[]))
     assert text12 == ROW12_QUESTION
+    # And the answer to the clarify: "all" (the parser's mode all, no number of its own).
+    text13 = console.say(
+        "all",
+        verdict(entities=[], open_question_answer={"mode": "all", "items": [], "qty_for_all": None}),
+    )
+    for code in ROW9_CODES:
+        assert f"{code} x 10: {TOO_BIG}" in text13
 
     transcript = "\n".join(console.transcript)
     assert EM_DASH not in transcript and EN_DASH not in transcript
@@ -885,3 +885,170 @@ def test_engine_user_block_carries_recent_exchanges_on_a_second_turn(
     assert "Recent exchanges, oldest first:" in second_block
     assert "User: price for SRTWC8517" in second_block
     assert "Assistant: (the Previous response)" in second_block
+
+
+# =============================================================================== #
+# Review round (captain, after the reviewer pass): B1, S1 to S5, T1 and the nits
+# =============================================================================== #
+
+
+def _row12_state():
+    focus = Focus(products=ht.product_rows(*ROW9_CODES), domains=["inventory"], tasks=(_row12_task(),))
+    return ht.state(focus, turn_no=13)
+
+
+def test_b1_a_pasted_list_skips_lines_noted_earlier_but_left_blank():
+    """Row 3 then row 4 with no reset: lines 3 to 5 carry 30, 40, 5 from row 3, the
+    paste leaves them blank, and only lines 1 and 2 are answered."""
+    state = _state_with_task(_task([10, 20, 30, 40, 5] + [None] * 5))
+    v = verdict(
+        entities=[],
+        open_question_answer={
+            "mode": "done",
+            "items": [{"position": 1, "code": None, "qty": 10}, {"position": 2, "code": None, "qty": 5}],
+            "qty_for_all": None,
+        },
+    )
+    _new, plan = apply(state, v, build_policy())
+    (spec,) = ht.inventory_specs(plan)
+    assert spec.filters.get("requested_quantities") == {
+        ht.uuid_of(OWNER_FAMILY[0]): 10,
+        ht.uuid_of(OWNER_FAMILY[1]): 5,
+    }
+    assert spec.filters.get("not_checked") == OWNER_FAMILY[2:]
+
+
+def test_s1_a_line_number_after_the_clarify_places_the_asked_quantity():
+    """"2" after "Is 10 for all 3 products, or for one of them?", with no declared
+    answer (mode null, the parser read a position): line 2 at 10, never "Is 2 for all
+    3 products". The other lines keep their quantities and all three are answered."""
+    asked, _plan = apply(_row12_state(), verdict(demand_qty=10, entities=[]), build_policy())
+    (task,) = [t for t in asked.focus.tasks if t.kind == "stock_qty"]
+    assert task.asked_qty == 10
+    assert task_mod.open_question(asked.focus.tasks)["asked_qty"] == 10
+    after = replace(asked, turn_no=asked.turn_no + 1)
+    new_state, plan = apply(after, verdict(reference_positions=[2], entities=[]), build_policy())
+    assert "asked_quantity_placed" in plan.trace.rules_fired
+    (spec,) = ht.inventory_specs(plan)
+    assert spec.filters.get("requested_quantities") == {
+        ht.uuid_of(ROW9_CODES[0]): 5,
+        ht.uuid_of(ROW9_CODES[1]): 10,
+        ht.uuid_of(ROW9_CODES[2]): 1,
+    }
+    assert all(t.asked_qty is None for t in new_state.focus.tasks)
+
+
+def test_s1_the_asked_quantity_lasts_one_turn():
+    asked, _plan = apply(_row12_state(), verdict(demand_qty=10, entities=[]), build_policy())
+    later, _ = apply(
+        replace(asked, turn_no=asked.turn_no + 1),
+        verdict(message_type="casual", entities=[]),
+        build_policy(),
+    )
+    assert all(t.asked_qty is None for t in later.focus.tasks)
+
+
+def test_s2_a_number_about_another_domain_is_not_the_stock_clarify():
+    v = verdict(domain_hint="promotion", intent_hint="check_promotion", demand_qty=10, entities=[])
+    _new, plan = apply(_row12_state(), v, build_policy())
+    assert plan.trace.task_question != ROW12_QUESTION
+    assert "bare_number_over_a_finished_answer_asks_which" not in plan.trace.rules_fired
+
+
+def test_s3_a_parked_check_is_not_offered_and_not_answered():
+    parked = _task([10, 5] + [None] * 8, status=task_mod.PARKED)
+    assert task_mod.open_question((parked,)) is None
+    state = _state_with_task(parked)
+    v = verdict(
+        message_type="casual",
+        entities=[],
+        open_question_answer={"mode": "done", "items": [], "qty_for_all": None},
+    )
+    _new, plan = apply(state, v, build_policy())
+    assert not any("open_question_answer" in r for r in plan.trace.rules_fired)
+    assert ht.inventory_specs(plan) == []
+
+
+def test_s4_the_newest_reply_is_printed_when_it_is_not_the_previous_response():
+    block = parser_mod.build_user_block(
+        previous_response="something else",
+        latest_user_message="10 / 20",
+        pending_kind=None,
+        recent_exchanges=[("(media)", "How many units for each?")],
+    )
+    assert "User: (media)" in block.splitlines()
+    assert "Assistant: How many units for each?" in block.splitlines()
+
+
+def test_s4_a_media_turn_is_an_exchange_not_skipped(session_factory):
+    from app.services.chatbot import turn_runtime
+
+    db = session_factory()
+    contact = str(CONTACT_ID) + "-media"
+    db.add(
+        ChatbotTurn(
+            id=str(uuid.uuid4()),
+            contact_respond_id=contact,
+            message_id="ZZT-r8-media-1",
+            ingress="webhook",
+            is_test=False,
+            envelope={"message": {"message": {"message": {"type": "audio"}}}, "contact": {"id": contact}},
+            status="done",
+            response={"reply": {"text": "How many units for each?"}},
+        )
+    )
+    db.commit()
+    assert turn_runtime.recent_exchanges(
+        db, contact_respond_id=contact, ingress="webhook", is_test=False
+    ) == [("(media)", "How many units for each?")]
+
+
+def test_s5_the_hint_prints_the_lines_when_no_open_question_is_shown():
+    task = _task([10] + [None] * 9)
+    block = parser_mod.build_user_block(
+        previous_response="(none)",
+        latest_user_message="ok",
+        pending_kind="escalate_offer",
+        focus=Focus(domains=["inventory"], tasks=(task,)),
+    )
+    assert "1. SRTWC286-SH - 10; 2. SRTWC286-SH-150" in block
+    assert "see Open question" not in block
+
+
+def test_t1_a_product_not_on_the_list_leaves_the_object_unapplied():
+    """"10 for all, and check SRTKT1631SS": the new product is a new ask, never eaten."""
+    state = _state_with_task(_task([None] * 10))
+    v = verdict(
+        domain_hint="inventory",
+        entities=[ht.asked("SRTKT1631SS")],
+        open_question_answer={"mode": "all", "items": [], "qty_for_all": 10},
+    )
+    _new, plan = apply(state, v, build_policy())
+    assert not any("open_question_answer" in r for r in plan.trace.rules_fired)
+
+
+def test_t1_an_open_question_of_another_kind_leaves_the_object_unapplied():
+    from app.services.chatbot.turn import pending as turn_pending
+
+    state = replace(
+        _state_with_task(_task([None] * 10)),
+        pending=turn_pending.ask("escalate_offer", [], asked_at_turn=5),
+    )
+    v = verdict(entities=[], open_question_answer={"mode": "all", "items": [], "qty_for_all": 10})
+    _new, plan = apply(state, v, build_policy())
+    assert not any("open_question_answer" in r for r in plan.trace.rules_fired)
+
+
+def test_a_quantity_of_zero_or_less_leaves_the_object_unapplied():
+    state = _state_with_task(_task([None] * 10))
+    for bad in (0, -5):
+        v = verdict(
+            entities=[],
+            open_question_answer={
+                "mode": "fill",
+                "items": [{"position": 1, "code": None, "qty": bad}],
+                "qty_for_all": None,
+            },
+        )
+        _new, plan = apply(state, v, build_policy())
+        assert not any("open_question_answer" in r for r in plan.trace.rules_fired)

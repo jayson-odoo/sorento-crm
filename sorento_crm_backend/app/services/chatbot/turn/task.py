@@ -49,6 +49,11 @@ REFER_TO_SALESMAN = "Please refer to your salesman."
 #: `apply._numbered_lines_are_the_products`.
 SLOT_QUANTITIES = "slot_quantities"
 
+#: PR #1247 round 8 (review B1): with `SLOT_QUANTITIES`, the lines named ARE the whole
+#: answer. A list pasted back with blanks means the blank lines are skipped, whatever an
+#: earlier turn noted on them.
+ONLY_THESE_LINES = "slot_quantities_only"
+
 #: The header of the point-form question (round 6, ruling 2).
 EACH_QUESTION = "How many units for each?"
 
@@ -81,6 +86,9 @@ class Task:
     touched_at_turn: int = 0
     slots: tuple[Slot, ...] = ()
     not_checked: tuple[str, ...] = ()
+    #: PR #1247 round 8 (review S1): the number "Is 10 for all 3 products, or for one of
+    #: them?" asked about, kept for the ONE next turn so "2" or "all" can place it.
+    asked_qty: int | None = None
 
 
 class TaskKind(Protocol):
@@ -246,6 +254,8 @@ class StockQtyTask:
 
     def fill(self, task: Task, verdict: dict[str, Any]) -> Task:
         slots = list(task.slots)
+        if verdict.get(ONLY_THESE_LINES) is True:
+            slots = [replace(slot, value=None) for slot in slots]
         by_code: dict[str, int] = {}
         for entity in verdict.get("entities") or []:
             if not isinstance(entity, dict):
@@ -362,8 +372,10 @@ class StockQtyTask:
         ]
         return "\n".join([EACH_QUESTION, *lines])
 
-    def hint(self, task: Task) -> str:
-        """The line the parser reads."""
+    def hint(self, task: Task, *, open_question_shown: bool = True) -> str:
+        """The line the parser reads. `open_question_shown` False (the block carries no
+        `Open question:` object, e.g. under another open question) prints the lines here
+        as round 7 did, so the parser never reads a pointer to a line that is absent."""
         if task.status == ANSWERED:
             answered = [
                 f"{slot.label} x {slot.value}"
@@ -375,7 +387,14 @@ class StockQtyTask:
         if len(task.slots) > 1:
             # PR #1247 round 8: the point-form question's lines, what is noted and what
             # is owed ride on the `Open question:` object (`open_question`), stated once.
-            parts.append("Asked as numbered lines: see Open question.")
+            if open_question_shown:
+                parts.append("Asked as numbered lines: see Open question.")
+                return " ".join(parts)
+            lines = "; ".join(
+                f"{i}. {slot.label} - {'' if slot.value is None else slot.value}".rstrip()
+                for i, slot in enumerate(task.slots, 1)
+            )
+            parts.append(f"Asked as numbered lines, a blank quantity still owed: {lines}.")
             return " ".join(parts)
         noted = [
             f"{slot.label} x {slot.value}" for slot in task.slots if slot.value is not None
@@ -421,6 +440,7 @@ def task_to_wire(task: Task) -> dict[str, Any]:
             for slot in task.slots
         ],
         "not_checked": list(task.not_checked),
+        **({"asked_qty": task.asked_qty} if task.asked_qty is not None else {}),
     }
 
 
@@ -451,6 +471,7 @@ def task_from_wire(raw: Any) -> Task | None:
         not_checked=tuple(
             str(name) for name in (raw.get("not_checked") or []) if name is not None
         ),
+        asked_qty=_number(raw.get("asked_qty")),
     )
 
 
@@ -646,8 +667,8 @@ def _revised(task: Task, verdict: dict[str, Any], turn_no: int) -> Task | None:
     beside one, is a stock ask of its own and is answered as one.
 
     PR #1247 round 8: lines of any answered check are revised by `SLOT_QUANTITIES`,
-    which `apply._open_question_answer` writes from the parser's declared answer to
-    the "last_answer" object ("3 for all of them", "2. 10"). The other lines keep their
+    which `apply._open_question_answer` writes from the parser's declared answer
+    (`open_question_answer`) to the "last_answer" object ("3 for all of them", "2. 10"). The other lines keep their
     quantities, and the whole check is answered again."""
     quantities = {key.strip().casefold(): qty for key, qty in _slot_quantities(verdict).items()}
     if quantities:
@@ -993,7 +1014,9 @@ def open_question(tasks: Any) -> dict[str, Any] | None:
     """The stock question as the structured object the parser reads (PR #1247 round 8).
 
     `kind` is "stock_quantities" while the quantities are still asked and "last_answer"
-    once the check is answered (a follow-up may revise it, "3 for all of them"). `items`
+    once the check is answered (a follow-up may revise it, "3 for all of them"); a parked
+    check is not offered. `asked_qty` is present only after "Is N for all K products, or
+    for one of them?". `items`
     are the question's numbered lines in their fixed order, `qty` null while owed, and
     `owed` names those positions. The parser answers it in `open_question_answer`.
     None with no stock task. Reads a `Task` or its wire dict, like `hint_lines`.
@@ -1002,7 +1025,8 @@ def open_question(tasks: Any) -> dict[str, Any] | None:
         if _value(row, "kind") != "stock_qty":
             continue
         task = row if isinstance(row, Task) else task_from_wire(row)
-        if task is None or not task.slots:
+        if task is None or not task.slots or task.status == PARKED:
+            # A parked check is not the question on the table (review S3).
             continue
         items = [
             {"position": i, "code": slot.label, "qty": _number(slot.value)}
@@ -1012,11 +1036,12 @@ def open_question(tasks: Any) -> dict[str, Any] | None:
             "kind": "last_answer" if task.status == ANSWERED else "stock_quantities",
             "items": items,
             "owed": [item["position"] for item in items if item["qty"] is None],
+            **({"asked_qty": task.asked_qty} if task.asked_qty is not None else {}),
         }
     return None
 
 
-def hint_lines(tasks: Any) -> list[str]:
+def hint_lines(tasks: Any, *, open_question_shown: bool = True) -> list[str]:
     """One `Open task: ...` line per task, most recently touched first.
 
     Reads a task ROW, which may be a `Task` or the dict it is stored as - the parser
@@ -1032,5 +1057,5 @@ def hint_lines(tasks: Any) -> list[str]:
         as_task = row if isinstance(row, Task) else task_from_wire(row)
         if as_task is None:
             continue
-        lines.append(impl.hint(as_task))
+        lines.append(impl.hint(as_task, open_question_shown=open_question_shown))
     return lines

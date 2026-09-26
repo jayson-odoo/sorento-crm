@@ -606,7 +606,9 @@ def build_user_block(
         # and a domain switch are judged against something. One line, omitted whole when
         # the focus is empty.
         lines.append(subject)
-    for task_line in task_mod.hint_lines(getattr(focus, "tasks", None)):
+    for task_line in task_mod.hint_lines(
+        getattr(focus, "tasks", None), open_question_shown=bool(open_question)
+    ):
         lines.append(task_line)
     if open_question:
         lines.append(
@@ -636,10 +638,11 @@ def build_user_block(
         last = len(recent_exchanges) - 1
         for index, (user_text, assistant_text) in enumerate(recent_exchanges):
             lines.append(f"User: {_exchange_text(user_text)}")
-            # The newest reply IS the Previous response line; not paid for twice.
+            # The newest reply IS the Previous response line; not paid for twice. Only
+            # when it really is that reply (review S4): otherwise it is printed.
             lines.append(
                 "Assistant: (the Previous response)"
-                if index == last
+                if index == last and str(assistant_text or "").strip() == previous.strip()
                 else f"Assistant: {_exchange_text(assistant_text)}"
             )
     return "\n".join(lines)

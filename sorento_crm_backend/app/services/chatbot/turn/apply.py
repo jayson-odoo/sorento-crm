@@ -1841,9 +1841,10 @@ def _open_question_task(focus: Focus) -> Any:
     """The stock check the `Open question:` object states: still asking, or just
     answered (`task.open_question` picks the same one)."""
     for task in focus.tasks or ():
+        # A parked check is not the question on the table (review S3): "ok that's all"
+        # under another subject must not answer it.
         if task.kind == "stock_qty" and task.slots and task.status in (
             task_mod.OPEN,
-            task_mod.PARKED,
             task_mod.ANSWERED,
         ):
             return task
@@ -1865,7 +1866,49 @@ def _placed_line(item: dict[str, Any], slots: list[Any]) -> int | None:
     return None
 
 
-def _open_question_answer(state: State, verdict: dict[str, Any], trace: Trace) -> bool:
+def _positive(value: Any) -> int | None:
+    """A declared quantity the stock tool can be sent: a whole number above zero."""
+    quantity = _stated_quantity(value)
+    return quantity if quantity is not None and quantity > 0 else None
+
+
+def _take_asked_quantity(state: State) -> tuple[State, int | None]:
+    """The number "Is 10 for all 3 products, or for one of them?" asked about, taken
+    off the task: it answers the ONE next turn or is forgotten (review S1)."""
+    tasks = tuple(state.focus.tasks or ())
+    asked = next((t.asked_qty for t in tasks if t.asked_qty is not None), None)
+    if asked is None:
+        return state, None
+    cleared = tuple(replace(t, asked_qty=None) for t in tasks)
+    return replace(state, focus=replace(state.focus, tasks=cleared)), asked
+
+
+def _asked_quantity_placed(
+    state: State, verdict: dict[str, Any], trace: Trace, asked: int | None
+) -> None:
+    """The fallback half of the row 12 clarify: "2" after "Is 10 for all 3 products,
+    or for one of them?" is line 2 at 10, never 2 units (review S1). The parser's own
+    `open_question_answer` is read first; this runs only when it declared nothing."""
+    if asked is None or state.pending is not None:
+        return
+    task = _open_question_task(state.focus)
+    if task is None or task.status != task_mod.ANSWERED:
+        return
+    position = _lone_position(verdict)
+    if position is None:
+        bare = _stated_quantity(verdict.get("demand_qty"))
+        position = bare if not _names_a_product(verdict) else None
+    if position is None or not 1 <= position <= len(task.slots):
+        return
+    verdict[task_mod.SLOT_QUANTITIES] = {task.slots[position - 1].key: asked}
+    verdict["demand_qty"] = None
+    verdict["reference_positions"] = []
+    trace.rules_fired.append("asked_quantity_placed")
+
+
+def _open_question_answer(
+    state: State, verdict: dict[str, Any], trace: Trace, asked: int | None = None
+) -> bool:
     """PR #1247 round 8 (owner console test of round 7, 26 Sep 2026): the parser's own
     `open_question_answer` drives the stock question, before any shape rule.
 
@@ -1882,6 +1925,9 @@ def _open_question_answer(state: State, verdict: dict[str, Any], trace: Trace) -
     second shape. Returns False, and touches nothing, when the object is absent, mode
     null, or not usable (an item that places on no line, two on one line, "all" with no
     number): then the shape rules run as the fallback. Nothing here reads a word.
+
+    `asked` is the number the row 12 clarify asked about: "all" with no number of its
+    own gives every line that number.
     """
     answer = verdict.get(OPEN_QUESTION_ANSWER)
     if not isinstance(answer, dict) or state.pending is not None:
@@ -1896,7 +1942,9 @@ def _open_question_answer(state: State, verdict: dict[str, Any], trace: Trace) -
     answered = task.status == task_mod.ANSWERED
     quantities: dict[str, int] = {}
     if mode == "all":
-        each = _stated_quantity(answer.get("qty_for_all"))
+        each = _positive(answer.get("qty_for_all"))
+        if each is None and answer.get("qty_for_all") is None:
+            each = asked
         if each is None:
             return False
         quantities = {slot.key: each for slot in slots}
@@ -1904,10 +1952,12 @@ def _open_question_answer(state: State, verdict: dict[str, Any], trace: Trace) -
         for item in answer.get("items") or []:
             if not isinstance(item, dict):
                 continue
-            qty = _stated_quantity(item.get("qty"))
-            if qty is None:
+            if item.get("qty") is None:
                 # A blank line of a pasted list is skipped, never a quantity.
                 continue
+            qty = _positive(item.get("qty"))
+            if qty is None:
+                return False
             index = _placed_line(item, slots)
             if index is None or slots[index].key in quantities:
                 return False
@@ -1949,11 +1999,17 @@ def _open_question_answer(state: State, verdict: dict[str, Any], trace: Trace) -
         verdict["topic_reset"] = False
         verdict[task_mod.SLOT_QUANTITIES] = quantities
         verdict["proceed_anyway"] = True if (mode == "done" and not answered) else None
+        if mode == "done" and not answered and quantities:
+            # Review B1: the pasted list is the whole answer. A line left blank in it is
+            # skipped, even when an earlier turn noted a quantity on it.
+            verdict[task_mod.ONLY_THESE_LINES] = True
     trace.rules_fired.append(f"open_question_answer_{mode}")
     return True
 
 
-def _bare_number_over_a_finished_answer(state: State, verdict: dict[str, Any], trace: Trace):
+def _bare_number_over_a_finished_answer(
+    state: State, verdict: dict[str, Any], trace: Trace
+) -> tuple[State, Plan] | None:
     """PR #1247 round 8 (owner row 12): one bare number after a stock check answered for
     two or more products does not say which product it is for, so it is asked, over
     the SAME products and never a bigger list. The parser's declared answer ("all",
@@ -1973,10 +2029,13 @@ def _bare_number_over_a_finished_answer(state: State, verdict: dict[str, Any], t
         quantity = _lone_position(verdict)
     if (
         quantity is None
-        or _names_a_product(verdict)
+        or verdict.get("entities")
+        or verdict.get("domain_hint") not in (None, "inventory")
         or verdict.get("proceed_anyway") is True
         or verdict.get("topic_reset") is True
     ):
+        # A number beside anything of its own, or about another domain ("any promo for
+        # 10 units?"), is not this question (review S2).
         return None
     labels = [str(slot.label) for slot in task.slots]
     trace.rules_fired.append("bare_number_over_a_finished_answer_asks_which")
@@ -1988,6 +2047,10 @@ def _bare_number_over_a_finished_answer(state: State, verdict: dict[str, Any], t
     )
     focus = copy.deepcopy(state.focus)
     focus.domains = ["inventory"]
+    # The number rides on the task for the one next turn, so "2" or "all" can place it.
+    focus.tasks = tuple(
+        replace(t, asked_qty=quantity) if t is task else t for t in state.focus.tasks
+    )
     asked = State(
         focus=focus,
         pending=None,
@@ -2105,7 +2168,9 @@ def apply(
     # PR #1247 round 8: the parser's declared answer to the open stock question comes
     # first. The two shape rules below are the fallback, for a verdict that declares
     # none (a recorded emission, or a parser that left mode null).
-    if not _open_question_answer(state, verdict, trace):
+    state, asked_qty = _take_asked_quantity(state)
+    if not _open_question_answer(state, verdict, trace, asked_qty):
+        _asked_quantity_placed(state, verdict, trace, asked_qty)
         # Owner hand test 26 Sep, round 3, and the round 5 ruling ("make the picker not
         # sticky"): once the which-one pick is spent, a lone position is the product's
         # quantity, never a pick. Before any reader.

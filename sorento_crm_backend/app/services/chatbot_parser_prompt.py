@@ -225,6 +225,9 @@ message does not answer it. Fill entities and demand_qty as usual too.
     demand_qty the number; over a "last_answer" of two or more items -> mode null,
     demand_qty the number (the assistant asks which).
   - A product NOT on the list -> mode null, a new stock question as usual.
+  - "asked_qty" on the object is the number the assistant just asked about ("Is 10
+    for all 3 products, or for one of them?"): "all" -> "all", qty_for_all that
+    number; a line ("2", "the second one") -> "fill", that line at that number.
 """
 
 
