@@ -614,20 +614,12 @@ def test_has_turn_fetch_passes_all_ids_to_the_domain_tool():
     assert "limit" not in args, args.get("limit")
 
 
-def test_has_fetch_pages_five_products_not_five_rows():
-    """AC-1315/AC-1316 (console finding, 11 Sep 2026): with SEVEN qualifying
-    product ids the fetch step must carry `product_ids` == the FIRST FIVE (a
-    page of PRODUCTS) and must NOT carry `limit: 5` at all (the tool's row
-    limit stays at its own default) - `_predicate_world`'s own three-id world
-    is too small to prove this: three ids all fit on one page either way, so
-    the same three would appear whether the code slices to five or not. Same
-    for both domains named in the console finding: the stock tool (rows can
-    outnumber products) and the cert tool (files per product).
-
-    RED: `fetch.py`'s own `entity_ids_transformer` sets `out["limit"] = 5`
-    unconditionally whenever `trig.get("predicate")` is not None (no product
-    slicing exists anywhere in the function), so today ALL SEVEN ids land in
-    `product_ids` (not sliced to five) AND `limit` is wrongly present at 5.
+def test_has_fetch_lists_products_not_rows():
+    """AC-1315/AC-1316, no paging (owner ruling, 26 Sep 2026): with SEVEN qualifying
+    product ids the fetch step carries ALL seven (a set that fits one message is listed
+    in full), a named count (`top_n`) cuts the PRODUCT list, and `limit` - the tool's
+    own ROW cap, rows can outnumber products - is never set. Both domains of the
+    original console finding: the stock tool and the cert tool.
     """
     from app.services.chatbot.lanes.business import fetch
 
@@ -638,27 +630,31 @@ def test_has_fetch_pages_five_products_not_five_rows():
     ]
     predicate = {"require": {"stock": True}, "qualifying_total": 7, "truncated": False, "unrecognized_terms": []}
 
-    stock_args = fetch.entity_ids_transformer(
-        {
-            "entities": entities,
-            "tool": "crm_inventory_stock_balance_list",
-            "semantic_input": {"contact_id": "1", "space_id": "364817"},
-            "predicate": predicate,
-        }
-    )
-    assert stock_args.get("product_ids") == ids[:5], stock_args.get("product_ids")
-    assert "limit" not in stock_args, stock_args.get("limit")
+    for tool, require in (
+        ("crm_inventory_stock_balance_list", {"stock": True}),
+        ("crm_master_product_attachments_list", {"certificate": True}),
+    ):
+        args = fetch.entity_ids_transformer(
+            {
+                "entities": entities,
+                "tool": tool,
+                "semantic_input": {"contact_id": "1", "space_id": "364817"},
+                "predicate": {**predicate, "require": require},
+            }
+        )
+        assert args.get("product_ids") == ids, (tool, args.get("product_ids"))
+        assert "limit" not in args, (tool, args.get("limit"))
 
-    cert_args = fetch.entity_ids_transformer(
-        {
-            "entities": entities,
-            "tool": "crm_master_product_attachments_list",
-            "semantic_input": {"contact_id": "1", "space_id": "364817"},
-            "predicate": {**predicate, "require": {"certificate": True}},
-        }
-    )
-    assert cert_args.get("product_ids") == ids[:5], cert_args.get("product_ids")
-    assert "limit" not in cert_args, cert_args.get("limit")
+        named = fetch.entity_ids_transformer(
+            {
+                "entities": entities,
+                "tool": tool,
+                "semantic_input": {"contact_id": "1", "space_id": "364817", "top_n": 3},
+                "predicate": {**predicate, "require": require},
+            }
+        )
+        assert named.get("product_ids") == ids[:3], (tool, named.get("product_ids"))
+        assert "limit" not in named, (tool, named.get("limit"))
 
 
 # --------------------------------------------------------------------------- #
@@ -1298,19 +1294,19 @@ def _cert_ctx(text: str, entities: list[dict[str, Any]]) -> dict[str, Any]:
 @pytest.mark.parametrize(
     "qualifying_total, shown, set_noun, require, expected",
     [
-        (1256, 5, "taps", {"certificate": True}, "1,256 taps have certificates. Showing 5."),
+        (1256, 20, "taps", {"certificate": True}, "1,256 taps have certificates. Here are the first 20."),
         (3, 3, "taps", {"certificate": True}, "3 taps have certificates."),
         (1, 1, "tap", {"certificate": True}, "1 tap has certificates."),
-        (7, 5, "taps", {"stock": True}, "7 taps have stock. Showing 5."),
+        (7, 7, "taps", {"stock": True}, "7 taps have stock."),
         (2, 2, "taps", {"attachment_type": "Product Photos"}, "2 taps have product photos."),
         (4, 4, "sinks", {"incoming": True}, "4 sinks have incoming stock."),
         (4, 4, "sinks", {"promotion": True}, "4 sinks have a promotion."),
         (
             9,
-            5,
+            9,
             "taps",
             {"certificate": True, "stock": True},
-            "9 taps have certificates and stock. Showing 5.",
+            "9 taps have certificates and stock.",
         ),
     ],
 )
@@ -1346,16 +1342,12 @@ def test_set_noun_for(class_labels, expected):
     assert set_noun_for(class_labels) == expected
 
 
-def test_set_answer_carries_the_header_and_shows_five():
-    """AC-1316: a HAS turn's reply opens with "<qualifying_total> <set noun> have
-    <predicate noun>. Showing <n>." before the existing certificate block, and the
-    shown count must actually BE `n` - seven certified class-Tap products, no explicit
-    product entity at all (the described set comes purely from the class binding on
-    "which tap has cert", per AC-1306/C2).
-
-    RED (see the module-section docstring above): today's reply's first line is the
-    tool's own `intro` ("I have attached the file(s) below."), never a header, and the
-    render shows all 7 products (no limit was ever threaded through `run_fetch`), not 5.
+def test_set_answer_carries_the_header_and_lists_every_product():
+    """AC-1316, no paging (owner ruling, 26 Sep 2026): a HAS turn's reply opens with
+    "<qualifying_total> <set noun> have <predicate noun>." before the existing
+    certificate block, and a set that fits one message lists EVERY product - seven
+    certified class-Tap products, no explicit product entity at all (the described set
+    comes purely from the class binding on "which tap has cert", per AC-1306/C2).
     """
     with blank_session() as db:
         _seed_registry(db)
@@ -1374,8 +1366,8 @@ def test_set_answer_carries_the_header_and_shows_five():
         reply = (fragment.get("fetch") or {}).get("response") or ""
 
     lines = reply.splitlines()
-    assert lines and lines[0] == "7 taps have certificates. Showing 5.", reply
-    assert reply.count("*Product Code:*") == 5, reply
+    assert lines and lines[0] == "7 taps have certificates.", reply
+    assert reply.count("*Product Code:*") == 7, reply
 
 
 def test_set_answer_is_scoped_to_the_class_word():
@@ -2120,9 +2112,9 @@ def test_unresolved_word_token_is_the_description_not_a_miss():
 def test_set_header_names_the_scheme():
     """AC-1316 (second console pass): a scheme-narrowed certificate require must
     name the SCHEME in the set header, not the bare "certificates" noun - "which
-    item has PPS cert" must read "940 products have PPS certificates. Showing
-    5.", never lose the scheme the customer asked about. A bare `{"certificate":
-    True}` require is untouched (no scheme to name).
+    item has PPS cert" must read "940 products have PPS certificates. ...", never
+    lose the scheme the customer asked about. A bare `{"certificate": True}` require
+    is untouched (no scheme to name).
 
     RED: `build_set_header`'s own `_header_predicate_phrase` maps every
     `require["certificate"]` value (bool OR the `{"scheme": ...}` dict) to the
@@ -2133,9 +2125,8 @@ def test_set_header_names_the_scheme():
     """
     from app.services.chatbot.lanes.business.answer import build_set_header
 
-    assert (
-        build_set_header(940, 5, "products", {"certificate": {"scheme": "PPS"}})
-        == "940 products have PPS certificates. Showing 5."
+    assert build_set_header(940, 5, "products", {"certificate": {"scheme": "PPS"}}) == (
+        "940 products have PPS certificates. Here are the first 5."
     )
     assert (
         build_set_header(2, 2, "taps", {"certificate": True})
@@ -2238,8 +2229,10 @@ def test_shown_counts_products_not_rows():
     """AC-1330 (R8, fix round 2): "which basin got stock" over five class-Wash-
     Basin products, each carrying stock rows in THREE warehouses (15 rows total),
     must count PRODUCTS in the header - `shown` is distinct product codes
-    rendered, never tool rows. Five or fewer products leaves no "Showing"; seven
-    products shows exactly five distinct codes and says "Showing 5.".
+    rendered, never tool rows. A set that fits one message lists every product
+    under the count alone; a named count of four over seven lists four distinct
+    codes (twelve rows) and says "Here are the first 4." (no paging, owner ruling
+    26 Sep 2026).
 
     Entities carry `hint: "product"` for "basin" (not "category") - matching
     `test_stock_set_answer_matches_forward_block_for_a_dealer`'s own convention
@@ -2303,6 +2296,7 @@ def test_shown_counts_products_not_rows():
                     "match_mode": "or",
                     "access_levels": [],
                     "entities": [{"hint": "product", "raw": "basin"}],
+                    "top_n": 4,
                 }
             },
         }
@@ -2312,59 +2306,22 @@ def test_shown_counts_products_not_rows():
         reply = (fragment.get("fetch") or {}).get("response") or ""
 
     lines = reply.splitlines()
-    assert lines and lines[0] == "7 wash basins have stock. Showing 5.", reply
+    assert lines and lines[0] == "7 wash basins have stock. Here are the first 4.", reply
     shown_codes = _s4_codes_in(reply)
-    assert len(shown_codes) == 5, reply
+    assert len(shown_codes) == 4, reply
 
 
 # --------------------------------------------------------------------------- #
-# S4 - AC-1317 (work item E3): "more" paging by 5 through the offer carry.
-#
-# Written BEFORE any S4 code exists: `variables.selection_context == "set_page"` is
-# never written by the tail today (the tail's roster ladder in `compile_state.py`
-# only ever writes `member_offer` / `suggest_offer` / `tier_offer` / `team_clarify`
-# kinds), and `head/output_exchange.py` has no bare-word arm for "more" / "next" /
-# "lagi" at all (grepped: absent). So every test below runs the REAL production seam
-# end to end - `engine.run_turn` with the business lane wired to real DB reads (S1-S3
-# are green, so a set answer's HEADER and PRODUCT BLOCK already render correctly) -
-# and fails on the ONE thing S4 adds: the tail never stamps the `set_page` carry, and
-# a bare "more" is read by NOTHING today, so it falls through the ordinary ladder and
-# answers as an unrelated turn (typically a miss/clarify, never "Showing 6 to 7." or
-# "That was all 7 taps.").
-#
-# CONTRACT NOTE for the coder (not a blocker, just named so a reviewer does not cite it
-# out of context): `output_exchange.py`'s own module docstring says "No NEW [text-
-# sniffing] site may be added: a reviewer finding one is a merge blocker" - that rule
-# guards the D8 PARITY PORT of the n8n graph (no undocumented drift from the JS this
-# module replaces), not new plan-approved business logic. E3 names this file as the
-# bare-word arm's home explicitly, so the rule does not block it; flagged here only so
-# the coder does not have to re-derive that distinction under review.
-#
-# CONTRACT NOTE 2: the plan's own quoted shape for the new carry is a DICT -
-# `variables.last_result_set = {"kind": "set_page", "qualifying_ids": [...], ...}` -
-# while `compile_state._offer_carry` gates every EXISTING carry kind on
-# `jsc.is_array(prev_set)` (`last_result_set` there is always a roster LIST). The coder
-# will need to either widen that gate to accept this dict shape or give `set_page` its
-# own parallel carry check; the tests below assert only the OBSERVABLE session state
-# and reply text, not which of the two the coder picks.
-#
-# MEASURED, worth naming for the coder: `route.decide()` classifies a domain-less,
-# intent-less, entity-less short message (exactly the parser output E3's own risk note
-# says a "more" turn gets) as `branch_kind = "low_signal"` (`head/route.py:315`,
-# `is_low_signal()`), which today's `lanes/casual.py` owns - never the business lane.
-# With only `business_query` in `chatbot_completed_lanes` (as every test below sets),
-# that is why turn 2 in the tests below answers "Sorry, I ran into a problem
-# understanding that." rather than reaching the business fetch step at all: the arm
-# has to intercept BEFORE or AT that routing decision (reading `selection_context` off
-# the carried session, which `route.decide` does not receive today), not only inside
-# the business lane's own gate/fetch, or a "more" will never arrive there to page.
+# S4 - whole-turn harness. The "more" paging these helpers were written for is gone
+# (owner ruling, 26 Sep 2026: no paging; tests/chatbot/test_counted_set_no_paging.py
+# pins what replaced it). They stay for the engine-level cases below.
 #
 # Every full-turn test wires the SAME three seams `test_s6c_engine_paths.py` /
 # `test_s6_s7_integration.py` use: `business_services.production_services` (resolve),
 # `business_services.fetch_services` (the MCP call) and
 # `business_services.answer_services_for` (the miss-flow probes, stubbed empty since
 # none of these turns is expected to reach them) - real `resolve_gate` / `gate` /
-# `fetch` / `answer` / tail code runs, only the network is stubbed. `chatbot_completed_
+# `fetch` / `answer` code runs, only the network is stubbed. `chatbot_completed_
 # lanes = ["business_query"]` plus both switches on so the CRM answers in one
 # `run_turn` call rather than delegating to n8n.
 # --------------------------------------------------------------------------- #
@@ -2393,18 +2350,6 @@ def _s4_real_resolve_entity(db):
         payload = {**body, "spec_fallback": False, "understand_phrase": False}
         principal = {"id": getattr(settings, "external_api_key_act_as_user_id", None)}
         return resolve_reference_post(ResolveReferenceRequest(**payload), current_user=principal, db=db)
-
-    return resolve_entity
-
-
-def _s4_counting_resolve_entity(counter: dict[str, int]):
-    """A resolver that never touches the DB and never raises - used on a "more" turn
-    so a call is COUNTED (proof the resolver ran) rather than crashing the turn and
-    hiding the real red reason (the reply text) behind a traceback."""
-
-    def resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
-        counter["n"] = counter.get("n", 0) + 1
-        return {"tokens": [], "resolutions": [], "unresolved_tokens": []}
 
     return resolve_entity
 
@@ -2519,18 +2464,6 @@ def _s4_cert_parser_output(**overrides: Any):
     return _parser_output(**base)
 
 
-def _s4_bare_parser_output(**overrides: Any):
-    """"more" / "next" / "lagi" etc: the parser tags nothing (E3's own risk note - "a
-    turn where the parser tags nothing and the intent is null gets no `require` and
-    behaves as today, which is the safe failure"), so this is `intent_hint: None,
-    domain_hint: None, entities: []` on every case this section exercises."""
-    from tests.chatbot.test_engine import _parser_output
-
-    base = dict(intent_hint=None, domain_hint=None, entities=[])
-    base.update(overrides)
-    return _parser_output(**base)
-
-
 def _s4_seed_seven_taps(db) -> list[str]:
     codes: list[str] = []
     category_id, uom_id = _seed_category_and_uom(db)
@@ -2578,8 +2511,7 @@ def _cert_capturing_fake_call_tool(db, calls: list[dict[str, Any]]):
 # --------------------------------------------------------------------------- #
 # Owner regression (PR #833, R29, AC-1354): a scheme-narrowed certificate      #
 # leg must pass the qualifying certificates' OWN ids to the tool, alongside    #
-# the page's product_ids, on the first answer and on every "more" page (the   #
-# carry stores them) - a bare certificate leg passes nothing extra.            #
+# the listed product_ids - a bare certificate leg passes nothing extra.        #
 # --------------------------------------------------------------------------- #
 
 
@@ -2589,13 +2521,11 @@ def test_scheme_narrowed_certificate_predicate_passes_certificate_ids_to_the_too
     """AC-1354/R29: "which tap has PPS cert" must call
     `crm_master_product_attachments_list` with `certificate_ids` alongside
     the first-five `product_ids` - only the PPS files should ever render, not
-    every certificate file the qualifying products hold. The following
-    "more" page must carry the SAME `certificate_ids` (the carry stores
-    them).
+    every certificate file the qualifying products hold.
 
     RED: `entity_ids_transformer` never reads `predicate.certificate_ids` -
     it only ever slices `product_ids` for a HAS turn - so the tool args carry
-    no `certificate_ids` key at all on either turn.
+    no `certificate_ids` key at all.
     """
     contact_id = _s4_contact_id("certids")
     db = session_factory()
@@ -2633,16 +2563,6 @@ def test_scheme_narrowed_certificate_predicate_passes_certificate_ids_to_the_too
     turn1_args = calls[0]["args"]
     assert set(turn1_args.get("certificate_ids") or []) == set(cert_ids), turn1_args
     assert turn1_args.get("product_ids"), turn1_args
-
-    stub_parser(_s4_bare_parser_output())
-    turn2 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-certids-2", text="more"),
-        session_factory=session_factory,
-    )
-    assert turn2.status == "done", turn2.error
-    assert len(calls) == 2, calls
-    turn2_args = calls[1]["args"]
-    assert set(turn2_args.get("certificate_ids") or []) == set(cert_ids), turn2_args
 
 
 def test_bare_certificate_predicate_passes_no_certificate_ids(
@@ -2999,511 +2919,6 @@ def test_a_non_document_predicate_still_asks_for_the_attachment_type(
     assert "Which kind of file do you need?" in text, text
 
 
-def test_set_answer_writes_the_set_page_carry(session_factory, stub_parser, stub_access, monkeypatch):
-    """AC-1317: a set answer's tail stamps `selection_context = "set_page"` and a
-    `last_result_set` carrying the described set, the offset already advanced past the
-    5 shown, and the request's own predicate/set-noun/domain/tool - so a later "more"
-    has everything it needs with no second resolver call.
-
-    RED: nothing in `compile_state.py` writes a `set_page` kind today (the roster
-    ladder's only kinds are `member_offer` / `suggest_offer` / `tier_offer` /
-    `team_clarify`), so `selection_context` is left at whatever the ordinary ladder
-    produces for an answered turn with no offer of its own - `None` - never
-    `"set_page"`.
-    """
-    contact_id = _s4_contact_id("write")
-    db = session_factory()
-    codes = _s4_seed_seven_taps(db)
-    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
-
-    engine_mod = _s4_wire_engine(
-        session_factory,
-        monkeypatch,
-        resolve_entity=_s4_real_resolve_entity(db),
-        fetch_mcp_call=_cert_fake_call_tool(db),
-    )
-    stub_parser(_s4_cert_parser_output())
-    stub_access()
-
-    result = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-s4-1a", text="which tap has cert"),
-        session_factory=session_factory,
-    )
-    assert result.status == "done", result.error
-
-    variables = _s4_session_vars(session_factory, contact_id).get("variables") or {}
-    assert variables.get("selection_context") == "set_page", variables
-
-    carry = variables.get("last_result_set")
-    assert isinstance(carry, dict), carry
-    assert carry.get("kind") == "set_page", carry
-    ids = carry.get("qualifying_ids") or []
-    assert len(ids) == 7, carry
-    assert carry.get("offset") == 5, carry
-    assert carry.get("qualifying_total") == 7, carry
-    assert carry.get("require") == {"certificate": True}, carry
-    assert carry.get("set_noun") == "taps", carry
-    assert carry.get("domain") == "product_attachment", carry
-
-
-def test_more_returns_the_next_page_without_resolving(session_factory, stub_parser, stub_access, monkeypatch):
-    """AC-1317: the next 5 (here, the remaining 2 of 7) of the SAME described set, no
-    second resolver call.
-
-    RED: turn 2's reply is not "7 taps have certificates. Showing 6 to 7." today -
-    there is no bare-word arm reading "more" under a carried `set_page` context at all
-    (grepped `output_exchange.py`, `contracts.py`, `compile_state.py`, `pending.py`:
-    absent), so the turn falls through the ordinary ladder as an unrelated business
-    query with no domain, no intent and no entities.
-    """
-    contact_id = _s4_contact_id("page")
-    db = session_factory()
-    codes = _s4_seed_seven_taps(db)
-    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
-
-    resolve_calls: dict[str, int] = {}
-    engine_mod = _s4_wire_engine(
-        session_factory,
-        monkeypatch,
-        resolve_entity=_s4_real_resolve_entity(db),
-        fetch_mcp_call=_cert_fake_call_tool(db),
-    )
-    stub_parser(_s4_cert_parser_output())
-    stub_access()
-    turn1 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-s4-2a", text="which tap has cert"),
-        session_factory=session_factory,
-    )
-    assert turn1.status == "done", turn1.error
-    reply1 = (turn1.reply or {}).get("text") or ""
-    shown1 = _s4_codes_in(reply1)
-
-    # Turn 2's resolver is swapped for a COUNTING stub, never the real one: a call is
-    # recorded rather than crashing the turn, so the reply-text assertion below is
-    # still the primary, legible red reason.
-    from app.services.chatbot.lanes.business.services import ResolveGateServices
-
-    monkeypatch.setattr(
-        engine_mod.business_services,
-        "production_services",
-        lambda db, *, space_id=None: ResolveGateServices(
-            access_types=lambda **_: [],
-            resolve_entity=_s4_counting_resolve_entity(resolve_calls),
-            probe=lambda **_: None,
-        ),
-    )
-    stub_parser(_s4_bare_parser_output())
-    turn2 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-s4-2b", text="more"),
-        session_factory=session_factory,
-    )
-
-    reply2 = (turn2.reply or {}).get("text") or ""
-    lines2 = reply2.splitlines()
-    assert lines2 and lines2[0] == "7 taps have certificates. Showing 6 to 7.", reply2
-
-    shown2 = _s4_codes_in(reply2)
-    assert shown2 == (set(codes) - shown1), (shown1, shown2, codes)
-    assert resolve_calls.get("n", 0) == 0, "the resolver ran on a 'more' continuation turn"
-
-
-def test_more_past_the_end_says_that_was_all(session_factory, stub_parser, stub_access, monkeypatch):
-    """AC-1317: past the end of the carried set, "That was all <N> <noun>." and the
-    carry is cleared - seeded directly at "already on the last page" (offset ==
-    qualifying_total) so this test's own red reason is the "past the end" arm alone,
-    not also whatever turn 1 / turn 2 do or do not carry yet (both untested here).
-
-    RED: no code reads a `set_page` carry at all, so the reply is not "That was all 7
-    taps." and `selection_context` is left exactly as seeded ("set_page"), never
-    cleared.
-    """
-    contact_id = _s4_contact_id("end")
-    db = session_factory()
-    codes = _s4_seed_seven_taps(db)
-
-    from app.models.product import Product
-
-    ids = [row.id for row in db.query(Product).filter(Product.product_code.in_(codes)).all()]
-    assert len(ids) == 7
-
-    _s4_seed_contact(
-        session_factory,
-        contact_id=contact_id,
-        session_vars={
-            "variables": {
-                "domain_hint": "product_attachment",
-                "selection_context": "set_page",
-                "last_result_set": {
-                    "kind": "set_page",
-                    "qualifying_ids": ids,
-                    "offset": 7,
-                    "qualifying_total": 7,
-                    "require": {"certificate": True},
-                    "set_noun": "taps",
-                    "domain": "product_attachment",
-                    "tool": "crm_master_product_attachments_list",
-                },
-            }
-        },
-    )
-
-    engine_mod = _s4_wire_engine(
-        session_factory,
-        monkeypatch,
-        resolve_entity=_s4_counting_resolve_entity({}),
-        fetch_mcp_call=_cert_fake_call_tool(db),
-    )
-    stub_parser(_s4_bare_parser_output())
-    stub_access()
-
-    result = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-s4-3a", text="more"),
-        session_factory=session_factory,
-    )
-
-    reply = (result.reply or {}).get("text") or ""
-    assert reply.strip() == "That was all 7 taps.", reply
-
-    variables = _s4_session_vars(session_factory, contact_id).get("variables") or {}
-    assert variables.get("selection_context") != "set_page", variables
-
-
-@pytest.mark.parametrize(
-    "text, should_page",
-    [
-        ("more", True),
-        ("next", True),
-        ("lagi", True),
-        ("more please", True),
-        ("show more", True),
-        ("more taps with stock please and thanks", False),
-        ("SRTWC286", False),
-    ],
-)
-def test_more_words_are_recognised_and_long_messages_are_not(
-    session_factory, stub_parser, stub_access, monkeypatch, text, should_page
-):
-    """AC-1317: "more" / "next" / "lagi" recognised standalone or in a short (<= four
-    word) reply; a longer message or an ordinary code is left to the normal ladder -
-    the carry must not fire on a message that merely CONTAINS the word "more" as part
-    of a different, longer question.
-
-    RED (every case): no bare-word arm exists, so a paging case never renders "Showing
-    6 to 7." and - the part that would make a non-paging case pass for the wrong
-    reason if skipped - the two non-paging cases must ALSO not show it, which holds
-    trivially today (nothing pages at all) but is asserted explicitly so a coder who
-    wires the WORD LIST without the LENGTH GUARD cannot pass this file by accident.
-    """
-    contact_id = _s4_contact_id("word")
-    db = session_factory()
-    codes = _s4_seed_seven_taps(db)
-
-    from app.models.product import Product
-
-    ids = [row.id for row in db.query(Product).filter(Product.product_code.in_(codes)).all()]
-
-    _s4_seed_contact(
-        session_factory,
-        contact_id=contact_id,
-        session_vars={
-            "variables": {
-                "domain_hint": "product_attachment",
-                "selection_context": "set_page",
-                "last_result_set": {
-                    "kind": "set_page",
-                    "qualifying_ids": ids,
-                    "offset": 5,
-                    "qualifying_total": 7,
-                    "require": {"certificate": True},
-                    "set_noun": "taps",
-                    "domain": "product_attachment",
-                    "tool": "crm_master_product_attachments_list",
-                },
-            }
-        },
-    )
-
-    engine_mod = _s4_wire_engine(
-        session_factory,
-        monkeypatch,
-        resolve_entity=_s4_counting_resolve_entity({}),
-        fetch_mcp_call=_cert_fake_call_tool(db),
-    )
-    stub_parser(_s4_bare_parser_output())
-    stub_access()
-
-    result = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id=f"ZZT-s4-word-{abs(hash(text))}", text=text),
-        session_factory=session_factory,
-    )
-    reply = (result.reply or {}).get("text") or ""
-
-    if should_page:
-        # AC-1317: a "more" turn returns the next five PRODUCTS WITH their
-        # blocks under the header, not the header alone -
-        # `test_more_returns_the_next_page_without_resolving` already proves
-        # that shape; this test's own job is which WORDS trigger paging at
-        # all, so it checks the header line only (captain's ruling on the
-        # coder's dispute, 11 Sep 2026).
-        lines = reply.splitlines()
-        assert lines and lines[0] == "7 taps have certificates. Showing 6 to 7.", reply
-    else:
-        assert "Showing" not in reply, reply
-
-
-def test_a_set_answer_with_five_or_fewer_leaves_no_carry(session_factory, stub_parser, stub_access, monkeypatch):
-    """AC-1317: when every qualifying product already fit on the first page (D5's
-    header already omits "Showing" for this world, per S3's own
-    `test_set_answer_header_omits_showing_when_all_fit`), there is nothing to page -
-    the carry must not arm, and a following "more" answers as an ordinary turn.
-
-    NOT RED TODAY - flagged rather than hidden. Every assertion in this test already
-    holds with zero of S4 built: the header is right (S3 is green) and
-    `selection_context` is never "set_page" for ANY answer yet, paged or not, so both
-    halves pass vacuously rather than for the AC's own reason ("3 fits on one page so
-    nothing carries"). It stays in the suite as the regression guard named in AC-1317
-    (a coder who arms the carry unconditionally on every set answer, instead of gating
-    it on `qualifying_total > 5`, breaks it) - the captain should read this one as a
-    forward guard, not as red-run evidence.
-    """
-    contact_id = _s4_contact_id("small")
-    db = session_factory()
-    category_id, uom_id = _seed_category_and_uom(db)
-    _seed_registry(db)
-    for _ in range(3):
-        product = _tap_product(db, category_id=category_id, uom_id=uom_id)
-        _certificate_for(db, product_id=product.id)
-    db.commit()
-    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
-
-    engine_mod = _s4_wire_engine(
-        session_factory,
-        monkeypatch,
-        resolve_entity=_s4_real_resolve_entity(db),
-        fetch_mcp_call=_cert_fake_call_tool(db),
-    )
-    stub_parser(_s4_cert_parser_output())
-    stub_access()
-
-    turn1 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-s4-5a", text="which tap has cert"),
-        session_factory=session_factory,
-    )
-    assert turn1.status == "done", turn1.error
-    reply1 = (turn1.reply or {}).get("text") or ""
-    assert reply1.splitlines()[0] == "3 taps have certificates.", reply1
-
-    variables = _s4_session_vars(session_factory, contact_id).get("variables") or {}
-    assert variables.get("selection_context") != "set_page", variables
-
-    stub_parser(_s4_bare_parser_output())
-    turn2 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-s4-5b", text="more"),
-        session_factory=session_factory,
-    )
-    reply2 = (turn2.reply or {}).get("text") or ""
-    assert "Showing" not in reply2, reply2
-
-
-def test_domain_change_clears_the_set_page_carry(session_factory, stub_parser, stub_access, monkeypatch):
-    """AC-1317: `topic.changed` clears the carry exactly as it clears every other
-    roster kind - a following stock turn for a real product code is a domain change
-    (`product_attachment` -> `inventory`), per `topic.changed`'s own truth table.
-
-    RED: `selection_context` is never "set_page" to begin with (same S4 gap every
-    other test names), so this assertion cannot currently distinguish "cleared by a
-    domain change" from "never armed" - it is included anyway because it is the
-    correct standing regression once the carry exists, and it fails FIRST on the
-    precondition (`variables.get("selection_context")` after turn 1 is not
-    "set_page"), which is itself accurate: the precondition really is missing today.
-    """
-    contact_id = _s4_contact_id("domain")
-    db = session_factory()
-    codes = _s4_seed_seven_taps(db)
-
-    from app.models.inventory import Stock, Warehouse
-    from app.models.product import Product, ProductCategory, UnitOfMeasure
-    from tests._pg_fixture import unique_code
-
-    category = db.query(ProductCategory).first()
-    uom = db.query(UnitOfMeasure).first()
-    stock_product = Product(
-        id=str(uuid.uuid4()),
-        product_code="SRTWC286",
-        product_name="SRTWC286",
-        description="SRTWC286 CHROME BASIN TAP",
-        category_id=category.id,
-        base_uom_id=uom.id,
-        list_price=10,
-        is_active=True,
-    )
-    db.add(stock_product)
-    db.flush()
-    warehouse = Warehouse(
-        id=str(uuid.uuid4()), warehouse_code=unique_code("WH")[:50], warehouse_name="ZZT Warehouse", is_active=True
-    )
-    db.add(warehouse)
-    db.flush()
-    db.add(
-        Stock(
-            id=str(uuid.uuid4()),
-            product_id=stock_product.id,
-            warehouse_id=warehouse.id,
-            quantity_on_hand=10,
-            quantity_reserved=0,
-        )
-    )
-    db.commit()
-
-    engine_mod = _s4_wire_engine(
-        session_factory,
-        monkeypatch,
-        resolve_entity=_s4_real_resolve_entity(db),
-        fetch_mcp_call=_cert_fake_call_tool(db),
-    )
-    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
-    stub_parser(_s4_cert_parser_output())
-    stub_access()
-
-    turn1 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-s4-6a", text="which tap has cert"),
-        session_factory=session_factory,
-    )
-    assert turn1.status == "done", turn1.error
-    variables_after_1 = _s4_session_vars(session_factory, contact_id).get("variables") or {}
-    assert variables_after_1.get("selection_context") == "set_page", variables_after_1
-
-    from tests.chatbot.test_engine import _parser_output
-
-    from app.services.chatbot.lanes.business.services import FetchServices as _FetchServices
-
-    monkeypatch.setattr(
-        engine_mod.business_services, "fetch_services", lambda db: _FetchServices(mcp_call=_stock_fake_call_tool(db))
-    )
-    stub_parser(
-        _parser_output(
-            intent_hint="check_stock",
-            domain_hint="inventory",
-            match_mode="and",
-            entities=[
-                {
-                    "raw": "SRTWC286",
-                    "hint": "product",
-                    "canonical_code": "SRTWC286",
-                    "current_message": True,
-                    "confident": True,
-                }
-            ],
-        )
-    )
-    turn2 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-s4-6b", text="SRTWC286 stock"),
-        session_factory=session_factory,
-    )
-    assert turn2.status == "done", turn2.error
-
-    variables_after_2 = _s4_session_vars(session_factory, contact_id).get("variables") or {}
-    assert variables_after_2.get("selection_context") != "set_page", variables_after_2
-
-
-def test_ids_are_capped_at_200_and_the_reply_asks_to_narrow(session_factory, stub_parser, stub_access, monkeypatch):
-    """AC-1317: the carried id list is capped (named `SET_PAGE_ID_CAP` in
-    `answer.py` per the plan) even though the true count keeps counting past it; a
-    "more" that has exhausted the CAPPED list (but not the true count) asks to narrow
-    rather than claiming "that was all".
-
-    Seeded 12, not 206 (the plan's own escape hatch: "if seeding 206 is too slow, seed
-    12 and assert the cap through a monkeypatched cap constant"). The cap is
-    monkeypatched to 10 (`raising=False`: the attribute does not exist yet, so a
-    strict `setattr` would raise `AttributeError` before the real red reason - a
-    missing feature, not a missing constant - ever ran) so a 12-vs-10 gap is
-    provable regardless of whether the coder's constant is named exactly this.
-
-    RED, two independent reasons in one test, both named because either alone would
-    look like a wrong test rather than a wrong build: (1) nothing writes a
-    `qualifying_ids` cap today (there is no `set_page` write at all), so turn 1's own
-    carry never exists to inspect; (2) the "narrow" reply for a carry seeded already
-    AT the cap does not exist either (no bare-word arm reads it).
-    """
-    contact_id = _s4_contact_id("cap")
-    db = session_factory()
-    category_id, uom_id = _seed_category_and_uom(db)
-    _seed_registry(db)
-    codes = []
-    for _ in range(12):
-        product = _tap_product(db, category_id=category_id, uom_id=uom_id)
-        _certificate_for(db, product_id=product.id)
-        codes.append(product.product_code)
-    db.commit()
-
-    from app.services.chatbot.lanes.business import answer as answer_mod
-
-    monkeypatch.setattr(answer_mod, "SET_PAGE_ID_CAP", 10, raising=False)
-
-    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
-    engine_mod = _s4_wire_engine(
-        session_factory,
-        monkeypatch,
-        resolve_entity=_s4_real_resolve_entity(db),
-        fetch_mcp_call=_cert_fake_call_tool(db),
-    )
-    stub_parser(_s4_cert_parser_output())
-    stub_access()
-
-    turn1 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-s4-7a", text="which tap has cert"),
-        session_factory=session_factory,
-    )
-    assert turn1.status == "done", turn1.error
-    reply1 = (turn1.reply or {}).get("text") or ""
-    assert reply1.splitlines()[0] == "12 taps have certificates. Showing 5.", reply1
-
-    variables = _s4_session_vars(session_factory, contact_id).get("variables") or {}
-    carry = variables.get("last_result_set")
-    assert isinstance(carry, dict), carry
-    assert isinstance(carry.get("qualifying_ids"), list), carry
-    assert len(carry["qualifying_ids"]) == 10, carry
-    assert carry.get("qualifying_total") == 12, carry
-
-    # Phase B: seeded directly AT the cap (offset == the capped list's own length, 10),
-    # decoupled from whether phase A's own write half works yet - this isolates the
-    # "narrow" arm's own red reason from phase A's.
-    from app.models.product import Product
-
-    ids = [row.id for row in db.query(Product).filter(Product.product_code.in_(codes)).all()][:10]
-    contact_id_b = _s4_contact_id("cap-b")
-    _s4_seed_contact(
-        session_factory,
-        contact_id=contact_id_b,
-        session_vars={
-            "variables": {
-                "domain_hint": "product_attachment",
-                "selection_context": "set_page",
-                "last_result_set": {
-                    "kind": "set_page",
-                    "qualifying_ids": ids,
-                    "offset": 10,
-                    "qualifying_total": 12,
-                    "require": {"certificate": True},
-                    "set_noun": "taps",
-                    "domain": "product_attachment",
-                    "tool": "crm_master_product_attachments_list",
-                },
-            }
-        },
-    )
-    stub_parser(_s4_bare_parser_output())
-    turn2 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id_b, message_id="ZZT-s4-7b", text="more"),
-        session_factory=session_factory,
-    )
-    reply2 = (turn2.reply or {}).get("text") or ""
-    assert "narrow" in reply2.lower(), reply2
-
-    variables_b = _s4_session_vars(session_factory, contact_id_b).get("variables") or {}
-    assert variables_b.get("selection_context") != "set_page", variables_b
-
-
 # --------------------------------------------------------------------------- #
 # Fix round (console findings, 11 Sep 2026, committed 3779b32d6) - AC-1316,     #
 # AC-1320: a "category" entity the head retypes into an unresolved PRODUCT      #
@@ -3691,363 +3106,6 @@ def test_clarify_with_no_candidate_offers_common_product_types():
 
 
 # --------------------------------------------------------------------------- #
-# Security review (11 Sep 2026, PLAN-attribute-first-asks.md SEC-B1/N1,       #
-# AC-1333/AC-1336) - full `engine.run_turn` harness (S4 section above).       #
-# --------------------------------------------------------------------------- #
-
-
-def _sec_promo_fake_call_tool(db, calls: list[dict[str, Any]]):
-    """Records every MCP call (name, args) so a test can inspect the
-    `access_levels` argument the fetch step actually sent, and returns a
-    plausible promotion-products envelope keyed off whatever `product_ids`
-    the call carried."""
-    import json
-
-    from app.models.marketing import PromotionProduct
-    from app.models.product import Product
-
-    def fake_call_tool(name: str, args: dict[str, Any]) -> str:
-        calls.append({"name": name, "args": dict(args)})
-        product_ids = list(args.get("product_ids") or [])
-        rows = (
-            db.query(Product)
-            .join(PromotionProduct, PromotionProduct.product_id == Product.id)
-            .filter(Product.id.in_(product_ids))
-            .order_by(Product.product_code)
-            .distinct()
-            .all()
-        )
-        items = [
-            {
-                "title": p.product_code,
-                "fields": [{"key": "product_code", "label": "Product Code", "value": p.product_code}],
-                "flags": {},
-            }
-            for p in rows
-        ]
-        return json.dumps(
-            {
-                "result_type": "promotion_products",
-                "intro": "Promotions found.",
-                "items": items,
-                "has_result": bool(items),
-            }
-        )
-
-    return fake_call_tool
-
-
-def _sec_seed_seven_promo_taps(db, *, access_levels: list[str]) -> list[str]:
-    from app.models.marketing import Promotion, PromotionGroup, PromotionProduct
-
-    codes: list[str] = []
-    category_id, uom_id = _seed_category_and_uom(db)
-    _seed_registry(db)
-    for _ in range(7):
-        product = _tap_product(db, category_id=category_id, uom_id=uom_id)
-        promo = Promotion(
-            id=str(uuid.uuid4()),
-            description=f"ZZT promo {uuid.uuid4().hex[:6]}",
-            is_active=True,
-            access_levels=access_levels,
-        )
-        db.add(promo)
-        db.flush()
-        group = PromotionGroup(id=uuid.uuid4(), promotion_id=promo.id, group_name="G")
-        db.add(group)
-        db.flush()
-        db.add(
-            PromotionProduct(
-                id=str(uuid.uuid4()), promotion_id=promo.id, promotion_group_id=group.id, product_id=product.id
-            )
-        )
-        codes.append(product.product_code)
-    db.commit()
-    return codes
-
-
-def _sec_wire_promo_engine(session_factory, monkeypatch, *, resolve_entity, fetch_mcp_call, access_types):
-    from app.models.user import SystemSetting
-    from app.services.chatbot import engine as engine_mod
-    from app.services.chatbot.lanes.business.services import FetchServices, ResolveGateServices
-    from tests.chatbot.conftest import set_chatbot_switches
-
-    set_chatbot_switches(session_factory, business_lane=True, ordering=True)
-    db = session_factory()
-    setting = db.query(SystemSetting).first()
-    setting.chatbot_completed_lanes = ["business_query", "check_promotion"]
-    db.commit()
-
-    bundle = ResolveGateServices(access_types=access_types, resolve_entity=resolve_entity, probe=lambda **_: None)
-    monkeypatch.setattr(
-        engine_mod.business_services, "production_services", lambda db, *, space_id=None: bundle
-    )
-    monkeypatch.setattr(
-        engine_mod.business_services, "fetch_services", lambda db: FetchServices(mcp_call=fetch_mcp_call)
-    )
-    monkeypatch.setattr(
-        engine_mod.business_services, "answer_services_for", lambda session_factory: _s4_no_probe_answer_services()
-    )
-    return engine_mod
-
-
-def _sec_promo_parser_output(**overrides: Any):
-    from tests.chatbot.test_engine import _parser_output
-
-    base = dict(
-        intent_hint="check_promotion",
-        domain_hint="promotion",
-        match_mode="and",
-        entities=[
-            {"raw": "tap", "hint": "category", "canonical_code": None, "current_message": True, "confident": True}
-        ],
-    )
-    base.update(overrides)
-    return _parser_output(**base)
-
-
-def test_more_page_carries_the_contacts_access_levels(session_factory, stub_parser, stub_access, monkeypatch):
-    """AC-1333/SEC-B1: a "more" page's promotion tool call must carry the SAME
-    (non-empty) access_levels turn 1's own fetch used - never `[]` - or the
-    tier filter silently disappears from the page and the customer can be
-    shown promotions their tier cannot see.
-
-    World: a contact holding ONE access type ("Sorento Dealer"), seven class-Tap
-    products each in its own active promotion open to that same tier.
-
-    RED: `_set_page_reply`'s "next page" arm stamps `tier_gate: None`
-    unconditionally and only overrides the mutated parser's `domain_hint`, never
-    its `access_levels` - so `_fetch_semantic_input` (no tier_gate to read
-    `access_levels_recomposed` from) falls to the bare "more" parser output's own
-    `access_levels`, which is `[]`. Turn 1's tool call carries `["Sorento
-    Dealer"]` (from `tier_gate.access_levels_recomposed`); the page turn's carries
-    `[]`.
-    """
-    from app.models.access import ContactAccessType
-
-    contact_id = _s4_contact_id("secpromo")
-    db = session_factory()
-    db.add(ContactAccessType(code="sorento_dealer", name="Sorento Dealer"))
-    db.commit()
-    codes = _sec_seed_seven_promo_taps(db, access_levels=["sorento_dealer"])
-    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
-
-    calls: list[dict[str, Any]] = []
-    engine_mod = _sec_wire_promo_engine(
-        session_factory,
-        monkeypatch,
-        resolve_entity=_s4_real_resolve_entity(db),
-        fetch_mcp_call=_sec_promo_fake_call_tool(db, calls),
-        access_types=lambda **_: [{"name": "Sorento Dealer"}],
-    )
-    stub_parser(_sec_promo_parser_output())
-    stub_access()
-
-    turn1 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-sec-1a", text="which tap has promo"),
-        session_factory=session_factory,
-    )
-    assert turn1.status == "done", turn1.error
-    assert calls, "no MCP call recorded on turn 1"
-    turn1_access_levels = calls[-1]["args"].get("access_levels")
-    assert turn1_access_levels, ("turn 1's own tool call must carry a non-empty access_levels", turn1_access_levels)
-
-    calls.clear()
-    stub_parser(_s4_bare_parser_output())
-    turn2 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-sec-1b", text="more"),
-        session_factory=session_factory,
-    )
-    assert turn2.status == "done", turn2.error
-    assert calls, "no MCP call recorded on the 'more' turn"
-    turn2_access_levels = calls[-1]["args"].get("access_levels")
-    assert turn2_access_levels == turn1_access_levels, (turn1_access_levels, turn2_access_levels)
-    assert turn2_access_levels != [], turn2_access_levels
-
-
-def test_tier_ask_turn_does_not_arm_the_carry(session_factory, stub_parser, stub_access, monkeypatch):
-    """AC-1333: a promotion turn the contact's OWN multi-tier entitlement forces
-    to the existing tier-ask flow ("Which access level do you need ...") must
-    arm NOTHING - a following "more" is not a paged reply.
-
-    World: a contact holding TWO tiers of the SAME brand ("Sorento Dealer",
-    "Sorento Office") - `needs_tier_ask` returns True for more than one held
-    tier - over the same 7-tap promotion world.
-
-    RED: the set_page carry is armed off `gate.predicate` alone (a predicate
-    block is present regardless of whether the fetch actually rendered a set
-    answer or hit the tier-ask arm first), so this turn wrongly arms
-    `selection_context = "set_page"` even though nothing was ever shown.
-    """
-    contact_id = _s4_contact_id("secask")
-    db = session_factory()
-    codes = _sec_seed_seven_promo_taps(db, access_levels=["sorento_dealer"])
-    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
-
-    calls: list[dict[str, Any]] = []
-    engine_mod = _sec_wire_promo_engine(
-        session_factory,
-        monkeypatch,
-        resolve_entity=_s4_real_resolve_entity(db),
-        fetch_mcp_call=_sec_promo_fake_call_tool(db, calls),
-        access_types=lambda **_: [{"name": "Sorento Dealer"}, {"name": "Sorento Office"}],
-    )
-    stub_parser(_sec_promo_parser_output())
-    stub_access()
-
-    turn1 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-sec-2a", text="which tap has promo"),
-        session_factory=session_factory,
-    )
-    assert turn1.status == "done", turn1.error
-
-    variables = _s4_session_vars(session_factory, contact_id).get("variables") or {}
-    assert variables.get("selection_context") != "set_page", variables
-
-    resolve_calls: dict[str, int] = {}
-    from app.services.chatbot.lanes.business.services import ResolveGateServices
-
-    monkeypatch.setattr(
-        engine_mod.business_services,
-        "production_services",
-        lambda db, *, space_id=None: ResolveGateServices(
-            access_types=lambda **_: [{"name": "Sorento Dealer"}, {"name": "Sorento Office"}],
-            resolve_entity=_s4_counting_resolve_entity(resolve_calls),
-            probe=lambda **_: None,
-        ),
-    )
-    stub_parser(_s4_bare_parser_output())
-    turn2 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-sec-2b", text="more"),
-        session_factory=session_factory,
-    )
-    reply2 = (turn2.reply or {}).get("text") or ""
-    assert "Showing" not in reply2, reply2
-    assert not reply2.lower().startswith("7 taps"), reply2
-
-
-def test_carry_clears_on_a_non_page_business_answer(session_factory, stub_parser, stub_access, monkeypatch):
-    """AC-1336/SEC-N1: the set_page carry clears on ANY business answer that is
-    not itself a page - not only on a domain change - so a following unrelated
-    turn never mistakenly pages a stale set, and a fresh set answer re-arms
-    cleanly (offset 5, not compounded on old state).
-
-    Turn 1: "which tap has cert" -> set answer, carry armed.
-    Turn 2: "SRTWC1 stock" (a forward, code-exact stock turn) -> `selection_
-    context` must no longer be "set_page".
-    Turn 3: "which tap has cert" again -> re-armed, `offset == 5`.
-
-    GREEN today under this exact construction, measured directly: turn 2 IS a
-    domain change (product_attachment -> inventory), and clearing on a domain
-    change already works (`test_domain_change_clears_the_set_page_carry`,
-    unchanged by this security round). SEC-N1's own gap is narrower - the SAME
-    domain, a non-page answer - which this turn 2 does not exercise. Kept as
-    the AC-1336 regression guard (three turns, re-arm at a fresh offset of 5),
-    reported honestly per this file's own "CONTRACT CONTRADICTION" convention
-    rather than forced red.
-    """
-    contact_id = _s4_contact_id("secclear")
-    db = session_factory()
-    codes = _s4_seed_seven_taps(db)
-
-    from app.models.inventory import Stock, Warehouse
-    from app.models.product import Product, ProductCategory, UnitOfMeasure
-    from tests._pg_fixture import unique_code
-
-    category = db.query(ProductCategory).first()
-    uom = db.query(UnitOfMeasure).first()
-    stock_product = Product(
-        id=str(uuid.uuid4()),
-        product_code="ZZTWC1",
-        product_name="ZZTWC1",
-        description="ZZTWC1 SORENTO WATER CLOSET",
-        category_id=category.id,
-        base_uom_id=uom.id,
-        list_price=10,
-        is_active=True,
-    )
-    db.add(stock_product)
-    db.flush()
-    warehouse = Warehouse(
-        id=str(uuid.uuid4()), warehouse_code=unique_code("WH")[:50], warehouse_name="ZZT Warehouse", is_active=True
-    )
-    db.add(warehouse)
-    db.flush()
-    db.add(
-        Stock(
-            id=str(uuid.uuid4()),
-            product_id=stock_product.id,
-            warehouse_id=warehouse.id,
-            quantity_on_hand=10,
-            quantity_reserved=0,
-        )
-    )
-    db.commit()
-
-    engine_mod = _s4_wire_engine(
-        session_factory,
-        monkeypatch,
-        resolve_entity=_s4_real_resolve_entity(db),
-        fetch_mcp_call=_cert_fake_call_tool(db),
-    )
-    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
-    stub_parser(_s4_cert_parser_output())
-    stub_access()
-
-    turn1 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-sec-3a", text="which tap has cert"),
-        session_factory=session_factory,
-    )
-    assert turn1.status == "done", turn1.error
-    variables_after_1 = _s4_session_vars(session_factory, contact_id).get("variables") or {}
-    assert variables_after_1.get("selection_context") == "set_page", variables_after_1
-
-    from tests.chatbot.test_engine import _parser_output as _plain_parser_output
-    from app.services.chatbot.lanes.business.services import FetchServices as _FetchServices
-
-    monkeypatch.setattr(
-        engine_mod.business_services, "fetch_services", lambda db: _FetchServices(mcp_call=_stock_fake_call_tool(db))
-    )
-    stub_parser(
-        _plain_parser_output(
-            intent_hint="check_stock",
-            domain_hint="inventory",
-            match_mode="and",
-            entities=[
-                {
-                    "raw": "ZZTWC1",
-                    "hint": "product",
-                    "canonical_code": "ZZTWC1",
-                    "current_message": True,
-                    "confident": True,
-                }
-            ],
-        )
-    )
-    turn2 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-sec-3b", text="ZZTWC1 stock"),
-        session_factory=session_factory,
-    )
-    assert turn2.status == "done", turn2.error
-    variables_after_2 = _s4_session_vars(session_factory, contact_id).get("variables") or {}
-    assert variables_after_2.get("selection_context") != "set_page", variables_after_2
-
-    monkeypatch.setattr(
-        engine_mod.business_services, "fetch_services", lambda db: _FetchServices(mcp_call=_cert_fake_call_tool(db))
-    )
-    stub_parser(_s4_cert_parser_output())
-    turn3 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-sec-3c", text="which tap has cert"),
-        session_factory=session_factory,
-    )
-    assert turn3.status == "done", turn3.error
-    variables_after_3 = _s4_session_vars(session_factory, contact_id).get("variables") or {}
-    assert variables_after_3.get("selection_context") == "set_page", variables_after_3
-    carry_after_3 = variables_after_3.get("last_result_set") or {}
-    assert carry_after_3.get("offset") == 5, carry_after_3
-
-
-# --------------------------------------------------------------------------- #
 # Correctness review (11 Sep 2026, PLAN-attribute-first-asks.md REV-S3,        #
 # AC-1337) - two hand-synced copies across the module boundary                #
 # (`references.py` sits outside `app.services.chatbot`, so it keeps its own    #
@@ -4055,65 +3113,25 @@ def test_carry_clears_on_a_non_page_business_answer(session_factory, stub_parser
 # --------------------------------------------------------------------------- #
 
 
-def test_page_cap_and_cert_regex_are_pinned():
+def test_id_cap_and_cert_regex_are_pinned():
     """AC-1337/REV-S3: `answer.SET_PAGE_ID_CAP` and `references._SET_PAGE_ID_CAP`
     must stay equal, and `references._CERT_WORD_RE` must stay the same pattern
-    as `output_exchange._CERT_RE` - both are hand-synced copies across the
-    module boundary (`references.py`'s own docstrings say so), so a value
-    that drifts silently under-pages a "more" carry or lets a cert-shaped word
-    slip past the described-set stripping.
+    as `predicate._CERT_RE` (its home since main retired `head/output_exchange`) -
+    both are hand-synced copies across the module boundary (`references.py`'s own
+    docstrings say so), so a value that drifts silently caps the counted set
+    differently from the recount or lets a cert-shaped word slip past the
+    described-set stripping.
 
     Green today - both copies were kept in lockstep by hand at write time.
     Kept as the regression guard the drift would otherwise need a console
     turn to surface.
     """
     from app.api.v1.system import references
-    from app.services.chatbot.head.output_exchange import _CERT_RE
     from app.services.chatbot.lanes.business import answer
+    from app.services.chatbot.lanes.business.predicate import _CERT_RE
 
     assert answer.SET_PAGE_ID_CAP == references._SET_PAGE_ID_CAP
     assert references._CERT_WORD_RE.pattern == _CERT_RE.pattern
-
-
-# --------------------------------------------------------------------------- #
-# Correctness review - REV-N1/AC-1337: `is_more_reply` must accept only the    #
-# fixed paging phrases, never any short message merely containing the word.   #
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.parametrize(
-    "text, expected",
-    [
-        ("more", True),
-        ("More!", True),
-        ("next", True),
-        ("lagi", True),
-        ("more please", True),
-        ("show more", True),
-        ("next 5", True),
-        ("next five", True),
-        ("more 5", True),
-        ("no more", False),
-        ("next week?", False),
-        ("more taps with stock", False),
-        ("SRTWC286", False),
-    ],
-)
-def test_is_more_reply_accepts_only_paging_phrases(text, expected):
-    """AC-1337/REV-N1: `is_more_reply` must equal one of the fixed paging
-    phrases (more, next, lagi, more please, show more, next 5, next five,
-    "more"/"next"/"lagi" followed by a single number), lower-cased and
-    stripped of punctuation - never any short message that merely CONTAINS
-    one of those words.
-
-    RED for "no more" and "next week?": today's `_MORE_WORD_RE` is a bare
-    substring/word search (`\\b(more|next|lagi)\\b`) over a message capped
-    only at 4 words, so both match and wrongly page a carry that was never
-    asked to continue.
-    """
-    from app.services.chatbot.lanes.business.answer import is_more_reply
-
-    assert is_more_reply(text) is expected, text
 
 
 # --------------------------------------------------------------------------- #
@@ -4152,297 +3170,6 @@ def test_set_noun_for_irregular_plurals():
         build_set_header(1, 1, "bathroom accessory", {"stock": True})
         == "1 bathroom accessory has stock."
     )
-
-
-# --------------------------------------------------------------------------- #
-# Fix round 3 - R19/AC-1343 (REV-S1 re-check): the set_page carry survives     #
-# ONLY a page continuation - a same-domain non-page answer and a same-domain  #
-# zero-qualifying clarify both clear it, so "more" afterwards answers the     #
-# no-set copy; a rendered set answer re-arms it fresh.                        #
-# --------------------------------------------------------------------------- #
-
-
-def test_fresh_set_answer_rearms_the_carry_with_its_own_set(session_factory, stub_parser, stub_access, monkeypatch):
-    """AC-1343/R19: a second, SAME-DOMAIN set answer for a DIFFERENT class
-    ("which basin has cert" right after "which tap has cert") must re-arm the
-    carry with the basin set alone - never merge with or retain the old tap
-    identity.
-
-    Likely GREEN today, measured directly: `_set_page_carry`'s fresh arm
-    writes a brand-new dict (no `**prev_carry` spread, unlike its own
-    page-continuation arm), so a second genuine RENDER already replaces the
-    carry wholesale. Kept as the AC-1343 regression guard the fix must not
-    break while closing the (different) clarify gap below, reported honestly
-    rather than forced red.
-    """
-    contact_id = _s4_contact_id("r19rearm")
-    db = session_factory()
-    tap_codes = _s4_seed_seven_taps(db)
-
-    from app.models.product import Product, ProductCategory, UnitOfMeasure
-
-    category = db.query(ProductCategory).first()
-    uom = db.query(UnitOfMeasure).first()
-    # The bare word "basin" only resolves to class "Wash Basin" through a
-    # category coded `<brand>-WB`'s own `search_synonyms` - a plain product's
-    # class derivation (from its description) is unaffected by which category
-    # it sits under, so this is vocabulary-only, not a category reassignment.
-    _wash_basin_category(db)
-    basin_codes: list[str] = []
-    for _ in range(6):
-        product = _basin_product(db, category_id=category.id, uom_id=uom.id)
-        _certificate_for(db, product_id=product.id)
-        basin_codes.append(product.product_code)
-    db.commit()
-
-    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
-    engine_mod = _s4_wire_engine(
-        session_factory,
-        monkeypatch,
-        resolve_entity=_s4_real_resolve_entity(db),
-        fetch_mcp_call=_cert_fake_call_tool(db),
-    )
-    stub_parser(_s4_cert_parser_output())
-    stub_access()
-
-    turn1 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-r19r-1", text="which tap has cert"),
-        session_factory=session_factory,
-    )
-    assert turn1.status == "done", turn1.error
-
-    stub_parser(
-        _s4_cert_parser_output(
-            entities=[
-                {
-                    "raw": "basin",
-                    "hint": "product",
-                    "canonical_code": None,
-                    "current_message": True,
-                    "confident": True,
-                },
-                {
-                    "raw": "cert",
-                    "hint": "attachment_type",
-                    "canonical_code": None,
-                    "current_message": True,
-                    "confident": True,
-                },
-            ]
-        )
-    )
-    turn2 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-r19r-2", text="which basin has cert"),
-        session_factory=session_factory,
-    )
-    assert turn2.status == "done", turn2.error
-
-    variables = _s4_session_vars(session_factory, contact_id).get("variables") or {}
-    assert variables.get("selection_context") == "set_page", variables
-    carry = variables.get("last_result_set") or {}
-    ids = set(carry.get("qualifying_ids") or [])
-
-    basin_ids = {row.id for row in db.query(Product).filter(Product.product_code.in_(basin_codes)).all()}
-    tap_ids = {row.id for row in db.query(Product).filter(Product.product_code.in_(tap_codes)).all()}
-
-    assert ids == basin_ids, (ids, basin_ids, tap_ids)
-    assert not (ids & tap_ids), (ids, tap_ids)
-
-
-def test_carry_clears_on_a_same_domain_zero_qualifying_clarify(
-    session_factory, stub_parser, stub_access, monkeypatch
-):
-    """AC-1343/R19: after "which tap has cert", a SAME-DOMAIN clarify that
-    renders nothing (AC-1320's own zero-qualifying-with-unrecognized-terms
-    shape) must clear the set_page carry - not leave the tap set armed for a
-    later, unrelated "more" to page through under the wrong header.
-
-    Turn 1: "which tap has cert" -> set answer, carry armed (7 taps, offset 5).
-    Turn 2: "which flurbish has cert" -> AC-1320 clarify (qualifying_total 0,
-    unrecognized_terms carrying "flurbish"), same domain (product_attachment),
-    NOTHING rendered, no roster - `selection_context` must no longer be
-    "set_page".
-    Turn 3: "more" - AC-1343 (amended): with the carry cleared, `head/route.py`'s
-    `is_set_page_more_reply` (gated on `prev.selection_context == "set_page"`)
-    is false, so the turn takes the SAME ordinary low-signal route a bare
-    "more" with no prior set takes today - never `resolve_gate._set_page_reply`
-    at all. The harness registers "low_signal" in `chatbot_completed_lanes` so
-    this turn completes in the CRM rather than hitting the S7 hard refusal for
-    an un-registered lane, and its clarifier call is stubbed so no live model
-    call runs.
-
-    RED: `_offer_carry`'s set_page arm only clears on `answered or topic.
-    changed(...)` - turn 2 is neither answered (nothing was ever rendered) nor
-    a domain change (still product_attachment), so `variables["selection_
-    context"]` is restored to "set_page" off `prev` and turn 3's bare "more"
-    is wrongly routed as a page continuation, paging the STALE tap set under
-    the old header.
-    """
-    contact_id = _s4_contact_id("r19clear")
-    db = session_factory()
-    codes = _s4_seed_seven_taps(db)
-    _s4_seed_contact(session_factory, contact_id=contact_id, session_vars={"variables": {}})
-
-    engine_mod = _s4_wire_engine(
-        session_factory,
-        monkeypatch,
-        resolve_entity=_s4_real_resolve_entity(db),
-        fetch_mcp_call=_cert_fake_call_tool(db),
-    )
-    stub_parser(_s4_cert_parser_output())
-    stub_access()
-
-    turn1 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-r19-1", text="which tap has cert"),
-        session_factory=session_factory,
-    )
-    assert turn1.status == "done", turn1.error
-    variables_after_1 = _s4_session_vars(session_factory, contact_id).get("variables") or {}
-    assert variables_after_1.get("selection_context") == "set_page", variables_after_1
-
-    stub_parser(
-        _s4_cert_parser_output(
-            entities=[
-                {
-                    "raw": "flurbish",
-                    "hint": "product",
-                    "canonical_code": None,
-                    "current_message": True,
-                    "confident": True,
-                },
-                {
-                    "raw": "cert",
-                    "hint": "attachment_type",
-                    "canonical_code": None,
-                    "current_message": True,
-                    "confident": True,
-                },
-            ]
-        )
-    )
-    turn2 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-r19-2", text="which flurbish has cert"),
-        session_factory=session_factory,
-    )
-    assert turn2.status == "done", turn2.error
-    variables_after_2 = _s4_session_vars(session_factory, contact_id).get("variables") or {}
-    assert variables_after_2.get("selection_context") != "set_page", variables_after_2
-
-    resolve_calls: dict[str, int] = {}
-    from app.services.chatbot.lanes.business.services import ResolveGateServices
-
-    monkeypatch.setattr(
-        engine_mod.business_services,
-        "production_services",
-        lambda db, *, space_id=None: ResolveGateServices(
-            access_types=lambda **_: [],
-            resolve_entity=_s4_counting_resolve_entity(resolve_calls),
-            probe=lambda **_: None,
-        ),
-    )
-    # Register "low_signal" so this turn's own lane completes in the CRM instead
-    # of hitting S7's hard refusal for a branch kind `chatbot_completed_lanes`
-    # does not name; the resolver-counting stub above stays wired regardless
-    # (a "more" with no carry never reaches `resolve_gate.run` either way).
-    from app.models.user import SystemSetting
-
-    settings_db = session_factory()
-    setting = settings_db.query(SystemSetting).first()
-    setting.chatbot_completed_lanes = ["business_query", "low_signal"]
-    settings_db.commit()
-
-    from app.services.chatbot.lanes import casual
-
-    monkeypatch.setattr(casual, "resolve_for_prompt", lambda db, *, ctx: {"resolutions": []})
-    monkeypatch.setattr(casual, "resolve_clarifier_config", lambda db, **_: object())
-    monkeypatch.setattr(
-        casual, "call_clarifier", lambda config, prompt: '{"response": "Not paging anything right now."}'
-    )
-
-    stub_parser(_s4_bare_parser_output())
-    turn3 = engine_mod.run_turn(
-        _s4_envelope(contact_id=contact_id, message_id="ZZT-r19-3", text="more"),
-        session_factory=session_factory,
-    )
-    assert turn3.status == "done", turn3.error
-    assert turn3.branch_kind == "low_signal", turn3.branch_kind
-
-    variables_after_3 = _s4_session_vars(session_factory, contact_id).get("variables") or {}
-    assert variables_after_3.get("selection_context") != "set_page", variables_after_3
-
-    reply3 = (turn3.reply or {}).get("text") or ""
-    assert "Showing 6 to 7" not in reply3, reply3
-    assert not (_s4_codes_in(reply3) & set(codes)), (reply3, codes)
-
-
-# --------------------------------------------------------------------------- #
-# Round 3 re-check (R26, AC-1350): the page arm's `fetch_rendered_result`      #
-# guard (`_set_page_carry`, compile_state.py ~line 1947) has no test of its    #
-# own today - the reviewer proved disabling it leaves the whole file green.   #
-# --------------------------------------------------------------------------- #
-
-
-def test_set_page_carry_page_arm_keeps_the_offset_when_the_fetch_never_rendered():
-    """AC-1350/R26: a page-continuation turn (`gate_json.predicate.page`
-    present, off a carried `set_page` selection) whose OWN fetch never
-    reached the tool (`fetch_rendered_result=False` - a tier-ask, an
-    infrastructure error, the gate's own picker) must leave the carry's
-    `offset` EXACTLY as `prev` left it - nothing new was shown, so a retried
-    "more" has to start from the SAME position, not skip past rows the
-    customer never actually saw.
-
-    Unit-level, not a full engine turn: measured directly that a genuine MCP
-    failure fails the WHOLE turn before `compile_current_state` ever runs at
-    all (`engine.py`'s `fetch_failed_hard` path), so a full-turn construction
-    of this scenario would pass whether or not the guard exists - proving
-    nothing. Calling `_set_page_carry` itself is the only construction that
-    actually exercises the guarded branch.
-
-    GREEN today (the guard already exists at compile_state.py ~line 1947) -
-    confirmed as a genuine kill test by manually disabling the guard locally
-    (offset then advances to 7, the fabricated page's own `new_offset`) and
-    reverting; not committed as a mutation, this docstring is the record.
-    """
-    from app.services.chatbot.tail.compile_state import _set_page_carry
-
-    prev_carry = {
-        "kind": "set_page",
-        "qualifying_ids": ["a", "b", "c", "d", "e", "f", "g"],
-        "offset": 5,
-        "qualifying_total": 7,
-        "require": {"certificate": True},
-        "set_noun": "taps",
-        "domain": "product_attachment",
-        "access_levels": [],
-    }
-    prev = {
-        "selection_context": "set_page",
-        "last_result_set": prev_carry,
-        "domain_hint": "product_attachment",
-    }
-    gate_json = {
-        "predicate": {
-            "require": {"certificate": True},
-            "qualifying_total": 7,
-            "page": {"start": 6, "end": 7, "new_offset": 7, "set_noun": "taps"},
-        }
-    }
-    variables: dict[str, Any] = {}
-
-    touched = _set_page_carry(
-        variables,
-        gate_json=gate_json,
-        gate_ran=True,
-        prev=prev,
-        qf={"domain_hint": "product_attachment"},
-        fetch_rendered_result=False,
-    )
-
-    assert touched is True
-    assert variables.get("selection_context") == "set_page"
-    carry = variables.get("last_result_set")
-    assert carry == prev_carry, carry
-    assert carry["offset"] == 5, carry
 
 
 # --------------------------------------------------------------------------- #

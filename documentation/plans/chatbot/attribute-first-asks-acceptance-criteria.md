@@ -270,6 +270,21 @@ tool. No new reply format.
   the same header and "Showing 6 to 10"; a "more" past the end says "That was all
   <qualifying_total>." Evidence: pytest on two consecutive turns through the existing
   offer-carry state; console turn.
+- AC-1316/AC-1317 amended by owner ruling R39 (26 Sep 2026, PLAN "Revive round"): no paging.
+  - AC-1316a Up to 50 qualifying products (`answer.SET_LIST_MAX`): every one is listed under
+    "<qualifying_total> <set noun> have <predicate noun>." with no "Showing". Evidence:
+    `tests/chatbot/test_counted_set_no_paging.py`.
+  - AC-1316b More than 50, no count named: the header adds "That is too many to list in one
+    message. How many should I show (up to 50), or which brand or size should I narrow it to?"
+    and no rows (and no files) are sent. Every leg (certificate, stock, attachment_type,
+    promotion, incoming). Evidence: same file.
+  - AC-1317a The answer to that question (the parser's `top_n`, no new subject) lists that many
+    from the start of the SAME set, recounted under the same tier and stock visibility policy,
+    headed "... Here are the first <n>."; a count above 50 lists 50; a count in the ask itself
+    works the same way. Evidence: same file.
+  - AC-1317b "more" / "next" / "lagi" pages nothing, and no carry survives the turn after the
+    question. A recount that finds nothing never calls the tool without a product filter.
+    Evidence: same file; `tests/chatbot/test_rearch_invariants.py`.
 - AC-1318 Validity: "has cert" counts any active register certificate; expired rows keep the
   existing "Validity: Expired" flag in the block. Evidence: pytest on a product whose only
   certificate is expired (counted, flagged).

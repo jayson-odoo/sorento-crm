@@ -828,8 +828,7 @@ def resolve_product_set(
     # same convention `schemes_on_file` follows, since a bare leg has no
     # scheme to narrow by (a product certified under both PPS and WCM must
     # never have its WCM file rendered for a PPS question). Scoped to the
-    # CANDIDATES actually shown (the same page-id list the "more" carry
-    # stores), never the whole qualifying family - a certificate the caller
+    # CANDIDATES actually shown, never the whole qualifying family - a certificate the caller
     # never sees a product for is not one it needs to fetch either. Same
     # explicit same-company predicate as `_leg_certificate` itself (the
     # `do_orm_execute` listener's `with_loader_criteria` does not reliably

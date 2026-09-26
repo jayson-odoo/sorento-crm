@@ -1449,9 +1449,9 @@ def run_fetch(
     item = fetch_mod.fetch_result(structured, tool=tool_item, tier_probe=None)
     # SEC-B1/AC-1333: the RECOMPOSED access_levels this turn's tool call actually
     # carried (`semantic_input`'s own, built above from `tier_gate.access_levels_
-    # recomposed` when a tier gate ran) - `_set_page_carry` stores this in the
-    # set_page carry so a later "more" page can re-inject the SAME tier, rather
-    # than falling to the bare parser's own (empty, on a "more" turn) list.
+    # recomposed` when a tier gate ran) - `turn_runtime.set_page_carry` stores this
+    # in the set_page carry so the answer to "how many should I show?" recounts under
+    # the SAME tier, rather than the bare parser's own (empty, on a bare count) list.
     item["access_levels"] = semantic_input.get("access_levels")
     return {
         "kind": "result",

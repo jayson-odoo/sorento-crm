@@ -2581,20 +2581,36 @@ def _header_predicate_phrase(require: dict[str, Any]) -> str:
     return _and_list(parts) if parts else "that"
 
 
-def build_set_header(qualifying_total: int, shown: int, set_noun: str, require: dict[str, Any]) -> str:
-    """AC-1316 (work item E2): "<qualifying_total> <set noun> have <predicate noun>.
-    Showing <n>." - prepended, as its OWN line, ahead of the existing render (the
-    block below it is untouched). "Showing <n>" is dropped when every qualifying
-    product already fits on the page (`qualifying_total <= shown`).
+#: The longest counted set listed in one reply (owner ruling, 26 Sep 2026: "A counted set
+#: that fits one WhatsApp message (about 50 rows) is listed in full"). Read at call time
+#: (`answer.SET_LIST_MAX`) so a test can lower it rather than seed fifty products.
+SET_LIST_MAX = 50
 
-    A pure string function: `qualifying_total` and `shown` are counts the caller
-    already has (the resolver's own `qualifying_total`, and the page the domain
-    tool actually rendered), never re-derived here.
+
+def build_set_header(qualifying_total: int, shown: int, set_noun: str, require: dict[str, Any]) -> str:
+    """AC-1316: "<qualifying_total> <set noun> have <predicate noun>." - the counted set's
+    own line, ahead of the rows. No paging (owner ruling, 26 Sep 2026: no "Showing 5", no
+    "more"):
+
+    - every qualifying product listed (`shown >= qualifying_total`): the count alone;
+    - some listed because the customer named how many (`0 < shown < qualifying_total`):
+      "Here are the first <shown>.";
+    - none listed (`shown == 0`, a set longer than `SET_LIST_MAX`): the count, then the
+      question - how many to show, or a narrower filter.
+
+    A pure string function: `qualifying_total` and `shown` are counts the caller already
+    has, never re-derived here.
     """
     verb = "has" if qualifying_total == 1 else "have"
     header = f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}."
     if qualifying_total > shown:
-        header += f" Showing {shown}."
+        if shown > 0:
+            header += f" Here are the first {shown}."
+        else:
+            header += (
+                " That is too many to list in one message. How many should I show "
+                f"(up to {SET_LIST_MAX}), or which brand or size should I narrow it to?"
+            )
     return header
 
 
@@ -2627,71 +2643,9 @@ def set_noun_for(class_labels: list[str] | None) -> str:
     return " ".join(w.lower() for w in words)
 
 
-# --------------------------------------------------------------------------- #
-# E3 (attribute-first asks, AC-1317): "more" paging through the set_page carry.
-# --------------------------------------------------------------------------- #
-
-#: The carried id list's own cap - a 2,704-long qualifying set is carried as ids,
-#: not re-queried, so it has to stop somewhere short of the whole catalogue.
-#: Named so a test can monkeypatch it (`raising=False`) rather than seed the real
-#: count.
+#: The qualifying ids one described set is counted and fetched from - the resolver's own
+#: cap, so a 2,704-long set is counted in full but never carried as a list of that size.
 SET_PAGE_ID_CAP = 200
-
-# REV-N1/AC-1337 (third console pass): the fixed set a paging reply must EQUAL,
-# lower-cased and stripped of punctuation - never a bare substring/word search,
-# which let "no more" and "next week?" wrongly page a carry that was never
-# asked to continue.
-_MORE_FIXED_PHRASES: frozenset[str] = frozenset(
-    {"more", "next", "lagi", "more please", "show more", "next 5", "next five", "lagi 5"}
-)
-_MORE_NUMBER_RE = re.compile(r"^more \d+$")
-_PUNCTUATION_RE = re.compile(r"[^\w\s]")
-_WHITESPACE_RE = re.compile(r"\s+")
-
-
-def is_more_reply(text: Any) -> bool:
-    """AC-1317/AC-1337: a bare "more" / "next" / "lagi" reply, or one of the
-    fixed short courtesy/paging phrases, lower-cased and stripped of
-    punctuation - equality only, never a substring/word search over an
-    arbitrary short message: "no more", "next week?" and "more taps with
-    stock" must NOT page a carry that was never asked to continue.
-    """
-    normalized = _WHITESPACE_RE.sub(" ", _PUNCTUATION_RE.sub("", jsc.js_string(text).lower())).strip()
-    if not normalized:
-        return False
-    return normalized in _MORE_FIXED_PHRASES or bool(_MORE_NUMBER_RE.match(normalized))
-
-
-def build_set_page_header(
-    qualifying_total: int, start: int, end: int, set_noun: str, require: dict[str, Any]
-) -> str:
-    """AC-1317: "<qualifying_total> <set noun> have <predicate noun>. Showing
-    <start> to <end>." - the CONTINUATION page's own header, off the SAME
-    predicate-noun phrase `build_set_header` uses, with a pre-known `set_noun`
-    (the carry's own, never re-derived from `class_labels` - a "more" turn runs
-    no resolver call and so never re-computes them).
-    """
-    verb = "has" if qualifying_total == 1 else "have"
-    return (
-        f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}. "
-        f"Showing {start} to {end}."
-    )
-
-
-def build_set_page_exhausted_message(qualifying_total: int, set_noun: str) -> str:
-    """AC-1317: "That was all <N> <noun>." - the fixed idiom, never conjugated
-    off `qualifying_total` ("was", not "were", even for a plural count)."""
-    return f"That was all {qualifying_total:,} {set_noun}."
-
-
-def build_set_page_narrow_message(set_noun: str) -> str:
-    """AC-1317: past the CARRIED id list's own cap (`SET_PAGE_ID_CAP`) - real
-    qualifying products remain, but the carry ran out before they did, so the
-    honest answer is to ask for a narrower question, never "that was all"."""
-    return (
-        f"That's as many {set_noun} as I can carry in one list - narrow the ask "
-        f"(a brand, or a more specific type) and I can show you the right ones."
-    )
 
 
 def not_found_error_message(

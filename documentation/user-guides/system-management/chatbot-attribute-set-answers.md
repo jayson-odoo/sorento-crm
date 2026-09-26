@@ -17,30 +17,35 @@ srtwc286" replies as it always has, one product's stock, no count line in front 
 
 ## The reply
 
-The first line always states the count, and how many products are shown in this reply:
+The first line always states the count:
 
-> 908 taps have certificates. Showing 5.
+> 7 taps have certificates.
 
-Below that first line, the reply looks exactly like asking about one product - one block per
-product, files attached - repeated for the first five qualifying products. If every qualifying
-product already fits in the reply, the "Showing" sentence is left off (e.g. "3 taps have
-certificates.").
+**Up to 50 qualifying products:** every one is listed below that line, each block looking
+exactly like asking about one product (files attached for a certificate or document answer).
 
-### Getting the next five
+**More than 50:** nothing is listed, because the list would not fit in one WhatsApp message.
+The bot states the count and asks:
 
-Reply **more** (also **next**, or the Malay **lagi**) - on its own, or as a short phrase like
-"more please" or "show more" - and the bot sends the next five products with an updated header:
+> 908 taps have certificates. That is too many to list in one message. How many should I show
+> (up to 50), or which brand or size should I narrow it to?
 
-> 908 taps have certificates. Showing 6 to 10.
+Reply with a number ("10") and the bot lists that many from the start of the set:
 
-Keep replying "more" to keep paging. Once every qualifying product has been shown, the bot says:
+> 908 taps have certificates. Here are the first 10.
 
-> That was all 908 taps.
+Or narrow the question instead ("which sorento tap has cert") and the bot answers the smaller
+set. Naming a number in the question itself works the same way ("show 20 taps with cert").
 
-The bot only carries the first 200 qualifying product ids forward for paging. If a set is bigger
-than that and you keep asking for more past the 200th, it will ask you to narrow the question
-instead of paging further (e.g. "narrow the ask - a brand, or a more specific type - and I can
-show you the right ones") rather than silently stopping.
+There is no paging: "more", "next" or "lagi" does not fetch another batch. Ask again with a
+number or a narrower question.
+
+A dealer on an **Availability only** stock visibility policy asking "which tap got stock" is
+counted over the locations their policy allows only, and is never shown a quantity: each product
+is listed by its code, followed by the usual "How many units do you need?" question.
+
+The owner's everyday words are understood as their product types: "water tap" is a tap and
+"water basin" is a wash basin ("which water tap got stock", "which water basin got stock").
 
 ## What "has cert" checks
 
@@ -59,7 +64,7 @@ The bot never silently answers "none" for a word it didn't understand - it alway
 asks you to try a word it knows.
 
 * An unrecognised **product type** clarifies and suggests the closest match it does know:
-  > I don't know 'water tap' as a product type. Did you mean tap?
+  > I don't know 'aqua tap' as a product type. Did you mean tap?
 * An unrecognised **document type** (something you're asking to see, like a photo, before an
   admin has taught the bot that word) clarifies and lists the document types it does know:
   > I don't know 'photo' as a document type. Types I know: Certification, Product Photos, Product

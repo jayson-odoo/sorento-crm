@@ -19,9 +19,9 @@ right reason rather than a live run against the un-rewired engine).
 is assumed to be v3's already-declared `requested_attributes: list[str]` key
 (`tests.chatbot._turn_helpers.verdict`'s own default, `[]`) plus `domain_hint` /
 `entities[].hint` naming the class word's resolved kind - no other key exists in the
-v3 schema for this. The exact reply grammar ("N <kind> have <attribute>. Showing 5.")
-and the paging window (5 per page, "Showing 6 to 10" on a second "more") are copied
-from the console yaml's own `reply_contains` assertions, not invented.
+v3 schema for this. The exact reply grammar ("N <kind> have <attribute>.") is copied
+from the console yaml's own `reply_contains` assertions, not invented; the paging window
+it once carried is gone (owner ruling, 26 Sep 2026: no paging).
 
 Seeding (coordinator amendment, 16 Sep 2026): CI's database has no data, so every
 test seeds its own products / certificates / promotions rows on the BLANK scratch
@@ -284,7 +284,8 @@ def _stub_certificate_tools(session_factory, monkeypatch, *, codes: list[str]) -
 
 class TestCountedSetAnswer:
     """Console case "a class word scopes the set and the header counts it" (AC-1306,
-    AC-1316): "which tap has cert" -> "taps have certificates ... Showing 5"."""
+    AC-1316): "which tap has cert" -> "11 taps have certificates." with all eleven
+    listed (no paging, owner ruling 26 Sep 2026)."""
 
     @pytest.mark.xfail(strict=True, reason=_XFAIL_ATTRIBUTE_FIRST_NEVER_ROUTES_COUNTED_SET)
     def test_counted_answer_names_kind_attribute_and_shows_five(
@@ -311,49 +312,10 @@ class TestCountedSetAnswer:
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
         text = (result.reply or {}).get("text", "")
-        assert "have certificates" in text or "certificate" in text.lower(), text
-        assert "Showing 5" in text, text
-
-
-class TestPagingByFive:
-    @pytest.mark.xfail(strict=True, reason=_XFAIL_ATTRIBUTE_FIRST_NEVER_ROUTES_COUNTED_SET)
-    def test_more_pages_the_same_set_by_five(
-        self, session_factory, stub_parser, stub_access, monkeypatch
-    ) -> None:
-        _seed_contact(session_factory, phone="+60000000021")
-        # Same company-link requirement as `TestCountedSetAnswer` - the certificate
-        # read is company-scoped.
-        _link_contact_company(session_factory, company_id=SORENTO)
-        codes = _seed_products(session_factory, class_label="tap", synonyms=["taps"], count=11)
-        _seed_certificates(session_factory, codes, company_id=SORENTO)
-        _stub_certificate_tools(session_factory, monkeypatch, codes=codes)
-
-        offsets_seen: list[int] = []
-
-        def on_call(user_block: str) -> None:
-            offsets_seen.append(len(offsets_seen))
-
-        v1 = verdict(
-            domain_hint="product_attachment",
-            requested_attributes=["certificate"],
-            entities=[entity("tap", hint="product_type", confident=True)],
-        )
-        stub_parser(v1, on_call=on_call)
-        stub_access()
-
-        from app.services.chatbot import engine as engine_mod
-
-        first = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-        assert "Showing 5" in (first.reply or {}).get("text", ""), first.reply
-
-        v2 = verdict(message_type="clarification", user_goal="more", continuation=True)
-        stub_parser(v2, on_call=on_call)
-        second_envelope = _envelope()
-        second_envelope.message["message"]["messageId"] = "ZZT-attr-first-page-2"
-        second_envelope.message["message"]["message"]["text"] = "more"
-        second = engine_mod.run_turn(second_envelope, session_factory=session_factory)
-
-        assert "Showing 6 to 10" in (second.reply or {}).get("text", ""), second.reply
+        assert "11 taps have certificates." in text, text
+        assert "Showing" not in text, text
+        for code in codes:
+            assert code in text, text
 
 
 class TestOwnCompanyCertificatesOnly:

@@ -172,48 +172,34 @@ def test_fetch_spec_entities_only_carry_the_kinds_the_domain_declares():
         assert "14.09.2026 Container Status 2026.xlsx" not in values, spec.entities
 
 
-def test_set_page_survives_only_with_the_continuation_signal():
-    """(c) `focus.set_page` survives a turn only when the verdict carries the
-    continuation signal, and is dropped by a turn that produced a list answer.
-
-    Field name measured off the S3 paging test
-    (`test_rearch_s3_attribute_first.py::TestPagingByFive::
-    test_more_pages_the_same_set_by_five`): `verdict(message_type="clarification",
-    user_goal="more", continuation=True)` is what a "more" turn emits, and
-    `turn/apply.py::_is_continuation` reads `verdict.get("continuation") is True` and
-    nothing else (AC-1317).
-
-    `apply()`'s own continuation branch (line ~1228: `if _is_continuation(verdict) and
-    focus.set_page:`) is the SURVIVE half, and it holds today - asserted here as
-    context, not the graded half. The DROP half is `engine.py`'s job today (lines
-    ~1643-1657: `state_out.focus.set_page = None` once a real, non-paged fetch runs) -
-    outside this pure package entirely. `apply()` itself (`_focus_rules`,
-    turn/apply.py) never touches `focus.set_page` on an ordinary turn: a plain
-    NEW_ASK for a different product, with `continuation` absent (the default), rides
-    the stale `set_page` value straight through into `new_state.focus.set_page`
-    unchanged. Currently red: this pure-layer gap means a caller driving `apply()`
-    alone - anywhere `engine.py`'s own post-fetch bookkeeping is not also wired in -
-    ships a stale page position on every unrelated later turn.
+def test_set_page_is_read_only_by_the_answer_to_how_many():
+    """(c) No paging (owner ruling, 26 Sep 2026). `focus.set_page` is the set a too-long
+    counted answer asked "how many should I show?" about, and the one turn that reads
+    it is that question's answer: a count (`top_n`) naming no new subject lists that
+    many of the SAME set. A "more" (`continuation`) pages nothing, and every turn -
+    the count's answer included - leaves nothing carried behind it.
     """
     carried_set_page = {
         "set_key": {"domain": "product_attachment", "kind": "certificate"},
-        "offset": 5,
     }
-
-    # Survive: a continuation turn re-reads the SAME carried set_page value into its
-    # own fetch, untouched.
-    survive_state = State(
-        focus=Focus(set_page=dict(carried_set_page)), pending=None, profile=Profile()
-    )
-    continuation_verdict = verdict(
-        message_type="clarification", user_goal="more", continuation=True
-    )
     policy = build_policy()
-    new_survive_state, survive_plan = apply(survive_state, continuation_verdict, policy)
 
-    assert len(survive_plan.fetch) == 1, survive_plan.fetch
-    assert survive_plan.fetch[0].filters.get("set_page") == carried_set_page
-    assert new_survive_state.focus.set_page == carried_set_page
+    # Read: the count answers the carried set, once.
+    count_state = State(focus=Focus(set_page=dict(carried_set_page)), pending=None, profile=Profile())
+    new_count_state, count_plan = apply(count_state, verdict(top_n=3, continuation=True), policy)
+
+    assert len(count_plan.fetch) == 1, count_plan.fetch
+    assert count_plan.fetch[0].filters.get("set_page") == carried_set_page
+    assert count_plan.fetch[0].filters.get("top_n") == 3
+    assert new_count_state.focus.set_page is None
+
+    # A "more" is not a count: nothing is paged, and the carry is closed.
+    more_state = State(focus=Focus(set_page=dict(carried_set_page)), pending=None, profile=Profile())
+    new_more_state, more_plan = apply(
+        more_state, verdict(message_type="clarification", user_goal="more", continuation=True), policy
+    )
+    assert not any(isinstance(s.filters.get("set_page"), dict) for s in more_plan.fetch), more_plan.fetch
+    assert new_more_state.focus.set_page is None
 
     # Drop: an ordinary, non-continuation NEW_ASK for an unrelated product must not
     # carry the stale page position forward.

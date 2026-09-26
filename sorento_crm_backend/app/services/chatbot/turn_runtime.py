@@ -1716,10 +1716,15 @@ def make_tool_runner(
         page_ids: list[str] = []
         carry = spec.filters.get("set_page")
         if isinstance(carry, dict):
-            # Security B2: the entitlement comes off the CARRY (what page 1 answered
-            # under), never off this turn's verdict - a bare "more" states no tier, and
-            # an empty list is read downstream as "no tier filter at all".
-            page_predicate, page_ids = page_the_set(db, carry)
+            # Security B2: the entitlement comes off the CARRY (what the first answer
+            # counted under), never off this turn's verdict - a bare count states no
+            # tier, and an empty list is read downstream as "no tier filter at all".
+            page_predicate, page_ids = page_the_set(
+                db,
+                carry,
+                size=spec.filters.get("top_n"),
+                stock_policy=_contact_stock_policy(db, ctx, space_id),
+            )
         # R6 (fix round 2), corrected in fix round 4: `policy` is threaded through
         # so a null `routing.suggested_team` gets a domain-aware fill here too,
         # rather than the flat `DEFAULT_SUGGESTED_TEAM` literal - but this is the
@@ -1879,6 +1884,9 @@ def make_tool_runner(
                 and not tier_gate_value.get("access_levels_recomposed")
             )
             or (page_predicate is not None and page_predicate.get("entitlement_missing"))
+            # A recount that found nothing has no ids to send, and a tool called with
+            # no product filter answers about the whole catalogue: a miss, not a call.
+            or (page_predicate is not None and not page_ids)
             or would_be_unfiltered
             or no_subject_gate is not None
         ):
@@ -2033,8 +2041,8 @@ def spec_tier_matched(resolved: Any) -> bool:
     ONE product lane, one ladder: the resolver tries the code tiers and falls back to the
     spec/class search only when they matched nothing, so "SRTWC286 got stock" and "which
     water closet got stock" walk the same path and only the second reaches the fallback.
-    The counted-set answer ("N water closets have stock. Showing 5." plus the page
-    cursor) is simply how a SPEC-tier match RENDERS; a code-tier match renders as the
+    The counted-set answer ("N water closets have stock." over the listed set) is
+    simply how a SPEC-tier match RENDERS; a code-tier match renders as the
     list. The render had been following the `require` predicate instead, which
     `predicate.derive_require` builds from the INTENT alone (`check_stock` ->
     `{"stock": true}`) - so it rides every stock, incoming and promotion turn there is,
@@ -2059,9 +2067,6 @@ def spec_tier_matched(resolved: Any) -> bool:
     return bool(products) and all(m.get("match_tier") == SPEC_TIER for m in products)
 
 
-SET_PAGE_SIZE = 5
-
-
 def _entitled_names(values: Any) -> list[str]:
     """The access-level NAMES in `values`, trimmed, non-empty, in order."""
     return [v for v in jsc.array(values) if isinstance(v, str) and v.strip()]
@@ -2074,32 +2079,32 @@ def set_page_carry(
     *,
     access_levels: Any = None,
 ) -> dict[str, Any] | None:
-    """Where a counted-set answer got to, for `focus.set_page` (AC-1317).
+    """The set a too-long counted answer asked about, for `focus.set_page`.
 
-    `{set_key, offset}` and nothing more: the set is RE-DESCRIBED next turn from
+    No paging (owner ruling, 26 Sep 2026): the carry exists only so the answer to "how
+    many should I show?" - the parser's own count key, `top_n` - can list that many of
+    the SAME set. The engine writes it only when the rows were withheld (more than
+    `answer.SET_LIST_MAX` qualifying, no count named) and clears it on the next turn
+    whatever that turn is. `{set_key}` and nothing more: the set is RE-DESCRIBED from
     `set_key` rather than carried as a list of ids, so a session never holds two hundred
-    uuids and a "more" three turns later still answers over live data.
+    uuids and the answer is counted over live data.
 
-    Called only for a SPEC-tier answer (`spec_tier_matched`), and never without a scope
-    term: `set_key` describes the population by its `require` leg and its class words, so
-    an empty `scope_terms` describes "every product that has stock" and the next "more"
-    pages the whole catalogue. A spec tier reached with nothing to scope by is a miss, not
-    a set.
+    Never without a scope term: `set_key` describes the population by its `require` leg
+    and its class words, so an empty `scope_terms` describes "every product that has
+    stock". A spec tier reached with nothing to scope by is a miss, not a set.
 
     **Security B2 (re-check round, 20 Sep 2026): `access_levels` is part of the
     description, not beside it.** The same `require` leg and the same class words read
     under two entitlements are two different populations, so the levels page 1 actually
     answered under (`lanes/business._fetch_semantic_input`'s own, off
     `tier_gate.access_levels_recomposed`, carried out as the envelope's
-    `access_levels_used`) belong INSIDE `set_key` - main records the same fact as
-    `access_levels` on its own flat carry (`lanes/business/resolve_gate._set_page_reply`
-    reads it back as the next page's `tier_gate`). Without it the "more" turn had nothing
-    to recount by and fell to the PARSER's `access_levels`, which is empty in 249 of 249
+    `access_levels_used`) belong INSIDE `set_key`. Without it the recount had nothing
+    to count by and fell to the PARSER's `access_levels`, which is empty in 249 of 249
     real captures: `product_predicate_service._access_level_codes` reads an empty name
-    list as "no tier filter", so page 2 of a promotion set counted and named products
+    list as "no tier filter", so a recount of a promotion set counted and named products
     whose only promotion is restricted to a tier the contact does not hold. The key is
-    ALWAYS written, empty list included - a carry with no levels recorded is refused by
-    `page_the_set` rather than read as "no restriction".
+    ALWAYS written, empty list included - a promotion carry with no levels recorded is
+    refused by `page_the_set` rather than read as "no restriction".
     """
     if not predicate or not scope_terms:
         return None
@@ -2117,12 +2122,36 @@ def set_page_carry(
             "set_noun": set_noun_for(labels),
             "access_levels": _entitled_names(access_levels),
         },
-        "offset": min(SET_PAGE_SIZE, total),
     }
 
 
-def page_the_set(db: Session, carry: dict[str, Any], *, access_levels: Any = None):
-    """The next page of a carried set: `(predicate, product_ids)`.
+def _contact_stock_policy(db: Session, ctx: dict[str, Any], space_id: str | None):
+    """The asking contact's stock visibility policy (None for no contact), resolved the
+    way the resolver resolves it for the first answer (`references._stock_policy_for`)."""
+    contact_id = jsc.nullish_str(jsc.get(jsc.get(ctx, "contact"), "id")).strip()
+    if not contact_id:
+        return None
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+    from app.services.stock_visibility import resolve_policy
+
+    resolved = resolve_contact_with_null_workspace_fallback(db, contact_id=contact_id, space_id=space_id)
+    return resolve_policy(db, resolved or contact_id, space_id)
+
+
+def page_the_set(
+    db: Session,
+    carry: dict[str, Any],
+    *,
+    access_levels: Any = None,
+    size: int | None = None,
+    stock_policy: Any = None,
+):
+    """The first `size` products of a carried set: `(predicate, product_ids)`.
+
+    `size` is the count the customer named (capped at `answer.SET_LIST_MAX`, the
+    default). `stock_policy` is the asking contact's stock visibility policy, so a
+    dealer's recount of a stock set covers only the locations it allows, exactly as the
+    first answer's did (`product_predicate_service._leg_stock`).
 
     The set is re-counted from its own description, which is what makes the carry two
     small values instead of a list - and what makes a page honest when the catalogue
@@ -2142,18 +2171,21 @@ def page_the_set(db: Session, carry: dict[str, Any], *, access_levels: Any = Non
     later page of that same carry recounts under the same authority. Production's own
     "more" (`make_tool_runner.runner`) passes nothing at all.
     """
-    from app.services.chatbot.lanes.business.answer import SET_PAGE_ID_CAP
+    from app.services.chatbot.lanes.business import answer as answer_mod
     from app.services.product_predicate_service import resolve_product_set
 
     key = carry.get("set_key") or {}
-    offset = int(carry.get("offset") or 0)
     entitled = _entitled_names(key.get("access_levels"))
     if not entitled:
         stamped = _entitled_names(access_levels)
         if stamped:
             key["access_levels"] = list(stamped)
             entitled = stamped
-    if not entitled:
+    # Only the promotion leg is tier-restricted (`product_predicate_service._leg_promotion`
+    # is the one leg that reads `access_levels`), so only a set with one needs a recorded
+    # entitlement to be recounted honestly; a certificate, stock, incoming or attachment
+    # set has none to record and must not be refused for lacking it.
+    if not entitled and (key.get("require") or {}).get("promotion"):
         return {
             "require": key.get("require") or {},
             "qualifying_total": 0,
@@ -2161,12 +2193,7 @@ def page_the_set(db: Session, carry: dict[str, Any], *, access_levels: Any = Non
             "unrecognized_terms": [],
             "class_labels": [],
             "entitlement_missing": True,
-            "page": {
-                "start": offset + 1,
-                "end": offset,
-                "new_offset": offset,
-                "set_noun": key.get("set_noun") or "products",
-            },
+            "set_noun": key.get("set_noun") or "products",
         }, []
     outcome = resolve_product_set(
         db,
@@ -2174,10 +2201,11 @@ def page_the_set(db: Session, carry: dict[str, Any], *, access_levels: Any = Non
         specs=[],
         free_terms=None,
         scope_terms=list(key.get("scope_terms") or []),
-        limit=SET_PAGE_ID_CAP,
+        limit=answer_mod.SET_PAGE_ID_CAP,
         product_ids=None,
         brand=None,
         access_levels=entitled,
+        stock_policy=stock_policy,
     )
     total = int(outcome.get("qualifying_total") or 0)
     ids = [
@@ -2186,21 +2214,18 @@ def page_the_set(db: Session, carry: dict[str, Any], *, access_levels: Any = Non
         if isinstance(c, dict)
     ]
     ids = [i for i in ids if i]
-    page_ids = ids[offset : offset + SET_PAGE_SIZE]
-    end = offset + len(page_ids)
+    limit = answer_mod.SET_LIST_MAX if not size else min(int(size), answer_mod.SET_LIST_MAX)
+    page_ids = ids[:limit]
     predicate = {
         "require": outcome.get("require") or key.get("require") or {},
         "qualifying_total": total,
         "truncated": bool(outcome.get("truncated")),
         "unrecognized_terms": [],
         "class_labels": [],
-        "page": {
-            "start": offset + 1,
-            "end": end,
-            "new_offset": end,
-            "set_noun": key.get("set_noun") or "products",
-        },
+        "set_noun": key.get("set_noun") or "products",
     }
+    if outcome.get("certificate_ids"):
+        predicate["certificate_ids"] = outcome["certificate_ids"]
     return predicate, page_ids
 
 
@@ -2700,8 +2725,8 @@ def envelope_of(
         # a report, a refusal, a miss suggestion - has to say instead. A refused domain
         # says contract 7's registered sentence.
         "lane_text": denial_text if refused else fetched.get("response"),
-        # A counted-set answer's own header ("10 taps have certificates. Showing
-        # 5.", AC-1316/AC-1317) - unlike `lane_text` this travels ALONGSIDE rows, not
+        # A counted-set answer's own header ("10 taps have certificates.",
+        # AC-1316) - unlike `lane_text` this travels ALONGSIDE rows, not
         # instead of them: the composer still renders `figures` through its own
         # per-row grammar, only the domain-generic header line is replaced.
         #

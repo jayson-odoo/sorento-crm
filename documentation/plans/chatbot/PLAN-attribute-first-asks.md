@@ -1,6 +1,6 @@
 # PLAN: attribute-first asks, "which products have X", across every product and domain
 
-Status: IMPLEMENTED, PR #833 open and reviewed (rounds 1 to 5, verdict ready); owner test round R27 to R34 landed; merge pending owner go (11 Sep 2026). Lane `feat/chatbot-attribute-first-asks`.
+Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged (46711c618), revive repairs R35 to R38 and owner ruling R39 (no paging) built, tester first; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
 Test report: `attribute-first-asks-test-report.md`.
 UAC: `attribute-first-asks-acceptance-criteria.md`.
 Supersedes: `documentation/plans/_archive/chatbot/PLAN-spec-backward-search.md` (its backend half
@@ -260,6 +260,40 @@ Multiple keys AND. Unknown key stays a 422.
   LESSONS-LEARNT when the lane merges.
 - 220 cert-covered products have no spec row; they are reachable only through LOOKUP ids or a
   bare "anything with cert". Out of scope; belongs to spec derivation coverage.
+
+## Revive round, 26 Sep 2026
+
+Main's turn engine re-architecture (#952) had already ported most of this lane's code
+(`predicate.derive_require`, the resolver's require branch, the five legs, the set header,
+paging through `focus.set_page`) and retired `head/route.py` and `tail/compile_state.py`,
+which carried the lane's old "more" carry and Match line. The merge takes main's version of
+every app file; the lane keeps migration 511, its tests, the console cases and these docs.
+
+Owner, 26 Sep 2026: "I want to push for this reverse asking feature ... which water tap got
+stock which water tap got certificate which water basin blah blah blah got stock or got
+incoming all this reverse asking need to be able to cater to that".
+
+- R35 (repair): main's AC-1703 did-you-mean guard read a class word's substring matches
+  ("bidet" in `ACC-BIDET`) as a mistyped code and silenced AC-1319's zero-qualifying answer.
+  The guard counts only code-shaped tokens now.
+- R36 (repair): under the v3 verdict a cert PHRASE in `requested_attributes` ("PPS cert") fell
+  to the bare leg and lost its scheme; it now splits like an attachment_type raw.
+- R37 (owner): "water tap" is a Tap and "water basin" a Wash Basin (`CLASS_SYNONYMS`, and
+  migration 511 appends both to the categories already on file). AC-1301's "phrase that names
+  no set" example moves to "water tub"; the console clarify case to "aqua tap".
+- R38 (dealer check): the stock leg counts only the locations the asking contact's stock
+  visibility policy allows (the same `warehouse_criterion` the stock tool uses, stock ask v2
+  R3), and an availability row (no fields, by design) prints its product code instead of a
+  bare "1. ". No quantity reaches an availability-only contact.
+- R39 (owner ruling, 26 Sep 2026 01:55Z): "drop paging. No 'Showing 5', no more / next /
+  lagi carry. A counted set that fits one WhatsApp message (about 50 rows) is listed in full
+  under its count header; a longer one states the count and asks how many to show, or offers a
+  narrower filter. Apply to every leg." Built as `answer.SET_LIST_MAX = 50`; a longer set lists
+  nothing and asks; the answer to that question (the parser's own `top_n`, no new subject) lists
+  that many from the start of the set, recounted under the same tier and stock policy, and
+  clears the carry. A count in the ask itself works the same way. `continuation` pages nothing.
+  A recount that finds nothing refuses the tool call rather than sending it with no product
+  filter.
 
 ## Definition of done
 

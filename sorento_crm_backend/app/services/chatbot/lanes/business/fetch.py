@@ -499,6 +499,23 @@ def space_id_or_default(space_id: Any) -> str:
 TIER_PROBE_TOOL = "crm_marketing_promotions_list"
 
 
+def _set_named_count(semantic_input: Any) -> int | None:
+    """How many of a counted set the customer asked to see (`top_n`), or None."""
+    top_n = jsc.get(semantic_input, "top_n")
+    if isinstance(top_n, bool) or not isinstance(top_n, int) or top_n <= 0:
+        return None
+    return top_n
+
+
+def _set_list_size(semantic_input: Any) -> int:
+    """How many products of a counted set one reply lists: the named count, never past
+    `answer.SET_LIST_MAX`. Deferred import: `answer.py` imports from this module."""
+    from app.services.chatbot.lanes.business import answer as answer_mod
+
+    named = _set_named_count(semantic_input)
+    return min(named, answer_mod.SET_LIST_MAX) if named else answer_mod.SET_LIST_MAX
+
+
 def entity_ids_transformer(
     trigger: dict[str, Any] | None, *, space_id: str | None = None
 ) -> dict[str, Any]:
@@ -836,17 +853,15 @@ def entity_ids_transformer(
         elif tool_name in ORDER_TOOLS or tool_name in GROUP_BY_TOOLS:
             out["limit"] = top_n
 
-    # E1 (attribute-first asks, fix round 11 Sep): a HAS turn - the resolver's
-    # `predicate` block rode through the gate untouched - shows the first FIVE
-    # qualifying PRODUCTS, never five ROWS: `limit` is the tool's own ROW cap
-    # (a stock answer can carry several warehouse rows per product, a cert
-    # answer several files per product), so setting `limit=5` there cut a
-    # 7-product answer down to 5 rows spanning 4 products under a header that
-    # said "Showing 5" - `limit` is left at the tool's own default entirely,
-    # and the PAGE is built by slicing `product_ids` itself. "more" (E3) pages
-    # the next five ids from the carried offer the same way.
+    # A counted set (the resolver's `predicate` rode through the gate) lists PRODUCTS,
+    # never a ROW count: `limit` is the tool's own row cap (a stock answer carries a row
+    # per warehouse, a cert answer a row per file), so it is left alone and the list is
+    # cut by slicing `product_ids` itself - to the count the customer named (`top_n`),
+    # else to `answer.SET_LIST_MAX` (owner ruling, 26 Sep 2026: a set that fits one
+    # message is listed in full; a longer one is answered with its count and a question,
+    # `output_structurer` below). No paging: nothing is kept for a "more".
     if trig.get("predicate") is not None and isinstance(out.get("product_ids"), list):
-        out["product_ids"] = out["product_ids"][:5]
+        out["product_ids"] = out["product_ids"][: _set_list_size(semantic_input)]
 
     # R29/AC-1354: a scheme-narrowed certificate leg's own certificate ids
     # ride the SAME predicate block, straight through under the SAME arg
@@ -2566,66 +2581,44 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # would render with no leading count/attribute line at all.
     predicate = ctx.get("predicate") if isinstance(ctx.get("predicate"), dict) else None
     set_header: str | None = None
+    # A set too long for one message is answered with its count and a question, and no
+    # rows (owner ruling, 26 Sep 2026) - `answers` and the files go with them below, so
+    # neither a positional pick nor an attachment send can reach a row nobody was shown.
+    set_withheld = False
     if predicate is not None:
-        from app.services.chatbot.lanes.business.answer import (
-            build_set_header,
-            build_set_page_header,
-            set_noun_for,
-        )
+        from app.services.chatbot.lanes.business import answer as answer_mod
 
-        qualifying_total = jsc.get(predicate, "qualifying_total") or 0
+        qualifying_total = int(jsc.get(predicate, "qualifying_total") or 0)
         require = jsc.get(predicate, "require") or {}
-        # E3/AC-1317: a "more" continuation page carries its OWN pre-known
-        # `set_noun` and page bounds (`page`) - a "more" turn runs no resolver
-        # call, so there are no fresh `class_labels` to re-derive one from.
-        page = jsc.get(predicate, "page")
-        if isinstance(page, dict):
-            header = build_set_page_header(
-                qualifying_total,
-                jsc.get(page, "start"),
-                jsc.get(page, "end"),
-                jsc.js_string(jsc.get(page, "set_noun")) or "products",
-                require,
-            )
+        class_labels = jsc.array(jsc.get(predicate, "class_labels"))
+        # A recount of a carried set (`turn_runtime.page_the_set`, the answer to "how
+        # many should I show?") runs no class read of its own and names its noun itself.
+        set_noun = jsc.nullish_str(jsc.get(predicate, "set_noun")).strip() or answer_mod.set_noun_for(class_labels)
+        # `set_noun_for` is always plural (its own contract, AC-1316) - singular
+        # only for the ONE-qualifying-product header ("1 tap has ...", never
+        # "1 taps has ...") is the class label ITSELF (REV-N2/AC-1337), never a
+        # naive "-1 char" strip of the pluralised noun: that guess turned
+        # "bathroom accessories" into "bathroom accessorie", not the real
+        # singular "bathroom accessory". Only the single-label case has one to
+        # use; the "products" fallback (zero or blended labels) has no
+        # singular of its own and keeps its old strip.
+        if qualifying_total == 1:
+            single_labels = [label for label in class_labels if label and label.strip()]
+            if len(single_labels) == 1:
+                set_noun = single_labels[0].strip().lower()
+            elif set_noun.endswith("s"):
+                set_noun = set_noun[:-1]
+        named = _set_named_count(semantic_input)
+        if named is None and qualifying_total > answer_mod.SET_LIST_MAX:
+            shown = 0
+            set_withheld = True
+        elif named is None:
+            shown = qualifying_total
         else:
-            # R8 (console fix round 2, AC-1330): `shown` is distinct PRODUCTS
-            # rendered, never tool rows - a stock/cert answer carries one row per
-            # warehouse/certificate, so five products across three warehouses is
-            # fifteen rows and would have overstated "Showing 15" for a five-page
-            # answer. Falls back to the row count when no row carries a product
-            # code at all (a result type this header never fires for today).
-            items0 = e.get("items") or []
-
-            def _product_code_of_row(it: Any) -> str:
-                fields = jsc.get(it, "fields")
-                if not isinstance(fields, list):
-                    return ""
-                for f in fields:
-                    if isinstance(f, dict) and f.get("label") == "Product Code":
-                        return jsc.nullish_str(f.get("value")).strip()
-                return ""
-
-            shown_codes = {c for c in (_product_code_of_row(it) for it in items0) if c}
-            shown = len(shown_codes) if shown_codes else len(items0)
-            class_labels = jsc.array(jsc.get(predicate, "class_labels"))
-            set_noun = set_noun_for(class_labels)
-            # `set_noun_for` is always plural (its own contract, AC-1316) - singular
-            # only for the ONE-qualifying-product header ("1 tap has ...", never
-            # "1 taps has ...") is the class label ITSELF (REV-N2/AC-1337), never a
-            # naive "-1 char" strip of the pluralised noun: that guess turned
-            # "bathroom accessories" into "bathroom accessorie", not the real
-            # singular "bathroom accessory". Only the single-label case has one to
-            # use; the "products" fallback (zero or blended labels) has no
-            # singular of its own and keeps its old strip.
-            if qualifying_total == 1:
-                single_labels = [label for label in class_labels if label and label.strip()]
-                if len(single_labels) == 1:
-                    set_noun = single_labels[0].strip().lower()
-                elif set_noun.endswith("s"):
-                    set_noun = set_noun[:-1]
-            header = build_set_header(qualifying_total, shown, set_noun, require)
+            shown = min(named, answer_mod.SET_LIST_MAX, qualifying_total)
+        header = answer_mod.build_set_header(qualifying_total, shown, set_noun, require)
         set_header = header
-        msg = f"{header}\n{msg}"
+        msg = header if set_withheld else f"{header}\n{msg}"
 
     final_response = msg.strip()
     if so_bucket_refusal:
@@ -2643,7 +2636,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         # numbered 2 on screen (review, should-fix 4). Flattened in RENDER order, which is
         # the only order the customer can be talking about. Ungrouped, this is `items`
         # unchanged, so nothing else moves.
-        "answers": _rendered_answers(e) if groups_render else e.get("items"),
+        "answers": [] if set_withheld else (_rendered_answers(e) if groups_render else e.get("items")),
     }
     # Spread-in, not defaulted: a reply with no summary keeps EXACTLY the keys it has today.
     if qs_render:
@@ -2652,7 +2645,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         out["groups"] = e["groups"]
     out.update(
         {
-            "attachments": e.get("attachments") or [],
+            "attachments": [] if set_withheld else (e.get("attachments") or []),
             "action_links": e.get("action_links") or [],
             "last_updated_at": e.get("last_updated_at") or None,
             "has_result": bool(jsc.truthy(e.get("has_result"))),

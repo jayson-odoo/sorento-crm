@@ -1596,9 +1596,10 @@ def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
 _CERT_WORD_RE = re.compile(r"cert|ikram|span|sirim|bomba|ms\s?[0-9]|halal", re.IGNORECASE)
 
 # A COPY of `app.services.chatbot.lanes.business.answer.SET_PAGE_ID_CAP`, for the same
-# module-boundary reason `_CERT_WORD_RE` above is a copy: the "more" carry (E3, AC-1317)
-# pages off however many qualifying ids `resolve_product_set` is asked for, so this file
-# has to ask for at least this many rather than the ordinary LOOKUP page size.
+# module-boundary reason `_CERT_WORD_RE` above is a copy: a counted set lists (up to
+# `answer.SET_LIST_MAX`) off however many qualifying ids `resolve_product_set` is asked
+# for, so this file has to ask for at least this many rather than the ordinary LOOKUP
+# page size.
 _SET_PAGE_ID_CAP = 200
 
 
@@ -2751,10 +2752,10 @@ def resolve_reference_post(
             else (None if payload.free_terms else _has_turn_free_terms(payload, result, query_text))
         )
 
-        # E3/AC-1317: the "more" carry pages by 5 off the QUALIFYING ids
-        # themselves, capped at `_SET_PAGE_ID_CAP` (200) - never the ordinary
-        # LOOKUP page size (`payload.limit`, 15), which would leave a
-        # 7-qualifying answer with only the first 5 to page through.
+        # The counted set lists off the QUALIFYING ids themselves, capped at
+        # `_SET_PAGE_ID_CAP` (200) - never the ordinary LOOKUP page size
+        # (`payload.limit`, 15), which would cut a 40-product set that fits one
+        # message down to 15.
         outcome = resolve_product_set(
             db,
             # R14/AC-1338: the PROMOTED require (a bare `true` recovered a

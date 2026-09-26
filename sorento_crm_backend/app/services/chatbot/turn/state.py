@@ -102,11 +102,11 @@ class Focus:
     # `outstanding_filters` and the two could disagree).
     sales_channel: str | None = None
     date_window: dict[str, Any] | None = None
-    # The twelfth slot (AC-1534, contract 115): where a counted-set answer got to.
-    # `{"set_key": ..., "offset": n}` - the set the last answer described and how many of
-    # it the customer has already been shown, so "more" pages the SAME set instead of
-    # re-counting it. Its own slot rather than a bag entry: a page position is a focus
-    # axis like any other, and it has to be cleared by a topic reset with the rest.
+    # The twelfth slot (AC-1534, contract 115): the set a too-long counted answer asked
+    # "how many should I show?" about, `{"set_key": ...}`, read only by that question's
+    # answer (no paging, owner ruling 26 Sep 2026). Its own slot rather than a bag entry:
+    # it is a focus axis like any other, and it has to be cleared by a topic reset with
+    # the rest.
     set_page: dict[str, Any] | None = None
     extra: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
