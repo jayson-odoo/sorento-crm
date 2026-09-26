@@ -465,9 +465,22 @@ def list_opportunities(
 ):
     q = db.query(SalesOpportunity)
     if query:
+        # Nit (Phase 3): a reader searching "Kedai Mine" should find the opportunity by
+        # its customer's name, not just by title/number - a correlated subquery on
+        # Customer.id (rather than a join) keeps this a filter, not a row multiplier.
         like = f"%{query}%"
+        customer_match = (
+            db.query(Customer.id)
+            .filter(Customer.id == SalesOpportunity.customer_id, Customer.customer_name.ilike(like))
+            .exists()
+        )
         q = q.filter(
-            or_(SalesOpportunity.title.ilike(like), SalesOpportunity.opportunity_no.ilike(like))
+            or_(
+                SalesOpportunity.title.ilike(like),
+                SalesOpportunity.opportunity_no.ilike(like),
+                SalesOpportunity.prospect_name.ilike(like),
+                customer_match,
+            )
         )
     if status_id:
         q = q.filter(SalesOpportunity.status_id == status_id)
