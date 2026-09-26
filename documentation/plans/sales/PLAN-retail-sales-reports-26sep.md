@@ -1,6 +1,14 @@
 # PLAN: retail sales reports on the reports kernel, one query layer for the screens and the chatbot (#1267)
 
-Status: draft, round 3 (26 Sep 2026). The owner's grill answers (PR #1269 comment 5844136277,
+Status: draft, round 4 (26 Sep 2026). The owner's answers to round 2's Q1 to Q5 (PR #1269 comment
+5844192717, 26 Sep 07:16:21Z, quoting "## Round 2" with the answers inline) are folded in: section
+R4 carries an "Owner ruling 26 Sep 07:16 Q<n>" line per answer, reconciles round 3 (which was
+written before these answers: the WhatsApp file rule, the scheduled sends, the module), the
+reconciled slice list with parallel lanes (R4.5) and the open questions Q6 to Q8 plus Q9 (R4.6),
+posted on PR #1269 as the "Round 4" comment. Round 1 to 3 text is kept; a "Round 4:" note marks
+each place a ruling changes. Track per slice unchanged (R4.5). Nothing built.
+
+Round 3 status line, kept: draft, round 3 (26 Sep 2026). The owner's grill answers (PR #1269 comment 5844136277,
 26 Sep 07:06Z) are folded in: section R3 carries an "Owner ruling 26 Sep 07:06 G<n>" line per
 answer, the module and schema alignment with #1260 round 5, the new slice S6 (the weekly scheduled
 Excel by email or WhatsApp, G9), the round 3 slice waves, G7 asked again in plain words, and the
@@ -15,6 +23,9 @@ nothing to put in a Postgres schema (section 0.2). Round 3: superseded by R3.2, 
 #1260 round 5: the `sales` module with the `sales` Postgres schema for every new table, which here
 is one table, `sales.report_subscriptions` (S6). The reports are two definitions registered on
 the existing reports kernel (`app/services/reports/`), which the sponsorship report uses today.
+Round 4 (Owner ruling 26 Sep 07:16 Q5, "we need a sales schema and a sales module so we are more
+modular"): the `sales` module and the `sales` Postgres schema are the ruling; every new table of
+this plan lives in `sales` (R4.3).
 UAC: `retail-sales-reports-26sep-acceptance-criteria.md` alongside (the contract; the journey J1
 to J9 lives there and is not repeated here).
 Mockup: `mockups/retail-sales-reports.html` (round 2: Yearly comparison and the Sales report on
@@ -24,6 +35,209 @@ Issue: #1267.
 
 Backend paths are under `sorento_crm_backend/`, frontend under `sorento_crm_frontend/`, MCP under
 `sorento_crm_mcp/`. Line numbers are on origin/main 46711c61 unless a PR branch is named.
+
+## R4. Round 4: the owner's answers to round 2's Q1 to Q5 (26 Sep 07:16Z)
+
+The owner answered Q1 to Q5 inline on PR #1269 (comment 5844192717, 26 Sep 07:16:21Z). The reply
+is binding. Round 3 (comment 5844192500, 07:16:19Z) was posted two seconds earlier and was written
+before these answers, so R4.4 reconciles it. Nothing earlier in this file is deleted; a "Round 4:"
+note marks each place a ruling changes.
+
+### R4.1 Ruling lines
+
+- **Owner ruling 26 Sep 07:16 Q1**: "(b) ... - okay". Applied: with both channels ticked, one
+  Excel holds the DEALER and PROJECT TEAM blocks one under the other, like the PDF
+  (`WorkbookSpec.sheet_per`, kernel extension in S1). A recommendation until now; a ruling from
+  here.
+- **Owner ruling 26 Sep 07:16 Q2**: "always text + file, no cutoff". Applied (R4.2): **every
+  answer the chatbot gives from `crm_sales_analysis` is sent as a text reply AND the Excel file of
+  the same query.** The 12 figure rule is withdrawn, the list / small table / large table shapes
+  no longer decide anything, and no override words exist: "in Excel", "as a file" and "send the
+  report" are not needed (the file always comes), and **"as text" is dropped**, because the plan
+  has no answer that needs a text-only reply and the ruling says "always". Trigger to bring "as
+  text" back: the owner asks for a text-only reply.
+- **Owner ruling 26 Sep 07:16 Q3**: "okay". Applied: S2's migration pre-fills
+  `sales_agents.person_label` from the code's name part (SEAN I and SEAN III become SEAN), never
+  overwrites a typed label, and the owner corrects exceptions on the Sales Agents screen.
+  `person_label` is an existing column of `public.sales_agents` (`app/models/sales_agent.py:60`),
+  so this adds no table.
+- **Owner ruling 26 Sep 07:16 Q4**: "okay". Applied: the report sections are shared saved views
+  in the Views menu, not tabs; the per-month tables are the workbook's month sheets.
+- **Owner ruling 26 Sep 07:16 Q5**: "we need a sales schema and a sales module so we are more
+  modular". Applied (R4.3): the `sales` module **and** the `sales` Postgres schema, the same one
+  #1260 round 5 recommends (module key `sales`, schema `sales`; the firstmate note on PR #1269,
+  07:18Z, confirms the names). Every new table of this plan lives in schema `sales`. Round 3's
+  R3.2 already recommended this; it is now the ruling.
+
+### R4.2 Q2 applied: text + file on every answer
+
+- **What is sent.** For every answer (a figure or a table the tool fetched):
+  1. **The text**, at once, in the turn: the header (report, company, channel, basis, period,
+     agent and codes, excluded customers, the count) and **the whole answer**: one line per row,
+     `label: RM a` for one value column, `label: a | b | c` under a column name line for two or
+     more, then the totals line. Every row, whatever the count; n8n chunks a long message (owner,
+     PR #1258 05:32Z). No "Full table in the attached Excel" in place of rows: the text is the
+     answer, not a summary. How wide a text line may get is Q9.
+  2. **The Excel file** of the same query, as a document, through the low stock report's path
+     (0.6 "The file path"): a `report_xlsx` My Downloads row, `generate_report_xlsx` on the
+     worker, `attachments` returned when ready inside the sync window (7 s cap,
+     `app/api/v1/scm/low_stock_report.py:120-146`), otherwise the text ends "The Excel follows
+     here." and the worker pushes it once (`_push_low_stock_to_chat` and `_claim_chat_delivery`,
+     `app/tasks/export_tasks.py:911-927, 1003-1089`, generalised from `low_stock_xlsx` to
+     `report_xlsx`).
+- **Not an answer, so no file:** a clarify question ("Sorento or Mocha?", "Which Tan: TAN KH or
+  TAN WL?", "Debtor type or product brand?", "How many agents do you want to see?" for a ranked ask
+  with no N), the dealer contact refusal, and an error line. The file comes with the answer that
+  follows.
+- **The 24 hour window does not bite here.** A chatbot answer replies to a message the contact
+  has just sent, so the window is open for the text and for the file, including the worker's push
+  seconds later. If the push is refused anyway (`attachment_window_closed`,
+  `app/services/respond_chat_template_service.py:697-720`), the existing failure record applies
+  (`user_downloads.error`, an outbox row), and the file stays in My Downloads.
+- **Who owns the file:** the CRM user linked to the contact; with no linked user, the act-as user
+  (the low stock rule, `app/api/v1/scm/low_stock_report.py:432-440`). My Downloads keeps a row per
+  answer for the existing 30 day retention (`purge_expired_downloads`,
+  `app/services/download_service.py:250`), so the extra rows age out with no new job.
+- **What changes in code (all in S1, the slice that builds the chatbot seam):** the presenter no
+  longer counts cells; the route always queues the workbook (the `deliver=file` switch of 5.5 is
+  withdrawn, the route always delivers); the parser drops `reply_format`; the pending line
+  becomes "The Excel follows here."; the file name is the kernel's `<title>-<period>.xlsx`.
+  Every chatbot golden of S1, S2, S3 and S5 becomes a text golden plus an attachment assertion.
+- **Cost, stated:** every answer now waits on a worker job for its file (up to 7 s in the turn,
+  then the push). The text goes first and does not wait for the file.
+
+### R4.3 Q5 applied: the `sales` module and the `sales` schema
+
+**How existing module schemas are set up (measured on origin/main 46711c61):**
+- **Models:** each module table declares its schema in `__table_args__`, for example `{"schema":
+  "chatbot"}` (`app/models/chatbot_turn.py:69`) and `{"schema": "projects"}`
+  (`app/models/project_so.py:135`); `app/models/scm.py:3-10` states the rule: a module-to-module
+  FK is schema-qualified (`ForeignKey("scm.reorder_run.id")`), an FK into core is unqualified
+  (`ForeignKey("products.id")`).
+- **Migrations:** the module's first migration runs `CREATE SCHEMA IF NOT EXISTS <key>`
+  (`alembic/versions/273_scm_module_schema.py:42`, `472_chatbot_turns.py:46`,
+  `354_projects_schema_move.py:362`).
+- **Alembic:** `alembic/env.py` runs `include_schemas=True` with an `include_name` filter
+  (:57-69, :80, :100) against `KNOWN_SCHEMAS`, built from the models' own schemas (:49-54), so a
+  new schema needs **no env change**: it is covered the day its first model declares it. A schema
+  with no model yet is filtered out of autogenerate, never proposed as a DROP.
+- **Uninstall:** the module's tables are listed schema-qualified in
+  `sorento_crm_frontend/modules/<key>/purge_tables.json` (`modules/projects/purge_tables.json`
+  lists `projects.*`), a purge deletes rows through the ORM model classes and never issues `DROP
+  SCHEMA` (`app/modules/projects/purge.py:1-40`, ADR-0011
+  `documentation/adr/0011-project-sales-tables-live-in-the-projects-schema.md`), and an invariants
+  test guards it (`tests/test_projects_module_purge_invariants.py`).
+
+**What this plan does with it:**
+- **Module `sales`**, shared with #1260 (unchanged from R3.2): `app/modules/sales/bootstrap.py`
+  (`MODULE_KEY = "sales"`), the `MODULE_MANIFEST` entry, `"sales": "sales"` in
+  `permission_module_map.py`, routers under `app/api/v1/sales/` behind
+  `require_module_enabled_with_api_key("sales")`, the Sales menu group with `moduleKey: 'sales'`,
+  `/sales` to `sales` in `lib/route-module-map.ts`. Whichever of this S1 and #1260 S6 lands
+  first creates them; the other reuses them (AC-R3-2).
+- **Schema `sales`:** the lane that creates the module also runs `CREATE SCHEMA IF NOT EXISTS
+  sales` in its migration, so the boundary shows in `\dn` from the first sales lane on, table or
+  not. If that is this S1, its migration (the slug grant sweep and the `chatbot_domains` row it
+  already carries) gains the one line. Every later migration that adds a `sales.*` table repeats
+  the idempotent line, so lane order never matters.
+- **Every new table of this plan is in `sales`.** The inventory, measured against this plan:
+
+  | Thing | New table? | Where it lives |
+  | --- | --- | --- |
+  | Scheduled sends (S6) | **yes** | `sales.report_subscriptions`, `{"schema": "sales"}`, model in `app/models/sales.py` beside #1260's `sales.*` models (#1260 3.7: one flat model file per domain), listed in `modules/sales/purge_tables.json`, purge invariants test |
+  | Saved views, and the set-apart and exclude lists in them | no | rows of the kernel's existing `report_views` (`app/models/report_view.py:21-22`), shared with the sponsorship report; a view is a row, not a table |
+  | Person labels (S2, Q3) | no | the existing column `public.sales_agents.person_label` |
+  | Debtor type (S3) | no, a column | `public.customers.debtor_type`, on the customer's own core table |
+  | The chatbot's and the scheduled send's files | no | the existing `public.user_downloads` rows (My Downloads) |
+  | Sales orders, lines, agents, customers | no | stay in `public`, owned by `order` and `product` (#1260 3.7, "Not recommended: a `sales` schema holding `sales_agents` or `sales_orders`") |
+
+  Named trigger: a later ruling that adds a table (footnotes stored in the CRM, G8 (b); dated
+  person labels) puts it in `sales` by this ruling.
+- **The code is modular too:** routes in `app/api/v1/sales/` (`analysis.py`,
+  `report_subscriptions.py`), services in `app/services/sales/` (`schedule.py`,
+  `report_subscriptions.py`), the model in `app/models/sales.py`, schemas in
+  `app/schemas/sales.py`, pages under `app/(protected)/sales/`. The dataset and the two report
+  definitions stay in the kernel's registration folders (`app/services/reports/datasets/`,
+  `definitions/`) beside the sponsorship ones, and carry `module_key = "sales"`, which is what the
+  per-report module check (5.3 extension 1) reads.
+- **The `sales` Postgres schema holds no view, function or copy of core data.** Reports read
+  `public` tables through the kernel; nothing is mirrored.
+
+### R4.4 Round 3 reconciled with these answers
+
+Round 3 was written before 07:16Z. Where it and the rulings meet:
+- **The WhatsApp file rule (round 3 R3.1 "Round 2 Q1 to Q4" bullet, 0.6, 5.5):** superseded by
+  Q2. There is no shape rule; every answer is text + file (R4.2). Round 3's AC-R3-6 ("Debtor type
+  or product brand?") is a clarify question and carries no file.
+- **Scheduled sends (R3.3, S6):** already text then file on WhatsApp and a file by email, which is
+  Q2's rule, so the window-open path is unchanged. The window-closed path (Q6) had the template
+  text only, which breaks "always text + file"; R4.6 re-recommends it. The period (Q8) and where
+  it is set up (Q7) are unchanged recommendations.
+- **Module (R3.2):** round 3's re-answer is now the ruling (Q5). One correction: R3.2 and S6
+  named `modules/sales/purge_tables.json`; the file is
+  `sorento_crm_frontend/modules/sales/purge_tables.json` (the `modules/projects/` precedent),
+  and R4.3 adds `CREATE SCHEMA IF NOT EXISTS sales` to the module-creating lane rather than only
+  the first table's lane.
+- **Round 3's Q1 to Q4 "recommendations stand"** (R3.1): now rulings, with no change of content.
+
+### R4.5 Slices, round 4: reconciled list, with parallel lanes
+
+Each slice is its own lane and PR (one lane = one branch = one PR). The waves are round 3's; what
+round 4 changes inside each slice is in the last column.
+
+| Wave | Slice | Track | Needs merged first | Runs beside | Round 4 change |
+| --- | --- | --- | --- | --- | --- |
+| 0 (now) | **S0** measure on the prod copy (captain, no code, no PR) | none | nothing | S4, S1 | none |
+| 0 (now) | **S4** Mocha's AutoCount SO feed (ESB, mostly outside this repo) | full | nothing | S0, S1, wave 2 | none |
+| 1 | **S1** dataset, **Yearly comparison**, kernel extensions with `sheet_per` (Q1), Export to Excel, `crm_sales_analysis`, the chatbot text + file on every answer (Q2); creates the `sales` module **and schema** if #1260 S6 has not (Q5) | full | nothing | S0, S4; S3's migration and ingest half | Q1 ruled; Q2: no shape rule, every answer text + file, pending line "The Excel follows here."; Q5: `CREATE SCHEMA IF NOT EXISTS sales` |
+| 2 | **S2** Sales report: person (pre-fill, Q3), set apart, exclude, quarter, Sorento's shared views (Q4), project orders included | full | S1 | S3, S6 | Q3 and Q4 ruled; chatbot goldens text + file |
+| 2 | **S3** debtor type and the product brand axis | full | S1 for the dataset half | S2, S6 | chatbot goldens text + file |
+| 2 | **S6** weekly scheduled Excel by email or WhatsApp, `sales.report_subscriptions` in the `sales` schema (Q5) | full | S1 | S2, S3 | Q5 ruled; window-closed path per Q6 (R4.6) |
+| 3 | **S5** Mocha on the Sales report | small fix | S2, S3, S4 | nothing | chatbot golden text + file |
+
+- **Parallel lanes today:** S0, S4 and S1 at once (three lanes). S3's migration and ingest half
+  may open beside S1 in wave 1 and finish in wave 2. After S1 merges: S2, S3 and S6 at once
+  (three lanes; S3 and S6 both carry a migration, so the pre-PR gate re-parents each before its
+  merge). S5 last.
+- **Beside #1260:** #1260 S6 (its first lane) and this S1 both may create the `sales` module and
+  schema; the second to land reuses the files and its `CREATE SCHEMA IF NOT EXISTS` is a no-op.
+  This S6 and #1260 S5 share `next_run_for`; the first to land writes it.
+- **Track check:** no slice moves track. S1 stays full (slug, company parameter, module check);
+  S5 stays under 300 lines (its golden gains one attachment assertion).
+
+### R4.6 Open questions (Q6 to Q8 from round 3, and one new)
+
+- **Q6. A scheduled WhatsApp send outside the 24 hour window, under "always text + file".**
+  Respond.io cannot send a file outside the window: `send_chat_attachment_for` refuses
+  `attachment_window_closed` up front (`app/services/respond_chat_template_service.py:682-720`),
+  and only text falls back to an approved template. Options:
+  - (a) the template text with the totals line and "The Excel is in your My Downloads" (round 3's
+    recommendation; text without the file on WhatsApp, the file by email and in My Downloads);
+  - (b) **the template text with the totals line, ending "Reply to this message and the Excel is
+    sent here."; the person's reply opens the window and the file is pushed once**;
+  - (c) skip WhatsApp that week and send by email only.
+  **Recommend (b):** it is the only option where the WhatsApp recipient still gets both text and
+  file. Mechanism, reused: the send writes the `report_xlsx` My Downloads row with
+  `deliver_to_contact_id` set and `delivered_at` null (the columns the low stock hand-off already
+  uses, `app/models/download.py:56-60`); the contact's next chat turn (`POST
+  /api/v1/external/chat/turn`, `app/api/v1/external/chat.py:171`) enqueues the existing one-shot
+  push (`_claim_chat_delivery`, `export_tasks.py:911-927`) for any such row of that contact, so
+  the file goes once and a retried job sends nothing. The reply is also answered as a normal
+  message. A row not claimed within 7 days is left in My Downloads and not pushed later. One
+  approved Meta template, `sales_report_scheduled`, as round 3 had.
+- **Q7. Where a scheduled send is set up.** (a) on the report screen, Views menu > Scheduled
+  sends, for the view on screen; (b) on the person's contact record, beside #1260's Sales updates
+  tab. **Recommend (a)**, unchanged: a send is one view plus people, and the view lives on the
+  report screen.
+- **Q8. The period of a scheduled file.** (a) this year to date, as at the send date; (b) the
+  period saved in the view. **Recommend (a)**, unchanged: your PDFs are "as at" the day they are
+  made.
+- **Q9 (new). How wide the text part of an answer may be.** With text + file on every answer, the
+  text of a wide table (for example agent x debtor type: 61 agents x 7 accounts) is one long line
+  per agent. Options: (a) every column on every line (`SEAN: 48,210 | 12,400 | 7,980 | ...`) under
+  a column name line; (b) past 4 columns, each line carries the row total only and the columns
+  are in the Excel. **Recommend (a):** it follows "no cutoff", the file carries the same table in
+  columns, and n8n chunks the length.
 
 ## R3. Round 3: the owner's grill answers (26 Sep 07:06Z)
 
@@ -80,12 +294,16 @@ their round 2 text, and a "Round 3:" note marks each place a ruling changes.
 - **Round 2 Q1 to Q4**: not answered. Their recommendations stand: Q1 (b) both channel blocks in
   one Excel; Q2 the file or text rule with the cut at 12 figures; Q3 person labels pre-filled
   from the code's name part; Q4 sections as shared saved views.
+  - Round 4: answered at 07:16Z. Q1, Q3 and Q4 "okay" (rulings, content unchanged); Q2 ruled the
+    other way, "always text + file, no cutoff", so the 12 figure rule is withdrawn (R4.2).
 - **Round 2 Q5 changed, to align with #1260 round 5.** The sales targets plan
   (`PLAN-sales-targets-opportunities-26sep.md` on `claude/sales-targets-opportunities-plan-7behob`,
   round 5 header and 3.7 "Module and schema (round 5)") now recommends the `sales` module **with
   its own `sales` Postgres schema** for every new table (`sales.teams`, `sales.targets`, ...,
   `sales.update_subscriptions`), on the owner's ADR-0011 precedent for Project Sales. This plan
   follows it (R3.2).
+  - Round 4: Owner ruling 26 Sep 07:16 Q5, "we need a sales schema and a sales module so we are
+    more modular": the alignment is now the ruling (R4.3).
 
 ### R3.2 Module and schema, aligned with #1260 (replaces the "no sales schema" half of 0.2)
 
@@ -100,6 +318,9 @@ their round 2 text, and a "Round 3:" note marks each place a ruling changes.
   both plans' migrations carry it); `modules/sales/purge_tables.json` gains
   `sales.report_subscriptions`, and uninstall purges its rows through the ORM and never drops the
   schema (ADR-0011). Raw SQL names the schema.
+  - Round 4 (Owner ruling 26 Sep 07:16 Q5): ruled. The purge file is
+    `sorento_crm_frontend/modules/sales/purge_tables.json` (the `modules/projects/` precedent), and
+    the module-creating lane also runs `CREATE SCHEMA IF NOT EXISTS sales` (R4.3).
 - **Saved views stay the kernel's `report_views` rows** (`app/models/report_view.py:21-22`,
   `public`). They are a kernel table shared by every report (the sponsorship report's views live
   there too), not a sales table, so moving them would move procurement's views. A saved view is a
@@ -172,6 +393,11 @@ frequency).
      text through `send_text_or_template` with use case `sales_report_scheduled` (header, totals
      line, "The Excel is in your My Downloads.") (Q6). The Meta template approval is an ops gate
      in S6's DoD, as in #1260 S5.
+   - Round 4 (Owner ruling 26 Sep 07:16 Q2, "always text + file"): the window-closed text alone
+     no longer meets the rule. Q6 is re-recommended as (b): the template text ends "Reply to this
+     message and the Excel is sent here.", the download row is written with
+     `deliver_to_contact_id` set, and the contact's next chat turn triggers the one-shot push
+     (R4.6).
 5. **The text header** is the chatbot's (0.6): report and view name, company, basis, period "as
    at", the totals line. No UUID.
 
@@ -230,6 +456,8 @@ apart the way you do HANLIM?
   not messaged in the last 24 hours. Options: (a) send the approved template text with the totals
   line and "The Excel is in your My Downloads"; (b) skip the WhatsApp send and email only.
   **Recommend (a).**
+  - Round 4: re-asked under Owner ruling 26 Sep 07:16 Q2; the new recommendation is the reply to
+    fetch option (R4.6).
 - **Q7. Where a scheduled send is set up.** Options: (a) on the report screen, in the Views menu,
   for the view being sent; (b) on the person's contact record, beside #1260's Sales updates tab.
   **Recommend (a)**: a send is a view plus people, and the view lives on the report screen.
@@ -463,6 +691,11 @@ up to a few seconds' wait and a 24 hour window check, and a three-line answer wi
 is noise. So lists and small grids are text only, grids are text header + file (which is "text +
 file", where it helps), and any answer can be re-sent as a file on request.
 
+Round 4 (Owner ruling 26 Sep 07:16 Q2, "always text + file, no cutoff"): the shape rule above and
+the override words are withdrawn. Every answer is the whole answer as text plus the Excel file of
+the same query; clarify questions and refusals carry no file; "as text" is dropped (R4.2). The
+file path below is unchanged and now serves every answer.
+
 **The file path, reused from the low stock report**: the route creates a `report_xlsx` My
 Downloads row owned by the CRM user linked to the contact (as `low_stock_report.py:437-444,
 470-476` does), enqueues the kernel's `generate_report_xlsx` on `imports`, waits up to the same
@@ -492,6 +725,7 @@ amount. Round 2 builds them on the report screen you already have for sponsorshi
 - **Export to Excel** lands in **My Downloads**, like every other export.
 - **On WhatsApp**, short answers come as text; a table (such as dealer sales 2025 vs 2026 by
   month) comes as an Excel file with a short summary, like the low stock report.
+  Round 4 (your Q2 answer): every answer comes as text and as the Excel file.
 - Round 3 (G9): **every week**, the report views you choose are sent as an Excel file to the
   people you name, by email or WhatsApp (S6).
 
@@ -814,6 +1048,7 @@ lists every reuse and every new piece with file:line.
   definition's filters plus `rows`, `cols` and `n` (1 to 100, cut after `total_count` and totals,
   PR #1263's rule). It calls `engine.run` for the `sales` definition, so it is the screens' query.
   With `deliver=file` it also queues the workbook (0.6) and returns `attachments` or `pending`.
+  Round 4 (Q2): no `deliver` switch; every call that returns an answer queues the workbook (R4.2).
 - **MCP tool** `crm_sales_analysis` (new `ToolSpec`, `catalog.py:15` shape), domain orders, the
   `sales_orders.sales_report` reveal key, no paging params, `related_tools=("crm_sales_report",
   "crm_top_selling_report")`; in `PRESENTER_TOOLS` (`presenters.py:38`),
@@ -823,9 +1058,10 @@ lists every reuse and every new piece with file:line.
 - **Parser** (`app/services/chatbot_parser_prompt.py:83-98`): `group_by` gains `agent`,
   `debtor_type`, `brand`, `month`, `quarter`, `year`; new nullable keys `compare_years`,
   `exclude_customers`, `sales_basis` (ordered | delivered | unclear), `reply_format` (file | text
-  | unsaid).
+  | unsaid). Round 4 (Q2): `reply_format` is dropped; nothing in the message changes the format.
 - **Shape rule** (0.6): the presenter counts rows x value columns and picks text, or text header
-  + file.
+  + file. Round 4 (Owner ruling 26 Sep 07:16 Q2): withdrawn; the presenter prints the whole answer
+  as text and always passes the attachment (R4.2).
 - **Person** (0.5): a label wins; no "which code" question when one exists.
 - **Clarify, never assume** (owner rulings 26 Sep from #1175): company when both are granted and
   none named; the period only when the words are ambiguous (none said = the current calendar
@@ -885,6 +1121,11 @@ codes the name split would group, HANLIM's ledger ids, Mocha SO count and `so_fe
   export lands a `report_xlsx` row in My Downloads; route 401 / 403 / 422; presenter goldens for
   the file answer (text header + attachment) and the pending line; agent-browser evidence via the
   sidebar at 1280 and 375.
+- Round 4: Q1 ruled (`sheet_per` built). Q2: every chatbot golden is the whole answer as text
+  plus an attachment assertion, "total project sales this year" included; clarify goldens assert
+  no attachment; the pending line is "The Excel follows here." Q5: if S1 creates the module, its
+  migration runs `CREATE SCHEMA IF NOT EXISTS sales` and a test asserts the schema exists after
+  upgrade.
 - DoD: three months reconcile with S0 on the prod copy; the owner reads the yearly comparison
   beside the PDF.
 - Round 3: wave 1. Basis filter with Delivered default (G1); variance as (a) (G5); no period =
@@ -905,6 +1146,8 @@ codes the name split would group, HANLIM's ledger ids, Mocha SO count and `so_fe
   unchanged; exclude removes the customers from every cell and total and the header names them;
   quarter buckets; the monthly sheets sum to the summary; the shape rule (1 value column = text,
   12 cells = text, 13 cells = file, "in Excel" = file).
+  Round 4 (Owner ruling 26 Sep 07:16 Q2): the shape rule test is replaced by "every answer, 1 cell
+  or 427, is text plus the file"; Q3 and Q4 ruled.
 - DoD: every active Sorento code has a `person_label` after the owner's review of the pre-fill;
   the count is pasted in the PR.
 - Round 3: wave 2, beside S3 and S6. The per-agent views include project orders (G4); the
@@ -947,6 +1190,9 @@ Weekly delivery (G9), footnotes (G8).
 
 ### S6. The weekly scheduled Excel, by email or WhatsApp (full; round 3, G9 (b))
 
+- Round 4: the model is `ReportSubscription` in `app/models/sales.py` with `{"schema": "sales"}`
+  (Q5, R4.3); the purge file is `sorento_crm_frontend/modules/sales/purge_tables.json`; the
+  window-closed path follows Q6 (R4.6).
 - Backend: migration (`CREATE SCHEMA IF NOT EXISTS sales`, `sales.report_subscriptions`, the
   runner's `scheduled_tasks` row, the `sales.reports.schedule` slug and its grant sweep); the
   `sales_report_scheduled` email event; the `sales_report_scheduled` WhatsApp use case in
@@ -978,6 +1224,8 @@ Weekly delivery (G9), footnotes (G8).
 - **A quantity measure**: an owner ask.
 - **Dated person labels**: an owner ask.
 - **Text + file on every answer**: the owner rules Q2 the other way.
+  - Round 4: the owner did (Owner ruling 26 Sep 07:16 Q2); it is built in S1 (R4.2). The item
+    that replaces it: **"as text" (a text-only reply)**: the owner asks for one.
 - Round 3: **Agents seeing only their own rows** (G10 (b)): agents are given access.
   **Footnotes stored in the CRM** (G8 (b)): the owner asks. **Daily or monthly scheduled sends**:
   the owner asks (S6 is weekly, "produced weekly").
@@ -995,6 +1243,12 @@ Weekly delivery (G9), footnotes (G8).
 - **Mocha is blocked on an external feed.** S4 depends on the ESB team.
 - **The chatbot file needs the 24 hour window** for the worker push; outside it the pending
   reply is the only message, as for the low stock report (`respond_chat_template_service.py:697-720`).
+  Round 4: a chatbot answer always replies to a fresh inbound message, so the window is open; the
+  risk stays for the scheduled send only (Q6).
+- Round 4: **Every answer now waits on a worker job for its file** (Q2). The text goes first and
+  does not wait; the worker must be running (CLAUDE.md "Worker is required"), and a missing
+  worker shows as "The Excel follows here." with no file, the failure notice path of the low
+  stock report (`_tell_chat_the_report_failed`, `export_tasks.py:944`) covers a failed build.
 - **Tax inclusive amounts.** `line_total` is Total (Inc). S0 measures, G1 decides.
 - Round 3: **Scheduled sends go to people outside the screen's session.** Access is re-checked
   per send (R3.3), rows ship disabled, and `security-reviewer` runs on S6.
@@ -1072,21 +1326,26 @@ the slug `sales.reports.view` (0.2). G6's recommendation (b) matches the top X o
   the Excel writes one block per channel, one under the other on one sheet, like the PDF
   (`WorkbookSpec.sheet_per`, a small kernel extension). **Recommend (b)**: the PDF is one page with
   both blocks, and the extension is generic (any report can split by a filter).
+  - Owner ruling 26 Sep 07:16 Q1: "okay", (b).
 - **Q2. Chatbot file or text.** The rule in 0.6: a list (one figure per row) is text, however
   long; a table of up to 12 figures is text; a larger table is a short text summary plus the Excel
   file; "in Excel" or "as text" in the message overrides. **Recommend this rule, and not text +
   file on every answer**: a file for a three-line answer is noise and waits on a worker job. Say
   if the threshold should be another number than 12.
+  - Owner ruling 26 Sep 07:16 Q2: "always text + file, no cutoff"; the rule above is withdrawn
+    (R4.2).
 - **Q3. Person labels pre-filled.** 0 of 80 codes have a person label. Options: (a) S2 fills them
   from the code's name part (SEAN I and SEAN III become SEAN), and you correct any on the Sales
   Agents screen; (b) you type all 80 by hand. **Recommend (a)**: it matches your note that SEAN I
   and SEAN III are the same person, and you only fix the exceptions.
+  - Owner ruling 26 Sep 07:16 Q3: "okay", (a).
 - **Q4. Report sections as saved views.** Report B's and C's sections (by account, by month,
   debtor type by month, dealer vs HANLIM, by quarter, set apart customers) become shared views in
   the report's Views menu, not tabs; the per-month tables are the Excel's month sheets, and one
   month on screen is one month chip. **Recommend this**: it is the sponsorship report's own
   mechanism, and you can add a view without a code change. The other way is fixed tabs, which
   would be new components.
+  - Owner ruling 26 Sep 07:16 Q4: "okay", shared saved views.
 - **Q5. Sales module, not a sales schema.** The two reports go in the Sales menu group from the
   sales targets plan (#1260), under the `sales` module and a `sales.reports.view` permission; the
   data stays in the sales order tables, and no table is added, so there is no sales schema (the
@@ -1095,6 +1354,8 @@ the slug `sales.reports.view` (0.2). G6's recommendation (b) matches the top X o
   - Round 3: unanswered; re-answered to align with #1260 round 5: the `sales` module **with** the
     `sales` schema for every new table (`sales.report_subscriptions`), saved views staying the
     kernel's rows (R3.2). Q1 to Q4 unanswered, recommendations stand.
+  - Owner ruling 26 Sep 07:16 Q5: "we need a sales schema and a sales module so we are more
+    modular": the `sales` module and the `sales` schema, every new table in it (R4.3).
 
 ## 10. Out of scope
 
@@ -1102,3 +1363,4 @@ A report designer beyond the kernel's Configure summary, a dashboard of KPIs, a 
 targets and commissions (#1260), an invoice feed (named trigger, section 7), a scheduled send
 (G9), footnote storage (G8), and any change to the existing sales report or top X answers.
 Round 3: the scheduled send is in scope now (G9, S6); footnote storage stays out (G8 (c)).
+Round 4: text + file on every chatbot answer is in scope now (Q2, S1); a text-only reply is out.
