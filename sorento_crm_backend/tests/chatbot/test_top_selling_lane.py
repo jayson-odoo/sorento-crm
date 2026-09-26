@@ -489,6 +489,108 @@ class TestFollowUp:
         assert _calls(captured) == []
         assert reply.strip() == ASK_METRIC
 
+    def test_a_fresh_ask_after_a_single_row_reply_drops_the_old_category(
+        self, session_factory, monkeypatch, route
+    ) -> None:
+        """Reviewer B2 (a), PR #1273: a single row is sent as is and asks nothing, so the
+        next ask that names the ranking itself is FRESH. It must not rank inside the
+        category the last ask named (owner: never assume a filter nobody named)."""
+        from app.models.product import ProductCategory
+
+        db = session_factory()
+        db.add(ProductCategory(category_code="KS", category_name="KITCHEN SINK", company_id=DEFAULT_COMPANY_ID))
+        db.commit()
+        route.codes = ["SRTWT7445"]
+        _seed_contact(session_factory, variables={})
+        reply, captured = _turn(
+            session_factory, monkeypatch,
+            _ts(
+                top_n=None,
+                entities=[{"raw": "kitchen sinks", "hint": "category", "canonical_code": None, "current_message": True, "confident": True, "hint_confident": True}],
+            ),
+            "top selling kitchen sinks by quantity",
+        )
+        (args,) = _calls(captured)
+        assert args["category_ids"], "the first ask is inside the category"
+        assert "How many" not in reply
+
+        reply, captured = _turn(
+            session_factory, monkeypatch,
+            _ts(rank_by="amount", top_n=5, domain_in_message=True),
+            "top 5 selling items by amount",
+        )
+        (args,) = _calls(captured)
+        assert "category_ids" not in args or not args["category_ids"]
+        assert args["rank_by"] == "amount" and args["n"] == 5
+        assert "\nCategory: all\n" in reply
+
+    def test_a_fresh_ask_after_an_unanswered_how_many_asks_the_metric(
+        self, session_factory, monkeypatch, route
+    ) -> None:
+        """Reviewer B2 (b), PR #1273: the how-many reply is left unanswered and the
+        customer asks the ranking again with no metric. That is a fresh ask, so the
+        metric is asked (owner: metric required, no default), never carried."""
+        _seed_contact(session_factory, variables={})
+        reply, _captured = _turn(session_factory, monkeypatch, _ts(top_n=None), "top selling items by quantity")
+        assert "How many items do you want to see?" in reply
+
+        reply, captured = _turn(
+            session_factory, monkeypatch, _ts(rank_by=None, top_n=10, domain_in_message=True), "top 10 selling items",
+        )
+        assert _calls(captured) == []
+        assert reply.strip() == ASK_METRIC
+
+    def test_a_fresh_ask_after_a_single_row_reply_drops_the_old_customer(
+        self, session_factory, monkeypatch, route
+    ) -> None:
+        """B2, the customer axis: a fresh ask that names no customer ranks every
+        customer the contact may see, never the one the last ask named."""
+        route.codes = ["SRTWT7445"]
+        _seed_contact(session_factory, variables={})
+        matches = {"dealer a": {"uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME}}
+        _turn(
+            session_factory, monkeypatch,
+            _ts(
+                top_n=None,
+                entities=[{"raw": "dealer a", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}],
+            ),
+            "top selling for dealer a by quantity", matches=matches,
+        )
+        reply, captured = _turn(
+            session_factory, monkeypatch,
+            _ts(rank_by="amount", top_n=5, domain_in_message=True),
+            "top 5 selling items by amount",
+        )
+        (args,) = _calls(captured)
+        assert "customer_ids" not in args or not args["customer_ids"]
+        assert "\nCustomer: all\n" in reply
+
+    def test_the_metric_answer_restating_the_ask_completes_it(self, session_factory, monkeypatch, route) -> None:
+        """The other side of B2: the bot asked the metric, and "top 5 by amount" names
+        the ranking AND answers the question. It completes the asked ask (its
+        category stays) rather than starting over."""
+        from app.models.product import ProductCategory
+
+        db = session_factory()
+        db.add(ProductCategory(category_code="KS", category_name="KITCHEN SINK", company_id=DEFAULT_COMPANY_ID))
+        db.commit()
+        _seed_contact(session_factory, variables={})
+        reply, _captured = _turn(
+            session_factory, monkeypatch,
+            _ts(
+                rank_by=None, top_n=5,
+                entities=[{"raw": "kitchen sink", "hint": "category", "canonical_code": None, "current_message": True, "confident": True, "hint_confident": True}],
+            ),
+            "top 5 kitchen sink",
+        )
+        assert reply.strip() == ASK_METRIC
+        _reply, captured = _turn(
+            session_factory, monkeypatch, _ts(rank_by="amount", top_n=5, domain_in_message=True), "top 5 by amount",
+        )
+        (args,) = _calls(captured)
+        assert args["rank_by"] == "amount"
+        assert args["category_ids"]
+
     def test_another_domain_leaves_the_ranking(self, session_factory, monkeypatch, route) -> None:
         _seed_contact(session_factory, variables={})
         _turn(session_factory, monkeypatch, _ts(), "top 5 by quantity")
