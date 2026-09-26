@@ -12,7 +12,9 @@ still owes the S6-6/S4-6 browser pass before this reads "implemented". S3, S4 an
 (#1237, main 46711c618). S5 implemented on `claude/po-schedule-redesign-s5-xbp75f`, full track,
 FE only; vitest/type-check green; browser evidence is component-level (the real client off its
 `?demo=` fixture in Chromium, no live stack in the cloud lane); the S5-7 pass on HQ/26/01/121 v2
-stays owed on a local stack. S7 not started.
+stays owed on a local stack. Reviewer pass on #1265 (26 Sep): B1, B2, S1 and S2 fixed on the
+same branch, test-first (S2 adds a backend gate on the schedule's `document_url`, no
+migration). S7 not started.
 Track per slice: S1 small fix; S4 small fix; S2, S3, S5, S6, S7 full track.
 
 UAC: `documentation/plans/projects/po-schedule-redesign-24sep-acceptance-criteria.md`.

@@ -90,14 +90,6 @@ import { DeliveryScheduleReviewClient } from './DeliveryScheduleReviewClient';
 /**
  * The sentences `buildColumnStates` writes for this fixture, in full.
  */
-/**
- * The flush valve asks for 8 of the 16 ordered, and that is a partial schedule - normal on a
- * live project, a WARNING rather than something to fix, and the same verdict the server
- * reaches. It used to be a blocker on this screen alone.
- */
-const SHORTFALL_WARNING =
-  'The schedule asks for 8 of the 16 on the purchase order; the remaining 8 is expected ' +
-  'on a later schedule.';
 const REPORTED_MISMATCH_MESSAGE =
   "The areas add up to 8 but the schedule's own TOTAL QTY row says 16. " +
   'One of the two was misread, so check the cells against the paper.';
