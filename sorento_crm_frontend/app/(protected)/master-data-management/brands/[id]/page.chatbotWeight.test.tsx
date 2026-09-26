@@ -181,4 +181,26 @@ describe('Brand detail - Chatbot brand weight (R1)', () => {
     fireEvent.change(input, { target: { value: '10000' } });
     expect(screen.getByRole('button', { name: /save brand/i })).toBeDisabled();
   });
+
+  // PR #833 round 5 pass N-r5-1: the record page says why, in the dialog's own words.
+  it('edit mode: an out of range weight says the same words as the dialog', async () => {
+    h.brand = brand({ chatbot_weight: 0 });
+    await renderDetail();
+    await startEdit();
+
+    const input = screen.getByLabelText('Chatbot brand weight') as HTMLInputElement;
+    expect(screen.queryByText('Enter 9999 or less')).toBeNull();
+    expect(screen.queryByText('Enter 0 or more')).toBeNull();
+
+    fireEvent.change(input, { target: { value: '10000' } });
+    expect(screen.getByText('Enter 9999 or less')).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: '-1' } });
+    expect(screen.getByText('Enter 0 or more')).toBeInTheDocument();
+    expect(screen.queryByText('Enter 9999 or less')).toBeNull();
+
+    fireEvent.change(input, { target: { value: '5' } });
+    expect(screen.queryByText('Enter 0 or more')).toBeNull();
+    expect(screen.queryByText('Enter 9999 or less')).toBeNull();
+  });
 });
