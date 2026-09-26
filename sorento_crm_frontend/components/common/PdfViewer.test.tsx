@@ -66,6 +66,18 @@ describe('PdfViewer', () => {
     expect(fakePdfJs.textLayers[0].container).toHaveClass('textLayer');
   });
 
+  it('destroys the pdf.js document task on unmount (PR #1256 review, kill K2)', async () => {
+    const { unmount } = render(<PdfViewer url="/files/po.pdf" title="PO" />);
+
+    await ready();
+    const task = fakePdfJs.getDocument.mock.results.at(-1)?.value as { destroy: ReturnType<typeof vi.fn> };
+    expect(task.destroy).not.toHaveBeenCalled();
+
+    unmount();
+
+    expect(task.destroy).toHaveBeenCalledTimes(1);
+  });
+
   it('walks pages from the toolbar and stops at both ends', async () => {
     const onPageChange = vi.fn();
     fakePdfJs.setNumPages(2);
