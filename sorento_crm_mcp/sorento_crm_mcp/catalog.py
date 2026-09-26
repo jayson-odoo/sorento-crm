@@ -763,6 +763,36 @@ CATALOG: tuple[ToolSpec, ...] = (
         restricted_fields=(("sales_orders.sales_report", "Sales report"),),
     ),
     ToolSpec(
+        "crm_sales_analysis",
+        (
+            "A COMPANY'S OWN SALES TOTALS - by month, by year or in total, dealer or project "
+            "or both, on the ordered or the delivered (transferred to DO) basis - with NO "
+            "product or customer subject (use crm_sales_report for those). The same query as "
+            "the Yearly comparison screen. Answers the WHOLE table as text AND the same query "
+            "as an Excel file (attached when ready, else 'The Excel follows here.' and the "
+            "file is pushed to the chat).\n\n"
+            "AXES: `rows` and `cols` are month | year | channel (never equal); 'by month' is "
+            "rows=month, cols=year. `channel` dealer | project, absent = all. `basis` ordered "
+            "| delivered (REQUIRED; delivered unless the person said ordered). `company` - the "
+            "company NAME the person named (Sorento, Mocha); absent = the contact's only "
+            "company, or the bot is asked 'Sorento or Mocha?'. `date_from`/`date_to` on the "
+            "sales order date; absent = this calendar year to today. `n` (1 to 100) - the top "
+            "N rows by total, after the full count and totals.\n\n"
+            "REQUIRED: pass BOTH `contact_id` (Respond.io contact id) and `space_id` - the "
+            "answer is per contact (their company, their reveal key, their chat for the file)."
+        ),
+        "/api/v1/sales/analysis",
+        (),
+        (
+            "rows", "cols", "channel", "basis", "company", "date_from", "date_to", "n",
+            "contact_id", "space_id",
+        ),
+        domain="orders",
+        related_tools=("crm_sales_report",),
+        escalation_team="sales",
+        restricted_fields=(("sales_orders.sales_report", "Sales report"),),
+    ),
+    ToolSpec(
         "crm_order_analytics",
         (
             "AGGREGATE / ANALYTICAL tool for customer sales orders - computes a single "

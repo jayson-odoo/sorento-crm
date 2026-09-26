@@ -46,12 +46,13 @@ def _run(db, module, direction="upgrade"):
 
 
 def _seed_roles_and_order_domain(db):
-    db.execute(sa.text(
-        "INSERT INTO user_roles (id, slug, name) VALUES "
-        "(gen_random_uuid()::text, 'admin', 'Admin'), "
-        "(gen_random_uuid()::text, 'superadmin', 'Superadmin'), "
-        "(gen_random_uuid()::text, 'sales_executive_zzt', 'Sales exec')"
-    ))
+    import uuid as _uuid
+
+    from app.models.user import UserRole
+
+    for slug in ("admin", "superadmin", "sales_executive_zzt"):
+        db.add(UserRole(id=str(_uuid.uuid4()), slug=slug, name=slug))
+    db.flush()
     import importlib.util as iu
 
     spec = iu.spec_from_file_location("_zzt_s0", _VERSIONS / "chatbot_rearch_s0.py")
@@ -98,7 +99,7 @@ def test_ac_r4_10_the_purge_file_ships_empty_and_no_model_lives_in_sales():
     from app.database import Base
 
     purge = Path(__file__).resolve().parents[2] / "sorento_crm_frontend" / "modules" / "sales" / "purge_tables.json"
-    assert json.loads(purge.read_text()) == []
+    assert json.loads(purge.read_text()) == {"moduleKey": "sales", "tables": []}
     in_sales = [t.fullname for t in Base.metadata.tables.values() if t.schema == "sales"]
     # AC-R5-11: this plan adds no table; any later one must sit in `sales` (none yet).
     assert in_sales == []

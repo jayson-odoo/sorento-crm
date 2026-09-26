@@ -56,6 +56,9 @@ class ReportDetailLayout(BaseModel):
     rows: List[Dict[str, ReportRowValue]]
     # measure key -> decimal string. A measure with nothing to total is absent.
     totals: Dict[str, str]
+    # True when the run had more lines than the sync cap and the definition truncates
+    # rather than refuses: `rows` are the first ones, `totals` still the whole set's.
+    truncated: bool = False
 
 
 class ReportPivotDimension(BaseModel):
@@ -84,11 +87,33 @@ class ReportPivotLayout(BaseModel):
     row_totals: Dict[str, Dict[str, str]]
     col_totals: Dict[str, Dict[str, str]]
     grand_total: Dict[str, str]
+    # The VARIANCE row (last row minus the one before, per column), when the definition
+    # asks for one: column value -> measure key -> decimal string, sparse like `cells`.
+    variance_row: Optional[Dict[str, Dict[str, str]]] = None
+    variance_total: Optional[Dict[str, str]] = None
+    variance_label: Optional[str] = None
+    # "line" when the screen draws this table as a chart under it.
+    chart: Optional[str] = None
+    # The screen prints whole ringgit; the workbook keeps the sen.
+    whole_units: bool = False
+    # False when the column-totals row means nothing (years added to years).
+    show_column_totals: bool = True
+
+
+class ReportBlock(BaseModel):
+    """One block of a split summary: the pivot for one value of the split param."""
+
+    key: str
+    title: str
+    summary: ReportPivotLayout
 
 
 class ReportLayouts(BaseModel):
     detail: ReportDetailLayout
     summary: ReportPivotLayout
+    # One per chosen value of the definition's `sheet_per` param, in option order.
+    # Absent when the definition does not split.
+    blocks: Optional[List[ReportBlock]] = None
 
 
 class ReportResult(BaseModel):
@@ -99,6 +124,8 @@ class ReportResult(BaseModel):
     period_label: str
     row_count: int
     layouts: ReportLayouts
+    # A line the screen prints under the filter bar (the basis of a sales report).
+    note: Optional[str] = None
 
 
 class ReportSelectOption(BaseModel):
@@ -183,6 +210,8 @@ class ReportMeta(BaseModel):
     # True when the caller holds `reports.views.publish`. Publish + Set as default are
     # ABSENT without it, never disabled.
     can_publish: bool
+    # "detail" or "summary": the tab the screen opens on.
+    opens_on: str = "detail"
 
 
 class ReportCatalogEntry(BaseModel):

@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  ChartLine,
   Award,
   Badge,
   Bell,
@@ -135,6 +136,21 @@ export const MENU_SIDEBAR: MenuConfig = [
             permission: 'projects.types.view',
           },
         ],
+      },
+    ],
+  },
+  {
+    // The `sales` module (PLAN-retail-sales-reports-26sep 5.4; shared with #1260, whose
+    // Targets, Opportunities, Sales Teams and Sales Agents join this group). The Sales
+    // report item lands with S2.
+    title: 'Sales',
+    icon: ChartLine,
+    moduleKey: 'sales',
+    children: [
+      {
+        title: 'Yearly comparison',
+        path: '/sales/yearly-comparison',
+        permission: 'sales.reports.view',
       },
     ],
   },

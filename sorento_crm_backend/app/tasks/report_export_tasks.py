@@ -28,6 +28,13 @@ logger = logging.getLogger(__name__)
 
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
+#: A job enqueued with no company grant (one queued before the grant travelled with the
+#: job). A company-scoped report then reads NOBODY'S rows: the fail-closed answer.
+NO_COMPANY_SNAPSHOT = "__no_company_snapshot__"
+
+#: What the chat hears when the Excel it was promised cannot be built (AC-R4-4).
+REPORT_BUILD_FAILED_TEXT = "Could not build the sales report Excel right now."
+
 
 def generate_report_xlsx(
     download_id: str,
@@ -35,14 +42,19 @@ def generate_report_xlsx(
     params: dict,
     view: Optional[dict],
     user_id: str,
+    company_grants=NO_COMPANY_SNAPSHOT,
 ) -> dict:
     """Render a report to a workbook, store it, and update the download row.
 
     The session runs at the all-companies scope, which is correct for every dataset
-    declaring ``scope="none"`` (the only kind that exists today). A ``scope="company"``
-    dataset must first snapshot the ENQUEUER's active company into this signature - the
-    worker has no request to resolve one from, and the fail-closed UNSET scope would
-    otherwise return nothing at all.
+    declaring ``scope="none"``. A ``scope="company"`` dataset reads the ENQUEUER's grant,
+    which the route snapshots into ``company_grants`` (a list of company ids, or None for
+    the all-companies system caller): the worker has no request to resolve one from. A
+    job with no snapshot reads nothing (fail closed).
+
+    A download the chat turn handed over (``deliver_to_contact_id`` set, the chatbot's
+    sales answer) is pushed to that contact once it is ready, or the contact is told in
+    text that it could not be built; for any other download both are no-ops.
     """
     from app.schemas.report import ReportViewConfig
     from app.services.reports import engine, registry as reg
@@ -59,7 +71,8 @@ def generate_report_xlsx(
             raise ValueError(f"Unknown report '{key}'")
 
         config = ReportViewConfig.model_validate(view) if view else engine.view_config(definition)
-        data = engine.run_workbook(db, definition, params or {}, config)
+        grants = frozenset() if company_grants == NO_COMPANY_SNAPSHOT else company_grants
+        data = engine.run_workbook(db, definition, params or {}, config, company_grants=grants)
         content = render_workbook(definition, data)
 
         # The route already named the file from the period the user asked for; re-deriving
@@ -87,10 +100,21 @@ def generate_report_xlsx(
             key,
             len(content),
         )
+        from app.tasks import export_tasks
+
+        export_tasks._push_download_to_chat(db, download_id, provider=provider, key=stored_key)
         return {"download_id": download_id, "status": "ready", "bytes": len(content)}
     except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
         logger.exception("generate_report_xlsx failed for download %s", download_id)
         _record_failure(db, svc, download_id, e, "generate_report_xlsx")
+        try:
+            from app.tasks import export_tasks
+
+            export_tasks._tell_chat_the_download_failed(
+                db, download_id, text=REPORT_BUILD_FAILED_TEXT
+            )
+        except Exception:  # noqa: BLE001 - the export already failed; never raise here
+            logger.exception("generate_report_xlsx: failure notice for %s failed", download_id)
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
         db.close()

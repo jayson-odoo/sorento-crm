@@ -231,13 +231,22 @@ api_router.include_router(
     tags=["downloads"],
 )
 # Reporting foundation: one set of routes for every report, each gated on its own
-# permission slug. Under the procurement guard while the sponsorship report is the only
-# one (PLAN-reporting-foundation); it moves when a second module owns a report.
+# permission slug AND its own module. The procurement guard that sat here while the
+# sponsorship report was the only one is per report now (the second module, `sales`,
+# arrived: PLAN-retail-sales-reports-26sep 5.3 extension 1).
 api_router.include_router(
     reports.router,
     prefix="/reports",
     tags=["reports"],
-    dependencies=[Depends(require_module_enabled_with_api_key("procurement"))],
+)
+# Sales module (PLAN-retail-sales-reports-26sep S1): the chatbot's sales analysis.
+from app.api.v1 import sales as sales_routes  # noqa: E402
+
+api_router.include_router(
+    sales_routes.router,
+    prefix="/sales",
+    tags=["sales"],
+    dependencies=[Depends(require_module_enabled_with_api_key("sales"))],
 )
 api_router.include_router(
     list_query.router,

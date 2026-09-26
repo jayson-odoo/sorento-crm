@@ -4,9 +4,10 @@ The catalog is permission-filtered, each report is gated on its own slug, and pu
 view (or making one the default for everyone) additionally needs `reports.views.publish`.
 Report #2 adds a dataset and a definition and appears here with no route work at all.
 
-Mounted under the procurement module guard for now: the only report is the sponsorship one,
-and a "reports" module key would be a module nobody can install anything into. It moves when
-a second module owns a report (PLAN-reporting-foundation, Architecture).
+Each definition names the module that owns it (`module_key`), checked per request: a
+disabled module's reports answer 403 and leave the catalog, and a definition naming no
+module is refused outright (fail closed). A company-scoped report reads one company at a
+time, inside the caller's grant (`_company_grants`).
 """
 from __future__ import annotations
 
@@ -58,6 +59,12 @@ def _definition(key: str) -> reg.ReportDefinition:
     return definition
 
 
+def _module_open(db: Session, user: dict, definition: reg.ReportDefinition) -> bool:
+    from app.modules.runtime.guards import module_blocked
+
+    return not module_blocked(db, str(user.get("id") or ""), definition.module_key)
+
+
 def _authorised(db: Session, user: dict, key: str) -> reg.ReportDefinition:
     """The report, or 403/404. 404 first: an unknown key is not a permission question."""
     definition = _definition(key)
@@ -67,7 +74,23 @@ def _authorised(db: Session, user: dict, key: str) -> reg.ReportDefinition:
             message=f"Permission required: {definition.permission}",
             code="FORBIDDEN",
         )
+    if not _module_open(db, user, definition):
+        raise AppException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            message=f"Module not enabled: {definition.module_key or 'none declared'}",
+            code="MODULE_NOT_ENABLED",
+        )
     return definition
+
+
+def _company_grants(db: Session, user: dict, definition: reg.ReportDefinition):
+    """The companies this caller may read: their switchable set (every company for an
+    admin), never only the one they are currently in. Only asked of a company report."""
+    if definition.dataset.scope != "company":
+        return None
+    from app.services.company_scope_resolver import resolve_user_grant_ids
+
+    return frozenset(str(c) for c in resolve_user_grant_ids(db, str(user["id"])))
 
 
 def _require_publish(db: Session, user: dict) -> None:
@@ -89,8 +112,11 @@ def _years(db: Session, definition: reg.ReportDefinition) -> List[int]:
     return [this_year - offset for offset in range(0, 5)]
 
 
-def _params_meta(db: Session, definition: reg.ReportDefinition) -> List[ReportParamMeta]:
+def _params_meta(
+    db: Session, definition: reg.ReportDefinition, grants=None
+) -> List[ReportParamMeta]:
     metas: List[ReportParamMeta] = []
+    company_param = definition.dataset.company_param
     for param in definition.params:
         if isinstance(param, reg.DateBasisParam):
             metas.append(
@@ -124,6 +150,8 @@ def _params_meta(db: Session, definition: reg.ReportDefinition) -> List[ReportPa
                     options=[
                         ReportSelectOption(value=value, label=label)
                         for value, label in param.options(db)
+                        # The Company filter lists the caller's own companies only.
+                        if param.key != company_param or grants is None or value in grants
                     ],
                 )
             )
@@ -140,7 +168,7 @@ def list_reports(
         reports=[
             ReportCatalogEntry(key=d.key, title=d.title, permission=d.permission)
             for d in reg.all_definitions()
-            if _holds(db, current_user, d.permission)
+            if _holds(db, current_user, d.permission) and _module_open(db, current_user, d)
         ]
     )
 
@@ -152,12 +180,19 @@ def get_report_meta(
     db: Session = Depends(get_db),
 ) -> ReportMeta:
     definition = _authorised(db, current_user, key)
+    grants = _company_grants(db, current_user, definition)
     default_view = ReportViewsService(db).default_config(key) or engine.view_config(definition)
+    company_param = definition.dataset.company_param
+    if company_param and not (default_view.params.get(company_param) or []):
+        # The report opens on the caller's current company, resolved now, per caller.
+        ctx = engine.resolve(db, definition, {}, company_grants=grants)
+        default_view.params[company_param] = ctx.values.get(company_param) or []
     return ReportMeta(
         key=definition.key,
         title=definition.title,
         permission=definition.permission,
-        params=_params_meta(db, definition),
+        opens_on=definition.opens_on,
+        params=_params_meta(db, definition, grants),
         catalog=[
             ReportCatalogColumn(
                 key=c.key, label=c.label, type=c.type, tag=c.tag, size=c.size
@@ -190,7 +225,13 @@ def run_report(
 ) -> ReportResult:
     """Both layouts over one row set, capped (the export path is not)."""
     definition = _authorised(db, current_user, key)
-    return engine.run(db, definition, _params_of(body), body.view)
+    return engine.run(
+        db,
+        definition,
+        _params_of(body),
+        body.view,
+        company_grants=_company_grants(db, current_user, definition),
+    )
 
 
 #: Anything a filesystem or a Content-Disposition header reads as structure. The period
@@ -230,8 +271,13 @@ def export_report(
     # Validate the params here rather than on the worker: a 422 the user can act on beats a
     # download row that fails a minute later in a drawer.
     params = _params_of(body)
-    ctx = engine.resolve(db, definition, params)
+    grants = _company_grants(db, current_user, definition)
+    ctx = engine.resolve(db, definition, params, company_grants=grants)
     filename = _export_filename(definition, ctx.period)
+    company_param = definition.dataset.company_param
+    if company_param:
+        # The job reads the company this press resolved, not whatever it defaults to later.
+        params = {**params, company_param: ctx.values.get(company_param) or []}
 
     view = body.view or engine.view_config(definition)
     engine.validate_view(definition, view)
@@ -250,6 +296,9 @@ def export_report(
             str(current_user["id"]),
             queue_name=settings.report_export_queue,
             job_timeout=600,
+            # The worker has no request to resolve a company from: the enqueuer's grant
+            # travels with the job (AC-R2-4). None for a report that is not company-scoped.
+            company_grants=sorted(grants) if grants is not None else None,
         )
     except Exception as e:  # noqa: BLE001 - Redis down must not leave a row spinning
         DownloadService(db).mark_failed(str(download.id), f"Could not queue the export: {e}")

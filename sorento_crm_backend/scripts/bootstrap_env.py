@@ -716,6 +716,7 @@ def seed_chatbot_policy() -> None:
     s9 = _load("_chatbot_rearch_s9", "chatbot_rearch_s9.py")
     s11 = _load("_chatbot_rearch_s11", "chatbot_rearch_s11.py")
     s12 = _load("_chatbot_rearch_s12", "chatbot_rearch_s12.py")
+    sales_s1 = _load("_sales_s1_reports_module", "sales_s1_reports_module.py")
 
     with engine.begin() as conn:
         domains_inserted, kinds_inserted = s0.seed_domains_and_kinds(conn)
@@ -731,6 +732,8 @@ def seed_chatbot_policy() -> None:
         s8.apply_narrowing(conn)
     with engine.begin() as conn:
         s9.apply_tools(conn)
+    with engine.begin() as conn:
+        sales_s1.apply_tools(conn)
     with engine.begin() as conn:
         s11.apply_narrowing(conn)
     with engine.begin() as conn:

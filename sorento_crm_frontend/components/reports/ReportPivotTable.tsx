@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { formatMoney2dp } from '@/lib/helpers';
+import { wholeRinggit } from './reportFormat';
 import type { ReportColumn, ReportPivotLayout } from '@/services/reportService';
 
 /**
@@ -18,11 +19,14 @@ import type { ReportColumn, ReportPivotLayout } from '@/services/reportService';
  * A cell that IS zero reads the same way the detail grid and the client's own sheet read it
  * (AC-G5): "-", never 0.00, which would claim money that came to nothing.
  */
-function measureText(value: string | undefined, measure: ReportColumn): string {
+function measureText(value: string | undefined, measure: ReportColumn, wholeUnits = false): string {
   if (value == null || value === '') return '';
-  if (measure.type === 'money') return Number(value) === 0 ? '-' : formatMoney2dp(value, '');
-  return value;
+  if (measure.type !== 'money') return value;
+  if (Number(value) === 0) return '-';
+  if (!wholeUnits) return formatMoney2dp(value, '');
+  return wholeRinggit(value);
 }
+
 
 /**
  * The first column is pinned, so its background has to be OPAQUE: a `bg-muted/40` header
@@ -46,6 +50,10 @@ const PINNED_FOOT =
 export function ReportPivotTable({ layout }: { layout: ReportPivotLayout }) {
   const { measures, col_dim: colDim, row_values: rowValues } = layout;
   const columnLabel = (value: string) => colDim.value_labels?.[value] ?? value;
+  const whole = layout.whole_units === true;
+  const text = (value: string | undefined, measure: ReportColumn) => measureText(value, measure, whole);
+  const showColumnTotals = layout.show_column_totals !== false;
+  const variance = layout.variance_row ?? null;
 
   return (
     <div className="w-full overflow-x-auto rounded-lg border border-border">
@@ -114,7 +122,7 @@ export function ReportPivotTable({ layout }: { layout: ReportPivotLayout }) {
                       index === 0 && 'border-s',
                     )}
                   >
-                    {measureText(layout.cells[rowValue]?.[colValue]?.[measure.key], measure)}
+                    {text(layout.cells[rowValue]?.[colValue]?.[measure.key], measure)}
                   </TableCell>
                 )),
               )}
@@ -126,42 +134,79 @@ export function ReportPivotTable({ layout }: { layout: ReportPivotLayout }) {
                     index === 0 && 'border-s',
                   )}
                 >
-                  {measureText(layout.row_totals[rowValue]?.[measure.key], measure)}
+                  {text(layout.row_totals[rowValue]?.[measure.key], measure)}
                 </TableCell>
               ))}
             </TableRow>
           ))}
         </TableBody>
 
-        <TableFooter>
-          <TableRow>
-            <TableCell className={cn(PINNED_FOOT, 'font-semibold')}>Total</TableCell>
-            {colDim.values.map((colValue) =>
-              measures.map((measure, index) => (
-                <TableCell
-                  key={`col-total-${colValue}-${measure.key}`}
-                  className={cn(
-                    'text-end font-semibold tabular-nums whitespace-nowrap',
-                    index === 0 && 'border-s border-border',
-                  )}
-                >
-                  {measureText(layout.col_totals[colValue]?.[measure.key], measure)}
-                </TableCell>
-              )),
-            )}
-            {measures.map((measure, index) => (
-              <TableCell
-                key={`grand-${measure.key}`}
-                className={cn(
-                  'text-end font-semibold tabular-nums whitespace-nowrap',
-                  index === 0 && 'border-s border-border',
+        {(showColumnTotals || variance) && (
+          <TableFooter>
+            {showColumnTotals && (
+              <TableRow>
+                <TableCell className={cn(PINNED_FOOT, 'font-semibold')}>Total</TableCell>
+                {colDim.values.map((colValue) =>
+                  measures.map((measure, index) => (
+                    <TableCell
+                      key={`col-total-${colValue}-${measure.key}`}
+                      className={cn(
+                        'text-end font-semibold tabular-nums whitespace-nowrap',
+                        index === 0 && 'border-s border-border',
+                      )}
+                    >
+                      {text(layout.col_totals[colValue]?.[measure.key], measure)}
+                    </TableCell>
+                  )),
                 )}
-              >
-                {measureText(layout.grand_total[measure.key], measure)}
-              </TableCell>
-            ))}
-          </TableRow>
-        </TableFooter>
+                {measures.map((measure, index) => (
+                  <TableCell
+                    key={`grand-${measure.key}`}
+                    className={cn(
+                      'text-end font-semibold tabular-nums whitespace-nowrap',
+                      index === 0 && 'border-s border-border',
+                    )}
+                  >
+                    {text(layout.grand_total[measure.key], measure)}
+                  </TableCell>
+                ))}
+              </TableRow>
+            )}
+            {variance && (
+              // The muted row under the years: this year minus last, over the months this
+              // year has; a month after the as-at date is blank (G5 (a)).
+              <TableRow data-testid="variance-row" className="text-muted-foreground">
+                <TableCell className={cn(PINNED_FOOT, 'font-semibold')}>
+                  {layout.variance_label ?? 'Variance'}
+                </TableCell>
+                {colDim.values.map((colValue) =>
+                  measures.map((measure, index) => (
+                    <TableCell
+                      key={`variance-${colValue}-${measure.key}`}
+                      className={cn(
+                        'text-end font-medium tabular-nums whitespace-nowrap',
+                        index === 0 && 'border-s border-border',
+                      )}
+                    >
+                      {text(variance[colValue]?.[measure.key], measure)}
+                    </TableCell>
+                  )),
+                )}
+                {measures.map((measure, index) => (
+                  <TableCell
+                    key={`variance-total-${measure.key}`}
+                    className={cn(
+                      'text-end font-semibold tabular-nums whitespace-nowrap',
+                      index === 0 && 'border-s border-border',
+                    )}
+                  >
+                    {text(layout.variance_total?.[measure.key], measure)}
+                  </TableCell>
+                ))}
+              </TableRow>
+            )}
+          </TableFooter>
+        )}
       </Table>
     </div>
   );

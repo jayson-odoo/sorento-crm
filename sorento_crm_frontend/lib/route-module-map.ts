@@ -27,6 +27,7 @@ const LEGACY_ROUTE_MODULE_PREFIXES: { prefix: string; moduleKey: string }[] = [
   { prefix: '/commercial-core', moduleKey: 'commercial_core' },
   { prefix: '/commercial', moduleKey: 'commercial_core' },
   { prefix: '/project-sales', moduleKey: 'projects' },
+  { prefix: '/sales', moduleKey: 'sales' },
   { prefix: '/dealer-kit', moduleKey: 'dealer_kit' },
 ];
 

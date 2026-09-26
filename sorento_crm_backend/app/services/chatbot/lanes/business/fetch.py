@@ -422,6 +422,8 @@ DATE_PARAMS: dict[str, tuple[str, str]] = {
     # AC-71: the low stock report's window narrows which sales orders the fresh plan
     # counts as demand - the run's own "plan until" pair, under the route's names.
     "crm_low_stock_report": ("date_from", "date_to"),
+    # PLAN-retail-sales-reports-26sep S1: the period of the sales analysis, by order date.
+    "crm_sales_analysis": ("date_from", "date_to"),
 }
 
 def _current_myt_year() -> int:
@@ -735,6 +737,41 @@ def entity_ids_transformer(
         if _lsr_contact is None:
             _lsr_contact = jsc.get(semantic_input, "contact_id")
         out["contact_id"] = jsc.nullish_str(_lsr_contact).strip()
+        out["space_id"] = space_id_or_default(
+            space_id if space_id is not None else jsc.get(semantic_input, "space_id")
+        )
+
+    # PLAN-retail-sales-reports-26sep S1: the sales analysis names an AXIS, a channel, a
+    # basis, a company and a period - never an entity id. "by month" is months down the
+    # side and the years across (the yearly comparison); anything else is one line per
+    # channel, the years across. No period said is this calendar year as at today (G6).
+    if tool_name == "crm_sales_analysis":
+        for key in ("product_ids", "customer_ids", "warehouse_ids", "limit", "group_by", "top_n"):
+            out.pop(key, None)
+        group_by = jsc.js_string(jsc.get(semantic_input, "group_by") or "")
+        out["rows"] = "month" if group_by == "month" else "channel"
+        out["cols"] = "year"
+        channel = jsc.get(semantic_input, "sales_channel")
+        if channel in ("dealer", "project"):
+            out["channel"] = channel
+        basis = jsc.get(semantic_input, "sales_basis")
+        out["basis"] = basis if basis in ("ordered", "delivered") else "delivered"
+        company = jsc.get(semantic_input, "sales_company")
+        if jsc.truthy(company):
+            out["company"] = jsc.js_string(company).strip()
+        if not jsc.truthy(out.get("date_from")) and not jsc.truthy(out.get("date_to")):
+            from app.services.reports.registry import today_malaysia
+
+            today = today_malaysia()
+            out["date_from"] = f"{today.year}-01-01"
+            out["date_to"] = today.isoformat()
+        top_n = jsc.get(semantic_input, "top_n")
+        if isinstance(top_n, int) and top_n > 0:
+            out["n"] = top_n
+        _sa_contact = trig.get("contact_id")
+        if _sa_contact is None:
+            _sa_contact = jsc.get(semantic_input, "contact_id")
+        out["contact_id"] = jsc.nullish_str(_sa_contact).strip()
         out["space_id"] = space_id_or_default(
             space_id if space_id is not None else jsc.get(semantic_input, "space_id")
         )
@@ -1997,9 +2034,11 @@ def _sales_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
 #: wording for its own error envelope; this copy covers only the "render never happened"
 #: fallback, where the presenter's text never reached this function.
 _LOW_STOCK_ERROR_TEXT = "Could not run the low stock report right now."
+#: The presenter's own error line for `crm_sales_analysis`, for a body it never rendered.
+_SALES_ANALYSIS_ERROR_TEXT = "Could not run the sales report right now."
 
 
-def _low_stock_report_output(result: Any) -> dict[str, Any]:
+def _low_stock_report_output(result: Any, *, fallback: str = _LOW_STOCK_ERROR_TEXT) -> dict[str, Any]:
     """PLAN-low-stock-report S6 (AC-66): `crm_low_stock_report`'s own envelope.
 
     `_outstanding_report_output`'s shape, with one difference that is the whole point:
@@ -2030,7 +2069,7 @@ def _low_stock_report_output(result: Any) -> dict[str, Any]:
         # safe default text, so state the error line verbatim as a terminal answer rather
         # than stringing a raw status dict into the reply or dropping into the generic
         # inventory miss.
-        text = _LOW_STOCK_ERROR_TEXT
+        text = fallback
         has_result = True
         attachments = None
     return {
@@ -2099,6 +2138,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         return _sales_report_output(result, ctx)
     if jsc.js_string(ctx.get("tool") or "") == "crm_low_stock_report":
         return _low_stock_report_output(result)
+    if jsc.js_string(ctx.get("tool") or "") == "crm_sales_analysis":
+        # The same envelope: the presenter's text and, when there is one, the Excel.
+        return _low_stock_report_output(result, fallback=_SALES_ANALYSIS_ERROR_TEXT)
     e = _extract_envelope(result)
     # Read once, for both the restricted-field drop below and the spec-visibility
     # drop (PLAN-spec-visibility-policy.md "Chatbot seam") - one contact, one

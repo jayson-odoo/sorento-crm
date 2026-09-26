@@ -8,3 +8,4 @@ in `definitions/` and are imported here so the registry is populated wherever it
 # Report definitions register themselves on import. Imported HERE (not in the routes) so
 # the registry is populated wherever it is read - route, RQ task or test.
 from app.services.reports.definitions import sponsorship  # noqa: E402,F401
+from app.services.reports.definitions import sales_yearly  # noqa: E402,F401

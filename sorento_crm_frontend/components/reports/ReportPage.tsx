@@ -33,11 +33,13 @@ import {
   type ReportParamValue,
   type ReportParamValues,
   type ReportPeriod,
+  type ReportPivotLayout,
   type ReportRow,
   type ReportView,
   type ReportViewConfig,
 } from '@/services/reportService';
 import { ConfigureSummaryDialog } from './ConfigureSummaryDialog';
+import { ReportPivotChart } from './ReportPivotChart';
 import { ReportFilterBar } from './ReportFilterBar';
 import { ReportPivotTable } from './ReportPivotTable';
 import { ReportViewsMenu } from './ReportViewsMenu';
@@ -250,6 +252,29 @@ export function periodIsRunnable(params: ReportParamValues): boolean {
 }
 
 /**
+ * One summary table, and under it the chart when the report draws one. A block with no
+ * sales keeps its table, blank, with the empty line under its title: a missing section
+ * would read as a report that forgot a channel (AC-S1-15).
+ */
+function SummaryBlock({ title, layout }: { title?: string; layout: ReportPivotLayout }) {
+  const empty = Object.keys(layout.cells).length === 0;
+  return (
+    <section className="min-w-0 space-y-3" aria-label={title ?? layout.title}>
+      {title && <h3 className="text-sm font-semibold">{title}</h3>}
+      {empty && <p className="text-sm text-muted-foreground">No sales in this period</p>}
+      <ReportPivotTable layout={layout} />
+      {layout.chart === 'line' && !empty && (
+        <Card>
+          <CardContent className="py-4">
+            <ReportPivotChart layout={layout} />
+          </CardContent>
+        </Card>
+      )}
+    </section>
+  );
+}
+
+/**
  * ONE page, always (AC-G2), and a skeleton that does not grow with the answer.
  *
  * The register this screen mirrors has no pages: a month is a table you read down to its
@@ -309,6 +334,8 @@ export function ReportPage({
       ? [...views.mine, ...views.shared].find((v) => v.is_default) ?? null
       : null;
     const config = fallback?.view ?? meta.default_view;
+    // A report opens on the tab it is read by: the Yearly comparison is its summary.
+    if (meta.opens_on) setActiveTab(meta.opens_on);
     setState({
       viewId: fallback?.id ?? null,
       params: withParamDefaults(config.params, meta.params),
@@ -518,6 +545,11 @@ export function ReportPage({
                 onChange={setParam}
                 disabled={isFetching}
               />
+              {result?.note && (
+                <p className="mt-3 text-xs text-muted-foreground" data-testid="report-note">
+                  {result.note}
+                </p>
+              )}
             </CardContent>
           </Card>
 
@@ -596,6 +628,12 @@ export function ReportPage({
               </TabsList>
 
               <TabsContent value="detail" className="mt-5">
+                {detailLayout.truncated && (
+                  <p className="mb-3 text-xs text-muted-foreground" data-testid="detail-truncated">
+                    Showing the latest {detailLayout.rows.length.toLocaleString()} of{' '}
+                    {result.row_count.toLocaleString()} lines.
+                  </p>
+                )}
                 <DataGrid
                   table={table}
                   recordCount={result.row_count}
@@ -640,8 +678,14 @@ export function ReportPage({
                 </DataGrid>
               </TabsContent>
 
-              <TabsContent value="summary" className="mt-5">
-                <ReportPivotTable layout={summary} />
+              <TabsContent value="summary" className="mt-5 space-y-6">
+                {result.layouts.blocks?.length ? (
+                  result.layouts.blocks.map((block) => (
+                    <SummaryBlock key={block.key} title={block.title} layout={block.summary} />
+                  ))
+                ) : (
+                  <SummaryBlock layout={summary} />
+                )}
               </TabsContent>
             </Tabs>
           )}

@@ -85,6 +85,13 @@ class Column:
     # Renders a raw dimension value for the screen ("2026-01" -> "Jan'26"). The frontend
     # must not invent a formatting rule per dimension, so the dataset supplies one.
     value_label: Optional[Callable[[Any], str]] = None
+    #: An axis that prints EVERY value, in this order, whether the data holds it or not:
+    #: (value, label) pairs. A month-of-year axis must print JAN to DEC in September too,
+    #: and a cell with nothing in it stays blank, never 0.
+    fixed_values: Optional[Tuple[Tuple[str, str], ...]] = None
+    #: The period_months idea for years: every year of the period is a value, so a year
+    #: with no sales is a blank row rather than a missing one.
+    period_years: bool = False
 
     def __post_init__(self) -> None:
         if self.type not in COLUMN_TYPES:
@@ -124,6 +131,10 @@ class Dataset:
     # Years the dataset actually holds rows for, newest first. Optional: without it the
     # filter bar offers the current year and the four before it.
     years: Optional[Callable[[Any], List[int]]] = None
+    #: The select param whose single value is the company a run reads (scope="company").
+    #: The engine checks the value against the caller's grant (403 outside it), defaults
+    #: it to the caller's current company, and names the company in the title block.
+    company_param: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.scope not in SCOPES:
@@ -252,12 +263,36 @@ class DetailLayout:
     order_by: Callable[[Any], Sequence[ColumnElement]]
     groups: Tuple[TickGroup, ...] = ()
     key: str = "detail"
+    #: Over the sync cap: "refuse" answers 422 (the register must be read whole), and
+    #: "truncate" returns the first rows with `truncated` set, so a years-long summary
+    #: is not refused because of the lines under it.
+    cap: str = "refuse"
+
+
+PIVOT_VARIANCES = frozenset({"last_two_rows"})
+PIVOT_CHARTS = frozenset({"line"})
 
 
 @dataclass(frozen=True)
 class PivotLayout:
     title: str
     key: str = "summary"
+    #: "last_two_rows": a VARIANCE row, the last row minus the one before it, over the
+    #: columns the last row has (a year to date against the same months a year earlier).
+    variance: Optional[str] = None
+    #: "line": the screen draws the pivot as a line chart under the table, and the
+    #: workbook writes a native chart under the block.
+    chart: Optional[str] = None
+    #: The screen prints whole ringgit; the workbook keeps the sen.
+    whole_units: bool = False
+    #: The column-totals row. A year-by-month table has no use for 2024 + 2025 + 2026.
+    column_totals: bool = True
+
+    def __post_init__(self) -> None:
+        if self.variance is not None and self.variance not in PIVOT_VARIANCES:
+            raise ValueError(f"Pivot '{self.title}' declares an unknown variance '{self.variance}'")
+        if self.chart is not None and self.chart not in PIVOT_CHARTS:
+            raise ValueError(f"Pivot '{self.title}' declares an unknown chart '{self.chart}'")
 
 
 @dataclass(frozen=True)
@@ -288,6 +323,17 @@ class WorkbookSpec:
     summary_row_total_label: str = "TOTAL"
     #: The summary's column-totals row ("TOTAL SALES" on the client's own sheet).
     summary_total_row_label: str = "TOTAL"
+    #: One sheet per month of the period. A three-year comparison must not write 33.
+    month_sheets: bool = True
+    #: A select param key: the summary sheet writes one block per chosen value, one under
+    #: the other (both channels of the yearly comparison on one page, as the PDF has them).
+    sheet_per: Optional[str] = None
+    #: The period line reads "AS AT <last day>" rather than the range.
+    period_as_at: bool = False
+    #: The money cells' number format; unset, the accounting RM format.
+    money_format: Optional[str] = None
+    #: What a money cell with no value holds. "" leaves it empty, which a chart skips.
+    no_value: str = "-"
 
 
 # --------------------------------------------------------------------- definition
@@ -306,6 +352,14 @@ class ReportDefinition:
     #  "pivot": {"rows": ..., "cols": ..., "measures": [...]}}
     default_view: Dict[str, Any]
     workbook: WorkbookSpec
+    #: The installable module that owns this report. The routes check it per request, and
+    #: a definition that names none is refused (fail closed).
+    module_key: Optional[str] = None
+    #: A line printed under the filter bar and in the workbook's title block, given the
+    #: query context (the basis of a sales report).
+    note: Optional[Callable[[Any], str]] = None
+    #: Which tab the screen opens on.
+    opens_on: str = "detail"
 
 
 def validate(definition: ReportDefinition) -> None:
@@ -346,6 +400,20 @@ def validate(definition: ReportDefinition) -> None:
                 f"Report '{definition.key}' groups on '{group.source}', "
                 "which is not a catalog dimension"
             )
+    if definition.opens_on not in ("detail", "summary"):
+        raise ValueError(f"Report '{definition.key}' opens on unknown tab '{definition.opens_on}'")
+    if definition.detail.cap not in ("refuse", "truncate"):
+        raise ValueError(f"Report '{definition.key}' declares an unknown detail cap")
+    split = definition.workbook.sheet_per
+    if split is not None and not any(
+        isinstance(p, SelectParam) and p.key == split for p in definition.params
+    ):
+        raise ValueError(f"Report '{definition.key}' splits by '{split}', which is not a select param")
+    company_param = dataset.company_param
+    if company_param is not None and not any(
+        isinstance(p, SelectParam) and p.key == company_param for p in definition.params
+    ):
+        raise ValueError(f"Report '{definition.key}' names company param '{company_param}' it lacks")
     basis = (view.get("params") or {}).get("date_basis")
     if basis is not None and dataset.basis(basis) is None:
         raise ValueError(

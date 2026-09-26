@@ -24,11 +24,12 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import status
-from sqlalchemy import and_, func
+from sqlalchemy import and_, false, func
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import ColumnElement
 
 from app.schemas.report import (
+    ReportBlock,
     ReportColumn,
     ReportColumnGroup,
     ReportDetailLayout,
@@ -39,8 +40,12 @@ from app.schemas.report import (
     ReportResult,
     ReportViewConfig,
 )
+from app.models.base import UNSET, company_scope, get_company_scope
 from app.services.error_handler import AppException
 from app.services.reports import registry as reg
+
+#: `resolve(company_grants=...)` left unsaid: read the grant off the session's own scope.
+FROM_SESSION = object()
 
 # The sync caps. A run over either is refused and the user is pointed at the uncapped
 # export - the refusal IS the answer, not a failure.
@@ -234,10 +239,19 @@ class QueryContext:
     date_basis: ColumnElement
     period: Period
     values: Dict[str, Any] = field(default_factory=dict)
+    #: The companies this caller may read, for a scope="company" dataset: None = every
+    #: company (a system caller), a frozenset = those, UNSET or empty = none (fail closed).
+    company_grants: Any = UNSET
 
     @property
     def dataset(self) -> reg.Dataset:
         return self.definition.dataset
+
+    @property
+    def company_id(self) -> Optional[str]:
+        key = self.dataset.company_param
+        chosen = self.values.get(key) if key else None
+        return chosen[0] if chosen else None
 
 
 def _as_list(value: Any) -> List[str]:
@@ -248,7 +262,54 @@ def _as_list(value: Any) -> List[str]:
     return [str(value)]
 
 
-def resolve(db: Session, definition: reg.ReportDefinition, params: Dict[str, Any]) -> QueryContext:
+def _forbidden_company() -> AppException:
+    return AppException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        message="You do not have access to that company",
+        code="COMPANY_FORBIDDEN",
+    )
+
+
+def _grants(db: Session, company_grants: Any) -> Any:
+    """The caller's company grant: given, or read off the session's scope."""
+    if company_grants is FROM_SESSION:
+        return get_company_scope(db)
+    if isinstance(company_grants, (list, tuple, set)):
+        return frozenset(str(c) for c in company_grants)
+    return company_grants
+
+
+def _bind_company(db: Session, definition: reg.ReportDefinition, values: Dict[str, Any],
+                  given: Dict[str, Any], grants: Any) -> None:
+    """The company a run reads: the named one inside the grant (403 outside it), else the
+    caller's current company, else the first granted one. No grant, no company."""
+    key = definition.dataset.company_param
+    if key is None:
+        return
+    chosen = [c for c in _as_list(given.get(key)) if c]
+    if len(chosen) > 1:
+        raise _invalid(f"'{key}' takes one company")
+    if chosen:
+        if grants is None:
+            return
+        if not isinstance(grants, frozenset) or chosen[0] not in grants:
+            raise _forbidden_company()
+        return
+    if grants is None or not isinstance(grants, frozenset) or not grants:
+        values[key] = []
+        return
+    session = get_company_scope(db)
+    current = [c for c in session if c in grants] if isinstance(session, frozenset) else []
+    values[key] = [current[0] if len(current) == 1 else sorted(grants)[0]]
+
+
+def resolve(
+    db: Session,
+    definition: reg.ReportDefinition,
+    params: Dict[str, Any],
+    *,
+    company_grants: Any = FROM_SESSION,
+) -> QueryContext:
     """Validate the incoming params against the definition and bind them (AC-A3)."""
     params = dict(params or {})
     known = {p.key for p in definition.params}
@@ -279,6 +340,9 @@ def resolve(db: Session, definition: reg.ReportDefinition, params: Dict[str, Any
     if basis_key is None or period is None:
         raise _invalid(f"Report '{definition.key}' declares no date basis or no period param")
 
+    grants = _grants(db, company_grants) if definition.dataset.scope == "company" else None
+    _bind_company(db, definition, values, params, grants)
+
     return QueryContext(
         db=db,
         definition=definition,
@@ -288,6 +352,7 @@ def resolve(db: Session, definition: reg.ReportDefinition, params: Dict[str, Any
         date_basis=reg.to_malaysia(definition.dataset.basis(basis_key).expr),
         period=period,
         values=values,
+        company_grants=grants,
     )
 
 
@@ -309,14 +374,17 @@ def _predicates(ctx: QueryContext) -> List[ColumnElement]:
 
     dataset = ctx.dataset
     if dataset.scope == "company":
-        # TODO: make this arm FAIL-CLOSED (no scope resolved = no rows) the day a dataset
-        # declares scope="company"; today none does, and an unset scope must not silently
-        # widen a report to every company.
-        from app.services.company_scope import admin_listing_company_filter
-
-        company = admin_listing_company_filter(ctx.db, dataset.company_column)
-        if company is not None:
-            preds.append(company)
+        # FAIL-CLOSED (AC-R2-4): None is the deliberate all-companies caller; a grant set
+        # is those companies; UNSET or an empty set is nobody's, so no rows at all.
+        grants = ctx.company_grants
+        if grants is None:
+            pass
+        elif isinstance(grants, frozenset) and grants:
+            preds.append(dataset.company_column.in_(sorted(grants)))
+        else:
+            preds.append(false())
+        if dataset.company_param is not None and not ctx.company_id:
+            preds.append(false())
     return preds
 
 
@@ -501,12 +569,32 @@ def _detail(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportDetai
         stmt = stmt.limit(DETAIL_ROW_CAP + 1)
 
     fetched = ctx.db.execute(stmt).mappings().all()
+    truncated = False
     if cap and len(fetched) > DETAIL_ROW_CAP:
-        raise ReportCapped(
-            f"This run returns more than {DETAIL_ROW_CAP:,} rows. "
-            "Narrow the period or export to Excel instead."
-        )
-    return _detail_layout(ctx, columns, _tick_values(ctx, columns, fetched), fetched)
+        if ctx.definition.detail.cap != "truncate":
+            raise ReportCapped(
+                f"This run returns more than {DETAIL_ROW_CAP:,} rows. "
+                "Narrow the period or export to Excel instead."
+            )
+        fetched = fetched[:DETAIL_ROW_CAP]
+        truncated = True
+    layout = _detail_layout(ctx, columns, _tick_values(ctx, columns, fetched), fetched)
+    if truncated:
+        layout.truncated = True
+        layout.totals = _whole_set_totals(ctx, columns)
+    return layout
+
+
+def _whole_set_totals(ctx: QueryContext, columns: List[reg.Column]) -> Dict[str, str]:
+    """A truncated detail still totals the WHOLE row set, in SQL."""
+    measures = [c for c in columns if c.tag == "measure"]
+    if not measures:
+        return {}
+    stmt = ctx.dataset.base(ctx).add_columns(
+        *[func.sum(m.expr(ctx)).label(m.key) for m in measures]
+    ).where(and_(*_predicates(ctx)))
+    row = ctx.db.execute(stmt).mappings().first() or {}
+    return {m.key: _money(row[m.key]) for m in measures if row.get(m.key) is not None}
 
 
 # --------------------------------------------------------------------------- pivot
@@ -574,24 +662,9 @@ def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportPivotL
             col_sums[col_value][measure.key] = col_sums[col_value].get(measure.key, Decimal(0)) + amount
             grand[measure.key] = grand.get(measure.key, Decimal(0)) + amount
 
-    row_values.sort(key=_natural_key)
-    if col_column.period_months:
-        # Every month of the period, empty ones included - the workbook has twelve sheets
-        # whether or not December had a form.
-        col_values = list(ctx.period.months)
-        if BLANK_VALUE in present_cols:
-            col_values.append(BLANK_VALUE)
-    else:
-        col_values = sorted(present_cols, key=_natural_key)
-
-    value_labels = (
-        {
-            value: value if value == BLANK_VALUE else col_column.value_label(value)
-            for value in col_values
-        }
-        if col_column.value_label
-        else None
-    )
+    row_values = _axis_values(ctx, row_column, row_values, rows=True)
+    col_values = _axis_values(ctx, col_column, present_cols, rows=False)
+    value_labels = _value_labels(col_column, col_values)
 
     if cap and len(row_values) * len(col_values) > PIVOT_CELL_CAP:
         raise ReportCapped(
@@ -599,9 +672,14 @@ def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportPivotL
             "Group by something coarser or export to Excel instead."
         )
 
+    layout = definition.pivot
+    variance_row, variance_total = (
+        _variance(row_values, cells, measures) if layout.variance == "last_two_rows" else (None, None)
+    )
+
     return ReportPivotLayout(
-        key=definition.pivot.key,
-        title=definition.pivot.title,
+        key=layout.key,
+        title=layout.title,
         row_dim=ReportPivotDimension(key=row_column.key, label=row_column.label),
         col_dim=ReportPivotColumnDimension(
             key=col_column.key,
@@ -617,7 +695,85 @@ def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportPivotL
         row_totals={k: _totals(v) for k, v in row_sums.items()},
         col_totals={k: _totals(v) for k, v in col_sums.items()},
         grand_total=_totals(grand),
+        variance_row=variance_row,
+        variance_total=variance_total,
+        variance_label="VARIANCE" if variance_row is not None else None,
+        chart=layout.chart,
+        whole_units=layout.whole_units,
+        show_column_totals=layout.column_totals,
     )
+
+
+def _period_years(ctx: QueryContext) -> List[str]:
+    last = ctx.period.end_exclusive - timedelta(days=1)
+    return [str(year) for year in range(ctx.period.start.year, last.year + 1)]
+
+
+def _axis_values(
+    ctx: QueryContext, column: reg.Column, present: List[str], *, rows: bool
+) -> List[str]:
+    """The values an axis prints, in order.
+
+    A FIXED axis (months of the year, the period's years, the period's months) prints
+    every value whether the data holds it or not; any other axis prints what is present,
+    ranked naturally. The blank bucket is kept and sorts last either way.
+    """
+    fixed: Optional[List[str]] = None
+    if column.fixed_values is not None:
+        fixed = [value for value, _label in column.fixed_values]
+    elif column.period_years:
+        fixed = _period_years(ctx)
+    elif column.period_months and not rows:
+        # Every month of the period, empty ones included - the workbook has twelve sheets
+        # whether or not December had a form.
+        fixed = list(ctx.period.months)
+    if fixed is None:
+        return sorted(present, key=_natural_key)
+    extra = sorted((v for v in present if v not in fixed and v != BLANK_VALUE), key=_natural_key)
+    values = fixed + extra
+    if BLANK_VALUE in present:
+        values.append(BLANK_VALUE)
+    return values
+
+
+def _value_labels(column: reg.Column, values: List[str]) -> Optional[Dict[str, str]]:
+    if column.fixed_values is not None:
+        labels = dict(column.fixed_values)
+        return {value: labels.get(value, value) for value in values}
+    if column.value_label:
+        return {
+            value: value if value == BLANK_VALUE else column.value_label(value)
+            for value in values
+        }
+    return None
+
+
+def _variance(
+    row_values: List[str],
+    cells: Dict[str, Dict[str, Dict[str, str]]],
+    measures: List[reg.Column],
+) -> Tuple[Optional[Dict[str, Dict[str, str]]], Optional[Dict[str, str]]]:
+    """The last row minus the one before, over the columns the LAST row has (G5 (a)).
+
+    A column the last row has nothing in is blank, not "minus last year": a September
+    report must not read October to December as a collapse that has not happened.
+    """
+    real = [v for v in row_values if v != BLANK_VALUE]
+    if len(real) < 2:
+        return None, None
+    last, previous = real[-1], real[-2]
+    row: Dict[str, Dict[str, str]] = {}
+    total: Dict[str, Decimal] = {}
+    for col_value, by_measure in (cells.get(last) or {}).items():
+        for measure in measures:
+            value = by_measure.get(measure.key)
+            if value is None:
+                continue
+            before = (cells.get(previous) or {}).get(col_value, {}).get(measure.key)
+            diff = Decimal(value) - (Decimal(before) if before is not None else Decimal(0))
+            row.setdefault(col_value, {})[measure.key] = _money(diff)
+            total[measure.key] = total.get(measure.key, Decimal(0)) + diff
+    return row, _totals(total)
 
 
 # ----------------------------------------------------------------------------- run
@@ -639,6 +795,61 @@ def view_config(definition: reg.ReportDefinition) -> ReportViewConfig:
     return ReportViewConfig.model_validate(raw)
 
 
+def _unscoped(ctx: QueryContext):
+    """A scope="company" dataset owns its company arm (`_predicates`), so its statements
+    run with the ORM listener's own per-entity scope OFF: the session's scope is the
+    caller's ACTIVE company, and a user granted Sorento and Mocha must be able to read
+    Mocha from a Sorento session. Every other dataset runs exactly as before."""
+    if ctx.dataset.scope == "company":
+        return company_scope(ctx.db, None)
+    from contextlib import nullcontext
+
+    return nullcontext()
+
+
+def _split_values(ctx: QueryContext) -> Optional[List[Tuple[str, str]]]:
+    """(value, label) of every chosen value of the definition's `sheet_per` param, in the
+    param's own option order. None when the definition does not split or nothing is
+    chosen (an empty multi-select means "no filter", so there is one block: the summary)."""
+    key = ctx.definition.workbook.sheet_per
+    if key is None:
+        return None
+    chosen = ctx.values.get(key) or []
+    if not chosen:
+        return None
+    param = next(p for p in ctx.definition.params if p.key == key)
+    options = list(param.options(ctx.db))
+    ordered = [(v, label) for v, label in options if v in chosen]
+    ordered += [(v, v) for v in chosen if v not in {o[0] for o in options}]
+    return ordered
+
+
+def _blocks(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> Optional[List[ReportBlock]]:
+    split = _split_values(ctx)
+    if split is None:
+        return None
+    key = ctx.definition.workbook.sheet_per
+    company = company_name(ctx.db, ctx.definition, ctx).upper()
+    blocks: List[ReportBlock] = []
+    for value, label in split:
+        one = QueryContext(
+            db=ctx.db,
+            definition=ctx.definition,
+            date_basis_key=ctx.date_basis_key,
+            date_basis=ctx.date_basis,
+            period=ctx.period,
+            values={**ctx.values, key: [value]},
+            company_grants=ctx.company_grants,
+        )
+        title = f"{company} - {label.upper()}" if company else label.upper()
+        blocks.append(ReportBlock(key=value, title=title, summary=_pivot(one, view, cap)))
+    return blocks
+
+
+def _note(ctx: QueryContext) -> Optional[str]:
+    return ctx.definition.note(ctx) if ctx.definition.note else None
+
+
 def run(
     db: Session,
     definition: reg.ReportDefinition,
@@ -646,20 +857,32 @@ def run(
     view: Optional[ReportViewConfig] = None,
     *,
     cap: bool = True,
+    company_grants: Any = FROM_SESSION,
 ) -> ReportResult:
     """Both layouts over one row set. ``cap=False`` is the export path (AC-A7)."""
-    ctx = resolve(db, definition, params)
+    ctx = resolve(db, definition, params, company_grants=company_grants)
     effective = view or view_config(definition)
 
-    detail = _detail(ctx, effective, cap)
-    summary = _pivot(ctx, effective, cap)
+    with _unscoped(ctx):
+        detail = _detail(ctx, effective, cap)
+        summary = _pivot(ctx, effective, cap)
+        blocks = _blocks(ctx, effective, cap)
+        row_count = _row_count(ctx) if detail.truncated else len(detail.rows)
 
     return ReportResult(
         key=definition.key,
         period_label=ctx.period.label,
-        row_count=len(detail.rows),
-        layouts=ReportLayouts(detail=detail, summary=summary),
+        row_count=row_count,
+        layouts=ReportLayouts(detail=detail, summary=summary, blocks=blocks),
+        note=_note(ctx),
     )
+
+
+def _row_count(ctx: QueryContext) -> int:
+    stmt = ctx.dataset.base(ctx).add_columns(func.count().label("n")).where(
+        and_(*_predicates(ctx))
+    )
+    return int(ctx.db.execute(stmt).scalar() or 0)
 
 
 # ------------------------------------------------------------------------ workbook
@@ -692,6 +915,12 @@ class WorkbookData:
     company_name: str = ""
     #: "JAN-DEC'25", for the labelled total rows the client's SUMMARY closes with.
     period_compact_label: str = ""
+    #: One summary block per value of the definition's `sheet_per` param, when it splits.
+    blocks: Optional[List[ReportBlock]] = None
+    #: The line the title block carries under the period (the basis of a sales report).
+    note: Optional[str] = None
+    #: The last day of the period, for an "AS AT" period line.
+    period_end: Optional[date] = None
 
 
 def workbook_columns(definition: reg.ReportDefinition, view: ReportViewConfig) -> List[str]:
@@ -766,6 +995,8 @@ def run_workbook(
     definition: reg.ReportDefinition,
     params: Dict[str, Any],
     view: Optional[ReportViewConfig] = None,
+    *,
+    company_grants: Any = FROM_SESSION,
 ) -> WorkbookData:
     """The export shape: the summary, then the period's months. Never capped.
 
@@ -773,19 +1004,28 @@ def run_workbook(
     (AC-A7). Both layouts still come out of one row set, so the file cannot disagree with
     the screen the user exported it from.
     """
-    ctx = resolve(db, definition, params)
+    ctx = resolve(db, definition, params, company_grants=company_grants)
     effective = view or view_config(definition)
+    with _unscoped(ctx):
+        summary = _pivot(ctx, effective, cap=False)
+        sheets = _month_sheets(ctx, effective) if definition.workbook.month_sheets else []
+        blocks = _blocks(ctx, effective, cap=False)
     return WorkbookData(
         key=definition.key,
         period_label=ctx.period.label,
-        summary=_pivot(ctx, effective, cap=False),
-        sheets=_month_sheets(ctx, effective),
-        company_name=company_name(db, definition),
+        summary=summary,
+        sheets=sheets,
+        company_name=company_name(db, definition, ctx),
         period_compact_label=ctx.period.compact_label,
+        blocks=blocks,
+        note=_note(ctx),
+        period_end=ctx.period.end_exclusive - timedelta(days=1),
     )
 
 
-def company_name(db: Session, definition: reg.ReportDefinition) -> str:
+def company_name(
+    db: Session, definition: reg.ReportDefinition, ctx: Optional[QueryContext] = None
+) -> str:
     """How this installation writes its own name, for the title block (AC-G7).
 
     The definition's value wins when it names one: it is the legal name the client puts on
@@ -798,6 +1038,13 @@ def company_name(db: Session, definition: reg.ReportDefinition) -> str:
     named = (definition.workbook.company_name or "").strip()
     if named:
         return named
+    if ctx is not None and ctx.company_id:
+        # A company-scoped report names the company it READ, not the installation.
+        from app.models.company import Company
+
+        stored = db.query(Company.name).filter(Company.id == ctx.company_id).scalar()
+        if stored:
+            return str(stored).strip()
     try:
         stored = db.query(SystemSetting.name).order_by(SystemSetting.id).first()
     except Exception:  # noqa: BLE001 - a report must not fail over its own letterhead

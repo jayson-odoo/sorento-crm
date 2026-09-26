@@ -124,6 +124,15 @@ _RAW: Dict[str, dict] = {
             "sla",
         ],
     },
+    "sales": {
+        "display_name": "Sales",
+        "description": (
+            "Sales reports (Yearly comparison, Sales report) over the sales orders, and the "
+            "sales targets and teams of #1260. Owns the `sales` Postgres schema."
+        ),
+        # `order` owns the sales orders the reports read.
+        "dependencies": ["base", "order"],
+    },
     "projects": {
         "display_name": "Project sales",
         "description": (
