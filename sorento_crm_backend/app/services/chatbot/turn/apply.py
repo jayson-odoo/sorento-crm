@@ -1623,6 +1623,38 @@ def _normalise_demand_qty(verdict: dict[str, Any]) -> None:
         e["quantity"] = bare
 
 
+def _did_you_mean_keeps_quantity(focus: Focus, verdict: dict[str, Any], trace: Trace) -> None:
+    """Owner hand test 26 Sep, slice 6 (T15 -> T16): "ELP3753 10" missed and the reply
+    offered ELP3754; the dealer typed "ELP3754" back and lost the 10, because the fetch
+    reads only this message's quantities. The miss is still on the focus - a product
+    row the resolver never placed (no uuid) carrying the quantity it was asked with -
+    so a message that names exactly one product and states no quantity of its own is
+    that ask, retried: the quantity is copied onto the entity, before the task step, the
+    narrowing or the fetch read anything (the same seam D13 writes at)."""
+    if _stated_quantity(verdict.get("demand_qty")) is not None:
+        return
+    named = [
+        e
+        for e in verdict.get("entities") or []
+        if isinstance(e, dict)
+        and e.get("current_message") is True
+        and e.get("hint") in (None, "product")
+    ]
+    if len(named) != 1 or _stated_quantity(named[0].get("quantity")) is not None:
+        return
+    missed = {
+        _stated_quantity(row.get("quantity"))
+        for row in (focus.products or [])
+        if isinstance(row, dict)
+        and not row.get("uuid")
+        and _stated_quantity(row.get("quantity")) is not None
+    }
+    if len(missed) != 1:
+        return
+    named[0]["quantity"] = next(iter(missed))
+    trace.rules_fired.append("did_you_mean_keeps_quantity")
+
+
 def _stock_pick(pending: Any) -> bool:
     """Is the open question a stock pick (owner hand test 26 Sep, slice 2 and F1): the
     which-one question `turn/task.py::after_reply` asks over a product family, or the
@@ -1731,6 +1763,7 @@ def apply(
     # focus rules, the narrowing and the fetch all see one shape for "how many of this
     # product".
     _normalise_demand_qty(verdict)
+    _did_you_mean_keeps_quantity(state.focus, verdict, trace)
 
     if state.pending is not None and _fully_answered_roster(state.pending):
         # Defect 2 (owner hand pass 6, 17 Sep 2026): a roster every option of which is
