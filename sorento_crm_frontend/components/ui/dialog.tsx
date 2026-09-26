@@ -16,7 +16,7 @@ import {
   useOpenState,
   useReducedMotion,
 } from '@/lib/motion';
-import { focusIsInsideFloating } from '@/components/common/floatingAncestry';
+import { guardFloatingOutsideInteraction } from '@/components/common/floatingAncestry';
 
 const dialogContentVariants = cva(
   // `overflow-y-auto` + a bounded `max-h` make EVERY modal scrollable - without
@@ -240,30 +240,24 @@ function DialogContent({
   // Radix wraps these in a CustomEvent whose `target` is the DialogContent itself.
   // The actual click/pointer/focus target is on `event.detail.originalEvent.target`.
   const guardOutsideInteraction = (event: Event) => {
-    const detail = (event as CustomEvent<{ originalEvent?: Event }>).detail;
-    const original = detail?.originalEvent;
-    const target = (original?.target ?? event.target) as Element | null;
-    // Ignore the trailing pointer/focus event from the Radix surface that
-    // *opened* this dialog (dropdown menu / popover / select / context menu).
-    // Those surfaces are unmounting during the same tick the dialog mounts;
-    // their event would otherwise be misread as an outside click.
-    //
-    // Also ignore interactions that land inside ANOTHER dialog stacked above
-    // this one. Nested dialogs are portaled as React siblings (not DOM/React
-    // descendants), so Radix reads any click in the child dialog as "outside"
-    // the parent and would dismiss the parent - e.g. clicking Save in a child
+    // Ignore interactions that land inside ANOTHER floating surface - a portalled
+    // Select/Popover/Command nested in this dialog's own content, or ANOTHER
+    // dialog/sheet stacked above it. Nested surfaces are often portaled as React
+    // siblings (not DOM/React descendants), so Radix reads any click in one as
+    // "outside" this content and would dismiss it - e.g. clicking Save in a child
     // "Change attachment type" dialog closed the whole detail modal. Closing a
-    // stacked dialog must be explicit, never a side effect of the one beneath
-    // it. Kept until the attachment-type flow is browser-verified under the
-    // modal default (PLAN-apple-alignment 7, risk 1).
-    if (focusIsInsideFloating(target)) {
-      event.preventDefault();
-      return;
-    }
-    // Same trailing-event problem when the closing surface was already
+    // stacked surface must be explicit, never a side effect of the one beneath
+    // it (`floatingAncestry.ts`'s own doc comment carries the shared reasoning).
+    guardFloatingOutsideInteraction(event);
+    if (event.defaultPrevented) return;
+    // Same trailing-event problem as above when the closing surface was already
     // unmounted by the time the event fires - target lands on body / html.
     // Suppress any outside interaction within a short grace window after
-    // mount; this is well under the click-to-real-outside-click latency.
+    // mount; this is well under the click-to-real-outside-click latency. Ignore
+    // the trailing pointer/focus event from the Radix surface that *opened*
+    // this dialog (dropdown menu / popover / select / context menu) too - those
+    // surfaces are unmounting during the same tick the dialog mounts; their
+    // event would otherwise be misread as an outside click.
     if (mountedAtRef.current && performance.now() - mountedAtRef.current < 300) {
       event.preventDefault();
       return;

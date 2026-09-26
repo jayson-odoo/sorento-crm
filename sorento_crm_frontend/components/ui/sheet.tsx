@@ -14,6 +14,7 @@ import {
   useOpenState,
   useReducedMotion,
 } from '@/lib/motion';
+import { guardFloatingOutsideInteraction } from '@/components/common/floatingAncestry';
 
 // Mirrors the Root's open state so SheetContent can gate its own
 // <AnimatePresence> (S8-01) - see the identical DialogOpenContext in dialog.tsx.
@@ -143,7 +144,15 @@ function SheetContent({
               />
             </SheetPrimitive.Overlay>
           )}
-          <SheetPrimitive.Content asChild forceMount data-slot="sheet-content" {...props}>
+          <SheetPrimitive.Content
+            asChild
+            forceMount
+            data-slot="sheet-content"
+            onPointerDownOutside={guardFloatingOutsideInteraction}
+            onInteractOutside={guardFloatingOutsideInteraction}
+            onFocusOutside={guardFloatingOutsideInteraction}
+            {...props}
+          >
             <motion.div
               className={cn(sheetVariants({ side }), className)}
               initial={variants.initial}

@@ -13,11 +13,34 @@
  * hop through one is a transient step INSIDE a modal's focus trap, not a departure from it.
  */
 const FLOATING_SURFACE_SELECTOR =
-  '[data-radix-popper-content-wrapper], [data-radix-menu-content], [data-radix-popover-content], [data-radix-select-content], [data-radix-context-menu-content], [data-slot="dropdown-menu-content"], [data-slot="popover-content"], [data-slot="select-content"], [data-slot="dialog-content"], [data-slot="alert-dialog-content"], [role="menu"], [role="menuitem"], [role="listbox"], [role="option"], [role="dialog"], [role="alertdialog"], [cmdk-root], [data-radix-focus-guard]';
+  '[data-radix-popper-content-wrapper], [data-radix-menu-content], [data-radix-popover-content], [data-radix-select-content], [data-radix-context-menu-content], [data-slot="dropdown-menu-content"], [data-slot="popover-content"], [data-slot="select-content"], [data-slot="dialog-content"], [data-slot="alert-dialog-content"], [data-slot="sheet-content"], [role="menu"], [role="menuitem"], [role="listbox"], [role="option"], [role="dialog"], [role="alertdialog"], [cmdk-root], [data-radix-focus-guard]';
 
 export function focusIsInsideFloating(node: Element | null): boolean {
   if (!node) return false;
   return Boolean(node.closest(FLOATING_SURFACE_SELECTOR));
+}
+
+/**
+ * Shared `onPointerDownOutside`/`onInteractOutside`/`onFocusOutside` guard for a
+ * portalled modal surface (`Dialog`, `Sheet`, `AlertDialog`): Radix wraps these in a
+ * CustomEvent whose `target` is the surface's OWN content node, not the real click -
+ * the actual DOM target lives on `event.detail.originalEvent.target`. An interaction
+ * landing inside ANOTHER floating surface (a nested dialog/sheet, or a Select/
+ * Popover/Command portalled elsewhere but still logically nested here) is never a
+ * real "outside" interaction; `preventDefault()` stops the surface dismissing itself
+ * over it. One function so `dialog.tsx` and `sheet.tsx` cannot drift into two
+ * different lists of the same concept (chatbot memory lane A browser pass, 26 Sep
+ * 2026: `Sheet` had no such guard at all - `TurnDetailDrawer`'s own accordion
+ * sections, and any Sheet opened from within an open Dialog, had none of the
+ * protection `Dialog` already carries for this exact class of interaction).
+ */
+export function guardFloatingOutsideInteraction(event: Event): void {
+  const detail = (event as CustomEvent<{ originalEvent?: Event }>).detail;
+  const original = detail?.originalEvent;
+  const target = (original?.target ?? event.target) as Element | null;
+  if (focusIsInsideFloating(target)) {
+    event.preventDefault();
+  }
 }
 
 /**

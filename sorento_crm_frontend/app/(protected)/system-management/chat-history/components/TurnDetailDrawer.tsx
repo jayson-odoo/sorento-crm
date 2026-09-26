@@ -381,21 +381,60 @@ function ApplySection({ apply }: { apply: TurnDetail['apply'] }) {
 }
 
 /**
- * The current subject, from `focus.after` (chatbot memory lane A, contract section 6).
- * The backend has not fixed a shape for it - the mockup's sample joins a few plain
- * fields with " · " ("stock · SRTWB1455 · Kuching") - so an object is
- * rendered the same way, a string as itself, and nothing at all as absent.
+ * One row's human label off `focus.after` - an entity dict (products, customers) or
+ * a bare code/string (domains, document). Mirrors the backend's own fallback order
+ * (`head/parser.py::_subject_names`: `name || raw || canonical_code`), with
+ * `display_name` checked first for whichever FE-only shape carries it.
+ */
+function focusEntityLabel(row: unknown): string {
+  if (row == null) return '';
+  if (typeof row === 'string') return row.trim();
+  if (typeof row === 'number') return String(row);
+  if (typeof row === 'object') {
+    const entity = row as Record<string, unknown>;
+    const value = entity.display_name ?? entity.name ?? entity.raw ?? entity.canonical_code;
+    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'number') return String(value);
+  }
+  return '';
+}
+
+/** The names on one focus axis, in order, deduped - the backend's own `_subject_names`. */
+function focusAxisNames(rows: unknown): string[] {
+  if (!Array.isArray(rows)) return [];
+  const names: string[] = [];
+  for (const row of rows) {
+    const text = focusEntityLabel(row);
+    if (text && !names.includes(text)) names.push(text);
+  }
+  return names;
+}
+
+/**
+ * The current subject, from `focus.after` (chatbot memory lane A, contract section 6) -
+ * rendered the same way the backend's own `head/parser.py::current_subject_line` reads
+ * it (domain, customer, product, document, status), since `focus.after` is the SAME
+ * `Focus` dataclass shape that function reads, not a flat list of primitives: every
+ * real field the engine writes there (`domains`, `products`, `customers`, `document`)
+ * is an array of entity dicts or bare codes, which a plain `Object.values` +
+ * string/number filter always empties out.
  */
 function currentSubjectText(after: unknown): string | null {
-  if (after == null) return null;
-  if (typeof after === 'string') return after || null;
-  if (typeof after === 'object') {
-    const parts = Object.values(after as Record<string, unknown>).filter(
-      (v): v is string | number => typeof v === 'string' || typeof v === 'number',
-    );
-    return parts.length ? parts.join(' · ') : null;
+  if (after == null || typeof after !== 'object') return null;
+  const focus = after as Record<string, unknown>;
+  const parts: string[] = [];
+  for (const [label, key] of [
+    ['domain', 'domains'],
+    ['customer', 'customers'],
+    ['product', 'products'],
+    ['document', 'document'],
+  ] as const) {
+    const names = focusAxisNames(focus[key]);
+    if (names.length) parts.push(`${label} ${names.join(', ')}`);
   }
-  return String(after);
+  const status = focus.status;
+  if (typeof status === 'string' && status.trim()) parts.push(`status ${status.trim()}`);
+  return parts.length ? parts.join('; ') : null;
 }
 
 function MemorySection({ memory }: { memory: TurnDetail['memory'] }) {
@@ -433,12 +472,15 @@ function MemorySection({ memory }: { memory: TurnDetail['memory'] }) {
  * trace event) - each layer's estimated tokens against its own cap, and the total
  * against the turn cap.
  */
+// `turn/context.py::CAPS` names exactly these five layers - L1 (current message,
+// `_render_l1`) and L2 (current subject + the open question, `_render_l2`) were
+// missing here and rendered as their raw code (browser pass, 26 Sep 2026).
 const CONTEXT_LAYER_LABEL: Record<string, string> = {
+  L1: 'Current message',
+  L2: 'Current subject and open question',
   L3: 'This conversation',
   L4: 'Past conversations',
   L5: 'About this contact',
-  current_subject: 'Current subject',
-  current_message: 'Current message',
 };
 
 function layerLabel(layer: TurnDetailContextLayer): string {
