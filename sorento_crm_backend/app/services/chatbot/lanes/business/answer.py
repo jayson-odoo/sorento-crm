@@ -2482,12 +2482,23 @@ def _unplaced_token_has_neighbours(resolved: Any, gate: Any) -> bool:
     Read through `miss_resolutions` + `_ms_is_exact`, the same two `build_suggest_offer`'s
     own D1 arm is built on, so this guard cannot claim a did-you-mean D1 then declines to
     print. `allowed_lookup` narrows it the same way D1 does.
+
+    Only a CODE-shaped token counts (the resolver's own `_CODE_RE`, letters and digits):
+    every F8 turn above typed a code. A plain class word ("bidet", "basin") that
+    substring-matches a few product codes is the described set's own word, not a typo,
+    and treating its matches as neighbours silenced AC-1319's zero-qualifying answer
+    ("Couldn't find a bidet with a certificate") under an unrelated did-you-mean.
     """
+    from app.services.entity_resolver import _CODE_RE
+
     r = resolved if isinstance(resolved, dict) else {}
     g = gate if isinstance(gate, dict) else {}
     allowed_lookup = jsc.get(jsc.get(g, "gate_debug"), "allowed_lookup")
     allowed = allowed_lookup if isinstance(allowed_lookup, list) else None
     for res in _ms_miss_resolutions(r, gate=g):
+        token = jsc.nullish_str(jsc.get(res, "token")).strip()
+        if len(token) < 3 or not _CODE_RE.fullmatch(token):
+            continue
         candidates = [
             *jsc.array(jsc.get(res, "matches")),
             *jsc.array(jsc.get(res, "alternatives")),
