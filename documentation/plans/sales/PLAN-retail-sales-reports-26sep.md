@@ -1,6 +1,7 @@
 # PLAN: retail sales reports on the reports kernel, one query layer for the screens and the chatbot (#1267)
 
-Status: S1 built (26 Sep 2026), track full, on PR #1269 (the plan rides inside the feature PR,
+Status: S1 built and ready for review (26 Sep 2026; merged head re-verified: backend S1 +
+chatbot + report suites, MCP, vitest, browser at 1280 and 375), track full, on PR #1269 (the plan rides inside the feature PR,
 owner ruling 26 Sep ~08:25Z; Q9 (a), Q10 (a); Mocha AutoCount connected in production, so S4
 shrinks to verifying Mocha sales orders arrive). S2, S3, S5, S6 not built. Build notes and the
 deviations S1 took from this text are in section S1-B below.
