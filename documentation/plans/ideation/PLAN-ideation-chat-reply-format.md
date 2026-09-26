@@ -1,6 +1,10 @@
 # PLAN - Ideation chat reply format (issue #1277)
 
-**Status:** in progress (branch `fix/ideation-chat-reply-format`). Track: small fix, with one
+**Status:** built, PR open (branch `fix/ideation-chat-reply-format`); reviewer round 1 folded
+(label parser keeps a value's own leading `*`, accepts `**Label:**` / `_Label:_`; full-width
+quoted titles; user's language kept in the extractor). Pre-merge: confirm prod's `production`
+label for `ideate_extractor` / `ideate_reply` is not an admin edit the migration would replace.
+Track: small fix, with one
 data-only migration (publishes two prompt versions, no schema change); no auth/RBAC change, no
 new external ingest surface.
 **UAC:** `ideation-chat-reply-format-acceptance-criteria.md` (alongside).
@@ -26,7 +30,7 @@ ASSUMED (the issue says "ruling assumed unless the owner overrules") and is flag
 
 - **W1 + W3, one deterministic pass.** `compose_ideate_reply` runs every reply, the LLM's or the
   shared-service template it falls back to, through `_format_ideate_reply(text, facts)`:
-  - a line whose label (ignoring `*`, `_` and spaces around it) is `Problem`, `Solution`,
+  - a line whose label (wrapped in `*`, `**` or `_`, or plain) is `Problem`, `Solution`,
     `Impact` or `Department` followed by `:` is rewritten `*Label:* value` (idempotent);
   - for every status except `complete`, a line that is only the draft title (quotes, `*` and an
     optional `Title:` prefix ignored, case and spacing ignored) is dropped. `complete` keeps the

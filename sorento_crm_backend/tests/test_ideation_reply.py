@@ -957,3 +957,44 @@ def test_fallback_template_title_line_dropped_on_every_format(configured, title_
     with _patched(_BoomProvider()):
         out = compose_ideate_reply(configured, result=result, user_message="hi")
     assert out == "What's the impact?"
+
+
+# --------------------------------------------------------------------------- #
+# #1277 reviewer round 1: the label parser keeps a value's own markup and      #
+# accepts the Markdown / italic spellings an LLM writes when told to bold.    #
+# --------------------------------------------------------------------------- #
+def test_format_keeps_a_value_that_starts_with_an_asterisk():
+    facts = {"status": "collecting", "title": "", "captured": {}}
+    out = _format_ideate_reply("Problem: *Urgent* orders are late\nWhat next?", facts)
+    assert out == "*Problem:* *Urgent* orders are late\nWhat next?"
+
+
+@pytest.mark.parametrize("line", ["**Problem:** x", "**Problem**: x", "_Problem:_ x"])
+def test_format_normalises_markdown_and_italic_labels(line):
+    facts = {"status": "collecting", "title": "", "captured": {}}
+    assert _format_ideate_reply(f"{line}\nWhat next?", facts) == "*Problem:* x\nWhat next?"
+
+
+def test_compose_accepts_markdown_bold_recap(configured):
+    """An LLM that writes `**Problem:**` is not thrown back to the template (R5:
+    the reply keeps the user's language)."""
+    text = "**Problem:** stock report is slow\nWhat's your proposed solution?"
+    result = {
+        "status": "collecting",
+        "title": "Faster stock report",
+        "captured": {"problem": "stock report is slow"},
+        "next_field": "proposed_solution",
+        "duplicate_candidate": None,
+        "idea_number": None,
+        "link": None,
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="hi")
+    assert out == "*Problem:* stock report is slow\nWhat's your proposed solution?"
+
+
+def test_format_drops_a_full_width_quoted_title_and_collapses_the_gap():
+    facts = {"status": "collecting", "title": "销售报告", "captured": {}}
+    out = _format_ideate_reply("「销售报告」\n\nProblem: x\n\n\nWhat next?", facts)
+    assert out == "*Problem:* x\n\nWhat next?"

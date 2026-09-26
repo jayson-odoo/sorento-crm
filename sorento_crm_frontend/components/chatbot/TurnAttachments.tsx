@@ -50,7 +50,9 @@ export function extractTurnAttachments(actions: unknown): TurnAttachment[] {
   if (!Array.isArray(actions)) return [];
   const action = actions.find(
     (a): a is Record<string, unknown> =>
-      typeof a === 'object' && a !== null && (a as Record<string, unknown>).kind === 'send_attachments',
+      typeof a === 'object' &&
+      a !== null &&
+      (a as Record<string, unknown>).kind === 'send_attachments',
   );
   if (!action) return [];
   const src = action.attachments_src;
@@ -67,10 +69,24 @@ export function extractTurnAttachments(actions: unknown): TurnAttachment[] {
 function ImageAttachment({ file }: { file: TurnAttachment }) {
   return (
     <figure className="w-fit">
-      <a href={file.url} target="_blank" rel="noopener noreferrer" title={file.filename}>
-        <img src={file.url} alt={file.filename} className="max-h-40 rounded-lg object-cover" />
+      <a
+        href={file.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={file.filename}
+      >
+        <img
+          src={file.url}
+          alt={file.filename}
+          loading="lazy"
+          className="max-h-40 rounded-lg object-cover"
+        />
       </a>
-      {file.caption ? <figcaption className="mt-0.5 text-xs text-muted-foreground">{file.caption}</figcaption> : null}
+      {file.caption ? (
+        <figcaption className="mt-0.5 text-xs text-muted-foreground">
+          {file.caption}
+        </figcaption>
+      ) : null}
     </figure>
   );
 }
@@ -84,7 +100,11 @@ function ImageAttachment({ file }: { file: TurnAttachment }) {
  *
  * Renders nothing when `attachments` is empty.
  */
-export function TurnAttachments({ attachments }: { attachments: TurnAttachment[] }) {
+export function TurnAttachments({
+  attachments,
+}: {
+  attachments: TurnAttachment[];
+}) {
   if (attachments.length === 0) return null;
 
   return (
@@ -93,23 +113,29 @@ export function TurnAttachments({ attachments }: { attachments: TurnAttachment[]
         file.attachmentType === 'image' ? (
           <ImageAttachment key={`${file.url}-${i}`} file={file} />
         ) : (
-        <div key={`${file.url}-${i}`} className="flex items-center gap-1.5 text-xs">
-          <Paperclip className="size-3.5 shrink-0 text-muted-foreground" />
-          <a
-            href={file.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="truncate underline underline-offset-2 hover:text-primary"
-            title={file.filename}
+          <div
+            key={`${file.url}-${i}`}
+            className="flex items-center gap-1.5 text-xs"
           >
-            {file.filename}
-          </a>
-          <Badge appearance="light" size="sm" className="shrink-0">
-            {file.attachmentType}
-          </Badge>
-          <span className="shrink-0 text-muted-foreground">{file.mimeType}</span>
-        </div>
-      ))}
+            <Paperclip className="size-3.5 shrink-0 text-muted-foreground" />
+            <a
+              href={file.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="truncate underline underline-offset-2 hover:text-primary"
+              title={file.filename}
+            >
+              {file.filename}
+            </a>
+            <Badge appearance="light" size="sm" className="shrink-0">
+              {file.attachmentType}
+            </Badge>
+            <span className="shrink-0 text-muted-foreground">
+              {file.mimeType}
+            </span>
+          </div>
+        ),
+      )}
     </div>
   );
 }

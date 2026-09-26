@@ -199,7 +199,10 @@ def _ideate_extractor_fallback() -> str:
         "underperforming.'). Never join the parts with a semicolon, never list them.\n"
         "- Keep the user's meaning. Never add a detail, number or claim they did not "
         "give.\n"
-        "- department: the team as a short name ('Sales', 'Operations'), not a sentence.\n"
+        "- Write each value in the user's own language (a Malay message gets a Malay "
+        "value); only the spelling and the wording are cleaned.\n"
+        "- department: the team the user named, as a short name ('Sales', "
+        "'Operations'), not a sentence.\n"
     )
 
 

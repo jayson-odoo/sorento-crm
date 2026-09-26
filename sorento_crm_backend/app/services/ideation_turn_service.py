@@ -106,17 +106,18 @@ _RECAP_FIELD_ORDER: tuple[tuple[str, str], ...] = (
 
 _QUESTION_MARKS = "?？"  # ASCII ? and full-width ？ (AC-1302)
 
-# #1277: a field line, read regardless of WhatsApp bold/italic markers around the
-# label ("Problem: x", "*Problem:* x", "*Problem*: x") - group 1 the label, group
-# 2 the value.
+# #1277: a field line, read regardless of the marker wrapped around its LABEL
+# ("Problem: x", "*Problem:* x", "*Problem*: x", Markdown "**Problem:** x",
+# italic "_Problem:_ x") - group 2 the label, group 3 the value. The closing
+# marker must repeat the opening one, so a value's own leading "*" is kept.
 _RECAP_LABELS = tuple(label for _key, label in _RECAP_FIELD_ORDER)
 _FIELD_LINE_RE = re.compile(
-    r"^\s*\*?\s*(" + "|".join(_RECAP_LABELS) + r")\s*\*?\s*:\s*\*?\s*(.*?)\s*$"
+    r"^\s*(\*\*|\*|_)?\s*(" + "|".join(_RECAP_LABELS) + r")\s*(?:\1)?\s*:\s*(?:\1)?\s*(.*?)\s*$"
 )
 # #1277: a bare title line may carry quotes, WhatsApp markers and an optional
 # "Title:" label around the title itself.
 _TITLE_LABEL_RE = re.compile(r"^title\s*:", re.I)
-_TITLE_STRIP_CHARS = "\"'“”‘’*_ \t"
+_TITLE_STRIP_CHARS = "\"'“”‘’「」『』*_ \t"
 
 # Blocking 1 (reviewer, round 1, PR #1222 at 720bb8f5): any IDEA-<digits> token
 # in a composed reply must be EXACTLY a fact's idea number - word-boundary
@@ -154,7 +155,7 @@ def _ideate_reply_facts(result: dict[str, Any]) -> dict[str, Any]:
 def _field_line(line: str) -> tuple[str, str] | None:
     """``(label, value)`` when ``line`` is a recap field line, bold or not."""
     match = _FIELD_LINE_RE.match(line)
-    return (match.group(1), match.group(2)) if match else None
+    return (match.group(2), match.group(3)) if match else None
 
 
 def _is_title_line(line: str, title: str) -> bool:
@@ -184,6 +185,9 @@ def _format_ideate_reply(text_out: str, facts: dict[str, Any]) -> str:
         if field:
             label, value = field
             line = f"*{label}:* {value}".rstrip()
+        # A dropped title line can leave two blank lines meeting; keep one.
+        if not line.strip() and lines_out and not lines_out[-1].strip():
+            continue
         lines_out.append(line)
     return "\n".join(lines_out).strip()
 
