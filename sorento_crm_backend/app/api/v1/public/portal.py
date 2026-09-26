@@ -385,8 +385,9 @@ def portal_impersonation_stop(
 class ProductLookupItem(BaseModel):
     # Additive (plan section 16, S2-16): the portal opportunity form's product lines need
     # the real id (`sales_opportunity_lines.product_id`), not just the printed code the
-    # complaint form's free-text line uses.
-    id: Optional[str] = None
+    # complaint form's free-text line uses. Named `product_id`, not `id` - this schema's
+    # "id" would read as the lookup ROW's own id, which nothing here has any use for.
+    product_id: Optional[str] = None
     product_code: str
     product_name: Optional[str] = None
     category_id: Optional[str] = None
@@ -414,7 +415,7 @@ def lookup_products(
     rows = query.order_by(Product.product_code).limit(limit).all()
     return [
         ProductLookupItem(
-            id=str(p.id) if p.id else None,
+            product_id=str(p.id) if p.id else None,
             product_code=p.product_code,
             product_name=p.product_name,
             category_id=str(p.category_id) if p.category_id else None,

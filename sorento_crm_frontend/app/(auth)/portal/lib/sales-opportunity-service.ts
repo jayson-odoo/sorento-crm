@@ -105,15 +105,14 @@ export interface PortalProductOption {
 
 /** The catalog's own portal lookup (LESSONS-LEARNT: never a capped static list). */
 export async function getPortalProductOptions(q: string): Promise<PortalProductOption[]> {
-  const url = `/api/v1/public/portal/lookups/products?q=${encodeURIComponent(q)}&limit=20`;
+  const url = `/api/v1/public/portal/lookups/products?q=${encodeURIComponent(q)}`;
   const res = await portalFetch(url);
-  const items = await unwrap<{ id?: string | null; product_code: string; product_name: string | null }[]>(
-    res,
-    'Failed to search products.',
-  );
+  const items = await unwrap<
+    { product_id?: string | null; product_code: string; product_name: string | null }[]
+  >(res, 'Failed to search products.');
   return items
-    .filter((item) => !!item.id)
-    .map((item) => ({ id: item.id as string, code: item.product_code, name: item.product_name }));
+    .filter((item) => !!item.product_id)
+    .map((item) => ({ id: item.product_id as string, code: item.product_code, name: item.product_name }));
 }
 
 export interface PortalSalesOpportunityMeta {
@@ -121,7 +120,7 @@ export interface PortalSalesOpportunityMeta {
   lost_reasons: { value: string; label: string }[];
 }
 
-export async function getPortalSalesOpportunityMeta(): Promise<PortalSalesOpportunityMeta> {
+export async function getPortalOpportunityMeta(): Promise<PortalSalesOpportunityMeta> {
   const res = await portalFetch(`${BASE}/meta`);
   return unwrap(res, 'Failed to load stages.');
 }
