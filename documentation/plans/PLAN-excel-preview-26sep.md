@@ -1,8 +1,9 @@
 # PLAN: In-app Excel preview, low stock report first
 
-Status: draft for the owner's grill (26 Sep 2026). Planning lane only, no feature code. Track:
-full (new read route, new email event, a shared viewer across about 12 sites; well over 300
-lines). No migration, no new permission, no new ingest surface.
+Status: grilled, owner answers folded in (26 Sep 2026, section 0). S1 in build on its own lane
+branch; S2 and S3 not started. Track: full (new read route, a new automation trigger, a shared
+viewer across about 12 sites; well over 300 lines). No migration, no new permission, no new
+ingest surface.
 UAC: `excel-preview-26sep-acceptance-criteria.md` (same folder)
 Mockup: `excel-preview-26sep-mockup.html` (same folder; open in a browser)
 Classification: the low stock report page is part of the SCM module (`scm` router, its module
@@ -11,6 +12,37 @@ guard, `scm.dashboard.view`); `SpreadsheetViewer` is core UI (`components/common
 Parents: `scm/PLAN-low-stock-report.md` (the run-bounded workbook), `scm/PLAN-low-stock-export-
 split-25sep.md` (#1236, the split). Sibling: #1256 (themed `PdfViewer`, open), whose toolbar and
 lazy-loading pattern this plan copies.
+
+## 0. Owner rulings 26 Sep
+
+The owner answered the grill on #1261 (comment of 26 Sep 05:28Z). Each answer is binding and is
+folded into the section it changes; the dated line here is the record.
+
+- **Owner ruling 26 Sep, Q1 (the email):** "it is a scheduled task in our system that uses the
+  automation". The email is sent by the automation engine, which the `automation_runner`
+  scheduled task drives; the plan does not build a second email path. The link in that email
+  must open the new page. Section 2F is corrected and section 5 rewritten.
+- **Owner ruling 26 Sep, Q2 (finding the page):** ok. A "Low stock report" sidebar item under
+  Procurement > Supply Chain opens the newest run, same permission as Reorder Planning.
+- **Owner ruling 26 Sep, Q3 (Reorder Planning's action):** ok. Actions > Low stock report Excel
+  opens the new page for that run; the split dialog is deleted.
+- **Owner ruling 26 Sep, Q4 (Download):** accepted. "Preparing..." while the worker builds the
+  file, then it saves on its own, and it is also in My Downloads.
+- **Owner ruling 26 Sep, Q5 (recipients):** "we can pick this in automation which is run by
+  scheduled task". Recipients are the automation's own `recipient_config` (users, roles, extra
+  emails), edited in System > Automations. No new recipient list on the scheduled task.
+- **Owner ruling 26 Sep, Q6 (scope):** ok. DataGrid Export buttons stay as they are; every other
+  Excel gets the preview.
+- **Owner ruling 26 Sep, Q7 (SheetJS):** yes, move to the vendor's 0.20.3 tarball, "make sure no
+  regression": every current SheetJS caller (the upload parsers included) is covered by a test
+  that runs before and after the bump.
+- **Owner ruling 26 Sep, Q8 (big runs):** ok, the cap counts rows after filtering, and "we must
+  optimize performance and make the download reasonably as fast as possible": S1 measures the
+  export on a 5,000-row run before and after and states both timings in its PR.
+
+Slices re-ordered by the rulings (section 8): S1 is the standalone low stock report page and the
+link the automation's email carries; S2 is the generic viewer, the SheetJS bump and My
+Downloads; S3 is the remaining sources.
 
 ## 1. Why
 
@@ -30,7 +62,7 @@ Measured on `origin/main` 46711c61. `BE` = `sorento_crm_backend/app`, `FE` =
 
 ### A. Queued exports: a My Downloads row + an RQ task on `imports`, stored to S3/R2
 
-All reach the user through My Downloads, so S3 (My Downloads preview) covers every one of them.
+All reach the user through My Downloads, so S2 (My Downloads preview) covers every one of them.
 
 | Kind | Route (enqueue) | Task | Builder | FE trigger |
 | --- | --- | --- | --- | --- |
@@ -47,7 +79,7 @@ All reach the user through My Downloads, so S3 (My Downloads preview) covers eve
 
 ### B. Synchronous routes: bytes in the response, the browser saves them straight away
 
-These are the sites S4 swaps to "preview first". Each already fetches a same-origin blob, so
+These are the sites S3 swaps to "preview first". Each already fetches a same-origin blob, so
 the preview needs no new route.
 
 | Route | Route file:line | Builder | FE trigger (saves via `saveBlobAs` or equivalent) |
@@ -64,7 +96,7 @@ the preview needs no new route.
 
 The supplier notice row fetches a signed bucket URL, which sends no CORS headers; its preview
 reads bytes through a small same-origin byte route beside it (the `/downloads/{id}/file`
-precedent). That is the only new route S4 needs.
+precedent). That is the only new route S3 needs.
 
 ### C. Built in the browser
 
@@ -73,15 +105,15 @@ precedent). That is the only new route S4 needs.
 | DataGrid toolbar "Export" (`components/ui/data-grid-list-toolbar.tsx:359`, 107 lists pass `exportConfig`) and the all-records export (`components/list/ListQueryExportDialog.tsx:261` over `POST /list-query/export`) | SheetJS via `lib/excel-utils.ts:28` | The grid on screen already IS the preview. Recommended out of scope (grill Q6) |
 | Stock balance (`inventory-management/stock/components/StockBalanceGrid.tsx:252-263`) | SheetJS | A grid export, same as above |
 | AutoCount pull compare (`PullCompareTab.tsx:182`) | SheetJS | A grid export, same as above |
-| Purchase request (`purchase-requests/lib/purchase-request-excel-export.ts:149,268,337,389`, called at `PurchaseRequestDetail.tsx:371-373`, `FormRevisionsTab.tsx:118`) | SheetJS | A detail-page document, not a grid: previewed in S4 |
-| Stock inquiry (`stock-inquiries/utils/exportStockInquiryToExcel.ts:135`, called at `StockInquiryDetail.tsx:222`) | exceljs | Same: previewed in S4 |
+| Purchase request (`purchase-requests/lib/purchase-request-excel-export.ts:149,268,337,389`, called at `PurchaseRequestDetail.tsx:371-373`, `FormRevisionsTab.tsx:118`) | SheetJS | A detail-page document, not a grid: previewed in S3 |
+| Stock inquiry (`stock-inquiries/utils/exportStockInquiryToExcel.ts:135`, called at `StockInquiryDetail.tsx:222`) | exceljs | Same: previewed in S3 |
 | Product import template (`products/components/ProductsList.tsx:897-900`) | SheetJS | An empty template: no preview, stays a download |
 
 ### D. Delivered outside our UI
 
 | Channel | Where | In scope? |
 | --- | --- | --- |
-| WhatsApp low stock report (chat route + late push) | `BE/api/v1/scm/low_stock_report.py:536`, `export_tasks.py:1003-1090` | No: the recipient is in WhatsApp, not in the CRM. The file also lands in the linked user's My Downloads, which S3 covers |
+| WhatsApp low stock report (chat route + late push) | `BE/api/v1/scm/low_stock_report.py:536`, `export_tasks.py:1003-1090` | No: the recipient is in WhatsApp, not in the CRM. The file also lands in the linked user's My Downloads, which S2 covers |
 | Supplier container request email attachment | `supplier_notice_service.py:1596-1625` | No: the recipient is an external supplier |
 | Chat attachments of stored files | `services/chatbot/engine.py:4200-4208` | No: same reason |
 
@@ -101,13 +133,31 @@ precedent). That is the only new route S4 needs.
 So My Downloads is a REPAIR, not a build (PRINCIPLES "check whether it exists"): the preview is
 there but hidden behind an icon, the row click saves, and the preview is too thin to trust.
 
-### F. The daily email: does not exist yet
+### F. The daily email: the automation engine (corrected, owner ruling 26 Sep, Q1)
 
-The owner describes "an automation to send an email to specific users every day". The code has
-none: the daily job `_handler_scm_reorder_run` (`BE/scheduler/task_scheduler.py:411-450`) creates
-and funds a run and returns; no email event, template or outbox producer mentions low stock, and
-no plan describes one. Either it lives outside this repo (an n8n flow) or it is the intent. Grill
-Q1; this plan builds it in-system (S2) unless the owner says otherwise.
+The first draft said the email "does not exist in the code". That was the wrong question: the
+owner's email is an **automation**, and automations are rows an admin configures in System >
+Automations, run by a scheduled task. The machinery, measured on `origin/main` 46711c61:
+
+| Piece | Where |
+| --- | --- |
+| The scheduled task that drives every automation | `automation_runner`, seeded by `alembic/versions/174_email_templates_and_automation.py:107`; handler `BE/scheduler/task_scheduler.py:335-337` (`_handler_automation_runner`), registered at `:577` |
+| The engine | `BE/services/automation_service.py:317` `evaluate_due` (daily/scheduled rules, `next_run_at` from `run_time` + `timezone`, `:50-80`) and `:272` `dispatch_event` (event rules, fired from domain code) -> `_execute` `:426` |
+| The rule | `automations` rows (`BE/models/automation.py:21`): `trigger_type`, `trigger_config`, `email_template_id`, `recipient_config`, `schedule_type` (`manual` or `daily`), `run_time` |
+| Who receives it | `recipient_config` (`user_ids`, `role_ids`, `extra_emails`, `one_email`), resolved by `BE/services/automation_recipients.py:19` `resolve_recipients`; normalised at `automation_service.py:383` |
+| The email body | the rule's `email_templates` row, rendered per match by `EmailTemplateService` with the trigger's context (`automation_service.py:614` `_send_per_match`), queued as `Notification` + `NotificationDelivery` (`:826` `_enqueue_email`) |
+| The trigger registry | `BE/services/automation_triggers.py:62` `register`; 12 types today, `days_before_promotion_end` (:171) to `sponsorship_form_approved` (:656) |
+| The daily reorder run | `BE/scheduler/task_scheduler.py:411-450` `_handler_scm_reorder_run`, registered at `:593` |
+
+What the code does NOT hold: a trigger that knows about the reorder run or the low stock report.
+None of the 12 registered types carries a run, its date, its low count or a link to it, and no
+migration seeds a low stock rule (the seeded rules are the handover, undone, reserve and
+sponsorship ones). So the rule the owner runs today is a row in the live database, built on a
+trigger that cannot name the run, and its link (if any) is typed into the template by hand. This
+repo cannot see or edit that row. What S1 adds is what the rule needs to link to the page: a
+trigger `low_stock_report_ready`, fired when the daily run completes, whose context carries
+`{{ report.link }}` (section 5). The admin points the existing rule at it and puts the link in
+its template; recipients stay on the rule (Q5).
 
 ## 3. Decision: one viewer, two feeders
 
@@ -161,9 +211,13 @@ No motion beyond the lightbox spring the modal already has.
 
 Dependency note: SheetJS on npm is frozen at 0.18.5, which carries two published advisories
 fixed upstream (prototype pollution on crafted files, fixed 0.19.3; ReDoS, fixed 0.20.2). The
-preview ALREADY parses user-uploaded attachments with it today. S3 moves the dependency to the
+preview ALREADY parses user-uploaded attachments with it today. S2 moves the dependency to the
 vendor's current tarball (`https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz` in
-`package.json`), the vendor's only distribution since 0.18.5. Grill Q7.
+`package.json`), the vendor's only distribution since 0.18.5. Owner ruling 26 Sep, Q7: yes, with
+no regression. Every current `xlsx` importer (the preview, `lib/excel-utils.ts`, the purchase
+request export, the product / stock / GRN / price upload parsers; S2 lists them by file:line
+before the bump) gets a vitest that parses or writes a real fixture workbook, run green on 0.18.5
+first and again on 0.20.3.
 
 ## 4. The low stock report page (S1)
 
@@ -193,6 +247,17 @@ def build_low_stock_model(db, *, run_id, include_supplier=True, split="none",
   the task, the chat route and the 18 existing tests are untouched.
 - `low_stock_preview` and `GET /scm/order-summary/low-stock-preview` are deleted with the dialog
   (the page shows the same counts from the view).
+- **Speed (owner ruling 26 Sep, Q8: "optimize performance and make the download reasonably as
+  fast as possible").** The workbook is written with openpyxl's write-only mode and ONE shared
+  set of cell styles (`WriteOnlyCell`), instead of appending rows and then walking every cell
+  again to set a new border and alignment on each. Same look: dark bold header, thin borders,
+  wrapped text, frozen at A2, the same widths. The view and the export build the model once per
+  call; the export task does not read the run twice. S1's PR states the export time on a
+  5,000-row run before and after (the build of the model and the write of the file, measured
+  separately), and the view route's time and payload on the same run.
+- The export route's cap check (AC-7) counts the FILTERED rows. The cheap
+  `export_guard_stats` count still answers first; only a run over the cap WITH filters builds
+  the model to count what the filters keep, so an unfiltered request stays one COUNT query.
 
 Routes (`BE/api/v1/scm/order_summary.py`, beside the export):
 
@@ -219,26 +284,38 @@ Routes (`BE/api/v1/scm/order_summary.py`, beside the export):
   `refetchIntervalInBackground: true` per D27, so a hidden tab still sees the file land), and
   when ready fetches `/downloads/{id}/file` and saves the blob (no popup, so no blocker). Grill Q4.
 - Reorder Planning's Actions > "Low stock report Excel" becomes a link to the page for that run;
-  `LowStockExportDialog.tsx` is deleted (grill Q3). One surface, not two that can drift.
+  `LowStockExportDialog.tsx` is deleted (owner ruling 26 Sep, Q3). One surface, not two that can
+  drift.
+- `SpreadsheetViewer` ships in S1 with the JSON feeder only (sheet tabs, "Go to sheet" over 12
+  sheets, frozen header, first column pinned, rows virtualised with `@tanstack/react-virtual`,
+  the grid scrolling sideways inside its own container). The SheetJS feeder joins it in S2.
 
-## 5. The daily email (S2)
+## 5. The daily email: the automation's link (S1, owner rulings 26 Sep, Q1 and Q5)
 
-- `EventDef("scm_low_stock_daily", "Daily low stock report", ...)` in
-  `BE/services/email_event_registry.py` (seeded on startup: no migration; the admin switch comes
-  free).
-- Recipients: `low_stock_email_user_ids` on the reorder run scheduled task's `metadata`, edited in
-  `ScheduledTaskForm.tsx` the way `company_ids` / `send_email` already are (:84-97). One list of
-  users is one preference; it does not need a table. Trigger for a table: per-user schedules or
-  per-recipient filters.
-- `_handler_scm_reorder_run` (`task_scheduler.py:411`), after funding, calls
-  `low_stock_email_service.send_daily(db, run_id, user_ids)`: one
-  `email_outbox_service.enqueue(event_key="scm_low_stock_daily", ...)` per active user with an
-  email; subject `Low stock report 26 Sep 2026: 42 low`; one link to
-  `<FRONTEND_BASE_URL>/scm/low-stock-report/<run_id>`. Best effort: caught and logged, never
-  fails the run (PRINCIPLES layering, post-commit side effects).
-- The email carries a link, not the file (grill Q5): the owner's point is to look first.
+The email is the automation engine's (section 2F). The plan builds no email event, no recipient
+list and no sender of its own; it gives the automation what it cannot have today, a trigger that
+knows the run:
 
-## 6. My Downloads (S3)
+- `automation_triggers.register(TriggerSpec(type="low_stock_report_ready", label="Low stock
+  report ready", ...))`, event-driven like `complaint_approved` (`:320`): pull mode yields
+  nothing, matches come from `AutomationService.dispatch_event`.
+- `_handler_scm_reorder_run` (`task_scheduler.py:411`), after the run is funded, calls
+  `low_stock_report_service.dispatch_ready(db, run_id)`: builds the counts off the same model
+  builder and dispatches ONE match with context
+  `report: {link, as_of, date_label, low, rows, run_label}`, where `link` is
+  `<FRONTEND_BASE_URL>/scm/low-stock-report/<run_id>` (the in-system page; the deep-link-after-
+  login layout brings a signed-out reader back to it). Best effort: caught and logged, never
+  fails the run.
+- Recipients: the automation's own `recipient_config` (owner ruling 26 Sep, Q5). No scheduled-
+  task metadata key, no form field.
+- The admin, in System > Automations, sets the existing low stock rule's trigger to "Low stock
+  report ready" and puts `{{ report.link }}` in its template (subject, for example,
+  `Low stock report {{ report.date_label }}: {{ report.low }} low`). A template that cannot carry
+  a variable can link `<FRONTEND_BASE_URL>/scm/low-stock-report`, which always opens the newest
+  completed run.
+- The email carries a link, not the file: the owner's point is to look first.
+
+## 6. My Downloads (S2)
 
 - `DownloadRow.tsx`: for a ready `.xlsx/.xls/.xlsm/.csv/.pdf` row, the row body runs
   `onPreview` (today :133-149 run `onDownload`), title "Preview"; the Download icon runs
@@ -249,7 +326,7 @@ Routes (`BE/api/v1/scm/order_summary.py`, beside the export):
   #1256's `PdfViewer` once it merges; this plan does not depend on it.
 - `KIND_LABEL` gains the three missing kinds.
 
-## 7. The remaining sources (S4)
+## 7. The remaining sources (S3)
 
 - `hooks/useSpreadsheetPreview.tsx`: `open({ load: () => Promise<Blob>, fileName })` mounts one
   `AttachmentPreviewModal` with a single item whose bytes come from the blob; Download calls
@@ -266,14 +343,14 @@ Routes (`BE/api/v1/scm/order_summary.py`, beside the export):
 
 | Slice | What | Journey | Executors |
 | --- | --- | --- | --- |
-| S1 | Low stock report page: model builder + view route + filters on the export + page + `SpreadsheetViewer` (JSON feeder only) + Actions link, dialog removed | J-A 3-7 | Phase 1 coder (page vs mock) -> Phase 2 tester, coder -> reviewer + browser |
-| S2 | Daily email: event, recipients in scheduled-task metadata, send after the run, form field | J-A 1-2 | tester -> coder (small) |
-| S3 | SheetJS feeder (dependency bump), `ExcelSlide` -> `SpreadsheetViewer`, virtualisation, My Downloads row click = preview | J-B | Phase 1 -> 2 -> 3 |
-| S4 | `useSpreadsheetPreview` + 7 sync sites + supplier notice byte route + 2 browser-built documents | J-C | coder, one site per commit |
+| S1 | Standalone low stock report page: model builder + view route + filters on the export (cap on filtered rows, faster writer, timings) + page + `SpreadsheetViewer` (JSON feeder, virtualised) + sidebar item + Actions link with the dialog removed + the `low_stock_report_ready` trigger whose `report.link` the automation's email carries | J-A 1-7 | coder, tests red first -> reviewer + browser |
+| S2 | SheetJS feeder with the dependency bump (a regression test per current `xlsx` caller, green before and after), `ExcelSlide` -> `SpreadsheetViewer`, My Downloads row click = preview | J-B | Phase 1 -> 2 -> 3 |
+| S3 | `useSpreadsheetPreview` + 7 sync sites + supplier notice byte route + 2 browser-built documents | J-C | coder, one site per commit |
 
-One lane, one branch, one PR (lane merge discipline); S1 is the first commit set and can be
-hand-tested alone. S2 depends on S1 (the link target). S3 depends on S1 only for the viewer
-component. S4 depends on S3.
+Re-ordered by the owner's rulings of 26 Sep: the email needs no slice of its own (Q1, Q5), so
+S1 is the page plus the link the email carries, and can be hand-tested alone. S2 depends on S1
+for the viewer component. S3 depends on S2. S1 ships on its own lane branch and PR (the rest of
+the lane follows it); this plan PR stays a draft docs PR and is never merged.
 
 ## 9. Risks
 
@@ -286,42 +363,38 @@ component. S4 depends on S3.
   downloads" if the user downloads twice quickly. Acceptable.
 - **The SheetJS source change** (tarball URL) needs `npm install --force` in CI and Docker as
   today; verify the lockfile integrity line lands.
-- **#1256 overlap**: both edit `AttachmentPreviewModal.tsx`; S3 lands after #1256 or merges it in.
+- **#1256 overlap**: both edit `AttachmentPreviewModal.tsx`; S2 lands after #1256 or merges it in.
+- **The live automation row.** The rule that sends the email today is data this repo cannot see.
+  Until the admin points it at `low_stock_report_ready`, its email keeps whatever link it has;
+  the S1 PR says so and names the two edits (trigger, template link).
 
 ## 10. Out of scope
 
-- DataGrid toolbar and list-query exports (the grid is the preview), unless grill Q6 says no.
+- DataGrid toolbar and list-query exports (the grid is the preview; owner ruling 26 Sep, Q6).
 - WhatsApp and supplier email deliveries (not in our UI).
-- CSV routes stay downloads in S4 except where a screen already offers them (the viewer reads CSV
+- CSV routes stay downloads in S3 except where a screen already offers them (the viewer reads CSV
   for free once it exists; wiring the three CSV sites is a one-line follow-up per site).
 - Editing cells in the preview.
 
-## 11. Grill questions for the owner
+## 11. Grill questions and the owner's answers
 
-Posted on the PR as one comment. Each has a recommendation; silence means the recommendation
-stands.
+Posted on the PR as one comment (26 Sep 05:11Z); answered by the owner at 05:28Z. The ruling is
+recorded under each question and in section 0.
 
-1. **The daily email does not exist in the code.** Is it an n8n flow today, or the intent?
-   Recommend: build it in-system (S2), sent right after the daily reorder run, one link, no
-   attachment.
-2. **Where do people find the page besides the email?** Recommend: a "Low stock report" sidebar
-   item under Procurement > Supply Chain (opens the newest run), same permission as Reorder
-   Planning.
-3. **Reorder Planning's Actions > Low stock report Excel**: keep the split dialog, or send the
-   user to the new page for that run? Recommend: send them to the page and delete the dialog, so
-   there is one way to pick a split and it always shows what you get.
-4. **Download on the page**: the file is built on the worker (a few seconds). Recommend: the
-   button shows "Preparing..." and the file saves itself when ready, and it also lands in My
-   Downloads. Alternative: build it inside the request and save at once (simpler, but breaks the
-   "one route, one task" rule from #1236 and ties up the API for a large run).
-5. **Email recipients**: who picks them? Recommend: an admin, on the daily reorder run in
-   System > Scheduled Tasks, as a list of users. Everyone on the list gets the same link.
-6. **"Every Excel"**: include the DataGrid "Export" buttons on the 107 lists? Recommend: no, the
-   grid on screen is already the preview of what those export. Every other Excel (queued, sync,
-   the purchase request and stock inquiry documents) gets the preview.
-7. **SheetJS upgrade**: the npm package is frozen at 0.18.5, which has two published advisories
-   and already parses uploaded files in the preview today. Recommend: take the vendor's 0.20.3
-   tarball in S3.
-8. **Over-cap runs**: today a run over 5,000 rows cannot be exported at all. Recommend: the cap
-   counts the filtered rows, so choosing suppliers or categories makes a big run exportable; the
-   page says the run is too large until the user narrows it.
+1. **The daily email.** Asked whether it is an n8n flow or the intent. *Owner ruling 26 Sep:* it
+   is a scheduled task that uses the automation. -> Section 2F corrected, section 5 rewritten: a
+   trigger with the run's link, no new email path.
+2. **Finding the page besides the email.** Recommended a sidebar item under Procurement > Supply
+   Chain opening the newest run, Reorder Planning's permission. *Owner ruling 26 Sep:* ok.
+3. **Reorder Planning's Actions > Low stock report Excel.** Recommended: open the page, delete the
+   dialog. *Owner ruling 26 Sep:* ok, open the new page.
+4. **Download on the page.** Recommended "Preparing...", auto-save, also in My Downloads.
+   *Owner ruling 26 Sep:* accepted.
+5. **Email recipients.** Recommended a user list on the scheduled task. *Owner ruling 26 Sep:*
+   pick them in the automation the scheduled task runs. -> the automation's `recipient_config`.
+6. **"Every Excel".** Recommended: not the DataGrid Export buttons. *Owner ruling 26 Sep:* ok.
+7. **SheetJS upgrade.** Recommended the vendor's 0.20.3 tarball. *Owner ruling 26 Sep:* yes,
+   make sure there is no regression. -> a test per current caller, before and after (S2).
+8. **Runs over 5,000 rows.** Recommended counting rows after filtering. *Owner ruling 26 Sep:*
+   ok, and optimise so the download is as fast as reasonably possible. -> write-only writer,
+   timings before and after in the S1 PR.

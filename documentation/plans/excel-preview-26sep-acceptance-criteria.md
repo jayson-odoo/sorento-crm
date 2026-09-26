@@ -6,17 +6,26 @@ lands on a standalone low stock report page, never the reorder planning screen; 
 the Excel preview of the plan; split by supplier / category, default both; filter suppliers and
 categories; Download gives that Excel.
 
+Owner rulings 26 Sep (answers to the grill on #1261, 05:28Z, binding; plan section 0):
+Q1 the email is the automation engine's, driven by a scheduled task, and its link opens this
+page; Q2 sidebar item, ok; Q3 Actions item opens the page, dialog removed, ok; Q4 Preparing...
+then auto-save and My Downloads, accepted; Q5 recipients are picked on the automation; Q6
+DataGrid Export excluded, ok; Q7 SheetJS 0.20.3 tarball with no regression; Q8 cap on filtered
+rows, and the download as fast as reasonably possible. Slices re-ordered: S1 page + email link,
+S2 viewer + SheetJS + My Downloads, S3 remaining sources.
+
 Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` browser pass via sidebar, `[T]` a named test.
 
 ## Journey
 
 ### J-A The daily low stock email (buyer, every morning)
 
-1. The daily reorder run finishes on the scheduler (already happens: `_handler_scm_reorder_run`).
-   The system already knows the run, its date, how many products are low, and who asked to
-   receive the report. Nothing is asked of anyone.
-2. The buyer gets one email: subject names the date and the low count, body carries one link,
-   "Open the low stock report".
+1. The daily reorder run finishes on the scheduler (already happens: `_handler_scm_reorder_run`)
+   and fires the automation trigger "Low stock report ready" with the run's date, low count and
+   link. Recipients are the ones the admin picked on the automation (owner ruling 26 Sep, Q5).
+   Nothing is asked of anyone.
+2. The buyer gets the automation's email: its template names the date and the low count and
+   carries one link, "Open the low stock report".
 3. The buyer clicks it. If not signed in, they sign in and land back on the same page
    (the existing deep-link-after-login).
 4. First screen: the **Low stock report** page for THAT run. Title and date in the header. No
@@ -45,7 +54,7 @@ Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` browser pass via sidebar, `[T]` a
 3. Download in the preview saves it. Queued exports keep landing in My Downloads, where J-B
    applies.
 
-## Phase S1: Low stock report page (J-A steps 3-7)
+## Phase S1: Low stock report page and the email's link (J-A steps 1-7)
 
 ### Backend
 
@@ -83,6 +92,11 @@ Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` browser pass via sidebar, `[T]` a
   existing `tests/scm/test_low_stock_report.py` and split tests stay green unchanged.
 - AC-9 [BE] Payload: each row travels once; `sheets` carry indexes, not copies. [T] a 5000-row
   run answers in under 1 s locally and under 1.5 MB uncompressed.
+- AC-9b [BE] Speed (owner ruling 26 Sep, Q8). The workbook is written in openpyxl write-only
+  mode with one shared style set; the file looks the same (header fill and font, thin borders,
+  wrapped text, frozen at A2, the same widths) [T] `test_workbook_style_unchanged`. The S1 PR
+  states the export time for a 5,000-row run before and after, the model build and the file
+  write measured separately.
 
 ### Frontend
 
@@ -112,8 +126,10 @@ Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` browser pass via sidebar, `[T]` a
   message + Retry), 403 (the standard no-access page).
 - AC-16 [FE] Reorder Planning's Actions > "Low stock report Excel" navigates to
   `/scm/low-stock-report/<run id>` for that run. `LowStockExportDialog` and
-  `GET /low-stock-preview` are removed (the page replaces both; see plan section 6). (Pending
-  grill Q3.)
+  `GET /low-stock-preview` are removed (the page replaces both). (Owner ruling 26 Sep, Q3.)
+- AC-16b [FE] Sidebar: Procurement > Supply Chain > "Low stock report", right after Reorder
+  Planning, path `/scm/low-stock-report`, Reorder Planning's permission and `moduleKey`. (Owner
+  ruling 26 Sep, Q2.)
 - AC-17 [FE] No UUID rendered (the run shows as its date), no feature explanation text, usable
   at 375px and 1280px.
 - AC-18 [E2E] From `/`, sidebar: Procurement > Supply Chain > Low stock report opens the newest
@@ -121,25 +137,24 @@ Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` browser pass via sidebar, `[T]` a
   sheet titles and first rows match the screen. Second pass: open the email link for a named run
   while signed out, sign in, land on that run's page.
 
-## Phase S2: The daily email (J-A steps 1-2)
+### The email's link (J-A steps 1-2; owner rulings 26 Sep, Q1 and Q5)
 
-- AC-19 [BE] New email event `scm_low_stock_daily` in `EMAIL_EVENT_REGISTRY` ("Daily low stock
-  report", enable switch in the existing email events admin). No migration: the registry seeds
-  on startup.
-- AC-20 [BE] Recipients live on the daily reorder scheduled task's metadata as
-  `low_stock_email_user_ids: string[]`. When `_handler_scm_reorder_run` completes, it enqueues
-  one outbox row per active recipient with an email address. No recipients = no email, no error.
-- AC-21 [BE] Subject `Low stock report <d Mon yyyy>: <n> low`; body text and HTML carry one link
-  `<FRONTEND_BASE_URL>/scm/low-stock-report/<run_id>` (the in-system page, lesson "staff emails
-  link to the in-system page"). No attachment.
-- AC-22 [BE] The email is a post-commit side effect: a failure to enqueue is logged and never
-  fails the run. [T] `test_daily_run_enqueues_low_stock_email_per_recipient`,
-  `test_daily_run_without_recipients_sends_nothing`, `test_email_failure_does_not_fail_run`.
-- AC-23 [FE] `ScheduledTaskForm`, for the reorder run task only, shows "Low stock email
-  recipients" (`SearchableMultiSelect` of users via `userSelectService`, clearable), saved into
-  the metadata key above, the same way `company_ids` is saved today.
+- AC-19 [BE] A new automation trigger `low_stock_report_ready` ("Low stock report ready") in
+  `automation_triggers`, event-driven (pull mode yields nothing), listed by
+  `GET /system/automation/triggers/catalog` so the admin can pick it in System > Automations. No migration.
+- AC-20 [BE] When `_handler_scm_reorder_run` has funded the run it dispatches the trigger ONCE
+  with context `report: {link, as_of, date_label, low, rows, run_label}`; every enabled
+  automation on that trigger sends its own template to its own `recipient_config`. No enabled
+  automation = nothing sent, no error. No new recipient list anywhere (Q5).
+- AC-21 [BE] `report.link` is `<FRONTEND_BASE_URL>/scm/low-stock-report/<run_id>` (the in-system
+  page; a relative path when the base is unset, like the other trigger links). `low` and `rows`
+  are the workbook's own counts for the default view (whole run, no filters).
+- AC-22 [BE] Best effort: a failure to count or dispatch is logged and never fails the run. [T]
+  `test_daily_run_dispatches_low_stock_report_ready`, `test_trigger_context_link_is_internal_page`,
+  `test_dispatch_failure_does_not_fail_run`, `test_trigger_is_listed`.
+- AC-23 retired (owner ruling 26 Sep, Q5): no recipients field on the scheduled task form.
 
-## Phase S3: Generic preview + My Downloads (J-B)
+## Phase S2: Generic preview, SheetJS bump, My Downloads (J-B)
 
 - AC-24 [FE] `components/common/SpreadsheetViewer` (lazy, like `PdfViewer`): props
   `{workbook | loadData, fileName, title, fileActions, className}`; `workbook` is the normalised
@@ -162,10 +177,14 @@ Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` browser pass via sidebar, `[T]` a
   (`order_inquiry_xlsx`, `order_inquiry_worklist_xlsx`, `oi_worksheet_xlsx`).
 - AC-28 [FE] Keyboard: Enter on a focused row opens the preview; Escape closes it; no motion on
   a keyboard-opened preview (M2-01).
+- AC-29b [FE] SheetJS moves to the vendor's 0.20.3 tarball (owner ruling 26 Sep, Q7: "make sure
+  no regression"). Before the bump every current `xlsx` importer is listed by file:line and has a
+  vitest that reads or writes a real fixture workbook through it; the same tests pass on 0.18.5
+  and on 0.20.3.
 - AC-29 [E2E] My Downloads > click the low stock row > preview shows its sheets > Download saves
   the same file; at 375px and 1280px.
 
-## Phase S4: The remaining Excel sources (J-C)
+## Phase S3: The remaining Excel sources (J-C)
 
 - AC-30 [FE] A shared `useSpreadsheetPreview()` hook opens the preview modal from
   `() => Promise<Blob>` plus a filename; Download saves that blob (`saveBlobAs`). Each sync site in
@@ -173,16 +192,16 @@ Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` browser pass via sidebar, `[T]` a
 - AC-31 [FE] The browser-built detail exports (purchase request, stock inquiry) write their
   workbook to an `ArrayBuffer` and open the same preview; Download writes the same bytes.
 - AC-32 [FE] DataGrid toolbar "Export Excel" and the list-query export are unchanged (the grid on
-  screen is already the preview). (Pending grill Q6.)
+  screen is already the preview). (Owner ruling 26 Sep, Q6.)
 - AC-33 [FE] Queued exports keep their "will appear in My Downloads" toast; the preview is
-  reached from My Downloads (S3). No per-site change.
+  reached from My Downloads (S2). No per-site change.
 - AC-34 [E2E] One pass per swapped site: press its Excel action, the preview opens with the right
   sheets, Download saves a file whose first sheet matches.
 
 ## Test list
 
 Backend (`tests/scm/test_low_stock_report.py`, `tests/scm/test_low_stock_view.py`,
-`tests/scm/test_low_stock_daily_email.py`):
+`tests/scm/test_low_stock_report_ready_trigger.py`):
 
 1. `test_view_default_split_is_supplier_category` (AC-3)
 2. `test_view_and_workbook_agree` (AC-2, parametrised over 4 splits + 1 filtered case)
@@ -194,7 +213,8 @@ Backend (`tests/scm/test_low_stock_report.py`, `tests/scm/test_low_stock_view.py
 8. `test_export_route_rejects_filters_on_other_formats` (AC-6)
 9. `test_cap_checked_on_filtered_rows` (AC-7)
 10. `test_view_payload_rows_travel_once` (AC-9)
-11. The three S2 tests named in AC-22, plus `test_email_link_is_internal_page` (AC-21)
+11. The four trigger tests named in AC-22 (AC-19..AC-21)
+11b. `test_workbook_style_unchanged` (AC-9b)
 
 Frontend (vitest):
 
@@ -209,6 +229,6 @@ Frontend (vitest):
 16. `DownloadRow.test.tsx`: Excel row click opens preview, icon downloads, PDF too, other kinds
     download (AC-27, AC-28)
 17. `ReorderPlanView.lowStock.test.tsx` rewritten: the item navigates to the page (AC-16)
-18. `ScheduledTaskForm.test.tsx`: recipients field on the reorder task only, saved in metadata
-    (AC-23)
-19. One vitest per S4 site: its action opens the preview, not a save (AC-30, AC-31)
+18. `menu.config.test.ts`: the Low stock report item, its place, path and gate (AC-16b)
+18b. One regression vitest per current SheetJS caller, green on 0.18.5 and 0.20.3 (AC-29b)
+19. One vitest per S3 site: its action opens the preview, not a save (AC-30, AC-31)
