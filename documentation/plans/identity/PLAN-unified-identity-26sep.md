@@ -9,8 +9,9 @@ every user at the backend (section 6). Round 4: no new pages (the Salesperson ac
 and the separate admin identity slice S4 are withdrawn; creating and linking live in the existing
 Administrative Users and Internal Users pages), one sign-in page (the existing `/signin`) with an
 Email / Phone toggle, and no email is ever sent by creating or linking a user (section 6.4).
-Track: full (migration, auth, RBAC, portal ingest). Nothing built. The plan rides in the first
-feature PR (S0); this lane is docs only.
+Track: full (migration, auth, RBAC, portal ingest). S0 built on PR #1303 (27 Sep 2026, owner ruling
+of 27 Sep 01:04 MYT to build without further alignment); the plan rides in that PR. S1, S2 and S3
+not started.
 UAC: `identity-unified-login-acceptance-criteria.md` (same folder; the Journey is there, and every
 AC traces to a step in it).
 Classification: CORE (auth and users are base-platform), tables stay in `public`.
