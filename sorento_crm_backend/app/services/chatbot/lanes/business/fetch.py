@@ -54,7 +54,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.services.chatbot import jsc
-from app.services.chatbot.contracts import UNDOMAINED_CHATBOT_TOOLS, is_timeline
+from app.services.chatbot.contracts import UNDOMAINED_CHATBOT_TOOLS, is_timeline, named_count
 from app.services.chatbot.turn.policy import default_policy
 from app.services.chatbot.turn import policy_rows
 
@@ -499,12 +499,21 @@ def space_id_or_default(space_id: Any) -> str:
 TIER_PROBE_TOOL = "crm_marketing_promotions_list"
 
 
+# The row cap a counted set's fetch asks each leg's tool for: the tool's own maximum
+# `limit` (`api/v1/inventory/stock.py` allows 5000, the attachment and promotion lists
+# `MAX_PAGE_LIMIT` 1000, `/incoming-stock/list` 50). Up to `answer.SET_LIST_MAX`
+# products at about 20 rows each fit the first three.
+SET_ROW_LIMIT: dict[str, int] = {
+    "crm_inventory_stock_balance_list": 1000,
+    "crm_master_product_attachments_list": 1000,
+    "crm_marketing_promotion_products_list": 1000,
+    "crm_incoming_stock_list": 50,
+}
+
+
 def _set_named_count(semantic_input: Any) -> int | None:
     """How many of a counted set the customer asked to see (`top_n`), or None."""
-    top_n = jsc.get(semantic_input, "top_n")
-    if isinstance(top_n, bool) or not isinstance(top_n, int) or top_n <= 0:
-        return None
-    return top_n
+    return named_count(jsc.get(semantic_input, "top_n"))
 
 
 def _set_list_size(semantic_input: Any) -> int:
@@ -514,6 +523,24 @@ def _set_list_size(semantic_input: Any) -> int:
 
     named = _set_named_count(semantic_input)
     return min(named, answer_mod.SET_LIST_MAX) if named else answer_mod.SET_LIST_MAX
+
+
+def _rendered_product_count(items: list[Any]) -> int | None:
+    """Distinct products the rendered rows name: a row's "Product Code" field, else its
+    title (the stock tool's availability rows carry no fields). None when no row names
+    one, so a result type this header never fires for is left alone."""
+    codes: set[str] = set()
+    for it in items:
+        code = ""
+        for f in jsc.get(it, "fields") or []:
+            if isinstance(f, dict) and f.get("label") == "Product Code":
+                code = jsc.nullish_str(f.get("value")).strip()
+                break
+        if not code and not (jsc.get(it, "fields") or []):
+            code = jsc.nullish_str(jsc.get(it, "title")).strip()
+        if code:
+            codes.add(code)
+    return len(codes) if codes else None
 
 
 def entity_ids_transformer(
@@ -862,6 +889,12 @@ def entity_ids_transformer(
     # `output_structurer` below). No paging: nothing is kept for a "more".
     if trig.get("predicate") is not None and isinstance(out.get("product_ids"), list):
         out["product_ids"] = out["product_ids"][: _set_list_size(semantic_input)]
+        # Reviewer B3 on PR #833: the tool's own DEFAULT row cap (50) cut a listed set
+        # short - a stock row per location, a cert row per file - so 40 basins came back
+        # as about 8. The listed products need all their rows: ask for the tool's
+        # maximum. The header still counts what actually rendered (`output_structurer`).
+        if tool_name in SET_ROW_LIMIT:
+            out["limit"] = SET_ROW_LIMIT[tool_name]
 
     # R29/AC-1354: a scheme-narrowed certificate leg's own certificate ids
     # ride the SAME predicate block, straight through under the SAME arg
@@ -2616,6 +2649,14 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             shown = qualifying_total
         else:
             shown = min(named, answer_mod.SET_LIST_MAX, qualifying_total)
+        if not set_withheld:
+            # Reviewer B3 on PR #833 (R8/AC-1330 restored): the header states what the
+            # rows show, never what was asked for. A tool that still cut rows at its
+            # cap rendered fewer PRODUCTS than were sent, and the header must say
+            # "Here are the first N" over those, never claim the list is complete.
+            rendered = _rendered_product_count(e.get("items") or [])
+            if rendered is not None and rendered < shown:
+                shown = rendered
         header = answer_mod.build_set_header(qualifying_total, shown, set_noun, require)
         set_header = header
         msg = header if set_withheld else f"{header}\n{msg}"
