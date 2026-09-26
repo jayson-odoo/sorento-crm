@@ -2571,20 +2571,24 @@ def _header_predicate_phrase(require: dict[str, Any]) -> str:
 
 
 def build_set_header(qualifying_total: int, shown: int, set_noun: str, require: dict[str, Any]) -> str:
-    """AC-1316 (work item E2): "<qualifying_total> <set noun> have <predicate noun>.
-    Showing <n>." - prepended, as its OWN line, ahead of the existing render (the
-    block below it is untouched). "Showing <n>" is dropped when every qualifying
-    product already fits on the page (`qualifying_total <= shown`).
+    """AC-1316 (work item E2): "<qualifying_total> <set noun> have <predicate
+    noun>." - prepended, as its OWN line, ahead of the existing render (the block
+    below it is untouched).
 
-    A pure string function: `qualifying_total` and `shown` are counts the caller
-    already has (the resolver's own `qualifying_total`, and the page the domain
-    tool actually rendered), never re-derived here.
+    #1262 slice 3 (F5), owner ruling: the chatbot never prints paging text in a
+    reply - "Showing <n>" USED to follow when the qualifying total outran the page
+    (`qualifying_total > shown`), which is what printed "5,857 products have
+    stock. Showing 0." over a stock ask that matched nothing at all (T10). A count
+    names what was counted; it never claims to have shown a page of it.
+    `shown` is kept as a parameter (unused here) rather than dropped from the
+    signature, so every call site - which still has it to hand for other reasons -
+    is untouched.
+
+    A pure string function: `qualifying_total` is the count the caller already has
+    (the resolver's own `qualifying_total`), never re-derived here.
     """
     verb = "has" if qualifying_total == 1 else "have"
-    header = f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}."
-    if qualifying_total > shown:
-        header += f" Showing {shown}."
-    return header
+    return f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}."
 
 
 # REV-N2/AC-1337 (third console pass): the irregular endings a bare "+s" gets

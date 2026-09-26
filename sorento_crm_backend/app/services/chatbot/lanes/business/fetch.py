@@ -1317,6 +1317,13 @@ def _axis_labelled_subject(entities: Any) -> str:
         claimed |= types
         codes = [r["code"] for r in kept if r["type"] in types]
         if codes:
+            # #1262 slice 3 (F5), AC-S3-3: above 5, name the COUNT, never every one
+            # of them - a catalogue-wide sweep (5,857 products) joined every "match"
+            # into a single miss line that spanned three WhatsApp messages. At or
+            # under the cap the customer's own subject still prints in full.
+            if len(codes) > 5:
+                parts.append(f"the {len(codes)} {jsc.js_string(axis['label']).lower()}s searched")
+                continue
             # "A", "A and B", "A, B and C" - the last join is a word so the axis boundary
             # stays readable next to the comma that separates axes.
             listed = (

@@ -170,8 +170,15 @@ _DC_NON_ALNUM = re.compile(r"[^a-z0-9]")
 _DF_SEPARATORS = re.compile(r"[^a-z0-9]+")
 _HAS_DIGIT = re.compile(r"[0-9]")
 # `‐-―` is the range U+2010..U+2015; the other three are U+2212, U+FE58, U+FE63, U+FF0D.
+# #1262 slice 3 (F5): ONE leading letter, not two - "M210-GM" (a real Mocha code) is
+# one letter then digits, and the two-letter rule read it as a DESCRIPTION word
+# ("bidet", "tap"), which is what let a bare "M210-GM" stock ask sweep the whole
+# catalogue unscoped (`require={"stock": true}` with nothing to withhold it). A
+# genuine description word still stays described - `_is_a_described_word`'s own
+# `_HAS_DIGIT` guard reads "tap"/"basin" as described regardless of this shape at
+# all, since neither carries a digit.
 _CODE_SHAPED = re.compile(
-    "^[A-Za-z][A-Za-z][A-Za-z0-9._/\\-‐-―−﹘﹣－]*\\Z"
+    "^[A-Za-z][A-Za-z0-9._/\\-‐-―−﹘﹣－]*\\Z"
 )
 
 
