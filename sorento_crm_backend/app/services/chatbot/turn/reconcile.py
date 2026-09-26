@@ -40,6 +40,21 @@ def hits_for_token(resolved: dict[str, dict[str, int]] | None, raw: Any) -> dict
     return folded.get(key)
 
 
+# #1262 slice 7: a fixed priority for the ONE tie the codebase actually has to break
+# (customer vs. transporter, "Sorento" naming both) - see the diagnosis transcript's
+# own recorded roster, position 2 = the customer option. Any kind not listed here
+# keeps its resolver-order place, alphabetically, so a tie this file has never seen
+# still gets SOME deterministic order rather than crashing.
+_KIND_TIE_ORDER: tuple[str, ...] = ("transporter", "customer")
+
+
+def _kind_tie_key(kind: str) -> tuple[int, str]:
+    try:
+        return (_KIND_TIE_ORDER.index(kind), kind)
+    except ValueError:
+        return (len(_KIND_TIE_ORDER), kind)
+
+
 class ReconcileResult:
     def __init__(self) -> None:
         self.entities: list[dict[str, Any]] = []
@@ -62,6 +77,14 @@ def apply_reconciliation(
             result.entities.append(e)
             continue
         matched = [k for k, count in hits.items() if count and count > 0]
+        # #1262 slice 7 (F1b): the resolver's own hit-dict order is an accident of
+        # however its callers happened to run, not a contract - the SAME ambiguity
+        # (customer/transporter on "Sorento") armed a DIFFERENT numbered pick turn
+        # to turn depending on which resolver ran first. `_KIND_TIE_ORDER` (below)
+        # pins it to the shape the real transcript recorded (its position 2 was the
+        # customer option), so the same tie always numbers its options the same way.
+        if len(matched) > 1:
+            matched = sorted(matched, key=_kind_tie_key)
         if len(matched) == 0:
             result.entities.append(e)
         elif len(matched) == 1:
@@ -79,6 +102,13 @@ def apply_reconciliation(
                 {
                     "position": i + 1,
                     "label": f"{raw} ({k})",
+                    # #1262 slice 7 (F1b): the label above is display only - `apply.py`'s
+                    # pick arm falls back to it when neither `code` nor a uuid is on the
+                    # option, which is how the PRINTED "Sorento (customer)" ended up
+                    # stored as the customer's `raw`/`canonical_code`. Carrying the raw
+                    # token here is what the pick arm resolves the entity from instead.
+                    "raw": raw,
+                    "code": raw,
                     "uuid": None,
                     "uuids": [],
                     "entity_type": k,
