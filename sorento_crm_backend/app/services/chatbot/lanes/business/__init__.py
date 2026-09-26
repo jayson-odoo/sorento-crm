@@ -992,7 +992,7 @@ def _resolve_report_product_and_location(
             *jsc.array(parse_output.get("entities")),
             *jsc.array(parse_output.get("outstanding_refinement_entities")),
         ]
-        if isinstance(e, dict) and jsc.js_string(e.get("hint") or "") == "brand"
+        if isinstance(e, dict) and jsc.js_string(e.get("hint") or "").strip().lower() == "brand"
     }
     brand_tokens.discard("")
     if brand_tokens and db is not None:
@@ -1338,7 +1338,7 @@ def run_fetch(
     # so it never appears there, the same reason the location word just above
     # reads `parse_output` directly instead.
     has_brand = any(
-        isinstance(e, dict) and jsc.js_string(e.get("hint") or "") == "brand"
+        isinstance(e, dict) and jsc.js_string(e.get("hint") or "").strip().lower() == "brand"
         for e in jsc.array(parse_output.get("entities"))
     )
     # #1262 slice 2 (F1c): a carried customer id is a subject only when it is a real
