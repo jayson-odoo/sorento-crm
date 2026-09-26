@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { LoaderCircleIcon, Plus, X } from 'lucide-react';
+import { LoaderCircleIcon, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -14,99 +14,13 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
-import {
-  getSalesOpportunityCustomerOptions,
-  getSalesOpportunityProductOptions,
-} from '../services/salesOpportunityService';
 import { useSaveSalesOpportunity } from '../hooks/useSalesOpportunities';
-
-const PROSPECT_PREFIX = 'prospect:';
-const BLOCKED_VALUE = '__blocked__';
-
-let lineKeySeq = 0;
-function nextLineKey(): string {
-  lineKeySeq += 1;
-  return `line-${lineKeySeq}`;
-}
-
-interface LineDraft {
-  key: string;
-  productId: string;
-  qty: string;
-}
-
-/**
- * One product line's own picker. `options` (not `fetchOptions`) so this row's search box
- * is one control, not two - `onSearchChange` still hits the server on every keystroke
- * (LESSONS-LEARNT: never a capped static list over the ~22,000-product catalog).
- */
-function ProductLineRow({
-  line,
-  onChange,
-  onRemove,
-}: {
-  line: LineDraft;
-  onChange: (patch: Partial<LineDraft>) => void;
-  onRemove: () => void;
-}) {
-  const [options, setOptions] = useState<SearchableSelectOption[]>([]);
-  // Reviewer should-fix 7: a later search REPLACES `options` wholesale, and a picked
-  // product from an earlier search is gone from that replacement the moment the reader
-  // types again - the trigger would then find no match for `line.productId` and fall
-  // back to the placeholder, reading as if the pick had been lost. Keeping the chosen
-  // option itself, merged back in, means it survives regardless of what the next search
-  // returns (the static-mode equivalent of `selectedOption`, which only applies in
-  // `fetchOptions` mode).
-  const [selected, setSelected] = useState<SearchableSelectOption | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    getSalesOpportunityProductOptions('').then((opts) => {
-      if (active) setOptions(opts);
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const mergedOptions = useMemo(() => {
-    if (!selected || options.some((o) => o.value === selected.value)) return options;
-    return [selected, ...options];
-  }, [options, selected]);
-
-  return (
-    <div data-testid="opportunity-line-row" className="flex items-end gap-2">
-      <div className="flex-1 flex flex-col gap-1.5">
-        <Label htmlFor={`Product-${line.key}`}>Product</Label>
-        <SearchableSelect
-          id={`Product-${line.key}`}
-          value={line.productId}
-          onChange={(v) => onChange({ productId: v })}
-          onOptionChange={setSelected}
-          options={mergedOptions}
-          onSearchChange={(q) => getSalesOpportunityProductOptions(q).then(setOptions)}
-          placeholder="Search products..."
-          wrapOptions
-        />
-      </div>
-      <div className="w-24 flex flex-col gap-1.5">
-        <Label htmlFor={`Qty-${line.key}`}>Qty</Label>
-        <Input
-          id={`Qty-${line.key}`}
-          type="number"
-          min="0.01"
-          step="0.01"
-          value={line.qty}
-          onChange={(e) => onChange({ qty: e.target.value })}
-        />
-      </div>
-      <Button type="button" variant="ghost" size="sm" aria-label="Remove line" onClick={onRemove}>
-        <X className="size-4" />
-        Remove
-      </Button>
-    </div>
-  );
-}
+import { OpportunityLineRow, nextLineKey, type LineDraft } from './OpportunityLineRow';
+import {
+  BLOCKED_VALUE,
+  PROSPECT_PREFIX,
+  fetchCustomerOrProspectOptions,
+} from '../lib/customerOrProspect';
 
 /**
  * The Log opportunity modal (UAC S2-12, S2-15, S2-16; plan 3.4, 3.5, section 16, N10, N11).
@@ -153,23 +67,6 @@ export default function SalesOpportunityModal({
     () => [] as SearchableSelectOption[],
     [],
   );
-
-  const fetchCustomerOptions = async (query: string): Promise<SearchableSelectOption[]> => {
-    const result = await getSalesOpportunityCustomerOptions(query);
-    const options: SearchableSelectOption[] = result.items.map((item) => ({
-      value: item.customer_id,
-      label: `${item.customer_code} - ${item.customer_name}`,
-    }));
-    if (result.blocked) {
-      options.push({ value: BLOCKED_VALUE, label: result.blocked.message, disabled: true });
-    } else if (result.prospect) {
-      options.push({
-        value: `${PROSPECT_PREFIX}${result.prospect.name}`,
-        label: `Add "${result.prospect.name}" as a new prospect`,
-      });
-    }
-    return options;
-  };
 
   const addLine = () => setLines((prev) => [...prev, { key: nextLineKey(), productId: '', qty: '1' }]);
   const removeLine = (key: string) => setLines((prev) => prev.filter((l) => l.key !== key));
@@ -226,7 +123,7 @@ export default function SalesOpportunityModal({
                 value={customerOrProspect}
                 onChange={setCustomerOrProspect}
                 options={customerOptions}
-                fetchOptions={fetchCustomerOptions}
+                fetchOptions={fetchCustomerOrProspectOptions}
                 selectedOption={
                   presetCustomerId && presetCustomerLabel
                     ? { value: presetCustomerId, label: presetCustomerLabel }
@@ -278,7 +175,7 @@ export default function SalesOpportunityModal({
               ) : (
                 <div className="flex flex-col gap-2">
                   {lines.map((line) => (
-                    <ProductLineRow
+                    <OpportunityLineRow
                       key={line.key}
                       line={line}
                       onChange={(patch) => updateLine(line.key, patch)}

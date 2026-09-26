@@ -9,8 +9,29 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn() }),
+}));
+
 vi.mock('@/components/common/RecordNavigation', () => ({
   RecordNavigation: () => <nav aria-label="record navigation" />,
+}));
+
+vi.mock('@/components/common/DetailActions', () => ({
+  default: ({
+    pagerNode,
+    primary,
+    pendingAction,
+  }: {
+    pagerNode?: React.ReactNode;
+    primary?: React.ReactNode;
+    pendingAction?: React.ReactNode;
+  }) => (
+    <div data-testid="detail-actions">
+      {pagerNode}
+      {pendingAction ?? primary}
+    </div>
+  ),
 }));
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
@@ -42,15 +63,28 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   },
 }));
 
+const perms = vi.hoisted(() => ({ granted: new Set<string>(['sales.opportunities.edit']) }));
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: (slug: string) => perms.granted.has(slug),
+}));
+
 const hooks = vi.hoisted(() => ({
   useSalesOpportunity: vi.fn(),
+  useSalesOpportunities: vi.fn(),
   useSalesOpportunityMeta: vi.fn(),
+  useSalesOpportunityAgentOptions: vi.fn(),
   useSaveSalesOpportunity: vi.fn(),
 }));
 vi.mock('../../hooks/useSalesOpportunities', () => hooks);
 
+vi.mock('../../actions', () => ({
+  useSalesOpportunityActions: () => ({ actions: [], dialogs: null, pending: null }),
+}));
+
 const service = vi.hoisted(() => ({
   getSalesOpportunitySalesOrderOptions: vi.fn(),
+  getSalesOpportunityCustomerOptions: vi.fn(),
+  getSalesOpportunityProductOptions: vi.fn(),
 }));
 vi.mock('../../services/salesOpportunityService', () => service);
 
@@ -112,9 +146,20 @@ beforeEach(() => {
       ],
     },
   });
+  hooks.useSalesOpportunities.mockReturnValue({
+    data: { data: [detail()], pagination: { total: 1, page: 1, limit: 200 }, empty: false },
+  });
+  hooks.useSalesOpportunityAgentOptions.mockReturnValue({ data: [] });
+  perms.granted = new Set(['sales.opportunities.edit']);
   service.getSalesOpportunitySalesOrderOptions.mockReset();
   service.getSalesOpportunitySalesOrderOptions.mockResolvedValue([
     { id: 'so-1', so_number: 'SO-000001', customer_id: 'cust-1', customer_name: 'ZZT Dealer', order_date: '2026-10-01' },
+  ]);
+  service.getSalesOpportunityCustomerOptions.mockReset();
+  service.getSalesOpportunityCustomerOptions.mockResolvedValue({ items: [], prospect: null, blocked: null });
+  service.getSalesOpportunityProductOptions.mockReset();
+  service.getSalesOpportunityProductOptions.mockResolvedValue([
+    { value: 'p1', label: 'ZZT-001 - ZZT Basin' },
   ]);
 });
 
@@ -212,5 +257,61 @@ describe('SalesOpportunityDetail', () => {
     });
     render(<SalesOpportunityDetail id="opp-1" />);
     expect(screen.getByText('Price')).toBeTruthy();
+  });
+
+  it('fix B2: Edit swaps the title, amount and close date for inputs in place', () => {
+    render(<SalesOpportunityDetail id="opp-1" />);
+    expect(screen.queryByLabelText('Title')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('ZZT Deal');
+    expect((screen.getByLabelText('Expected amount') as HTMLInputElement).value).toBe('1000.00');
+    expect((screen.getByLabelText('Expected close date') as HTMLInputElement).value).toBe('2026-11-01');
+  });
+
+  it('fix B2: saving an edit sends the updated fields and lines through the id payload', async () => {
+    hooks.useSalesOpportunity.mockReturnValue({
+      data: detail({
+        lines: [{ id: 'l1', product_id: 'p1', product_code: 'ZZT-001', product_name: 'ZZT Basin', qty: 2 }],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<SalesOpportunityDetail id="opp-1" />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'ZZT Deal Renamed' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
+    const payload = save.mutateAsync.mock.calls[0][0];
+    expect(payload.id).toBe('opp-1');
+    expect(payload.title).toBe('ZZT Deal Renamed');
+    expect(payload.lines).toEqual([{ product_id: 'p1', qty: 2 }]);
+  });
+
+  it('fix B2: Cancel leaves the record unchanged and exits edit mode', () => {
+    render(<SalesOpportunityDetail id="opp-1" />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Should not stick' } });
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    expect(screen.queryByLabelText('Title')).toBeNull();
+    expect(screen.getByText('ZZT Deal')).toBeTruthy();
+  });
+
+  it('fix B2: renders a real RecordNavigation position within the default list', () => {
+    hooks.useSalesOpportunities.mockReturnValue({
+      data: {
+        data: [detail({ id: 'opp-0' }), detail({ id: 'opp-1' }), detail({ id: 'opp-2' })],
+        pagination: { total: 3, page: 1, limit: 200 },
+        empty: false,
+      },
+    });
+    render(<SalesOpportunityDetail id="opp-1" />);
+    expect(screen.getByLabelText('record navigation')).toBeTruthy();
+  });
+
+  it('fix B2: no Edit button without sales.opportunities.edit', () => {
+    perms.granted = new Set();
+    render(<SalesOpportunityDetail id="opp-1" />);
+    expect(screen.queryByRole('button', { name: /^edit$/i })).toBeNull();
   });
 });
