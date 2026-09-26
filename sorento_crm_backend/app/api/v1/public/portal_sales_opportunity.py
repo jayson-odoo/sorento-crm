@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.public.portal import get_portal_token
 from app.database import get_db
-from app.models.base import company_scope
+from app.models.base import company_scope, get_company_scope, set_company_scope
 from app.models.portal import PortalToken
 from app.models.sales_agent import SalesAgent
 from app.schemas.sales import (
@@ -78,25 +78,45 @@ def _require_agent(db: Session, token: PortalToken) -> SalesAgent:
     # test) overrides that dependency directly (LESSONS: db.info survives the thread hop
     # a contextvar would not).
     db.info["actor_contact_id"] = str(token.contact_id)
+    # Phase 3 fix S2: scope the WHOLE request to this agent's own company as soon as the
+    # agent is known (or leave it unrestricted - `None` - for a single-tenant install
+    # where the agent carries no company_id), so every query for the rest of the request
+    # - the customer lookup inside `_resolve_company` included - runs under the
+    # company-scope auto-filter and can never widen past it.
+    set_company_scope(db, frozenset({agent.company_id}) if agent.company_id else None)
     return agent
 
 
 def _resolve_company(db: Session, *, customer_id: Optional[str], agent: SalesAgent) -> str:
-    """Customer's company, else the agent's, else the first active company (section 16,
-    `portal_price_tag._resolve_company`)."""
-    from app.models.company import Company
+    """Never widens past what `_require_agent` already scoped this request to (Phase 3
+    fix S2): the customer's own company (a SCOPED lookup - `Customer` is
+    `CompanyScopedMixin`, so a customer outside the current scope resolves to nothing
+    rather than to its real, out-of-scope company), else the agent's own company but
+    only when the current scope already permits it (an agent whose `company_id` somehow
+    disagrees with the request's own scope must never widen it), else the scope's one
+    company if it names exactly one, else the single-tenant default.
+
+    No unordered `Company.first()`: a `LIMIT 1` with no `ORDER BY` is Postgres's choice,
+    not a business rule, and it can hand back a company neither the customer nor the
+    agent has any connection to at all.
+    """
     from app.models.order import Customer
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    scope = get_company_scope(db)
 
     if customer_id:
         customer = db.query(Customer).filter(Customer.id == customer_id).first()
         if customer is not None and customer.company_id:
             return customer.company_id
-    if agent.company_id:
+
+    if agent.company_id and (scope is None or (isinstance(scope, frozenset) and agent.company_id in scope)):
         return agent.company_id
-    company = db.query(Company).filter(Company.is_active.is_(True)).first()
-    if company:
-        return company.id
-    return "00000000-0000-0000-0000-000000000001"
+
+    if isinstance(scope, frozenset) and len(scope) == 1:
+        return next(iter(scope))
+
+    return DEFAULT_COMPANY_ID
 
 
 def _reraise(db: Session, exc: Exception):
