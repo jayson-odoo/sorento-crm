@@ -688,7 +688,7 @@ Every slice runs the full track and `security-reviewer` (AC-62).
 
 - Scope: section 4.1, 9.1, the S0 row of 9.2, section 8 in full, CLAUDE.md corrections (Prisma
   gone, staff tokens are opaque sessions, the `system` principal is replaced by integrations).
-- UAC: AC-01 to AC-13, AC-60, AC-62.
+- UAC: AC-01 to AC-14, AC-60, AC-62.
 - Done when: pre-flight results in the PR and clean (or owner-ruled), query 3 listed by name;
   migration applies on a clone of the prod copy and the previous image's suite passes against it
   (AC-05); red-then-green tests for AC-11 and AC-12 committed; audit screens show actor words,
@@ -711,7 +711,7 @@ Every slice runs the full track and `security-reviewer` (AC-62).
 ### S3 The owner creates and links users
 
 - Scope: sections 6 and 7.
-- UAC: AC-40 to AC-47, AC-50, AC-53, AC-55.
+- UAC: AC-40 to AC-50, AC-53, AC-55.
 - Done when: the owner's flow runs end to end on the lane stack from the sidebar: open a
   salesperson contact from the worklist, Create user (prefilled, `salesperson` suggested),
   save, the row flips to Linked; the two 409s shown inline with their offered action; Link

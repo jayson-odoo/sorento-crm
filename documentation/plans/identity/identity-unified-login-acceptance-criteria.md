@@ -1,9 +1,15 @@
 # UAC: Unified identity, one login for the portal and the CRM (#1280)
 
 Plan: `PLAN-unified-identity-26sep.md` (same folder).
-Status: draft, written to the recommendations in the plan's section 12 ("Grill questions for the
-owner"). Every AC below that depends on an unanswered question names it as `(Qn)`; when the owner
-answers differently, the AC is rewritten before its slice starts.
+Status: draft, round 2 (26 Sep 2026). Rewritten for the owner rulings of 26 Sep 2026 23:45 MYT on
+Q1, Q2, Q3, Q4, Q6, Q8, Q9, Q10 (plan section 12). Q5 is re-asked and Q11 to Q15 are unanswered;
+ACs that depend on them still follow the recommendation and name it as `(Qn)`, to be rewritten
+before their slice starts if the owner answers differently.
+
+Owner ruling 26 Sep 2026 23:45 MYT (Q3, Q4), binding on every AC below: no user is ever created
+automatically. The owner creates and sets up every user at the backend (create, link to the
+contact, set roles), then the person signs in. A contact the owner has not set up keeps using the
+portal exactly as today.
 
 Owner words, 26 Sep 2026 ~13:50Z, issue #1280 (verbatim, binding):
 
@@ -24,14 +30,16 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
 
 ### J-A A retail salesperson signs in on her phone (WhatsApp only, no email)
 
-1. Aisyah is a retail salesperson contact. She already exists as a WhatsApp contact; since S3 she
-   also has a counterpart user, created for her without her doing anything.
+1. Aisyah is a retail salesperson contact. She already exists as a WhatsApp contact. The owner
+   has created her user from her contact (J-E): linked to her contact, role Salesperson, her
+   companies. She did nothing.
 2. She opens the sign-in page on her phone. One field: "Email or phone number". She types her
    number (any common form: `012-345 6789`, `+60123456789`, `60123456789`).
 3. The system recognises a phone number and moves straight to "Enter the code we sent to your
    WhatsApp", masked number shown, six boxes, the phone's own one-time-code autofill offered.
-4. She receives the code on WhatsApp, enters it, and lands on the portal home she already knows,
-   with the forms her market segment grants. She never chose a password and never registered.
+4. She receives the code on WhatsApp, enters it, and lands on the portal home she already knows
+   (a salesperson lands on the portal first, Q9), with the forms her market segment grants. She
+   never chose a password and never registered.
 5. What she submits is recorded against her user (and her contact, as today).
 
 ### J-B A staff member signs in as before
@@ -42,27 +50,42 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
 
 ### J-C An existing portal contact taps an old WhatsApp link
 
-1. A dealer contact taps the `/portal/c/{slug}` link they received months ago.
+1. A contact taps the `/portal/c/{slug}` link they received months ago.
 2. The verify card they know appears (their name, masked number); the code is sent to WhatsApp.
-3. They enter the code. Behind it, their user is created at that moment (Q3, Q4) and a normal
-   signed-in session starts. They land on the same portal home, same forms, same submissions.
-4. No re-registration, no new link, no password.
+3. They enter the code and land on the same portal home, same forms, same submissions.
+4. Behind it: if the owner has set up a user for this contact, a normal signed-in user session
+   starts (the same one the CRM uses). If not (most dealer contacts), it is today's portal
+   session, unchanged, and no user is created (Q3, Q4).
+5. No re-registration, no new link, no password, either way.
 
-### J-D A project salesperson grows into the CRM
+### J-D A project salesperson grows into the CRM (later, when the owner decides)
 
-1. An admin adds a CRM role (for example Project Sales) to a salesperson's user.
-2. The salesperson's next page load shows the CRM shell with Project Sales in the sidebar and a
-   "Portal" entry to get back to their submissions. Same sign-in, same session.
+1. Today a salesperson gets nothing beyond portal submission (Q8). When the owner decides one
+   should, the owner adds a CRM role (for example Project Sales) to that salesperson's user.
+2. The salesperson still lands on the portal first (Q9), now with an "Open CRM" link in the portal
+   header; the CRM shows Project Sales in the sidebar and a "Portal" entry back. Same sign-in,
+   same session.
 
-### J-E An admin looks after identities
+### J-E The owner sets a person up, then the person signs in
+
+1. The owner opens User Management > Salesperson accounts: every salesperson contact with its
+   state, No user yet, Linked, or Needs attention.
+2. On Aisyah's row (No user yet) the owner clicks Create user. The Add user modal opens with her
+   contact locked, her name and phone filled in, role Salesperson suggested and her companies
+   filled in. The owner reviews, changes anything, and saves.
+3. The row flips to Linked. Her contact's page shows her user in its User account section.
+4. The owner may send her the portal link with the existing "Send portal link" action, or simply
+   tell her to sign in with her number. Nothing is sent by itself.
+5. For a dealer contact, the owner does the same from the contact's page (User account > Create
+   user), with role Portal suggested. For a staff member who is also a salesperson, the owner uses
+   Link existing user instead of creating a second one.
+
+### J-E2 The owner looks after identities
 
 1. Users list: a "Kind" filter (Staff / Salesperson / Portal) and a "Sign-in" column (Email,
    Phone, both).
 2. A user's page: a "Sign-in" section with email, phone (verified or not), linked WhatsApp
-   contact, last sign-in and how.
-3. A contact's page: a "User account" section (linked user, or "No user yet" with Create).
-4. A "Salesperson accounts" view listing every salesperson contact with its user state:
-   linked, created, or needs attention (a phone clash) with the one action that resolves it.
+   contact, last sign-in and how, and "Needs attention" when the contact's phone has changed.
 
 ### J-F Recovery
 
@@ -83,10 +106,11 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
   differs only by case from another's is rejected with 409; sign-in with any casing finds the
   user. The migration's pre-flight lists any existing case-duplicates and stops (does not merge
   them silently).
-- **AC-04 [BE][T]** Backfill links existing users to contacts: every user with no
+- **AC-04 [BE][T]** Backfill links existing users to contacts: every existing user with no
   `respond_contact_id` whose normalised `contact_number` equals exactly one contact's
-  `phone_number` gets linked; ambiguous or already-claimed matches are left unlinked and listed
-  (see AC-50). Re-running the backfill changes nothing.
+  `phone_number` gets linked (the link `respond_link_service` already caches at runtime today);
+  ambiguous or already-claimed matches are left unlinked and listed. The S0 PR lists every link by
+  name. It creates no user and changes no role. Re-running the backfill changes nothing.
 - **AC-05 [BE][T]** Zero downtime: the S0 migration is expand-only (new nullable columns, new
   indexes created concurrently, relaxed NOT NULL), and the previous image's test suite still
   passes against the migrated schema.
@@ -96,7 +120,7 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
 - **AC-07 [BE][T]** Every session row records how it was created: `user_sessions.auth_method` is
   one of `password`, `phone_otp`, `portal_link` (a portal verify card), `impersonation`.
 - **AC-08 [BE][T]** Audit actor contract: every `audit_logs` row written after S0 carries
-  `actor_type` (`user`, `integration`, `worker`, `scheduler`, `public_link`, `system`), and, where
+  `actor_type` (`user`, `contact`, `integration`, `worker`, `scheduler`, `public_link`, `system`), and, where
   they exist, `user_id` (the effective actor), `real_user_id` (the impersonating admin, else equal
   to `user_id`), `auth_method`, `session_id`, `integration_id`, `contact_id` (the actor's linked
   contact), `ip_address`, `user_agent`, `trace_id`, `company_id`.
@@ -112,8 +136,11 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
   `get_current_user_or_api_key` records the caller's `user_id` (confirms, then fixes, the
   suspected context loss in plan section 3.5).
 - **AC-13 [FE][T]** The audit screens render the new fields as words: actor kind ("Staff",
-  "Integration: n8n", "Background job for Aisyah", "Scheduled"), "on behalf of" for impersonation,
-  and the sign-in method; no UUID is visible.
+  "Integration: n8n", "Background job for Aisyah", "Scheduled", "Portal: <contact name> (no
+  user)"), "on behalf of" for impersonation, and the sign-in method; no UUID is visible.
+- **AC-14 [BE][T]** A portal write by a contact with no user records `actor_type = contact`,
+  `auth_method = portal_token`, `contact_id` = the contact and no `user_id` (Q3, Q4: such
+  contacts keep using the portal).
 
 ## S1 Phone sign-in
 
@@ -124,8 +151,9 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
 - **AC-21 [BE][T]** `POST /api/v1/auth/phone/request-code` with a phone number always answers
   200 with the same body, whether or not the number belongs to anyone (no enumeration). A code is
   sent only when the number resolves to exactly one ACTIVE, non-integration user with a linked
-  WhatsApp contact.
-- **AC-22 [BE][T]** The code goes to WhatsApp (Q6) through the existing `respond_io` queue and the
+  WhatsApp contact whose phone equals the user's phone. A contact with no user never gets a
+  sign-in code from this route, and no user is created (Q4).
+- **AC-22 [BE][T]** The code goes to WhatsApp only (Q6, owner ruling 26 Sep 2026 23:45 MYT) through the existing `respond_io` queue and the
   portal OTP template, and every send writes an `integration_log` row on success and failure.
 - **AC-23 [BE][T]** Limits: 10-minute expiry, 60-second resend cooldown, 5 wrong attempts per
   code, 10 sends per number per day, and the existing per-IP limit, all enforced server-side;
@@ -138,11 +166,13 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
   shown only when the user has a password, and a "Change number" back link.
 - **AC-26 [BE][T]** Email login no longer reveals whether an email exists: an unknown email and a
   wrong password return the same 401 body.
-- **AC-27 [BE][T]** Phone sign-in works for staff too (Q10): a staff user with a verified, linked
-  phone signs in by code and gets their normal CRM session and permissions.
-- **AC-28 [FE][E2E]** After sign-in the user lands where they work (Q9): a user holding any CRM
-  permission (or admin) lands on the CRM home or their `callbackUrl`; a user holding none lands
-  on their portal home.
+- **AC-27 [BE][T]** Phone sign-in works for staff and admins too (Q10, owner ruling 26 Sep 2026
+  23:45 MYT): a staff user and a `superadmin` with a linked phone each sign in by code and get
+  their normal CRM session and permissions.
+- **AC-28 [FE][E2E]** After sign-in the user lands where they work (Q9, owner ruling 26 Sep 2026
+  23:45 MYT): a `callbackUrl` the user may open wins; otherwise a user holding the `salesperson`
+  role lands on its portal home even if it also holds CRM permissions; any other user with a CRM
+  permission (or admin) lands on the CRM home; a user with none lands on its portal home.
 
 ## S2 Portal on the unified session
 
@@ -156,75 +186,97 @@ Screens are designed at 375px first (a salesperson's phone), then checked at 128
   portal route is scoped to the linked contact's companies, not the user's CRM company grants.
 - **AC-33 [BE][T]** Form visibility is unchanged: the forms a user sees on the portal are the
   forms its linked contact sees today (market segment base plus per-contact overrides).
-- **AC-34 [FE][E2E]** The verify card on `/portal/c/{slug}` and `/portal?token=` signs the person
-  in to the unified session: after the code, the NextAuth session exists, and opening a CRM page
-  they have permission for needs no second sign-in.
-- **AC-35 [BE][T]** A portal contact with no user gets one at that verify step (Q3, Q4): role
-  `portal_user`, status ACTIVE, no password, phone from the contact, email empty, company grants
-  copied from the contact's companies, and linked to the contact. Re-verifying never creates a
-  second user.
-- **AC-36 [BE][T]** Legacy portal tokens keep working until they expire, and from the S2 deploy
-  they no longer slide (Q11), so every legacy token ends within 30 days of S2. A new portal
-  verification mints no new `portal_tokens` row except for admin "view as contact" (Q12).
+- **AC-34 [FE][E2E]** For a contact the owner has set up (linked to an ACTIVE user), the verify
+  card on `/portal/c/{slug}` and `/portal?token=` signs the person in to the unified session:
+  after the code, the NextAuth session exists, and opening a CRM page they have permission for
+  needs no second sign-in. `slug-info` and `token-info` carry `has_user` so the card picks the
+  path; the server refuses the unified path for a contact with no user (same 401 as a wrong code).
+- **AC-35 [BE][T]** A portal contact with no user is never given one (Q3, Q4, owner ruling 26 Sep
+  2026 23:45 MYT): its verify step mints a portal token exactly as today (7-day link token,
+  30-day sliding verified token, same limits), and the `users` row count is unchanged after it
+  signs in, re-verifies, or submits.
+- **AC-36 [BE][T]** Portal tokens (Q11): a token of a contact with no user keeps sliding as today,
+  with no end date. From the S2 deploy, a token of a contact that has a user no longer slides, so
+  it ends within 30 days, and that person's new verifications mint a user session, not a token.
+  Admin "view as contact" tokens are unchanged (Q12).
 - **AC-37 [BE][T]** Submissions made on a user session store the same `contact_id`, `space_id` and
   `respond_inbox_url` as before, and the audit row carries the user (AC-08).
 - **AC-38 [FE][E2E]** Signing out from the portal ends the user session everywhere that session
   was used (portal and CRM); the user's own device list (`account/security/current-sessions`)
   shows portal sign-ins with their method.
 - **AC-39 [FE][E2E]** A user with both CRM and portal access has a "Portal" entry in the user menu
-  and a way back to the CRM from the portal header; a portal-only user who opens a CRM URL lands
-  on their portal home, not an empty CRM shell.
+  and an "Open CRM" link in the portal header; a portal-only user who opens a CRM URL lands on
+  their portal home, not an empty CRM shell.
 
-## S3 Counterpart users for salesperson contacts
+## S3 The owner creates and links users
 
-- **AC-40 [BE][T]** A salesperson contact is (Q1): a contact in any market segment with
-  `is_requestor_selectable = true` (today `retail` and `project`), or a contact linked from
-  `sales_agents.contact_id`. The rule is one function, used by the backfill, the sync and the
-  admin view.
-- **AC-41 [BE][T]** Backfill: every salesperson contact with no linked user gets one: role
-  `salesperson` (Q8), ACTIVE, no password, phone and name from the contact, no email, company
-  grants copied from the contact. Re-running creates nothing new.
-- **AC-42 [BE][T]** One person, one user (Q14): when a salesperson contact's phone equals an
-  existing user's `contact_number`, that user is linked and given the `salesperson` role instead
-  of creating a second user.
-- **AC-43 [BE][T]** A clash is never auto-resolved: a contact whose phone matches a user already
-  linked to a different contact is left unlinked and reported (AC-50), and the backfill carries on
-  with the rest.
-- **AC-44 [BE][T]** Stays true after the backfill: adding a contact to a salesperson segment, or
-  linking it to a sales agent, provisions its user in the same transaction; removing it from every
-  salesperson source removes the `salesperson` role but never deletes the user or its history.
-- **AC-45 [BE][T]** A provisioned user can do nothing in the CRM until given more: the
-  `salesperson` and `portal_user` roles are protected, seeded with no CRM permissions, and are
-  never the `is_default` role; the grant sweep leaves them empty.
-- **AC-46 [BE][T]** A contact's phone change (Respond.io sync or admin edit) updates the linked
-  user's `contact_number` and clears `phone_verified_at`; a change that would collide with another
-  user is refused on the user side and reported.
-- **AC-47 [BE][T]** Provisioning is audited: each created or linked user writes an audit row with
-  `actor_type = system` (backfill) or the acting admin, naming the contact it came from.
-
-## S4 Admin screens
-
+- **AC-40 [BE][T]** A salesperson contact is (Q1, owner ruling 26 Sep 2026 23:45 MYT): a contact in
+  any market segment with `is_requestor_selectable = true` (today `retail` and `project`), or a
+  contact linked from `sales_agents.contact_id`. One function; it only decides who appears on the
+  worklist (AC-50) and which role the create form suggests. It creates nothing.
+- **AC-41 [BE][T]** The owner creates a user from a contact: `POST
+  /api/v1/user_management/users` accepts `respond_contact_id`, an optional `email` (Q5) and
+  `company_ids`; the saved user is linked to the contact, its phone is the contact's phone, its
+  roles and companies are exactly what the owner submitted, status ACTIVE when it has a phone,
+  INACTIVE with the existing invite email when it has only an email.
+- **AC-42 [BE][T]** One person, one user, decided by the owner (Q14): creating a user whose phone
+  equals an existing user's answers 409 `PHONE_BELONGS_TO_USER` naming that user (never its id),
+  and creates nothing; linking the contact to that existing user instead succeeds and adds no
+  role.
+- **AC-43 [BE][T]** A contact already linked answers 409 `CONTACT_ALREADY_LINKED` naming its user;
+  linking a user already linked to a different contact is refused the same way. Nothing is
+  unlinked or merged by itself.
+- **AC-44 [BE][T]** Nothing creates a user or changes its roles except the owner's create, edit and
+  link actions: adding a contact to a salesperson segment, linking it to a sales agent, removing
+  it from every salesperson source, a Respond.io sync, a portal verify and a phone sign-in each
+  leave the `users` and `user_role_assignments` row counts unchanged (one test per source).
+- **AC-45 [BE][T]** A salesperson gets nothing beyond portal submission (Q8, owner ruling 26 Sep
+  2026 23:45 MYT): the `salesperson` and `portal_user` roles are protected, seeded with no CRM
+  permissions, never the `is_default` role, and the grant sweep leaves them empty. A user holding
+  only `salesperson` gets 403 on every CRM route and sees the portal forms of its contact.
+- **AC-46 [BE][T]** A contact's phone change (Respond.io sync or admin edit of the contact) does not
+  change the linked user. While the two phones differ, phone sign-in for that user is refused and
+  the user is flagged "Needs attention" (AC-52); the owner's "Use new number" updates the user's
+  phone, clears `phone_verified_at` and ends its sessions (AC-54).
+- **AC-47 [BE][T]** Every create and link is audited with the acting admin (`real_user_id`) and
+  names the contact it came from.
+- **AC-48 [FE][E2E]** The create form (the existing Add user modal) opened from a contact or a
+  worklist row shows, in order: Name, WhatsApp contact (locked), Phone (read-only, from the
+  contact), Email (optional when there is a phone, Q5), Roles (`SearchableMultiSelect`,
+  `salesperson` suggested for a salesperson contact, `portal_user` for any other), Companies
+  (prefilled from the contact). Each 409 shows inline with its action ("Open user", "Link this
+  contact to <name> instead"). Usable at 375px and 1280px.
+- **AC-49 [BE]** S3 records the supersession of the 14 Aug 2026 "no user account for salespeople"
+  ruling (Q2, owner ruling 26 Sep 2026 23:45 MYT) in the `sales_agent.py` docstring and
+  `PLAN-customer-sales-agent-assignment-24sep.md`.
 - **AC-50 [FE][E2E]** "Salesperson accounts" (under User Management): a DataGrid of every
-  salesperson contact with columns Contact, Phone, Segment / Agent, User, State (Linked, Created,
-  Needs attention); filter by State; a "Needs attention" row names the clash in words and offers
-  the one resolving action (Link to this user, or Open the clashing user). Standard DataGrid rules
+  salesperson contact with columns Contact, Phone, Segment / Agent, User, State (No user yet,
+  Linked, Needs attention); filter by State, defaulting to all; row actions Create user (opens
+  AC-48), Open user, or for Needs attention the one resolving action named in words ("Phone
+  belongs to <name>": Link to <name>; "<name> is linked to another contact": Open <name>; "No
+  longer a salesperson; still has the Salesperson role": Open user). Standard DataGrid rules
   (fixed layout, resizable, explicit sizes, truncate + title), usable at 375px.
+- **AC-53 [FE][E2E]** Contact detail: a "User account" section showing the linked user, or "No
+  user yet" with Create user and Link existing user for an admin; Unlink is a 5-second deferred
+  action with Cancel (D7), never a dialog.
+
+## S4 Admin identity screens
+
 - **AC-51 [FE][E2E]** Users list: a "Kind" filter (Staff, Salesperson, Portal, derived from roles)
   that defaults to showing everyone (lesson: a list that opens filtered cannot be reconciled), and
   a "Sign-in" column (Email, Phone, Email + Phone).
 - **AC-52 [FE][E2E]** User detail: a "Sign-in" section in the same place on view and edit, with
-  email, phone and its verified state, linked WhatsApp contact (name and masked phone, clickable),
-  last sign-in time and method; explicit empty states ("No phone yet. Add one to allow phone
-  sign-in.").
-- **AC-53 [FE][E2E]** Contact detail: a "User account" section showing the linked user, or "No
-  user yet" with a Create user action for an admin; Unlink is a 5-second deferred action with
-  Cancel (D7), never a dialog.
-- **AC-54 [BE][T]** Unlinking or changing a user's phone or linked contact revokes every session of
+  email, phone and its verified state, linked WhatsApp contact (name and masked phone, clickable)
+  with Link WhatsApp contact when there is none, last sign-in time and method, and "Needs
+  attention: phone differs from WhatsApp contact" with "Use new number" (AC-46); explicit empty
+  states ("No phone yet. Add one to allow phone sign-in.").
+- **AC-54 [BE][T]** Unlinking, or changing a user's phone or linked contact, revokes every session of
   that user (the same path as force-logout) and writes an audit row.
-- **AC-55 [BE][T]** Every new admin route is permission-gated: `user_management.users.edit` for
-  link, unlink and phone edits; `user_management.users.view` for the salesperson view; each has
-  an auth-denial test, and the grant sweep gives the new view permission to every role that
-  already holds `user_management.users.view`.
+- **AC-55 [BE][T]** Every new or extended admin route is permission-gated:
+  `user_management.users.create` to create from a contact, `user_management.users.edit` for link,
+  unlink and phone edits, `user_management.users.view` for the worklist; each has an auth-denial
+  test, and the grant sweep gives the new view permission to every role that already holds
+  `user_management.users.view`.
 
 ## Cross-cutting
 
