@@ -48,9 +48,9 @@ def _brand(db, name: str, *, default: bool = False):
         row = Brand(id=str(uuid.uuid4()), brand_code=name.upper()[:50], brand_name=name, is_active=True)
         db.add(row)
         db.flush()
-    if hasattr(row, "is_chatbot_default"):
-        row.is_chatbot_default = default
-        db.flush()
+    # Round 4 R1: the round 2 default is now the top chatbot weight.
+    row.chatbot_weight = 1.5 if default else 0
+    db.flush()
     return row
 
 
@@ -89,8 +89,7 @@ def world(session_factory):
 
     db = session_factory()
     # Clear any default a previous test left, so each test states its own.
-    if hasattr(Brand, "is_chatbot_default"):
-        db.query(Brand).update({Brand.is_chatbot_default: False})
+    db.query(Brand).update({Brand.chatbot_weight: 0})
     _category_id, uom_id = _seed_category_and_uom(db)
     basin_category = _class_category(db, "WB")
     wc_category = _class_category(db, "WC")
@@ -509,8 +508,8 @@ def sorento_default(world):
     from app.models.product import Brand
 
     db = world["db"]
-    db.query(Brand).update({Brand.is_chatbot_default: False})
-    world["sorento"].is_chatbot_default = True
+    db.query(Brand).update({Brand.chatbot_weight: 0})
+    world["sorento"].chatbot_weight = 1.5
     db.commit()
     return world
 
@@ -547,8 +546,8 @@ def test_w5_a_default_brand_with_nothing_in_the_set_leaves_the_set_whole(chat, s
     A set the default brand does not reach at all is answered across brands."""
     world = sorento_default
     db = world["db"]
-    world["sorento"].is_chatbot_default = False
-    world["mocha"].is_chatbot_default = True
+    world["sorento"].chatbot_weight = 0
+    world["mocha"].chatbot_weight = 1.5
     db.commit()
     text = chat.say(
         "which water closet has stock",

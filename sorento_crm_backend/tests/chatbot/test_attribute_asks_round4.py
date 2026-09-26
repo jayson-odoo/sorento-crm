@@ -305,7 +305,9 @@ def test_r3_an_incoming_row_is_two_lines_too(chat, world):
 
 
 def test_r3_a_set_reply_of_fifty_rows_fits_one_whatsapp_message(chat, world, monkeypatch):
-    """50 two-line rows stay under WhatsApp's 4,096 characters with names this long."""
+    """50 two-line rows stay under WhatsApp's 4,096 characters with names this long,
+    leaving 400 for the header lines and the other-brands line (a blank line between
+    products stays, round 3 ruling)."""
     from app.services.chatbot.lanes.business import fetch as fetch_mod
 
     items = [
@@ -323,7 +325,7 @@ def test_r3_a_set_reply_of_fifty_rows_fits_one_whatsapp_message(chat, world, mon
     ]
     labels = {f"SRTWC{i:04d}-SH-NEW-P": {"name": "Sorento Close Couple WC Soft Close"} for i in range(50)}
     text = fetch_mod.set_rows_text(items, labels, require={"stock": True}, offset=0)
-    assert len(text) < 3500, len(text)
+    assert len(text) <= 4096 - 400, len(text)
 
 
 # --------------------------------------------------------------------------- #

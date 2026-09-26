@@ -2491,11 +2491,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if len(action_links):
         msg += "\n"
 
-    # Round 3 W1 (owner hand test on PR #833, "line by line ... vertical, don't use |"): a
-    # counted-set row is a block read top to bottom. Line 1 is the product's own name,
-    # then one "*Label:* value" line per field: the code, the key specs the header does
-    # not already say, then the tool's own fields. The name and specs come from the
-    # resolver (`predicate.row_labels`, keyed by product code).
+    # A counted-set row (`set_row_text`): the product's name with its code, then the
+    # one or two facts the ask was about. The name comes from the resolver
+    # (`predicate.row_labels`, keyed by product code).
     set_predicate = ctx.get("predicate") if isinstance(ctx.get("predicate"), dict) else None
     set_row_labels = jsc.get(set_predicate, "row_labels") if set_predicate is not None else None
     set_row_labels = set_row_labels if isinstance(set_row_labels, dict) else None
@@ -2503,47 +2501,11 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # 11 to 50." over rows 11 to 50). Display only: a set answer mints no pick roster.
     set_row_offset = int(jsc.get(set_predicate, "offset") or 0) if set_predicate is not None else 0
 
-    def _set_item_block(position: int, it: Any) -> str:
-        fields = [f for f in (jsc.get(it, "fields") or []) if isinstance(f, dict)]
-        # The attachments presenter leaves "Product Code" unkeyed; the stock one keys it.
-        code_field = next(
-            (
-                f
-                for f in fields
-                if jsc.js_string(f.get("key") or "") == "product_code"
-                or (not f.get("key") and jsc.js_string(f.get("label") or "") == "Product Code")
-            ),
-            None,
-        )
-        code = jsc.nullish_str(code_field.get("value") if code_field else jsc.get(it, "title")).strip()
-        described = set_row_labels.get(code) if set_row_labels else None
-        described = described if isinstance(described, dict) else {}
-        name = jsc.js_string(described.get("name") or "").strip() or code
-        lines = [f"{position}. {name}"]
-        if code:
-            lines.append(f"*Product Code:* {code}")
-        for spec in jsc.array(described.get("specs")):
-            label = jsc.js_string(jsc.get(spec, "label") or "").strip()
-            value = jsc.js_string(jsc.get(spec, "value") or "").strip()
-            if label and value:
-                lines.append(f"*{label}:* {value}")
-        for f in fields:
-            if f is code_field:
-                continue
-            # The name line already says it.
-            if jsc.js_string(f.get("label") or "") == "Product Name" and _fmt_value(f.get("value")) == name:
-                continue
-            lines.append(f"*{jsc.js_string(f.get('label', jsc.UNDEFINED))}:* {_fmt_value(f.get('value'))}")
-        flags = jsc.get(it, "flags")
-        if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "discontinued")):
-            lines.append("⚠️ *(PRODUCT DISCONTINUED)*")
-        if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "expired")):
-            lines.append("⚠️ *(EXPIRED)*")
-        return "\n".join(lines)
+    set_require = (jsc.get(set_predicate, "require") or {}) if set_predicate is not None else {}
 
     def _item_line(position: int, it: Any) -> str:
         if set_row_labels is not None:
-            return _set_item_block(position, it)
+            return set_row_text(position, it, set_row_labels, require=set_require)
         field_lines = "\n".join(
             f"*{jsc.js_string(jsc.get(f, 'label', jsc.UNDEFINED))}:* "
             f"{_fmt_value(jsc.get(f, 'value'))}"
@@ -2808,3 +2770,101 @@ def fetch_result(
     if isinstance(j.get("error"), str):
         return {**j, "_fetch_arm": "error"}
     return {**j, "tool": tool, "tier_probe": tier_probe, "_fetch_arm": "result"}
+
+
+# --------------------------------------------------------------------------- #
+# counted-set rows
+# --------------------------------------------------------------------------- #
+
+#: The facts a counted-set row shows per ask (owner console test of round 3 on PR #833,
+#: R3: "one product is at most 2 lines: name with code, then the one or two facts the ask
+#: was about; details on request"). Matched on the field's key first, then its label.
+_SET_ROW_FACTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "stock": (("total_on_hand", "Total"), ("total", "Total")),
+    "certificate": (("certificate_number", "Certificate Number"), ("valid_until", "Valid Until")),
+    "attachment_type": (
+        ("certificate_number", "Certificate Number"),
+        ("valid_until", "Valid Until"),
+        ("file_name", "File Name"),
+    ),
+    "incoming": (
+        ("remaining_incoming_quantity", "Incoming Quantity"),
+        ("estimated_arrival_date", "Estimated Arrival Date"),
+        ("eta", "ETA"),
+    ),
+    "promotion": (("promotion", "Promotion"), ("end_date", "End Date")),
+}
+_SET_ROW_FACTS_MAX = 2
+
+
+def _set_row_code_field(fields: list[dict[str, Any]]) -> dict[str, Any] | None:
+    # The attachments presenter leaves "Product Code" unkeyed; the stock one keys it.
+    return next(
+        (
+            f
+            for f in fields
+            if jsc.js_string(f.get("key") or "") == "product_code"
+            or (not f.get("key") and jsc.js_string(f.get("label") or "") == "Product Code")
+        ),
+        None,
+    )
+
+
+def set_row_text(position: int, it: Any, labels: dict[str, Any] | None, *, require: Any = None) -> str:
+    """One counted-set row, at most two lines (owner console test of round 3 on PR #833,
+    R3; round 3 W1's 5 to 8 line block came out "so many" for "10"):
+
+        3. Sorento Counter Basin (SRTWB123)
+        *Total:* 10
+
+    Line 1 is the product's name with its code; line 2 is the one or two facts the ask
+    was about (`_SET_ROW_FACTS`, by the set's `require` legs), bold labels, no "|". Specs
+    and per-location lines are details on request."""
+    fields = [f for f in (jsc.get(it, "fields") or []) if isinstance(f, dict)]
+    code_field = _set_row_code_field(fields)
+    code = jsc.nullish_str(code_field.get("value") if code_field else jsc.get(it, "title")).strip()
+    described = (labels or {}).get(code) if code else None
+    described = described if isinstance(described, dict) else {}
+    name = jsc.js_string(described.get("name") or "").strip() or code
+    first = f"{position}. {name} ({code})" if code and name != code else f"{position}. {name}"
+    flags = jsc.get(it, "flags")
+    if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "discontinued")):
+        first += " *(Discontinued)*"
+
+    wanted: list[tuple[str, str]] = []
+    for leg in (require or {}) if isinstance(require, dict) else ():
+        for pair in _SET_ROW_FACTS.get(leg, ()):
+            if pair not in wanted:
+                wanted.append(pair)
+    facts: list[str] = []
+    seen_labels: set[str] = set()
+    for key, label in wanted:
+        field = next(
+            (f for f in fields if jsc.js_string(f.get("key") or "") == key),
+            None,
+        ) or next(
+            (f for f in fields if not f.get("key") and jsc.js_string(f.get("label") or "") == label),
+            None,
+        )
+        if field is None:
+            continue
+        shown_label = jsc.js_string(field.get("label") or label)
+        if shown_label in seen_labels:
+            continue
+        seen_labels.add(shown_label)
+        # A fact the ask was about is said even when blank ("Valid Until: not recorded").
+        value = field.get("value")
+        shown = "not recorded" if value in (None, "") else _fmt_value(value)
+        facts.append(f"*{shown_label}:* {shown}")
+        if len(facts) >= _SET_ROW_FACTS_MAX:
+            break
+    if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "expired")):
+        facts.append("*(Expired)*")
+    return first if not facts else f"{first}\n{', '.join(facts)}"
+
+
+def set_rows_text(items: Any, labels: dict[str, Any] | None, *, require: Any = None, offset: int = 0) -> str:
+    """Every row of a counted-set page (`set_row_text`), a blank line between products."""
+    return "\n\n".join(
+        set_row_text(offset + i + 1, it, labels, require=require) for i, it in enumerate(jsc.array(items))
+    )

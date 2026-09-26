@@ -122,11 +122,12 @@ class Brand(Base, CompanyScopedMixin):
     # whatever the toggle state. Default true so nothing changes until an admin
     # flips a brand.
     flows_to_purchasing = Column(Boolean, nullable=False, default=True, server_default=text("true"))
-    # Owner brief W5 on PR #833: the brand the chatbot answers first when a customer names
-    # no brand ("which wash basin has stock" -> the default brand's set, then the other
-    # brands' counts). One per company, enforced by `BrandService`. Seeded to Sorento by
-    # migration bcd_0001; edited on Master Data > Brands.
-    is_chatbot_default = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    # Owner console test of round 3 on PR #833 (R1, 27 Sep 2026): brand preference is a
+    # weight, not a switch. When a customer names no brand, a counted set answers the
+    # highest weighted brand it reaches (weight > 0) and names the other brands in weight
+    # order. 0 = no preference. Seeded to Sorento 1.5 by migration bcw_0001; edited on
+    # Master Data > Brands.
+    chatbot_weight = Column(Numeric(6, 2), nullable=False, default=0, server_default=text("0"))
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)

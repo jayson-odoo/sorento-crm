@@ -594,7 +594,17 @@ def _split_class_tail(db: Session, scope_terms: list[str] | None) -> list[str] |
                 out.extend([head, tail])
                 break
         else:
-            out.append(term)
+            # Round 4 R2 (owner console exchange 3): the class word FIRST, the spec after
+            # it ("water closet p trap"), read the same way, so the header keeps its
+            # "Product type" line.
+            for i in range(len(words) - 1, 0, -1):
+                head = " ".join(words[:i])
+                tail = " ".join(words[i:])
+                if resolve_classes_for_term(db, head) and resolve_terms_to_specs(db, [tail]):
+                    out.extend([head, tail])
+                    break
+            else:
+                out.append(term)
     return out
 
 
@@ -893,34 +903,31 @@ def resolve_product_set(
             )
         return query
 
-    # W5 (owner brief on PR #833): a customer who names no brand gets the company's
-    # chatbot default brand (`Brand.is_chatbot_default`, Master Data > Brands) first, and
-    # the other brands' counts beside it. A default the set does not reach at all leaves
-    # the set whole; a brand the customer named always wins.
+    # R1 (owner console test of round 3 on PR #833): brand preference is a weight per brand
+    # (`Brand.chatbot_weight`, Master Data > Brands). A customer who names no brand gets
+    # the highest weighted brand (weight > 0) that the set reaches, and the other brands'
+    # counts in weight order beside it. With no weighted brand in the set, the set stays
+    # whole; a brand the customer named always wins.
     other_brands: list[dict[str, Any]] = []
     if prefer_default_brand and not brand:
-        default_row = (
-            db.query(Brand)
-            .filter(Brand.is_chatbot_default.is_(True), Brand.is_active.is_(True))
-            .order_by(Brand.brand_name)
-            .first()
+        per_brand = (
+            _base(db.query(Brand.brand_name, Brand.chatbot_weight, func.count(func.distinct(family))))
+            .join(Brand, Brand.id == Product.brand_id)
+            .filter(Brand.is_active.is_(True))
+            .group_by(Brand.brand_name, Brand.chatbot_weight)
+            .all()
         )
-        if default_row is not None:
-            per_brand = (
-                _base(db.query(Brand.brand_name, func.count(func.distinct(family))))
-                .join(Brand, Brand.id == Product.brand_id)
-                .group_by(Brand.brand_name)
-                .all()
-            )
-            counts = {name: int(n) for name, n in per_brand if n}
-            if counts.get(default_row.brand_name):
-                brand = default_row.brand_name
-                brand_is_default = True
-                other_brands = [
-                    {"brand": _display_name(name), "count": n}
-                    for name, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
-                    if name != default_row.brand_name
-                ]
+        ranked: dict[str, tuple[float, int]] = {}
+        for name, weight, n in per_brand:
+            if not n:
+                continue
+            w, c = ranked.get(name, (0.0, 0))
+            ranked[name] = (max(w, float(weight or 0)), c + int(n))
+        ordered = sorted(ranked.items(), key=lambda kv: (-kv[1][0], -kv[1][1], kv[0]))
+        if ordered and ordered[0][1][0] > 0:
+            brand = ordered[0][0]
+            brand_is_default = True
+            other_brands = [{"brand": _display_name(name), "count": c} for name, (_w, c) in ordered[1:]]
 
     qualifying_total = _base(db.query(func.count(func.distinct(family)))).scalar() or 0
 

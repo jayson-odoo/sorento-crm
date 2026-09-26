@@ -72,8 +72,7 @@ def world(session_factory):
     from app.models.product import Brand
 
     db = session_factory()
-    if hasattr(Brand, "is_chatbot_default"):
-        db.query(Brand).update({Brand.is_chatbot_default: False})
+    db.query(Brand).update({Brand.chatbot_weight: 0})
     _category_id, uom_id = _seed_category_and_uom(db)
     wc_category = _class_category(db, "WC")
     basin_category = _class_category(db, "WB")

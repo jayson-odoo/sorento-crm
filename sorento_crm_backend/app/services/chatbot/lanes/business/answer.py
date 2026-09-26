@@ -2588,16 +2588,24 @@ SET_LIST_MAX = 50
 
 
 def describe_set_line(description: Any) -> str:
-    """"Brand: Sorento, Product type: Wash basin, Mounting: Wall hung" - the resolver's
-    own labelled bindings (`product_predicate_service.describe_set`), or "" when the set
-    was described by nothing it could name (owner brief W2 on PR #833)."""
+    """The resolver's own labelled bindings (`product_predicate_service.describe_set`),
+    one filter per line with the label bold, or "" when the set was described by nothing
+    it could name (owner brief W2 on PR #833):
+
+        *Brand:* Sorento
+        *Product type:* Wash basin
+        *Mounting:* Wall hung
+
+    Owner console test of round 3 (R2, 27 Sep 2026): "Brand, product type needs to be
+    line by line, label needs to be bold". Bold is WhatsApp's own `*...*` markup, the
+    contract the console renders (#1279)."""
     parts = []
     for entry in jsc.array(description):
         label = jsc.js_string(jsc.get(entry, "label") or "").strip()
         value = jsc.js_string(jsc.get(entry, "value") or "").strip()
         if label and value:
-            parts.append(f"{label}: {value}")
-    return ", ".join(parts)
+            parts.append(f"*{label}:* {value}")
+    return "\n".join(parts)
 
 
 def not_understood_line(words: Any) -> str:
@@ -2638,10 +2646,11 @@ def build_set_header(
     """
     verb = "has" if qualifying_total == 1 else "have"
     header = f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}."
-    # W2: what the set was identified as leads the line, in plain words.
+    # W2: what the set was identified as leads, in plain words; R2: one line per filter,
+    # then the count on its own line.
     described = describe_set_line(description)
     if described:
-        header = f"{described}. {header}"
+        header = f"{described}\n{header}"
     missed = not_understood_line(not_understood)
     if missed:
         header += f" {missed}"
