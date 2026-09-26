@@ -8,6 +8,7 @@ import { isSuperadminUser } from '@/lib/is-superadmin';
 import { MENU_SIDEBAR } from '@/config/menu.config';
 import { injectPublishedWorkflowForms } from '@/config/workflow-forms-dynamic-menu';
 import { MenuConfig, MenuItem } from '@/config/types';
+import { filterMenuByModule } from '@/lib/menu-module-filter';
 import { usePublishedWorkflowDefinitionsForSubmissionQuery } from '@/app/(protected)/workflow-forms-management/hooks/useWorkflowForms';
 import { cn } from '@/lib/utils';
 import { collectMenuPaths, matchesMenuPath } from '@/lib/menu-path-match';
@@ -69,27 +70,6 @@ function filterMenuBySuperadmin(items: MenuConfig, isSuperadmin: boolean | null)
         ? { ...item, children: filterMenuBySuperadmin(item.children, isSuperadmin) }
         : item,
     );
-}
-
-/** Hide menu branches tied to disabled tenant modules (null = still loading / error - show all). */
-function filterMenuByModule(items: MenuConfig, enabledModuleKeys: Set<string> | null): MenuConfig {
-  if (!enabledModuleKeys) return items;
-  return items
-    .filter((item: MenuItem) => {
-      if (item.heading) return true;
-      if (item.moduleKey && !enabledModuleKeys.has(item.moduleKey)) return false;
-      if (item.children?.length) {
-        const filtered = filterMenuByModule(item.children, enabledModuleKeys);
-        return filtered.length > 0;
-      }
-      return true;
-    })
-    .map((item: MenuItem) => {
-      if (item.children?.length) {
-        return { ...item, children: filterMenuByModule(item.children, enabledModuleKeys) };
-      }
-      return item;
-    });
 }
 
 /** Drop heading items that have no non-heading items following them before the next heading or end of list. */
