@@ -1,7 +1,8 @@
 # PLAN: In-app Excel preview, low stock report first
 
-Status: grilled, owner answers folded in (26 Sep 2026, section 0). S1 in build on its own lane
-branch; S2 and S3 not started. Track: full (new read route, a new automation trigger, a shared
+Status: grilled, owner answers folded in (26 Sep 2026, section 0). S1 built on branch
+`claude/low-stock-report-preview-s1-co31pg`, in review (evidence: `evidence/excel-preview-s1/`);
+S2 and S3 not started. Track: full (new read route, a new automation trigger, a shared
 viewer across about 12 sites; well over 300 lines). No migration, no new permission, no new
 ingest surface.
 UAC: `excel-preview-26sep-acceptance-criteria.md` (same folder)
@@ -227,11 +228,12 @@ first and again on 0.20.3.
 groups again in `low_stock_preview` (:347). Refactor into ONE model builder the workbook renders:
 
 ```python
-def build_low_stock_model(db, *, run_id, include_supplier=True, split="none",
-                          suppliers=None, categories=None) -> dict:
-    # {as_of, columns, rows: [tuple], sheets: [(title, [row index])],
-    #  facets: {suppliers: [(key, rows, low)], categories: [...]},
-    #  counts: {rows, low, sheets}, over_cap, filename}
+def build_low_stock_view(db, *, run_id, include_supplier=True, split="supplier_category",
+                         suppliers=None, categories=None) -> dict:
+    # {run: {run_id, as_of}, split, columns, rows: [tuple],
+    #  sheets: [{title, row_indexes, low}],
+    #  facets: {suppliers: [{key, rows, low}], categories: [...]},
+    #  counts: {rows, low, sheets}, over_cap, max_rows, filename}
 ```
 
 - Filters apply to `frozen["all_rows"]` before the split, on the SAME key callables the split
@@ -302,7 +304,7 @@ knows the run:
 - `_handler_scm_reorder_run` (`task_scheduler.py:411`), after the run is funded, calls
   `low_stock_report_service.dispatch_ready(db, run_id)`: builds the counts off the same model
   builder and dispatches ONE match with context
-  `report: {link, as_of, date_label, low, rows, run_label}`, where `link` is
+  `report: {link, as_of, date_label, low, rows}`, where `link` is
   `<FRONTEND_BASE_URL>/scm/low-stock-report/<run_id>` (the in-system page; the deep-link-after-
   login layout brings a signed-out reader back to it). Best effort: caught and logged, never
   fails the run.

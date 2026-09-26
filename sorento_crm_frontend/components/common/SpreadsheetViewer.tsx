@@ -135,7 +135,7 @@ export function SpreadsheetViewer({
   return (
     <div className={cn('flex min-w-0 flex-col', className)} data-slot="spreadsheet-viewer">
       <Tabs value={sheet.title} onValueChange={select} className="min-w-0">
-        <TabsList variant="line" size="sm" className="px-2">
+        <TabsList variant="line" size="sm" className="px-2" aria-label="Sheets">
           {sheets.map((s) => (
             <TabsTrigger key={s.title} value={s.title}>
               {s.flagged ? (

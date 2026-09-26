@@ -177,7 +177,11 @@ export function LowStockReportView({ runId }: { runId?: string }) {
 
       <Card className="min-w-0 overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">
-          <Tabs value={split} onValueChange={(value) => setSplit(value as ExportSplit)}>
+          <Tabs
+            value={split}
+            onValueChange={(value) => setSplit(value as ExportSplit)}
+            className="min-w-0 max-w-full"
+          >
             <TabsList variant="default" size="sm" aria-label="Split into sheets">
               {SPLITS.map((option) => (
                 <TabsTrigger key={option.value} value={option.value}>
