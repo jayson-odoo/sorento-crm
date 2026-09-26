@@ -7,13 +7,11 @@ this plan and the UAC disagree, the UAC wins). **Review:** `UX-REVIEW-product-sp
 **Rule appendix:** `rule-engine-built-in-rules.md` (every built-in rule in the new form).
 **Mockups:** `mockups/`.
 **Classification:** CORE, schema `public`. No new table, no new permission.
-**Status:** DRAFT, round 4, 27 Sep 2026. Planned, not built. Round 1 owner rulings, the
-round 3 Lavish mockup rulings and the round 4 Lavish notes applied (the three rulings sections
-below, and section 8). Plan text accepted by the owner ("ok this is fine"); mockups 02 and 03
-accepted as they are. Q8 is answered (no re-read concept on any screen). Waiting on the owner for Q3 and Q11 (answered in PR #1290 comment 5847720339), and
-for confirmation of Q7, Q9 and Q10, which stay on the recommendation. **Track: full** (one lane,
-expected diff well over 300 lines, two data migrations: the Brand specification removal and the
-rule conversion).
+**Status:** IN REVIEW on PR #1302 (27 Sep 2026), not merged. **Track: full.** Slices S0
+to S3 landed on one lane branch; open questions Q3, Q7, Q9, Q10, Q11 and Q13 were built to the
+plan's recommendation and are listed under "Rulings assumed" in the PR body. Planning history:
+DRAFT round 4, 27 Sep 2026; round 1 owner rulings, the round 3 Lavish mockup rulings and the
+round 4 Lavish notes applied (the three rulings sections below, and section 8).
 **Alignment page:** `alignment-product-specs-27sep.html` (owner review surface in Lavish; it
 restates this plan and must not contradict it).
 **Lane:** one lane, one branch, one PR; slices land as commits on it (lane merge discipline,
