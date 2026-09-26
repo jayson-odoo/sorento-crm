@@ -1,6 +1,6 @@
 # PLAN: attribute-first asks, "which products have X", across every product and domain
 
-Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged, revive repairs R35 to R38 and owner ruling R39 (no paging) built, reviewer pass fix round done; owner hand test round 2 (W1 to W6: brand binding, plain-words header, readable rows, paging keeps the set, chatbot default brand, water basin) built tester first; owner hand test of round 2 (round 3, W1 to W6: vertical rows, a count after a page continues, a new class word starts a new set, no "(default)", brand scope proven) built red first; owner console test of round 3 (round 4, R1 to R7: brand weights, line-by-line header, two-line rows, a miss says what it searched, the clarify answer reruns the ask, unknown values said back, plain words) built red first; reviewer pass at d6fa2b31 (round 5: B1 R6 fires only on a value-position word, S1 list values in the near miss, S2 one display helper, S3 serial_ddl, N1 to N4) fixed red first; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
+Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged, revive repairs R35 to R38 and owner ruling R39 (no paging) built, reviewer pass fix round done; owner hand test round 2 (W1 to W6: brand binding, plain-words header, readable rows, paging keeps the set, chatbot default brand, water basin) built tester first; owner hand test of round 2 (round 3, W1 to W6: vertical rows, a count after a page continues, a new class word starts a new set, no "(default)", brand scope proven) built red first; owner console test of round 3 (round 4, R1 to R7: brand weights, line-by-line header, two-line rows, a miss says what it searched, the clarify answer reruns the ask, unknown values said back, plain words) built red first; reviewer pass at d6fa2b31 (round 5: B1 R6 fires only on a value-position word, S1 list values in the near miss, S2 one display helper, S3 serial_ddl, N1 to N4) fixed red first; reviewer pass at 34cb4697 (round 6: B1-r5 whole-word product name match, N-r5-1 to N-r5-3) fixed red first; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
 Test report: `attribute-first-asks-test-report.md`.
 UAC: `attribute-first-asks-acceptance-criteria.md`.
 Supersedes: `documentation/plans/_archive/chatbot/PLAN-spec-backward-search.md` (its backend half
@@ -491,6 +491,18 @@ reading of each turn is inferred from the reply the owner saw; the fixture says 
 - N3: chatbot weight is bounded 0 to 9999 on the dialog (zod `.max(9999)`, input `min`/`max`,
   `noValidate` so the zod message shows) and on the record page (input `max`, Save disabled).
 - N4: MCP presenter test for `display_value`.
+
+## Reviewer pass at 34cb4697, 26 Sep 2026 (round 6, B1-r5, N-r5-1 to N-r5-3)
+
+- B1-r5 (AC-1376 amended): `_names_a_product` matches the phrase as whole words
+  (`~* '\m<phrase>\M'` on name and description), not as a substring. "Basket Trap", "Outlet
+  trap" and "Bucket trap" no longer name "t trap", so the owner's exchange 8 stays exact
+  whatever else the catalogue holds; a product called "... T Trap ..." still does.
+- N-r5-1: the brand record page shows "Enter 0 or more" / "Enter 9999 or less" under the weight
+  input, the dialog's own words, beside the disabled Save.
+- N-r5-2 (AC-1374 amended): the near miss lower-cases a value word by word and keeps an all-caps
+  word or a `SPEC_ACRONYMS` word ("No PVC pipe wash basins", "No LED white ...").
+- N-r5-3: the console yaml sends all six reviewer phrases and each refuses any "I don't know".
 
 ## Definition of done
 

@@ -444,7 +444,8 @@ fallback on; parser and MCP stubbed), which also replays the owner's eight excha
   Would you like me to escalate to purchasing team?"; with none in any value, "No bathtubs have
   a certificate in any finish or colour." AMENDED 26 Sep 2026 (reviewer pass at d6fa2b31, S1): a
   product carrying two values (a dual finish) is listed under each and counted once in the total;
-  an acronym value keeps its capitals ("No PVC wash basins", N2).
+  an acronym value keeps its capitals ("No PVC wash basins", N2). AMENDED 26 Sep 2026 (reviewer
+  pass at 34cb4697, N-r5-2): word by word, so "PVC pipe" reads "No PVC pipe wash basins".
 - AC-1375 (R5, owner ruling 27 Sep 2026) The answer to "I don't know 'water tap basin' as a
   product type. Did you mean tap or wash basin?" that is one of the options re-runs the original
   ask with that word: "tap" answers "2 taps have stock." with the list, never a code search. A
@@ -458,7 +459,10 @@ fallback on; parser and MCP stubbed), which also replays the owner's eight excha
   single-letter values, or a one-edit slip of a known value word) and the phrase must be no
   product's name or description; a plain product word before a head word ("deck mounted bath
   mixer", "long spout basin tap", "ceiling mounted shower", "rain shower ceiling mount", "grease
-  trap", "click clack waste") is searched, never said back.
+  trap", "click clack waste") is searched, never said back. AMENDED 26 Sep 2026 (reviewer pass
+  at 34cb4697, B1-r5): a product names the phrase only as whole words; a product called "Floor
+  Waste With Basket Trap" does not name "t trap", and exchange 8 still answers exactly "I don't
+  know 't trap' as a trap. I know P trap and S trap." beside it.
 - AC-1377 (R7, owner ruling 27 Sep 2026) Every value a reply shows is plain words: the registry's
   `value_labels`, else the stored slug in sentence case ("cold_only" -> "Cold only", "s_trap" ->
   "S trap", "pp" -> "PP"). Every enum value in the registry seed reads without "_". The product

@@ -269,6 +269,33 @@ MCP `tests/test_presenters.py` 117 passed. py3.12 compile on the touched .py fil
 0 hits, 1 alembic head (`bcw_0001_brand_chatbot_weight`). Live parser: not run (no parser key on
 this VM); the console yaml carries three round 5 B1 cases.
 
+## Round 6: reviewer pass at 34cb4697 (26 Sep 2026), B1-r5, N-r5-1 to N-r5-3
+
+New tests: `tests/chatbot/test_attribute_asks_round6.py` (17) and one case in
+`[id]/page.chatbotWeight.test.tsx`. Red commit `bdc52cca6`: 12 of 17 backend red on 34cb4697e
+code (B1-r5 x4, the reviewer's "Basket Trap" reproduction included; N-r5-2 x2; N-r5-3 x6), the
+5 green are guards ("T Trap" and "Q TRAP" as whole words still name a product; "PVC", "Matt
+black" and "Gunmetal" read as before); vitest 1 red.
+
+Kill tests (one mutation each, restored after): 9 of 9 RED.
+
+| Kill | Mutation | Result |
+|---|---|---|
+| KB1r5a | back to the substring ILIKE (`%t trap%`) | RED, 4 |
+| KB1r5b | leading `\m` dropped | RED, 4 |
+| KB1r5c | description branch dropped | RED, 1 |
+| KB1r5d | regex fed to ILIKE | RED, 2 |
+| KN2 | whole value lower-cased unless all capitals (round 5 code) | RED, 2 |
+| KN3a | "any grease trap" case back to its one exact phrase | RED, 1 |
+| KN3b | "any click clack waste" case missing | RED, 1 |
+| KN1a | record page message not rendered | RED, 1 |
+| KN1b | record page upper bound wrong | RED, 1 |
+
+Gates (same flags as round 5): `tests/chatbot` plus the same touched files, 3271 passed, 214
+skipped, 33 xfailed, 0 failed. Brands vitest 31 passed. py3.12 compile ok, dash guard 0 hits,
+1 alembic head (`bcw_0001_brand_chatbot_weight`). Live parser: not run (no parser key on this
+VM); the console yaml now sends all six reviewer phrases.
+
 ## Deviations
 
 - Phase 1 skipped by design: no UI surface. The lavish review page stands in for the mock.
