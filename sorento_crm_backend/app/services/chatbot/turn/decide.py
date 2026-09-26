@@ -409,6 +409,26 @@ def backward_reference(verdict: dict[str, Any]) -> bool:
     return isinstance(anaphora, dict) and anaphora.get("backward_reference") is True
 
 
+def _outstanding_domain_mismatch(pending: Pending | None, verdict: dict[str, Any]) -> bool:
+    """#1262 slice 4 (F3): does THIS message's own `domain_hint` name a domain that
+    disagrees with the open OUTSTANDING offer's stored one (`pending.payload
+    ["domain"]`)? Read purely off the parser's own fields against the pending's own
+    stored field - never a word list, never a text match (the same "read the
+    parser's own output" discipline `domain_in_message`/`backward_reference` above
+    already follow). A photo read as an incoming ask (`domain_hint: "incoming"`)
+    under an open ORDER-domain offer is the mismatch this exists for; a null
+    `domain_hint` (the ordinary refining turn, which names no domain at all) or one
+    equal to the offer's own domain is not.
+    """
+    if pending is None or pending.kind not in OUTSTANDING_KINDS:
+        return False
+    domain_hint = verdict.get("domain_hint")
+    if not isinstance(domain_hint, str) or not domain_hint:
+        return False
+    offer_domain = pending.payload.get("domain")
+    return isinstance(offer_domain, str) and bool(offer_domain) and domain_hint != offer_domain
+
+
 def _subject_reading(
     verdict: dict[str, Any],
     focus: Focus,
@@ -475,6 +495,19 @@ def _subject_reading(
             )
         return Decision(NEW_ASK, "domain_in_message", entities=named, window=window, **facts)
     if in_message is False and entities:
+        if _outstanding_domain_mismatch(pending, verdict):
+            # #1262 slice 4 (F3), AC-S4-1: this message DID name an entity, but the
+            # parser's own `domain_hint` says it is about a DIFFERENT domain than the
+            # open outstanding offer's - read as NEW_ASK (the plan's own words,
+            # "else NEW_ASK"), the SAME reading a message naming its own entity on
+            # the standing subject's own domain already gets (`_answer_outstanding`
+            # drops the question rather than mis-resolving it). A photo read as
+            # "X5: M210-GM" under an open ORDER-domain offer is this row's own case:
+            # no domain WORD (`domain_in_message: false`), but the parser still knows
+            # it is an incoming ask.
+            return Decision(
+                NEW_ASK, "names_its_own_entity", entities=named, window=window, **facts
+            )
         return Decision(
             REFINE,
             "refines_standing_subject",
@@ -483,6 +516,14 @@ def _subject_reading(
             scope=_stored_scope(pending),
             **facts,
         )
+    if in_message is True and not entities and _outstanding_domain_mismatch(pending, verdict):
+        # #1262 slice 4 (F3), AC-S4-2, owner ruling (hand pass 3, T6 half): "got eta"
+        # names ANOTHER domain of its own, with no entity at all - the table's row 2
+        # ("true, no -> a domain switch over the standing subject") is exactly this
+        # shape, and closing the offer is what stops three more turns replaying its
+        # poisoned filters (`_answer_outstanding`'s own NEW_ASK arm reads this same
+        # `why` and drops the question).
+        return Decision(NEW_ASK, "domain_switch", entities=named, window=window, **facts)
     if pending is not None and (entities or window) and _keeps_subject(verdict, pending, entities):
         return Decision(
             REFINE,

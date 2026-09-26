@@ -494,7 +494,13 @@ def _answer_outstanding(
         trace.outstanding = {"kind": pending.kind, "scope": decision.scope, "detail": None}
         return focus, pending, None, True
 
-    if decision.kind == NEW_ASK and decision.why == "names_its_own_entity":
+    if decision.kind == NEW_ASK and decision.why in (
+        "names_its_own_entity",
+        # #1262 slice 4 (F3), AC-S4-2: `decide()`'s own T6-half reading - a message
+        # naming ANOTHER domain, no entity at all, closes the offer exactly like a
+        # message that names its own entity does (owner ruling, hand pass 3 T6 half).
+        "domain_switch",
+    ):
         trace.rules_fired.append("outstanding_pending_dropped")
         _drop_question_subject(focus, pending)
         return focus, None, None, False
