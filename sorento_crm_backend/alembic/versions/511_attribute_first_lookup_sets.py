@@ -1,7 +1,7 @@
 """Two empty lookup sets for attribute-first asks: certificate_scheme, attachment_type_alias
 
 Revision ID: 511_attribute_first_lookup_sets
-Revises: sb2_stock_pair_unique
+Revises: sb3_company_stock_push_at
 Create Date: 2026-09-10
 
 D3, PLAN-attribute-first-asks.md. NO options here by owner decision (10 Sep 2026:
@@ -28,7 +28,7 @@ import sqlalchemy as sa
 
 
 revision = "511_attribute_first_lookup_sets"
-down_revision = "sb2_stock_pair_unique"
+down_revision = "sb3_company_stock_push_at"
 branch_labels = None
 depends_on = None
 
