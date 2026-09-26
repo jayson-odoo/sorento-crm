@@ -107,3 +107,4 @@ def test_bench_export(db, split):  # noqa: F811
         view_t, payload = _best(lambda: view(db, run_id=run_id, split=split))
         print(f"BENCH view split={split} {view_t:.2f}s json={len(json.dumps(payload))} bytes")
 
+

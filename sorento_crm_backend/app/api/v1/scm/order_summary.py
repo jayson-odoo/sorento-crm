@@ -25,7 +25,7 @@ the caller's name and the id never leaves the server.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy.orm import Session
@@ -33,13 +33,14 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.download import DownloadResponse
+from app.schemas.export_split import ExportSplit
 from app.services.download_service import DownloadService
 from app.services.error_handler import AppException
 from app.services.uuid_path_param import validate_uuid_path
 from app.schemas.scm_order_summary import (
     KeyedStatusIn,
     KeyedStatusOut,
-    LowStockPreviewOut,
+    LowStockViewOut,
     OrderSummaryDecisionIn,
     OrderSummaryDecisionOut,
     OrderSummaryDemandDrillOut,
@@ -145,6 +146,13 @@ def export_order_summary(
             status_code=422,
             message="split applies to the low stock report only",
         )
+    # PLAN-excel-preview-26sep AC-6: the page's supplier / category filters, the same rule
+    # as `split` above - refused on the other formats rather than silently ignored.
+    if (payload.suppliers or payload.categories) and fmt != LOW_STOCK_FORMAT:
+        raise AppException(
+            status_code=422,
+            message="filters apply to the low stock report only",
+        )
     if fmt == OI_WORKSHEET_FORMAT:
         # Fix round 1 (security review): the worksheet prints the OI worklist's own row
         # shape, so it needs the OI worklist's own view permission on top of
@@ -208,7 +216,17 @@ def export_order_summary(
             low_stock_report_service.MAX_LOW_STOCK_ROWS if fmt == LOW_STOCK_FORMAT
             else svc.MAX_EXPORT_ROWS
         )
-        if stats["row_count"] > cap:
+        # PLAN-excel-preview-26sep AC-7 (owner ruling 26 Sep, Q8): the low stock cap counts
+        # the rows the filters KEEP, so narrowing makes a big run exportable. The cheap
+        # count answers first; only a run over the cap WITH filters reads the run to count
+        # what they keep, so an unfiltered request stays one COUNT query.
+        over = stats["row_count"] > cap
+        if over and fmt == LOW_STOCK_FORMAT and (payload.suppliers or payload.categories):
+            over = low_stock_report_service.filtered_row_count(
+                db, stats["run_id"],
+                suppliers=payload.suppliers, categories=payload.categories,
+            ) > cap
+        if over:
             raise AppException(422, "Narrow the plan first")
 
     kind = (
@@ -275,6 +293,8 @@ def export_order_summary(
                 queue_name="imports",
                 job_timeout=600,
                 split=payload.split,
+                suppliers=payload.suppliers or None,
+                categories=payload.categories or None,
             )
         elif fmt == OI_WORKSHEET_FORMAT:
             enqueue_job(
@@ -307,27 +327,45 @@ def export_order_summary(
     return DownloadResponse.model_validate(DownloadService(db).get(str(download.id)))
 
 
-@router.get("/order-summary/low-stock-preview", response_model=LowStockPreviewOut)
-def get_low_stock_preview(
+@router.get("/order-summary/low-stock-view", response_model=LowStockViewOut)
+def get_low_stock_view(
     run_id: Optional[str] = Query(
         None,
         description=(
-            "Which plan's low stock report to preview. Omitted means the newest completed "
+            "Which plan's low stock report to show. Omitted means the newest completed "
             "plan. Opaque, and never rendered."
         ),
     ),
+    split: ExportSplit = Query(
+        low_stock_report_service.VIEW_DEFAULT_SPLIT,
+        description="How the workbook is split into sheets. Defaults to supplier and category.",
+    ),
+    supplier: Optional[List[str]] = Query(
+        None, description="Keep only these suppliers (repeat the parameter). 'No supplier' "
+                          "is the blank bucket.",
+    ),
+    category: Optional[List[str]] = Query(
+        None, description="Keep only these categories (repeat the parameter). 'No category' "
+                          "is the blank bucket.",
+    ),
     db: Session = Depends(get_db),
-    _user: dict = Depends(_VIEW),
+    _user: dict = Depends(_EXPORT),
 ):
-    """The split dialog's own courtesy read (R4, AC-15b): fired once when the dialog opens,
-    never on page load. Same visibility gate as the export itself - a named `run_id` is
-    validated as a UUID (404 on a malformed one, the same non-committal answer a genuinely-
-    absent run gets) before the report is ever read.
+    """The low stock report as the in-app page shows it (PLAN-excel-preview-26sep AC-1): the
+    workbook for one run, split and filtered, built by the SAME function that writes the
+    file (AC-2), so what the user sees is what Download gives them.
+
+    Same gate as the export itself (`scm.dashboard.view`, a real signed-in user, never an
+    API key): the report carries supplier names, PO and SPO numbers. A named `run_id` is
+    validated as a UUID and checked with the run visibility gate before anything is read,
+    so a malformed, absent or another company's run is the same 404.
     """
     if run_id:
         run_id = validate_uuid_path(run_id, resource="Reorder run")
         reorder_run_service.assert_run_visible(db, run_id)
-    return low_stock_report_service.low_stock_preview(db, run_id)
+    return low_stock_report_service.build_low_stock_view(
+        db, run_id=run_id, split=split, suppliers=supplier, categories=category,
+    )
 
 
 @router.get(

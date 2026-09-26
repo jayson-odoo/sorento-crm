@@ -16,7 +16,7 @@ import uuid
 from app.models.automation import Automation
 from app.models.email_template import EmailTemplate
 from app.models.notification import Notification
-from tests.scm.conftest import requires_pg
+from tests.scm.conftest import requires_pg, seed_user
 from tests.scm.test_low_stock_report import _product, _run, _summary_row
 from tests.scm.test_product_grain_summary import db  # noqa: F401
 
@@ -131,6 +131,9 @@ def test_automation_on_the_trigger_emails_its_own_recipients_the_link(db, monkey
 
     monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **k: None)
     run_id = _seed_run_with_rows(db)
+    # The engine authors the queued email as the rule's creator; a fresh CI database has
+    # no users at all, so the rule names one.
+    author_id = seed_user(db, "purchasing")
     template = EmailTemplate(
         id=str(uuid.uuid4()), code=f"tpl-lsrdy-{uuid.uuid4().hex[:6]}",
         name="Daily low stock", is_active=True, body_text=None,
@@ -145,6 +148,7 @@ def test_automation_on_the_trigger_emails_its_own_recipients_the_link(db, monkey
         email_template_id=str(template.id),
         recipient_config={"user_ids": [], "role_ids": [], "extra_emails": ["buyer@test.local"]},
         schedule_type="manual", run_time=None, timezone="Asia/Kuala_Lumpur",
+        created_by_user_id=author_id,
     )
     db.add(rule)
     db.flush()
