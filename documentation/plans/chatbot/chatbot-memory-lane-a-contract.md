@@ -88,7 +88,7 @@ Stored in `respond_contacts.chatbot_profile.facts`, one entry per key:
 | usual_brands | Usual brands | list of brand names, max 3 | tallied, stated, staff | SearchableMultiSelect |
 | usual_sites | Usual sites | list of warehouse names, max 3 | tallied, stated, staff | SearchableMultiSelect |
 | project | Project | str, max 60, newlines stripped | stated, staff | text |
-| about | About | list of str, max 3 entries, each max 200, newest first | stated, staff | text |
+| about | About | list of str, max 3 entries, each max 200, newest first (a staff save of one text replaces the list with that one entry) | stated, staff | text |
 | note | Note | str, max 200 | staff | text |
 
 - Precedence per key: staff > stated > crm > tallied. A stated write never replaces a staff
@@ -117,6 +117,7 @@ drops `chatbot_recall_enabled`. `chatbot_profile` in the body never touches `fac
 {
   "level": {"own": "full" | null, "effective": "full", "system_default": "off"},
   "facts": [{"key": "customer", "label": "Customer", "value": "Chin Chun Trading (CC001)",
+             "display": "Chin Chun Trading (CC001)",
              "source": "crm", "last_seen": null, "editable": false,
              "link": "/order-management/customers/<id>"}, ...],
   "vocabulary": [{"key": "role", "label": "Role", "kind": "choice" | "multi" | "text",
@@ -134,7 +135,8 @@ drops `chatbot_recall_enabled`. `chatbot_profile` in the body never touches `fac
 }
 ```
 
-`episodes.rows` is the newest 10. `open_orders.rows` the newest 5 open sales orders of the
+A fact's `value` is the stored raw value (`"ms"`, `["SRTWB1455"]`); `display` is the label the
+grid prints (`"Malay"`, `"SRTWB1455, M486-75-BL"`). `episodes.rows` is the newest 10. `open_orders.rows` the newest 5 open sales orders of the
 primary linked customer. Facts are ordered by the vocabulary order.
 
 `PUT /{id}/chatbot/facts/{key}` (`user_management.contacts.edit`), body `{"value": str | [str]}`:
@@ -180,8 +182,9 @@ chatbot parser row.
    about themselves is remembered"; it is validated like `project` (newlines stripped, printed
    quoted, length capped).
 5. Facts are learned only at a level other than `off`.
-6. One migration for the lane (S0) carries every schema change, the contact level column and
-   the usage-log turn id included.
+6. One schema migration for the lane (S0) carries every schema change, the contact level
+   column and the usage-log turn id included; S3 adds one more migration that only publishes
+   the new parser prompt version (label unmoved, the 487/513 precedent).
 7. The 25 Sep prod dump is not on this VM: digest goldens are built from synthetic turn rows in
    the recorded trace shape; the prod-copy goldens, the backfill run and the Q18 counts are
    posted as orchestrator steps.
