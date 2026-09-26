@@ -605,6 +605,7 @@ export function DeliveryScheduleReviewClient({
                 page={documentPage}
                 onPageChange={setDocumentPage}
                 className="flex-1"
+                documentLabel="Delivery schedule"
               />
             ) : (
               <DocumentEmptyState

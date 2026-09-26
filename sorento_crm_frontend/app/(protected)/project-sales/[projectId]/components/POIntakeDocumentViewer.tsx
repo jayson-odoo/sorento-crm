@@ -23,6 +23,7 @@ export function POIntakeDocumentViewer({
   page,
   onPageChange,
   className,
+  documentLabel = 'Purchase order',
 }: {
   documentUrl: string | null;
   /**
@@ -34,6 +35,8 @@ export function POIntakeDocumentViewer({
   page: number;
   onPageChange: (page: number) => void;
   className?: string;
+  /** What the file is, for the frame's accessible name: "Delivery schedule page 2". */
+  documentLabel?: string;
 }) {
   const total = pageCount && pageCount > 0 ? pageCount : 1;
   const current = Math.min(Math.max(page, 1), total);
@@ -94,7 +97,7 @@ export function POIntakeDocumentViewer({
         ) : kind === 'image' ? (
           <img
             src={source}
-            alt={`Purchase order page ${current}`}
+            alt={`${documentLabel} page ${current}`}
             className="h-full w-full rounded bg-white object-contain"
           />
         ) : (
@@ -107,7 +110,7 @@ export function POIntakeDocumentViewer({
           <iframe
             key={current}
             src={`${source}#page=${current}&view=FitH`}
-            title={`Purchase order page ${current}`}
+            title={`${documentLabel} page ${current}`}
             className="h-full w-full rounded border-0 bg-white"
           />
         )}

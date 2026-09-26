@@ -575,6 +575,8 @@ describe('DeliveryScheduleReviewClient Documents (S5-5)', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Documents' }));
     const panel = await screen.findByRole('tabpanel');
     expect(panel.querySelector('iframe, img, object, embed')).not.toBeNull();
+    // S2 (review of #1265): the shared viewer named every file a purchase order.
+    expect(panel.querySelector('iframe')).toHaveAttribute('title', 'Delivery schedule page 1');
     expect(within(panel).queryByRole('table')).toBeNull();
     expect(within(panel).queryByRole('grid')).toBeNull();
   });

@@ -626,6 +626,62 @@ def test_a_dismissal_survives_the_read_path_recompute(scenario):
     assert "own total" in (column["reason"] or "")
 
 
+def test_document_url_is_none_when_the_schedule_file_cannot_be_shown(scenario, monkeypatch):
+    """S2 (review of #1265, R13): the Documents tab shows "This PDF is not available yet" only
+    on a falsy document_url. An attachment ROW can outlive its OBJECT, and a URL signed for
+    a missing object (or the raw path handed back when signing fails) lands in an iframe as
+    the storage error page. Same gate as the PO screen (#1237 B1): the object must exist and
+    the URL must actually be signed."""
+    from app.models.resources import Attachment
+    from app.services import storage_router
+
+    db = scenario["db"]
+    version = scenario["version"]
+    attachment = Attachment(
+        original_filename="schedule.pdf",
+        stored_filename="schedule.pdf",
+        file_path=f"project-schedule/{version.id}/schedule.pdf",
+        entity_type="delivery_schedule_version",
+        entity_id=version.id,
+        storage_provider="s3",
+    )
+    db.add(attachment)
+    db.flush()
+    version.attachment_id = attachment.id
+    db.flush()
+
+    class _FakeBackend:
+        def __init__(self, exists: bool, signs: bool = True):
+            self._exists = exists
+            self._signs = signs
+
+        def file_exists(self, key):
+            return self._exists
+
+        def get_signed_url(self, key, expires_in=3600):
+            if not self._signs:
+                raise RuntimeError("no credentials")
+            return f"https://signed.example/{key}"
+
+    service = ProjectScheduleService(db)
+
+    storage_router.clear_signed_url_cache()
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: _FakeBackend(False))
+    assert service.document_url(version) is None
+
+    storage_router.clear_signed_url_cache()
+    monkeypatch.setattr(
+        storage_router, "get_backend", lambda provider: _FakeBackend(True, signs=False)
+    )
+    assert service.document_url(version) is None
+
+    storage_router.clear_signed_url_cache()
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: _FakeBackend(True))
+    assert service.document_url(version) == (
+        f"https://signed.example/project-schedule/{version.id}/schedule.pdf"
+    )
+
+
 def test_a_schedule_asking_for_more_than_the_po_ordered_still_blocks(scenario):
     """The other direction is the one that is a concern: a schedule cannot commit
     quantity nobody bought."""
