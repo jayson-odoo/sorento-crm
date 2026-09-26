@@ -105,11 +105,27 @@ describe('POIntakeVersionsStrip', () => {
     renderStrip();
 
     const links = await screen.findAllByRole('link');
-    expect(links[0]).toHaveAttribute('href', '/project-sales/p1/purchase-orders/v2');
-    expect(links[1]).toHaveAttribute('href', '/project-sales/p1/purchase-orders/v1');
+    expect(links[0]).toHaveAttribute(
+      'href',
+      '/project-sales/p1/purchase-orders/v2?from=%2Fproject-sales%2Fp1%3Ftab%3Dpos',
+    );
+    expect(links[1]).toHaveAttribute(
+      'href',
+      '/project-sales/p1/purchase-orders/v1?from=%2Fproject-sales%2Fp1%3Ftab%3Dpos',
+    );
     expect(screen.getByText('v2')).toBeInTheDocument();
     expect(screen.getByText('Waiting to be read')).toBeInTheDocument();
     expect(screen.getAllByText('Not confirmed')).toHaveLength(2);
+  });
+
+  it('carries the POs tab as the review page origin (S2)', async () => {
+    listPOVersions.mockResolvedValue([summary()]);
+
+    renderStrip();
+
+    const link = await screen.findByRole('link');
+    const params = new URLSearchParams(link.getAttribute('href')?.split('?')[1]);
+    expect(params.get('from')).toBe('/project-sales/p1?tab=pos');
   });
 
   it('says a version is confirmed with the time on it', async () => {

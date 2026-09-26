@@ -276,7 +276,8 @@ export function usePOIntakeController(
     },
     updateLine,
     confirm: async () => {
-      await confirmMutation.mutateAsync().catch(() => undefined);
+      const result = await confirmMutation.mutateAsync().catch(() => null);
+      return result !== null;
     },
     acceptAnnotation,
     editAnnotation,

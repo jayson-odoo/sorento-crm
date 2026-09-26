@@ -23,6 +23,7 @@ import {
   useDemoScheduleState,
 } from '../delivery-schedules/_demo/scheduleDemo';
 import { ReconciliationBadge } from './DeliverySchedulesPanel';
+import { projectTabOriginHref, withReviewOrigin } from '../../_shared/lib/reviewOrigin';
 
 /**
  * The version history of one schedule.
@@ -119,7 +120,10 @@ export function DeliveryScheduleVersionsGrid({
           <div className="flex justify-end gap-1">
             <Button asChild size="sm" variant="outline">
               <Link
-                href={`/project-sales/${projectId}/delivery-schedules/${row.original.id}`}
+                href={withReviewOrigin(
+                  `/project-sales/${projectId}/delivery-schedules/${row.original.id}`,
+                  projectTabOriginHref(projectId, 'schedules'),
+                )}
               >
                 Open
               </Link>
