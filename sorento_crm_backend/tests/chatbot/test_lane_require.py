@@ -1369,7 +1369,7 @@ def test_set_answer_carries_the_header_and_lists_every_product():
         reply = (fragment.get("fetch") or {}).get("response") or ""
 
     lines = reply.splitlines()
-    assert lines and lines[0] == "7 taps have certificates.", reply
+    assert lines and lines[0] == "Product type: Tap. 7 taps have certificates.", reply
     assert reply.count("*Product Code:*") == 7, reply
 
 
@@ -1410,7 +1410,7 @@ def test_set_answer_is_scoped_to_the_class_word():
         basin_code = basin.product_code
 
     lines = reply.splitlines()
-    assert lines and lines[0] == "2 taps have certificates.", reply
+    assert lines and lines[0] == "Product type: Tap. 2 taps have certificates.", reply
     assert basin_code not in reply, reply
 
 
@@ -1438,7 +1438,7 @@ def test_set_answer_header_omits_showing_when_all_fit():
         reply = (fragment.get("fetch") or {}).get("response") or ""
 
     lines = reply.splitlines()
-    assert lines and lines[0] == "3 taps have certificates.", reply
+    assert lines and lines[0] == "Product type: Tap. 3 taps have certificates.", reply
     assert "Showing" not in reply, reply
 
 
@@ -1469,7 +1469,7 @@ def test_expired_only_certificate_still_counts_and_is_flagged():
         reply = (fragment.get("fetch") or {}).get("response") or ""
 
     lines = reply.splitlines()
-    assert lines and lines[0] == "1 tap has certificates.", reply
+    assert lines and lines[0] == "Product type: Tap. 1 tap has certificates.", reply
     assert "*Validity:* Expired" in reply, reply
     assert "(EXPIRED)" in reply, reply
 
@@ -1732,7 +1732,7 @@ def test_set_answer_replaces_the_found_line_and_no_picker_forms():
         reply = (fragment.get("fetch") or {}).get("response") or ""
 
     lines = reply.splitlines()
-    assert lines and lines[0] == "3 taps have certificates.", reply
+    assert lines and lines[0] == "Product type: Tap. 3 taps have certificates.", reply
     assert "Found:" not in reply, reply
     assert "Please choose" not in reply, reply
     assert "needs to be more specific" not in reply, reply
@@ -1813,10 +1813,9 @@ def test_brand_and_category_words_give_a_set_answer_not_a_picker():
         srt_bidet_code = srt_bidet.product_code
 
     lines = reply.splitlines()
-    assert lines and lines[0] in (
-        "1 Sorento bidet has certificates.",
-        "1 bidet has certificates.",
-    ), reply
+    # W2 (owner hand test round 2): the line leads with what was identified.
+    assert lines and lines[0].endswith(". 1 bidet has certificates."), reply
+    assert lines[0].startswith("Brand: Sorento"), reply
     assert cert_product_code in reply, reply
     assert "Please choose" not in reply, reply
     assert srt_bidet_code not in reply, reply
@@ -2105,7 +2104,7 @@ def test_unresolved_word_token_is_the_description_not_a_miss():
         reply = (fragment.get("fetch") or {}).get("response") or ""
 
     lines = reply.splitlines()
-    assert lines and lines[0].startswith("1 "), reply
+    assert lines and ". 1 " in lines[0], reply
     assert "has certificates." in lines[0], reply
     assert "ZZTWT5875" in reply, reply
     assert "Couldn't find" not in reply, reply
@@ -2274,7 +2273,7 @@ def test_shown_counts_products_not_rows():
         reply = (fragment.get("fetch") or {}).get("response") or ""
 
     lines = reply.splitlines()
-    assert lines and lines[0] == "5 wash basins have stock.", reply
+    assert lines and lines[0] == "Product type: Wash basin. 5 wash basins have stock.", reply
     assert "Showing" not in reply, reply
 
     with blank_session() as db:
@@ -2309,7 +2308,7 @@ def test_shown_counts_products_not_rows():
         reply = (fragment.get("fetch") or {}).get("response") or ""
 
     lines = reply.splitlines()
-    assert lines and lines[0] == "7 wash basins have stock. Here are the first 4.", reply
+    assert lines and lines[0] == "Product type: Wash basin. 7 wash basins have stock. Here are the first 4.", reply
     shown_codes = _s4_codes_in(reply)
     assert len(shown_codes) == 4, reply
 
@@ -3002,7 +3001,7 @@ def test_category_entity_yields_a_set_answer_not_a_clarify():
         reply = (fragment.get("fetch") or {}).get("response") or ""
 
     lines = reply.splitlines()
-    assert lines and lines[0] == "3 taps have certificates.", reply
+    assert lines and lines[0] == "Product type: Tap. 3 taps have certificates.", reply
     assert "i don't know" not in reply.lower(), reply
 
 

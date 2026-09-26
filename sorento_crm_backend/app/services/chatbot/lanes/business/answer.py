@@ -2587,7 +2587,37 @@ def _header_predicate_phrase(require: dict[str, Any]) -> str:
 SET_LIST_MAX = 50
 
 
-def build_set_header(qualifying_total: int, shown: int, set_noun: str, require: dict[str, Any]) -> str:
+def describe_set_line(description: Any) -> str:
+    """"Brand: Sorento, Product type: Wash basin, Mounting: Wall hung" - the resolver's
+    own labelled bindings (`product_predicate_service.describe_set`), or "" when the set
+    was described by nothing it could name (owner brief W2 on PR #833)."""
+    parts = []
+    for entry in jsc.array(description):
+        label = jsc.js_string(jsc.get(entry, "label") or "").strip()
+        value = jsc.js_string(jsc.get(entry, "value") or "").strip()
+        if label and value:
+            parts.append(f"{label}: {value}")
+    return ", ".join(parts)
+
+
+def not_understood_line(words: Any) -> str:
+    """The words the set reader could not use, said rather than silently dropped."""
+    terms = [jsc.js_string(w).strip() for w in jsc.array(words) if jsc.js_string(w).strip()]
+    if not terms:
+        return ""
+    quoted = _and_list([f'"{t}"' for t in terms])
+    return f"I did not understand {quoted}, so it is not part of this search."
+
+
+def build_set_header(
+    qualifying_total: int,
+    shown: int,
+    set_noun: str,
+    require: dict[str, Any],
+    *,
+    description: Any = None,
+    not_understood: Any = None,
+) -> str:
     """AC-1316: "<qualifying_total> <set noun> have <predicate noun>." - the counted set's
     own line, ahead of the rows. No paging (owner ruling, 26 Sep 2026: no "Showing 5", no
     "more"):
@@ -2605,6 +2635,13 @@ def build_set_header(qualifying_total: int, shown: int, set_noun: str, require: 
     """
     verb = "has" if qualifying_total == 1 else "have"
     header = f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}."
+    # W2: what the set was identified as leads the line, in plain words.
+    described = describe_set_line(description)
+    if described:
+        header = f"{described}. {header}"
+    missed = not_understood_line(not_understood)
+    if missed:
+        header += f" {missed}"
     if qualifying_total > shown:
         if shown > 0:
             header += f" Here are the first {shown}."

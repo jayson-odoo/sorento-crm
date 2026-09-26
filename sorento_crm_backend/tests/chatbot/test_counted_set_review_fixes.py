@@ -76,7 +76,7 @@ def test_which_tap_has_valid_cert_answers_the_whole_certified_set(
 
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text=f"which tap has {phrase}")
 
-    assert text.startswith("7 taps have certificates."), text
+    assert text.startswith("Product type: Tap. 7 taps have certificates."), text
     assert _s4_codes_in(text) == set(codes), text
 
 
@@ -239,7 +239,7 @@ def test_a_listed_set_asks_the_tool_for_enough_rows(session_factory, stub_parser
 
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap has cert")
 
-    assert text.startswith("7 taps have certificates.\n"), text
+    assert text.startswith("Product type: Tap. 7 taps have certificates.\n"), text
     assert _s4_codes_in(text) == set(codes), text
     assert isinstance(calls[0]["args"].get("limit"), int) and calls[0]["args"]["limit"] >= 14, calls
 
@@ -259,7 +259,7 @@ def test_a_row_cap_that_still_cuts_the_set_says_how_many_are_listed(
 
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap has cert")
 
-    assert text.startswith("7 taps have certificates. Here are the first 2."), text
+    assert text.startswith("Product type: Tap. 7 taps have certificates. Here are the first 2."), text
     assert len(_s4_codes_in(text)) == 2, text
 
 
@@ -321,7 +321,7 @@ def test_the_recount_after_how_many_keeps_the_dealers_stock_visibility(
     stub_parser(_tap_stock_verdict())
     stub_access()
     first = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap got stock")
-    assert first.startswith("2 taps have stock."), first
+    assert first.startswith("Product type: Tap. 2 taps have stock."), first
     before = len(calls)
 
     stub_parser(_bare_verdict(top_n=1, continuation=True, user_goal="show 1"))

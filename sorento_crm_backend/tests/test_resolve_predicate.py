@@ -314,11 +314,14 @@ def test_predicate_matches_carry_the_shape_the_fetch_reads(client, db):
         assert m.get("uuid")
         assert m.get("canonical_code")
 
-    assert set(payload["predicate"].keys()) == {
-        "require",
-        "qualifying_total",
-        "truncated",
-        "unrecognized_terms",
+    # The four documented keys always; the plain-words description (owner brief W2 on
+    # PR #833) and the class labels ride beside them only when there is one to say.
+    keys = set(payload["predicate"].keys())
+    assert {"require", "qualifying_total", "truncated", "unrecognized_terms"} <= keys
+    assert keys - {"require", "qualifying_total", "truncated", "unrecognized_terms"} <= {
+        "description",
+        "class_labels",
+        "brand",
     }
 
 

@@ -598,6 +598,53 @@ def _split_class_tail(db: Session, scope_terms: list[str] | None) -> list[str] |
     return out
 
 
+def _display_name(name: str) -> str:
+    """"SORENTO" -> "Sorento"; a name staff typed in mixed case stays as typed."""
+    name = (name or "").strip()
+    return name.title() if name.isupper() else name
+
+
+def _sentence_case(text: str) -> str:
+    text = " ".join(str(text or "").replace("_", " ").split())
+    return text[:1].upper() + text[1:].lower() if text else text
+
+
+def describe_set(db: Session, *, brand: str | None, membership: dict[str, list[str]]) -> list[dict[str, str]]:
+    """The described set in plain words, one `{key, label, value}` per binding, in the
+    order the header says them: Brand, Product type, then every other spec key.
+
+    Owner brief W2 on PR #833: labels and values come from the spec registry's own
+    display fields (`label`, `value_labels`), so "mounting: wall_hung" reads
+    "Mounting: Wall hung" and a staff edit to either label shows up here."""
+    from app.models.product_spec import ProductSpecRegistry
+
+    out: list[dict[str, str]] = []
+    if brand:
+        out.append({"key": "brand", "label": "Brand", "value": _display_name(brand)})
+    classes = [c for c in membership.get("class") or [] if c]
+    if classes:
+        out.append({"key": "class", "label": "Product type", "value": " or ".join(_sentence_case(c) for c in classes)})
+    others = [k for k in membership if k not in ("class", "brand")]
+    if not others:
+        return out
+    rows = {
+        row.spec_key: row
+        for row in db.query(ProductSpecRegistry).filter(ProductSpecRegistry.spec_key.in_(others)).all()
+    }
+    for key in others:
+        row = rows.get(key)
+        labels = dict(getattr(row, "value_labels", None) or {})
+        values = [labels.get(v) or _sentence_case(v) for v in membership[key]]
+        out.append(
+            {
+                "key": key,
+                "label": (row.label if row is not None and row.label else _sentence_case(key)),
+                "value": " or ".join(values),
+            }
+        )
+    return out
+
+
 def resolve_product_set(
     db: Session,
     *,
@@ -941,6 +988,10 @@ def resolve_product_set(
     # W1: the brand the set is scoped to, as the brands table spells it.
     if brand:
         outcome["brand"] = brand
+    # W2: what was identified, for the header. Present only when something was.
+    description = describe_set(db, brand=brand, membership=verdict.get("membership") or {})
+    if description:
+        outcome["description"] = description
     if certificate_ids is not None:
         outcome["certificate_ids"] = certificate_ids
     return outcome

@@ -2657,7 +2657,14 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             rendered = _rendered_product_count(e.get("items") or [])
             if rendered is not None and rendered < shown:
                 shown = rendered
-        header = answer_mod.build_set_header(qualifying_total, shown, set_noun, require)
+        header = answer_mod.build_set_header(
+            qualifying_total,
+            shown,
+            set_noun,
+            require,
+            description=jsc.get(predicate, "description"),
+            not_understood=jsc.get(predicate, "unrecognized_terms"),
+        )
         set_header = header
         msg = header if set_withheld else f"{header}\n{msg}"
 

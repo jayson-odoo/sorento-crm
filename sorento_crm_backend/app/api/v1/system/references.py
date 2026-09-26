@@ -2820,6 +2820,12 @@ def resolve_reference_post(
         # convention as `schemes_on_file`.
         if outcome.get("certificate_ids"):
             result["predicate"]["certificate_ids"] = outcome["certificate_ids"]
+        # W2/W1 (owner hand test round 2): what the set was identified as, in plain
+        # words, and its brand - present only when there is one to say.
+        if outcome.get("description"):
+            result["predicate"]["description"] = outcome["description"]
+        if outcome.get("brand"):
+            result["predicate"]["brand"] = outcome["brand"]
         _emit_spec_matches(result, outcome["candidates"], payload.query or "")
         # R2 only fires on a genuine HAS answer (qualifying_total > 0): the
         # existing zero-qualifying miss flow names its own candidate codes off

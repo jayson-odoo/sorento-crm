@@ -860,6 +860,9 @@ def filter_specs(
         "clause": clause,
         "class_labels": sorted(membership.get("class", set())),
         "unrecognized_terms": unrecognized,
+        # What defined the set, key by key, so a caller can say it back in plain words
+        # (owner brief W2 on PR #833). Additive; the clause above is the truth.
+        "membership": {key: sorted(values) for key, values in membership.items() if values},
     }
 
 
