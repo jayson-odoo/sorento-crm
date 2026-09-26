@@ -1458,3 +1458,110 @@ def test_seen_media_not_reoffered(wired):
     )
     assert "pending_media" not in out["session_vars"]["ideation"]
     assert "which relate" not in out["reply_text"]
+
+
+# --------------------------------------------------------------------------- #
+# #1277 (issue) - W1+W3 at the turn level: the exact recap shape from the    #
+# owner's console transcript, reply LLM unavailable (db=None -> config read  #
+# fails -> _call_ideate_reply_llm returns None -> the shared-service         #
+# TEMPLATE fallback is what handle_turn's reply_text formats).               #
+# --------------------------------------------------------------------------- #
+def test_1277_recap_replay_bolds_labels_and_drops_title(wired):
+    wired.set_session_vars({"ideation": {"draft_id": "d1", "status": "collecting", "missing": ["department"]}})
+    fallback_reply = (
+        '"sales order KPI tracking"\n'
+        "Problem: track sales order kpi\n"
+        "Solution: dashboard widget\n"
+        "Impact: faster visibility\n"
+        "Department: sales\n"
+        "Is that right?"
+    )
+    wired.set_create_idea(
+        {
+            "draft_id": "d1",
+            "status": "review",
+            "title": "sales order KPI tracking",
+            "captured": {
+                "problem": "track sales order kpi",
+                "proposed_solution": "dashboard widget",
+                "impact": "faster visibility",
+                "department": "sales",
+            },
+            "missing": [],
+            "reply_text": fallback_reply,
+        }
+    )
+    out = _turn(message_text="yes that's right")
+    assert out["reply_text"] == (
+        "*Problem:* track sales order kpi\n"
+        "*Solution:* dashboard widget\n"
+        "*Impact:* faster visibility\n"
+        "*Department:* sales\n"
+        "Is that right?"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# #1277 - W4: `offered_media` on the turn that builds a media menu.          #
+# --------------------------------------------------------------------------- #
+def test_offered_media_lists_images_in_menu_order(wired):
+    wired.set_session_vars({})
+    wired.set_create_idea(
+        {"draft_id": "d1", "status": "collecting", "missing": ["impact"], "reply_text": "Got it. What's the impact?"}
+    )
+    out = _turn(
+        message_text="I have an idea about exporting orders",
+        fetch_recent_messages=lambda: _respond_payload(
+            _media_item("m1", "image", "https://respond/1.jpg", filename="mockup.jpg", ts=2000),
+            _media_item("m2", "image", "https://respond/2.jpg", filename="sketch.jpg", ts=1000),
+        ),
+        media_clients=_stub_media_clients(),
+    )
+    assert out["offered_media"] == [
+        {"position": 1, "kind": "image", "url": "https://respond/1.jpg", "filename": "mockup.jpg"},
+        {"position": 2, "kind": "image", "url": "https://respond/2.jpg", "filename": "sketch.jpg"},
+    ]
+
+
+def test_offered_media_empty_when_no_candidates(wired):
+    wired.set_session_vars({})
+    wired.set_create_idea({"draft_id": "d1", "status": "collecting", "missing": ["impact"], "reply_text": "ok"})
+    out = _turn(
+        message_text="idea: dark mode",
+        fetch_recent_messages=lambda: _respond_payload(),
+        media_clients=_stub_media_clients(),
+    )
+    assert out["offered_media"] == []
+
+
+def test_offered_media_empty_on_selection_turn(wired):
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d1",
+                "status": "collecting",
+                "missing": ["impact"],
+                "pending_media": [
+                    {"source_msg_id": "m1", "kind": "image", "url": "u", "filename": None, "received_at": None}
+                ],
+            }
+        }
+    )
+    wired.set_create_idea({"draft_id": "d1", "status": "collecting", "missing": [], "reply_text": "attached."})
+    out = _turn(message_text="1", media_selection="1", media_clients=_stub_media_clients())
+    assert out["offered_media"] == []
+
+
+def test_ideation_turn_response_schema_keeps_offered_media():
+    """`response_model` silently drops undeclared fields (repo lesson) - the
+    schema must declare `offered_media` or it never reaches n8n/the console."""
+    from app.schemas.external.ideation import IdeationTurnResponse
+
+    result = {
+        "status": "collecting",
+        "reply_text": "x",
+        "session_vars": {},
+        "offered_media": [{"position": 1, "kind": "image", "url": "u", "filename": "f"}],
+    }
+    dumped = IdeationTurnResponse(**result).model_dump()
+    assert dumped.get("offered_media") == result["offered_media"]

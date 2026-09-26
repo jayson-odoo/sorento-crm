@@ -394,3 +394,86 @@ def test_provider_failure_degrades_to_empty_extraction(configured):
         out = extract_ideate_turn(configured, message_text="hello", status="collecting")
 
     assert out == IdeateExtraction()
+
+
+# --------------------------------------------------------------------------- #
+# #1277 (issue) - W2: clean values (preamble stripped, spelling corrected,    #
+# never semicolon-joined). AC-3.                                             #
+# --------------------------------------------------------------------------- #
+def test_extractor_fallback_prompt_has_clean_values_rule():
+    """The system prompt tells the model to strip conversational preamble,
+    correct spelling, and never join an extended value with a semicolon."""
+    from app.services import ai_prompt_registry
+
+    text = ai_prompt_registry.PROMPT_KEYS["ideate_extractor"].fallback().lower()
+    assert "i have an idea" in text
+    assert "spelling" in text
+    assert "semicolon" in text
+
+
+def test_context_block_lists_captured_fields_one_per_line_no_semicolon_join(configured):
+    """The captured-so-far context block is one field per line, never `"; "`-
+    joined - the same glue the owner saw echoed inside the Problem line
+    (#1277 finding 2)."""
+    captured_messages = {}
+
+    class _CapturingProvider:
+        def chat(self, messages, *_a, **_k):
+            captured_messages["messages"] = messages
+            return ChatResult(
+                content=json.dumps(
+                    {
+                        "fields": [],
+                        "remove": [],
+                        "skip": [],
+                        "title": "",
+                        "review_action": "none",
+                        "change_text": "",
+                        "duplicate_choice": "none",
+                    }
+                ),
+                prompt_tokens=1,
+                completion_tokens=1,
+                total_tokens=2,
+            )
+
+    with patch(
+        "app.services.ideation_extractor.get_provider", return_value=_CapturingProvider()
+    ):
+        extract_ideate_turn(
+            configured,
+            message_text="more detail on the same idea",
+            status="collecting",
+            captured={"problem": "a", "impact": "b"},
+        )
+
+    user_content = captured_messages["messages"][1]["content"]
+    assert "a; impact" not in user_content
+    lines = [line.strip() for line in user_content.splitlines()]
+    assert any(line == "- problem: a" for line in lines)
+    assert any(line == "- impact: b" for line in lines)
+
+
+# --------------------------------------------------------------------------- #
+# #1277 - the migration that publishes the new ideate_extractor/ideate_reply  #
+# prompt versions to production (AC-3). Text/grep-style: no DB required.     #
+# --------------------------------------------------------------------------- #
+def test_ideation_reply_fmt_migration_exists_and_bumps_both_prompts():
+    import pathlib
+
+    revision_id = "ideation_reply_fmt_prompts"
+    assert len(revision_id) <= 32, "alembic head revision id must be <= 32 chars"
+
+    versions_dir = pathlib.Path(__file__).resolve().parents[1] / "alembic" / "versions"
+    matches = [
+        p for p in versions_dir.glob("*.py") if revision_id in p.read_text(encoding="utf-8")
+    ]
+    assert matches, (
+        f"expected a migration under {versions_dir} carrying revision "
+        f"{revision_id!r} (bump_prompt_to_fallback for ideate_extractor and "
+        f"ideate_reply)"
+    )
+    content = matches[0].read_text(encoding="utf-8")
+    assert f'revision = "{revision_id}"' in content or f"revision = '{revision_id}'" in content
+    assert 'bump_prompt_to_fallback(op.get_bind(), "ideate_extractor")' in content
+    assert 'bump_prompt_to_fallback(op.get_bind(), "ideate_reply")' in content

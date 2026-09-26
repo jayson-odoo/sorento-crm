@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 
 from app.services.ai_assistant_service import AIAssistantConfigService
 from app.services.ideation_turn_service import (
+    _format_ideate_reply,
     compose_ideate_denial_reply,
     compose_ideate_reply,
 )
@@ -109,6 +110,9 @@ def test_facts_and_language_reach_the_model(configured):
 # AC-1302 - exactly one trailing question mark, non-terminal                  #
 # --------------------------------------------------------------------------- #
 def test_non_terminal_reply_with_one_question_is_accepted(configured):
+    # #1277: the composed reply is accepted, but the FINAL text bolds the plain
+    # label and drops the quoted-title line (non-terminal status) - it is no
+    # longer `out == text` verbatim.
     text = '"Show promo price in red on price tags"\nProblem: the price tag should show promo price in red\nWhat\'s your proposed solution?'
     result = {
         "status": "collecting",
@@ -123,7 +127,10 @@ def test_non_terminal_reply_with_one_question_is_accepted(configured):
     }
     with _patched(_StubProvider(text)):
         out = compose_ideate_reply(configured, result=result, user_message="hi")
-    assert out == text
+    assert out == (
+        "*Problem:* the price tag should show promo price in red\n"
+        "What's your proposed solution?"
+    )
 
 
 def test_reply_with_extra_question_mark_falls_back(configured):
@@ -312,6 +319,8 @@ def test_no_api_key_falls_back(db_session):
 # AC-1310 - point-form recap; a one-sentence pack fails                       #
 # --------------------------------------------------------------------------- #
 def test_recap_reply_accepted_point_form(configured):
+    # #1277: bold labels + no title line in a recap - `out` is no longer the raw
+    # LLM text verbatim (it used to be plain labels with the quoted title kept).
     text = (
         '"Add slow moving stock filter to dashboard"\n'
         "Problem: add a filter for slow moving stock on the dashboard\n"
@@ -333,7 +342,11 @@ def test_recap_reply_accepted_point_form(configured):
     }
     with _patched(_StubProvider(text)):
         out = compose_ideate_reply(configured, result=result, user_message="a toggle that hides stock")
-    assert out == text
+    assert out == (
+        "*Problem:* add a filter for slow moving stock on the dashboard\n"
+        "*Solution:* a toggle that hides anything that sold in the last 90 days\n"
+        "What's the impact if we do this?"
+    )
 
 
 def test_recap_reply_packed_into_one_sentence_falls_back(configured):
@@ -750,3 +763,197 @@ def test_denial_reply_falls_back_on_empty_output(configured):
             configured, user_message="i have an idea", fallback_text="Sorry, you are not allowed to access ideation"
         )
     assert out == "Sorry, you are not allowed to access ideation"
+
+
+# --------------------------------------------------------------------------- #
+# #1277 (issue) - W1: bold labels. Unit tests of `_format_ideate_reply`       #
+# directly, plus integration through `compose_ideate_reply` (AC-1/AC-2).      #
+# --------------------------------------------------------------------------- #
+def test_format_bolds_plain_labels():
+    facts = {"status": "collecting", "title": "", "captured": {}}
+    text = "Problem: x\nSolution: y\nWhat's next?"
+    out = _format_ideate_reply(text, facts)
+    assert out == "*Problem:* x\n*Solution:* y\nWhat's next?"
+
+
+def test_format_bolds_department_label():
+    facts = {"status": "collecting", "title": "", "captured": {}}
+    text = "Department: Sales\nWhat's next?"
+    out = _format_ideate_reply(text, facts)
+    assert out == "*Department:* Sales\nWhat's next?"
+
+
+def test_format_accepts_already_bold_label_no_double_wrap():
+    facts = {"status": "collecting", "title": "", "captured": {}}
+    text = "*Problem:* x\nWhat's next?"
+    out = _format_ideate_reply(text, facts)
+    assert out == text
+    assert "**" not in out
+
+
+def test_format_leaves_clarifying_prose_unchanged():
+    facts = {
+        "status": "collecting",
+        "title": "Chatbot remembers past dealer questions",
+        "captured": {"problem": "chatbot should remember what a dealer already asked before"},
+    }
+    text = (
+        "Impact just means what changes for us once this is done - fewer repeated "
+        "questions, happier dealers. What's the impact if we do this?"
+    )
+    out = _format_ideate_reply(text, facts)
+    assert out == text
+
+
+def test_format_is_idempotent():
+    facts = {"status": "collecting", "title": "sales order KPI tracking", "captured": {}}
+    text = '"sales order KPI tracking"\nProblem: x\nWhat next?'
+    once = _format_ideate_reply(text, facts)
+    twice = _format_ideate_reply(once, facts)
+    assert twice == once
+
+
+def test_compose_bolds_plain_labels_via_llm_recap(configured):
+    text = (
+        '"Show promo price in red on price tags"\n'
+        "Problem: the price tag should show promo price in red\n"
+        "What's your proposed solution?"
+    )
+    result = {
+        "status": "collecting",
+        "title": "Show promo price in red on price tags",
+        "captured": {"problem": "the price tag should show promo price in red"},
+        "next_field": "proposed_solution",
+        "duplicate_candidate": None,
+        "idea_number": None,
+        "link": None,
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="hi")
+    assert "*Problem:*" in out
+    assert "Problem: " not in out
+
+
+def test_compose_accepts_already_bold_recap_no_double_wrap(configured):
+    text = (
+        "*Problem:* add a filter for slow moving stock on the dashboard\n"
+        "*Solution:* a toggle that hides anything that sold in the last 90 days\n"
+        "What's the impact if we do this?"
+    )
+    result = {
+        "status": "collecting",
+        "title": "Add slow moving stock filter to dashboard",
+        "captured": {
+            "problem": "add a filter for slow moving stock on the dashboard",
+            "proposed_solution": "a toggle that hides anything that sold in the last 90 days",
+        },
+        "next_field": "impact",
+        "duplicate_candidate": None,
+        "idea_number": None,
+        "link": None,
+        "reply_text": "fallback",
+    }
+    with _patched(_StubProvider(text)):
+        out = compose_ideate_reply(configured, result=result, user_message="a toggle")
+    assert out == text
+    assert "**" not in out
+
+
+def test_compose_fallback_template_bolds_labels_on_provider_failure(configured):
+    """AC-1/AC-2: the shared-service TEMPLATE fallback also gets bolded, not just
+    an LLM-composed reply."""
+    result = {
+        "status": "collecting",
+        "title": "",
+        "captured": {},
+        "next_field": None,
+        "duplicate_candidate": None,
+        "idea_number": None,
+        "link": None,
+        "reply_text": "Problem: x\nImpact: z\nAnything else?",
+    }
+    with _patched(_BoomProvider()):
+        out = compose_ideate_reply(configured, result=result, user_message="hi")
+    assert "*Problem:* x" in out
+    assert "*Impact:* z" in out
+
+
+# --------------------------------------------------------------------------- #
+# #1277 - W3: no title line in a non-complete recap; complete keeps it        #
+# (AC-5).                                                                     #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "title_line",
+    [
+        "sales order KPI tracking",
+        '"sales order KPI tracking"',
+        '*"sales order KPI tracking"*',
+        "Title: sales order KPI tracking",
+    ],
+)
+@pytest.mark.parametrize("status", ["collecting", "review"])
+def test_format_drops_title_line_for_non_complete_status(title_line, status):
+    facts = {"status": status, "title": "sales order KPI tracking", "captured": {}}
+    text = f"{title_line}\nProblem: x\nWhat next?"
+    out = _format_ideate_reply(text, facts)
+    assert "sales order KPI tracking" not in out
+    assert out == "*Problem:* x\nWhat next?"
+
+
+def test_format_keeps_title_line_on_complete():
+    facts = {
+        "status": "complete",
+        "title": "sales order KPI tracking",
+        "idea_number": "IDEA-0003",
+        "link": "https://x.test/ideas/tok",
+    }
+    text = (
+        "sales order KPI tracking\n"
+        "IDEA-0003 - we'll update you on WhatsApp\n"
+        "Track it here: https://x.test/ideas/tok"
+    )
+    out = _format_ideate_reply(text, facts)
+    assert out == text
+
+
+def test_format_keeps_duplicate_candidate_mention_line():
+    facts = {
+        "status": "duplicate_candidate",
+        "title": "",
+        "duplicate_candidate": {"title": "Show promo price in red on price tags"},
+    }
+    text = (
+        "Similar idea exists: Show promo price in red on price tags\n"
+        "Vote for that one, or keep yours separate?"
+    )
+    out = _format_ideate_reply(text, facts)
+    assert out == text
+
+
+@pytest.mark.parametrize(
+    "title_line",
+    [
+        "sales order KPI tracking",
+        '"sales order KPI tracking"',
+        '*"sales order KPI tracking"*',
+        "Title: sales order KPI tracking",
+    ],
+)
+def test_fallback_template_title_line_dropped_on_every_format(configured, title_line):
+    """The shared-service TEMPLATE fallback also loses its title line (only
+    `complete` keeps one) - the LLM never ran here (_BoomProvider)."""
+    fallback = f"{title_line}\nWhat's the impact?"
+    result = {
+        "status": "collecting",
+        "title": "sales order KPI tracking",
+        "captured": {},
+        "next_field": "impact",
+        "duplicate_candidate": None,
+        "idea_number": None,
+        "link": None,
+        "reply_text": fallback,
+    }
+    with _patched(_BoomProvider()):
+        out = compose_ideate_reply(configured, result=result, user_message="hi")
+    assert out == "What's the impact?"
