@@ -1,0 +1,15 @@
+{
+  "group": "item",
+  "rank_by": "qty",
+  "basis": "delivered",
+  "top_n": 5,
+  "total": 0,
+  "customer_name": "HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I]",
+  "category_name": null,
+  "sales_agent": null,
+  "agent_fill_pct": null,
+  "channel": null,
+  "date_from": "2026-09-01",
+  "date_to": "2026-09-30",
+  "rows": []
+}

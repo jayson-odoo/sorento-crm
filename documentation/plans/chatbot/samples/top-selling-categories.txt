@@ -1,0 +1,18 @@
+*Top 6 selling categories*
+Ranked by: Amount
+Basis: Delivered (transferred to DO)
+Categories with sales: 6
+Customer: all
+Category: all
+Sales agent: all
+Channel: all
+Delivery date: 01/01/2026 to 31/12/2026
+
+1. KITCHEN SINK: Qty 4,210, RM 612,300.00
+2. WATER CLOSET: Qty 1,830, RM 498,120.00
+3. BASIN MIXER: Qty 2,960, RM 301,450.75
+4. KITCHEN TAP: Qty 3,105, RM 210,980.00
+5. ACC: Qty 7,400, RM 0.00
+6. Unassigned: Qty 120, RM 3,600.00
+
+Reply with a rank number to see that category's top items.

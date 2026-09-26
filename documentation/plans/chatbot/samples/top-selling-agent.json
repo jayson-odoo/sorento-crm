@@ -1,0 +1,51 @@
+{
+  "group": "item",
+  "rank_by": "qty",
+  "basis": "delivered",
+  "top_n": 5,
+  "total": 96,
+  "customer_name": null,
+  "category_name": null,
+  "sales_agent": "SEAN I",
+  "agent_fill_pct": 87,
+  "channel": null,
+  "date_from": "2026-01-01",
+  "date_to": "2026-12-31",
+  "rows": [
+    {
+      "rank": 1,
+      "code": "SRTKT39SS",
+      "name": "Kitchen Tap",
+      "qty": 310,
+      "amount": 9920.0
+    },
+    {
+      "rank": 2,
+      "code": "SRTWT7445",
+      "name": "Kitchen Sink 2 Bowl",
+      "qty": 204,
+      "amount": 14280.0
+    },
+    {
+      "rank": 3,
+      "code": "SRTBS1020",
+      "name": "Basin Mixer",
+      "qty": 150,
+      "amount": 9000.0
+    },
+    {
+      "rank": 4,
+      "code": "SRTSH2201",
+      "name": "Shower Set",
+      "qty": 98,
+      "amount": 3038.0
+    },
+    {
+      "rank": 5,
+      "code": "SRTWT7446",
+      "name": "Kitchen Sink 1 Bowl",
+      "qty": 61,
+      "amount": 3355.0
+    }
+  ]
+}

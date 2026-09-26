@@ -29,6 +29,20 @@ later reader can tell a ruling from a proposal.
   partial list: it states how many there are and asks how many to show. A list that fits is
   sent in full. The same rule applies to PR #833's counted set answers (that lane's work, not
   this one's).
+- Owner, PR #1258 26 Sep 05:32Z (amends the 01:55Z reading above): **length is not the
+  bot's problem.** n8n already chunks a long WhatsApp message, so there is no "fits one
+  message" threshold, no `chatbot_top_selling_one_message_rows` setting and no bot-side
+  split of a long reply. With no N named, the header states the full count and the bot asks
+  how many (1 to the smaller of the count and 100), whatever the count; a named N up to 100
+  goes out whole and n8n chunks it. One row is sent as is (nothing to choose between).
+- Owner, PR #1258 26 Sep 05:32Z: **the ranked list is a sticky pick list**, the same as the
+  customer and product pickers: the printed rows arm a `top_selling_pick` roster
+  (`turn/pending.py::ROSTER_KINDS`), so a later "2", a typed code or a typed category name
+  resolves against the last list shown through `turn/decide.py::picked_positions`, and the
+  list stays open across picks. No turn clock (the pickers have none: `pending.tick` only
+  expires the escalation offers); it closes on the pickers' own two rules in
+  `turn/apply.py` (every row picked, `stale_roster_closed`; a new ask about something else,
+  `new_ask_closes_stale_roster`).
 - Owner ruling 26 Sep: **metric is required.** `rank_by` is quantity or amount; when the
   message does not say, the bot asks "By quantity or by amount?". No default metric.
 - Owner ruling 26 Sep: **basis.** Both ordered (`qty_ordered`, ordered amount) and delivered
@@ -79,10 +93,12 @@ agent code).
    selling by category" is ambiguous and gets the group clarify question.
 5. They type "top 5 by quantity for sales agent SEAN I this year". Same list, filtered to the
    SOs that agent sold.
-6. They type "top selling items by quantity" with no number. A short list (fits one message)
-   comes in full; a long one gets "That list is too long for one message. How many items do
-   you want to see?" under a header that states the count. "20" or "top 20" answers it.
+6. They type "top selling items by quantity" with no number. They get "How many items do you
+   want to see? Reply with a number from 1 to 100." under a header that states the count.
+   "20" or "top 20" answers it (amended by the owner, PR #1258 05:32Z).
 7. They reply "2" after a ranking. That item's customers and months follow (the detail).
+   The list stays open: "4" or "SRTBS1020" next answers against the same list, as a second
+   pick over a customer or product picker does (owner, PR #1258 05:32Z).
 8. They type "ordered" after a ranking. The same ranking re-runs on the ordered basis.
 9. A dealer types "top 5 for <another dealer>". It gets "Sorry, I can only share sales
    figures for your own account." and nothing is fetched for that customer.
@@ -91,7 +107,7 @@ agent code).
 
 Decisions asked of the user: the customer picker (existing), the metric clarify, the group
 clarify, the basis clarify (only when ambiguous), the month clarify (only when ambiguous) and
-the how-many question on a long list. Every other axis is derived.
+the how-many question when no N is named. Every other axis is derived.
 
 ## What exists today (measured against the code, 24 Sep 2026)
 
@@ -236,9 +252,10 @@ Reply with a rank number to see that item's customers and months.
      `Unassigned` for products with no category). `n` is the body's own `rank`, rows print in
      the order given (the route sorts), at most 100 rows (the N ceiling).
    - No "more", "next" or "lagi" anywhere (owner ruling 01:50Z).
-2. **How many (a long list with no N).** The same header, a blank line, then `That list is
-   too long for one message. How many items do you want to see?` (`categories` at category
-   grain). No rows, no offer. `has_result: true` (it is not a miss; nothing escalates).
+2. **How many (no N named).** The same header, a blank line, then `How many items do you want
+   to see? Reply with a number from 1 to 100.` (`categories` at category grain; the upper
+   bound is the smaller of the count and 100). No rows, no offer, no pick list.
+   `has_result: true` (it is not a miss; nothing escalates).
 3. **Miss.** The same header, a blank line, `No sales found.`, nothing after it.
    `has_result: false`, so the lane's not-found path offers the escalation.
 4. **Metric clarify.** `By quantity or by amount?`
@@ -293,9 +310,11 @@ Response (`TopSellingResponse`, every field declared, asserted through the route
 }
 ```
 
-`rows` is empty with `total > 0` exactly when `top_n` is absent and `total` exceeds the
-setting `chatbot_top_selling_one_message_rows` (default 50, the ONE setting the 01:55Z ruling
-asks for). The presenter renders shape 2 off that pair and needs no setting of its own.
+`rows` is empty with `total > 0` exactly when `top_n` is absent and `total > 1` (owner, PR
+#1258 05:32Z: no size threshold, no setting; n8n chunks long messages). The presenter renders
+shape 2 off that pair. The envelope also carries `result_set`, one `{idx, label, code, name,
+entity_type}` row per printed line (`idx` = rank; label = the product code at item grain, the
+printed category name at category grain), empty on the how-many reply and the miss.
 
 Detail body (`detail_code` set): `{..the same header fields.., "detail": {"code", "name",
 "by_customer": [{customer_name, qty, amount}], "by_month": [{month, qty, amount}]}}`, both
@@ -435,10 +454,12 @@ No word table anywhere in Python (S12 of the sales report holds).
    `focus.status` is what makes the answer land), and fetches nothing. A dealer naming a
    customer outside its own ledgers gets the refusal line, also before any fetch.
 9. `output_structurer`: `crm_top_selling_report` takes the miss path on `has_result: false`
-   and, on a ranking hit, arms the detail offer (owner ruling 26 Sep: detail offer required)
-   so a bare rank number re-calls the tool with `detail_code` = that row's code (category
-   grain: re-calls the item ranking with that category as the filter). The how-many reply
-   arms nothing. `_search_scope_header` skipped for it, same as the two reports.
+   and, on a ranking hit, arms the envelope's `result_set` as a sticky `top_selling_pick`
+   roster via `turn/pending.top_selling_pick` (owner, PR #1258 05:32Z: behaves like the
+   customer and product pickers; owner ruling 26 Sep: detail offer required), so a rank
+   number or a typed code / category name re-calls the tool with `detail_code` = that row's
+   code (category grain: re-calls the item ranking with that category as the filter), and
+   the list stays open for the next pick. The how-many reply arms nothing. `_search_scope_header` skipped for it, same as the two reports.
 10. `resolve_gate` picker hint off for `top_selling` (R20 rule), same population reason.
 11. `mcp_tool_domains.py`: `crm_top_selling_report` under `orders`. NO in-app assistant
     bootstrap (security B1 of the sales report: the same money, same reason).
@@ -468,8 +489,8 @@ says ordered; asked when unclear).
 | dealer contact | any | any | any | any | customer forced to the contact's own ledgers (owner ruling 26 Sep); another customer named = refusal line, no fetch |
 
 Owner ruling 26 Sep, N across the matrix: a named N (1 to 100) cuts every row of the matrix;
-no N returns every ranked row when the list fits one message (the setting, default 50) and
-the how-many question when it does not. Category grain (ranking categories) accepts every
+no N returns the how-many question with the full count (owner, PR #1258 05:32Z: no size
+threshold; n8n chunks long messages), except a single row, which is sent. Category grain (ranking categories) accepts every
 filter above except a category filter, which it ignores with the header printing `all`.
 
 An ambiguous customer name takes the existing picker on every row that names one; a category
@@ -536,7 +557,8 @@ categories, products, agents, SOs and lines (CI's database is empty).
 
 1. **Default N** when the message names none: 5? (Hard cap 10 either way, WhatsApp.)
    Owner ruling 26 Sep: no default. No number = every row, no paging; a list longer than one
-   message gets the how-many question. Cap is 100.
+   message gets the how-many question. Cap is 100. Amended PR #1258 05:32Z: no number gets
+   the how-many question whatever the count; n8n chunks long messages.
 2. **Default metric**: quantity or amount when the message names neither? Owner ruling 26
    Sep: no default, clarify via chat.
 3. **Quantity basis**: ordered or confirmed? Owner ruling 26 Sep: support both; normal
@@ -578,6 +600,5 @@ categories, products, agents, SOs and lines (CI's database is empty).
 - The parser prompt is a mechanical derivation of the live n8n body with trailing
   addenda; this adds a trailing block only, so `test_parser_prompt_is_live.py` still holds.
 - A named N up to 100 can exceed one WhatsApp message (about 4,096 characters, roughly 50
-  rows). Reading (captain, 26 Sep): the owner asked for "top 100" by name, so a named N is
-  sent in full, split into consecutive messages at row boundaries by the lane (S4); only the
-  no-N case gets the how-many question. Flagged on the S1 PR for the owner to confirm.
+  rows). Settled (owner, PR #1258 05:32Z): the bot sends it as one reply and n8n's existing
+  chunking splits it; the lane adds no splitting of its own.

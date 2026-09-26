@@ -2427,3 +2427,143 @@ def _sales_report_envelope(report: dict) -> dict:
         "response": _sales_report(report),
         "has_result": isinstance(months, list) and len(months) > 0,
     }
+
+
+# --------------------------------------------------------------------------
+# top X hot selling (S1, PLAN-chatbot-top-x-hot-selling-24sep.md, owner rulings
+# 26 Sep 2026 on PR #1175). The same minimal envelope as the sales report for
+# the same reason: the header renders on a miss too, so only `has_result` can
+# tell the lane a miss (escalate) from a hit. Reuses the sales report's and the
+# outstanding report's formatters directly (money, quantity, dates, channel,
+# "Unassigned") so the three replies cannot drift apart.
+# --------------------------------------------------------------------------
+
+# Fixed lines the lane sends BEFORE any fetch (owner: no default metric, clarify
+# when unsure whether a category is a filter or the ranking grain, a dealer never
+# sees another customer). Declared here so the goldens and the lane read one literal.
+TOP_SELLING_ASK_METRIC = "By quantity or by amount?"
+TOP_SELLING_ASK_GROUP = (
+    "Do you want the top items inside one category, or the categories ranked against each other?"
+)
+TOP_SELLING_REFUSED_OTHER_CUSTOMER = "Sorry, I can only share sales figures for your own account."
+
+# The owner's "top 100": the route clamps a named N here, the presenter never prints past it.
+_TOP_SELLING_MAX_ROWS = 100
+
+
+def _top_selling_is_category(report: dict) -> bool:
+    return report.get("group") == "category"
+
+
+def _top_selling_header(report: dict) -> str:
+    """Title, metric, basis, the FULL count (owner: the header states it), then every
+    filter axis, ``all`` where none was named. The fill-rate note rides under the
+    agent line only when the route sends it (the route decides when it is low)."""
+    noun = "categories" if _top_selling_is_category(report) else "items"
+    top_n = report.get("top_n")
+    title = f"*Top {top_n} selling {noun}*" if _filled(top_n) else f"*Top selling {noun}*"
+    lines = [
+        title,
+        f"Ranked by: {'Amount' if report.get('rank_by') == 'amount' else 'Quantity'}",
+        f"Basis: {'Ordered' if report.get('basis') == 'ordered' else 'Delivered (transferred to DO)'}",
+        f"{noun.capitalize()} with sales: {_outstanding_fmt_int(report.get('total') or 0)}",
+        f"Customer: {report.get('customer_name') if _filled(report.get('customer_name')) else 'all'}",
+        f"Category: {report.get('category_name') if _filled(report.get('category_name')) else 'all'}",
+        f"Sales agent: {report.get('sales_agent') if _filled(report.get('sales_agent')) else 'all'}",
+    ]
+    if _filled(report.get("agent_fill_pct")):
+        lines.append(
+            f"Note: only {report.get('agent_fill_pct')}% of sales orders in this period carry a sales agent."
+        )
+    lines.append(f"Channel: {_sales_channel_header(report.get('channel'))}")
+    lines.append(f"Delivery date: {_outstanding_date_range(report.get('date_from'), report.get('date_to'))}")
+    return "\n".join(lines)
+
+
+def _top_selling_row(row: dict, *, category: bool) -> str:
+    """``n. CODE Name: Qty q, RM v`` (code alone when the name is null); at category
+    grain ``n. NAME: Qty q, RM v`` (the code when the name is null, ``Unassigned``
+    when both are). ``n`` is the body's own rank: the route sorts, never this."""
+    code, name = row.get("code"), row.get("name")
+    if category:
+        label = _outstanding_label(name if _filled(name) else code)
+    else:
+        label = " ".join(str(v) for v in (code, name) if _filled(v)) or "Unassigned"
+    return (
+        f"{row.get('rank')}. {label}: Qty {_outstanding_fmt_int(row.get('qty'))}, "
+        f"{_rm_money(row.get('amount') or 0)}"
+    )
+
+
+def _top_selling_rows(report: dict) -> list[dict]:
+    rows = report.get("rows") if isinstance(report.get("rows"), list) else []
+    return [r for r in rows if isinstance(r, dict)][:_TOP_SELLING_MAX_ROWS]
+
+
+def _top_selling_total(report: dict) -> int:
+    try:
+        return int(report.get("total") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _top_selling(report: dict) -> str:
+    """The whole WhatsApp reply for one route body. Three shapes off the same header:
+    rows present = the ranking plus the detail offer (owner: required); no rows but a
+    count = the message named no N, so state the count (the header) and ask how many
+    (owner rulings 26 Sep: no default N, no partial list, no "more"); no rows and no
+    count = the miss line. Length is never a reason here: n8n already chunks a long
+    WhatsApp message (owner, PR #1258 05:32Z), so a named N up to 100 goes out whole."""
+    header = _top_selling_header(report)
+    category = _top_selling_is_category(report)
+    rows = _top_selling_rows(report)
+    if not rows:
+        total = _top_selling_total(report)
+        if total > 0:
+            noun = "categories" if category else "items"
+            return (
+                header + f"\n\nHow many {noun} do you want to see? "
+                f"Reply with a number from 1 to {min(total, _TOP_SELLING_MAX_ROWS)}."
+            )
+        return header + "\n\n" + SALES_REPORT_MISS_MESSAGE
+    offer = (
+        "Reply with a rank number to see that category's top items."
+        if category
+        else "Reply with a rank number to see that item's customers and months."
+    )
+    body = "\n".join(_top_selling_row(r, category=category) for r in rows)
+    return header + "\n\n" + body + "\n\n" + offer
+
+
+def _top_selling_pick_row(row: dict, *, category: bool) -> dict:
+    """One printed line as a pick row (owner, PR #1258 05:32Z: the list behaves like the
+    customer and product pickers). The `{idx, label, code, name, entity_type}` shape every
+    roster row already uses; `idx` is the printed rank so a later "2" means line 2. The
+    label is what a typed answer matches exactly (`turn/decide._positions_by_label`): the
+    product code at item grain, as the product picker labels its lines, and the printed
+    category name at category grain, as the customer picker labels its lines by name."""
+    code, name = row.get("code"), row.get("name")
+    return {
+        "idx": row.get("rank"),
+        "label": _outstanding_label(name if _filled(name) else code) if category else code,
+        "code": code,
+        "name": name,
+        "entity_type": "category" if category else "product",
+    }
+
+
+def _top_selling_envelope(report: dict) -> dict:
+    """What `present_response` will return for `crm_top_selling_report` (S3 wires the
+    dispatch). The how-many reply is not a miss (nothing to escalate), so it carries
+    `has_result: true` under its own `result_type`, which the lane reads to arm nothing.
+    `result_set` is the pick list the lane arms as a sticky `top_selling_pick` roster
+    (backend `turn/pending.top_selling_pick`); empty whenever no list was printed."""
+    rows = _top_selling_rows(report)
+    how_many = not rows and _top_selling_total(report) > 0
+    category = _top_selling_is_category(report)
+    return {
+        "result_type": "top_selling_how_many" if how_many else "top_selling",
+        "response": _top_selling(report),
+        "has_result": bool(rows) or how_many,
+        "result_set": [_top_selling_pick_row(r, category=category) for r in rows],
+    }

@@ -1,0 +1,15 @@
+{
+  "group": "item",
+  "rank_by": "qty",
+  "basis": "delivered",
+  "top_n": null,
+  "total": 1284,
+  "customer_name": null,
+  "category_name": null,
+  "sales_agent": null,
+  "agent_fill_pct": null,
+  "channel": null,
+  "date_from": "2026-01-01",
+  "date_to": "2026-12-31",
+  "rows": []
+}
