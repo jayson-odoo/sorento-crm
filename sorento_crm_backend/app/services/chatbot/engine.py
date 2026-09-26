@@ -835,20 +835,36 @@ def _answer_earlier_messages(
     mine = envelope.model_dump(mode="json")
     my_message_id = _message_id(envelope)
     out: list[dict[str, Any]] = []
-    for item in taken:
+    for index, item in enumerate(taken):
         if item.row_id is None and item.job_id is not None:
             # Today's path (pre-S6): n8n's `media-route` replies on its own when its
             # extraction fails or outlives its wait. Answering such a photo here too
             # would send the customer a second message, so only a photo that has been
             # READ is answered ahead; any other is left to its own delivery, with no row.
-            status = media_intake.await_existing_job(
-                item.job_id, timeout_seconds=media_wait, session_factory=session_factory
-            )
+            try:
+                status = media_intake.await_existing_job(
+                    item.job_id, timeout_seconds=media_wait, session_factory=session_factory
+                )
+            except Exception:  # noqa: BLE001 - see the docstring: best effort
+                logger.warning(
+                    "chatbot send order: could not wait on an earlier photo of %s; it is "
+                    "left to its own delivery",
+                    contact_respond_id,
+                    exc_info=True,
+                )
+                status = None
             if status != "completed":
-                left_count += 1
                 if "photo_not_read" not in reasons:
                     reasons.append("photo_not_read")
-                continue
+                if status == "failed":
+                    # n8n answers it on its reply arm; it never reaches `/chat/turn`,
+                    # so nothing later waits on it.
+                    left_count += 1
+                    continue
+                # Still being read: it runs later as its own turn, so nothing sent
+                # after it may be answered ahead of it (as in `within_bounds`).
+                left_count += len(taken) - index
+                break
         try:
             if item.row_id is not None:
                 earlier_envelope = Envelope.model_validate(item.envelope)
