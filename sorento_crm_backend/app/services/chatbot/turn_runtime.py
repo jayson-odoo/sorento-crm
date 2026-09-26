@@ -2772,6 +2772,11 @@ def envelope_of(
         # "more" recounts the set under the SAME entitlement rather than under the
         # parser's own, empty, list. `None` on every arm that never called the tool.
         "access_levels_used": fetched.get("access_levels"),
+        # The top selling question this reply asked (`group` / `metric` / `basis` /
+        # `how_many`), or None when it asked nothing. `engine.py` records it on
+        # `focus.top_selling` (`turn/apply.record_top_selling_asked`), reviewer B2 on
+        # PR #1273.
+        "top_selling_asked": fetched.get("top_selling_asked"),
     }
     if raw_fragment is not None:
         # R4 (PLAN-chatbot-answer-half-reattach.md): the UNTOUCHED `business.run_fetch`

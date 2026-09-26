@@ -65,6 +65,7 @@ from app.services.chatbot.turn import memory as memory_mod
 from app.services.chatbot.turn import tail as turn_tail
 from app.services.chatbot.turn.apply import apply as turn_apply
 from app.services.chatbot.turn.apply import is_product_shaped_entity
+from app.services.chatbot.turn.apply import record_top_selling_asked
 from app.services.chatbot.turn.policy import load_policy
 from app.services.chatbot.turn.route import route as turn_route
 # Module level and by name, the same shape `app/api/v1/external/media.py` uses for its own
@@ -2507,6 +2508,7 @@ def _run_stages(  # noqa: PLR0915
                     # An answer that is not a counted set closes the page: the customer
                     # has moved on, and "more" must not resume a set they left.
                     state_out.focus.set_page = None
+                record_top_selling_asked(state_out.focus, envelopes)
                 turn_trace.record(
                     "looked_up",
                     summary="Looked the answer up.",

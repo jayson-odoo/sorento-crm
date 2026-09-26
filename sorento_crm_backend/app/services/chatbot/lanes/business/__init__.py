@@ -440,20 +440,22 @@ def _outstanding_offer_closed(parse_output: dict[str, Any], db: Any) -> dict[str
     }
 
 
-def _top_selling_question(slot: dict[str, Any]) -> str | None:
+def _top_selling_question(slot: dict[str, Any]) -> tuple[str, str] | None:
     """S4 point 8a: the one question an unsettled top selling ask gets, in this order:
     the grain when the parser could not tell a category filter from a category ranking,
     the metric when none was named, the basis when a word could mean either. None once
     the ask is settled. A picked row (`detail_code`) is never asked about: the ranking
-    it came from already ran."""
+    it came from already ran. Returns `(axis, line)`: the axis is what the reply records
+    as asked (`top_selling_asked`), so the next message is read as its answer only if it
+    answers that axis (`turn/apply._top_selling_waiting`, reviewer B2 on PR #1273)."""
     if slot.get("detail_code"):
         return None
     if slot.get("rank_group") == "unclear":
-        return TOP_SELLING_ASK_GROUP
+        return "group", TOP_SELLING_ASK_GROUP
     if slot.get("rank_by") not in ("quantity", "amount"):
-        return TOP_SELLING_ASK_METRIC
+        return "metric", TOP_SELLING_ASK_METRIC
     if slot.get("basis") == "unclear":
-        return TOP_SELLING_ASK_BASIS
+        return "basis", TOP_SELLING_ASK_BASIS
     return None
 
 
@@ -476,7 +478,7 @@ def _top_selling_category_ids(slot: dict[str, Any], *, db: Any) -> tuple[list[st
     return ids, True
 
 
-def _fixed_reply(text: str) -> dict[str, Any]:
+def _fixed_reply(text: str, *, top_selling_asked: str | None = None) -> dict[str, Any]:
     """One fixed line and nothing else, before any fetch: the refusal and the top
     selling questions. `has_result: True` and no `outstanding_ask` keep it OFF the miss
     lane (no escalate offer) and arm nothing; the carried `focus.status` is what makes
@@ -495,6 +497,9 @@ def _fixed_reply(text: str) -> dict[str, Any]:
         "requested_attributes": [],
         "keys_served": False,
         "outstanding_report": True,
+        # The top selling question this line asks, if any (`_top_selling_question`'s
+        # axis); `engine.py` records it on the slot for the next turn to read.
+        "top_selling_asked": top_selling_asked,
     }
     item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
     return {
@@ -1398,9 +1403,10 @@ def run_fetch(
         slot = slot if isinstance(slot, dict) else {}
         question = _top_selling_question(slot)
         if question is not None:
+            axis, line = question
             if trace is not None:
-                trace.add("top_selling", {"asked": question})
-            return _fixed_reply(question)
+                trace.add("top_selling", {"asked": line})
+            return _fixed_reply(line, top_selling_asked=axis)
         category_ids, category_named = _top_selling_category_ids(slot, db=db)
         if category_named and not category_ids:
             return _error_fragment(

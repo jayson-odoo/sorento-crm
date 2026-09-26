@@ -886,18 +886,40 @@ TOP_SELLING_KEYS = ("rank_by", "basis", "rank_group", "top_n")
 TOP_SELLING_ONE_SHOT = ("detail_code",)
 
 
-def _top_selling_waiting(carried: dict[str, Any]) -> bool:
-    """Did the last reply ASK something about this ask? Read off the carried axes the
-    lane asks from, in the lane's own order (`lanes/business._top_selling_question`):
-    an unclear grain, no metric, an unclear basis, or no count (the how-many reply).
-    A message answering it names only the answer, so it completes the carried ask
-    rather than starting a fresh one."""
-    return bool(carried) and (
-        carried.get("rank_group") == "unclear"
-        or not carried.get("rank_by")
-        or carried.get("basis") == "unclear"
-        or carried.get("top_n") is None
+#: The clarify questions the lane asks (`lanes/business._top_selling_question`'s axis)
+#: and the parser key that answers each. The how-many question is not here: its answer
+#: is a bare count, which never names the ranking, so a message that does name it is a
+#: new ask (reviewer B2 (b), PR #1273).
+TOP_SELLING_CLARIFY_AXES = {"group": "rank_group", "metric": "rank_by", "basis": "basis"}
+
+
+def _top_selling_waiting(asked: Any, own: dict[str, Any]) -> bool:
+    """Is this message the answer to the question the LAST reply asked? `asked` is what
+    that reply recorded (`record_top_selling_asked`), never inferred from which axes
+    happen to be empty: a single row sent as is, or a how-many left unanswered, leaves a
+    carried slot with no count, and reading that as "still waiting" let a fresh ask
+    inherit the old category, customer and metric (reviewer B2, PR #1273). A message
+    that restates the ranking while answering the clarify ("top 5 by amount" under "By
+    quantity or by amount?") completes the asked ask."""
+    axis = TOP_SELLING_CLARIFY_AXES.get(asked) if isinstance(asked, str) else None
+    return axis is not None and own.get(axis) not in (None, "unclear")
+
+
+def record_top_selling_asked(focus: Focus, envelopes: list[dict[str, Any]]) -> None:
+    """After the lane ran: record on `focus.top_selling` which top selling question the
+    reply asked (`asked`), or clear it when the reply asked nothing (a list, a single
+    row, a detail, a miss, a refusal). `_top_selling_rules` reads it next turn."""
+    slot = focus.top_selling
+    if not isinstance(slot, dict):
+        return
+    asked = next(
+        (e.get("top_selling_asked") for e in envelopes or [] if isinstance(e, dict) and e.get("top_selling_asked")),
+        None,
     )
+    if asked:
+        slot["asked"] = asked
+    else:
+        slot.pop("asked", None)
 
 
 def _top_selling_rules(
@@ -909,14 +931,15 @@ def _top_selling_rules(
     * A verdict naming the ask (`order_status: "top_selling"`) sets the status. Its own
       non-null axes always win. Carried ones fill the rest unless this is a FRESH ask
       (the parser's `domain_in_message`: the message names the ask itself, "top 10
-      selling items") and the last reply asked nothing (`_top_selling_waiting`); a fresh ask
-      states its own metric, grain and count (owner: no default metric), while "by
-      amount" or "ordered" under a ranking changes only the axis it names.
+      selling items") that does not answer the clarify the last reply asked
+      (`_top_selling_waiting`); a fresh ask states its own metric, grain, count and
+      filters (owner: no default metric, never assume), while "by amount" or "ordered"
+      under a ranking changes only the axis it names.
     * A new ask about anything else (`domain_in_message` without the word) leaves
       the ranking: the status and the slot go, so a later order list is not re-read as
       a ranking.
     * The parser can read a bare "6" under the how-many question as a position; with
-      no pick this turn, a waiting count and one position, the position IS the count
+      no pick this turn, the how-many asked last and one position, the position IS the count
       (the parser's own field, never the text).
     * Category words the message names ride on the slot, because the lane resolves
       them itself (the generic resolver re-types a category under `order` as a
@@ -936,11 +959,14 @@ def _top_selling_rules(
         focus.top_selling = None
         return
     carried = dict(focus.top_selling or {})
+    # What the last reply asked lives one turn: this turn's reply records its own.
+    asked_last = carried.pop("asked", None)
     own = {k: verdict.get(k) for k in TOP_SELLING_KEYS if verdict.get(k) is not None}
     positions = [p for p in (verdict.get("reference_positions") or []) if isinstance(p, (int, float))]
     if (
         "top_n" not in own
         and "answer_top_selling_pick" not in trace.rules_fired
+        and asked_last == "how_many"
         and carried.get("rank_by")
         and carried.get("top_n") is None
         and len(positions) == 1
@@ -955,13 +981,31 @@ def _top_selling_rules(
     if categories:
         own["category_words"] = categories
         carried.pop("category_code", None)
-    if asked and names_its_ask and not _top_selling_waiting(carried):
+    if asked and names_its_ask and not _top_selling_waiting(asked_last, own):
         # A fresh ask names the ask ITSELF ("top 10 selling items": `domain_in_message`);
-        # "by amount" under a ranking names only the axis it changes.
+        # "by amount" under a ranking names only the axis it changes. A fresh ask states
+        # its own filters too (owner: never assume): a customer, channel or date window
+        # it does not name is not carried from the last ask (reviewer B2, PR #1273).
         carried = {}
+        _drop_unnamed_filters(focus, verdict)
         trace.rules_fired.append("top_selling_fresh_ask")
     carried.update(own)
     focus.top_selling = carried
+
+
+def _drop_unnamed_filters(focus: Focus, verdict: dict[str, Any]) -> None:
+    """A fresh top selling ask keeps only the filters THIS message named: its own
+    customer entities (the generic rules already wrote those), channel and dates."""
+    names_customer = any(
+        isinstance(e, dict) and e.get("hint") == "customer" and e.get("current_message") is not False
+        for e in (verdict.get("entities") or [])
+    )
+    if not names_customer:
+        focus.customers = []
+    if not verdict.get("sales_channel"):
+        focus.sales_channel = None
+    if not (verdict.get("date_mode") or verdict.get("date_filter_start") or verdict.get("date_filter_end")):
+        focus.date_window = None
 
 
 def _without_top_selling_pick(focus: Focus) -> Focus:

@@ -2181,6 +2181,10 @@ def _top_selling_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
         "keys_served": False,
         "outstanding_ask": outstanding_ask,
         "outstanding_report": True,
+        # The how-many reply ASKS (reviewer B2, PR #1273): recorded on the slot so the
+        # next bare number is its count, while a list or a single row asks nothing and
+        # the next ask naming the ranking starts fresh.
+        "top_selling_asked": "how_many" if envelope.get("result_type") == "top_selling_how_many" else None,
     }
 
 
