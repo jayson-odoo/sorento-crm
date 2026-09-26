@@ -120,6 +120,10 @@ class SystemSettingUpdate(BaseModel):
     # anything but the two grains is a 422 before it can reach the column. Same rule as
     # the blocks above - it must appear HERE and in the GET dict, because both are manual.
     plan_grain: Optional[Literal["product", "location"]] = None
+    # Cost price from the supplier (#1288, AC-S2-20). Off by default (first rollout);
+    # on, a staff upload goes through Submit/Decide/Return before Apply. Same rule again -
+    # must appear here AND in the GET dict below.
+    cost_price_verification_enabled: Optional[bool] = None
     # Chatbot media endpoint (PLAN-chatbot-media-endpoint section 2.4). Same rule
     # again - every one of these must ALSO appear in the GET dict below.
     #
@@ -394,6 +398,9 @@ async def get_settings(
                 # Rollout default (plan 5.1): a row saved before the column existed reads
                 # as Product rather than as "no policy", which has no meaning here.
                 "plan_grain": (getattr(settings, "plan_grain", None) or "product") if settings else None,
+                "cost_price_verification_enabled": (
+                    bool(getattr(settings, "cost_price_verification_enabled", False)) if settings else False
+                ),
                 # Chatbot media. NULL is meaningful for the three model columns:
                 # provider/model inherit the AIAssistantConfig row, and a NULL
                 # degraded model means the monthly quota is a hard stop rather
@@ -802,8 +809,29 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
             else:
                 update_data[column] = default
 
+    # #1288 AC-S2-20: the verification switch is the control that lets staff skip a
+    # second person, so a change is a named, audited event of its own - not just another
+    # row in the generic settings dict.
+    cost_price_verification_changed = (
+        "cost_price_verification_enabled" in update_data
+        and bool(update_data["cost_price_verification_enabled"])
+        != bool(getattr(settings, "cost_price_verification_enabled", False))
+    )
+
     for key, value in update_data.items():
         setattr(settings, key, value)
+
+    if cost_price_verification_changed:
+        from app.services.audit_service import log_audit
+        from app.audit_context import get_real_and_effective_user_ids
+
+        real_user_id, _eff = get_real_and_effective_user_ids()
+        log_audit(
+            db, "system_settings", str(settings.id), "COST_VERIFICATION_SETTING",
+            new_values={"cost_price_verification_enabled": update_data["cost_price_verification_enabled"]},
+            user_id=real_user_id,
+        )
+
     db.commit()
     db.refresh(settings)
     return {"message": "General settings updated successfully", "data": settings}
