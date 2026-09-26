@@ -391,6 +391,14 @@ def _settle_question_subject(focus: Focus, pending: Pending, trace: Trace | None
         focus.customers = [
             {"uuid": uid, "hint": "customer", "current_message": False} for uid in ids
         ]
+    # #1262 slice 9 (F1a) follow-up: the SAME settle, for the brand the scope question
+    # was asked about - a stored `brand_ids` filter is already-resolved uuids or it is
+    # nothing (the brand never reaches a resolver that could mis-place it), onto the
+    # DEDICATED `outstanding_brand_ids` slot, never `focus.brands` (the tier-gate's own,
+    # unrelated field - see `Focus.outstanding_brand_ids`'s own docstring).
+    brand_ids = [b for b in (filters.get("brand_ids") or []) if is_uuid(b)]
+    if brand_ids:
+        focus.outstanding_brand_ids = brand_ids
     codes = [c for c in (filters.get("warehouse_codes") or []) if c]
     token = filters.get("location_token")
     if codes or token:

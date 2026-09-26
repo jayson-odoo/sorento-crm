@@ -1609,6 +1609,13 @@ def outstanding_carry(
     ids = [e["uuid"] for e in focus.customers if isinstance(e, dict) and _is_uuid(e.get("uuid"))]
     if ids:
         out["outstanding_carried_customer_ids"] = ids
+    # #1262 slice 9 (F1a) follow-up: the same carry, for the brand the scope question
+    # (or an open detail offer) was asked about - already-resolved uuids on
+    # `focus.outstanding_brand_ids` (settled by `_settle_question_subject`), never
+    # re-resolved (D10).
+    brand_ids = [b for b in focus.outstanding_brand_ids if _is_uuid(b)]
+    if brand_ids:
+        out["outstanding_carried_brand_ids"] = brand_ids
     for entity in focus.warehouse:
         if not isinstance(entity, dict):
             continue

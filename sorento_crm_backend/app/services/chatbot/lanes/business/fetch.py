@@ -1869,6 +1869,14 @@ def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
         # built - and a REFINEMENT of that offer ("this month only") has to re-run the
         # same scope rather than re-ask a question the customer already answered.
         "scope": semantic_input.get("outstanding_scope"),
+        # #1262 slice 9 (F1a) follow-up: the SAME already-resolved brand ids
+        # `_resolve_report_product_and_location` wrote onto this same `semantic_input`
+        # earlier in this fetch - the report just ran with them, so the detail offer
+        # (and any refinement of it) carries them forward the same way it does
+        # `customer_ids` above.
+        "brand_ids": [
+            b for b in jsc.array(semantic_input.get("outstanding_brand_ids")) if is_uuid(b)
+        ],
     }
 
 

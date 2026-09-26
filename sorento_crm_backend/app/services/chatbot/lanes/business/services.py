@@ -454,6 +454,19 @@ def outstanding_customer_echo(db: Session, customer_ids: Any) -> str:
     return _customer_echo(db, None, ids) or ""
 
 
+def outstanding_brand_echo(db: Session, brand_ids: Any) -> str:
+    """The `Brand:` line for a set of resolved brand ids - the SAME "one source, the
+    rows" rule `outstanding_customer_echo` above follows, so the scope question and the
+    report cannot name the brand differently. Delegates to the report route's own
+    `_brand_echo` (#1262 slice 9, F1a)."""
+    from app.services.outstanding_report_service import _brand_echo
+
+    ids = [str(bid) for bid in (brand_ids or []) if bid]
+    if not ids:
+        return ""
+    return _brand_echo(db, ids) or ""
+
+
 def resolve_warehouse_token(db: Session, token: str) -> list[str]:
     """D5 (PLAN-chatbot-outstanding-report.md, S4 point 7): a token equal to a
     `warehouse_code` (case-insensitive) resolves to that code ONLY (`BRW` -> `BRW`); a

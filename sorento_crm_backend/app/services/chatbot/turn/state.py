@@ -98,6 +98,14 @@ class Focus:
     customers: list[dict[str, Any]] = field(default_factory=list)
     warehouse: list[dict[str, Any]] = field(default_factory=list)
     brands: list[str] = field(default_factory=list)
+    # #1262 slice 9 (F1a) follow-up: the outstanding report's OWN brand carry - already
+    # RESOLVED uuids (never re-resolved, D10), settled by `_settle_question_subject` off
+    # the scope-ask's stored filters and read back by `turn_runtime.outstanding_carry`.
+    # A dedicated slot, deliberately NOT `brands` above: that field holds plain CODE
+    # strings for the tier-gate's own brand x tier entitlement recompose
+    # (`turn_runtime.py`'s `recompose(tiers, focus.brands, entitled)`), an unrelated
+    # consumer this must never disturb.
+    outstanding_brand_ids: list[str] = field(default_factory=list)
     tier: list[str] = field(default_factory=list)
     domains: list[str] = field(default_factory=list)
     document: list[str] = field(default_factory=list)
@@ -174,7 +182,10 @@ class State:
 # lose a ledger family on the way (journey step 5, D7).
 # --------------------------------------------------------------------------- #
 
-FOCUS_LIST_FIELDS = ("products", "customers", "warehouse", "brands", "tier", "domains", "document")
+FOCUS_LIST_FIELDS = (
+    "products", "customers", "warehouse", "brands", "outstanding_brand_ids",
+    "tier", "domains", "document",
+)
 
 
 def focus_to_wire(focus: Focus) -> dict[str, Any]:
@@ -209,7 +220,7 @@ def focus_from_wire(raw: Any) -> Focus:
         value = raw.get(name)
         if not isinstance(value, list):
             continue
-        if name in ("brands", "tier", "domains", "document"):
+        if name in ("brands", "outstanding_brand_ids", "tier", "domains", "document"):
             setattr(focus, name, [v for v in value if isinstance(v, str)])
         else:
             setattr(focus, name, [_entity(v) for v in value if v is not None])

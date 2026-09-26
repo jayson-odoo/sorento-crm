@@ -33,6 +33,7 @@ from app.services.chatbot.turn import policy_rows
 from app.services.chatbot.lanes.business.services import (
     FetchServices,
     ResolveGateServices,
+    outstanding_brand_echo,
     outstanding_customer_echo,
     resolve_warehouse_token,
 )
@@ -138,6 +139,14 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
         # answering turn prints the same `Location: IB (BRW-IB, MWH-IB)` header the
         # asking turn did instead of re-running over every warehouse.
         "location_token": semantic_input.get("outstanding_location_token"),
+        # #1262 slice 9 (F1a) follow-up: `semantic_input["outstanding_brand_ids"]` is
+        # ALREADY the resolved uuids by the time this runs - `run_fetch` calls
+        # `_resolve_report_product_and_location` (which resolves a fresh brand token OR
+        # falls back to `outstanding_carried_brand_ids`, R13/R15/D10) before ever
+        # reaching the scope-ask arm this feeds. No second fallback needed here.
+        "brand_ids": [
+            b for b in jsc.array(semantic_input.get("outstanding_brand_ids")) if fetch_mod.is_uuid(b)
+        ],
     }
 
 
@@ -232,7 +241,9 @@ def _outstanding_scope_ask(
     )
 
 
-def _outstanding_scope_filter_lines(filters: dict[str, Any], *, customer_name: str = "") -> list[str]:
+def _outstanding_scope_filter_lines(
+    filters: dict[str, Any], *, customer_name: str = "", brand_name: str = ""
+) -> list[str]:
     """The scope question's header: the SAME four lines the report prints, in the same
     order and the same words (`sorento_crm_mcp.presenters._outstanding_report`, the
     `Product:` / `Customer:` / `Location:` / `Order date:` block), one writer for every
@@ -261,6 +272,12 @@ def _outstanding_scope_filter_lines(filters: dict[str, Any], *, customer_name: s
     label with its company-code suffix ("CHIN CHUN HARDWARE SDN BHD (MCH, SRT)") while
     the report named the ledger rows. AC-1163's distinct, first-seen rule comes with
     it, because it lives in that one function.
+
+    `brand_name` (#1262 slice 9 follow-up, F1a): the SAME additive-only rule the MCP
+    presenter's `_outstanding_header_lines` uses for its own fifth `Brand:` line - it
+    prints ONLY when filled, never `all`, because an ordinary (no-brand) ask never named
+    one at all (unlike Product/Customer/Location/Order date, which are always one of
+    this report's four axes whether or not the customer named a value for it).
     """
     # The `Product:` line names every code the question is about, the way the `Customer:`
     # line names every ledger: "all" over a ten-variant roster is one question about ten
@@ -289,12 +306,16 @@ def _outstanding_scope_filter_lines(filters: dict[str, Any], *, customer_name: s
         filters.get("date_filter_start"), filters.get("date_filter_end")
     )
 
-    return [
+    lines = [
         f"Product: {product_code or 'all'}",
         f"Customer: {jsc.js_string(customer_name or '').strip() or 'all'}",
         f"Location: {location}",
         f"Order date: {order_date}",
     ]
+    brand_label = jsc.js_string(brand_name or "").strip()
+    if brand_label:
+        lines.append(f"Brand: {brand_label}")
+    return lines
 
 
 def order_date_text(start: Any, end: Any) -> str:
@@ -346,6 +367,12 @@ def _outstanding_scope_ask_from_filters(
             filters,
             customer_name=(
                 outstanding_customer_echo(db, filters.get("customer_ids")) if db is not None else ""
+            ),
+            # #1262 slice 9 follow-up: the SAME "db is None -> no-op" rule, one echo
+            # over one join, so the question and the report never name the brand
+            # differently either (R19b's own rule, extended).
+            brand_name=(
+                outstanding_brand_echo(db, filters.get("brand_ids")) if db is not None else ""
             ),
         )
     )
@@ -981,6 +1008,18 @@ def _resolve_report_product_and_location(
                     brand_ids.append(row["id"])
         if brand_ids:
             semantic_input["outstanding_brand_ids"] = brand_ids
+    if not semantic_input.get("outstanding_brand_ids"):
+        # R13/R15/D10, the same fallback the customer-id carry above and
+        # `_outstanding_filters_from`'s own docstring make: an ANSWERING turn (a scope
+        # pick, an out-of-range re-ask, a refinement) typed no brand word of its own -
+        # the ids rode in on the carried filter set, already resolved, and have to ride
+        # back out on it too or the re-run silently drops the very brand the question
+        # was scoped to.
+        carried_brand_ids = [
+            b for b in jsc.array(parse_output.get("outstanding_carried_brand_ids")) if jsc.truthy(b)
+        ]
+        if carried_brand_ids:
+            semantic_input["outstanding_brand_ids"] = carried_brand_ids
 
 
 def run_fetch(
