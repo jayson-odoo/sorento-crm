@@ -1,0 +1,80 @@
+# PLAN: a contact's turns are answered in WhatsApp send order, not arrival order
+
+Status: implemented, awaiting review. Track: feature by line count (product code is ~480 lines
+including docstrings, over the ~300 small-fix line), otherwise small-fix shaped: no migration,
+no auth / RBAC change, no new ingest surface, no frontend. One lane, one PR.
+UAC: `chatbot-turn-order-by-send-time-acceptance-criteria.md`.
+Source: issue #1262 round 3 (Mr Loo, sections 1 and 3, N6 / R3-6) and the owner's two chat
+rulings of 26 Sep 2026: "this fix of waiting few seconds is very fragile ... the order supposed
+to be photo -> stock" and "yeah go for one lane".
+
+## Evidence
+
+- Mr Loo sent a PHOTO at 14:57:25 (UTC+8, owner's WhatsApp screenshot) and "Stock" at 14:57:29
+  (`message.message.timestamp` 1790405849000 in the turn 378 envelope). The CRM ran "Stock" as
+  turn 378 and the photo as turn 379.
+- Turn 378 finished before the photo reached the CRM (round 3 section 1: Received 53 ms and
+  125 ms, so no queue wait). About 23 s of the photo's 29 s went on n8n's own media intake
+  (`sub-media-intake` calls `/external/media/process` and waits for the extraction) before it
+  called `/chat/turn` (round 3 section 3). A text is forwarded at once. So a text overtakes the
+  photo it was sent after, and the per-contact ticket (`dispatch.py`), which orders by ARRIVAL,
+  cannot see it.
+- The CRM does know the photo exists when "Stock" arrives: n8n's `/external/media/process` call
+  wrote the `contact_media_usage` ledger row and queued the extraction job seconds before.
+- respond.io puts the send time on every envelope as `message.message.timestamp` (ms). The
+  media ledger does not store it.
+
+## Design (no timer)
+
+When a turn gets its slot, it first answers every earlier-sent message of this contact that the
+CRM already knows about and has not answered, then itself (`app/services/chatbot/send_order.py`):
+
+1. **Queued turn rows** (both messages reached `/chat/turn`, the later-sent one first). Rows are
+   inserted at stage `queued` when a ticket was taken. A row whose send time is earlier than
+   this turn's is claimed with one conditional UPDATE (`stage queued -> received`) and answered
+   first. The waiting request claims its own row when its ticket comes up; if that fails, a
+   predecessor answered it and it replays the answer as `duplicate: true` (also when its wait
+   ran out, so it never sends the generic error beside the real answer).
+2. **Photos still in n8n's media intake** (today, until plan S6 is promoted). A ledger row with
+   no turn row, accepted, whose job is still `queued` or `running`, written before this turn
+   arrived and after this contact's previous turn. It is rebuilt as the attachment envelope and
+   answered first; its intake replays the same ledger row and job (idempotency key: contact,
+   message id, modality), so nothing is extracted or charged twice. The only wait is the
+   existing bounded media poll on that job, which the photo's own turn would have waited too.
+   When n8n then delivers the photo, it is a D15 duplicate and n8n sends nothing.
+
+Each earlier message runs as its own turn on its own row with its own trace; its actions are
+put ahead of this turn's in the one response n8n executes in order. "Stock" then reads the
+focus the photo left.
+
+Not covered, by construction: a message the CRM has not seen at all when a later one is
+answered. After S6 that window is the time between two respond.io webhooks. W4 below is the
+guard for what is left of it.
+
+## Stale focus (R3-6)
+
+A bare business ask (no entity, `entity_op: reuse`, not answering an open question) on a focus
+left by a turn that started on an EARLIER local day (Asia/Kuala_Lumpur) drops the carried
+products before APPLY. The turn then gets the existing bare-stock contract reply ("That would
+search every stock we have - I need at least one filter to narrow it down. Give me a product
+code, ..."), as a contact with no focus does. No previous turn: age unknown, focus untouched.
+
+## n8n steps for the owner (plan S6, not touched by this lane)
+
+From `PLAN-chatbot-media-into-turn.md` S6. The CRM side (media intake inside `/chat/turn`) is on
+main since #1139.
+
+1. Main workflow `THfmMmYcGzDDXBu4`: delete nodes `media-intake` and `media-gate`; wire
+   `redis-pop-main-message-list` straight to `tf-message`.
+2. Same workflow: delete `if-message-is-audio`; both of its outputs go to `chat-turn` and the
+   save-message call.
+3. `chat-turn` HTTP body: `{envelope: <message>}`. Drop the `media` key entirely (with it
+   present the CRM skips its own intake, `media_intake.patched_upstream`). Timeout stays 90 s.
+4. `sub-respond-save-message-redis`: for an attachment message store the caption as `message`
+   (empty string when none).
+5. Draft on the clone first; smoke one photo-only, one photo with caption, one voice note, one
+   denied number; then promote.
+6. Archive `sub-media-intake` (`B3rBMtABou6FpY69`).
+
+Until step 1 is live every photo still pays n8n's extraction wait before `/chat/turn`; this
+lane makes that wait harmless to ordering, not shorter.

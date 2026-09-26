@@ -1,0 +1,28 @@
+# UAC: a contact's turns are answered in WhatsApp send order (issue #1262 round 3)
+
+Plan: `PLAN-chatbot-turn-order-by-send-time.md`. Tests:
+`sorento_crm_backend/tests/chatbot/test_turn_order_by_send_time.py` (`T::` below).
+
+- AC-1 Mr Loo's photo (sent 14:57:25) and "Stock" (sent 14:57:29), with "Stock" reaching
+  `/chat/turn` first while n8n is still extracting the photo: the photo is answered first,
+  "Stock" is parsed against the photo's products, and the photo's reply is the first message
+  sent. `T::TestPhotoStillInN8nMediaIntake::test_mr_loo_photo_is_answered_first_and_stock_applies_to_its_products`
+- AC-2 The photo's own later delivery is a duplicate: no second parse, nothing sent.
+  `T::TestPhotoStillInN8nMediaIntake::test_the_photos_own_late_delivery_is_a_duplicate_and_sends_nothing`
+- AC-3 A photo whose extraction already finished and never became a turn is never answered
+  by a later message. `T::...::test_a_photo_whose_extraction_already_finished_is_not_replayed`
+- AC-4 A job stranded before a turn that has since been answered is never replayed.
+  `T::...::test_a_stranded_job_from_before_an_answered_turn_is_not_replayed`
+- AC-5 Both messages in the per-contact queue: the earlier-sent one waiting behind is answered
+  first; a later-sent one is left to its own request.
+  `T::TestBothInThePerContactQueue::test_a_queued_earlier_sent_message_is_answered_before_the_one_holding_the_slot`,
+  `T::TestBothInThePerContactQueue::test_a_queued_later_sent_message_is_left_for_its_own_request`
+- AC-6 Ordering on: the waiting request whose message was answered ahead of it replays that
+  answer as a duplicate, including after a queue timeout (no generic error reply).
+  `T::TestOrderingOnTheWaitingRequest::test_the_waiting_photo_request_replays_the_answer_given_ahead_of_it`,
+  `T::TestOrderingOnTheWaitingRequest::test_a_queue_timeout_after_being_answered_ahead_sends_no_error_reply`
+- AC-7 Turn 378: a bare "Stock" on a focus left by yesterday's turn never answers yesterday's
+  products; it asks for a product with the bare-stock contract sentence.
+  `T::TestStaleFocusOnABareDomainWord::test_turn_378_bare_stock_on_yesterdays_focus_asks_which_product`
+- AC-8 The same "Stock" on a focus from a turn earlier today still answers it.
+  `T::TestStaleFocusOnABareDomainWord::test_bare_stock_on_a_focus_named_today_still_answers_it`
