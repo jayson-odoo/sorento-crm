@@ -1,6 +1,7 @@
 """Authentication API routes."""
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 import bcrypt
@@ -19,6 +20,8 @@ from app.schemas.auth import (
     VerifyEmailRequest, VerifyEmailResponse,
     VerifyResetTokenRequest, VerifyResetTokenResponse,
     SessionInfo, MessageResponse,
+    PhoneRequestCodeRequest, PhoneRequestCodeResponse, PhoneVerifyRequest,
+    SetPasswordRequest,
 )
 from app.dependencies import get_current_user, get_actor_user_id
 from app.services import user_session_service
@@ -26,6 +29,12 @@ from app.services.error_handler import handle_internal_error
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# A throwaway bcrypt check against this (module-level, computed once) hash
+# equalises the timing of "no such user" / "trashed user" with a real wrong-
+# password check, so neither is distinguishable from a wrong password by
+# response time (AC-26 no-enumeration).
+_DUMMY_PASSWORD_HASH = bcrypt.hashpw(b"identity-s1-timing-dummy", bcrypt.gensalt()).decode("utf-8")
 
 
 def _verification_token_expired(token_row: VerificationToken, now_naive: datetime) -> bool:
@@ -59,12 +68,20 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
         .first()
     )
 
-    if not user:
-        # Count a miss too - don't let attackers probe emails for free.
+    # AC-26: an unknown email must not be distinguishable from a wrong
+    # password (previously a 404 - a direct "does this email exist" oracle),
+    # and a trashed user must never sign in by any method (plan 5.3). Both
+    # take a throwaway bcrypt check for timing, then the SAME 401 body a
+    # wrong password gets.
+    if not user or bool(getattr(user, "is_trashed", False)):
         login_throttle.record_failure(payload.email, ip)
+        try:
+            bcrypt.checkpw(payload.password.encode("utf-8"), _DUMMY_PASSWORD_HASH.encode("utf-8"))
+        except Exception:
+            pass
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found. Please register first.",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials.",
         )
 
     pw_raw = getattr(user, "password", None)
@@ -104,21 +121,7 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
     db.add(user)
     db.commit()
 
-    from app.models.user import UserRoleAssignment
-
     uid = str(getattr(user, "id", "") or "")
-    assignments = (
-        db.query(UserRoleAssignment)
-        .filter(UserRoleAssignment.user_id == uid)
-        .order_by(UserRoleAssignment.assigned_at.asc())
-        .all()
-    )
-    role_ids = [str(a.role_id) for a in assignments if getattr(a, "role_id", None) is not None]
-    role_id: str | None = role_ids[0] if role_ids else None
-    role: UserRole | None = (
-        db.query(UserRole).filter(UserRole.id == role_id).first() if role_id else None
-    )
-    role_name = str(getattr(role, "name", "") or "") if role is not None else None
 
     # Mint the opaque rolling session (30d if remember_me, else 8h).
     session_row = mint_session(
@@ -130,17 +133,9 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
         auth_method="password",
     )
 
-    return LoginResponse(
-        token=str(session_row.token),
-        id=uid,
-        email=getattr(user, "email", None) or None,
-        name=str(getattr(user, "name", "") or "") or None,
-        avatar=str(getattr(user, "avatar", "") or "") or None,
-        status=str(getattr(user, "status", "") or ""),
-        role_id=role_id if role_id is not None else "",
-        role_name=role_name,
-        role_ids=role_ids,
-    )
+    from app.services.phone_signin_service import build_login_response
+
+    return build_login_response(db, user, session_row)
 
 
 @router.post("/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
@@ -524,3 +519,175 @@ def revoke_other_sessions(request: Request, current_user: dict = Depends(get_cur
         db, get_actor_user_id(request, current_user), except_session_id=str(current_id) if current_id else None
     )
     return MessageResponse(message="Signed out other devices.", count=count)
+
+
+# --------------------------------------------------------------------------- #
+# Phone sign-in (identity S1, #1280) - AC-20 to AC-29.                        #
+#                                                                              #
+# Every DB query and the OTP/session/home_path logic live in                 #
+# app.services.phone_signin_service; this file only rate-limits (the same    #
+# per-IP pattern every other unauthenticated route above already uses) and   #
+# shapes the response bodies. See documentation/plans/identity/s1-contract.md.
+# --------------------------------------------------------------------------- #
+
+def _rate_limited_response(retry_after_seconds: int) -> JSONResponse:
+    from app.services.phone_signin_service import rate_limited_minutes_message
+
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={
+            "code": "RATE_LIMITED",
+            "message": rate_limited_minutes_message(retry_after_seconds),
+            "retry_after_seconds": retry_after_seconds,
+        },
+        headers={"Retry-After": str(retry_after_seconds)},
+    )
+
+
+@router.post("/phone/request-code", response_model=PhoneRequestCodeResponse)
+def phone_request_code(
+    payload: PhoneRequestCodeRequest, request: Request, db: Session = Depends(get_db)
+):
+    """Always answers the same 200 for every number, known or not (AC-21)."""
+    from app.services import phone_signin_service as svc
+    from app.services import rate_limit
+
+    ip = request.client.host if request.client else None
+    num = svc.normalize(payload.phone)
+
+    ip_gate = rate_limit.hit(
+        "phone_signin_otp", ip,
+        limit=app_settings.rate_limit_portal_otp_max,
+        window_seconds=app_settings.rate_limit_portal_otp_window_seconds,
+    )
+    if not ip_gate.allowed:
+        return _rate_limited_response(ip_gate.retry_after_seconds or app_settings.rate_limit_portal_otp_window_seconds)
+
+    cooldown_gate = rate_limit.hit("phone_signin_otp_cooldown", num, limit=1, window_seconds=60)
+    if not cooldown_gate.allowed:
+        return _rate_limited_response(cooldown_gate.retry_after_seconds or 60)
+
+    daily_gate = rate_limit.hit("phone_signin_otp_daily", num, limit=10, window_seconds=86400)
+    if not daily_gate.allowed:
+        return _rate_limited_response(daily_gate.retry_after_seconds or 86400)
+
+    eligible = svc.find_eligible(db, num)
+    if eligible is not None:
+        _user, contact = eligible
+        svc.send_signin_code(db, contact)
+
+    svc.mark_code_requested(num)
+
+    return PhoneRequestCodeResponse(
+        sent_to=svc.mask(num) or "",
+        expires_in_seconds=600,
+        resend_in_seconds=60,
+    )
+
+
+@router.post("/phone/verify", response_model=LoginResponse)
+def phone_verify(payload: PhoneVerifyRequest, request: Request, db: Session = Depends(get_db)):
+    """The right code for an eligible number mints a session (AC-24)."""
+    from app.services import phone_signin_service as svc
+    from app.services import rate_limit
+
+    ip = request.client.host if request.client else None
+    num = svc.normalize(payload.phone)
+
+    ip_gate = rate_limit.hit(
+        "phone_signin_verify", ip,
+        limit=app_settings.rate_limit_portal_otp_max,
+        window_seconds=app_settings.rate_limit_portal_otp_window_seconds,
+    )
+    if not ip_gate.allowed:
+        return _rate_limited_response(ip_gate.retry_after_seconds or app_settings.rate_limit_portal_otp_window_seconds)
+
+    locked_retry_after = svc.check_locked(num)
+    if locked_retry_after is not None:
+        return _rate_limited_response(locked_retry_after)
+
+    if not svc.code_was_requested(num):
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={
+                "code": "CODE_EXPIRED",
+                "message": "That code has expired. Send a new one.",
+            },
+        )
+
+    login_response = svc.attempt_verify(
+        db, num, payload.code,
+        user_agent=request.headers.get("user-agent"),
+        ip_address=ip,
+    )
+    if login_response is not None:
+        svc.clear_redis_state(num)
+        return login_response
+
+    result = svc.record_wrong_attempt(num)
+    if result.locked:
+        return _rate_limited_response(result.retry_after_seconds or 900)
+
+    if result.attempts_left is not None:
+        tries_word = "try" if result.attempts_left == 1 else "tries"
+        content = {
+            "code": "CODE_WRONG",
+            "message": f"That code is not right. {result.attempts_left} {tries_word} left.",
+            "attempts_left": result.attempts_left,
+        }
+    else:
+        # Redis down: fail open on the count, not on the refusal itself.
+        content = {"code": "CODE_WRONG", "message": "That code is not right."}
+    return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content=content)
+
+
+@router.post("/password", response_model=MessageResponse)
+def set_password(
+    payload: SetPasswordRequest,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Set/change the signed-in user's password (plan 5.3).
+
+    A phone-only user sets one with no ``current_password`` to prove; a user
+    who already has one must supply and pass it. Every OTHER session is
+    revoked on success - the current one stays (mirrors `/sessions/revoke-others`).
+    """
+    user = db.query(User).filter(User.id == current_user["id"]).first()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+
+    existing_hash = getattr(user, "password", None)
+    has_password = bool(existing_hash and str(existing_hash).strip())
+    if has_password:
+        if not payload.current_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current password is required.",
+            )
+        try:
+            ok = bcrypt.checkpw(
+                payload.current_password.encode("utf-8"), str(existing_hash).encode("utf-8")
+            )
+        except Exception:
+            ok = False
+        if not ok:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current password is not right.",
+            )
+
+    new_hash = bcrypt.hashpw(payload.new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    user.password = new_hash
+    db.add(user)
+    db.commit()
+
+    current_session_id = getattr(request.state, "session_id", None)
+    user_session_service.revoke_all_for_user(
+        db,
+        get_actor_user_id(request, current_user),
+        except_session_id=str(current_session_id) if current_session_id else None,
+    )
+
+    return MessageResponse(message="Password saved.")

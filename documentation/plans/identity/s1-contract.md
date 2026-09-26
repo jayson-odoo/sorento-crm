@@ -32,8 +32,9 @@ Request `{ "phone": "012-345 6789" }` (any format; normalised by `normalize_msis
   number." (depends only on the typed text, never on the database).
 - 429 per IP (bucket `phone_signin_otp`, the portal OTP IP limits `rate_limit_portal_otp_*`),
   per number cooldown (60 s) and per number daily cap (10 per 24 h). All three are keyed on the IP
-  or the typed number, never on whether it belongs to anyone. Body
-  `detail = { code: "RATE_LIMITED", message: "Too many tries. Try again in N minutes.",
+  or the typed number, never on whether it belongs to anyone. Body (flat, no `detail` wrapper,
+  as every S1 error below)
+  `{ code: "RATE_LIMITED", message: "Too many tries. Try again in N minutes.",
   retry_after_seconds }` plus `Retry-After`.
 - 200 otherwise, the same body for every number:
   `{ "sent_to": "+60••••6789", "expires_in_seconds": 600, "resend_in_seconds": 60 }`
@@ -57,13 +58,13 @@ Request `{ "phone": "...", "code": "123456" }`.
 - 200: `LoginResponse` (the email login shape, plus `home_path`). Creates a `user_sessions` row
   with `auth_method = "phone_otp"`, rolling 30 days (`remember=True`); consumes the code; stamps
   `users.phone_verified_at` and `last_sign_in_at`.
-- 401 `detail = { code: "CODE_EXPIRED", message: "That code has expired. Send a new one." }` when
+- 401 `{ code: "CODE_EXPIRED", message: "That code has expired. Send a new one." }` when
   no code was requested for this number in the last 10 minutes.
-- 401 `detail = { code: "CODE_WRONG", message: "That code is not right. N tries left.",
+- 401 `{ code: "CODE_WRONG", message: "That code is not right. N tries left.",
   attempts_left: N }` for a wrong code, an unknown number, a user who is no longer eligible, or a
   contact whose code is missing. The tries count is kept per typed number (Redis), so an unknown
   number counts down exactly like a known one.
-- 429 `detail = { code: "RATE_LIMITED", message: "Too many tries. Try again in N minutes.",
+- 429 `{ code: "RATE_LIMITED", message: "Too many tries. Try again in N minutes.",
   retry_after_seconds }` on the fifth wrong try and after, for 15 minutes per number; a new
   request-code does not lift it. Also the per-IP limit.
 - 422 for an invalid number or a code that is not 6 digits.
@@ -82,7 +83,7 @@ Request `{ "phone": "...", "code": "123456" }`.
 Request `{ "current_password": "..."?, "new_password": "..." }`. When the user already has a
 password, `current_password` is required and checked (400 "Current password is not right.").
 A phone-only user sets one without it. New password: 8 characters or more. On success every
-OTHER session of the user is revoked (the current one stays). `GET /api/v1/user-management/account/`
+OTHER session of the user is revoked (the current one stays). `GET /api/v1/user-management/users/me` (the account page's source)
 gains `has_password` (bool) and `phone_verified_at`.
 
 ### Lost phone (plan 5.3)

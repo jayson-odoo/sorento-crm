@@ -207,6 +207,51 @@ def send_portal_otp_respond_message(
     )
 
 
+def send_login_otp_respond_message(
+    otp_id: str,
+    identifier: str,
+    message_text: str,
+    otp_code: str,
+    space_id: Optional[str],
+) -> dict:
+    """Worker-side: window-aware Respond.io send for a phone sign-in OTP (identity S1, #1280).
+
+    Sends under the ``login_otp`` use case once an approved template is
+    mapped for it; falls back to ``portal_otp`` so phone sign-in works on day
+    one with the existing portal template (see
+    ``settings.phone_signin_otp_use_case``). Logged in the Respond outbox
+    exactly like the portal's own OTP send (``business_table=
+    'portal_otp_codes'``), and likewise not mirrored into the CRM chat thread.
+    """
+    from app.config import settings
+    from app.database import SessionLocal
+    from app.services.respond_template_service import get_default_row
+
+    db = SessionLocal()
+    try:
+        use_case = (
+            settings.phone_signin_otp_use_case
+            if get_default_row(db, settings.phone_signin_otp_use_case) is not None
+            else "portal_otp"
+        )
+    finally:
+        db.close()
+
+    return _send_and_log(
+        use_case=use_case,
+        business_table="portal_otp_codes",
+        business_id=otp_id,
+        identifier=identifier,
+        message_text=message_text,
+        respond_user_id="",
+        crm_sender_user_id=None,
+        space_id=space_id,
+        sla_entity_type="",
+        extra_context_vars={"otp_code": otp_code},
+        emit_outbound_webhook=False,
+    )
+
+
 def send_complaint_respond_message(
     complaint_id: str,
     identifier: str,

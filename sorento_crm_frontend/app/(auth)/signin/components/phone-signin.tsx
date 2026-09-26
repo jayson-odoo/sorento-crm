@@ -19,7 +19,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { OtpCodeField, useResendCooldown } from '@/components/auth/OtpCodeField';
-import { mockVerifyError } from '@/services/phoneSigninService';
 import { useRequestSigninCode } from '../hooks/usePhoneSignin';
 
 type PhoneStep = 'phone' | 'code';
@@ -62,16 +61,6 @@ export function PhoneSignIn({ onError, onSignedIn }: Props) {
 
   const handleVerify = async (typedCode: string) => {
     onError(null);
-
-    // Phase 1 mock only: lets the error states be tuned without a backend -
-    // see services/phoneSigninService.ts.
-    const mockError = mockVerifyError(typedCode);
-    if (mockError) {
-      onError(mockError);
-      setCode('');
-      return;
-    }
-
     setVerifying(true);
     try {
       const response = await signIn('phone-otp', {

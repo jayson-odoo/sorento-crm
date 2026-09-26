@@ -199,6 +199,12 @@ class Settings(BaseSettings):
     rate_limit_portal_otp_max: int = 30        # portal OTP requests per window per IP
     rate_limit_portal_otp_window_seconds: int = 60
 
+    # identity S1 (#1280): the WhatsApp template use case a phone sign-in code
+    # sends under, once an approved one is mapped in the template defaults
+    # screen. Falls back to "portal_otp" (send_login_otp_respond_message) when
+    # nothing is mapped yet, so phone sign-in works on day one.
+    phone_signin_otp_use_case: str = "login_otp"
+
     # Presigned-URL hardening (external API) - see PLAN-fix-security-cluster Sub-plan B.
     # When True, /external/presigned-url only signs a file_path that resolves to a
     # real attachments row (blocks signing arbitrary/guessed keys). Escape hatch:

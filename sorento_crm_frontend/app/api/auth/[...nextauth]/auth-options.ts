@@ -158,7 +158,11 @@ const authOptions: NextAuthOptions = {
 
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
+          // /api/v1/auth/phone/verify answers CODE_EXPIRED / CODE_WRONG / RATE_LIMITED
+          // as a flat { code, message, ... } body (not nested under `detail`) -
+          // see documentation/plans/identity/s1-contract.md.
           const message =
+            (typeof data?.message === 'string' && data.message) ||
             (typeof data?.detail === 'string' && data.detail) ||
             data?.detail?.message ||
             'That code is not right.';

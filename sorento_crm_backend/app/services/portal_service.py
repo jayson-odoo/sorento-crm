@@ -508,14 +508,22 @@ class PortalService:
 
     # ---------- OTP flow ----------
 
-    def request_otp(self, contact_id: str, space_id: str) -> dict:
-        """Generate a fresh OTP code and dispatch via Respond.io. Returns delivery hint."""
-        contact_id = (contact_id or "").strip()
-        space_id = (space_id or "").strip()
-        if not contact_id or not space_id:
-            raise handle_validation_error("contact_id and space_id are required.")
-        contact = self._resolve_contact(contact_id)
+    def create_and_dispatch_otp(
+        self,
+        contact: RespondContact,
+        space_id: str,
+        text_template: str,
+        task,
+    ) -> PortalOtpCode:
+        """Cooldown + daily-cap check, code creation and Respond.io dispatch.
 
+        Shared by the portal's own OTP request and phone sign-in (identity S1,
+        #1280) - the two differ only in the WhatsApp copy (``text_template``,
+        interpolating ``{code}``) and the RQ task that carries it. Raises
+        ``AppException`` (400) on a cooldown/cap hit or an enqueue failure;
+        phone sign-in swallows both (AC-21 never changes its 200 answer),
+        the portal's own ``request_otp`` lets them surface as before.
+        """
         # Rate-limit: at most one outstanding OTP per contact within cooldown.
         recent = (
             self.db.query(PortalOtpCode)
@@ -555,23 +563,19 @@ class PortalService:
         # Dispatch asynchronously via the RQ ``respond_io`` queue - the SAME path
         # as complaint / stock-inquiry status replies. The worker does the
         # window-aware send (free-form text inside the 24h window, else the
-        # approved ``portal_otp`` template) AND writes an ``integration_logs``
+        # approved WhatsApp template) AND writes an ``integration_logs``
         # outbox row, including a ``status='failed'`` row carrying the message
         # text when the send can't go out. That lets the code be read back from
         # the Respond outbox in local dev (no Respond.io connectivity) for
         # testing. Decoupling also means a Respond outage no longer 500s the
-        # request - the contact just retries.
+        # request - the caller just retries.
         identifier = (contact.respond_io_id or "").strip() or contact.id
-        otp_text = (
-            f"Your Sorento portal verification code is {code}. It expires in 10 "
-            f"minutes. Please do not share with anyone."
-        )
+        otp_text = text_template.format(code=code)
         try:
             from app.services.queue_service import enqueue_job
-            from app.tasks.respond_io_tasks import send_portal_otp_respond_message
 
             enqueue_job(
-                send_portal_otp_respond_message,
+                task,
                 otp.id,
                 identifier,
                 otp_text,
@@ -583,7 +587,7 @@ class PortalService:
         except Exception as e:  # noqa: BLE001
             # Enqueue itself failed (e.g. Redis unreachable) - refund the code so
             # it doesn't burn the daily cap, then surface a retryable error.
-            logger.warning("Failed to enqueue portal OTP for contact %s: %s", contact.id, e)
+            logger.warning("Failed to enqueue OTP for contact %s: %s", contact.id, e)
             try:
                 self.db.delete(otp)
                 self.db.commit()
@@ -592,6 +596,25 @@ class PortalService:
             raise handle_validation_error(
                 "Could not send the verification code right now. Please try again shortly."
             ) from e
+        return otp
+
+    def request_otp(self, contact_id: str, space_id: str) -> dict:
+        """Generate a fresh OTP code and dispatch via Respond.io. Returns delivery hint."""
+        contact_id = (contact_id or "").strip()
+        space_id = (space_id or "").strip()
+        if not contact_id or not space_id:
+            raise handle_validation_error("contact_id and space_id are required.")
+        contact = self._resolve_contact(contact_id)
+
+        from app.tasks.respond_io_tasks import send_portal_otp_respond_message
+
+        otp = self.create_and_dispatch_otp(
+            contact,
+            space_id,
+            "Your Sorento portal verification code is {code}. It expires in 10 "
+            "minutes. Please do not share with anyone.",
+            send_portal_otp_respond_message,
+        )
         masked_phone = self._mask_phone(contact.phone_number)
         return {"sent_to": masked_phone, "expires_at": otp.expires_at.isoformat()}
 
