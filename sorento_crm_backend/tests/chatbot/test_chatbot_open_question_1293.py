@@ -229,10 +229,21 @@ def test_the_prompt_states_every_kind_and_every_mode():
 
     assert STOCK_TASK_ADDENDUM in SEMANTIC_PARSER_PROMPT
     section = STOCK_TASK_ADDENDUM.split("== THE OPEN QUESTION AND open_question_answer ==", 1)[1]
+    # Each kind is DEFINED (its own line), not merely named in passing.
     for kind in question_mod.QUESTION_KINDS:
-        assert f'"{kind}"' in section, kind
+        assert f'\n  "{kind}": ' in section, kind
+    # The declared answer, every mode, exactly as the schema enumerates them.
+    assert (
+        '"open_question_answer": {"mode": '
+        '"pick"|"yes"|"no"|"fill"|"all"|"done"|"cancel"|null,'
+    ) in section
     for mode in ("pick", "yes", "no", "fill", "all", "done", "cancel"):
-        assert f'"{mode}"' in section, mode
+        assert f'-> "{mode}"' in section, mode
+    # The owner's own message is taught as ONE pick carrying its quantity.
+    assert (
+        '"the first one, I need 2", "1, I need 2", "yang pertama, 2 unit", "第一个要两个"\n'
+        '    -> "pick", items [{"position": 1, "code": null, "qty": 2}]'
+    ) in section
     # The owner's own phrase, and ordinals and numbers in all three languages.
     for phrase in (
         "the first one, I need 2",
