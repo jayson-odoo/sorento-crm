@@ -289,3 +289,47 @@ def test_w1_a_brand_word_in_the_class_term_is_a_brand_binding_off_the_brands_tab
     assert outcome["brand"] == brand
     assert outcome["qualifying_total"] == 2, outcome
     assert {c["product_code"] for c in outcome["candidates"]} == _codes(world["srt_wall"])
+
+
+# --------------------------------------------------------------------------- #
+# W2: say what was identified, in plain words                                   #
+# --------------------------------------------------------------------------- #
+
+
+def _display(brand_name: str) -> str:
+    return brand_name.title() if brand_name.isupper() else brand_name
+
+
+@pytest.mark.parametrize("shape", [0, 1], ids=["brand_entity", "brand_in_class_raw"])
+def test_w2_the_header_names_brand_type_and_mounting_in_plain_words(chat, world, shape):
+    brand = world["sorento"].brand_name
+    text = chat.say(
+        f"which {brand.lower()} wall hung basin has stock?",
+        _stock_verdict(_brand_entity_shapes(brand.lower(), "wall hung basin")[shape], "which wall hung basin has stock"),
+    )
+    first = text.splitlines()[0]
+    assert first == (
+        f"Brand: {_display(brand)}, Product type: Wash basin, Mounting: Wall hung. 2 wash basins have stock."
+    ), text
+    assert "wall_hung" not in text and "_" not in first, text
+
+
+def test_w2_without_a_brand_the_header_still_names_the_spec(chat, world):
+    text = chat.say(
+        "which wall hung basin has stock",
+        _stock_verdict([{"raw": "wall hung basin", "hint": "product_type"}], "which wall hung basin has stock"),
+    )
+    assert text.splitlines()[0] == "Product type: Wash basin, Mounting: Wall hung. 3 wash basins have stock.", text
+
+
+def test_w2_a_word_that_was_not_understood_is_said_never_silently_dropped(chat, world):
+    text = chat.say(
+        "which zzqx wash basin has stock",
+        _stock_verdict(
+            [{"raw": "wash basin", "hint": "product_type"}, {"raw": "zzqx", "hint": "product_type"}],
+            "which zzqx wash basin has stock",
+        ),
+    )
+    first = text.splitlines()[0]
+    assert "Product type: Wash basin." in first, text
+    assert "I did not understand \"zzqx\"" in first, text
