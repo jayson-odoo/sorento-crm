@@ -262,8 +262,10 @@ def test_c_the_block_states_a_pick_object_and_keeps_the_open_task_lines():
         open_question=obj,
     )
     assert 'Open question: {"kind":"pick_one"' in block
-    # A pick is not the stock question: the task's own line still prints.
-    assert any(line.startswith("Open task:") for line in block.splitlines())
+    # A pick is not the stock question: the task prints its own lines, never a
+    # pointer to an object that is not the one shown.
+    assert "see Open question" not in block
+    assert "1. SRTWC286-SH" in next(line for line in block.splitlines() if line.startswith("Open task:"))
 
 
 def test_c_the_engine_sends_the_did_you_mean_as_a_pick_object(
@@ -366,6 +368,12 @@ def test_d_a_position_not_offered_is_not_applied():
 
 def test_d_a_quantity_of_zero_is_not_applied():
     v = reply(open_question_answer=answer("pick", picked=[1], qty_for_all=0))
+    _new, plan = apply(_dym_state(), v, build_policy())
+    assert "open_question_answer_pick" not in plan.trace.rules_fired
+
+
+def test_d_a_quantity_of_zero_on_an_item_is_not_applied():
+    v = reply(open_question_answer=answer("pick", items=[(1, None, 0)]))
     _new, plan = apply(_dym_state(), v, build_policy())
     assert "open_question_answer_pick" not in plan.trace.rules_fired
 
@@ -852,11 +860,18 @@ def _load_migration():
     return module
 
 
-def test_j_the_migration_chains_onto_the_lane_head_with_a_short_id():
+def test_j_the_migration_chains_onto_a_committed_revision_with_a_short_id():
     module = _load_migration()
     assert module.revision == "sa2_r9_open_question"
     assert len(module.revision) <= 32
-    assert module.down_revision == "oisl_0001_suggested_links"
+    # Chained onto a committed revision (`alembic-reparent.sh` moves it onto main's
+    # head at merge time, so the parent id itself is not pinned here).
+    parents = [
+        path
+        for path in _MIGRATION.parent.glob("*.py")
+        if f'\nrevision = "{module.down_revision}"' in path.read_text()
+    ]
+    assert len(parents) == 1
 
 
 def test_j_the_migration_publishes_the_contract_unlabelled_and_is_idempotent():
