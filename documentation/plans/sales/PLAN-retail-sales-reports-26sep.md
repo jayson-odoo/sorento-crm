@@ -4,7 +4,8 @@ Status: draft, round 2 (26 Sep 2026). The owner's Lavish review of the mockup (2
 notes, PR #1269) is folded in: section 0 applies each note, and the design (section 5) and the
 slices (section 6) are rewritten on the existing reports kernel. The grill questions G1 to G10
 (section 9, PR #1269 comment 5843859424) are **not answered yet**: their recommendations stand as
-recommendations, not rulings. The round 2 questions Q1 to Q5 are in section 9.1. Track: full for
+recommendations, not rulings. The round 2 questions Q1 to Q5 are in section 9.1 and posted
+on PR #1269 as comment 5844077953 ("Round 2"). Track: full for
 S1, S2, S3 and S4 (S1 adds a permission slug, a chatbot tool and kernel changes; S3 a migration
 and an ingest field). S5 is now the small fix track (shared views and an owner check, no
 migration). S0 is a measurement with no code. Nothing built.
@@ -772,7 +773,7 @@ and for Mocha; G7's saved view is the kernel's shared view (0.3); G10's "sales r
 the slug `sales.reports.view` (0.2). G6's recommendation (b) matches the top X owner ruling
 ("No date said = the current calendar year").
 
-### 9.1 Round 2 questions (posted on PR #1269 as "Round 2")
+### 9.1 Round 2 questions (posted on PR #1269 as comment 5844077953, "Round 2")
 
 - **Q1. The yearly comparison's two blocks in one Excel file.** The screen shows one channel at a
   time (Channel filter; two shared views "Dealer" and "Project team"). Options: (a) the Excel
