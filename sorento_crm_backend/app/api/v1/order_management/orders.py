@@ -1805,6 +1805,11 @@ async def get_sales_report(
 
 _TOP_SELLING_N_MAX = 100
 
+#: The office tier's access type names ("Sorento Office"), matched the way the
+#: chatbot's `tier_gate.parse_level` reads them. Restated here, not imported:
+#: core never imports the chatbot package (tests/chatbot/test_import_boundary.py).
+_OFFICE_ACCESS_TYPE_RE = re.compile(r"^(sorento|cabana|mocha) office\Z")
+
 
 def _top_selling_dealer_scope(db: Session, contact_id: str) -> Optional[list[str]]:
     """The customers a dealer contact is forced to, or None for staff.
@@ -1812,11 +1817,10 @@ def _top_selling_dealer_scope(db: Session, contact_id: str) -> Optional[list[str
     A contact linked to any customer (`respond_contact_customers`) is that
     customer's dealer and sees only its own ledgers, whatever else it holds.
     Staff is positive, never the fallback: every access type the contact holds
-    reads as the office tier (`tier_gate.parse_level`, e.g. "Sorento Office")
+    reads as the office tier (`_OFFICE_ACCESS_TYPE_RE`, e.g. "Sorento Office")
     and at least one of them is active. Anyone else (no type, end user, dealer
     with no link, a type nobody classified) is refused (fail closed)."""
     from app.models.access import ContactAccessType, respond_contact_access_types
-    from app.services.chatbot.lanes.business.tier_gate import parse_level
     from app.services.contact_customer_service import list_links
     from app.services.error_handler import AppException
 
@@ -1835,7 +1839,9 @@ def _top_selling_dealer_scope(db: Session, contact_id: str) -> Optional[list[str
         .filter(respond_contact_access_types.c.contact_id == contact_id)
         .all()
     )
-    is_office = [(parse_level(name) or {}).get("tier") == "office" for name, _ in held]
+    is_office = [
+        bool(_OFFICE_ACCESS_TYPE_RE.match(" ".join((name or "").split()).lower())) for name, _ in held
+    ]
     if held and all(is_office) and any(active for _, active in held):
         return None
     raise AppException(

@@ -342,7 +342,7 @@ what shipped and what decides it.
 - Who is staff (review S2, fail closed): a contact linked to any customer
   (`respond_contact_customers`) is a dealer, forced to those ledgers, whatever else it holds.
   An unlinked contact is staff only when every access type it holds reads as the office tier
-  (`tier_gate.parse_level`: "Sorento Office", "Mocha Office", "Cabana Office") and one of them
+  (the chatbot tier_gate names, restated in the route: "Sorento Office", "Mocha Office", "Cabana Office") and one of them
   is active. Every other unlinked contact (no type, end user, dealer with no link, a type
   nobody classified) is refused 403 `customer_not_permitted` with no figures.
 - A dealer's `customer_query` is refused unless it matches one of its own ledgers: matching
