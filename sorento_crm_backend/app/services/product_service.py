@@ -1450,7 +1450,7 @@ class ProductService:
         if not touched:
             return
         from app.models.embeddings import EmbeddingQueue
-        from app.services.queue_service import get_queue
+        from app.services.queue_service import enqueue_job
         from app.services.embedding_service import _get_embedding_worker
         from app.config import settings as _settings
 
@@ -1497,10 +1497,11 @@ class ProductService:
             raise
 
         try:
-            queue = get_queue(_settings.embedding_queue_name)
             worker = _get_embedding_worker()
             for q_id in enqueue_payload:
-                queue.enqueue(worker, q_id, job_timeout=900)
+                # enqueue_job, not queue.enqueue: the job carries its audit actor and
+                # correlation id like every other job (review N5).
+                enqueue_job(worker, q_id, queue_name=_settings.embedding_queue_name, job_timeout=900)
         except Exception:
             # Embedding side effects must never block the import; rows are persisted
             # and can be picked up by a sweeper. Log and move on.

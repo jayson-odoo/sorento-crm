@@ -40,6 +40,9 @@ BULK_AUDIT_CAP = 500
 _REDACT_EXACT = frozenset({
     "password", "password_hash", "token", "secret", "key_hash", "code_hash", "credentials_json",
     "auth", "p256dh", "secret_key", "private_key", "otp",
+    # Header-style keys integration_service already treats as secret, for operator-entered
+    # JSON such as integrations.config_json (review N4).
+    "authorization", "x-api-key", "apikey", "cookie",
 })
 _REDACT_SUFFIXES = (
     "_password", "_secret", "_token", "_ciphertext", "_private_key", "_webhook_url", "_webhook",
@@ -394,6 +397,10 @@ def audit_event(
     """
 
     def deco(fn):
+        if _pyinspect.iscoroutinefunction(fn):
+            # The wrapper would return the coroutine and restore the context before it ran,
+            # so the verb would be silently lost (review N3).
+            raise TypeError(f"@audit_event({event!r}) cannot wrap an async function: {fn.__qualname__}")
         sig = _pyinspect.signature(fn)
 
         @functools.wraps(fn)
@@ -1049,12 +1056,22 @@ def _write_bulk_rows(
         if ctx is not None and ctx.event:
             ctx.event_hits.add((entity_type, entity_id))
     if remaining > 0:
+        # Every row in one company: the summary is that company's too, or the admin listing
+        # would show "N more rows" to every company (review N1). With its own column the whole
+        # match is checked, not just the itemised rows; through a parent chain only the
+        # itemised rows are known. Mixed, or unknown: company-less.
+        companies = {entry["company_id"] for entry in out}
+        if len(companies) == 1 and "company_id" in table.c:
+            distinct = select(func.count(func.distinct(table.c.company_id)), func.count(table.c.company_id))
+            n_companies, n_stamped = conn.execute(distinct.where(key.in_(matching)), params).one()
+            if n_companies != 1 or n_stamped != len(rows) + remaining:
+                companies = set()
         out.append({
             **common,
             "entity_id": "*",
             "old_values": None,
             "new_values": None,
-            "company_id": None,
+            "company_id": companies.pop() if len(companies) == 1 else None,
             "root_entity_type": entity_type,
             "root_entity_id": "*",
             "description": f"Bulk {common['action'].lower()} on {entity_type}: {remaining} more rows not itemised",

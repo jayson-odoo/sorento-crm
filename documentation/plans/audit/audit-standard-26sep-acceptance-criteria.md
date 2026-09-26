@@ -56,9 +56,14 @@ why" about any record, days or months after the fact.
   `Session.execute`), then one DELETE audit row per matched row is written with the old snapshot.
   (2)
 - **AC-S0-08 [BE]** Given a bulk statement matching more rows than the cap, then exactly `cap`
-  per-row audit rows plus one summary row naming the remaining count are written. (2)
+  per-row audit rows plus one summary row naming the remaining count are written. The summary
+  row carries the company when every matched row shares one, else none (review N1). (2)
 - **AC-S0-09 [BE]** Given a bulk statement on a skipped table, or with the entity type in
   `session.info["skip_audit_entity_types"]`, then no audit row is written. (2)
+- **Not covered by S0 (S3's inventory, review N2).** Raw `text()` DML, `bulk_*_mappings`, and an
+  executemany ORM bulk UPDATE by primary key (`session.execute(update(Model), [{...}, ...])`)
+  write no audit rows; the last logs one INFO line. No app call site of that third shape exists
+  at S0.
 
 ### Request context, principal and source
 

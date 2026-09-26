@@ -114,8 +114,10 @@ login (grill question 14).
    `delete()` issued through `Session.execute` pre-selects the matching primary keys (and the old
    values of the SET columns, or the whole row for a delete), capped at 500 rows per statement,
    and writes one audit row each (plus one `description="... N more rows"` summary row beyond the
-   cap). SET values that are SQL expressions read `"[expression]"`. Raw `text()` DML and
-   `bulk_*_mappings` are not seen; S3 allowlists the 16 sites by name.
+   cap). SET values that are SQL expressions read `"[expression]"`. Raw `text()` DML,
+   `bulk_*_mappings` and an executemany ORM bulk UPDATE by primary key
+   (`session.execute(update(Model), [{...}, ...])`, no app call site today, review N2) are not
+   seen; S3 allowlists the sites by name.
 4. **One mutable request context.** `AuditContext` (a dataclass) replaces the three contextvars.
    `LoggingMiddleware` puts a fresh object in the contextvar per request; every auth dependency
    MUTATES it. A sync dependency on a copied context mutates the same object, which is the fix for

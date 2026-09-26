@@ -345,3 +345,109 @@ class TestS3WriteOrder:
         db.refresh(first)
         db.refresh(second)
         assert second.changed_at > first.changed_at
+
+
+# --- Nits ------------------------------------------------------------------------------
+
+
+class TestNits:
+    def _teams(self, db, n):
+        from app.models.access import Team
+
+        teams = [Team(name=unique_code("T")) for _ in range(n)]
+        db.add_all(teams)
+        db.flush()
+        return teams
+
+    def test_n1_the_bulk_summary_row_carries_the_shared_company(self, db, monkeypatch):
+        from app.models.access import Team
+
+        monkeypatch.setattr(audit_service, "BULK_AUDIT_CAP", 2)
+        teams = self._teams(db, 3)
+        company = {str(t.company_id) for t in teams}
+        assert len(company) == 1 and None not in company
+        db.query(Team).filter(Team.id.in_([t.id for t in teams])).update(
+            {"description": "bulk"}, synchronize_session=False
+        )
+        (summary,) = _rows(db, "*", "UPDATE")
+        assert str(summary.company_id) == company.pop()
+
+    def test_n1_mixed_companies_keep_the_summary_company_less(self, db, monkeypatch):
+        from app.models.access import Team
+
+        monkeypatch.setattr(audit_service, "BULK_AUDIT_CAP", 2)
+        from sqlalchemy import text
+
+        from app.models.company import Company
+
+        teams = self._teams(db, 3)
+        other = Company(name="Other Co", code=unique_code("OC")[:50])
+        db.add(other)
+        db.flush()
+        # Raw SQL, so the move itself is not a bulk write under test.
+        db.execute(text("UPDATE teams SET company_id = :c WHERE id = :i"), {"c": other.id, "i": teams[0].id})
+        db.expire_all()
+        db.query(Team).filter(Team.id.in_([t.id for t in teams])).update(
+            {"description": "bulk"}, synchronize_session=False
+        )
+        (summary,) = _rows(db, "*", "UPDATE")
+        assert summary.company_id is None
+
+    def test_n3_audit_event_refuses_an_async_function(self):
+        from app.services.audit_service import audit_event
+
+        with pytest.raises(TypeError, match="async"):
+
+            @audit_event("test.async.nope")
+            async def handler(db):  # pragma: no cover - never runs
+                return None
+
+    def test_n4_header_style_secret_keys_are_dropped(self, db):
+        from app.services.audit_service import log_audit
+
+        eid = str(uuid.uuid4())
+        log_audit(
+            db, "probe", eid, "UPDATE",
+            new_values={"config_json": {
+                "headers": {"Authorization": "Bearer abc", "X-API-Key": "k1", "apikey": "k2", "Cookie": "s=1"},
+                "ok": 1,
+            }},
+        )
+        (row,) = _rows(db, eid)
+        assert row.new_values == {"config_json": {"headers": {}, "ok": 1}}
+
+    def test_n5_the_email_outbox_tick_writes_as_the_scheduler(self):
+        from unittest.mock import patch
+
+        from app.audit_context import get_actor
+        from app.scheduler import task_scheduler
+        from app.tasks import email_outbox_tasks
+
+        seen = {}
+
+        def fake_drain():
+            actor = get_actor()
+            seen["actor"] = (actor.actor_type, actor.job_id) if actor else None
+            return {}
+
+        with patch.object(email_outbox_tasks, "drain_email_outbox", fake_drain):
+            task_scheduler._drain_email_outbox_tick()
+        assert seen["actor"] == ("scheduler", "email_outbox_drainer")
+
+    def test_n5_the_bulk_embedding_enqueue_carries_the_actor(self, db):
+        from unittest.mock import MagicMock, patch
+
+        from app.audit_context import AuditActor, actor_scope
+        from app.services import queue_service
+        from app.services.product_service import ProductService
+
+        user_id = str(uuid.uuid4())
+        fake_queue = MagicMock()
+        with actor_scope(AuditActor(actor_type="user", user_id=user_id, real_user_id=user_id)), \
+                patch.object(queue_service, "get_queue", return_value=fake_queue), \
+                patch.object(db, "bulk_insert_mappings"), patch.object(db, "commit"):
+            ProductService(db)._bulk_publish_product_embedding_events(
+                [(str(uuid.uuid4()), "P-1", None, None)], user_id
+            )
+        (call,) = fake_queue.enqueue.call_args_list
+        assert call.kwargs["meta"]["actor"]["user_id"] == user_id
