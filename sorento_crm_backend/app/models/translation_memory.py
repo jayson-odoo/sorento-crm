@@ -43,6 +43,7 @@ def _uuid_str() -> str:
 
 class TranslationMemory(Base):
     __tablename__ = "translation_memory"
+    __audit_skip__ = "translation cache"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     # Normalised (trimmed, internal whitespace collapsed) by

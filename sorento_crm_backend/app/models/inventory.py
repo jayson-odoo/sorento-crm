@@ -163,6 +163,7 @@ class Stock(Base, CompanyScopedMixin):
 
 class StockLedger(Base, CompanyScopedMixin):
     __tablename__ = "stock_ledger"
+    __audit_skip__ = "stock ledger, itself a trail"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)

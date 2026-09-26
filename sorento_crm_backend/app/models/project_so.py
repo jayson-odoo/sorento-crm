@@ -525,6 +525,7 @@ class ProjectSalesOrderLine(Base, CompanyScopedMixin):
     """
 
     __tablename__ = "sales_order_lines"
+    __audit_parent__ = "project_sales_order_id"  # history rolls up to the header
     # Audit entity type pinned to the pre-move table name (ADR-0011).
     __audit_entity_type__ = "project_sales_order_lines"
 
@@ -967,6 +968,7 @@ class OrderInquiryRaise(Base, CompanyScopedMixin):
     """
 
     __tablename__ = "order_inquiry_raises"
+    __audit_skip__ = "append-only raise log, itself a trail"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     order_inquiry_id = Column(
@@ -1435,6 +1437,7 @@ class OrderInquiryReserveEvent(Base, CompanyScopedMixin):
     """
 
     __tablename__ = "order_inquiry_reserve_events"
+    __audit_skip__ = "reserve event log, itself a trail"
     __audit_entity_type__ = "project_order_inquiry_reserve_events"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)

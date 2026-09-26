@@ -20,6 +20,7 @@ import uuid
 
 class EmbeddingQueue(Base):
     __tablename__ = "embedding_queue"
+    __audit_skip__ = "embedding work queue"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     source_type = Column(String(64), nullable=False)
@@ -47,6 +48,7 @@ class EmbeddingQueue(Base):
 
 class EmbeddingDocument(Base):
     __tablename__ = "embedding_documents"
+    __audit_skip__ = "derived embeddings, rebuilt from the source rows"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     source_type = Column(String(64), nullable=False)
@@ -83,6 +85,7 @@ class EmbeddingDocument(Base):
 
 class EmbeddingChunk(Base):
     __tablename__ = "embedding_chunks"
+    __audit_skip__ = "derived embeddings, rebuilt from the source rows"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     document_id = Column(

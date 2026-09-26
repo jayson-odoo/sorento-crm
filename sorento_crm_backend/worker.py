@@ -68,7 +68,38 @@ class ForkSafeWorker(Worker):
             engine.dispose(close=False)
         except Exception:
             logger.exception("ForkSafeWorker: engine.dispose(close=False) failed")
-        return super().perform_job(job, queue)
+        # The job's audit rows name the user whose request queued it and share that
+        # request's correlation id (#1281 S0); the worker is the principal.
+        from app.audit_context import restore_from_job_meta
+
+        with restore_from_job_meta(getattr(job, "meta", None), queue.name, job.id):
+            return super().perform_job(job, queue)
+
+
+def register_worker_listeners():
+    """The Session-class listeners the API registers at startup, which the worker never runs.
+
+    RQ forks a work-horse per job that inherits these from the parent.
+    """
+    # Multi-company isolation: register the fail-closed SELECT filter + insert
+    # auto-stamp here too. NOTE: worker jobs must set the session scope from the
+    # ImportJob company snapshot (later slice) - until then owned-table writes in
+    # jobs are fail-closed (rejected). See app/services/company_scope.py.
+    from app.services.company_scope import register_company_scope_listeners
+    register_company_scope_listeners()
+
+    # The spec listeners were registered in the API's startup_event only, so a Product
+    # written inside an RQ job (an import, chiefly) never re-derived its specs - a
+    # pre-existing hole, not something this slice introduced. The write backstop would
+    # be blind on the same path, which is what surfaced it.
+    from app.services.product_spec_change_listener import register_product_spec_listeners
+    from app.services.product_spec_write import register_spec_write_backstop
+    register_product_spec_listeners()
+    register_spec_write_backstop()
+
+    # The audit trail (#1281 S0): without this every row an RQ job wrote was unaudited.
+    from app.services.audit_service import register_audit_listeners
+    register_audit_listeners()
 
 
 def _maybe_start_scheduler():
@@ -211,23 +242,7 @@ def _warn_if_vapid_missing():
 
 
 if __name__ == '__main__':
-    # Multi-company isolation: register the fail-closed SELECT filter + insert
-    # auto-stamp here too. The worker never runs the API's startup_event, and
-    # RQ forks a work-horse per job that inherits these Session-class listeners
-    # from the parent. NOTE: worker jobs must set the session scope from the
-    # ImportJob company snapshot (later slice) - until then owned-table writes in
-    # jobs are fail-closed (rejected). See app/services/company_scope.py.
-    from app.services.company_scope import register_company_scope_listeners
-    register_company_scope_listeners()
-
-    # The spec listeners were registered in the API's startup_event only, so a Product
-    # written inside an RQ job (an import, chiefly) never re-derived its specs - a
-    # pre-existing hole, not something this slice introduced. The write backstop would
-    # be blind on the same path, which is what surfaced it.
-    from app.services.product_spec_change_listener import register_product_spec_listeners
-    from app.services.product_spec_write import register_spec_write_backstop
-    register_product_spec_listeners()
-    register_spec_write_backstop()
+    register_worker_listeners()
 
     _maybe_start_scheduler()
     _warn_if_vapid_missing()

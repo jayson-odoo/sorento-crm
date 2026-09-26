@@ -114,6 +114,8 @@ def resolve_integration_principal(db: Session, presented_key: Optional[str]) -> 
         # share a principal, and the audit trail must still tell them apart.
         "integration_id": integration.id,
         "integration_name": integration.name,
+        # Derives the audit source (n8n / mcp / external_api), never the caller's X-Source.
+        "integration_type": integration.type,
         "auth_method": "integration_api_key",
     }
 

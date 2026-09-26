@@ -72,10 +72,17 @@ def enqueue_job(
     Drain uses atomic `lpop`, so concurrent drainers cannot double-claim.
     """
     queue = get_queue(queue_name)
+    # The job inherits the request's audit context: its rows name the requesting user and
+    # share the request's correlation id (#1281 S0, restored in worker.ForkSafeWorker).
+    from app.audit_context import snapshot_for_job
+
+    meta = dict(kwargs.pop('meta', None) or {})
+    meta.setdefault('audit_context', snapshot_for_job())
     job = queue.enqueue(
         func,
         *args,
         job_timeout=job_timeout,
+        meta=meta,
         **kwargs
     )
     logger.info(f"Job {job.id} enqueued to {queue_name} queue")
@@ -171,7 +178,10 @@ def run_sync_rq_jobs(queue_name: str, max_jobs: int) -> dict[str, int]:
         try:
             job.set_status(JobStatus.STARTED)
             job.save()
-            job.func(*job.args, **job.kwargs)
+            from app.audit_context import restore_from_job_meta
+
+            with restore_from_job_meta(getattr(job, 'meta', None), queue_name, job.id):
+                job.func(*job.args, **job.kwargs)
             job.set_status(JobStatus.FINISHED)
             job.save()
             try:

@@ -289,6 +289,7 @@ class ProductFindabilityRun(Base):
     """
 
     __tablename__ = "product_findability_runs"
+    __audit_skip__ = "findability test run, recomputed"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     source_id = Column(String(64), nullable=True)
@@ -312,6 +313,7 @@ class ProductFindabilityResult(Base):
     """One card, and every way of asking for it."""
 
     __tablename__ = "product_findability_results"
+    __audit_skip__ = "findability test result, recomputed"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     run_id = Column(

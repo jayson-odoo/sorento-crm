@@ -1623,6 +1623,7 @@ class ProjectPurchaseOrderLine(Base, CompanyScopedMixin):
     """
 
     __tablename__ = "purchase_order_lines"
+    __audit_parent__ = "po_id"  # history rolls up to the header
     # Audit entity type pinned to the pre-move table name (ADR-0011).
     __audit_entity_type__ = "project_purchase_order_lines"
 

@@ -40,8 +40,17 @@ def scheduler_session():
     """
     db = SessionLocal()
     set_company_scope(db, None)
+    # Audit rows a tick writes say so (#1281 S0): scheduler principal and source, and a
+    # request id per tick so one tick's changes read as one action.
+    import uuid as _uuid
+
+    from app.audit_context import audit_context_scope
+
     try:
-        yield db
+        with audit_context_scope(
+            principal_type="scheduler", source="scheduler", request_id=_uuid.uuid4().hex[:16]
+        ):
+            yield db
     finally:
         db.close()
 

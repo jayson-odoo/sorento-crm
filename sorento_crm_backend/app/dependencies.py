@@ -505,7 +505,7 @@ async def get_external_api_user(
     RBAC applies. Nothing reads the env var at runtime; the legacy shared key
     keeps working because its *hash* was seeded as an integration (AC-AC-09).
     """
-    from app.audit_context import set_audit_context
+    from app.audit_context import set_api_key_principal, set_audit_context
     from app.services.integration_auth import resolve_integration_principal
 
     if not api_key:
@@ -518,6 +518,7 @@ async def get_external_api_user(
 
     ip = request.client.host if request.client else None
     set_audit_context(str(user["id"]), ip)
+    set_api_key_principal(user.get("integration_id"), user.get("integration_type"), request.url.path)
     return user
 
 
@@ -547,13 +548,14 @@ def get_current_user_or_api_key(
         # The env var is no longer consulted at runtime -- the legacy shared key
         # keeps working because its hash was seeded as an integration, not
         # because anything reads EXTERNAL_API_KEY (AC-AC-01 / AC-AC-09).
-        from app.audit_context import set_audit_context
+        from app.audit_context import set_api_key_principal, set_audit_context
         from app.services.integration_auth import resolve_integration_principal
 
         user = resolve_integration_principal(db, api_key)
 
         ip = request.client.host if request.client else None
         set_audit_context(str(user["id"]), ip)
+        set_api_key_principal(user.get("integration_id"), user.get("integration_type"), request.url.path)
 
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info("auth.get_current_user_or_api_key done mode=%s elapsed_ms=%.1f", auth_mode, elapsed_ms)

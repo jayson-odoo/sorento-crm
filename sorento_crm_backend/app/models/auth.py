@@ -7,6 +7,7 @@ import uuid
 
 class VerificationToken(Base):
     __tablename__ = "verification_tokens"
+    __audit_skip__ = "one-time secret"
     
     identifier = Column(String, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     token = Column(String, primary_key=True)

@@ -240,6 +240,7 @@ class UserRolePermission(Base):
 
 class SystemLog(Base):
     __tablename__ = "system_logs"
+    __audit_skip__ = "request log, retired in S3"
     
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
@@ -692,6 +693,7 @@ class SystemSetting(Base):
 class UserQuickAccess(Base):
     """Per-user quick access (pinned menu items and attachment folders) for sidebar."""
     __tablename__ = "user_quick_access"
+    __audit_skip__ = "per-user UI preference"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
@@ -711,6 +713,7 @@ class UserListColumnConfig(Base):
     """Per-user per-listing column preferences (visibility + ordering)."""
 
     __tablename__ = "user_list_column_configs"
+    __audit_skip__ = "per-user UI preference"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)

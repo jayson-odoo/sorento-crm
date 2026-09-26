@@ -33,6 +33,7 @@ class JobStatus(str, enum.Enum):
 class ImportJob(Base):
     """Model for tracking import jobs."""
     __tablename__ = "import_jobs"
+    __audit_skip__ = "job progress counters churn; the IMPORT audit row carries the business effect"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_id = Column(String, unique=True, nullable=False, index=True)  # RQ job ID
@@ -92,6 +93,7 @@ class ImportJobRow(Base):
     """
 
     __tablename__ = "import_job_rows"
+    __audit_skip__ = "per-row import outcome, itself a trail"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     import_job_id = Column(

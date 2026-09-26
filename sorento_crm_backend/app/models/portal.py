@@ -46,6 +46,7 @@ class PortalToken(Base):
 
 class PortalOtpCode(Base):
     __tablename__ = "portal_otp_codes"
+    __audit_skip__ = "one-time secret"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     contact_id = Column(Text, nullable=False)

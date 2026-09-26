@@ -301,6 +301,7 @@ class ShipmentTrackingObservation(Base, CompanyScopedMixin):
     """
 
     __tablename__ = "shipment_tracking_observations"
+    __audit_skip__ = "tracking observation log, itself a trail"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     shipment_id = Column(
@@ -342,6 +343,7 @@ class ShipmentTrackingObservation(Base, CompanyScopedMixin):
 
 class InboundShipmentLine(Base, CompanyScopedMixin):
     __tablename__ = "inbound_shipment_lines"
+    __audit_parent__ = "shipment_id"  # history rolls up to the header
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     shipment_id = Column(UUID(as_uuid=False), ForeignKey("inbound_shipments.id", ondelete="CASCADE"), nullable=False)
@@ -696,6 +698,7 @@ class PickingHeader(Base, CompanyScopedMixin):
 
 class PickingLine(Base, CompanyScopedMixin):
     __tablename__ = "picking_lines"
+    __audit_parent__ = "picking_header_id"  # history rolls up to the header
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     picking_header_id = Column(UUID(as_uuid=False), ForeignKey("picking_headers.id", ondelete="CASCADE"), nullable=False)
@@ -812,6 +815,7 @@ class PurchaseOrder(Base, CompanyScopedMixin):
 class PurchaseOrderLine(Base, CompanyScopedMixin):
     """Open PO line - feeds on-order / net-position views by product×warehouse."""
     __tablename__ = "purchase_order_lines"
+    __audit_parent__ = "purchase_order_id"  # history rolls up to the header
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     purchase_order_id = Column(UUID(as_uuid=False), ForeignKey("purchase_orders.id", ondelete="CASCADE"), nullable=False)
@@ -1076,6 +1080,7 @@ class PurchaseRequestHeader(Base):
 
 class PurchaseRequestLine(Base):
     __tablename__ = "purchase_request_lines"
+    __audit_parent__ = "purchase_request_id"  # history rolls up to the header
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     purchase_request_id = Column(

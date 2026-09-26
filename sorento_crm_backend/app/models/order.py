@@ -221,6 +221,7 @@ class CustomerContact(Base, CompanyScopedMixin):
     """Main or stakeholder person linked to a business customer profile."""
 
     __tablename__ = "customer_contacts"
+    __audit_parent__ = "customer_id"  # history rolls up to the header
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     customer_id = Column(UUID(as_uuid=False), ForeignKey("customers.id", ondelete="CASCADE"), nullable=False)
@@ -360,6 +361,7 @@ class Order(Base, CompanyScopedMixin):
 class OrderLine(Base, CompanyScopedMixin):
     """Delivery order detail line: product + warehouse + qty + pricing."""
     __tablename__ = "order_lines"
+    __audit_parent__ = "order_id"  # history rolls up to the header
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     line_sequence = Column(Integer, nullable=False, default=1)
@@ -503,6 +505,7 @@ class SalesOrder(Base, CompanyScopedMixin):
 class SalesOrderLine(Base, CompanyScopedMixin):
     """Open SO line - feeds committed / net-position views by product×warehouse."""
     __tablename__ = "sales_order_lines"
+    __audit_parent__ = "sales_order_id"  # history rolls up to the header
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     sales_order_id = Column(UUID(as_uuid=False), ForeignKey("sales_orders.id", ondelete="CASCADE"), nullable=False)

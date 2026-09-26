@@ -651,6 +651,7 @@ class AgentTeam(Base, CompanyScopedMixin):
 class AgentTeamRoundRobinCursor(Base):
     """Per (agent, team) cursor for round-robin next assignee."""
     __tablename__ = "agent_team_round_robin_cursors"
+    __audit_skip__ = "assignment cursor"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     agent_id = Column(UUID(as_uuid=False), ForeignKey("access_agents.id", ondelete="CASCADE"), nullable=False)
