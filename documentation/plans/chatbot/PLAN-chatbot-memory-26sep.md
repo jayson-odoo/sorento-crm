@@ -877,3 +877,59 @@ stays open, or a follow-up is filed, until the 3-weekday window is in).
 DoD: the ten examples as replay cases (8.1) green, and red under ablation where 7.3 says so;
 console YAML green after deploy; the owner's hand pass (8.6) recorded; the #1275 no-reply
 query shows 0 `out_of_scope` / `escalation_declined` turns without a send over 3 weekdays.
+
+## 10. Simplest thing, not built (and the trigger that would build it)
+
+| not built | why not now | trigger that builds it |
+|---|---|---|
+| a `contact_profile_facts` table | about 12 facts per contact, never queried across contacts, row already locked by the tail | the first feature that queries facts across contacts |
+| an LLM episode summary | second model call per episode on the shared 200k TPM; not replayable; can invent facts | a history-question replay case or the owner's hand pass needs something the digest does not hold |
+| vector recall (kept only as the n8n search route) | the last 3 summaries ride every parse; older history is answered by the history composer from the table | a hand-pass reference to an episode older than the last 3 that the history composer cannot find by entity |
+| a tokenizer library (tiktoken) | the byte estimator over-counts and is checked against the provider's own `prompt_tokens` on every turn | the 8.4 check finds the estimator below the provider count |
+| per-layer budgets as settings | one set of numbers, no second tenant, no evidence anyone would tune them | a second tenant or a measured need to tune without a deploy |
+| company-level shared memory (two contacts at one dealer) | same-contact only was the owner's D3; no evidence yet | the owner asks for it, or a hand pass shows two contacts of one customer repeating each other's asks |
+| proactive follow-ups ("I'll tell you when the ETA changes") | a new outbound trigger surface; not asked for | an owner ruling (it touches Respond.io outbound and consent) |
+
+## 11. Risks
+
+- **Parser regression from the addendum.** Mitigated by the 8.2 parity run with every
+  disagreement ruled on in the PR, and by keeping the addendum at or below 400 tokens.
+- **Stale memory misleads.** Summaries carry no figures; facts expire; the current message
+  always wins (addendum rule); a follow-up always re-fetches.
+- **Prompt injection through stored text.** Only staff write free text (`note`, 200 chars).
+  Stated values are validated against masters: brands against the brand list, sites against
+  warehouse names, role against a closed list (`purchaser`, `owner`, `sales`,
+  `site_supervisor`, `other`), `project` cut to 60 chars with newlines stripped and printed
+  quoted. `security-reviewer` checks this seam.
+- **Privacy (Malaysia PDPA).** Nothing new is collected: turns are stored today; episodes are
+  derived from them with a 90-day retention, and staff can see and delete every fact. The
+  opt-out toggle stays per contact.
+- **Concurrency.** Episode close and fact writes happen inside the per-contact ticket and the
+  tail's `FOR UPDATE`; the staff fact routes update one key with `jsonb_set` under the same
+  row lock, so a staff save never overwrites a learned fact (and the whole-profile PUT no longer
+  touches `facts`).
+- **Overlap with #1275.** Both touch the parser prompt. This plan cuts only the three items of
+  6.4 and moves the date line; any larger cut is #1275's. Whichever lane merges second rebases
+  the prompt text and re-runs 8.2.
+- **Backfill on production.** Read-heavy over 90 days of turns; runs per contact in batches,
+  idempotent, re-runnable; about 4.4k turns today.
+
+## 12. Relation to "an enterprise version of Claude Code"
+
+The owner's comparison maps cleanly, and it is useful because it names what this plan builds
+and what it does not:
+
+| Claude Code | Sorento chatbot after this plan |
+|---|---|
+| CLAUDE.md, the system prompt | the parser prompt plus the policy blocks rendered from `chatbot_domains` |
+| user memory (facts about the person) | profile facts (layer 1), with source and expiry, editable by staff |
+| context compaction (older turns become a summary) | episodes (layer 2): closed segments become one digest line |
+| the context window budget | the per-layer token budget (layer 3), enforced in code and measured per turn |
+| tools | the MCP tools behind the fetch lanes |
+| permissions | grants, reveal gates, company scope (memory never changes them) |
+| asking before acting | the open question and the numbered offer |
+
+What Claude Code has and this plan does not build: acting on the user's behalf through tools
+that WRITE (create a quote, raise a complaint, place an order after a confirmation). That is
+the next step of the comparison and a different risk class (writes, approvals, audit). Grill
+question 14 asks whether to open it as its own ideation issue.
