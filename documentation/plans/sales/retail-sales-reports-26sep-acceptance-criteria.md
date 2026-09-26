@@ -1,7 +1,7 @@
 # UAC: retail sales reports, one query layer for the screens and the chatbot (#1267)
 
 Plan: `PLAN-retail-sales-reports-26sep.md`. Track: full (S1 to S4, and S6 from round 3); S5 small fix track (round 2); S0 is a measurement.
-Status: draft, round 4 (26 Sep 2026); round 2 status kept below. Round 2 (26 Sep 2026). The owner's Lavish review of the mockup (26 Sep 06:27Z, 10
+Status: draft, round 5 (26 Sep 2026), ready to build; round 4 and round 2 status kept below. Round 4 status: draft, round 4 (26 Sep 2026). Round 2 (26 Sep 2026). The owner's Lavish review of the mockup (26 Sep 06:27Z, 10
 notes) is applied: each note has an "Owner ruling 26 Sep 06:27 (Lavish) <n>" line in the section
 "Round 2" below, and every criterion it changes keeps its text and gains a "Round 2:" note. No
 criterion is deleted. G1 to G10 are still unanswered: their recommendations are written in as the
@@ -20,6 +20,14 @@ deleted. A `(Q1)` to `(Q5)` mark is now a ruling. Q2 was ruled against the recom
 chatbot answer is text plus the Excel file, with no cutoff (AC-R4-1 to AC-R4-6). Round 3's Q6 to
 Q8 stay open and Q9 is new (plan R4.6); Q6's written-in behaviour changes to the new
 recommendation (AC-R4-11).
+Round 5 (26 Sep 2026): the owner answered round 4's Q6 to Q8 (PR #1269 comment 5844298765, 26 Sep
+07:34:40Z). Each answer has an "Owner ruling 26 Sep 07:34 Q<n>" line in the section "Round 5"
+below, and each criterion it changes keeps its text and gains a "Round 5:" note. No criterion is
+deleted. Q6: no scheduled WhatsApp; Q7: the weekly send is an automation on the existing
+Automation screen, so the S6 criteria about `sales.report_subscriptions`, the Scheduled sends
+dialog, its routes, the `sales.reports.schedule` slug and the WhatsApp channel are superseded by
+AC-R5-1 to AC-R5-12; Q8: (a) ruled. Q9 is still open and recommendation (a) stays written in
+(AC-R4-2); Q10 is new (plan R5.6), recommendation (a) written in.
 Mockups: `documentation/plans/sales/mockups/retail-sales-reports.html`.
 Tags: `[BE]` backend, `[FE]` frontend, `[E2E]` browser via agent-browser, `[T]` has a named test.
 
@@ -59,12 +67,15 @@ holding the Sales report grant.
   email or on WhatsApp; the same file is in their My Downloads. The owner set it up once from the
   report's Views menu.
   - Round 4: on WhatsApp outside the 24 hour window the person gets the template text and, on replying, the file (Q6, recommended).
+  - Round 5: Owner ruling 26 Sep 07:34 Q6 and Q7: by **email only**, never WhatsApp. The owner set it up once as an automation on System Management > Automation (trigger "Sales report view", the view, Weekly, Monday, 09:00, the people). The file is attached to the email; one copy sits in the automation owner's My Downloads (AC-R5-1 to AC-R5-12).
 
 Decisions asked of the user: the as-at date and basis (both pre-filled), the company on report A,
 and on WhatsApp only what the message leaves ambiguous (company, period per G6, basis, axis, which
 code).
 Round 3: for a scheduled send, the owner decides the view, the people, the channel, the weekday
 and the time; nothing else (the period is year to date as at the send date, Q8).
+Round 5: no channel choice (email only, Q6); the owner decides the view, the people, the weekday
+and the time on the automation (Q7); the period is ruled (Q8).
 
 ## Measured (S0, prod copy, to be pasted before the grill closes)
 
@@ -291,6 +302,7 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
   the whole plan is `customers.debtor_type` (S3) (Q5).
   - Round 3: superseded by AC-R3-1 (Q5 re-answered to align with #1260 round 5): the plan's one new table, `sales.report_subscriptions` (S6), is in the `sales` schema. It still holds for S1 to S5.
   - Round 4: Owner ruling 26 Sep 07:16 Q5: "we need a sales schema and a sales module"; superseded by AC-R4-8 to AC-R4-10. S1 to S5 still add no table, but the `sales` schema is created by the lane that creates the module.
+  - Round 5: Owner ruling 26 Sep 07:34 Q7: no slice adds a table now, S6 included; the schema changes are `customers.debtor_type` (S3) and `automations.run_weekday` (S6), and the `sales` schema is still created (AC-R5-11).
 
 ### One Sales report (note 4)
 
@@ -368,6 +380,7 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
   views stay `report_views` rows; `sales_orders`, `sales_order_lines`, `sales_agents` and
   `customers` stay in `public`. Single alembic head.
   - Round 4: Owner ruling 26 Sep 07:16 Q5: ruled. The purge file is `sorento_crm_frontend/modules/sales/purge_tables.json` (AC-R4-9).
+  - Round 5: Owner ruling 26 Sep 07:34 Q7: superseded; `sales.report_subscriptions` is not built, the weekly send is an automation, and the plan creates no table (AC-R5-11). The `sales` schema is still created by the module-creating lane (AC-R4-8).
 - **AC-R3-2 [BE][T]** (S1 or #1260 S6, whichever lands first) One `sales` module: one
   `bootstrap.py`, one `MODULE_MANIFEST` entry, one `"sales": "sales"` permission map entry; the
   second lane adds none of them again.
@@ -394,42 +407,54 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
   view "By account", Views menu > **Scheduled sends** opens "Scheduled sends: By account". The
   item shows only for a shared view of a sales report and only to holders of
   `sales.reports.schedule` (Q7).
+  - Round 5: Owner ruling 26 Sep 07:34 Q7: superseded by AC-R5-1; there is no Views menu > Scheduled sends item and no `sales.reports.schedule` slug.
 - **AC-R3-8 [FE][T]** (S6) The dialog lists one row per subscription (Person, Channel, When "Mon
   09:00", Enabled, Next send, Last sent) and **Add** with Person, Channel, Day
   (`SearchableSelect` each) and Time. Person lists only users holding `sales.reports.view` in the
   view's company. A new row is saved disabled. No UUID shows.
+  - Round 5: Owner ruling 26 Sep 07:34 Q6 and Q7: superseded by AC-R5-1 and AC-R5-2; the automation form holds the view, the recipients, Weekly, Day and Time, with no Channel (email only). Enabled, Run now and the runs table are the Automation screen's own.
 - **AC-R3-9 [FE][E2E]** (S6) Delete on a row is the deferred hard delete: the button counts down
   with Cancel and the row is removed when the window lapses; no confirm dialog.
+  - Round 5: Owner ruling 26 Sep 07:34 Q7: the dialog is not built; deleting the weekly send is the Automation screen's existing delete, unchanged by this plan.
 - **AC-R3-10 [BE][T]** (S6) The runner sends each enabled row whose `next_run_at` is due once, and
   advances `next_run_at` to the next weekday and time in the row's timezone (golden table across a
   week boundary); a second tick in the same window sends nothing (idempotency).
+  - Round 5: Owner ruling 26 Sep 07:34 Q7: superseded by AC-R5-3 and AC-R5-9; the existing `automation_runner` runs it, `next_run_at` is the automation's own.
 - **AC-R3-11 [BE][T]** (S6) The file is the view's saved filters and pivot with the period
   replaced by 1 January of the send date's year to the send date (Q8); its title block reads "As
   at <send date>" and the basis; a `report_xlsx` row owned by the recipient lands in their My
   Downloads.
+  - Round 5: Owner ruling 26 Sep 07:34 Q8: (a) ruled, the period stands (AC-R5-4). Q7: the `report_xlsx` row is owned by the automation's owner, not by each recipient (AC-R5-4).
 - **AC-R3-12 [BE][T]** (S6) Access at every send: a recipient who lost `sales.reports.view`, lost
   the company grant or is inactive gets nothing (no file built, no message), an `integration_log`
   failure `no_access` is written, and `next_run_at` still advances (G10).
+  - Round 5: Owner ruling 26 Sep 07:34 Q7: the check moves to `recipient_check` and the run summary instead of `integration_log` (AC-R5-6).
 - **AC-R3-13 [BE][T]** (S6) Email: one `email_outbox` row with event `sales_report_scheduled`, to
   the user's email, subject "<view name>, as at dd/mm/yyyy", the text header as the body and the
   download's file as the attachment. A user with no email is skipped and logged.
+  - Round 5: Owner ruling 26 Sep 07:34 Q7: superseded by AC-R5-5; the email goes through the automation's template and Notification path with the attachment, and no `sales_report_scheduled` email event is added.
 - **AC-R3-14 [BE][T]** (S6) WhatsApp, window open: the text header, then the file through
   `send_chat_attachment_for`. Window closed: the `sales_report_scheduled` template text with the
   totals line and "The Excel is in your My Downloads." (Q6).
   - Round 4: under Owner ruling 26 Sep 07:16 Q2 the window-closed branch is re-recommended; AC-R4-11 carries the new expected behaviour (Q6 still open). The window-open branch is unchanged. No linked contact, or
   `outbound_enabled` false: skipped and logged. Each send writes an `integration_log` row with
   `business_table` `sales.report_subscriptions`.
+  - Round 5: Owner ruling 26 Sep 07:34 Q6, "we don't scheduled send whatsapp": superseded whole, window open and window closed; a scheduled send never goes by WhatsApp (AC-R5-8).
 - **AC-R3-15 [BE][T]** (S6) **Send now** sends one message for that row in a worker job whatever
   its Enabled state and does not change `next_run_at`.
+  - Round 5: Owner ruling 26 Sep 07:34 Q7: Send now is the automation's existing Run now (AC-R5-9).
 - **AC-R3-16 [BE][T]** (S6) Routes `GET|POST /api/v1/sales/report-subscriptions`, `PATCH|DELETE
   .../{id}`, `POST .../{id}/send-now`: no token 401; without `sales.reports.schedule` 403; `sales`
   module disabled 403; a view that is not shared or not `sales` / `sales_yearly` is 422; another
   company's view is 403; a duplicate (view, person, channel) is 409.
+  - Round 5: Owner ruling 26 Sep 07:34 Q7: superseded; the routes are not built. The existing `/api/v1/automation/automations` routes and `automation.automations.*` slugs apply, plus the trigger's view check (AC-R5-7).
 - **AC-R3-17 [FE][E2E]** (S6) The Scheduled sends dialog is usable and not clipped at 375 and
   1280 (rows stack at 375; no sideways page scroll).
+  - Round 5: Owner ruling 26 Sep 07:34 Q7: superseded by AC-R5-10 (the Automation form at 375 and 1280).
 - **AC-R3-18 [T]** (S6) DoD: the Meta-approved `sales_report_scheduled` template is mapped on prod
   before any WhatsApp row is enabled; the owner receives one Send now by email and one by WhatsApp
   and enables their own row.
+  - Round 5: Owner ruling 26 Sep 07:34 Q6: the Meta template gate and the WhatsApp Send now are withdrawn; DoD is AC-R5-12 (email only).
 
 ## Round 4: the owner's answers to round 2's Q1 to Q5 (26 Sep 07:16Z)
 
@@ -483,10 +508,12 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
   `sales.report_subscriptions`; a purge invariants test (as
   `tests/test_projects_module_purge_invariants.py`) shows uninstall deletes its rows and never
   issues `DROP SCHEMA`.
+  - Round 5: Owner ruling 26 Sep 07:34 Q7: superseded; `ReportSubscription` is not built and `purge_tables.json` gains no entry from this plan (AC-R5-11).
 - **AC-R4-10 [T]** (every slice) No new table of this plan is outside `sales`: a test lists the
   tables the plan's migrations create and asserts each has schema `sales`. Saved views stay
   `report_views` rows, person labels stay `sales_agents.person_label`, the debtor type is a
   column on `customers`.
+  - Round 5: still holds, now with an empty list: the plan's migrations create no table (S6 adds the column `automations.run_weekday`), and the test stays as the guard for any later table (AC-R5-11).
 
 ### The scheduled WhatsApp send outside the window (Q6, still open)
 
@@ -496,6 +523,63 @@ and the time; nothing else (the period is year to date as at the send date, Q8).
   turn within 7 days the file is pushed once; a second turn sends nothing; after 7 days nothing is
   pushed and the file stays in My Downloads. The reply itself is answered as a normal message.
   Email is unchanged and always carries the file.
+  - Round 5: Owner ruling 26 Sep 07:34 Q6, "we don't scheduled send whatsapp": superseded whole; no template text, no reply-to-fetch, no `deliver_to_contact_id` row from a scheduled send (AC-R5-8).
+
+## Round 5: the owner's answers to round 4's Q6 to Q8 (26 Sep 07:34Z)
+
+- Owner ruling 26 Sep 07:34 Q6: "we don't scheduled send whatsapp": a scheduled send never goes by WhatsApp; WhatsApp only answers when asked (the chatbot's text + file, AC-R4-1, unchanged).
+- Owner ruling 26 Sep 07:34 Q7: "we can use our scheudled task and automation": the weekly send is an automation on System Management > Automation, run by the existing `automation_runner` scheduled task; no new table, dialog, route or slug (plan R5.3).
+- Owner ruling 26 Sep 07:34 Q8: "okay": (a), year to date as at the send date.
+- Q9: not answered; (a) stays written in (AC-R4-2).
+- Q10 (new, plan R5.6): "the daily low stock email" named in the brief does not exist; the automation machinery is recommended (a) and written in below.
+
+### The weekly Sales report email as an automation (S6)
+
+- **AC-R5-1 [FE][E2E]** (S6) From `/`, by sidebar clicks, System Management > Automation > Add:
+  the Trigger list offers "Sales report view"; picking it shows **Report view** (a
+  `SearchableSelect` listing only shared views of the Sales report and Yearly comparison, by
+  report and view name, no UUID) in place of Days before. Schedule offers Manual, Daily and
+  **Weekly**; Weekly shows **Day** (`SearchableSelect`, Monday to Sunday) and Time. Recipients are
+  the existing picker (users, roles). No Channel field anywhere.
+- **AC-R5-2 [BE][T]** (S6) Saving stores `trigger_type` `sales_report_view`,
+  `trigger_config.report_view_id`, `schedule_type` `weekly`, `run_weekday` 0 to 6 and `run_time`;
+  `weekly` without `run_weekday` or `run_time` is 400; a `report_view_id` that is not a shared view
+  of `sales` / `sales_yearly` is 400. Creating needs `automation.automations.add` (existing); no
+  `sales.reports.schedule` slug exists.
+- **AC-R5-3 [BE][T]** (S6) `next_run_at` for Weekly is the next `run_weekday` at `run_time` in the
+  automation's timezone (golden table: Sunday 23:59, Monday 08:59, Monday 09:00, Monday 09:01,
+  across a month end, in `Asia/Kuala_Lumpur`); after a run it moves 7 days on. `daily` and `manual`
+  automations compute exactly as before.
+- **AC-R5-4 [BE][T]** (S6) Each run builds one workbook with the view's saved filters and pivot
+  under the view's company, the period replaced by 1 January of the send date's year to the send
+  date (Q8); the title block reads "As at <send date>" and the basis. One `report_xlsx` My
+  Downloads row is owned by the automation's owner.
+- **AC-R5-5 [BE][T]** (S6) Each email carries that workbook as its attachment
+  (`email_outbox.attachment_filename`, `attachment_storage_provider`, `attachment_storage_key`
+  set) and the seeded "Sales report (weekly)" template's subject "<view name>, as at dd/mm/yyyy" and
+  text header (report and view name, company, basis, the period, the totals line; no UUID). An
+  existing automation (for example `days_before_promotion_end`) produces the same `email_outbox`
+  row as before, with no attachment.
+- **AC-R5-6 [BE][T]** (S6) Access at every run: a recipient who is inactive, lacks
+  `sales.reports.view`, or lacks the view's company, and any Extra email address, gets no email and
+  is listed in the run summary under `no_access`; the other recipients get theirs. With every
+  recipient dropped, no email is sent and the run says so.
+- **AC-R5-7 [BE][T]** (S6) A view deleted, unshared or moved to another report after saving, or
+  the `sales` module disabled, gives a run that sends nothing and records the reason
+  (`view_missing`, `view_not_shared`, `not_a_sales_report`, `module_disabled`); `next_run_at` still
+  moves on.
+- **AC-R5-8 [BE][T]** (S6) No scheduled send reaches WhatsApp: a run makes no Respond.io call and
+  writes no `deliver_to_contact_id` row, whatever the recipient's linked contact (Q6).
+- **AC-R5-9 [BE][T]** (S6) Run now sends once whatever the weekday and does not move
+  `next_run_at`; a second `evaluate_due` in the same minute sends nothing (the runner's existing
+  due check).
+- **AC-R5-10 [FE][E2E]** (S6) The Automation form with this trigger is usable and not clipped at
+  375 and 1280 (no sideways page scroll).
+- **AC-R5-11 [T]** (S6) No new table: S6's migration adds only `automations.run_weekday` and the
+  template row; the AC-R4-10 test's list of the plan's new tables is empty;
+  `sorento_crm_frontend/modules/sales/purge_tables.json` gains nothing from this plan.
+- **AC-R5-12 [T]** (S6) DoD: the owner creates the automation for one shared view, presses Run
+  now, reads the email and its Excel beside the PDF, and enables it. `security-reviewer` has run.
 
 ## Every slice
 
@@ -519,3 +603,7 @@ Round 3: the scheduled weekly send is now in scope (Owner ruling 26 Sep 07:06 G9
 AC-R3-18). Still out: invoice feed, quantity measure, footnote storage (G8 (c)), dated person
 labels, agents seeing only their own rows (G10 (b)), daily or monthly sends, targets and
 commissions (#1260), text + file on every chatbot answer (Q2).
+
+Round 5: out: a scheduled send by WhatsApp (Owner ruling 26 Sep 07:34 Q6), a per-person scheduled
+send table and the Scheduled sends dialog (Q7), a copy of the weekly file in each recipient's My
+Downloads. In: the weekly email as an automation (AC-R5-1 to AC-R5-12).
