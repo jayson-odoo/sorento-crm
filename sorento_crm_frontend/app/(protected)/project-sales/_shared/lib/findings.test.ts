@@ -5,7 +5,13 @@
  * keys never collapses.
  */
 import { describe, expect, it } from 'vitest';
-import { collapseFindings, FINDING_SEVERITY_LABEL } from './findings';
+import {
+  buildFlagItems,
+  collapseFindings,
+  FINDING_SEVERITY_LABEL,
+  needsAttention,
+  publishBlockers,
+} from './findings';
 import type { ProjectSalesOrderFinding } from '../types/projectSalesOrder.types';
 
 function finding(overrides: Partial<ProjectSalesOrderFinding> & { id: string }): ProjectSalesOrderFinding {
@@ -123,5 +129,106 @@ describe('FINDING_SEVERITY_LABEL', () => {
     expect(FINDING_SEVERITY_LABEL.hard).toBe('Blocks publish');
     expect(FINDING_SEVERITY_LABEL.warn).toBe('Needs acknowledgement');
     expect(FINDING_SEVERITY_LABEL.info).toBe('Info');
+  });
+});
+
+describe('publishBlockers (lesson (e): the one rule the server also applies)', () => {
+  it('counts only this order\'s hard findings that have no acknowledged_at', () => {
+    const blockers = publishBlockers([
+      finding({ id: 'h1', severity: 'hard', code: 'line_arithmetic' }),
+      finding({ id: 'h2', severity: 'hard', code: 'total_mismatch', acknowledged_at: '2026-09-01T00:00:00' }),
+      finding({ id: 'w1', severity: 'warn' }),
+      finding({ id: 'i1', severity: 'info' }),
+    ]);
+    expect(blockers.map((f) => f.id)).toEqual(['h1']);
+  });
+
+  it('keys on the timestamp, not the display name', () => {
+    const blockers = publishBlockers([
+      finding({ id: 'h1', severity: 'hard', acknowledged_at: '2026-09-01T00:00:00', acknowledged_by_name: null }),
+    ]);
+    expect(blockers).toHaveLength(0);
+  });
+});
+
+describe('buildFlagItems (S7-3, R23)', () => {
+  const SHORT = finding({
+    id: 'so-short',
+    severity: 'hard',
+    code: 'schedule_short',
+    detail: 'CB1178A: the PO orders 1830 but the schedule only places 0.',
+    line_id: 'line-2',
+    detail_json: { product_code: 'CB1178A' },
+  });
+  const COLUMN = finding({
+    id: 'sch-col',
+    severity: 'hard',
+    code: 'unresolved_product',
+    detail: "The schedule column 'BUI-HB-CB1178ASS' is not mapped to a product.",
+    detail_json: { customer_code_raw: 'BUI-HB-CB1178ASS' },
+  });
+
+  it('names each item\'s source', () => {
+    const items = buildFlagItems(
+      [finding({ id: 'w1', line_id: 'line-1' })],
+      [finding({ id: 's1', code: 'schedule_over', severity: 'hard', detail_json: { product_code: 'ZZ9' } })],
+    );
+    expect(items.map((item) => item.members.map((m) => m.source))).toEqual([['sales_order'], ['schedule']]);
+    expect(items[0].lineId).toBe('line-1');
+    expect(items[1].lineId).toBeNull();
+  });
+
+  it('R23: folds the unmapped column into the schedule_short finding it causes, one item', () => {
+    const items = buildFlagItems([SHORT], [COLUMN]);
+    expect(items).toHaveLength(1);
+    expect(items[0].members.map((m) => m.finding.id)).toEqual(['so-short', 'sch-col']);
+    expect(items[0].members.map((m) => m.source)).toEqual(['sales_order', 'schedule']);
+    expect(items[0].lineId).toBe('line-2');
+    expect(items[0].severity).toBe('hard');
+  });
+
+  it('R23: the longer product code wins a column two codes both fit', () => {
+    const shorter = finding({
+      ...SHORT,
+      id: 'so-short-2',
+      line_id: 'line-3',
+      detail_json: { product_code: 'CB1178' },
+    });
+    const items = buildFlagItems([shorter, SHORT], [COLUMN]);
+    const withColumn = items.find((item) => item.members.some((m) => m.finding.id === 'sch-col'));
+    expect(withColumn?.lineId).toBe('line-2');
+  });
+
+  it('leaves a column that names no short product as its own schedule item', () => {
+    const items = buildFlagItems(
+      [SHORT],
+      [finding({ ...COLUMN, id: 'other', detail_json: { customer_code_raw: 'BUI-XX-OTHER' } })],
+    );
+    expect(items).toHaveLength(2);
+  });
+
+  it('keeps a dismissed finding as a closed item of its own, never collapsed', () => {
+    const items = buildFlagItems(
+      [
+        finding({ id: 'a', line_id: 'line-1', acknowledged_at: '2026-09-01T00:00:00' }),
+        finding({ id: 'b', line_id: 'line-1', acknowledged_at: '2026-09-01T00:00:00' }),
+      ],
+      [],
+    );
+    expect(items).toHaveLength(2);
+    expect(items.every((item) => !item.open)).toBe(true);
+  });
+
+  it('puts every publish blocker in an item that needs attention', () => {
+    const orderFindings = [
+      SHORT,
+      finding({ id: 'h-noline', severity: 'hard', code: 'total_mismatch' }),
+      finding({ id: 'w', severity: 'warn', line_id: 'line-5' }),
+      finding({ id: 'i', severity: 'info', line_id: 'line-6' }),
+    ];
+    const items = buildFlagItems(orderFindings, [COLUMN]).filter(needsAttention);
+    const covered = new Set(items.flatMap((item) => item.members.map((m) => m.finding.id)));
+    for (const blocker of publishBlockers(orderFindings)) expect(covered.has(blocker.id)).toBe(true);
+    expect(covered.has('i')).toBe(false);
   });
 });
