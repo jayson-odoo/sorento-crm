@@ -1,9 +1,9 @@
 /**
- * The set explosion, which is the thing a naive line list gets wrong.
+ * The sales order's lines, one plain row each (owner hand test, PR #1264 note 1).
  *
  * The PO says "927 SETS"; the sales order says a priced parent plus its zero-priced
- * companions. 52 PO lines become 99 sales order lines that way, so the table has to let a
- * person read a set AS a set instead of nine unrelated rows.
+ * companions. The table reads them as ordinary rows in line order, and a companion's price
+ * cell names the line it is priced on, instead of a heading row and an indented tree.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -164,53 +164,59 @@ describe('groupExplodedLines', () => {
 });
 
 describe('SalesOrderLinesTable', () => {
-  it('labels the set and shows its components under the parent', () => {
+  // Owner hand test, PR #1264 note 1: "to me, this still looks too complicated". One line
+  // per row: no set heading row, no collapse chevron, no indented companion arrow.
+  it('draws every line as one plain row, in line order, with no set heading or collapse', () => {
     renderTable();
 
-    expect(screen.getByText('Set from PO line 10: 4 components')).toBeInTheDocument();
-    expect(screen.getByText('SRTWCX8608-RL')).toBeInTheDocument();
-    expect(screen.getByText('SRTWCY8608')).toBeInTheDocument();
-    expect(screen.getAllByLabelText('Companion of the line above')).toHaveLength(3);
-    expect(screen.getByText('4 lines, 1 set exploded')).toBeInTheDocument();
-  });
-
-  it('collapses a set to its parent and opens it again', () => {
-    renderTable();
-
-    const toggle = screen.getByRole('button', { name: /Set from PO line 10/ });
-    fireEvent.click(toggle);
-
-    expect(screen.getByText('SRTWCX8608-RL')).toBeInTheDocument();
-    expect(screen.queryByText('SRTWCY8608')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /Set from PO line 10/ }));
-    expect(screen.getByText('SRTWCY8608')).toBeInTheDocument();
-  });
-
-  it('narrows to the set a finding concerns, and back again', () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
-    const other = line({
-      id: 'other',
-      line_no: 1,
-      product_code: 'CB6645-NL',
-      source_po_line_no: 3,
-    });
-    const onClear = vi.fn();
-    render(
-      <QueryClientProvider client={client}>
-        <SalesOrderLinesTable
-          lines={[other, ...SET_LINES]}
-          focusLineId="seat"
-          onClearFocus={onClear}
-        />
-      </QueryClientProvider>,
+    expect(screen.queryByText(/Set from PO line/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Set from PO line/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Companion of the line above')).not.toBeInTheDocument();
+    expect(screen.queryByText(/set exploded/)).not.toBeInTheDocument();
+    const codes = Array.from(document.querySelectorAll('tbody tr')).map(
+      (row) => row.querySelectorAll('td')[1]?.textContent?.trim(),
     );
+    expect(codes).toEqual(['SRTWCX8608-RL', 'SRTWCY8608', 'SRTWC8608-SC', 'TPE-9300']);
+  });
 
-    expect(screen.getByText('SRTWCX8608-RL')).toBeInTheDocument();
-    expect(screen.queryByText('CB6645-NL')).not.toBeInTheDocument();
+  it('says a zero-priced set part belongs to its priced line, in the price cell', () => {
+    renderTable({
+      lines: SET_LINES.map((entry) =>
+        entry.id === 'parent'
+          ? entry
+          : { ...entry, is_companion: true, parent_line_id: 'parent' },
+      ),
+    });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show all lines' }));
-    expect(onClear).toHaveBeenCalled();
+    const seat = screen.getByText('SRTWC8608-SC').closest('tr') as HTMLElement;
+    expect(within(seat).getByText('Part of #5')).toBeInTheDocument();
+    const parent = screen.getByText('SRTWCX8608-RL').closest('tr') as HTMLElement;
+    expect(within(parent).queryByText(/Part of/)).not.toBeInTheDocument();
+  });
+
+  it('keeps only the columns a person reads or edits: no Area, From PO line or Stock location', () => {
+    renderTable();
+    const headers = Array.from(document.querySelectorAll('thead th')).map((cell) =>
+      (cell.textContent ?? '').trim(),
+    );
+    expect(headers).toEqual([
+      '#',
+      'Product',
+      'Flag',
+      'Description',
+      'Qty',
+      'UOM',
+      'Unit price',
+      'Amount',
+      'Delivery',
+    ]);
+  });
+
+  it('offers no Reorder lines toggle', () => {
+    renderTable({ reorder: { enabled: true, onReorder: vi.fn() } });
+
+    expect(screen.queryByRole('button', { name: /Reorder lines/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Done reordering/ })).not.toBeInTheDocument();
   });
 
   it('marks the line a blocking finding sits on', () => {
@@ -307,10 +313,7 @@ describe('the Flag column and the Need attention filter (S7-3)', () => {
     renderTable({ flagItems: flagged(), defaultNeedsAttention: true });
 
     fireEvent.click(screen.getByRole('radio', { name: 'All lines (5)' }));
-    // The set's own header row is a heading, not a row of the list.
-    expect(
-      document.querySelectorAll('tbody tr:not([data-testid="data-grid-group-header"])'),
-    ).toHaveLength(5);
+    expect(document.querySelectorAll('tbody tr')).toHaveLength(5);
   });
 
   it('still draws a finding-only row on an order with no lines (review N3)', () => {

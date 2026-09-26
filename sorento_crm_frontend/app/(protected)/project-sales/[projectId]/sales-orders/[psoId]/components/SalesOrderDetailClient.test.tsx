@@ -1122,4 +1122,34 @@ describe('SalesOrderDetailClient, the S7 review screen', () => {
     fireEvent.mouseDown(await screen.findByRole('tab', { name: 'AutoCount differences' }));
     expect(await screen.findByText('Not in AutoCount yet')).toBeInTheDocument();
   });
+
+  // Owner hand test, PR #1264 note 3: "each sales agent is assigned to a location group like BB
+  // then the stock location is automatically BRW-BB". The server derives it; the screen states
+  // it once and never offers a picker for it.
+  it('note 3: states the derived stock location once, with no bulk picker on the Lines tab', async () => {
+    getProjectSalesOrder.mockResolvedValue(detail({ stock_location: 'BRW-BB' }));
+
+    renderDetail();
+
+    expect(await screen.findByText(/Stock location BRW-BB/)).toBeInTheDocument();
+    expect(screen.queryByText(/Apply to all lines/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Stock location for all lines/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No stock location/)).not.toBeInTheDocument();
+  });
+
+  it('note 3: flags an order whose location cannot be derived, naming the missing link', async () => {
+    getProjectSalesOrder.mockResolvedValue(
+      detail({
+        stock_location: null,
+        stock_location_gap: 'Sales agent LCL has no location group.',
+      }),
+    );
+
+    renderDetail();
+
+    const flag = await screen.findByText('No stock location');
+    expect(flag).toHaveAttribute('title', 'Sales agent LCL has no location group.');
+    expect(screen.queryByText(/Apply to all lines/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /warehouse/i })).not.toBeInTheDocument();
+  });
 });
