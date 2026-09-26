@@ -428,7 +428,13 @@ class UserService:
         if phone:
             from app.services.phone_utils import normalize_msisdn
 
-            filters.append(User.contact_number == normalize_msisdn(phone))
+            normalized_phone = normalize_msisdn(phone)
+            if normalized_phone is None:
+                # Junk input normalises to nothing usable - answer no rows.
+                # `User.contact_number == None` would otherwise compile to
+                # `IS NULL` and match every PHONELESS user instead.
+                return []
+            filters.append(User.contact_number == normalized_phone)
         if respond_contact_id:
             filters.append(User.respond_contact_id == respond_contact_id)
         if unlinked:
@@ -540,14 +546,30 @@ class UserService:
         (S3 1.2 step 10, 1.3, 1.4), its description naming the contact. Best-effort
         in its OWN transaction, after the caller's own commit: an audit-write failure
         must never undo the link itself.
+
+        `log_audit` derives `real_user_id`/`actor_type` from the ambient actor
+        automatically, but NOT its `user_id` column - that is only ever whatever
+        a caller passes explicitly. Read here so the row's `user_id` also names
+        whoever is stamped (the deferred `user.unlink_contact` executor runs
+        inside `actor_scope`, so this is the requester, not the sweep/commit).
         """
         import logging
+
+        from app.audit_context import get_actor
 
         logger = logging.getLogger(__name__)
         try:
             from app.services.audit_service import log_audit
 
-            log_audit(self.db, "user", user_id, "UPDATE", description=description)
+            actor = get_actor(self.db)
+            log_audit(
+                self.db,
+                "user",
+                user_id,
+                "UPDATE",
+                description=description,
+                user_id=actor.user_id if actor else None,
+            )
             self.db.commit()
         except Exception as e:
             self.db.rollback()
@@ -645,6 +667,39 @@ class UserService:
             )
         return user
 
+    def invite_user(self, user_data: UserCreate, invited_by_user_id: str):
+        """Create a user without a password and mark them as invited.
+
+        The onboarding provisioning task (`app/tasks/onboarding_tasks.py`) is the
+        one caller left: the plan removed the `POST /users/invite` ROUTE and its
+        Next proxy (AC-58, the create-and-email path from the Add user modal is
+        gone), not this method - onboarding still creates-and-invites in one step
+        for an approved person the reviewer already saw.
+        """
+        data = self._user_create_data(user_data)
+        data["email"] = normalize_email(data.get("email"))
+        self._check_email_free(data["email"], exclude_user_id=None)
+        self._check_contact_free(data.get("respond_contact_id"), exclude_user_id=None)
+        data["password"] = None
+        data["invited_by_user_id"] = invited_by_user_id
+        data["status"] = "INACTIVE"
+        user = User(**data)
+        self.db.add(user)
+        self.db.flush()
+        role_ids = user_data.role_ids
+        if not role_ids:
+            default_role = self.db.query(UserRole).filter(UserRole.is_default == True).first()
+            if default_role:
+                role_ids = [default_role.id]
+        for role_id in role_ids or []:
+            role = self.db.query(UserRole).filter(UserRole.id == role_id).first()
+            if role:
+                self.db.add(UserRoleAssignment(user_id=user.id, role_id=role_id))
+        self._grant_companies(user, user_data.company_ids)
+        self.db.commit()
+        self.db.refresh(user)
+        return user
+
     def update_user(self, user_id: str, user_data: UserUpdate):
         """Update a user, including the S3 1.3 contact-link and phone rules."""
         import logging
@@ -733,13 +788,18 @@ class UserService:
                 self._check_respond_user_id_unique(rid, exclude_user_id=user_id)
 
         # Enforce phone uniqueness (one phone == one user). Value is already
-        # E.164-normalised by the schema validator. Only a value that actually
-        # DIFFERS from today's counts as a change (AC-54 ruling: unchanged does
-        # nothing extra) - clears phone_verified_at and revokes sessions.
+        # E.164-normalised by the schema validator (blank/null both come through
+        # as None). Only a value that actually DIFFERS from today's counts as a
+        # change (AC-54 ruling: unchanged does nothing extra) - clears
+        # phone_verified_at and revokes sessions. That includes CLEARING the
+        # phone: `None` still differs from a previously-held number, and the
+        # uniqueness check only makes sense for a truthy new value.
         phone_changed = False
-        if update_data.get("contact_number"):
-            self._check_contact_number_unique(update_data["contact_number"], exclude_user_id=user_id)
-            phone_changed = update_data["contact_number"] != (user.contact_number or None)
+        if "contact_number" in update_data:
+            new_phone = update_data["contact_number"]
+            if new_phone:
+                self._check_contact_number_unique(new_phone, exclude_user_id=user_id)
+            phone_changed = new_phone != (user.contact_number or None)
 
         # Convert empty strings to None for optional fields to avoid foreign key violations
         optional_fields = ['superior_id', 'respond_user_id', 'country', 'timezone', 'avatar', 'tier', 'contact_number']

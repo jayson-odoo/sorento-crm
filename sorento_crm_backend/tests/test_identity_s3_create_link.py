@@ -907,6 +907,48 @@ def test_ac54_deferred_unlink_contact_executor_revokes_sessions_and_writes_audit
         assert row is not None
 
 
+def test_ac54_deferred_unlink_names_the_requester_not_the_ambient_actor():
+    """The executor runs from whichever request or sweep commits the deferred
+    window, not from the click that started it - the audit row must still name
+    the OWNER who asked for the unlink (`requested_by_id` on the payload), even
+    when a different actor (or none) is stamped at commit time."""
+    from app.audit_context import AuditActor, clear_actor, stamp_actor
+    from app.models.audit import AuditLog
+    from app.services.form_action_registry import get_action
+
+    with blank_session() as db:
+        contact = _seed_contact(db, name="Requester Attribution Contact")
+        user = _seed_user(db, name="Requester Attribution User")
+        user.respond_contact_id = contact.id
+        requester = _seed_admin_user(db)
+        db.commit()
+
+        # A DIFFERENT actor is ambiently stamped - the sweep/commit's own
+        # principal, never the person who parked the action.
+        stamp_actor(AuditActor(actor_type="worker", user_id=None, real_user_id=None), db=db)
+        try:
+            action = get_action("user.unlink_contact")
+            assert action is not None
+            action.execute(db, {"entity_id": user.id, "requested_by_id": requester.id})
+            db.commit()
+        finally:
+            clear_actor(db)
+
+        row = (
+            db.query(AuditLog)
+            .filter(
+                AuditLog.entity_type == "user",
+                AuditLog.entity_id == user.id,
+                AuditLog.action == "UPDATE",
+                AuditLog.description.ilike("Unlinked WhatsApp contact%"),
+            )
+            .first()
+        )
+        assert row is not None
+        assert row.user_id == requester.id, "the row must name the requester, not the ambient actor"
+        assert row.real_user_id == requester.id
+
+
 def test_ac54_phone_change_revokes_sessions(api_client):
     from app.services.user_session_service import mint_session
 
@@ -938,6 +980,29 @@ def test_ac54_first_link_does_not_revoke_sessions(api_client):
 
     db.refresh(session_row)
     assert session_row.revoked_at is None, "a FIRST link (owner ruling) must not end the session"
+
+
+def test_ac54_clearing_phone_to_null_revokes_sessions_and_clears_verified_at(api_client):
+    import datetime as _dt
+
+    from app.services.user_session_service import mint_session
+
+    client, db, _admin = api_client
+    phone = _msisdn(_phone())
+    user = _seed_user(db, name="Clear Phone User", email=f"{unique_code('clr')}@x.com".lower(), phone=phone)
+    user.phone_verified_at = _dt.datetime.utcnow()
+    db.commit()
+    session_row = mint_session(db, user.id, remember=True)
+
+    resp = client.put(f"/api/v1/user-management/users/{user.id}", json={"contact_number": None})
+    assert resp.status_code == 200, resp.text
+
+    db.refresh(user)
+    assert user.contact_number is None
+    assert user.phone_verified_at is None
+
+    db.refresh(session_row)
+    assert session_row.revoked_at is not None, "clearing the phone must revoke every session"
 
 
 # --------------------------------------------------------------------------- #
@@ -1105,6 +1170,19 @@ def test_select_filter_phone_returns_the_right_user(api_client):
     assert resp.status_code == 200, resp.text
     ids = {u["id"] for u in resp.json()}
     assert ids == {target.id}
+
+
+def test_select_filter_phone_junk_returns_empty_not_every_phoneless_user(api_client):
+    client, db, _admin = api_client
+    # A phone-less user: `normalize_msisdn("junk")` is None, and
+    # `User.contact_number == None` would otherwise compile to `IS NULL` and
+    # match this row, answering "found" for garbage input.
+    _phoneless = _seed_user(db, name="No Phone At All")
+    db.commit()
+
+    resp = client.get("/api/v1/user-management/users/select", params={"phone": "junk"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == []
 
 
 def test_select_filter_respond_contact_id_returns_the_right_user(api_client):

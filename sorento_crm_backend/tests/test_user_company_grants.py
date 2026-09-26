@@ -4,12 +4,12 @@ Covers the user_companies grant wiring added to the Add/Edit User flow:
  - create_user(company_ids=[SRT, MCH]) → two user_companies rows; the FIRST
     id also becomes the user's last_active_company_id landing default (S3
     contract 1.2 widens this from "only when there is exactly one").
+ - invite_user(company_ids=[...]) → same grant behaviour. S3 (#1280) removed
+    only the `POST /users/invite` ROUTE and its Next proxy (AC-58); the
+    onboarding provisioning task still calls this method directly.
  - set_user_companies() replaces the whole grant set and repoints
     last_active_company_id when the previous active grant is revoked.
  - Unknown company ids are silently skipped.
-
-`invite_user` was removed in S3 (#1280, AC-58: the create-and-email path is
-gone) - its two tests went with it.
 
 Runs against an in-memory sqlite bind (CLAUDE.md "sqlite pytest fixtures" gotcha):
 pg ``UUID(as_uuid=False)`` works as-is; JSONB/ARRAY columns are swapped to JSON.
@@ -108,6 +108,33 @@ def test_create_user_no_company_ids_grants_nothing(db, companies):
     assert _grant_ids(db, user.id) == set()
     assert user.last_active_company_id is None
 
+
+# --------------------------------------------------------------------------- #
+# invite_user                                                                  #
+# --------------------------------------------------------------------------- #
+def test_invite_user_grants_companies(db, companies):
+    svc = UserService(db)
+    inviter = str(uuid.uuid4())
+    user = svc.invite_user(
+        UserCreate(
+            email="inv@t.com",
+            name="Inv",
+            company_ids=[companies["srt"], companies["mch"]],
+        ),
+        invited_by_user_id=inviter,
+    )
+    assert _grant_ids(db, user.id) == {companies["srt"], companies["mch"]}
+    # S3 1.2: the FIRST id becomes the landing default, not just a single one.
+    assert str(user.last_active_company_id) == companies["srt"]
+
+
+def test_invite_user_single_company_sets_landing_default(db, companies):
+    svc = UserService(db)
+    user = svc.invite_user(
+        UserCreate(email="inv1@t.com", name="Inv1", company_ids=[companies["mch"]]),
+        invited_by_user_id=str(uuid.uuid4()),
+    )
+    assert str(user.last_active_company_id) == companies["mch"]
 
 
 # --------------------------------------------------------------------------- #

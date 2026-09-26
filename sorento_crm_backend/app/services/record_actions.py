@@ -141,10 +141,28 @@ def _delete_user(db: Session, payload: dict):
 
 
 def _unlink_user_contact(db: Session, payload: dict):
+    from app.audit_context import AuditActor, actor_scope
     from app.services.user_service import UserService
 
     # The exact unlink branch of `PUT /users/{id}` (S3 1.3/1.4) - one
     # implementation, called from both places.
+    #
+    # This executor runs from whichever request or background sweep happens to
+    # commit the deferred window, not from the click that started it - without
+    # this, the audit row would name that sweep's actor (or nobody) instead of
+    # the owner who actually asked for the unlink. `requested_by_id` is stamped
+    # onto the payload at park time (`app/api/v1/system/pending_actions.py`).
+    requested_by_id = payload.get("requested_by_id")
+    if requested_by_id:
+        with actor_scope(
+            AuditActor(
+                actor_type="user",
+                user_id=str(requested_by_id),
+                real_user_id=str(requested_by_id),
+            ),
+            db=db,
+        ):
+            return UserService(db).unlink_contact(_entity_id(payload))
     return UserService(db).unlink_contact(_entity_id(payload))
 
 
