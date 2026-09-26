@@ -141,6 +141,18 @@ describe('SalesTeamDetail', () => {
     expect(screen.getByText('1 left this month')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Previous sales team' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Next sales team' })).toBeTruthy();
+    // RecordNavigation's index is 1-based: North is 2nd of central/north/south.
+    expect(screen.getByText('2 / 3')).toBeTruthy();
+  });
+
+  it('shows the first team as "1 / 3", not "- / 3"', () => {
+    hooks.useSalesTeam.mockReturnValue({
+      data: detail({ id: 'central', name: 'Central' }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<SalesTeamDetail id="central" />);
+    expect(screen.getByText('1 / 3')).toBeTruthy();
   });
 
   it('lists the agents, and keeps a muted "Left 14 Oct" line for one who left', () => {

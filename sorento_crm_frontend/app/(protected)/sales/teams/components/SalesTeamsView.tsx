@@ -176,7 +176,7 @@ export default function SalesTeamsView() {
           </DataGrid>
         </div>
       </Container>
-      <SalesTeamModal open={modalOpen} onOpenChange={setModalOpen} team={null} />
+      <SalesTeamModal open={modalOpen} onOpenChange={setModalOpen} />
     </>
   );
 }

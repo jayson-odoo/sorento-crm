@@ -2,7 +2,7 @@
  * The team modal (UAC S6-12, S6-15; owner rulings 26 Sep 06:01 (Lavish) N2, N8 and
  * 26 Sep 06:09 T2).
  *
- * One modal for Add and Edit: Name, Agents (our standard multi-select of active agents, each
+ * The Add team modal (Edit is in place on the team page, S6-13): Name, Agents (our standard multi-select of active agents, each
  * option labelled with the team they are in now), Active. **Moves on** (a date, default today,
  * not clearable) appears only when a picked agent is in another team.
  */
@@ -60,13 +60,13 @@ beforeEach(() => {
 
 describe('SalesTeamModal', () => {
   it('labels each agent option with the team they are in now', () => {
-    render(<SalesTeamModal open onOpenChange={() => {}} team={null} />);
+    render(<SalesTeamModal open onOpenChange={() => {}} />);
     expect(screen.getByText('SEAN I - Sean Lee (now in Central)')).toBeTruthy();
     expect(screen.getByText('RAJ - Raj Kumar (no team)')).toBeTruthy();
   });
 
   it('shows Moves on, defaulting to today, only once a picked agent is in another team', () => {
-    render(<SalesTeamModal open onOpenChange={() => {}} team={null} />);
+    render(<SalesTeamModal open onOpenChange={() => {}} />);
     fireEvent.click(screen.getByLabelText('RAJ - Raj Kumar (no team)'));
     expect(screen.queryByLabelText('Moves on')).toBeNull();
 
@@ -79,7 +79,7 @@ describe('SalesTeamModal', () => {
 
   it('creates the team with its agents and the move date', async () => {
     const onOpenChange = vi.fn();
-    render(<SalesTeamModal open onOpenChange={onOpenChange} team={null} />);
+    render(<SalesTeamModal open onOpenChange={onOpenChange} />);
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: '  North  ' } });
     fireEvent.click(screen.getByLabelText('SEAN I - Sean Lee (now in Central)'));
     fireEvent.change(screen.getByLabelText('Moves on'), { target: { value: '2026-09-20' } });
@@ -97,7 +97,7 @@ describe('SalesTeamModal', () => {
   });
 
   it('sends no move date when nobody is moving', async () => {
-    render(<SalesTeamModal open onOpenChange={() => {}} team={null} />);
+    render(<SalesTeamModal open onOpenChange={() => {}} />);
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'West' } });
     fireEvent.click(screen.getByLabelText('RAJ - Raj Kumar (no team)'));
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -106,34 +106,9 @@ describe('SalesTeamModal', () => {
   });
 
   it('will not save a blank name', () => {
-    render(<SalesTeamModal open onOpenChange={() => {}} team={null} />);
+    render(<SalesTeamModal open onOpenChange={() => {}} />);
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: '   ' } });
     const saveButton = screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement;
     expect(saveButton.disabled).toBe(true);
-  });
-
-  it('edits an existing team: its own agents are not "moving", Active can be switched off', async () => {
-    render(
-      <SalesTeamModal
-        open
-        onOpenChange={() => {}}
-        team={{ id: 'north', name: 'North', is_active: true, sales_agent_ids: ['ali'] }}
-      />,
-    );
-    expect(screen.getByText('Edit team')).toBeTruthy();
-    expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('North');
-    // Ali is in North already: listed without a "now in" note, and no Moves on.
-    expect(screen.getByText('ALI - Ali Hassan')).toBeTruthy();
-    expect(screen.queryByLabelText('Moves on')).toBeNull();
-
-    fireEvent.click(screen.getByRole('switch', { name: 'Active' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
-    expect(save.mutateAsync).toHaveBeenCalledWith({
-      teamId: 'north',
-      name: 'North',
-      is_active: false,
-      sales_agent_ids: ['ali'],
-    });
   });
 });

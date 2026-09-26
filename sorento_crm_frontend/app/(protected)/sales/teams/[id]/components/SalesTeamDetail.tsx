@@ -184,7 +184,7 @@ export function SalesTeamDetail({ id }: { id: string }) {
               <DetailActions
                 pagerNode={
                   <RecordNavigation
-                    index={index >= 0 ? index : null}
+                    index={index >= 0 ? index + 1 : null}
                     total={teams.length}
                     hasPrevious={index > 0}
                     hasNext={index >= 0 && index < teams.length - 1}

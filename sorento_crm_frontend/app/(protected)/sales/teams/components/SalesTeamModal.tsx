@@ -19,29 +19,21 @@ import { todayMalaysiaYyyyMmDd } from '@/lib/helpers';
 import { useSalesTeamAgentOptions, useSaveSalesTeam } from '../hooks/useSalesTeams';
 import { agentOptionLabel, agentsMovingIn } from '../lib/moves';
 
-export interface SalesTeamModalTeam {
-  id: string;
-  name: string;
-  is_active: boolean;
-  sales_agent_ids: string[];
-}
-
 /**
- * Add and Edit are one modal (UAC S6-12, owner ruling 26 Sep 06:01 (Lavish), N2): Name,
+ * The Add team modal (UAC S6-12, owner ruling 26 Sep 06:01 (Lavish), N2): Name,
  * Agents (the standard multi-select of active agents, each option saying which team the agent
  * is in now, N8), Active. Moves on appears only when a picked agent is in another team
  * (S6-15, T2): a date, today by default, never later than today, never empty.
+ * Editing a team is in place on its page (S6-13), not here.
  */
 export default function SalesTeamModal({
   open,
   onOpenChange,
-  team,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  team: SalesTeamModalTeam | null;
 }) {
-  const teamId = team?.id ?? null;
+  const teamId = null;
   const { data: options = [] } = useSalesTeamAgentOptions(open);
   const save = useSaveSalesTeam();
 
@@ -52,15 +44,15 @@ export default function SalesTeamModal({
 
   useEffect(() => {
     if (!open) return;
-    setName(team?.name ?? '');
-    setAgentIds(team?.sales_agent_ids ?? []);
-    setIsActive(team?.is_active ?? true);
+    setName('');
+    setAgentIds([]);
+    setIsActive(true);
     setMovesOn(todayMalaysiaYyyyMmDd());
-  }, [open, team]);
+  }, [open]);
 
   const selectOptions = useMemo(
     () => options.map((o) => ({ value: o.id, label: agentOptionLabel(o, teamId) })),
-    [options, teamId],
+    [options],
   );
   const moving = agentsMovingIn(agentIds, options, teamId);
   const today = todayMalaysiaYyyyMmDd();
@@ -87,7 +79,7 @@ export default function SalesTeamModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{team ? 'Edit team' : 'Add team'}</DialogTitle>
+          <DialogTitle>Add team</DialogTitle>
         </DialogHeader>
         <form onSubmit={submit} className="flex flex-col gap-4">
           <DialogBody className="flex flex-col gap-4">
