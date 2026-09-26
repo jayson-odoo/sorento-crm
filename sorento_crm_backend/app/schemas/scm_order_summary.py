@@ -305,26 +305,72 @@ class OrderSummaryExportIn(BaseModel):
     run_id: Optional[str] = None
     format: str
     split: ExportSplit = "none"
+    # PLAN-excel-preview-26sep AC-6: the page's supplier / category filters, as split keys
+    # ("No supplier" / "No category" for a blank). Low stock report only; the route refuses
+    # them 422 on any other format. Omitted or empty keeps every row.
+    suppliers: Optional[List[str]] = None
+    categories: Optional[List[str]] = None
 
 
-class LowStockSheetCountsOut(BaseModel):
-    """The GROUP count the low stock workbook would write per non-`none` split (AC-15b) -
-    none-buckets ("No supplier" / "No category") included, pairs only when present. The
-    dialog doubles this into a sheet count itself (R2: every group is a `"<key> - Low"`
-    then `"<key>"` pair); the server states the group, not the sheet."""
+class LowStockViewRunOut(BaseModel):
+    """Which run the view shows. `run_id` is opaque: the page needs it to export the same run
+    it is showing when it was opened without one (newest run), and never renders it."""
 
-    supplier: int
-    category: int
-    supplier_category: int
+    run_id: str
+    as_of: Optional[str] = None
+    #: When the plan was computed (Malaysia wall time, no zone), for the page's "Daily plan,
+    #: <d Mon yyyy HH:MM>" subtitle (review N3). None on a run with no rows.
+    generated_at: Optional[str] = None
 
 
-class LowStockPreviewOut(BaseModel):
-    """`GET /order-summary/low-stock-preview` (R4, AC-15b): `rows` is the visible row
-    count (the workbook's own "All" count), computed off the SAME `_split()` the workbook
-    itself is built from - a courtesy count for the split dialog, not a second guess."""
+class LowStockViewSheetOut(BaseModel):
+    """One sheet of the workbook-to-be: its tab title and the rows it prints, by index into
+    `LowStockViewOut.rows`, in print order (AC-9: each row travels once). `low` marks a
+    "Low stock" / "<key> - Low" sheet."""
+
+    title: str
+    row_indexes: List[int]
+    low: bool
+
+
+class LowStockFacetOut(BaseModel):
+    """One supplier or category choice over the WHOLE run (AC-5): its split key ("No
+    supplier" / "No category" for a blank), how many rows it holds and how many are low."""
+
+    key: str
+    rows: int
+    low: int
+
+
+class LowStockFacetsOut(BaseModel):
+    suppliers: List[LowStockFacetOut]
+    categories: List[LowStockFacetOut]
+
+
+class LowStockViewCountsOut(BaseModel):
+    """After the filters: rows kept, of which low, and the sheets the file will hold."""
 
     rows: int
-    sheet_counts: LowStockSheetCountsOut
+    low: int
+    sheets: int
+
+
+class LowStockViewOut(BaseModel):
+    """`GET /order-summary/low-stock-view` (PLAN-excel-preview-26sep AC-1): the low stock
+    workbook for one run, split and filtered, as the in-app page shows it. Built by the
+    same function that writes the file (AC-2). Over the cap (`over_cap`) `rows` and
+    `sheets` are empty and `counts` still says how many rows the filters keep."""
+
+    run: LowStockViewRunOut
+    split: ExportSplit
+    columns: List[str]
+    rows: List[List[str | float | None]]
+    sheets: List[LowStockViewSheetOut]
+    facets: LowStockFacetsOut
+    counts: LowStockViewCountsOut
+    over_cap: bool
+    max_rows: int
+    filename: str
 
 
 class OrderSummaryDecisionIn(BaseModel):

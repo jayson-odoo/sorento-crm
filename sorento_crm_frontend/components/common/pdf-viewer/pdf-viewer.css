@@ -1,0 +1,107 @@
+/*
+ * pdf.js text layer for `components/common/PdfViewer`: transparent glyph spans laid over the
+ * page canvas so text can be selected and copied. The subset of pdf.js's own
+ * `web/pdf_viewer.css` the text layer needs (the rest styles pdf.js's viewer, which we do not
+ * use). Positions and font sizes come from pdf.js as inline custom properties; the page
+ * element sets `--total-scale-factor`.
+ */
+[data-slot='pdf-viewer'] .textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+/*
+ * A rotated scan (e.g. `/Rotate 270`): pdf.js sizes the text layer in the page's
+ * UNROTATED units and marks it with `data-main-rotation`, then rotates the whole
+ * layer with these three rules (`web/pdf_viewer.css`). Without them the layer keeps
+ * its unrotated box - wider than the canvas at fit width, forcing a horizontal
+ * scrollbar - and its glyphs sit turned 90/180/270 degrees off the rendered page,
+ * so a drag-select lands nowhere near the visible text.
+ */
+[data-slot='pdf-viewer'] .textLayer[data-main-rotation='90'] {
+  transform: rotate(90deg) translateY(-100%);
+}
+[data-slot='pdf-viewer'] .textLayer[data-main-rotation='180'] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+[data-slot='pdf-viewer'] .textLayer[data-main-rotation='270'] {
+  transform: rotate(270deg) translateX(-100%);
+}
+
+[data-slot='pdf-viewer'] .textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+[data-slot='pdf-viewer'] .textLayer > :not(.markedContent),
+[data-slot='pdf-viewer'] .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+[data-slot='pdf-viewer'] .textLayer .markedContent {
+  display: contents;
+}
+
+[data-slot='pdf-viewer'] .textLayer span[role='img'] {
+  user-select: none;
+  cursor: default;
+}
+
+[data-slot='pdf-viewer'] .textLayer ::selection {
+  background: color-mix(in oklab, var(--primary) 30%, transparent);
+}
+
+[data-slot='pdf-viewer'] .textLayer br::selection {
+  background: transparent;
+}
+
+/* pdf.js appends this after the spans so a drag-select past the last glyph does not jump. */
+[data-slot='pdf-viewer'] .textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+}
+
+[data-slot='pdf-viewer'] .textLayer.selecting .endOfContent {
+  top: 0;
+}
+
+/*
+ * Search matches, painted by `search.ts` as spans inside the text layer's own spans. The
+ * glyphs stay transparent (the canvas draws the text), so only the background shows. The
+ * paper is white in both themes, so these read the same in light and dark.
+ */
+[data-slot='pdf-viewer'] .textLayer .highlight {
+  margin: -1px;
+  padding: 1px;
+  border-radius: 2px;
+  background-color: color-mix(in oklab, var(--color-yellow-400) 45%, transparent);
+}
+
+[data-slot='pdf-viewer'] .textLayer .highlight.selected {
+  background-color: color-mix(in oklab, var(--color-orange-500) 55%, transparent);
+  outline: 1px solid var(--color-orange-600);
+}
