@@ -13,6 +13,12 @@ export interface AsyncComboboxProps<T> {
   optionValue: (o: T) => string;
   optionLabel: (o: T) => string;
   optionMeta?: (o: T) => string;
+  /**
+   * A row that is shown but not choosable - the sales opportunity form's "Seri Indah is
+   * another agent's customer" match (S2-15). Rendered muted, not clickable, and never
+   * committed by keyboard Enter either.
+   */
+  optionDisabled?: (o: T) => boolean;
   placeholder?: string;
   disabled?: boolean;
   allowFreeText?: boolean;
@@ -48,6 +54,7 @@ export function AsyncCombobox<T>({
   optionValue,
   optionLabel,
   optionMeta,
+  optionDisabled,
   placeholder,
   disabled,
   allowFreeText = true,
@@ -183,7 +190,12 @@ export function AsyncCombobox<T>({
     } else if (e.key === 'Enter') {
       // In multiline mode allow Enter to insert a newline UNLESS the user is
       // actively picking from the dropdown (activeIndex is highlighted).
-      if (open && activeIndex >= 0 && activeIndex < options.length) {
+      if (
+        open &&
+        activeIndex >= 0 &&
+        activeIndex < options.length &&
+        !optionDisabled?.(options[activeIndex])
+      ) {
         e.preventDefault();
         commitSelection(options[activeIndex]);
       } else if (!multiline && allowFreeText) {
@@ -307,22 +319,33 @@ export function AsyncCombobox<T>({
               const label = optionLabel(opt);
               const meta = optionMeta?.(opt);
               const isActive = i === activeIndex;
+              const isDisabled = !!optionDisabled?.(opt);
               return (
                 <button
                   type="button"
                   key={`${v}-${i}`}
                   role="option"
                   aria-selected={isActive}
+                  aria-disabled={isDisabled}
+                  disabled={isDisabled}
                   className={
                     'block w-full text-left px-3 py-2 text-sm transition-colors ' +
-                    (isActive ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/60')
+                    (isDisabled
+                      ? 'cursor-not-allowed text-muted-foreground opacity-60'
+                      : isActive
+                        ? 'bg-accent text-accent-foreground'
+                        : 'hover:bg-accent/60')
                   }
-                  onMouseEnter={() => setActiveIndex(i)}
+                  onMouseEnter={() => {
+                    if (!isDisabled) setActiveIndex(i);
+                  }}
                   onMouseDown={(e) => {
                     // Prevent input blur before click handler runs
                     e.preventDefault();
                   }}
-                  onClick={() => commitSelection(opt)}
+                  onClick={() => {
+                    if (!isDisabled) commitSelection(opt);
+                  }}
                 >
                   <div className="font-medium truncate">{label}</div>
                   {meta && (

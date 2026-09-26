@@ -889,6 +889,8 @@ export function statusLabel(status: string | null | undefined): string {
 // ---------------------------------------------------------------------------
 
 export interface ProductLookupItem {
+  /** Additive (plan section 16, S2-16): the sales opportunity form's own line FK. */
+  id?: string | null;
   product_code: string;
   product_name: string | null;
   category_id: string | null;
