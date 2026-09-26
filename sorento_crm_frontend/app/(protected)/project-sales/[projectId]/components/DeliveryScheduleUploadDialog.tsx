@@ -25,6 +25,7 @@ import {
 } from '../../_shared/hooks/useDeliverySchedules';
 import type { DeliverySchedule } from '../../_shared/types/deliverySchedule.types';
 import type { Project } from '../../_shared/types/project.types';
+import { pipelineOriginHref, withReviewOrigin } from '../../_shared/lib/reviewOrigin';
 
 const ACCEPTED = '.pdf,.jpg,.jpeg,.png';
 
@@ -38,16 +39,23 @@ const ACCEPTED = '.pdf,.jpg,.jpeg,.png';
  * `project` is omitted when this opens from the page-level Start menu (S2), which is not
  * scoped to a row: the project field renders first, and once one is picked this fetches that
  * project's own schedules to feed "Revision of" instead of relying on a `schedules` prop the
- * caller cannot supply yet.
+ * caller cannot supply yet. That same absence is what names the review page's origin (S4):
+ * Start always returns to the Pipeline list (`pipelineListQuery` is the grid's own list
+ * state), a fixed `project` call site names its own origin instead (`originHref`) or omits
+ * one to stay put.
  */
 export function DeliveryScheduleUploadDialog({
   project,
   schedules,
   onDone,
+  originHref,
+  pipelineListQuery,
 }: {
   project?: Project;
   schedules?: DeliverySchedule[];
   onDone: () => void;
+  originHref?: string;
+  pipelineListQuery?: string;
 }) {
   const router = useRouter();
   const [pickedProjectId, setPickedProjectId] = React.useState('');
@@ -137,8 +145,14 @@ export function DeliveryScheduleUploadDialog({
               return;
             }
             onDone();
+            const origin = needsProjectField
+              ? pipelineOriginHref(pipelineListQuery, effectiveProjectId)
+              : originHref;
             router.push(
-              `/project-sales/${effectiveProjectId}/delivery-schedules/${result.schedule_version_id}`,
+              withReviewOrigin(
+                `/project-sales/${effectiveProjectId}/delivery-schedules/${result.schedule_version_id}`,
+                origin,
+              ),
             );
           }}
         >

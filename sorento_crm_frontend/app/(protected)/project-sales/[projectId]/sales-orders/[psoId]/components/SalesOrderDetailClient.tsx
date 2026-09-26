@@ -47,9 +47,10 @@ import {
 } from '../../../../_shared/hooks/useProjectSalesOrders';
 import { SalesOrderStockLocationBulkApply } from './SalesOrderStockLocationBulkApply';
 import { useProject } from '../../../../_shared/hooks/useProjects';
+import { useReviewOriginHref } from '../../../../_shared/hooks/useReviewOrigin';
 import { useOpenDivergenceForOrder } from '../../../../_shared/hooks/useSoDivergence';
 import type { ProjectSalesOrderFinding } from '../../../../_shared/types/projectSalesOrder.types';
-import { SalesOrderAcknowledgeDialog } from '../../../components/SalesOrderAcknowledgeDialog';
+import { DismissReasonDialog } from '../../../components/DismissReasonDialog';
 import { SalesOrderFindingsSection } from '../../../components/SalesOrderFindingsSection';
 import { SalesOrderLinesTable } from '../../../components/SalesOrderLinesTable';
 import { ScheduleFindingsSection } from '../../../components/ScheduleFindingsSection';
@@ -88,6 +89,10 @@ export function SalesOrderDetailClient({
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  // S4: Publish returns the user to where they came from. With no origin (a deep link or a
+  // bookmark) it stays on the page, as before this slice. Routed through the shared hook (S1)
+  // so a crafted external `from` is rejected the same way every other review page rejects it.
+  const originHref = useReviewOriginHref();
   const project = useProject(projectId);
   const salesOrder = useProjectSalesOrder(psoId);
   const { acknowledge, save, regroup, publish, unpublish, reorderLines } = useSalesOrderMutations(
@@ -651,11 +656,13 @@ export function SalesOrderDetailClient({
       <AllocationPanel psoId={psoId} />
 
       {acknowledging && (
-        <SalesOrderAcknowledgeDialog
-          finding={acknowledging}
+        <DismissReasonDialog
+          severity={acknowledging.severity}
+          detail={acknowledging.detail}
+          ids={[acknowledging.id]}
           submitting={acknowledge.isPending}
           onDone={() => setAcknowledging(null)}
-          onConfirm={(reason) =>
+          onDismiss={(_ids, reason) =>
             acknowledge.mutateAsync({ findingId: acknowledging.id, reason })
           }
         />
@@ -678,7 +685,10 @@ export function SalesOrderDetailClient({
           unacknowledgedWarnings={unacknowledgedWarnings}
           submitting={publish.isPending}
           downloading={importFile.isPending}
-          onDone={() => setPublishing(false)}
+          onDone={(published) => {
+            setPublishing(false);
+            if (published && originHref) router.push(originHref);
+          }}
           onPublish={(body) => publish.mutateAsync(body)}
           onDownloadImportFile={() => importFile.mutate(so.provisional_ref)}
         />

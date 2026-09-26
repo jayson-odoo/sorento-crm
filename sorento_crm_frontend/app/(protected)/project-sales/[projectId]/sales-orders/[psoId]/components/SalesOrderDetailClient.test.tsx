@@ -30,10 +30,11 @@ vi.mock('@/lib/toast', () => ({
 }));
 
 const push = vi.fn();
+let originParam: string | null = null;
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, replace: vi.fn() }),
   usePathname: () => '/project-sales/p1/sales-orders/so-1',
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(originParam ? { from: originParam } : ''),
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -245,6 +246,7 @@ async function openGear() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  originParam = null;
   canEditProject = true;
   // Default: AutoCount agrees, so the amend path is open.
   listDivergences.mockResolvedValue({ data: [], total: 0, page: 1, limit: 100 });
@@ -326,21 +328,21 @@ describe('SalesOrderDetailClient', () => {
 
     renderDetail();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Clear with a reason' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Dismiss with a reason' }));
 
     const dialog = await screen.findByRole('dialog');
-    const record = within(dialog).getByRole('button', { name: 'Record the reason' });
+    const record = within(dialog).getByRole('button', { name: 'Dismiss 1' });
     expect(record).toBeDisabled();
 
     // Whitespace is not a reason.
     fireEvent.change(within(dialog).getByLabelText(/Reason/), { target: { value: '   ' } });
-    expect(within(dialog).getByRole('button', { name: 'Record the reason' })).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Dismiss 1' })).toBeDisabled();
     expect(acknowledgeFinding).not.toHaveBeenCalled();
 
     fireEvent.change(within(dialog).getByLabelText(/Reason/), {
       target: { value: 'Customer agreed the revised price on 01/04.' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Record the reason' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Dismiss 1' }));
 
     await waitFor(() =>
       expect(acknowledgeFinding).toHaveBeenCalledWith(
@@ -402,6 +404,72 @@ describe('SalesOrderDetailClient', () => {
     expect(saveBlobAs.mock.calls[0][1]).toBe('SO397450.csv');
   });
 
+  it('returns to the origin once Done is clicked after a successful Publish, when it carries one (S4-2)', async () => {
+    originParam = '/project-sales/p1?tab=sales-orders';
+    getProjectSalesOrder.mockResolvedValue(detail());
+    publishSalesOrder.mockResolvedValue({
+      status: 'published',
+      provisional_ref: 'PSO-000123',
+      autocount_doc_no: 'SO397450',
+      can_export: true,
+    });
+
+    renderDetail();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish' }));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Publish' }));
+
+    await waitFor(() => expect(publishSalesOrder).toHaveBeenCalledWith('so-1'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
+
+    expect(push).toHaveBeenCalledWith('/project-sales/p1?tab=sales-orders');
+  });
+
+  it('stays on the page once Done is clicked with no origin (S4-3)', async () => {
+    originParam = null;
+    getProjectSalesOrder.mockResolvedValue(detail());
+    publishSalesOrder.mockResolvedValue({
+      status: 'published',
+      provisional_ref: 'PSO-000123',
+      autocount_doc_no: 'SO397450',
+      can_export: true,
+    });
+
+    renderDetail();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish' }));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Publish' }));
+
+    await waitFor(() => expect(publishSalesOrder).toHaveBeenCalledWith('so-1'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
+
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('never navigates to a crafted external `from` (S1, open redirect)', async () => {
+    originParam = 'https://elsewhere.test/steal-session';
+    getProjectSalesOrder.mockResolvedValue(detail());
+    publishSalesOrder.mockResolvedValue({
+      status: 'published',
+      provisional_ref: 'PSO-000123',
+      autocount_doc_no: 'SO397450',
+      can_export: true,
+    });
+
+    renderDetail();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish' }));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Publish' }));
+
+    await waitFor(() => expect(publishSalesOrder).toHaveBeenCalledWith('so-1'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
+
+    expect(push).not.toHaveBeenCalled();
+  });
+
   it('names the warnings that have no reason before an irreversible publish', async () => {
     getProjectSalesOrder.mockResolvedValue(detail({ warn_findings: 1, findings: [WARN] }));
 
@@ -415,7 +483,7 @@ describe('SalesOrderDetailClient', () => {
     ).toBeInTheDocument();
   });
 
-  it('takes a hard override through a second, explicit confirmation', async () => {
+  it('dismisses a hard finding through the same one-step dialog as a warning', async () => {
     getProjectSalesOrder.mockResolvedValue(
       detail({ status: 'blocked', hard_findings: 1, findings: [HARD] }),
     );
@@ -423,19 +491,14 @@ describe('SalesOrderDetailClient', () => {
 
     renderDetail();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Override with a reason' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Dismiss with a reason' }));
 
     const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Blocks publish')).toBeInTheDocument();
     fireEvent.change(within(dialog).getByLabelText(/Reason/), {
       target: { value: 'PO amount is a typo, confirmed by email 02/04.' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Override' }));
-
-    const confirm = await screen.findByRole('alertdialog');
-    expect(within(confirm).getByText('Publish past a hard stop?')).toBeInTheDocument();
-    expect(acknowledgeFinding).not.toHaveBeenCalled();
-
-    fireEvent.click(within(confirm).getByRole('button', { name: 'Override and record' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Dismiss 1' }));
 
     await waitFor(() =>
       expect(acknowledgeFinding).toHaveBeenCalledWith(
