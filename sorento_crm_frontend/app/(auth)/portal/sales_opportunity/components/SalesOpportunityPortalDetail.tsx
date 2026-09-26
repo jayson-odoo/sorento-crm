@@ -114,7 +114,18 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
         <CardContent className="flex flex-col gap-2 py-4">
           <div className="flex items-center justify-between gap-2">
             <span className="text-sm font-semibold">{opportunity.title}</span>
-            <Badge appearance="light">{opportunity.stage_label}</Badge>
+            <Badge
+              variant={
+                opportunity.outcome === 'lost'
+                  ? 'destructive'
+                  : opportunity.outcome === 'won'
+                    ? 'success'
+                    : 'primary'
+              }
+              appearance="light"
+            >
+              {opportunity.stage_label}
+            </Badge>
           </div>
           <span className="text-xs text-muted-foreground">
             <span>{opportunity.opportunity_no}</span> &middot;{' '}
@@ -124,6 +135,14 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
             <span>{formatCurrency(opportunity.expected_amount)}</span>
             <span>{formatDate(opportunity.expected_close_date)}</span>
           </div>
+          {/* Browser pass defect 1: the detail never surfaced WHY a Lost opportunity was
+              lost, once it already was one - the reason only ever showed during the
+              confirm step that set it. */}
+          {opportunity.outcome === 'lost' && opportunity.lost_reason_label ? (
+            <p className="text-sm text-muted-foreground">
+              Lost reason: <span className="font-medium text-foreground">{opportunity.lost_reason_label}</span>
+            </p>
+          ) : null}
         </CardContent>
       </Card>
 

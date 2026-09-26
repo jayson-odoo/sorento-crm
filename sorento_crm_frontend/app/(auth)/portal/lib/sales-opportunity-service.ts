@@ -30,6 +30,7 @@ export interface PortalSalesOpportunity {
   expected_amount: string;
   expected_close_date: string;
   lost_reason: string | null;
+  lost_reason_label: string | null;
   source: string;
   lines: PortalSalesOpportunityLine[];
   available_transitions: { to_status_id: string; key: string; label: string }[];

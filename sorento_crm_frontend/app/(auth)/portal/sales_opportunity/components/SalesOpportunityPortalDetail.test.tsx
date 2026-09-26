@@ -190,4 +190,20 @@ describe('SalesOpportunityPortalDetail', () => {
     expect(screen.getByText('ZZT Basin')).toBeTruthy();
     expect(screen.getByText('2')).toBeTruthy();
   });
+
+  it('fix browser-defect-1: shows the lost reason once the opportunity is Lost', async () => {
+    service.getPortalSalesOpportunity.mockResolvedValue(
+      detail({
+        outcome: 'lost',
+        stage_key: 'lost',
+        stage_label: 'Lost',
+        lost_reason: 'price',
+        lost_reason_label: 'Price',
+        available_transitions: [],
+      }),
+    );
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    await screen.findByText('OPP-000001');
+    expect(screen.getByText('Price')).toBeTruthy();
+  });
 });
