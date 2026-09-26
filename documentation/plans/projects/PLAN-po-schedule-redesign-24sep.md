@@ -17,7 +17,9 @@ stays owed on a local stack. Reviewer pass on #1265 (26 Sep): B1, B2, S1 and S2 
 same branch, test-first (S2 adds a backend gate on the schedule's `document_url`, no
 migration). Owner hand test 26 Sep (round 3): W1 picker options one line, W2 filled segments,
 W3 the schedule read shows the PO read's progress bar (pages read of total); fixed on the same
-branch, test-first.
+branch, test-first. Round 4 (26 Sep): main 253dafaf1 merged; the schedule Documents tab now
+draws through main's in-app PdfViewer (#1256) and reads the file same-origin via the version's
+attachment_id, as the PO screen does.
 Track per slice: S1 small fix; S4 small fix; S2, S3, S5, S6, S7 full track.
 
 UAC: `documentation/plans/projects/po-schedule-redesign-24sep-acceptance-criteria.md`.
