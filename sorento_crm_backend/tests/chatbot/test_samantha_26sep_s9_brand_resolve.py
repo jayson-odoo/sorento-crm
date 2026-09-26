@@ -451,6 +451,92 @@ class TestPromotionBrandGateFailsClosed:
             f"no Sorento (or any other) row may leak through as a fallback: {gate!r}"
         )
 
+    def test_mixed_order_and_promotion_turn_keeps_the_brand_gate_closed(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """Security review follow-up (26 Sep, coordinator round 3): a message asking
+        for outstanding orders AND Cabana promotions in one turn - the parser hints
+        `domain_hint: "order"` (the order half won the domain read) while `route()`
+        still sends the turn through the promotion access-check entry
+        (`branch_kind="check_promotion"`, `entry="access_check"`), because a
+        promotion ask reaches the tier gate before anything else regardless of which
+        domain word the parser preferred.
+
+        `resolve_kinds`'s own `is_order_domain` check (~1223) reads `domain_hint`
+        ALONE - it has no idea `branch_kind` is `"check_promotion"` this turn - so it
+        strips the Cabana entity from `ctx.parse.output.entities` (~1236-1243)
+        exactly as it would for a pure order-domain ask, and `resolve_gate.run`
+        (~1052) hands `run_tier_gate` that ALREADY-STRIPPED dict. The gate closes on
+        an empty `query_brands` the same way `test_promotion_brand_gate_still_fails_
+        closed_for_an_unheld_live_brand` measured before its own fix: `brand_gate_
+        empty` false, the full "Sorento Dealer" entitlement survives untouched.
+
+        Same seam and fixture as the sibling test above; only `domain_hint` and
+        `branch_kind` differ. Only the GATE is asserted here (not on the resolver's
+        own token list) - the resolver-side question needs `resolve_gate.run`'s
+        actual `resolved` payload, a separate carrier from `gate`, and is out of
+        scope for this test.
+        """
+        import uuid as _uuid
+
+        from app.models.base import set_company_scope as _set_company_scope
+
+        from app.services.chatbot import turn_runtime
+        from app.services.chatbot.lanes.business import services as business_services
+        from app.services.chatbot.lanes.business.services import ResolveGateServices
+
+        db = session_factory()
+        _set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        db.add(
+            Brand(
+                id=str(_uuid.uuid4()), brand_code="CAB", brand_name="Cabana",
+                is_active=True, company_id=DEFAULT_COMPANY_ID,
+            )
+        )
+        db.commit()
+
+        def _resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
+            asked = list(body.get("tokens") or [])
+            return {"tokens": asked, "resolutions": [], "unresolved_tokens": asked}
+
+        resolve_services = ResolveGateServices(
+            access_types=lambda **_: [{"name": "Sorento Dealer"}],
+            resolve_entity=validating_resolve_entity(_resolve_entity),
+            probe=lambda **_: None,
+        )
+        monkeypatch.setattr(
+            business_services, "production_services", lambda db, **kw: resolve_services
+        )
+
+        ctx = {
+            "contact": {"id": "zzt-s9-mixed-order-promo-gate"},
+            "parse": {
+                "output": {
+                    "domain_hint": "order",
+                    "entities": [
+                        {
+                            "raw": "Cabana", "hint": "brand", "canonical_code": None,
+                            "current_message": True, "confident": True,
+                        },
+                    ],
+                }
+            },
+            "session": {},
+        }
+        outcome = turn_runtime.resolve_kinds(
+            db, ctx=ctx, branch_kind="check_promotion", space_id=None, dry_run=True
+        )
+        gate = (outcome.payload or {}).get("gate") or {}
+
+        assert gate.get("brand_gate_empty") is True, (
+            f"a mixed order+promotion turn must still fail closed on the unheld "
+            f"brand, not fall back to the full entitlement: {gate!r}"
+        )
+        assert "cabana" in (gate.get("access_notice") or "").lower(), (
+            f"the refusal must name the unheld brand even on a mixed-domain turn: "
+            f"{gate.get('access_notice')!r}"
+        )
+
     def test_brand_strip_is_order_domain_only(self, session_factory, monkeypatch) -> None:
         """The strip exists to keep a brand OUT of the shared resolver's order-domain
         fan-out (F1a) - it must not also blind the resolver for inventory/promotion
