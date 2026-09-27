@@ -196,9 +196,14 @@ def test_the_guard_keeps_a_confident_digit_code():
 
 
 def test_the_stock_task_addendum_teaches_the_last_answered_line():
-    from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT, STOCK_TASK_ADDENDUM
+    from app.services.chatbot_parser_prompt import (
+        SEMANTIC_PARSER_PROMPT,
+        SPECIFICATION_ADDENDUM,
+        STOCK_TASK_ADDENDUM,
+    )
 
     assert '"Last answered:"' in STOCK_TASK_ADDENDUM
     assert '"how about 100?"' in STOCK_TASK_ADDENDUM
     assert "correction true" in STOCK_TASK_ADDENDUM
-    assert SEMANTIC_PARSER_PROMPT.endswith(STOCK_TASK_ADDENDUM)
+    # Fix round 8 on PR #833 stacked SPECIFICATION_ADDENDUM after it, newest outermost.
+    assert SEMANTIC_PARSER_PROMPT.removesuffix(SPECIFICATION_ADDENDUM).endswith(STOCK_TASK_ADDENDUM)

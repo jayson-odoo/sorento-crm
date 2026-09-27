@@ -65,8 +65,16 @@ def _golden() -> str:
 
 class TestRenderMatchesGolden:
     def test_render_prompt_blocks_equals_golden_file(self) -> None:
+        from app.services.chatbot_parser_prompt import specification_lines
+
         with pg_session() as db:
             rendered = render_prompt_blocks(db)
+            # Fix round 8 on PR #833: the blocks close with the Specification lines,
+            # rendered from the specification registry, which other tests of this shared
+            # database may edit. They are pinned in `test_spec_grounding_prompt.py`
+            # against a blank schema; this golden file stays the domains and the kinds.
+            spec = "\n".join(specification_lines(db))
+        rendered = rendered.removesuffix(f"\n{spec}\n") if spec else rendered
 
         assert rendered == _golden(), (
             "render_prompt_blocks(db) must equal the hand-written golden file "

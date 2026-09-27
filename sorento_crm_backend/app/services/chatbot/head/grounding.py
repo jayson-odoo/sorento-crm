@@ -205,6 +205,7 @@ def load_vocabulary(db: "Session") -> Vocabulary:
     from app.services.chatbot.lanes.business.predicate import _BARE_CERT_WORDS
 
     attachment_words.update(_BARE_CERT_WORDS)
+    attachment_words.update(_singular(w) for phrase in PROMPT_DOCUMENT_KINDS for w in _words(phrase))
     brand_words = {w for name in brand_names(db) for w in _words(name)}
     known_words = set(class_words) | type_words
     for entry in keys:
@@ -220,6 +221,16 @@ def load_vocabulary(db: "Session") -> Vocabulary:
         attachment_words=attachment_words,
         brand_words=brand_words,
     )
+
+
+#: The document kinds the parser prompt itself tells the model an `attachment_type` may be
+#: (its ATTACHMENT TYPE EXTRACTION rows and the kind's canonical codes), on the list even
+#: where the attachment-type table is empty: the prompt and this check must agree on what
+#: a document word is, or "photo" would be re-filed on a fresh install.
+PROMPT_DOCUMENT_KINDS = (
+    "photo", "image", "picture", "video", "drawing", "technical drawing", "cad", "blueprint",
+    "3d model", "model", "certificate", "gambar", "foto", "imej", "lukisan teknikal",
+)
 
 
 def _singular(word: str) -> str:
