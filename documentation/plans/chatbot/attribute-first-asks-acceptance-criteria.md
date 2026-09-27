@@ -511,3 +511,34 @@ Every criterion below is tested with her exact messages.
 - AC-1384 (F7) Replies are plain, human sentences: no internal phrasing ("described set",
   "qualifies nothing", "predicate", "unrecognized", "scope term", "None", "null") reaches any
   reply.
+
+## M. Owner retest of round 7 (27 Sep 2026 12:59 to 13:04 MYT, console :3084 at b056885e, contact Mr Loo) [BE]
+
+Rulings assumed (the owner confirms): a set answer's intro names the described set and its count,
+then exactly the product-code rows in the contact's detailed or compact mode, then the same footer;
+the same rule per domain. AC-1381's header lines and AC-1373's two-line rows are superseded.
+
+- AC-1385 (F1, grounding) The parser is bounded by the specification registry. Its prompt carries a
+  `specification` entity kind and one Specification line per registry key (key, label, every choice
+  with its words, the unit of a numeric key, the words of a yes-or-no key), rendered from the
+  registry at publish time; the entity carries `spec_key` and `spec_value`. After every parse a
+  deterministic step grounds each descriptor against the registry, whatever kind the parser gave
+  it: the category token keeps only what the product IS ("gunmetal basin" -> category "basin" plus
+  Finish or colour: Gunmetal; "undermount basin" -> Mounting: Under counter); a number beside a
+  numeric key's word is that measurement ("thicnkess 1.2 mm" -> Thickness: 1.2 mm); a word beside a
+  key's own word that is none of its choices is an unknown value of that key, said back with the
+  known choices ("I don't know 'pink' as a finish or colour. I know ...", "I don't know 'f trap' as a
+  trap. I know P trap and S trap."); `attachment_type` stays only for a word on the attachment-type
+  list, never for a descriptor; a document domain chosen only for a misfiled descriptor becomes the
+  product domain. Tested on the owner's messages and on phrases generated from the registry.
+- AC-1386 (F1, follow-up) A one-word follow-up ("cert?", "stock?", "incoming?") after a described
+  answer switches the domain and keeps the grounded set.
+- AC-1387 (F2) A set answer renders its rows through the product-code answer's renderer, from the
+  same tool in the same mode, with the same fields, flags ("PRODUCT DISCONTINUED"), warehouse lines
+  and "Data last updated" footer. Only the intro differs: "Stock summary for Sorento wash basins with
+  stock (276, showing 1 to 10)." The same for incoming, certificates and attachments, and for price
+  ("Prices for Sorento gunmetal wash basins (3)."). No separate set row format and no bold attribute
+  header lines.
+- AC-1388 (F1, zero set) A described set that qualifies nothing says what it looked for and what the
+  set holds in the key's other values (AC-1374), never "Could not find incoming for category ...".
+

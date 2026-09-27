@@ -12,6 +12,8 @@ import re
 
 _FILTER_RE = re.compile(r"^\*([^*]+):\* (.+)$")
 _ROW_RE = re.compile(r"^(\d+)\. (?:(.+) \((\S+)\)|(\S+))(?: \*\(Discontinued\)\*)?$")
+#: Round 8 on PR #833: a set row IS the product-code row ("1. *Product Code:* GB3006C").
+_CODE_ROW_RE = re.compile(r"^(\d+)\. \*Product Code:\* (\S+)")
 
 
 def legacy_lines(text: str) -> list[str]:
@@ -41,6 +43,10 @@ def row_codes(text: str) -> list[str]:
     """The product codes of the rows, in order."""
     out = []
     for line in (text or "").splitlines():
+        code_row = _CODE_ROW_RE.match(line)
+        if code_row:
+            out.append(code_row.group(2))
+            continue
         m = _ROW_RE.match(line)
         if m:
             out.append(m.group(3) or m.group(4))
@@ -52,7 +58,7 @@ def row_blocks(text: str) -> list[list[str]]:
     out: list[list[str]] = []
     current: list[str] | None = None
     for line in (text or "").splitlines():
-        if _ROW_RE.match(line):
+        if _CODE_ROW_RE.match(line) or _ROW_RE.match(line):
             current = [line]
             out.append(current)
         elif current is not None and line.strip():
