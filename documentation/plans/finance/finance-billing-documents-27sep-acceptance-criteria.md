@@ -10,7 +10,12 @@ and Q6 to Q13 are settled, so their "(Q#)" markers are gone. Still marked: "(Q5)
 being confirmed) and "(Q14)", "(Q15)", "(Q16)" (new, plan section 9). Every changed AC keeps its
 id; new ACs are appended at the end of their slice (S0-22, S1-9, S1-10, S2-11, S2-12). Changed in
 round 2: S0-2, S0-3, S0-12, S0-16, S0-22 (new), S1-1, S1-4, S1-5, S1-8, S1-9 (new), S1-10 (new),
-S2-1, S2-3, S2-11 (new), S2-12 (new), S3-3, S4-1, S4-2, S4-3. Nothing is built.
+S2-1, S2-3, S2-11 (new), S2-12 (new), S3-3, S4-1, S4-2, S4-3.
+
+Round 3 (27 Sep, the owner's round 2 answers, plan section 0.1): Q5 No, Q14 by the sales order
+type, Q15 the invoice's own agent, Q16 the Roles screen. Rewritten: J5, S1-4, S1-5, S1-9,
+S1-10 (sales order type grouping replaces the team grouping; retail S1's `(blank)` row replaces
+the "No team" block). S0 built on PR #1314; S1 building on the S1 lane.
 Track: full (new module, new schema, a migration, new permissions, a new external ingest entity).
 
 Tags: `[BE]` pytest (Postgres only), `[FE]` vitest, `[E2E]` recorded agent-browser run (no new
@@ -50,9 +55,10 @@ step, and the fewest-decisions rule is met by there being none to make beyond "w
   **Invoiced** beside Ordered and Delivered. Picking it shows invoices plus cash sales plus
   debit notes minus credit notes, excluding tax, filed by document date, in ringgit.
 - **J5.** The figure tallies with the AutoCount yearly sales PDF for the same months (2024
-  onwards) and the same grouping: each document counts for the team its sales agent was in on the
-  document date, and a document whose agent had no team shows under "No team". The basis line
-  under the filters says which documents were counted.
+  onwards) and the same grouping: DEALER and PROJECT TEAM by the sales order type the document
+  was billed from, as the order bases group (ruling Q14), each document credited to its own
+  agent (Q15); a document nothing classifies reads as an unclassified order does, `(blank)`.
+  The basis line under the filters says which documents were counted.
 
 **Staff in sales admin or accounts, J6 to J9**
 
@@ -148,8 +154,8 @@ step, and the fewest-decisions rule is met by there being none to make beyond "w
 
 ## S1: the invoiced basis on the sales reports
 
-Depends on PR #1269 (the reports kernel dataset and the Basis filter), merged to main at 52b0ac24,
-and on #1260's dated `sales.team_members` for the grouping (ruling Q8).
+Depends on PR #1269 (the reports kernel dataset and the Basis filter), merged to main at 52b0ac24.
+Grouping by the sales order type (ruling Q14, plan 3.4), not by the agent's team.
 
 - **S1-1 [BE]** (J4) Given the S0 fixture in company A, when the Yearly comparison runs with Basis
   = Invoiced, then the fixture month's figure is IV net + CS net + DN net - CN net, excluding
@@ -159,31 +165,36 @@ and on #1260's dated `sales.team_members` for the grouping (ruling Q8).
   own month, never the IV's month.
 - **S1-3 [BE]** (J4) Given the Basis filter, then its options are Ordered, Delivered and Invoiced;
   Delivered stays the default until the owner rules otherwise.
-- **S1-4 [BE]** (J5) Given the invoiced basis, then each document counts in the block of the team
-  its `sales_agent_id` belonged to on its `doc_date` in its company (a `sales.team_members` row
-  with `coalesce(valid_from, -infinity) <= doc_date <= coalesce(valid_to, infinity)`), the block
-  headed by the team's name (Q14), never by `demand_class` and never by the agent's current
-  class. Given an agent who moved from team A to team B on the 15th, then a document of the 14th
-  counts for A and one of the 15th for B. The Channel filter on Invoiced lists the company's
-  teams plus "No team".
+- **S1-4 [BE]** (J5) Given the invoiced basis, then each document counts in the block of its
+  stored `demand_class` (`retail` reads Dealer, `project` reads Project team), through the same
+  label and Channel filter the order bases use (plan 3.4), never through the agent's sales team.
+  The ingest decides `demand_class` with `classify_document`: the class of the sales order its
+  lowest-numbered linked line came from; for a CN or DN with none, the class of the document it
+  is against; else its own agent's class; else the customer's market segment. Given an invoice
+  from a retail SO, a cash sale with no SO whose agent is project, and a CN against a project
+  invoice, then they count in Dealer, Project team and Project team respectively. The Channel
+  filter on Invoiced offers Dealer and Project team, as on the order bases.
 - **S1-5 [T]** (J5) Given Basis = Invoiced, then the basis line under the filters and in the
   workbook reads "Basis: Invoiced (invoices, cash sales and debit notes less credit notes,
-  excluding tax), by document date, grouped by the sales agent's team on that date."
+  excluding tax), by document date, grouped by the sales order type."
 - **S1-6 [BE]** (J4) Given the chatbot's `crm_sales_analysis` tool, when asked for invoiced sales,
   then it answers from the same dataset (one query layer, as #1269 built it).
 - **S1-7 [BE]** (J4) Given a caller without `finance.billing_documents.view`, then Invoiced is
   still offered on the sales reports (the report's own slug `sales.reports.view` gates it; the
   report shows totals, never a document).
 - **S1-8 [E2E]** (J4, J5) The owner's three chosen months, all in 2024 or later, run on the prod
-  copy after the backfill, are recorded against the PDF in this file's "Measured" block, per team
-  block and for "No team".
-- **S1-9 [BE]** (J5) Given a document whose agent did not resolve (`sales_agent_id` NULL), a
-  document whose agent has no team row covering its `doc_date`, and a document whose agent is in
-  no team, then all three count in one "No team" block that sorts last, is omitted when empty,
-  and is included in the company total; the company total on Invoiced equals the ungrouped
-  invoiced sum.
+  copy after the backfill, are recorded against the PDF in this file's "Measured" block, per block
+  (Dealer, Project team) and for `(blank)`.
+- **S1-9 [BE]** (J5) Given a document the ladder cannot classify (no linked SO, no against
+  document, an agent with no demand class or none resolved, a customer with no project
+  segment), then it stores `demand_class` NULL and reads exactly as retail S1's AC-S1-4 reads an
+  unclassified order: with the Channel filter cleared it is a `(blank)` row, sorted last and in
+  the total; with Dealer and Project team ticked it is in neither block. The company total on
+  Invoiced with the Channel filter cleared equals the ungrouped invoiced sum.
 - **S1-10 [BE]** (J5) Given an IV whose own agent differs from the agent on the SO its lines came
-  from, then it counts whole for its own agent's team (Q15).
+  from, then it counts whole, in the block of that SO's type, and its agent column reads the
+  invoice's own agent (Q15); given a cash sale, the class ladder's agent rung reads its own
+  agent.
 
 ## S2: the Finance menu, list and record pages
 
@@ -241,8 +252,8 @@ Mostly shared-service work; the CRM side is a runbook and a measurement.
 - **S4-1 [T]** (J3) A runbook `documentation/plans/finance/RUNBOOK-billing-backfill.md` records the
   start date as set on the shared service (1 Jan 2023 planned; the CRM holds no copy of it), batch
   size (1000), order (oldest first, IV and CS before CN and DN), the permission grant to the
-  feed's role when Q16 is (b), the check that every agent on the documents has a team (the
-  "No team" count per month), the check queries and the re-run rule (safe: S0-5).
+  feed's role (Q16 is (b): the owner grants on the Roles screen), the unclassified count per
+  month (documents with `demand_class` NULL, the `(blank)` row), the check queries and the re-run rule (safe: S0-5).
 - **S4-2 [E2E]** (J3) After the backfill on production, documents per type per month from the
   start date match AutoCount's own counts, and the three test months (2024 or later) are
   recorded here.
