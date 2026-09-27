@@ -16,8 +16,11 @@ types or customer links it holds (`orders._top_selling_is_staff`, shared by the 
 (27 Sep, owner retest at 9ab7f89d, parser v34): F1 to F8 below ("As built (fix lane round
 4)"), main (11bf373e) merged, the lane's first migration re-parented onto
 `merge_27sep_three_heads`, the parser prompt republished unlabelled by
-`chatbot_top_selling_vocab_r4`. S5 (sales agent) is built by round 4 as a lane-side
-resolver; S6 (review + live console) and S7 (per-month breakdown) open. Track: full track (new route + MCP tool = a new external
+`chatbot_top_selling_vocab_r4`. Fix lane round 5 (27 Sep, owner retest of round 4 at
+a7c6abc6, which ran the console on parser v34 although v38 was the newest full version):
+R1 to R9 below ("As built (fix lane round 5)"), the console no longer remembers a version
+pick, the parser words republished unlabelled by `chatbot_top_selling_vocab_r5`. S5 (sales
+agent) is built by round 4 as a lane-side resolver; S6 (review + live console) and S7 (per-month breakdown) open. Track: full track (new route + MCP tool = a new external
 ingest surface, one policy-row migration, one prompt migration, one entity-kind migration;
 the diff will pass 300 lines).
 Issue: #1171. UAC: `chatbot-top-x-hot-selling-24sep-acceptance-criteria.md` (AC-19xx).
@@ -601,6 +604,71 @@ replays the transcript in order.
   them); the bottom header says so in one line: "Items with no sale in this period are
   not ranked."
 - F8: every reply in the replay is checked for snake_case and dashes.
+
+### As built (fix lane round 5, owner retest of round 4, 27 Sep 2026)
+
+Source: the owner's PR #1273 comment "Owner ruling from the retest of top selling round 4
+(27 Sep, about 11:30 to 14:10 MYT, :3083)", its five transcripts and the orchestrator's
+notes. Pinned by `tests/chatbot/test_top_selling_round5.py`, which replays the five
+transcripts in order and types the owner's own messages; live parser run:
+`tests/chatbot/console_cases/2026-09-27-top-selling-round5.yaml`.
+
+- Console: the retest ran every turn on parser v34 because `useChatbotConsole.ts` kept
+  the version pick in localStorage and restored it on each page load ahead of the newest
+  full version. The pick now lives only for the page session; the composer shows "Parser
+  vNN"; the per-turn trace pill already carried the version.
+- One seam reads a message inside a ranking against the question the bot asked, before
+  anything routes it: `engine._top_selling_verdict`, run just before the first APPLY
+  pass. It is the only place that reads the message text for top selling, and only for
+  the closed questions the bot itself printed (a bare number, and the words of the
+  "customer or sales agent?" options, `TOP_SELLING_WHO_WORDS`). `turn/apply` stays text
+  free: the seam hands it `top_selling_who`, `top_selling_unclear` and
+  `top_selling_leftover` on the verdict.
+- R1/R2: "2", "1", "yeah sales agent", "sales agent", "fanny sales agent", "neither" (the
+  parser's `is_affirmative: false`) answer "Do you mean customer X or sales agent Y?"
+  whatever the parser made of them (v34 read "2" as a promotion lookup of "fanny water
+  closet", "yeah sales agent" as low signal). The answer sets that axis, clears the other
+  (the customer word the generic rules left on the focus included, which is what answered
+  "Couldn't find: fanny (customer)"), keeps the category, count and metric, and runs the
+  ranking (or asks the metric if the ask never named one). A customer word in a message
+  that says "agent" is the agent, no question.
+- R3: inside a ranking, "customer is everyone", "all customers", "neither" or a message
+  naming an agent over an open customer picker closes the picker and clears the customer
+  (`broaden_axis: customer`), never "all" as a pick of every row (contract 31 stays for
+  every other picker).
+- R4: a current entity of several words is split into word groups, longest first, matched
+  strictly against sales agents, categories (code, name or class vocabulary term), brands
+  and customers (`engine._split_noisy_token`). A token naming an agent or a brand beside
+  another kind always splits; any other splits only when it does not resolve whole ("water
+  tap" stays the Tap class, "SAMPLE - FANNY NG" one customer). Words under three letters
+  ("by") are dropped; one unknown leftover is said once ("I don't know 'marble'.") and the
+  ranking runs. A split word the parser sent to a promotion or document lookup is read
+  back into the ranking.
+- R5: after a ranking, an order report ask ("outstanding", "can show me the DO", "show me
+  the orders"; `apply._is_report_hop`) runs that report with the customer and the period
+  in force (the named window, else the current year the ranking's route defaults to), and
+  drops agent, category and brand, which no order report takes: one header line "Filters
+  from the ranking: Customer: X / Period: dd/mm/yyyy to dd/mm/yyyy" and one line per dropped
+  filter ("Category is not a filter for delivery orders, showing all categories"),
+  `fetch.top_selling_hop_lines`. The ranking-only words leave the focus, so the order
+  lookup never answers "Couldn't find: bathtub (category)". The slot stays marked `hop`, so
+  the next report carries the same filters; a new ranking ask starts over. The order list's
+  own scope header now reads the window the fetch ran over (`_spec_window`), not "all
+  dates". Trigger to add agent, category or brand to the order reports: the owner asks for
+  outstanding by agent.
+- R6: "worst / worse 100 hot selling", "bottom 100" are taught as least sold rankings;
+  inside a ranking conversation an out of scope reading gets one short question ("Sorry, I
+  didn't get that. What would you like to change in the ranking?"), never the out of scope
+  lane or the routing picker. A request for a person is still `request_for_help`.
+- R7: over an open ranked list only a bare whole number 1 to N is a pick; "2025" or
+  "2025?" is that year (the same ranking re-run over it); any other number (past the end,
+  with words or punctuation) is not a pick and the ranking runs again with its filters.
+  Amends S4's "a number past the end re-prints the list".
+- R8: inside a ranking no picker lists more than five options (the roster cap is lowered
+  for the turn), and a ranked list is never re-printed whole as a menu ("Which item do you
+  mean? Reply with a rank number from 1 to N.").
+- R9: every new line is plain words; the replay asserts no snake_case and no dash in any
+  reply.
 
 ## Filters combination matrix (rewritten for the 26 Sep rulings)
 

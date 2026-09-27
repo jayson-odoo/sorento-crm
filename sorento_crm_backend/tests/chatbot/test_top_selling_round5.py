@@ -364,7 +364,7 @@ class Replay:
                 assert bad not in text, (body, bad, text)
             check(text, captured)
             outcome = "pass"
-        except AssertionError as exc:
+        except (AssertionError, ValueError) as exc:
             if not self.report:
                 raise
             outcome = f"FAIL {str(exc)[:160]!r}"
