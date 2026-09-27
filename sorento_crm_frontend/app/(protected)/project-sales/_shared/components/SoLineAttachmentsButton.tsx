@@ -212,8 +212,9 @@ function SoLineAttachmentsDialog({
           <DialogHeader>
             <DialogTitle>{label}</DialogTitle>
           </DialogHeader>
-          {/* AC-U7: scrollable body, Upload stays reachable at 375px. */}
-          <div className="max-h-[60vh] space-y-3 overflow-y-auto">
+          {/* AC-U7: scrollable body, Upload stays reachable at 375px. dvh, not vh
+              (M6-02/M6-03): vh overshoots mobile Safari's visible area. */}
+          <div className="max-h-[60dvh] space-y-3 overflow-y-auto">
             {attachments.length === 0 ? (
               <p className="text-sm text-muted-foreground">No files on this line yet.</p>
             ) : (
