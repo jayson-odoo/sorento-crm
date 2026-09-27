@@ -294,3 +294,25 @@ Reached by sidebar clicks: Products > Reference Data > Brands > BRAVAT.
 
 **D4: pass.** The one console message on the brands list is a React missing-key warning from
 the list, which this lane does not change.
+
+## Fix round 2 re-check (reviewer pass at ea0b804b)
+
+**Stack:** backend `:8000` on a throwaway `sorento_demo` database (bootstrapped, `spec_0003`, the
+49 shipped specifications with no stored rules, 6 products), frontend dev server `:3000`,
+`agent-browser@0.27.0`, sidebar clicks from `/`.
+
+| Check | Width | Result | Evidence |
+|---|---|---|---|
+| Spec list, four default columns, no issue badge | 1280, 375 | pass; 375 has no sideways page scroll (360 of 375) | `r2-spec-list-1280.png`, `r2-spec-list-375.png` |
+| Rules grid, view | 1280 | pass | `r2-rules-grid-1280.png` |
+| Rules grid, edit: row menu inside the card (S-13) | 1280 | pass: menu buttons at x 1185 to 1213 of 1280 | `r2-rules-grid-edit-1280.png` |
+| Rules grid under sm: Order, What to find, Value it sets only, all visible (S-13) | 375 | pass | `r2-rules-grid-375.png` |
+| Rule modal; Add "ZZT RED" by keyboard Enter (N-10); Try it on reads "Rose gold" (B-7) | 1280 | pass | `r2-rule-modal-1280.png`, `r2-rule-modal-try-it-1280.png` |
+| See what would change: `SRTWC7605 - Rose gold`, no snake_case in the dialog (B-7) | 1280 | pass | `r2-see-what-would-change-1280.png` |
+| A rule added in the modal takes an in-place word edit (B-4) | 1280 | pass: the row reads `WALL HUNG ZZT RED` | `r2-b4-inline-after-modal-1280.png` |
+| Save re-reads the product | 1280 | pass: `SRTWC7605` stored `finish = rose_gold` | `r2-saved-toast-1280.png` |
+| Try it on in view mode, grid "Reads:" line (B-7) | 1280 | pass: "Reads: Rose gold", no snake_case on the page | `r2-try-it-grid-1280.png` |
+| Remove a saved rule | 1280 | goes through `/pending-actions` (202) and commits after 5 s; "Remove disabled during its own countdown" is pinned by vitest, the harness is too slow to open a second menu inside 5 s | none |
+| Rule modal | 375 | pass: dialog 0 to 375, no sideways scroll | `r2-rule-modal-375.png` |
+| Product Specifications tab, one search box: "one piece twister wc" reads "This product comes up, 1st of 3", one request (S-15) | 375, 1280 | pass | `r2-product-specs-search-375.png`, `r2-product-specs-tab-375.png`, `r2-product-specs-tab-1280.png` |
+| Next.js "1 Issue" badge | all | was a missing-key console error from the protected layout on every page; 0 console errors after the fix on `/`, the spec list and the record page | none |

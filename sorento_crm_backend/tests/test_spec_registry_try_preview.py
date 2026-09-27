@@ -479,8 +479,10 @@ def test_preview_job_reports_pending_before_it_finishes(api, monkeypatch):
 
     # The no-op thread double above never reaches `_run_job`'s `finally`, so
     # `start()`'s single-run guard (S4) would otherwise stay "running" for the rest
-    # of this process and 409 every real `start()` call after this test.
-    product_spec_preview._RUNNING_JOB_ID = None
+    # of this process and 409 every real `start()` call after this test. Both halves
+    # of it: the in-process slot and the database lock taken for this job (S-8).
+    product_spec_preview.end_catalogue_read(job_id)
+    assert product_spec_preview._RUNNING_JOB_ID is None
 
 
 def test_preview_get_requires_edit_not_view(api):

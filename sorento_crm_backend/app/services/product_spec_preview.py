@@ -366,5 +366,11 @@ def start(spec_key: str, rules: list[dict], db: Session | None = None) -> str:
     _claim(job_id, db, refusal)
 
     _remember(job_id, {"status": "pending", "spec_key": spec_key})
-    threading.Thread(target=_run_job, args=(job_id, spec_key, rules), daemon=True).start()
+    try:
+        threading.Thread(target=_run_job, args=(job_id, spec_key, rules), daemon=True).start()
+    except Exception:
+        # `_run_job`'s `finally` gives the slot back; a thread that never started
+        # would hold both halves of it for the life of the process.
+        end_catalogue_read(job_id)
+        raise
     return job_id

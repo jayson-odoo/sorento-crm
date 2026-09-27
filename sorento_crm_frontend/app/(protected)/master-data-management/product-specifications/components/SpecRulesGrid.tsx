@@ -410,8 +410,10 @@ export function SpecRulesGrid({
         accessorFn: (row) => row.index,
         header: ({ column }) => <DataGridColumnHeader title="Order" column={column} />,
         cell: ({ row }) => <span className="tabular-nums">{row.original.index + 1}</span>,
-        size: 64,
-        minSize: 56,
+        // Under sm only Order, What to find and Value it sets show, and all three fit
+        // the card at 375 without scrolling sideways (S-13).
+        size: belowSm ? 62 : 64,
+        minSize: 44,
       },
       {
         id: 'where',
@@ -441,16 +443,16 @@ export function SpecRulesGrid({
         accessorFn: (row) => ruleCells(row.rule.builder, spec, lookupSpec).whatToFind.primary,
         header: ({ column }) => <DataGridColumnHeader title="What to find" column={column} />,
         cell: ({ row }) => renderFindCell(row.original, ruleCells(row.original.rule.builder, spec, lookupSpec)),
-        size: 220,
-        minSize: 150,
+        size: belowSm ? 140 : 220,
+        minSize: 110,
       },
       {
         id: 'value',
         accessorFn: (row) => ruleCells(row.rule.builder, spec, lookupSpec).valueItSets,
         header: ({ column }) => <DataGridColumnHeader title="Value it sets" column={column} />,
         cell: ({ row }) => renderValueCell(row.original, ruleCells(row.original.rule.builder, spec, lookupSpec)),
-        size: 130,
-        minSize: 90,
+        size: belowSm ? 104 : 130,
+        minSize: 80,
       },
       {
         id: 'only_when',
@@ -538,6 +540,7 @@ export function SpecRulesGrid({
     rules,
     onChange,
     onEdit,
+    belowSm,
   ]);
 
   const reorderable = mode === 'edit' && isSortedByOrder;
@@ -628,7 +631,7 @@ export function SpecRulesGrid({
       </div>
       <div className="flex items-center justify-between p-2 text-xs text-muted-foreground">
         <span>
-          {rules.length} rule{rules.length === 1 ? '' : 's'}. The first rule that finds something wins.
+          {rules.length} rule{rules.length === 1 ? '' : 's'}.
         </span>
         {mode === 'edit' && (
           <Button type="button" size="sm" variant="outline" onClick={onAdd}>
