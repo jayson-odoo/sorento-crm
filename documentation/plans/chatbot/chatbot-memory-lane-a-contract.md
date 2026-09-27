@@ -232,13 +232,14 @@ chatbot parser row.
 8. The 25 Sep prod dump is not on this VM: digest goldens are built from synthetic turn rows in
    the recorded trace shape; the prod-copy goldens, the backfill run and the Q18 counts are
    posted as orchestrator steps.
-9. Migrations after the merge: main carries three heads off `sales_0002_team_leader`
-   (`ideation_confirm_prompts`, `prod_discontinued_at_flt`, `sa2_r9_open_question`). The
-   no-op `mem_0000_merge_main` joins them and `mem_0001_frames_level` ->
-   `mem_0002_parser_memory` hang off it, so `alembic heads` prints one head,
-   `mem_0002_parser_memory`. No main migration is edited. The prod-copy up/down/up step now
-   downgrades to `mem_0000_merge_main` (not `sales_0002_team_leader`, which would also
-   revert main's three revisions).
+9. Migrations after the merge: main's three heads off `sales_0002_team_leader`
+   (`ideation_confirm_prompts`, `prod_discontinued_at_flt`, `sa2_r9_open_question`) are
+   joined on main itself by `merge_27sep_three_heads` (#1308, main 11bf373e). The lane's
+   own no-op `mem_0000_merge_main` is deleted (fix lane round 2) and
+   `mem_0001_frames_level` -> `mem_0002_parser_memory` hang off `merge_27sep_three_heads`,
+   so `alembic heads` prints one head, `mem_0002_parser_memory`. No main migration is
+   edited. The prod-copy up/down/up step downgrades to `merge_27sep_three_heads` (not
+   `sales_0002_team_leader`, which would also revert main's three revisions).
    Merge round test run (cloud VM, `scripts/cloud-env-setup.sh`, `.env.ci-tests`, CI's
    commands): backend xdist loadfile 18,227 passed; SCM 4,109 passed; migration tests
    serial 400 passed; serial_ddl 2 passed; chatbot set (memory fixtures and the round 9

@@ -36,6 +36,8 @@ from pathlib import Path
 import pytest
 
 from app.services.chatbot_parser_prompt import (
+    BLOCKS_BEGIN,
+    BLOCKS_END,
     GROWTH_R1_ADDENDUM,
     LAST_COST_ADDENDUM,
     LOW_STOCK_ADDENDUM,
@@ -45,18 +47,14 @@ from app.services.chatbot_parser_prompt import (
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
-# Measured baseline (coordinator ruling, 26 Sep 2026), not the plan's 22,100 - see the
-# module docstring for why the two numbers measure different things. 37,153 at
-# 232182ae; the lane itself landed at 37,118.
-# 37,153 -> 39,647 (27 Sep 2026, main d8395cb8 merged into the lane): main's own
-# `STOCK_TASK_ADDENDUM` (PR #1247, rounds 8 and 9) put main alone at 39,484 by this
-# same formula, which is the "genuine new addendum that must land" case the module
-# docstring names. The lane adds 163 over main: main's round 8 made the same
-# "Companies OFFERED" IIFE cut the lane had used to pay for `MEMORY_ADDENDUM`, so
-# that cut is counted once, on main's side. Flagged for an owner ruling in the merge
-# round's PR comment; the ceiling is the measured merged value, so any further
-# growth still fails here.
-CEILING = 39_647
+# 37,153 is the coordinator's ceiling (26 Sep 2026). It was measured on a rendering that
+# appended the four growth addenda a SECOND time (`SEMANTIC_PARSER_PROMPT` already carries
+# them), which counted 7,272 est. tokens twice (reviewer pass at d89110c0, S3). On the
+# rendering a published version really has (`chatbot_rearch_s4._body`: the constant plus
+# the policy blocks, below) the figures are: base 232182ae 29,901; lane at d89110c0 29,866;
+# main 11bf373e 32,231 (its own `STOCK_TASK_ADDENDUM`); this lane merged over it 32,395.
+# The ceiling stays 37,153 and is now measured on the right text.
+CEILING = 37_153
 
 
 def _est_tokens(text: str) -> int:
@@ -66,18 +64,14 @@ def _est_tokens(text: str) -> int:
 
 
 def _rendered_production_prompt(*, current_date: str = "Thursday, 25 September 2026") -> str:
-    """The way `parser.resolve_config` builds the live call's system prompt: the
-    registry's fallback body (here, the same fallback constant the registry falls back
-    to, `_chatbot_semantic_parser_fallback()` -> `SEMANTIC_PARSER_PROMPT`) with its
-    `{{current_date}}` variable substituted, PLUS every addendum this repo has already
-    stacked onto it, PLUS the policy blocks (the domain/entity-kind paragraphs a real
-    published version wraps in - the committed seed fixture stands in for a live
-    `chatbot_domains` render, exactly as `test_rearch_s4_prompt_blocks.py`'s own golden
-    file does)."""
-    body = SEMANTIC_PARSER_PROMPT + GROWTH_R1_ADDENDUM + LAST_COST_ADDENDUM + LOW_STOCK_ADDENDUM + SALES_REPORT_ADDENDUM
-    body = body.replace("{{current_date}}", current_date)
+    """Exactly the shape `chatbot_rearch_s4._body` publishes (and `mem_0002_parser_memory`
+    reuses): the constant, which already carries every addendum, then the policy blocks
+    between their markers, with `{{current_date}}` substituted as `parser.resolve_config`
+    does. The committed seed fixture stands in for a live `chatbot_domains` render,
+    exactly as `test_rearch_s4_prompt_blocks.py`'s own golden file does."""
     policy_blocks = POLICY_BLOCKS_SEED_FILE.read_text(encoding="utf-8")
-    return body + "\n" + policy_blocks
+    body = f"{SEMANTIC_PARSER_PROMPT.rstrip()}\n\n{BLOCKS_BEGIN}\n{policy_blocks}{BLOCKS_END}\n"
+    return body.replace("{{current_date}}", current_date)
 
 
 class TestPromptUnderCeiling:
@@ -90,13 +84,26 @@ class TestPromptUnderCeiling:
             f"coordinator ruling 26 Sep 2026) - the static prompt may not grow"
         )
 
+    def test_each_addendum_is_counted_once(self) -> None:
+        """The rendering is the published shape: every addendum appears once (reviewer
+        pass at d89110c0, S3: they used to be appended a second time)."""
+        rendered = _rendered_production_prompt()
+        for name, addendum in (
+            ("GROWTH_R1_ADDENDUM", GROWTH_R1_ADDENDUM),
+            ("LAST_COST_ADDENDUM", LAST_COST_ADDENDUM),
+            ("LOW_STOCK_ADDENDUM", LOW_STOCK_ADDENDUM),
+            ("SALES_REPORT_ADDENDUM", SALES_REPORT_ADDENDUM),
+        ):
+            assert rendered.count(addendum.strip()) == 1, f"{name} counted more than once"
+        assert rendered.count(BLOCKS_BEGIN) == 1
+
     def test_kill_test_appending_extra_text_is_reported_over(self) -> None:
         """The SAME check function, fed a prompt padded with extra chars, must report
         it over - proving the check function itself catches an overshoot rather than
-        always passing (or always failing). 3,000 chars is about +1,000 est. tokens,
-        comfortably over the measured baseline whether or not it sits exactly at
+        always passing (or always failing). The padding is exactly one est. token past
         CEILING."""
-        rendered = _rendered_production_prompt() + ("z" * 3000)
+        rendered = _rendered_production_prompt()
+        rendered += "z" * (3 * (CEILING - _est_tokens(rendered)) + 3)
         tokens = _est_tokens(rendered)
         assert tokens > CEILING, (
             f"padding by 3000 chars must push the estimate over {CEILING}, got {tokens} "
