@@ -228,4 +228,29 @@ describe('SalesOpportunityPortalForm', () => {
     const payload = service.createPortalSalesOpportunity.mock.calls[0][0];
     expect(payload.lines[0]).toEqual({ product_id: 'p1', qty: 1, unit_price: 100 });
   });
+
+  it('F7: a blank unit price sends an explicit null (not omitted, not 0) and shows "-" for the amount', async () => {
+    service.getPortalProductOptions.mockResolvedValue([
+      { id: 'p1', code: 'ZZT-001', name: 'ZZT Basin', listPrice: null },
+    ]);
+    render(<SalesOpportunityPortalForm />);
+    fireEvent.click(screen.getByRole('button', { name: /add product/i }));
+    const productSelect = await screen.findByLabelText('Search products...');
+    await waitFor(() => expect(screen.getByRole('option', { name: 'ZZT-001 - ZZT Basin' })).toBeTruthy());
+    fireEvent.change(productSelect, { target: { value: 'p1' } });
+
+    expect((screen.getByLabelText('Unit price') as HTMLInputElement).value).toBe('');
+    expect(screen.getByText('-')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'ZZT Opp' } });
+    fireEvent.change(screen.getByLabelText('Expected amount'), { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText('Expected close date'), {
+      target: { value: '2026-11-01' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save|submit/i }));
+
+    await waitFor(() => expect(service.createPortalSalesOpportunity).toHaveBeenCalledTimes(1));
+    const payload = service.createPortalSalesOpportunity.mock.calls[0][0];
+    expect(payload.lines[0]).toEqual({ product_id: 'p1', qty: 1, unit_price: null });
+  });
 });

@@ -239,6 +239,55 @@ describe('SalesOpportunityPortalDetail', () => {
     expect(service.updatePortalSalesOpportunity).not.toHaveBeenCalled();
   });
 
+  // Nit: no feature explanations in the UI - the title "Mark won" plus Confirm/Cancel is
+  // the whole dialog.
+  it('nit: the Mark won dialog has no explanatory sentence', async () => {
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    await screen.findByText('OPP-000001');
+    openGear();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Mark won' }));
+    expect(screen.queryByText('This closes the opportunity.')).toBeNull();
+  });
+
+  // Nit: Lost is a stage move, not a delete - the CRM's own gear does not style it
+  // destructive either.
+  it('nit: Mark lost is a secondary action in the gear, not styled destructive', async () => {
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    await screen.findByText('OPP-000001');
+    openGear();
+    const item = screen.getByRole('menuitem', { name: 'Mark lost' });
+    expect(item.className).not.toContain('text-destructive');
+  });
+
+  it('nit: a failed Mark won save keeps the dialog open, and only closes once the retry succeeds', async () => {
+    service.updatePortalSalesOpportunity.mockRejectedValueOnce(new Error('network down'));
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    await screen.findByText('OPP-000001');
+    openGear();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Mark won' }));
+    fireEvent.click(screen.getByRole('button', { name: /confirm/i }));
+    await waitFor(() => expect(service.updatePortalSalesOpportunity).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('heading', { name: 'Mark won' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /confirm/i }));
+    await waitFor(() => expect(service.updatePortalSalesOpportunity).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Mark won' })).toBeNull());
+  });
+
+  it('nit: a failed Mark lost save keeps the dialog open with the typed reason', async () => {
+    service.updatePortalSalesOpportunity.mockRejectedValueOnce(new Error('network down'));
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    await screen.findByText('OPP-000001');
+    openGear();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Mark lost' }));
+    const reasonSelect = await screen.findByLabelText('Lost reason');
+    fireEvent.change(reasonSelect, { target: { value: 'price' } });
+    fireEvent.click(screen.getByRole('button', { name: /confirm/i }));
+    await waitFor(() => expect(service.updatePortalSalesOpportunity).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('heading', { name: 'Mark lost' })).toBeTruthy();
+    expect((screen.getByLabelText('Lost reason') as HTMLSelectElement).value).toBe('price');
+  });
+
   it('has no sales order field anywhere in the portal', async () => {
     render(<SalesOpportunityPortalDetail id="opp-1" />);
     await screen.findByText('OPP-000001');

@@ -232,14 +232,18 @@ export default function SalesOpportunityPortalDetail({ id, slug }: { id: string;
     }
   };
 
-  const applyStatus = async (toStatusId: string, extra?: { lost_reason: string }) => {
+  /** Returns whether the PATCH succeeded, so a confirm dialog on top of it knows whether
+   *  it is safe to close itself - a failed save has to keep the typed reason, not lose it. */
+  const applyStatus = async (toStatusId: string, extra?: { lost_reason: string }): Promise<boolean> => {
     setSaving(true);
     try {
       await updatePortalSalesOpportunity(id, { status_id: toStatusId, ...extra });
       toast.success('Opportunity updated');
       load();
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to update the opportunity.');
+      return false;
     } finally {
       setSaving(false);
     }
@@ -252,25 +256,30 @@ export default function SalesOpportunityPortalDetail({ id, slug }: { id: string;
     setLostReason('');
   };
 
-  const confirmPending = () => {
+  const confirmPending = async () => {
     if (!pendingTransition) return;
-    if (pendingTransition.key === 'lost') {
-      if (!lostReason) return;
-      void applyStatus(pendingTransition.toStatusId, { lost_reason: lostReason });
-    } else {
-      void applyStatus(pendingTransition.toStatusId);
+    if (pendingTransition.key === 'lost' && !lostReason) return;
+    const ok = await applyStatus(
+      pendingTransition.toStatusId,
+      pendingTransition.key === 'lost' ? { lost_reason: lostReason } : undefined,
+    );
+    // Only clears the dialog on success - a failed save keeps it open with the reason
+    // still typed, so a retry doesn't have to be picked again.
+    if (ok) {
+      setPendingTransition(null);
+      setLostReason('');
     }
-    setPendingTransition(null);
-    setLostReason('');
   };
 
   // F6: a terminal move (Won, Lost) opens the confirm dialog first - Won is terminal too
   // (a closed opportunity cannot be edited again), so it gets the same dialog Lost does,
-  // just without the reason field. Every other move runs the instant it is clicked.
+  // just without the reason field. Every other move runs the instant it is clicked. Lost
+  // stays a secondary action (not destructive) - it is a stage move, same as the CRM's own
+  // gear, not a delete.
   const stageActions: RecordAction[] = transitions.map((t) => ({
     key: `stage-${t.to_status_id}`,
     label: t.label,
-    kind: t.key === 'lost' ? 'destructive' : 'secondary',
+    kind: 'secondary',
     run: () => {
       if (TERMINAL_KEYS.has(t.key)) {
         setPendingTransition({ toStatusId: t.to_status_id, key: t.key, label: t.label });
@@ -466,24 +475,20 @@ export default function SalesOpportunityPortalDetail({ id, slug }: { id: string;
           <DialogHeader>
             <DialogTitle>{pendingTransition?.label}</DialogTitle>
           </DialogHeader>
-          <DialogBody className="flex flex-col gap-1.5">
-            {pendingTransition?.key === 'lost' ? (
-              <>
-                <Label htmlFor="portal-opportunity-lost-reason">Lost reason</Label>
-                <SearchableSelect
-                  id="portal-opportunity-lost-reason"
-                  aria-label="Lost reason"
-                  value={lostReason}
-                  onChange={setLostReason}
-                  options={lostReasonOptions}
-                  placeholder="Pick a reason"
-                  wrapOptions
-                />
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground">This closes the opportunity.</p>
-            )}
-          </DialogBody>
+          {pendingTransition?.key === 'lost' ? (
+            <DialogBody className="flex flex-col gap-1.5">
+              <Label htmlFor="portal-opportunity-lost-reason">Lost reason</Label>
+              <SearchableSelect
+                id="portal-opportunity-lost-reason"
+                aria-label="Lost reason"
+                value={lostReason}
+                onChange={setLostReason}
+                options={lostReasonOptions}
+                placeholder="Pick a reason"
+                wrapOptions
+              />
+            </DialogBody>
+          ) : null}
           <DialogFooter>
             <Button type="button" variant="outline" size="sm" onClick={cancelPending}>
               Cancel
@@ -491,7 +496,7 @@ export default function SalesOpportunityPortalDetail({ id, slug }: { id: string;
             <Button
               type="button"
               size="sm"
-              onClick={confirmPending}
+              onClick={() => void confirmPending()}
               disabled={(pendingTransition?.key === 'lost' && !lostReason) || saving}
             >
               {saving ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
