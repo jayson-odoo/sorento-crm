@@ -1,10 +1,16 @@
 # UAC: finance module, billing documents from AutoCount (issue #1309)
 
 Plan: `documentation/plans/finance/PLAN-finance-billing-documents-27sep.md`. Alignment page:
-`documentation/plans/finance/alignment/finance-alignment-r1.html` (the mockups are inline there).
+`documentation/plans/finance/alignment/finance-alignment-r2.html` (round 2, the rulings; round 1
+with the original questions is `finance-alignment-r1.html`). S0 build brief:
+`documentation/plans/finance/S0-build-brief.md`.
 
-Status: draft, round 1, not grilled. Every AC is written to the bold recommendation of the plan's
-open question it depends on, and is marked "(Q#)" where an answer can change it. Nothing is built.
+Status: draft, round 2 (27 Sep). The owner's 13 rulings (plan section 0) are folded in: Q1 to Q4
+and Q6 to Q13 are settled, so their "(Q#)" markers are gone. Still marked: "(Q5)" (staff only,
+being confirmed) and "(Q14)", "(Q15)", "(Q16)" (new, plan section 9). Every changed AC keeps its
+id; new ACs are appended at the end of their slice (S0-22, S1-9, S1-10, S2-11, S2-12). Changed in
+round 2: S0-2, S0-3, S0-12, S0-16, S0-22 (new), S1-1, S1-4, S1-5, S1-8, S1-9 (new), S1-10 (new),
+S2-1, S2-3, S2-11 (new), S2-12 (new), S3-3, S4-1, S4-2, S4-3. Nothing is built.
 Track: full (new module, new schema, a migration, new permissions, a new external ingest entity).
 
 Tags: `[BE]` pytest (Postgres only), `[FE]` vitest, `[E2E]` recorded agent-browser run (no new
@@ -26,7 +32,7 @@ step, and the fewest-decisions rule is met by there being none to make beyond "w
 
 **The shared service (system actor), J1 to J3**
 
-- **J1.** After the NDA, AutoCount opens its billing tables (IV, CS, CN, DN; Q1) to the shared
+- **J1.** After the NDA, AutoCount opens its billing tables (IV, CS, CN, DN) to the shared
   service. The shared service pushes each document, header and lines together, to the same
   endpoint it already uses for sales orders, naming the company (`companyCode`). The CRM already
   knows the customers, sales agents and products by the refs and codes the SO feed established,
@@ -34,21 +40,24 @@ step, and the fewest-decisions rule is met by there being none to make beyond "w
 - **J2.** A document changed or cancelled in AutoCount is pushed again, whole. The CRM updates it
   in place; a cancelled one stays visible and stops counting. A document deleted in AutoCount
   arrives as a deletion.
-- **J3.** History from the agreed start date (Q2) arrives through the same endpoint in batches.
-  Pushing any batch twice changes nothing.
+- **J3.** History from the start date the owner sets on the shared service (1 Jan 2023 planned)
+  arrives through the same endpoint in batches. The CRM takes any date it is sent. Pushing any
+  batch twice changes nothing.
 
 **The owner or a manager reading sales, J4 to J5**
 
 - **J4.** Opens Sales > Yearly comparison or Sales report (PR #1269). The Basis filter now offers
-  **Invoiced** beside Ordered and Delivered. Picking it shows invoices plus cash sales (plus
-  debit notes, Q7) minus credit notes, excluding tax, filed by document date, in ringgit.
-- **J5.** The figure tallies with the AutoCount yearly sales PDF for the same months and the same
-  grouping (the grouping is Q8). The basis line under the filters says which documents were
-  counted.
+  **Invoiced** beside Ordered and Delivered. Picking it shows invoices plus cash sales plus
+  debit notes minus credit notes, excluding tax, filed by document date, in ringgit.
+- **J5.** The figure tallies with the AutoCount yearly sales PDF for the same months (2024
+  onwards) and the same grouping: each document counts for the team its sales agent was in on the
+  document date, and a document whose agent had no team shows under "No team". The basis line
+  under the filters says which documents were counted.
 
 **Staff in sales admin or accounts, J6 to J9**
 
-- **J6.** Sidebar > FINANCE > Billing Documents. A list of every billing document of the current
+- **J6.** Sidebar > FINANCE > Billing Documents (for roles granted Finance on the Roles screen;
+  admin and superadmin by default). A list of every billing document of the current
   company, newest first, with type, number, date, customer, agent, total and status. Filters:
   type, date, customer, agent, status. Search by document number or customer.
 - **J7.** Clicks a row. The record page shows the header (type badge, number, status, date,
@@ -57,7 +66,7 @@ step, and the fewest-decisions rule is met by there being none to make beyond "w
   against an invoice. Prev and next walk the list.
 - **J8.** From a sales order's record, or a customer's record, the same documents are one click
   away (S3).
-- **J9.** A dealer on the portal sees none of this (Q5).
+- **J9.** A dealer on the portal sees none of this (Q5, being confirmed).
 
 ## S0: model and ingest contract, with a replayable fixture
 
@@ -65,15 +74,18 @@ step, and the fewest-decisions rule is met by there being none to make beyond "w
   listed, then schema `finance` holds `billing_documents` and `billing_document_lines`, both with a
   NOT NULL `company_id` FK to `companies`, and `app_modules_catalog` holds a `finance` row with
   `is_core = false` and no `tenant_modules` row (dormant until switched on in App Store).
-- **S0-2 [BE]** (J1) Given the migration, when `user_permissions` is read, then
-  `finance.billing_documents.{view,edit,delete}` exist; `view` is granted to `admin` and
-  `superadmin`; `edit` and `delete` to `admin`, `superadmin` and every role that holds
-  `scm.sales_orders.edit` (the ESB integration's role today). The same slugs are declared in
-  `app/rbac/permission_registry.py`, and `permission_module_map` maps prefix `finance` to module
-  `finance`.
+- **S0-2 [BE]** (J1, J6) Given the migration, when `user_permissions` is read, then
+  `finance.billing_documents.{view,export,edit,delete}` exist, each granted to `admin` and
+  `superadmin` and to no other role by name (the `sales_0001_teams` precedent; everyone else on
+  the Roles screen). `edit` and `delete` are the ingest and deletions gates only; no UI uses
+  them. (Q16: if answered (a), `edit`, `delete` and `view` are also granted to every role holding
+  `scm.sales_orders.edit`; if (b), they are not.) The same four slugs are declared in
+  `app/rbac/permission_registry.py`, so a `create_all` + `sync_permissions` database has them,
+  and `permission_module_map` maps prefix `finance` to module `finance`. Running the migration's
+  grant twice adds no row.
 - **S0-3 [BE]** (J1) Given `document_type` has a CHECK constraint, when a row with a type outside
-  `invoice`, `cash_sale`, `credit_note`, `debit_note` is inserted, then Postgres rejects it. (Q1
-  may shorten the list; the constraint follows.)
+  `invoice`, `cash_sale`, `credit_note`, `debit_note` is inserted, then Postgres rejects it; each
+  of the four is accepted.
 - **S0-4 [BE]** (J1) Given the replayable fixture `tests/fixtures/finance/billing_documents_v1.json`
   (one IV with two lines linked to an SO line, one CS with no SO, one CN against that IV, one DN,
   one cancelled IV, one USD IV), when it is pushed to `POST /api/v1/external/ingest/billing_documents`
@@ -103,7 +115,7 @@ step, and the fewest-decisions rule is met by there being none to make beyond "w
   would change a total).
 - **S0-12 [BE]** (J1) Given a CN whose `against_doc_no` names an IV not yet pushed, when the CN
   lands, then `against_document_id` is NULL and `against_doc_no` is kept; when the IV lands later,
-  then the CN's `against_document_id` is filled by the IV's ingest. (Q4)
+  then the CN's `against_document_id` is filled by the IV's ingest.
 - **S0-13 [BE]** (J1) Given an IV line whose `from_line_ref` is an SO line's integration ref, when
   it lands, then `sales_order_line_id` points at that line; given a ref that resolves to nothing,
   then it stays NULL with `from_doc_type`, `from_doc_no` and `from_line_ref` kept as sent.
@@ -113,7 +125,9 @@ step, and the fewest-decisions rule is met by there being none to make beyond "w
 - **S0-15 [BE]** (J1) Given a push without `companyCode` and without an integration binding, then
   422 `COMPANY_ANCHOR_REQUIRED` (the existing anchor, unchanged).
 - **S0-16 [BE]** (J1) Given a caller holding `scm.sales_orders.edit` but not
-  `finance.billing_documents.edit`, when it pushes `billing_documents`, then 403.
+  `finance.billing_documents.edit`, when it pushes `billing_documents`, then 403; the same for
+  `/deletions` without `.delete` and `/read` without `.view`. Holding `.view` or `.export` alone
+  never lets a caller push.
 - **S0-17 [BE]** (J1) Given the fixture has landed, when `POST /external/read/billing_documents`
   asks for its refs, then each comes back in the canonical shape it was pushed in (money as JSON
   numbers), with `entity_id` per header and per line.
@@ -128,32 +142,48 @@ step, and the fewest-decisions rule is met by there being none to make beyond "w
 - **S0-21 [T]** (J1) The contract section for `billing_documents` is appended to
   `documentation/plans/autocount/PLAN-autocount-cross-repo-contract.md` as section 12, so the
   shared service has one contract of record.
+- **S0-22 [BE]** (J3) Given documents dated 2019-06-30, 2022-12-31 and 2023-01-01, when they are
+  pushed, then all three are `created` and stored with their dates: the CRM has no start-date
+  floor and no start-date setting, because the shared service owns the start (ruling Q2).
 
 ## S1: the invoiced basis on the sales reports
 
-Depends on PR #1269 (the reports kernel dataset and the Basis filter) being merged.
+Depends on PR #1269 (the reports kernel dataset and the Basis filter), merged to main at 52b0ac24,
+and on #1260's dated `sales.team_members` for the grouping (ruling Q8).
 
 - **S1-1 [BE]** (J4) Given the S0 fixture in company A, when the Yearly comparison runs with Basis
-  = Invoiced, then the fixture month's figure is IV net + CS net + DN net (Q7) - CN net, excluding
+  = Invoiced, then the fixture month's figure is IV net + CS net + DN net - CN net, excluding
   tax, in MYR (`local_net_total`), the cancelled IV and the USD IV's foreign amount excluded or
   converted as stored, filed under each document's `doc_date`.
 - **S1-2 [BE]** (J4) Given a CN dated in a later month than its IV, then the CN reduces the CN's
   own month, never the IV's month.
 - **S1-3 [BE]** (J4) Given the Basis filter, then its options are Ordered, Delivered and Invoiced;
   Delivered stays the default until the owner rules otherwise.
-- **S1-4 [BE]** (J5) Given the invoiced basis, then the channel blocks group by the rule Q8 picks;
-  until Q8 is answered, Invoiced shows one block, "All sales", and the Channel filter is disabled
-  with the basis line saying so.
+- **S1-4 [BE]** (J5) Given the invoiced basis, then each document counts in the block of the team
+  its `sales_agent_id` belonged to on its `doc_date` in its company (a `sales.team_members` row
+  with `coalesce(valid_from, -infinity) <= doc_date <= coalesce(valid_to, infinity)`), the block
+  headed by the team's name (Q14), never by `demand_class` and never by the agent's current
+  class. Given an agent who moved from team A to team B on the 15th, then a document of the 14th
+  counts for A and one of the 15th for B. The Channel filter on Invoiced lists the company's
+  teams plus "No team".
 - **S1-5 [T]** (J5) Given Basis = Invoiced, then the basis line under the filters and in the
   workbook reads "Basis: Invoiced (invoices, cash sales and debit notes less credit notes,
-  excluding tax), by document date."
+  excluding tax), by document date, grouped by the sales agent's team on that date."
 - **S1-6 [BE]** (J4) Given the chatbot's `crm_sales_analysis` tool, when asked for invoiced sales,
   then it answers from the same dataset (one query layer, as #1269 built it).
 - **S1-7 [BE]** (J4) Given a caller without `finance.billing_documents.view`, then Invoiced is
   still offered on the sales reports (the report's own slug `sales.reports.view` gates it; the
   report shows totals, never a document).
-- **S1-8 [E2E]** (J4, J5) The owner's three chosen months, run on the prod copy after the backfill,
-  are recorded against the PDF in this file's "Measured" block, per grouping.
+- **S1-8 [E2E]** (J4, J5) The owner's three chosen months, all in 2024 or later, run on the prod
+  copy after the backfill, are recorded against the PDF in this file's "Measured" block, per team
+  block and for "No team".
+- **S1-9 [BE]** (J5) Given a document whose agent did not resolve (`sales_agent_id` NULL), a
+  document whose agent has no team row covering its `doc_date`, and a document whose agent is in
+  no team, then all three count in one "No team" block that sorts last, is omitted when empty,
+  and is included in the company total; the company total on Invoiced equals the ungrouped
+  invoiced sum.
+- **S1-10 [BE]** (J5) Given an IV whose own agent differs from the agent on the SO its lines came
+  from, then it counts whole for its own agent's team (Q15).
 
 ## S2: the Finance menu, list and record pages
 
@@ -161,13 +191,16 @@ Phase 1 against a mock, then Phase 2 wiring, per the pipeline.
 
 - **S2-1 [FE]** (J6) Given a user with `finance.billing_documents.view` and the `finance` module on,
   then the sidebar shows a FINANCE heading with Billing Documents; without either, it does not.
+  An admin or superadmin has it without any grant; any other role has it only once granted on
+  the Roles screen.
 - **S2-2 [FE]** (J6) Given the list, then it is a `DataGrid` with `tableLayout: { width: 'fixed',
   columnsResizable: true }`, columns Type (Badge), Number, Date, Customer, Agent, Total (right
   aligned, currency code when not MYR), Status (Badge), each with an explicit `size`, long text
   truncated with a `title`; no Add button, no row delete.
 - **S2-3 [FE]** (J6) Given the filters, then Type, Status, Customer and Agent are
   `SearchableSelect` or `SearchableMultiSelect`, each optional one `clearable`; Date is the
-  standard date range; query strings are built with `buildDataGridParams`.
+  standard date range; query strings are built with `buildDataGridParams`. The Export button
+  shows only with `finance.billing_documents.export` (and view).
 - **S2-4 [BE]** (J6) Given `GET /api/v1/finance/billing-documents`, then it pages, sorts and
   searches through the list-query registry (resource `finance_billing_documents`), is scoped to
   the caller's company, and answers 403 without the view slug.
@@ -185,6 +218,12 @@ Phase 1 against a mock, then Phase 2 wiring, per the pipeline.
 - **S2-9 [E2E]** (J6, J7) Sidebar click from `/` to the list, a filter, a row, prev and next, at
   375 and 1280, recorded as agent-browser evidence under `documentation/plans/finance/evidence/s2/`.
 - **S2-10 [T]** (J6) No UI text explains the feature; no UUID is visible anywhere.
+- **S2-11 [BE]** (J9) Given a dealer's portal user (a portal role, no finance slug), then every
+  `/api/v1/finance/*` call answers 403 and no portal page links to Finance. (Q5, being confirmed:
+  staff only.)
+- **S2-12 [BE]** (J6) Given `POST /api/v1/list-query/export` for resource
+  `finance_billing_documents`, then a caller with `.view` but not `.export` gets 403 and a caller
+  with both gets the filtered rows, scoped to the caller's company.
 
 ## S3: billing on the records people already open
 
@@ -192,20 +231,24 @@ Phase 1 against a mock, then Phase 2 wiring, per the pipeline.
   documents whose lines point at its lines, with an empty state when there are none.
 - **S3-2 [FE]** (J8) Given a customer record, then a "Billing documents" tab lists that
   customer's documents (the same list component, pre-filtered), with an empty state.
-- **S3-3 [BE]** (J8) Given a user without `finance.billing_documents.view`, then neither section
-  is rendered and the backing calls answer 403.
+- **S3-3 [BE]** (J8) Given a user without `finance.billing_documents.view` (any role not granted
+  it on the Roles screen), then neither section is rendered and the backing calls answer 403.
 
 ## S4: history backfill and the tally
 
 Mostly shared-service work; the CRM side is a runbook and a measurement.
 
-- **S4-1 [T]** (J3) A runbook `documentation/plans/finance/RUNBOOK-billing-backfill.md` names the
-  start date (Q2), batch size (1000), order (oldest first, IV and CS before CN), the check queries
-  and the re-run rule (safe: S0-5).
-- **S4-2 [E2E]** (J3) After the backfill on production, documents per type per month match
-  AutoCount's own counts for the three test months (recorded here).
+- **S4-1 [T]** (J3) A runbook `documentation/plans/finance/RUNBOOK-billing-backfill.md` records the
+  start date as set on the shared service (1 Jan 2023 planned; the CRM holds no copy of it), batch
+  size (1000), order (oldest first, IV and CS before CN and DN), the permission grant to the
+  feed's role when Q16 is (b), the check that every agent on the documents has a team (the
+  "No team" count per month), the check queries and the re-run rule (safe: S0-5).
+- **S4-2 [E2E]** (J3) After the backfill on production, documents per type per month from the
+  start date match AutoCount's own counts, and the three test months (2024 or later) are
+  recorded here.
 - **S4-3 [E2E]** (J5) The Yearly comparison on Basis = Invoiced matches the AutoCount PDF within
-  RM 1 per cell for those months, or the residual is explained cell by cell.
+  RM 1 per cell for those months, per team block, from 2024 onwards (2023 is loaded but not
+  tallied), or the residual is explained cell by cell.
 
 ## Measured
 

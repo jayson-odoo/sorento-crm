@@ -1,20 +1,54 @@
 # PLAN: finance module, billing documents from AutoCount through the shared service (#1309)
 
-Status: **draft, round 1, awaiting the owner's answers to section 9 (Q1 to Q13).** Planning half
-of the pipeline only (journey, grill questions, UAC, plan, slices, tickets); nothing is built.
+Status: **draft, round 2 (27 Sep): the owner's 13 rulings are folded in (section 0). Q5 is
+being confirmed by the orchestrator; Q14 to Q16 are new and open (section 9). S0 is ready to
+build from `S0-build-brief.md`.** Planning half of the pipeline only (journey, grill questions,
+UAC, plan, slices, tickets); nothing is built.
 Track: full (new module and schema, migration, new permissions, a new external ingest entity).
 Domain: finance. Classification: **MODULE `finance`** (installable per tenant: another AutoCount
 customer would turn it on; `app_modules_catalog` row + `require_module_enabled_with_api_key`).
 Schema: **`finance`**, tables without a `finance_` prefix (the ADR-0011 precedent the `sales`
 module followed, `sorento_crm_backend/alembic/versions/sales_0001_teams.py:5-6,43`).
 UAC: `finance-billing-documents-27sep-acceptance-criteria.md` alongside (the contract; the journey
-J1 to J9 lives there). Alignment page with the mockups:
-`alignment/finance-alignment-r1.html`.
+J1 to J9 lives there). Alignment pages with the mockups: `alignment/finance-alignment-r1.html`
+(round 1, the questions) and `alignment/finance-alignment-r2.html` (round 2, the rulings).
+S0 build brief: `S0-build-brief.md`.
 Branch: `claude/finance-billing-documents-plan-jks6fx` (the cloud session is pinned to that name;
-the brief named `claude/finance-billing-documents-plan`), off `origin/main` 9751e55d.
+the brief named `claude/finance-billing-documents-plan`), off `origin/main` 9751e55d; draft PR
+#1310. Since then `origin/main` gained PR #1269 (52b0ac24, the sales reports kernel), so S1's
+dependency on it is met.
 
 Paths below are relative to the repo root. Backend paths start `sorento_crm_backend/`, shortened
 to `be/` in the tables; frontend `sorento_crm_frontend/` to `fe/`.
+
+## 0. Owner rulings (27 Sep)
+
+Source: the owner's notes on the round 1 alignment page, delivered 21:35 MYT and posted verbatim
+on issue #1309 (comment 5855833693, "Owner rulings on the round 1 open questions"). Each note is
+quoted as written, against the question it was attached to; "Read as" is the orchestrator's
+reading in that comment; "Consequence" is what changed in this plan.
+
+| Q | Owner's note (verbatim) | Read as | Consequence in this plan |
+| --- | --- | --- | --- |
+| 1 | "this" (on the bold (a)) | (a) IV, CS, CN and DN | The CHECK on `document_type` holds all four (3.1); UAC S0-3 loses its "Q1 may shorten" note. |
+| 2 | "i will start the shares servcie transfer from 2023 probably, i can set in shared service" | Backfill from 1 Jan 2023; the start date is set on the shared service side, the CRM accepts whatever history arrives | The start date is shared-service configuration, not CRM configuration: the CRM ingest has **no date floor** and accepts a document of any date (3.3.5, new UAC S0-22). The planned start is 1 Jan 2023. The S4 tally covers **2024 onwards** (the months the Yearly comparison shows); 2023 lands but is not tallied (S4-1, S4-3). |
+| 3 | "yes this" (on (a)) | (a) net, tax and total as AutoCount sends them | Unchanged from round 1 (3.2). |
+| 4 | "yes" (on (a)) | (a) one invoice on the header | `against_document_id` + `against_doc_no` on the header stand (3.2, 3.3.3); UAC S0-12 loses its Q4 marker. A4 is still for the shared service to confirm; a knock-off-only AutoCount is the trigger in section 7. |
+| 5 | "yes" (on the line "No. Staff only for now") | Agreement with the recommendation: staff only; **the orchestrator is confirming with the owner in chat** | Provisionally: dealers see no billing document and no amount on the portal. Nothing portal-side is built; new UAC S2-11 holds the portal to that. Kept in section 9 marked "confirming". |
+| 6 | "yes" (on (a)) | (a) headers and lines with customer, agent, product and tax fields | A9 is the owner's ruling now, not an assumption; the record shape of 3.3.2 is the NDA scope. |
+| 7 | "yes" | Yes: IV + CS + DN - CN | The invoiced basis includes DN (3.4); UAC S1-1 loses its Q7 marker. |
+| 8 | "based on the seals order agent" | Group by the sales agent on the document (the sales order agent), not by debtor type and not by the agent's current class; the agent's team as of the document date gives the DEALER / PROJECT TEAM blocks | S1 groups the invoiced basis by the document's `sales_agent_id` and that agent's dated `sales.team_members` row (#1260) covering `doc_date`, with a **"No team" block** as the fallback (3.4). The single "All sales" placeholder block is gone (UAC S1-4 rewritten). How a team maps to a block, and whose agent wins when the invoice's agent differs from its SO's, are new questions Q14 and Q15. |
+| 9 | "crearte permissions for this" | (a) with its own permissions (view, export) granted on the Roles screen; admin and superadmin get them by default | Two user-facing slugs, `finance.billing_documents.view` and `finance.billing_documents.export`, seeded by `fin_0001` and granted to admin and superadmin only, as `sales_0001_teams` does; every other role through the Roles screen (3.5, UAC S0-2 rewritten). The ingest-side slugs and who holds them are new question Q16. |
+| 10 | "ok" | No | AR-module documents stay out; trigger unchanged in section 7. |
+| 11 | "ok" | No | Receipts and payments stay out; trigger unchanged in section 7. |
+| 12 | "yes" | Yes | The basis sums `local_net_total` (AutoCount's own MYR amount); unchanged (3.4). |
+| 13 | "yes" | Yes | Cancelled stays visible with a Cancelled badge and out of every total; unchanged (3.3.4, 3.4, 3.5). |
+
+The owner ended the Lavish session after these notes.
+
+**Sections rewritten in round 2:** 0 (new), 1 (the history paragraph), 3.3.5 (backfill), 3.3.6
+(A9 settled), 3.4 (channel grouping), 3.5 (permissions, export), 4 (slices S0, S1, S2, S4),
+5, 6, 7 (the portal line), 8, 9.
 
 ## 1. In plain words (for the owner)
 
@@ -39,12 +73,15 @@ service. The shared service pushes each document, whole, to the same CRM endpoin
 receives your sales orders and purchase orders every day, naming Sorento or Mocha. Pushing the
 same document twice changes nothing; a document edited in AutoCount is pushed again and replaced;
 a cancelled one stays visible and stops counting; history comes in through the same door, in
-batches, from a start date you choose (Q2).
+batches, from the start date you set on the shared service (1 Jan 2023 planned, ruling Q2). The
+CRM takes whatever history arrives; the tally against the PDF covers 2024 onwards.
 
 **What the CRM will show.**
 1. On **Sales > Yearly comparison and Sales report** (PR #1269), a third basis, **Invoiced**:
-   invoices plus cash sales minus credit notes, excluding tax, by document date. That is what the
-   scout on #1269 found the AutoCount PDF counts, and the only basis that can tally with it.
+   invoices plus cash sales plus debit notes minus credit notes, excluding tax, by document date,
+   grouped by the document's sales agent and the team that agent was in on that date. That is
+   what the scout on #1269 found the AutoCount PDF counts, and the only basis that can tally
+   with it.
 2. A new **FINANCE > Billing Documents** list and a record page per document, read only
    (AutoCount is the book of record; nobody types an invoice in the CRM).
 3. On a **sales order** and a **customer**, the billing documents that belong to them.
@@ -306,8 +343,13 @@ an invoice lands, any CN/DN in the company whose `against_doc_no` equals its num
 
 **3.3.5 Backfill and company scoping.** History arrives through the same endpoint, oldest first,
 IV and CS before CN and DN of the same day (so `against` links resolve on first write; the late-fill
-of 3.3.3 covers the rest), in batches of 1000, from the date Q2 picks. Re-running any batch is safe
-(UAC S0-5). Each company pushes under its own `companyCode` (Sorento `SRT`; Mocha is already
+of 3.3.3 covers the rest), in batches of 1000. **The start date belongs to the shared service**
+(ruling Q2: "i can set in shared service"); the owner plans 1 Jan 2023. The CRM therefore has no
+start-date setting and no date floor: a document of any `doc_date` is accepted and stored (UAC
+S0-22), so moving the start earlier or later is a shared-service change only, and a second,
+earlier backfill later is just more pushes. The tally (S4) covers 2024 onwards, the years the
+Yearly comparison shows; 2023 documents are stored, listed and counted by the basis but not
+tallied against the PDF. Re-running any batch is safe (UAC S0-5). Each company pushes under its own `companyCode` (Sorento `SRT`; Mocha is already
 connected in production per the owner, PR #1269 comment 5844532989); every row carries the anchor's
 `company_id`; a master found only in the other company is not linked (UAC S0-14);
 `integration_references` is global, so refs carry the AutoCount database name (cross-repo contract
@@ -329,26 +371,59 @@ connected in production per the owner, PR #1269 comment 5844532989); every row c
 - **A7.** Cancelled documents stay in AutoCount with a Cancelled flag; deleted ones vanish and can
   be detected by the ETL as deletions.
 - **A8.** Agent and customer codes on billing documents are the same codes the SO feed sends.
-- **A9.** The NDA allows header, line, customer, agent, product and tax fields. Nothing about bank
-  accounts, GL accounts or payment details is needed (Q6).
+- **A9.** Settled by the owner (ruling Q6): the NDA scope is header, line, customer, agent,
+  product and tax fields. Nothing about bank accounts, GL accounts or payment details is needed
+  or sent.
+- **A10** (new, from ruling Q8). The agent code on an IV transferred from an SO is the SO's agent
+  code in the normal case; the shared service reports how often they differ (feeds Q15).
 
 ### 3.4 The invoiced basis on the sales reports (S1)
 
-On the #1269 reports kernel (its dataset `app/services/reports/datasets/sales_order_lines.py`
-and the Basis filter, retail plan 5.1-5.2): a second dataset over `finance.billing_documents`
-(header level is enough; lines only for a brand or product axis), and Basis gains **Invoiced**.
+On the #1269 reports kernel, merged to main at 52b0ac24 (its dataset
+`be/app/services/reports/datasets/sales_order_lines.py`, the definition
+`be/app/services/reports/definitions/sales_yearly.py` and the Basis filter): a second dataset over
+`finance.billing_documents` (header level is enough; lines only for a brand or product axis), and
+Basis gains **Invoiced**.
 
 `invoiced_value = SUM(CASE document_type WHEN 'credit_note' THEN -1 ELSE 1 END * local_net_total)`
 over `status = 'posted'` and `document_type IN ('invoice','cash_sale','credit_note','debit_note')`
-(DN included per Q7), dated by `doc_date`, company from the Company filter. Excluding tax by
-construction (`local_net_total`). A CN counts in its own month (UAC S1-2).
+(DN included, ruling Q7), dated by `doc_date`, company from the Company filter. Excluding tax by
+construction (`local_net_total`, AutoCount's own MYR amount, ruling Q12). A CN counts in its own
+month (UAC S1-2).
 
-**Channel grouping, left open (Q8).** The SO basis groups by `sales_orders.demand_class`. A cash
-sale has no SO and an invoice's SO link is per line, so the invoiced basis cannot use
-`demand_class` directly. Options: (a) the document's agent's current `demand_class`
-(`sales_agents`), (b) **the PDF's people grouping**: the document's agent, grouped through
-#1260's dated `sales.teams` membership as of `doc_date`, (c) debtor type (#1269 S3). Until the owner
-answers, Invoiced shows one "All sales" block (UAC S1-4).
+**Channel grouping (ruling Q8: "based on the seals order agent").** On main the SO basis builds
+its two blocks from `sales_orders.demand_class` (`sales_order_lines.py:37-47`: `retail` reads
+"Dealer", `project` reads "Project team"). The invoiced basis does not use `demand_class` and does
+not use the agent's current class: it groups **by the sales agent on the document**
+(`billing_documents.sales_agent_id`) **and the team that agent was in on the document date**, from
+#1260's dated membership (`sales.team_members`, `be/alembic/versions/sales_0001_teams.py:66-109`).
+The dated rule is the one `be/app/services/sales/team_service.py:6-7` already states for orders:
+a document of agent A dated X belongs to team T when A has a row for T with
+`coalesce(valid_from, -infinity) <= X <= coalesce(valid_to, infinity)`, within the document's
+company. `team_service` is the only writer and refuses overlapping stays, so there is at most one
+such row; an agent's first team has `valid_from` NULL and so covers their whole history (V1),
+which is what makes a 2023 document land in a team at all.
+
+The query is one LEFT JOIN from `finance.billing_documents` to `sales.team_members` on
+`(company_id, sales_agent_id)` and the dated condition, then to `sales.teams` for the name. No
+new table, column or mapping in `finance`.
+
+**The fallback.** A document lands in the **"No team"** block when any of these holds: its agent
+did not resolve at ingest (`sales_agent_id` NULL, warning `agent_unresolved`), the agent has no
+team row covering `doc_date`, or the agent is in no team at all. The block is shown only when it
+is non-empty, sorts last, and is counted in the company total, so every ringgit the PDF counts is
+in the report and the size of the gap is visible. The fix is on the existing Sales Teams screen
+(put the agent in a team, or date a move correctly), never in Finance. Not the agent's
+`demand_class` as a fallback: the ruling ruled out the agent's class as the grouping, and a
+fallback that silently re-grouped by it would produce a block the owner cannot reconcile.
+
+**How a team becomes a block** is new question Q14: the recommendation is that each team is its
+own block, headed by the team's name, so teams named "Dealer" and "Project team" reproduce the
+PDF's DEALER and PROJECT TEAM rows with no mapping to build. **Whose agent when they differ** (an
+IV's own agent vs the agent on the SO its lines came from) is Q15: the recommendation is the
+document's own agent, because a cash sale has no SO and a per-line SO agent would split one
+document across blocks. The Channel filter, on Basis = Invoiced, lists the company's teams plus
+"No team" (UAC S1-4, S1-9).
 
 ### 3.5 Module, permissions, menu, pages
 
@@ -357,18 +432,40 @@ answers, Invoiced shows one "All sales" block (UAC S1-4).
   mounted at `/finance` with `require_module_enabled_with_api_key("finance")`, FE
   `route-module-map` `{ prefix: '/finance', moduleKey: 'finance' }`, purge registry entry.
   Dormant until switched on in App Store, as `sales` shipped.
-- **Permissions:** `finance.billing_documents.view` (staff read; granted to admin, superadmin),
-  `.edit` and `.delete` (ingest and deletions only: no UI writes; granted to admin, superadmin and
-  every role holding `scm.sales_orders.edit`, which is how the ESB integration's role gets it, the
-  sweep shape of `414_product_set_grant_sweep.py`). No `.add`: nothing is created by hand. Export
-  uses `.view` (trigger for a separate slug: someone must see but not export).
+- **Permissions (ruling Q9: "crearte permissions for this").** Finance gets its own slugs,
+  following the sales module precedent (`be/alembic/versions/sales_0001_teams.py:35-40,112-135`:
+  rows inserted into `user_permissions` when absent, granted through `user_role_permissions` to
+  `admin` and `superadmin` only, `ON CONFLICT DO NOTHING`; the same slugs declared in
+  `be/app/rbac/permission_registry.py` so `sync_permissions` creates them on a `create_all`
+  database, as `:818-821` does for `sales.teams`). Every other role gets them on the Roles screen
+  (the role editor), never by a migration sweep. The user-facing pair:
+  - `finance.billing_documents.view`: the FINANCE menu, the list, the record page, and the S3
+    sections on the SO and customer records.
+  - `finance.billing_documents.export`: the list's Export button and `POST /list-query/export`
+    for the resource. It plugs into the list registry's existing `export_slug`
+    (`be/app/services/list_query_registry.py:85`; checked in `be/app/api/v1/list_query.py:240-242`),
+    exactly as `order_management.orders.export` does. Export without view is meaningless, so the
+    Export button needs both.
+
+  No `.add`: nothing is created by hand. The ingest door gates every entity by a slug
+  (`INGEST_PERMISSIONS`, `READ_PERMISSIONS`, `DELETE_PERMISSIONS`, `ingest.py:83-133`), so the
+  feed also needs a write slug and a delete slug that no UI uses: `finance.billing_documents.edit`
+  (ingest) and `.delete` (deletions), read-back on `.view`. They are declared, seeded and granted
+  to admin and superadmin with the others. Whether the migration also grants `.edit`, `.delete`
+  and `.view` to the ESB integration's role (every role holding `scm.sales_orders.edit`, the
+  `472_ingest_v2_permissions.py` sweep) or an admin grants them on the Roles screen before the
+  first push is new question Q16.
 - **Menu:** a FINANCE heading after SALES with one item, Billing Documents (`/finance/billing-documents`,
   `permission: 'finance.billing_documents.view'`, `moduleKey: 'finance'`), in `MENU_SIDEBAR` and
   `MENU_SIDEBAR_COMPACT`.
 - **List** (`DataGrid`, fixed layout, resizable): Type (Badge), Number, Date, Customer, Agent,
   Total (right aligned; currency code shown when not MYR), Status (Badge: Posted neutral, Cancelled
   muted). Filters: Type (`SearchableMultiSelect`), Status, Customer, Agent (`SearchableSelect`,
-  clearable), Date range. Search: number, customer. No Add, no Delete: read-only mirror.
+  clearable), Date range. Search: number, customer. Export (xlsx of the filtered list, through
+  the list-query export) shown only with `.export`. No Add, no Delete: read-only mirror.
+- **Portal (ruling Q5, being confirmed):** nothing. No portal route, component or endpoint reads
+  `finance`; a dealer's portal role holds no finance slug, so every `/finance` call answers 403
+  (UAC S2-11).
 - **Record** `/finance/billing-documents/[id]`: `PageHeader` (number, type Badge, status Badge),
   meta strip (AutoCount, last synced, document date), `RecordNavigation`, line tabs as on the Users
   record: **Details** (customer, agent, currency and rate, ref, description, totals: net, tax,
@@ -389,30 +486,34 @@ so the idempotency test (S0-5) also bounds audit volume. If #1299 has not merged
 
 ## 4. Slices
 
-Ordered for early value. Each slice's ACs are in the UAC under its id.
+Ordered for early value. Each slice's ACs are in the UAC under its id. "Round 2" marks what the
+rulings changed.
 
 | Slice | What | UAC | Depends on | Before -> after |
 | --- | --- | --- | --- | --- |
-| **S0** | Model + ingest contract + replayable fixture: migration `fin_0001_billing_documents` (schema, two tables, module row, permissions, grants), models, `CanonicalBillingDocument`, the entity in `DOCUMENT_SPECS` style or a sibling `BillingDocumentIngestService` with the same constructor, read-back, deletions, contract 2.6, `_pg_fixture` schema entries, the fixture JSON, contract section 12 in the cross-repo plan. Backend only. | S0-1 to S0-21 | none (NDA not needed: the fixture stands in) | No billing document can be received -> the shared service can push, replay and delete billing documents for either company, proven by a fixture. |
-| **S1** | Invoiced basis on Yearly comparison and Sales report, and the chatbot. | S1-1 to S1-8 | S0, PR #1269 merged | Reports can only count orders -> Basis: Invoiced counts IV + CS (+ DN) - CN, excl. tax, by document date. |
-| **S2** | Finance menu, list and record pages (Phase 1 mock, then wiring). | S2-1 to S2-10 | S0 | Billing documents are invisible -> FINANCE > Billing Documents list and record. |
+| **S0** (round 2: permissions, no date floor) | Model + ingest contract + replayable fixture: migration `fin_0001_billing_documents` (schema, two tables, module row, the four slugs and their admin and superadmin grants), models, `CanonicalBillingDocument`, a sibling `BillingDocumentIngestService` with `DocumentIngestService`'s constructor, read-back, deletions, contract 2.6, `_pg_fixture` schema entries, the fixture JSON, contract section 12 in the cross-repo plan. Backend only. Build brief: `S0-build-brief.md`. | S0-1 to S0-22 | none (NDA not needed: the fixture stands in) | No billing document can be received -> the shared service can push, replay and delete billing documents of any date for either company, proven by a fixture. |
+| **S1** (round 2: grouping by agent and dated team) | Invoiced basis on Yearly comparison and Sales report, and the chatbot, grouped by the document's agent and that agent's team on the document date, with a "No team" block. | S1-1 to S1-10 | S0; PR #1269 (merged, 52b0ac24); Q14 and Q15 answered before the grouping is built | Reports can only count orders -> Basis: Invoiced counts IV + CS + DN - CN, excl. tax, by document date, in the owner's teams. |
+| **S2** (round 2: export slug, portal) | Finance menu, list (with Export on `.export`) and record pages (Phase 1 mock, then wiring). | S2-1 to S2-12 | S0 | Billing documents are invisible -> FINANCE > Billing Documents list and record, for the roles granted on the Roles screen. |
 | **S3** | Billing on the SO record and the customer record. | S3-1 to S3-3 | S2 | You leave the SO to find its invoice -> the SO and customer show theirs. |
-| **S4** | History backfill runbook and the tally against the PDF. | S4-1 to S4-3 | S0, NDA, shared-service sink | The basis has only new documents -> history from Q2's date, tallied. |
+| **S4** (round 2: start date on the shared service, tally from 2024) | History backfill runbook and the tally against the PDF. | S4-1 to S4-3 | S0, NDA, shared-service sink | The basis has only new documents -> history from the shared service's start date (1 Jan 2023 planned) in the CRM, 2024 onwards tallied. |
 
 S1 and S2 can run in parallel lanes after S0 (different files: reports kernel vs finance pages).
 Per the lane rule (CLAUDE.md "Lane merge discipline"), S0 to S3 land as commits on one feature
-lane unless the owner splits S1 out to ride with #1269's follow-ups.
+lane unless the owner splits S1 out to ride with #1269's follow-ups. S0 is briefed to build now
+(`S0-build-brief.md`): none of Q5, Q14, Q15 changes it, and Q16 changes only which roles one
+migration statement grants to (the brief carries both variants).
 
-**Tickets** (to be opened on answer of section 9, each linking this PLAN and the UAC): one issue
-per slice, S0 blocking S1, S2 and S4, S2 blocking S3. Not opened yet, so the grill can still
-reshape them.
+**Tickets** (each linking this PLAN and the UAC): one issue per slice, S0 blocking S1, S2 and S4,
+S2 blocking S3. S0's ticket can open now; S1's waits on Q14 and Q15.
 
 ## 5. Testing seams (agreed before Phase 2)
 
 - S0: pytest through the route (`TestClient` with an integration key) on `blank_session` with the
   `finance` schema translated; the fixture file is the golden set; replay equality compares a
   canonical dump of both tables.
-- S1: the kernel's run function on a seeded fixture, the golden numbers written first.
+- S1: the kernel's run function on a seeded fixture, the golden numbers written first; the
+  seed includes two teams, an agent who moves team mid-month, an agent with no team and a
+  document with no resolved agent, so the dated join and the "No team" block are both pinned.
 - S2/S3: vitest on the service and hooks against the mock; agent-browser evidence run.
 
 ## 6. Risks
@@ -423,7 +524,13 @@ reshape them.
 - **Mocha books in another currency or tax regime.** `currency_code`/`local_net_total` cover it.
 - **A CN against an invoice from before the backfill start.** `against_doc_no` is kept, the link
   stays NULL, and the basis is unaffected (a CN counts in its own month).
-- **#1269 not merged when S1 starts.** S1 waits; S2 does not.
+- **#1269 not merged when S1 starts.** Resolved: merged at 52b0ac24.
+- **Teams not set up, or not dated back far enough, when the backfill lands.** The "No team"
+  block grows and the DEALER / PROJECT TEAM blocks will not tally. It is visible, not silent,
+  and the fix is on the Sales Teams screen; an agent's first team already covers all history
+  (V1), so only a mid-history move needs dating.
+- **The ESB role lacks the ingest slug on the first push** (if Q16 is answered "Roles screen").
+  Every record answers 403 until an admin grants it; the S4 runbook's first step is that grant.
 
 ## 7. Not built, and the trigger for each
 
@@ -441,49 +548,47 @@ reshape them.
 - **A DO link as a FK:** the DO table is fed by the ESB with trustworthy money.
 - **Credit note allocations across several invoices:** A4 is wrong (AutoCount allocates per line or
   by knock-off) and the owner needs to see the split.
-- **Dealer-facing invoices on the portal:** Q5 answered yes.
+- **Dealer-facing invoices on the portal:** the owner asks for them (ruling Q5 is staff only,
+  being confirmed); then a portal page reads the dealer's own customer's documents.
+- **A start-date setting in the CRM:** never while the shared service owns the start (ruling Q2).
+- **A team-to-block mapping table:** Q14 answered with a mapping instead of "one block per team".
 - **A queue for the ingest:** a billing batch times out on the synchronous route.
 
 ## 8. Glossary and ADR
 
 `CONTEXT.md` has no billing terms. The grill (`/grill-with-docs`) should add **Billing document**,
 **Document type**, **Invoiced basis** to `documentation/CONTEXT.md` and one ADR,
-"0013: billing documents are one typed table in the `finance` schema", once Q1 to Q4 are answered.
-Not written in this docs-only lane, so the grill can still change them. No conflict with an
+"0013: billing documents are one typed table in the `finance` schema". Q1 to Q4 are now
+answered (section 0), so both are due; the S0 build lane writes them (`S0-build-brief.md`), since
+this lane is plan files only. No conflict with an
 existing ADR: ADR-0007 (a dealer is a customer) is why a billing document points at `customers`.
 
-## 9. Open questions for the owner (the grill)
+## 9. Open questions for the owner (round 2)
 
-Each is answerable yes, no or with one pick. The recommendation is in bold.
+Q1 to Q13 are closed by the rulings in section 0, except Q5, which the orchestrator is
+confirming. Q14 to Q16 are new: the rulings raised them. Each is answerable yes, no or with one
+pick. The recommendation is in bold.
 
-1. **Which document types on day one?** (a) IV, CS, CN, DN; (b) IV, CS, CN only; (c) IV only.
-   **(a) all four: they are one shape, and a DN left out would make the invoiced figure short by
-   every extra charge.**
-2. **Is history backfilled, and from when?** (a) from 1 Jan 2024; (b) from 1 Jan 2025; (c) no, new
-   documents only. **(a) 1 Jan 2024: the Yearly comparison shows 2024, 2025 and 2026.**
-3. **Tax: how is it stored?** (a) net (excl. tax), tax and total, all three, as AutoCount sends;
-   (b) tax-inclusive total only; (c) net only. **(a): the report sums net, the record page shows
-   all three, and nothing is recomputed.**
-4. **How does a credit note reference its invoice?** (a) one invoice on the CN header, with the
-   invoice number kept even when that invoice is not in the CRM; (b) per line; (c) not at all.
-   **(a), unless the shared service reports that AutoCount only allocates by knock-off (A4).**
-5. **Do dealers see amounts (their invoices) on the portal?** Yes or no. **No: staff only for
-   now; the portal shows no orders today.**
-6. **What does the NDA allow the shared service to send?** (a) document headers and lines with
-   customer, agent, product and tax fields; (b) headers only; (c) something narrower you will name.
-   **(a): it is everything this plan uses, and nothing about bank, GL or payment details.**
-7. **Does the invoiced basis add debit notes?** Yes or no. **Yes: IV + CS + DN - CN, matching how
-   AutoCount's sales analysis treats a DN as extra billing; confirm against the report's options.**
-8. **Channel grouping on the invoiced basis** (left open): (a) the agent's current dealer/project
-   class; (b) the PDF's people grouping, the agent's sales team as of the document date (#1260's
-   dated teams); (c) debtor type. **Provisionally (b), because the PDF's "16pax" footnote says it
-   groups people; please confirm from the AutoCount report's options before S1 builds it.**
-9. **Who sees Finance > Billing Documents?** (a) admin and superadmin now, others granted on the
-   Roles screen; (b) also every sales role. **(a).**
-10. **AutoCount AR-module documents (AR Invoice, AR CN, AR DN, no item lines): include now?** Yes
-    or no. **No: add them only if the tally shows they are part of the PDF.**
-11. **Receipts and payments: plan them now?** Yes or no. **No: named trigger in section 7.**
-12. **Foreign-currency documents: report in ringgit using AutoCount's own converted amount?** Yes
-    or no. **Yes (`local_net_total`).**
-13. **A cancelled document: keep it visible with a Cancelled badge and leave it out of every
-    total?** Yes or no. **Yes.**
+5. **(Confirming.) Do dealers see amounts (their invoices) on the portal?** The owner's note
+   "yes" sat on the line "No. Staff only for now", read as agreement. **No: staff only. The plan
+   is built that way (UAC S2-11); a "yes, dealers see them" would add a portal slice and changes
+   nothing in S0.**
+14. **How does a sales team become a block on the invoiced basis?** (a) each team is its own
+    block, headed by the team's name, so naming the teams "Dealer" and "Project team" on the
+    Sales Teams screen gives the PDF's DEALER and PROJECT TEAM rows; (b) every team is mapped to
+    one of two fixed blocks, DEALER or PROJECT TEAM, by a new setting on the team.
+    **(a): nothing new to build or keep in step, and the report shows exactly the teams you
+    define. (b) is a new column and screen field, worth it only if you keep more teams than
+    blocks.**
+15. **When an invoice's own agent differs from the agent on the sales order its lines came
+    from, whose team does it count for?** (a) the invoice's own agent; (b) the sales order's
+    agent, line by line. **(a): a cash sale has no sales order, one document stays in one
+    block, and AutoCount's own sales report groups by the document's agent. The shared service
+    reports how often they differ (A10); if it is often, we revisit.**
+16. **Who grants the billing ingest permission to the AutoCount feed's role?** (a) the migration,
+    to every role that already receives sales orders from the feed (holds
+    `scm.sales_orders.edit`), as the ingest v2 permissions were granted; (b) an admin, on the
+    Roles screen, before the first push. **(a): the feed works on the day the module ships
+    and no one has to remember a grant; people's access to Finance stays on the Roles screen
+    either way, since this grants only the feed's write and delete (and the read-back it
+    needs).**
