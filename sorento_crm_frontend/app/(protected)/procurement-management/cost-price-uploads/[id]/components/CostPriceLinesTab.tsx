@@ -75,8 +75,9 @@ function StaleCell({ line }: { line: CostPriceChangeLine }) {
   const recorded = line.current_unit_cost != null ? line.current_unit_cost.toFixed(2) : 'none';
   const live = stale.live_unit_cost != null ? stale.live_unit_cost.toFixed(2) : 'none';
   return (
-    <span className="block truncate text-xs text-amber-700" title={`Recorded ${recorded}, now ${live}`}>
-      Recorded {recorded}, now {live}
+    <span className="block text-xs text-amber-700" title={`Recorded ${recorded}, now ${live}`}>
+      <span className="block truncate">Recorded {recorded}</span>
+      <span className="block truncate">now {live}</span>
     </span>
   );
 }

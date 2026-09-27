@@ -123,12 +123,15 @@ function renderTab(cs: CostPriceChangeSetDetail) {
 }
 
 describe('S6 / AC-S2-06: a stale line shows the recorded and the live price', () => {
-  it('shows "Recorded 100.00, now 105.00" for a stale line', () => {
+  it('shows the recorded and the live price on their own lines, so neither truncates away', () => {
     linesData = [
       line({ id: 'a', current_unit_cost: 100, current_currency: 'CNY', stale: { live_unit_cost: 105, live_currency: 'CNY' } }),
     ];
     renderTab(changeSet());
 
-    expect(screen.getByText('Recorded 100.00, now 105.00')).toBeInTheDocument();
+    // One truncating line hid the live price at grid width (evidence 32-stale-lines-1280.png).
+    expect(screen.getAllByText('Recorded 100.00').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('now 105.00').length).toBeGreaterThan(0);
+    expect(screen.getAllByTitle('Recorded 100.00, now 105.00').length).toBeGreaterThan(0);
   });
 });

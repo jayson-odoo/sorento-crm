@@ -190,3 +190,84 @@ grid did - worth a look if that inconsistency was not intentional.
 **All three findings from the previous run are fixed**, confirmed against `sorento_dev` end to
 end: the Reject dialog (`fc6fe80ff` + its red test `1d7cb3843`), bare prices in the set's own
 currency and "1 sheet" in the header (`ccfcf52a7` + its red test `c063e531c`).
+
+## Refresh, fix lane round 2 (27 Sep 2026)
+
+Reviewer pass at `232e5706`, Nit 12: several committed shots predated the "Apply N changes"
+plural fix and showed the Next.js dev "N Issue(s)" badge with no explanation. This round
+re-shoots every screenshot that still showed `Apply 1 changes`, re-shoots the three the
+reviewer named directly (09/10 supplier-prices, 07-applied, 18-kelvin-applied), and adds three
+new screenshots for behaviour the earlier evidence never exercised. Recorded against a fresh
+`sorento_rt` database (migrated to head `cpc2_cost_price_tick_schedule`, no prior business rows)
+with `agent-browser`, session `lane-a-r2`, backend on `.env.rt` copied from `.env.ci-tests` with
+`sorento_ci` swapped for `sorento_rt`, frontend `npm run dev` with a scratch `.env.local`.
+
+Seed (scratch script, not committed): superadmin `captain@sorento-dev.com`; purchasing users
+`meiling@sorento-dev.com` / `kelvin@sorento-dev.com`, one role holding
+`procurement.cost_price_changes.{upload,view,verify}`, `procurement.suppliers.{view,price_link}`,
+`procurement.product_suppliers.{view,add,edit,delete}` and `user_management.settings.view`;
+supplier `XIAMEN TAIYANG TECHNOLOGY`; products `ZZLANEA-P1/P2/P3`, each linked to it at 100.00 CNY,
+45-day lead time, `unit_cost` written directly (no cost rows, matching a real "never uploaded
+before" link). Two from-zero-database gaps needed a one-time bootstrap, neither an app-code
+change: no `TenantModule` rows existed yet, so every module reported `enabled: false` and the
+sidebar hid every module-gated group including Procurement (the backend guard's "no rows yet =
+legacy install, let it through" bypass is API-side only - the frontend menu filter has no
+equivalent, so a genuinely fresh tenant needs its modules installed once); and no `system_settings`
+row existed, so the verification toggle's own PUT 404'd until one was created. Both were fixed by
+inserting the missing rows directly, not by editing any route or component.
+
+| Step | Screenshot | What it shows | Flow |
+| --- | --- | --- | --- |
+| Review, mobile | `06-review-375.png` | Re-shot: "1 change ready" / "Apply 1 change" - correct singular. CPC-0001, ZZLANEA-P1 100 to 110 CNY. | Mei Ling, verification off, before Apply |
+| Applied, not verified | `07-applied-1280.png` | Re-shot: header reads "... applied by Mei Ling ... Not verified" - a direct Draft-to-Applied path (verification off) leaves `verified=false`, matching the header's own conditional. | Same set, after Apply |
+| Supplier Prices, desktop | `09-supplier-prices-1280.png` | Re-shot (Blocking 2 fix): ZZLANEA-P3 keeps its 100.00 CNY row at "Always" status untouched, and a second 115.00 CNY row for CPC-0002 shows "Scheduled" (Valid from 27 Nov 2026) - a future-dated apply never erases the link's live price. | Mei Ling: added ZZLANEA-P3's 100.00 CNY row by hand first (`+Price` on the Supplier's own Prices tab, so a real cost-list row exists to keep), then uploaded and applied a 1-row, Valid-from-27-Nov-2026 file at 115.00 |
+| Supplier Prices, mobile | `10-supplier-prices-375.png` | Re-shot: same two ZZLANEA-P3 rows, Price/Valid from/Valid to columns legible and non-clipped at 375px (Status/Source scroll further right, same as the 1280 layout's own column order). | Same state, 375px |
+| Mei Ling, pending, disabled Apply | `15-meiling-cannot-apply-1280.png` | Re-shot: CPC-0003 Pending Verification, Apply reads "Apply 0 changes" and is disabled, with "You uploaded, submitted or mapped this set" printed inline next to it (not just a hover tooltip). Superseded in spirit by `31` below (same screen, this one kept for the plural-fix record). | Mei Ling, own submitted set |
+| Kelvin, decision view | `16-kelvin-decision-1280.png` | Re-shot: CPC-0003, both lines undecided, per-line Accept/Reject, footer "Apply 0 changes" disabled with "2 lines undecided". | Kelvin, verifier |
+| Kelvin, both decided | `17-kelvin-rejected-1280.png` | Re-shot: ZZLANEA-P2 line Accepted (blue), ZZLANEA-P3 line Rejected (red, reason "Price rise too high" via the Reject dialog), footer now "Apply 1 change" and enabled. | Kelvin, after deciding both lines |
+| Kelvin, applied, verified | `18-kelvin-applied-1280.png` | Re-shot: header reads "... applied by Kelvin ... Verified by Kelvin"; Decision column shows Accepted / Rejected with the typed reason surviving past Apply. | Kelvin applies |
+| Mobile pass, review | `21-review-375.png` | Re-shot: identical capture to `06` (same Draft review screen, same singular-grammar fix) - the mobile-pass slot and the S1 slot happened to land on the same state this run. | Mei Ling, 375px |
+| Pending set, disabled Apply + reason | `31-pending-apply-reason-1280.png` | New: Mei Ling's own view of her Pending set (CPC-0003) - disabled "Apply 0 changes" with the reason "You uploaded, submitted or mapped this set" printed next to it. Confirms AC-S2 four-eyes: holding the verify permission is not enough when you are the submitter. | Mei Ling |
+| Stale line + toast | `32-stale-lines-1280.png` | New: CPC-0004 (Draft, ZZLANEA-P1, 110 to 125), after a hand-edit dropped the link's live price to 118 CNY via the Supplier Prices tab mid-review, then clicking Apply: a toast fired ("Some prices changed after this set was parsed. Refresh and try again."), the line now reads "Recorded 110...." (full text "Recorded 110.00, now 118.00", column-truncated with `title`), and a "Refresh prices" button appears in the header (only rendered when a Draft set the caller uploaded has a stale line). | Mei Ling |
+| Refresh prices, resolved | `33-refresh-prices-1280.png` | New: after clicking "Refresh prices", the line re-captures the live price (Price now 118.00, Change recalculated to +5.9%), the stale marker and the Refresh button both disappear, and Apply immediately succeeds (confirmed via a DB check: CPC-0004 status `applied`). | Mei Ling |
+
+### The Next.js dev "1 Issue" badge
+
+Opened the issues overlay directly (`Open issues overlay` button) rather than guessing: it is a
+single recurring **Console Error**, *"Each child in a list should have a unique key prop... Check
+the render method of `Demo1Layout`."* `Demo1Layout` (`app/components/layouts/demo1/layout.tsx`)
+is the shared protected-app shell (header, sidebar, footer, quick access) used by every page in
+the product, not anything under `cost-price-uploads`, `product-suppliers` or `suppliers` - the
+full 20-frame call stack is entirely `react-dom` internals with no app-code frame, consistent
+with a pre-existing warning rather than something this lane's diff introduced. Not fixed here
+(out of this lane's files); the overlay was hidden before every screenshot above via
+`document.querySelector('nextjs-portal').style.display='none'`, the same technique the previous
+evidence rounds used, so it never sits on top of on-screen text.
+
+### The 375px supplier header clipping Edit
+
+Confirmed still present and confirmed pre-existing: the Supplier detail page's header
+(`XIAMEN TAIYANG TECHNOLOGY` + Active badge + prev/next + Edit button) is the same
+`app/(protected)/procurement-management/suppliers/[id]/components/SupplierDetail.tsx` header used
+everywhere in the suppliers module, unrelated to the cost-price-from-supplier lane's own files.
+Not re-screenshotted separately this round (visible already in `10-supplier-prices-375.png`'s
+header row); not fixed here for the same reason as the dev badge.
+
+Console checked after every step (`agent-browser console` / `errors`): no errors from this
+lane's own code. The only warnings seen were the pre-existing `Demo1Layout` key-prop warning
+above and one transient `next-auth` `CLIENT_FETCH_ERROR` on `/api/auth/csrf` during a daemon
+hiccup unrelated to the app (a `agent-browser` CDP timeout recovered by closing and reopening the
+session, consistent with the shared-daemon note in `documentation/agents/browser-verification.md`
+- no evidence this affected the app itself).
+
+### Housekeeping for this round
+- Backend: `venv/bin/uvicorn app.main:app` on `:8000` against `sorento_rt`, `SORENTO_ENV_FILE`
+  pointed at a scratch `.env.rt` (copy of `.env.ci-tests` with the database swapped) outside the
+  repo. Frontend: `npm run dev` on `:3000` with a scratch, gitignored `.env.local`
+  (`NEXTAUTH_SECRET` matching the backend `JWT_SECRET`, `FASTAPI_INTERNAL_URL`,
+  `AUTH_TRUST_HOST=true`, `NEXT_PUBLIC_API_URL` left unset). Both stopped at the end of the run.
+- System Settings > Purchasing verification toggle was flipped on for the Kelvin four-eyes shots
+  and back off afterward, same as prior rounds.
+- Browser session `lane-a-r2` (isolated), closed at the end of the run, not `close --all`.
+- No source file under `sorento_crm_backend/app` or `sorento_crm_frontend/app` was edited for this
+  refresh; the two from-zero-database bootstrap gaps above were fixed with data, not code.
