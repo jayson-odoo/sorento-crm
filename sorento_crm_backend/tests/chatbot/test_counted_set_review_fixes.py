@@ -77,7 +77,9 @@ def test_which_tap_has_valid_cert_answers_the_whole_certified_set(
 
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text=f"which tap has {phrase}")
 
-    assert one_line_header(text).startswith("Product type: Tap. 7 taps have certificates."), text
+    # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
+    # header is the product-code answer's own intro naming the described set and its count.
+    assert one_line_header(text).startswith("Certificates found for taps with certificates (7)."), text
     assert _s4_codes_in(text) == set(codes), text
 
 
@@ -179,7 +181,11 @@ def test_an_honest_zero_names_the_set_and_fetches_nothing(session_factory, stub_
 
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap has cert")
 
-    assert "with a certificate" in text, text
+    # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): a
+    # miss for a described set names it the way its answer would have
+    # (`described_set_phrase`), plural "with certificates", never the bare subject's
+    # singular "with a certificate".
+    assert "with certificates" in text, text
     assert "have certificates." not in text and "has certificates." not in text, text
     assert calls == [], calls
 
@@ -240,7 +246,9 @@ def test_a_listed_set_asks_the_tool_for_enough_rows(session_factory, stub_parser
 
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap has cert")
 
-    assert one_line_header(text) == "Product type: Tap. 7 taps have certificates.", text
+    # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
+    # header is the product-code answer's own intro naming the described set and its count.
+    assert one_line_header(text) == "Certificates found for taps with certificates (7).", text
     assert _s4_codes_in(text) == set(codes), text
     assert isinstance(calls[0]["args"].get("limit"), int) and calls[0]["args"]["limit"] >= 14, calls
 
@@ -249,7 +257,12 @@ def test_a_row_cap_that_still_cuts_the_set_says_how_many_are_listed(
     session_factory, stub_parser, stub_access, monkeypatch
 ):
     """The tool's own hard row cap (4 rows here) cuts 7 taps x 2 files to 2 taps: the
-    header must say "Here are the first 2", never claim the list is complete."""
+    header must say "showing 1 to 2", never claim the list is complete.
+
+    Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): a
+    named count says which ones inside the intro's parenthetical, never "Here are the
+    first N.".
+    """
     db, codes = _two_certs_per_tap(session_factory)
     calls: list[dict[str, Any]] = []
     engine_mod, contact_id = _wired(
@@ -260,7 +273,7 @@ def test_a_row_cap_that_still_cuts_the_set_says_how_many_are_listed(
 
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap has cert")
 
-    assert one_line_header(text).startswith("Product type: Tap. 7 taps have certificates. Here are the first 2."), text
+    assert one_line_header(text).startswith("Certificates found for taps with certificates (7, showing 1 to 2)."), text
     assert len(_s4_codes_in(text)) == 2, text
 
 
@@ -321,14 +334,17 @@ def test_the_recount_after_how_many_keeps_the_dealers_stock_visibility(
     engine_mod, contact_id, taps, calls = _dealer_on_availability(session_factory, monkeypatch, tag="dealerrecount")
     stub_parser(_tap_stock_verdict())
     stub_access()
+    # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
+    # header is the product-code answer's own intro naming the described set and its
+    # count, never "N noun have leg.".
     first = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap got stock")
-    assert one_line_header(first).startswith("Product type: Tap. 2 taps have stock."), first
+    assert one_line_header(first).startswith("Stock summary for taps with stock (2)."), first
     before = len(calls)
 
     stub_parser(_bare_verdict(top_n=1, continuation=True, user_goal="show 1"))
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=2, text="1")
 
-    assert one_line_header(text).startswith("Product type: Tap. 2 taps have stock. Here are the first 1."), text
+    assert one_line_header(text).startswith("Stock summary for taps with stock (2, showing 1 to 1)."), text
     asked = {pid for c in calls[before:] for pid in (c["args"].get("product_ids") or [])}
     assert taps[1].id not in asked, asked
     assert asked <= {taps[0].id, taps[2].id} and len(asked) == 1, asked
@@ -380,7 +396,10 @@ def test_a_bare_count_answers_the_question_whatever_the_parser_made_of_it(
     stub_parser(_bare_verdict(message_type="casual", user_goal="3", **parser_reads))
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=2, text="3")
 
-    assert one_line_header(text).startswith("Product type: Tap. 7 taps have certificates. Here are the first 3."), text
+    # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): a
+    # named count says which ones inside the intro's parenthetical, never "Here are the
+    # first N.".
+    assert one_line_header(text).startswith("Certificates found for taps with certificates (7, showing 1 to 3)."), text
     assert len(_s4_codes_in(text)) == 3, text
     assert len(calls) == before + 1 and len(calls[-1]["args"]["product_ids"]) == 3, calls
 
@@ -438,4 +457,7 @@ def test_a_count_that_names_nothing_still_arms_the_question(
     stub_parser(_bare_verdict(top_n=3, continuation=True, user_goal="show 3"))
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=2, text="3")
 
-    assert one_line_header(text).startswith("Product type: Tap. 7 taps have certificates. Here are the first 3."), text
+    # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): a
+    # named count says which ones inside the intro's parenthetical, never "Here are the
+    # first N.".
+    assert one_line_header(text).startswith("Certificates found for taps with certificates (7, showing 1 to 3)."), text

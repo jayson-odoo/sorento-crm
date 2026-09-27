@@ -38,7 +38,7 @@ from tests.chatbot.test_attribute_asks_round3 import (  # noqa: F401 - fixtures 
     _product,
     world as r3world,
 )
-from tests.chatbot.set_reply import snake_tokens
+from tests.chatbot.set_reply import row_blocks, row_codes, snake_tokens
 from tests.chatbot.test_engine import stub_access, stub_parser  # noqa: F401 - fixtures used by name
 from tests.chatbot.test_lane_require import _stock_for
 from tests.chatbot.test_reverse_asks_owner_phrasings import _class_category, _incoming_for
@@ -199,33 +199,45 @@ def _codes(products) -> set[str]:
 
 
 def test_r1_the_highest_weighted_brand_heads_the_set_and_the_others_follow_the_weights(chat, world):
-    """Mocha (0.5) is named before Cabana (0) although Cabana has more wash basins."""
+    """Mocha (0.5) is named before Cabana (0) although Cabana has more wash basins.
+
+    Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
+    header is the product-code answer's own intro naming the described set - the brand
+    still heads the phrase, now inside that one line rather than a bold "*Brand:*" line.
+    """
     text = chat.say("which wash basin has stock", _ask("stock", "wash basin", "which wash basin has stock"))
     sorento, mocha, cabana = (_display(world[k].brand_name) for k in ("sorento", "mocha", "cabana"))
-    assert _header(text)[0] == f"*Brand:* {sorento}", text
+    assert _header(text) == [f"Stock summary for {sorento} wash basins with stock (3)."], text
     assert text.splitlines()[-1] == f"Other brands with stock: {mocha} 1, {cabana} 2. Name one to see them.", text
 
 
 def test_r1_raising_another_brand_above_sorento_makes_it_the_header_brand(chat, world):
+    """Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
+    header is the product-code answer's own intro naming the described set."""
     _weigh(world["db"], world["cabana"], 2.0)
     world["db"].commit()
     text = chat.say("which wash basin has stock", _ask("stock", "wash basin", "which wash basin has stock"))
     sorento, mocha, cabana = (_display(world[k].brand_name) for k in ("sorento", "mocha", "cabana"))
-    assert _header(text)[0] == f"*Brand:* {cabana}", text
-    assert {r["code"] for r in _rows(text)} == _codes(world["cabana_basins"]), text
+    assert _header(text) == [f"Stock summary for {cabana} wash basins with stock (2)."], text
+    assert set(row_codes(text)) == _codes(world["cabana_basins"]), text
     assert text.splitlines()[-1] == f"Other brands with stock: {sorento} 3, {mocha} 1. Name one to see them.", text
 
 
 def test_r1_a_weighted_brand_the_set_does_not_reach_hands_the_header_to_the_next_weight(chat, world):
     """No Sorento tap has incoming; the Mocha weight is next, and Mocha has none either,
-    so with no weighted brand in the set the set stays whole with no brand line."""
+    so with no weighted brand in the set the set stays whole with no brand line.
+
+    Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
+    header is the product-code answer's own intro; with no brand narrowed, the phrase
+    itself carries no brand word.
+    """
     _weigh(world["db"], world["sorento"], 0)
     _weigh(world["db"], world["mocha"], 0)
     world["db"].commit()
     text = chat.say("which wash basin has stock", _ask("stock", "wash basin", "which wash basin has stock"))
     assert not [ln for ln in _header(text) if ln.startswith("*Brand:*")], text
     assert "Other brands" not in text, text
-    assert "6 wash basins have stock." in text, text
+    assert "Stock summary for wash basins with stock (6)." in text, text
 
 
 def test_r1_brands_store_a_weight_not_a_switch():
@@ -241,23 +253,29 @@ def test_r1_brands_store_a_weight_not_a_switch():
 
 
 def test_r2_the_header_says_one_filter_per_line_with_bold_labels(chat, world):
+    """Superseded in layout by the round 8 ruling on PR #833 (owner retest of round 7, 27
+    Sep 2026): the bold "*Label:* value" filter lines are retired - the header is the
+    product-code answer's own intro naming the described set (brand, product type and
+    trap all still named, inside the phrase) and its count, in ONE line."""
     text = chat.say("which water closet has stock, p trap", _ask("stock", "water closet", "which water closet has stock, p trap", extra=[_entity("p trap", "spec")]))
     brand = _display(world["sorento"].brand_name)
     assert _header(text) == [
-        f"*Brand:* {brand}",
-        "*Product type:* Water closet",
-        "*Trap:* P trap",
-        "5 water closets have stock.",
+        f"Stock summary for {brand} P trap water closets with stock (5).",
     ], text
+    assert "*Brand:*" not in text and "*Product type:*" not in text and "*Trap:*" not in text, text
 
 
 def test_r2_a_class_word_with_a_spec_after_it_keeps_its_product_type_line(chat, world):
     """Owner exchange 3: "any water closet p trap got stock" read as ONE class word lost
-    the Product type from the header ("Brand: Sorento, Trap: P trap. 62 water closets")."""
+    the Product type from the header ("Brand: Sorento, Trap: P trap. 62 water closets").
+
+    Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): both
+    the product type and the trap are still named, inside the intro's one-line phrase.
+    """
     text = chat.say("any water closet p trap got stock", _ask("stock", "water closet p trap", "any water closet p trap got stock"))
     brand = _display(world["sorento"].brand_name)
-    assert _header(text)[:3] == [f"*Brand:* {brand}", "*Product type:* Water closet", "*Trap:* P trap"], text
-    assert {r["code"] for r in _rows(text)} == _codes(world["srt_ptrap"]), text
+    assert _header(text) == [f"Stock summary for {brand} P trap water closets with stock (5)."], text
+    assert set(row_codes(text)) == _codes(world["srt_ptrap"]), text
 
 
 # --------------------------------------------------------------------------- #
@@ -265,19 +283,24 @@ def test_r2_a_class_word_with_a_spec_after_it_keeps_its_product_type_line(chat, 
 # --------------------------------------------------------------------------- #
 
 
-def test_r3_a_stock_row_is_two_lines_name_with_code_then_the_stock(chat, world, list_max_2):
-    """Owner exchanges 1 and 2: "10" came out as 10 blocks of 5 to 8 lines."""
+def test_r3_a_stock_row_is_the_product_code_row_with_its_facts(chat, world, list_max_2):
+    """Owner exchanges 1 and 2: "10" came out as 10 blocks of 5 to 8 lines.
+
+    Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): a set
+    row is the product-code answer's own row ("N. *Product Code:* X" then its facts, one
+    per field the tool sent - Total and the one warehouse this world stocks in), never the
+    retired "N. <name> (<code>)" two-line block, and never a field the tool itself omits.
+    """
     chat.say("any basin has stock", _ask("stock", "basin", "any basin has stock"))
     text = chat.say("10", _bare(top_n=10))
-    rows = _rows(text)
-    assert len(rows) == 2, text
-    names = {p.product_code: p.product_name for p in world["srt_basins"]}
-    for row in rows:
-        assert row["code"] in names and row["name"] == names[row["code"]], row
-        assert len(row["lines"]) <= 2, row
-        assert row["lines"][1:] == ["*Total:* 10"], row
-    assert not re.search(r"\*(Material|Finish or colour|Product Code):\*", text), text
-    assert world["warehouse"].warehouse_code not in text, text
+    blocks = row_blocks(text)
+    assert len(blocks) == 2, text
+    codes = {p.product_code for p in world["srt_basins"]}
+    listed = row_codes(text)
+    assert set(listed) <= codes and len(listed) == 2, text
+    for block in blocks:
+        assert block[1:] == ["*Total:* 10", f"*{world['warehouse'].warehouse_code}:* 10"], block
+    assert not re.search(r"\*(Material|Finish or colour):\*", text), text
 
 
 def test_r3_a_certificate_row_keeps_the_attachment_structure(chat, world):
@@ -300,8 +323,16 @@ def test_r3_an_incoming_row_keeps_the_eta_structure(chat, world):
     assert set(full_row_codes(text)) == _codes(world["srt_tubs"]), text
 
 
-def test_r3_a_set_reply_of_fifty_rows_fits_one_whatsapp_message(chat, world, monkeypatch):
-    """50 two-line rows fit one WhatsApp message (4,096 characters) with names this long."""
+def test_r3_a_set_reply_of_fifty_product_code_rows_fits_one_whatsapp_message(chat, world, monkeypatch):
+    """50 rows fit one WhatsApp message (4,096 characters).
+
+    Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026):
+    `fetch.set_rows_text` (the two-line "N. <name> (<code>)" row builder) is retired - a
+    set's rows are the tool's own product-code rows, built inline in
+    `fetch.output_structurer` from the envelope's `items`/`predicate`, with one intro line
+    ahead of them. Same four fields a row carried before (Product Code, Total, two
+    warehouses), so this is a fair like-for-like check of the new shape.
+    """
     from app.services.chatbot.lanes.business import fetch as fetch_mod
 
     items = [
@@ -317,9 +348,22 @@ def test_r3_a_set_reply_of_fifty_rows_fits_one_whatsapp_message(chat, world, mon
         }
         for i in range(50)
     ]
-    labels = {f"SRTWC{i:04d}-SH-NEW-P": {"name": "Sorento Close Couple WC Soft Close"} for i in range(50)}
-    text = fetch_mod.set_rows_text(items, labels, require={"stock": True}, offset=0)
-    # Room left under 4,096 for the header lines and the other-brands line.
+    result = {
+        "result_type": "stock",
+        "intro": "Stock summary for the requested products.",
+        "items": items,
+        "has_result": True,
+    }
+    ctx = {
+        "predicate": {
+            "qualifying_total": 50,
+            "require": {"stock": True},
+            "class_labels": ["Water Closet"],
+            "description": [{"key": "class", "label": "Product type", "value": "Water Closet", "kind": "text"}],
+        }
+    }
+    text = fetch_mod.output_structurer(result, ctx)["response"]
+    # Room left under 4,096 for the other-brands line and the footer.
     assert len(text) < 3800, len(text)
 
 
@@ -363,30 +407,41 @@ def test_r4_a_miss_with_nothing_in_any_value_says_so(chat, world):
 
 def test_r5_answering_the_clarify_runs_the_counted_set_the_customer_asked_for(chat, world):
     """Owner exchanges 6 and 7: "tap" answered a code search ("Here are the matching
-    products. 1. *Product Code:* SRTWT5906-COLD TAP-NL ...")."""
+    products. 1. *Product Code:* SRTWT5906-COLD TAP-NL ...").
+
+    Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
+    header is the product-code answer's own intro naming the described set and its count.
+    """
     ask = chat.say("any water tap basin", _ask("stock", "water tap basin", "any water tap basin"))
     assert ask == "I don't know 'water tap basin' as a product type. Did you mean tap or wash basin?", ask
     before = len(chat.calls)
     text = chat.say("tap", _product_ask("tap", "tap"))
     assert "Here are the matching products" not in text, text
-    assert _header(text)[-2:] == ["*Product type:* Tap", "2 taps have stock."], text
-    assert {r["code"] for r in _rows(text)} == _codes(world["taps"]), text
+    brand = _display(world["sorento"].brand_name)
+    assert _header(text) == [f"Stock summary for {brand} taps with stock (2)."], text
+    assert set(row_codes(text)) == _codes(world["taps"]), text
     assert [c["name"] for c in chat.calls[before:]] != ["crm_master_products_list"], chat.calls[before:]
 
 
 def test_r5_the_other_option_runs_that_set(chat, world):
+    """Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
+    header is the product-code answer's own intro naming the described set and its count."""
     chat.say("any water tap basin", _ask("stock", "water tap basin", "any water tap basin"))
     text = chat.say("wash basin", _product_ask("wash basin", "wash basin"))
-    assert "3 wash basins have stock." in _header(text)[-1], text
+    brand = _display(world["sorento"].brand_name)
+    assert f"Stock summary for {brand} wash basins with stock (3)." in _header(text)[-1], text
 
 
 def test_r5_a_reply_that_is_not_an_option_is_its_own_question(chat, world):
+    """Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
+    header is the product-code answer's own intro naming the described set and its count."""
     chat.say("any water tap basin", _ask("stock", "water tap basin", "any water tap basin"))
     text = chat.say("which bathtub has incoming", _ask("incoming", "bathtub", "which bathtub has incoming"))
-    assert "bathtubs have incoming stock." in _header(text)[-1], text
+    brand = _display(world["sorento"].brand_name)
+    assert f"Incoming stock found for {brand} bathtubs with incoming stock (2)." in _header(text)[-1], text
     # And the clarify is spent: a later bare "tap" is not read as its answer.
     later = chat.say("tap", _product_ask("tap", "tap"))
-    assert "taps have stock" not in later, later
+    assert "taps with stock" not in later, later
 
 
 # --------------------------------------------------------------------------- #
@@ -527,25 +582,35 @@ def test_r7_a_miss_names_its_domain_in_plain_words(chat, world):
 
 def test_replay_the_owners_eight_exchanges(chat, world, list_max_2):
     """The eight turns in order, one conversation. Each reply is scanned for snake_case
-    by `_ScannedChat`; the assertions are each ruling's own, turn by turn."""
+    by `_ScannedChat`; the assertions are each ruling's own, turn by turn.
+
+    Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
+    header is the product-code answer's own intro naming the described set and its count,
+    and a set row is the product-code row, so 1 and 3 read the one-line header and 2 and 4
+    read the product-code rows.
+    """
     sorento = _display(world["sorento"].brand_name)
     replies = [chat.say(x["text"], _verdict(x["verdict"], x["text"])) for x in _exchanges()]
     one, two, three, four, five, six, seven, eight = replies
 
-    # 1: R1 + R2. Line by line; the weighted brand heads it; the others by weight.
-    assert _header(one)[:2] == [f"*Brand:* {sorento}", "*Product type:* Wash basin"], one
-    assert _header(one)[2].startswith("3 wash basins have stock. That is too many to list"), one
-    # 2: R3. "10" lists what fits, two lines a product.
-    assert len(_rows(two)) == 2 and all(len(r["lines"]) <= 2 for r in _rows(two)), two
-    # 3: R2. The Product type line is there.
-    assert "*Product type:* Water closet" in _header(three) and "*Trap:* P trap" in _header(three), three
+    # 1: R1 + R2. The weighted brand heads it; the others by weight.
+    assert _header(one) == [
+        f"Stock summary for {sorento} wash basins with stock (3). "
+        "That is too many to list in one message. How many should I show (up to 2)? "
+        "Or ask again naming a brand or size."
+    ], one
+    # 2: R3. "10" lists what fits, the product-code rows.
+    assert len(row_blocks(two)) == 2, two
+    # 3: R2. The product type and trap are both named.
+    assert "wash basin" not in _header(three)[0].lower()
+    assert "water closet" in _header(three)[0].lower() and "p trap" in _header(three)[0].lower(), three
     # 4: R3.
-    assert all(len(r["lines"]) <= 2 for r in _rows(four)) and _rows(four), four
+    assert row_blocks(four), four
     # 5: R4.
     assert five.startswith("No gunmetal wash basins with incoming stock (I looked for Finish or colour: Gunmetal among wash basins)."), five
     # 6 and 7: R5.
     assert six.endswith("Did you mean tap or wash basin?"), six
-    assert "2 taps have stock." in _header(seven), seven
+    assert f"Stock summary for {sorento} taps with stock (2)." in _header(seven), seven
     # 8: R6.
     assert eight == "I don't know 't trap' as a trap. I know P trap and S trap.", eight
 
