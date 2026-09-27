@@ -439,4 +439,12 @@ describe('SalesOpportunityPortalDetail', () => {
     fireEvent.change(screen.getByLabelText('Qty'), { target: { value: '3' } });
     expect((screen.getByLabelText('Expected amount') as HTMLInputElement).value).toBe('5000.00');
   });
+
+  it('Back returns to the portal home on the Sales Opportunity kind, in the slug tree when given one', async () => {
+    render(<SalesOpportunityPortalDetail id="opp-1" slug="darren" />);
+    await screen.findByText('OPP-000001');
+    expect(screen.getByRole('link', { name: /Back/ }).getAttribute('href')).toBe(
+      '/portal/c/darren?type=sales_opportunity',
+    );
+  });
 });

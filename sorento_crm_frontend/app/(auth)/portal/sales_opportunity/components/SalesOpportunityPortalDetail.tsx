@@ -30,6 +30,7 @@ import type { RecordAction } from '@/components/common/recordActions';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { toast } from '@/lib/toast';
 import { formatCurrency, formatDate } from '@/lib/helpers';
+import { portalHomePath } from '../../lib/portal-paths';
 import {
   getPortalOpportunityMeta,
   getPortalSalesOpportunity,
@@ -49,7 +50,7 @@ import {
   type LineDraft,
 } from './PortalOpportunityLineRow';
 
-export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
+export default function SalesOpportunityPortalDetail({ id, slug }: { id: string; slug?: string }) {
   const [opportunity, setOpportunity] = useState<PortalSalesOpportunity | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -272,7 +273,7 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 px-3 pb-8 pt-4">
       <Button variant="ghost" size="sm" asChild>
-        <Link href="/portal/sales_opportunity">
+        <Link href={portalHomePath({ slug, type: 'sales_opportunity' })}>
           <ArrowLeft className="mr-1 size-4" /> Back
         </Link>
       </Button>
