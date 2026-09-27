@@ -152,6 +152,14 @@ describe('TicketConversationPanel reply-to', () => {
     expect(screen.queryByTestId('composer-quote')).toBeNull();
   });
 
+  it('AC-RT-17: a stale post-send clear leaves a newer pick alone', () => {
+    render(<TicketConversationPanel ticketId="t1" />);
+    fireEvent.click(screen.getByTestId('fake-bubble-reply'));
+    const clear = composerProps.at(-1)!.onClearReplyTo as (sent?: unknown) => void;
+    act(() => clear({ messageId: 'older', excerpt: 'older quote', senderLabel: 'Mr Loo' }));
+    expect(screen.getByTestId('composer-quote')).toHaveTextContent('Is the sink in stock?');
+  });
+
   it('AC-RT-17: the ticket send forwards the audit fields', async () => {
     render(<TicketConversationPanel ticketId="t1" />);
     const adapter = composerProps.at(-1)!.sendAdapter as (p: unknown) => Promise<unknown>;

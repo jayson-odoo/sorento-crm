@@ -78,7 +78,9 @@ Plan: `PLAN-ticket-reply-to-27sep.md`
   text handed to the send is `> {excerpt}\n{body}` where excerpt is the quoted text with
   whitespace collapsed, clipped at 160 characters plus an ellipsis (the pre-16-Aug
   `buildQuotedReplyText`, byte for byte), and `reply_to_message_id` / `reply_to_excerpt` ride
-  along for the audit trail. After a successful send the preview clears.
+  along for the audit trail. After a successful send the preview clears (only if it is still the
+  target that send carried). Outside the 24h window (template send) the quote and answer are
+  flattened onto one line and the composer's one-line warning shows.
 - **AC-RT-18** [BE] Given `POST /{tracking_id}/ticket/send` with JSON `{text: "> q\nbody",
   reply_to_message_id, reply_to_excerpt}`, then Respond receives exactly that text, unchanged,
   and the ticket's response-clock event reason records `reply_to_message_id=<id>` and

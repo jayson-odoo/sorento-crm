@@ -1,6 +1,6 @@
 # PLAN: ticket resolving reply-to (quoted message) with WhatsApp gestures (#1317)
 
-Status: Track: full (FE diff over 300 lines with tests; no migration, no auth/RBAC change, no new ingest surface). Planning committed 27 Sep 2026; build in progress on the same PR.
+Status: Track: full (FE diff over 300 lines with tests; no migration, no auth/RBAC change, no new ingest surface). Built and reviewed on PR #1318 (reviewer: no blockers, 3 should-fix applied); awaiting CI label and owner hand test. Browser pass not run in the cloud lane (needs a Respond-linked ticket on prod-copy data; see cloud-lanes.md "What stays local").
 UAC: `ticket-reply-to-27sep-acceptance-criteria.md`
 Issue: #1317. Owner's words there are the scope: bring back reply-to in ticket resolving, WhatsApp gestures (swipe right on the phone, chevron or right click on desktop), carried in the outgoing text the way the dropped version did.
 
@@ -115,6 +115,17 @@ No backend change, no migration (alembic heads quoted in the PR close-out).
 8. Tap on a quote whose original is not in the loaded page: **a plain label (no id travels in
    the text to fetch it by); scroll up loads older pages and the quote becomes tappable once the
    original is loaded.**
+
+## Review round 1 (applied)
+
+- Out of the 24h window the send is a template and line breaks are flattened, so the quote and
+  the answer arrive on one line (`> quote answer`). The quote is kept (the customer still sees
+  which message is answered) and the composer's one-line warning now shows whenever a quote is
+  present (AC-RT-17).
+- The post-send clear names the target it sent (`onClearReplyTo(sent)`), so a bubble picked
+  while a send was in flight stays picked.
+- AC-RT-8 boundary: a release at exactly 56px replies (test added; `>=` to `>` now goes red).
+- The swipe arrow rides just outside the bubble's leading edge instead of the row's start.
 
 ## Tests (red first)
 

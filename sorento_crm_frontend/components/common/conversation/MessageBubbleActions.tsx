@@ -91,16 +91,6 @@ export default function MessageBubbleActions({
 
   return (
     <>
-      {onReply && (
-        <span
-          aria-hidden
-          data-testid="swipe-reply-icon"
-          className="pointer-events-none absolute start-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-full bg-black/10 text-zinc-700 dark:bg-white/15 dark:text-zinc-200"
-          style={{ opacity: swipe.progress }}
-        >
-          <CornerUpLeft className="size-4" />
-        </span>
-      )}
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
@@ -126,6 +116,18 @@ export default function MessageBubbleActions({
             }
             {...swipe.handlers}
           >
+            {onReply && (
+              // Rides just outside the bubble's leading edge, so it shows in
+              // the gap the swipe opens, for incoming and outgoing alike.
+              <span
+                aria-hidden
+                data-testid="swipe-reply-icon"
+                className="pointer-events-none absolute end-full top-1/2 me-2 flex size-7 -translate-y-1/2 items-center justify-center rounded-full bg-black/10 text-zinc-700 dark:bg-white/15 dark:text-zinc-200"
+                style={{ opacity: swipe.progress }}
+              >
+                <CornerUpLeft className="size-4" />
+              </span>
+            )}
             {(onReply || hasCopy) && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

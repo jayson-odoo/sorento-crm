@@ -1099,7 +1099,7 @@ export default function RespondChatList({
                   </span>
                 </div>
               )}
-              <div className={`relative flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
+              <div className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
                 <MessageBubbleActions
                   enabled={messageMenu && !isPending}
                   onReply={onReply ? () => onReply(replyTarget()) : undefined}

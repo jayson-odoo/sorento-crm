@@ -397,7 +397,11 @@ export default function TicketConversationPanel({
             }
             notAvailableMessage={notAvailableMessage}
             replyTo={canReply ? replyTarget : null}
-            onClearReplyTo={() => setReplyTarget(null)}
+            // After a send, only the target that send carried is dropped: a
+            // bubble picked while it was in flight stays picked.
+            onClearReplyTo={(sent) =>
+              setReplyTarget((current) => (sent && current !== sent ? current : null))
+            }
           />
         </div>
       )}

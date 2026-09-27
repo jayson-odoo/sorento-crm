@@ -151,6 +151,18 @@ describe('swipe right to reply (AC-RT-7..10)', () => {
     expect(bubble.style.transform).toBe('translateX(0px)');
   });
 
+  it('AC-RT-8: a release at exactly 56px replies (the threshold is inclusive)', () => {
+    const onReply = vi.fn();
+    render(<RespondChatList items={[question]} messageMenu onReply={onReply} />);
+    const bubble = bubbleOf('Is the sink in stock?');
+    touch(bubble, 'pointerDown', 10);
+    touch(bubble, 'pointerMove', 30);
+    touch(bubble, 'pointerMove', 66);
+    expect(bubble.style.transform).toBe('translateX(56px)');
+    touch(bubble, 'pointerUp', 66);
+    expect(onReply).toHaveBeenCalledTimes(1);
+  });
+
   it('AC-RT-7: travel is capped at 80px', () => {
     render(<RespondChatList items={[question]} messageMenu onReply={vi.fn()} />);
     const bubble = bubbleOf('Is the sink in stock?');

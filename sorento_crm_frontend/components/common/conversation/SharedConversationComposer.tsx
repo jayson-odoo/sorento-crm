@@ -88,8 +88,12 @@ interface SharedConversationComposerProps {
    * `sendAdapter` for the audit trail only.
    */
   replyTo?: ReplyTarget | null;
-  /** Drops `replyTo`: the preview's Cancel, and after a successful send. */
-  onClearReplyTo?: () => void;
+  /**
+   * Drops `replyTo`: the preview's Cancel (no argument), and after a
+   * successful send, naming the target that send carried - controls stay live
+   * during a send, so the owner keeps a target picked in the meantime.
+   */
+  onClearReplyTo?: (sent?: ReplyTarget) => void;
   /**
    * Overrides the default send. Used where the send must be stamped with more
    * than (entityType, entityId) - e.g. an intervention ticket carrying files
@@ -507,7 +511,7 @@ export default function SharedConversationComposer({
       ]);
       setFailedFileName(failed?.filename ?? null);
       // The quote went out with the text, whatever happened to the files.
-      if (replyTo) onClearReplyTo?.();
+      if (replyTo) onClearReplyTo?.(replyTo);
       if (attachmentsDropped) {
         toast.error(
           sentFiles.length === 1
@@ -852,7 +856,7 @@ export default function SharedConversationComposer({
           variant="ghost"
           className="size-5 shrink-0"
           aria-label="Cancel reply"
-          onClick={onClearReplyTo}
+          onClick={() => onClearReplyTo()}
         >
           <X className="size-3.5" />
         </Button>
@@ -899,7 +903,8 @@ export default function SharedConversationComposer({
           <div className="rounded-md border bg-muted/30 p-3 text-sm whitespace-pre-wrap break-words">
             {renderTemplateBody()}
           </div>
-          {/[\n\t]|\s{2,}/.test(replyText) && (
+          {/* A quote is a line of its own, so it is flattened too (#1317). */}
+          {(!!replyTo || /[\n\t]|\s{2,}/.test(replyText)) && (
             <p className="text-xs text-amber-600 dark:text-amber-400" data-testid="flatten-warning">
               Line breaks, tabs and repeated spaces are removed when sent as a template - the
               message is delivered on one line.

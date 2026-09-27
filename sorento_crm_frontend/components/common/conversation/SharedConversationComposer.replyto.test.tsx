@@ -102,6 +102,32 @@ describe('SharedConversationComposer reply-to', () => {
     await waitFor(() => expect(onClearReplyTo).toHaveBeenCalled());
   });
 
+  it('AC-RT-17: the post-send clear names the target it sent, so a newer pick survives', async () => {
+    const onClearReplyTo = vi.fn();
+    const { sendAdapter } = renderComposer({ replyTo: REPLY_TO, onClearReplyTo });
+    typeAndSend('Yes');
+    await waitFor(() => expect(sendAdapter).toHaveBeenCalled());
+    await waitFor(() => expect(onClearReplyTo).toHaveBeenCalledWith(REPLY_TO));
+  });
+
+  it('AC-RT-17: outside the 24h window the quote still goes, with the one-line warning', () => {
+    renderComposer({
+      replyTo: REPLY_TO,
+      onClearReplyTo: vi.fn(),
+      windowStateOverride: {
+        closed: true,
+        template: {
+          configured: true,
+          template_name: 'chat_reply',
+          body_text: 'Hi, {{1}}',
+          slots: { '1': { editable: true } },
+        } as never,
+      },
+    });
+    expect(screen.getByTestId('composer-reply-to')).toBeInTheDocument();
+    expect(screen.getByTestId('flatten-warning')).toBeInTheDocument();
+  });
+
   it('AC-RT-17: a failed send keeps the target so a retry still quotes', async () => {
     const onClearReplyTo = vi.fn();
     const sendAdapter = vi.fn().mockRejectedValue(new Error('boom'));
