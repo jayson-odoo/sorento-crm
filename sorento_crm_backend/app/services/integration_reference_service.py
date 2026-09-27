@@ -358,6 +358,19 @@ class IntegrationReferenceService:
         # entity_type is interpolated only after passing the allowlist; the id
         # is always a bound parameter.
         table = _require_supported(entity_type)
+        module_table = _module_table(entity_type)
+        if module_table is not None:
+            # Through the Table, never the bare name: the table lives in a module schema that
+            # is not on the production `search_path`, and a failed statement here would abort
+            # the caller's transaction (the `except` below cannot undo that). The Table is
+            # schema-qualified and honours a `schema_translate_map`.
+            found = self.db.execute(
+                select(literal(1))
+                .select_from(module_table)
+                .where(module_table.c.id == str(entity_id))
+                .limit(1)
+            ).first()
+            return found is not None
         try:
             found = self.db.execute(
                 # Unqualified on purpose, and it matters now that

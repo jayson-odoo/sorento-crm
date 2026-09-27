@@ -800,3 +800,64 @@ class TestNoDateFloor:
             for r in load_fixture("billing_documents_v1_pre2023.json")["records"]
         )
         assert dates == [date(2019, 6, 30), date(2022, 12, 31), date(2023, 1, 1)]
+
+
+# ============================================ security review round 1 (production shape)
+class TestProductionSearchPath:
+    """`finance` is not on the production `search_path` ("$user", public). A reference
+    existence check that named `billing_documents` bare would fail there and abort the
+    transaction, breaking every update, delete and read-back; the blank schema hid it by
+    putting `{name}_finance` on the path. Here the path is set the production way."""
+
+    def _production_path(self, env):
+        from ._pg_fixture import _BLANK
+
+        name = _BLANK["name"]
+        env.db.execute(
+            text(
+                f'SET LOCAL search_path TO "{name}", "{name}_scm", "{name}_dealer_kit", '
+                f'"{name}_chatbot", "{name}_sales", "{name}_projects", "public"'
+            )
+        )
+
+    def test_replay_cancel_read_and_delete_work_without_finance_on_the_path(self, env):
+        env.push_fixture()
+        self._production_path(env)
+
+        replay = env.push_fixture()
+        assert set(_outcomes(replay).values()) == {"unchanged"}, replay.json()
+
+        cancel = load_fixture("billing_documents_v1_changes.json")["records"][1]
+        assert _record(env.push([cancel]), "SRT_DB:CS:2001")["outcome"] == "updated"
+
+        read = env.read(["SRT_DB:IV:1001"])
+        assert read.status_code == 200, read.text
+        assert read.json()["records"][0]["entity_id"]
+
+        cn = _minimal(
+            f"{MARKER}:CN:P1", document_type="credit_note", against_source_ref="SRT_DB:IV:1003"
+        )
+        assert _record(env.push([cn]), f"{MARKER}:CN:P1")["outcome"] == "created"
+
+        deleted = env.delete(["SRT_DB:DN:3001"])
+        assert deleted.json()["records"][0]["outcome"] == "deleted"
+
+
+class TestOverflowIsOneRecord:
+    def test_a_huge_exponent_fails_its_record_and_the_rest_lands(self, env):
+        huge = _minimal(
+            f"{MARKER}:IV:HUGE",
+            net_total="1e999999999",
+            tax_total="1e999999999",
+            total="1e999999999",
+        )
+        too_big = _minimal(f"{MARKER}:IV:BIG", net_total=1e14, tax_total=0, total=1e14)
+        good = _minimal(f"{MARKER}:IV:OK")
+        res = env.push([huge, too_big, good])
+        assert res.status_code == 200, res.text
+        out = {r["source_ref"]: r for r in res.json()["records"]}
+        assert out[f"{MARKER}:IV:HUGE"]["outcome"] == "failed"
+        assert "net_total" in out[f"{MARKER}:IV:HUGE"]["errors"]
+        assert out[f"{MARKER}:IV:BIG"]["outcome"] == "failed"
+        assert "net_total" in out[f"{MARKER}:IV:BIG"]["errors"]
+        assert out[f"{MARKER}:IV:OK"]["outcome"] == "created"

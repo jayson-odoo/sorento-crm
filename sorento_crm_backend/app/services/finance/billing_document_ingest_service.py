@@ -213,7 +213,12 @@ class BillingDocumentIngestService(MasterRefResolver):
                 outcome=IngestOutcome.FAILED,
                 errors={"_": INTERNAL_ERROR_MESSAGE},
             )
-        errors = billing_document_errors(payload)
+        try:
+            errors = billing_document_errors(payload)
+        except ArithmeticError:
+            # Unreachable through the schema's bounds; kept so one record's arithmetic can
+            # never escape the batch loop and turn a 1000-record push into a 500.
+            errors = {"total": "not computable"}
         if errors:
             return RecordResult(
                 source_ref=payload.source_ref, outcome=IngestOutcome.FAILED, errors=errors

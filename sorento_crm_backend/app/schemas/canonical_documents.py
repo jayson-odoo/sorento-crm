@@ -375,6 +375,14 @@ _NON_NEGATIVE_QTY_TYPES = frozenset({"invoice", "cash_sale"})
 _TOTAL_TOLERANCE = Decimal("0.01")
 
 
+#: Bounds matching the columns (`numeric(15,2)`, `numeric(15,4)`, `numeric(7,4)`), so a value
+#: the table cannot hold, or an exponent that would overflow the arithmetic, fails its own
+#: record by field instead of reaching the database. Non-finite values are refused too.
+_Money = Annotated[Decimal, Field(gt=Decimal("-1e13"), lt=Decimal("1e13"), allow_inf_nan=False)]
+_Qty4 = Annotated[Decimal, Field(gt=Decimal("-1e11"), lt=Decimal("1e11"), allow_inf_nan=False)]
+_Rate4 = Annotated[Decimal, Field(ge=0, lt=Decimal("1000"), allow_inf_nan=False)]
+
+
 class CanonicalBillingDocumentLine(BaseModel):
     """One item line of a billing document (plan 3.3.2).
 
@@ -393,14 +401,14 @@ class CanonicalBillingDocumentLine(BaseModel):
     description: Optional[str] = Field(None, max_length=8000)
     uom: Optional[str] = Field(None, max_length=20)
     # Sign checked per document type on the header (a credit note may carry a negative).
-    quantity: Decimal
-    unit_price: Optional[Decimal] = None
-    discount_amount: Optional[Decimal] = None
-    net_amount: Optional[Decimal] = None
+    quantity: _Qty4
+    unit_price: Optional[_Qty4] = None
+    discount_amount: Optional[_Money] = None
+    net_amount: Optional[_Money] = None
     tax_code: Optional[str] = Field(None, max_length=20)
-    tax_rate: Optional[Decimal] = None
-    tax_amount: Optional[Decimal] = None
-    line_total: Optional[Decimal] = None
+    tax_rate: Optional[_Rate4] = None
+    tax_amount: Optional[_Money] = None
+    line_total: Optional[_Money] = None
     # As sent: the SO or DO line this one was transferred from (A6). `from_line_ref` is an
     # SO line's `source_ref` when the shared service can name one.
     from_doc_type: Optional[str] = Field(None, max_length=10)
@@ -440,12 +448,12 @@ class CanonicalBillingDocument(_Canonical):
     customer_name: Optional[str] = Field(None, max_length=255)
     agent_code: Optional[str] = Field(None, max_length=100)
     currency_code: Optional[str] = Field(None, min_length=3, max_length=3)
-    currency_rate: Optional[Decimal] = Field(None, gt=0)
-    net_total: Decimal
-    tax_total: Decimal
-    total: Decimal
+    currency_rate: Optional[Annotated[Decimal, Field(gt=0, lt=Decimal("1e10"))]] = None
+    net_total: _Money
+    tax_total: _Money
+    total: _Money
     # Net in MYR as AutoCount converted it (A5); what the invoiced basis sums (ruling Q12).
-    local_net_total: Decimal
+    local_net_total: _Money
     against_doc_no: Optional[str] = Field(None, max_length=50)
     against_source_ref: Optional[str] = Field(None, max_length=255)
     ref: Optional[str] = Field(None, max_length=100)
