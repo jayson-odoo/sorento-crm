@@ -47,6 +47,16 @@ def _contact_display_names(db: Session, contact_ids: list[str]) -> dict[str, str
     return out
 
 
+def _scheduled_task_names(db: Session, keys: list[str]) -> dict[str, str]:
+    keys = [k for k in keys if k]
+    if not keys:
+        return {}
+    from app.models.scheduled_task import ScheduledTask
+
+    rows = db.query(ScheduledTask.key, ScheduledTask.name).filter(ScheduledTask.key.in_(keys)).all()
+    return {r.key: r.name for r in rows if r.name}
+
+
 def _integration_names(db: Session, integration_ids: list[str]) -> dict[str, str]:
     ids = [i for i in integration_ids if i]
     if not ids:
@@ -120,23 +130,35 @@ async def get_audit_logs(
     integration_ids = list(
         {str(it.integration_id) for it in items if getattr(it, "integration_id", None) is not None}
     )
+    scheduled_keys = list(
+        {it.job_id for it in items if getattr(it, "actor_type", None) == "scheduler" and getattr(it, "job_id", None)}
+    )
     user_names = _user_display_names(db, user_ids)
     contact_names = _contact_display_names(db, contact_ids)
     integration_names = _integration_names(db, integration_ids)
+    scheduled_names = _scheduled_task_names(db, scheduled_keys)
+    from app.services.activity_service import entity_labels
+
+    record_labels = entity_labels(db, items)
     data = []
     for it in items:
         payload = AuditLogResponse.model_validate(it).model_dump()
-        # Attribution precedence: acting contact -> staff user -> "System".
-        if getattr(it, "contact_id", None) is not None and contact_names.get(str(it.contact_id)):
+        # Attribution precedence: acting contact -> staff user -> "System". Contact
+        # first only on a contact or legacy row: a staff row also carries the user's
+        # linked WhatsApp contact (plan 8.1), and there the user is the name.
+        contact_first = (getattr(it, "actor_type", None) or "legacy") in ("contact", "legacy")
+        if contact_first and getattr(it, "contact_id", None) is not None and contact_names.get(str(it.contact_id)):
             payload["user_display_name"] = contact_names[str(it.contact_id)]
         elif it.user_id is not None:
             payload["user_display_name"] = user_names.get(str(it.user_id)) or "System"
         else:
             payload["user_display_name"] = "System"
         payload["actor_label"] = _actor_label(
-            it, user_names, contact_names, integration_names, payload["user_display_name"]
+            it, user_names, contact_names, integration_names, payload["user_display_name"],
+            scheduled_names=scheduled_names,
         )
         payload["description"] = _derive_description(it)
+        payload["entity_label"] = record_labels.get(str(it.id))
         data.append(AuditLogResponse(**payload))
     return {
         "data": data,

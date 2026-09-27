@@ -1,10 +1,11 @@
 """Audit contact attribution + display resolution (System Health WS2a).
 
 - log_audit(..., contact_id=X) persists contact_id.
-- The auto-flush path (_session_before_flush) stamps set_actor_contact_id() from
-  request context onto AuditLog.contact_id.
-- GET /api/v1/audit/logs/ resolves user_display_name: contact name (contact_id) >
-  staff name (user_id) > "System" (neither); changed_from/changed_to narrows.
+- The auto-flush path (_session_before_flush) copies the stamped actor's contact_id
+  onto AuditLog.contact_id.
+- GET /api/v1/audit/logs/ resolves user_display_name: on a contact or legacy row,
+  contact name (contact_id) > staff name (user_id) > "System" (neither); on any other
+  row the staff name wins; changed_from/changed_to narrows.
 - _derive_description turns a status-change UPDATE into "status: old → new".
 """
 import uuid
@@ -15,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app  # noqa: E402 (import first to settle app wiring)
 import app.database as app_database
-from app.audit_context import set_actor_contact_id
+from app.audit_context import AuditActor, clear_actor, stamp_actor
 from app.dependencies import get_current_user_or_api_key
 from app.models.access import RespondContact
 from app.models.audit import AuditLog
@@ -56,7 +57,7 @@ def test_auto_flush_stamps_actor_contact_from_context(db):
     db.commit()
 
     cid = str(uuid.uuid4())
-    set_actor_contact_id(cid)
+    stamp_actor(AuditActor(actor_type="contact", contact_id=cid))
     try:
         user.name = "Staff Renamed"  # tracked UPDATE (User.__audit_track__)
         # Invoke the exact function the SQLAlchemy before_flush listener calls.
@@ -68,7 +69,7 @@ def test_auto_flush_stamps_actor_contact_from_context(db):
         ]
         assert stamped, "auto-flush audit row was not stamped with the actor contact id"
     finally:
-        set_actor_contact_id(None)
+        clear_actor()
 
 
 # --------------------------------------------------------------------------- #

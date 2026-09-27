@@ -447,3 +447,64 @@ def test_ac05_reference_seed_seeds_salesperson_and_portal_user_protected_no_defa
 
             perms = db.query(UserRolePermission).filter(UserRolePermission.role_id == role.id).count()
             assert perms == 0
+
+
+# --------------------------------------------------------------------------- #
+# Reviewer pass at 03d3b474, N5: a write that loses the race to the unique     #
+# index is the same 409, not a 500. The pre-checks are stubbed out, which is   #
+# exactly what a concurrent writer that commits between check and flush does. #
+# --------------------------------------------------------------------------- #
+def test_create_losing_the_email_race_to_the_unique_index_is_409_email_taken(api_client, monkeypatch):
+    from app.services.user_service import UserService
+
+    client, db, _admin = api_client
+    stem = unique_code("race")
+    db.add(User(id=str(uuid.uuid4()), email=f"{stem}@example.com", name="Race Winner", status="ACTIVE"))
+    db.commit()
+    monkeypatch.setattr(UserService, "_check_email_free", lambda self, email, exclude_user_id: None)
+
+    resp = client.post("/api/v1/user-management/users/", json={"email": f"{stem}@EXAMPLE.COM", "name": "Race Loser"})
+
+    assert resp.status_code == 409, resp.text
+    body = resp.json()
+    assert body.get("code") == "EMAIL_TAKEN", body
+    assert "Race Winner" in str(body.get("message") or "")
+
+
+def test_invite_losing_the_email_race_to_the_unique_index_is_409_email_taken(api_client, monkeypatch):
+    from app.services.user_service import UserService
+
+    client, db, _admin = api_client
+    stem = unique_code("irace")
+    db.add(User(id=str(uuid.uuid4()), email=f"{stem}@example.com", name="Invite Race Winner", status="ACTIVE"))
+    db.commit()
+    monkeypatch.setattr(UserService, "_check_email_free", lambda self, email, exclude_user_id: None)
+
+    resp = client.post(
+        "/api/v1/user-management/users/invite", json={"email": f"{stem}@EXAMPLE.COM", "name": "Invite Race Loser"}
+    )
+
+    assert resp.status_code == 409, resp.text
+    body = resp.json()
+    assert body.get("code") == "EMAIL_TAKEN", body
+    assert "Invite Race Winner" in str(body.get("message") or "")
+
+
+def test_update_losing_the_contact_race_to_the_unique_index_is_409_contact_already_linked(api_client, monkeypatch):
+    from app.services.user_service import UserService
+
+    client, db, _admin = api_client
+    contact = _seed_contact(db, phone=_phone())
+    holder = User(id=str(uuid.uuid4()), email=f"{unique_code('rh')}@x.com", name="Race Holder", status="ACTIVE", respond_contact_id=contact.id)
+    target = User(id=str(uuid.uuid4()), email=f"{unique_code('rt')}@x.com", name="Race Target", status="ACTIVE")
+    db.add_all([holder, target])
+    db.commit()
+    monkeypatch.setattr(UserService, "_check_contact_free", lambda self, contact_id, exclude_user_id: None)
+
+    resp = client.put(f"/api/v1/user-management/users/{target.id}", json={"respond_contact_id": contact.id})
+
+    assert resp.status_code == 409, resp.text
+    body = resp.json()
+    assert body.get("code") == "CONTACT_ALREADY_LINKED", body
+    assert "Race Holder" in str(body.get("message") or "")
+    assert holder.id not in resp.text

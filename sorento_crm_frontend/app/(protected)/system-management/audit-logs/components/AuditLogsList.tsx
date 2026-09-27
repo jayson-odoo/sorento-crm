@@ -81,6 +81,13 @@ function actionBadgeVariant(
   }
 }
 
+/** The record in words; the raw entity_id is never shown (no UUIDs in the UI). */
+function recordLabel(log: AuditLog): string {
+  if (log.entity_label) return log.entity_label;
+  const pretty = log.entity_type.replace(/_/g, ' ');
+  return pretty.charAt(0).toUpperCase() + pretty.slice(1);
+}
+
 function prettyJson(value: Record<string, unknown> | null | undefined): string {
   if (value == null) return '-';
   try {
@@ -196,14 +203,14 @@ export default function AuditLogsList() {
       },
       {
         accessorKey: 'entity_id',
-        header: ({ column }) => <DataGridColumnHeader title="Entity ID" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Record" column={column} />,
         cell: ({ row }) => (
-          <span className="block truncate text-xs text-muted-foreground" title={row.original.entity_id}>
-            {row.original.entity_id}
+          <span className="block truncate text-xs text-muted-foreground" title={recordLabel(row.original)}>
+            {recordLabel(row.original)}
           </span>
         ),
         size: 160,
-        meta: { headerTitle: 'Entity ID' },
+        meta: { headerTitle: 'Record' },
       },
       {
         accessorKey: 'action',
@@ -466,8 +473,8 @@ export default function AuditLogsList() {
                   <dd>{selectedLog.entity_type}</dd>
                 </div>
                 <div>
-                  <dt className="text-xs font-medium text-muted-foreground">Entity ID</dt>
-                  <dd className="break-all">{selectedLog.entity_id}</dd>
+                  <dt className="text-xs font-medium text-muted-foreground">Record</dt>
+                  <dd className="break-words">{recordLabel(selectedLog)}</dd>
                 </div>
                 <div>
                   <dt className="text-xs font-medium text-muted-foreground">Actor</dt>

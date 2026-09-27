@@ -5,8 +5,8 @@ to verify access rights. The effective user is signaled via the
 ``X-Impersonate-User-Id`` request header, which is honored by ``get_current_user``
 when an active ``impersonation_sessions`` row exists for that admin/target pair.
 
-Audit / created_by / updated_by always remain the real admin - see
-``app.dependencies.get_actor_user_id`` and ``set_audit_context``.
+created_by / updated_by keep the effective user; the audit row's ``real_user_id``
+records the admin (identity S0, plan 8.2). See ``app.audit_context.AuditActor``.
 """
 import logging
 from datetime import datetime

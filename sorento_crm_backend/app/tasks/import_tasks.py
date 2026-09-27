@@ -146,8 +146,11 @@ def _write_import_audit(
 ) -> None:
     """Coarse per-job import audit at the job boundary. Best-effort (post-commit
     side effect): a failure here must NEVER break the import, so we swallow and
-    warn. Bulk imports bypass the ORM audit listener, so this is the only audit
-    row an import job produces. Commits the audit row on the same session AFTER
+    warn. The worker runs the ORM audit listener (identity S0), so a bulk import
+    suppresses the per-row rows for the entity it imports
+    (``skip_audit_entity_types``) and this is its one row for that entity; an
+    incidental write to another tracked model (a shipment status flip, a
+    back-created supplier) keeps its own row. Commits the audit row on the same session AFTER
     the import data (and the ImportJob status) have already committed.
 
     ``row_count`` may be an int OR a zero-argument callable that computes one. The
@@ -384,6 +387,14 @@ def process_warehouse_import(db_job_id: str, warehouses_data: list, user_id: str
         db.close()
 
 
+# The entity types the audit listener writes for the models these bulk imports
+# write row by row (`_audit_entity_type`), suppressed in favour of one coarse job
+# row. Not the coarse row's own label: that is "order" / "inbound_shipment".
+_PRODUCT_ENTITY_TYPE = "product"
+_ORDER_ENTITY_TYPE = "orders"
+_INBOUND_SHIPMENT_ENTITY_TYPE = "inbound_shipments"
+
+
 def process_product_import(db_job_id: str, products_data: list, user_id: str):
     """Process product import in background."""
     from rq import get_current_job
@@ -406,6 +417,11 @@ def process_product_import(db_job_id: str, products_data: list, user_id: str):
 
     job_id_str: str = str(job.job_id)
     outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
+    # Product is __audit_track__ and the worker registers the audit listener
+    # (identity S0), so an item listing of a few thousand rows would become a few
+    # thousand per-row audit rows. The coarse job row below covers the file, as for
+    # the customer import.
+    db.info.setdefault("skip_audit_entity_types", set()).add(_PRODUCT_ENTITY_TYPE)
     try:
         job_service.start_job(job_id_str)
         job_service.update_job_progress(job_id_str, total_rows=len(products_data))
@@ -505,6 +521,9 @@ def process_order_tracking_import(db_job_id: str, file_data: bytes, user_id: str
     
     job_id_str: str = str(job.job_id)
     outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
+    # Order is __audit_track__: one coarse job row covers the file, not one row per
+    # order (identity S0, same pattern as the product and customer imports).
+    db.info.setdefault("skip_audit_entity_types", set()).add(_ORDER_ENTITY_TYPE)
     try:
         # Mark job as started
         job_service.start_job(job_id_str)
@@ -3185,6 +3204,9 @@ def process_container_status_import(
 
     job_id_str = str(job.job_id)
     outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
+    # InboundShipment is __audit_track__: one coarse job row covers the sheet, not
+    # one row per container (identity S0, same pattern as the customer import).
+    db.info.setdefault("skip_audit_entity_types", set()).add(_INBOUND_SHIPMENT_ENTITY_TYPE)
     try:
         job_service.start_job(job_id_str)
 
