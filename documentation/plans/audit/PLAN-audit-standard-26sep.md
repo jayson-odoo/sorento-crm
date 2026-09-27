@@ -6,7 +6,9 @@ lane; merge order is #1298, then #1303, then #1299. The actor on every audit row
 (identity plan section 8); S0 adds no actor column. Measurement gate: run on the 25 Sep
 production copy (27 Sep 06:42 MYT), failed as built; round 3 implements the B3 exclusion ruling
 (assumed, owner to confirm): projected 3,136 rows a day at most, 2,015 expected, against 480
-today (section "Measurement"). Round 3 runs: the touched and audit, identity, queue, worker,
+today (section "Measurement"). Owner confirmed the B3 exclusion list as built (27 Sep 15:31 MYT).
+Merge round: origin/main 721ca398 merged, aud_0001 chains on identity_0001_s0_model, single head
+aud_0001_audit_standard_s0, up-down-up clean. Round 3 runs: the touched and audit, identity, queue, worker,
 scheduler, ingest and import suites (178 files) 2981 passed, 73 skipped, 0 failed; kill tests
 K1 to K15 all red. S1, S2, S3 not started.
 Plan created: 2026-09-26 (from the investigation report on #1281, comment 5846914028, sections 7
