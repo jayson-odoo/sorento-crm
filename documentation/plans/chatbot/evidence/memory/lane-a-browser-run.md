@@ -262,6 +262,161 @@ real pointer click at measured on-screen coordinates) passed at both viewports.
 target was actually on-screen; the one class of failure seen is a stale-ref/off-screen-click
 harness artifact reproducible identically on an untouched control, not a lane defect.
 
+## Round 3 (27 Sep 2026, HEAD 2a02bd95)
+
+Branch `claude/chatbot-memory-lane-a-t9sdo2` at HEAD `2a02bd95` ("test(chatbot): new contact
+default resolves to off, recall column dropped (round 3) [skip ci]"), on top of round 3's coder
+commit `3e1b95e7` ("feat(chatbot): memory round 3, context level values, facts at every level,
+statements list, recall column dropped, queue ticket and Chatbot tab"). Same dev stack as the
+earlier rounds: backend :8000 (`uvicorn --reload`, `.env.dev-stack`,
+`postgresql://sorento:sorento@localhost:5432/sorento_dev`), frontend :3000 dev (Turbopack,
+already running, not started or stopped by this run). agent-browser session `lane-a-r3`
+(`--session lane-a-r3`), driven with an explicit `--executable-path` pointing at the machine's
+Playwright-cached Chromium (`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`) because the
+daemon's own Chrome auto-detect failed on this box; once the daemon picked it up on first `open`,
+every later command that also failed auto-detect on its own (a per-invocation `npx` quirk, not a
+daemon issue) still worked against the same running daemon and the explicit path made this
+consistent. Logged in as `E2E_EMAIL`/`E2E_PASSWORD` from `.env.local`. Closed only this session
+(not `--all`) at the end.
+
+### Dev DB schema check (per the brief)
+
+Before touching the browser, checked the hand-edited dev DB directly:
+
+- `respond_contacts`: `chatbot_recall_enabled` column is gone (not in `\d respond_contacts`);
+  `ck_respond_contacts_chatbot_memory_level` now allows only
+  `off | conversation | episodes | full` (the value is `episodes`, not `past`).
+- Tan's own row (`e6aa5130-f012-4482-a1e1-15c428b77d88`) already had
+  `chatbot_memory_level = 'full'` - no `'past'` leftover, no update needed.
+- `system_settings.chatbot_memory` already read `{"enabled": false, "default_level": "full"}` -
+  no `'past'` leftover, no update needed. (The jsonb shape itself simplified since round 1's
+  seed note above, which listed `recall_default`/`profile_fields`/etc. - consistent with "recall
+  column dropped" in this round's commits.)
+
+No psql fix was required; both places already held the new-vocabulary default (`full`), not the
+old `past`.
+
+### Click log
+
+1. Sidebar Users & Access > People > Internal Users > row "Tan Wei Liang" (contact
+   `e6aa5130-f012-4482-a1e1-15c428b77d88`, the same seeded contact as rounds 1-2) at 1280x900.
+2. Tab strip now reads Profile / Access / Routing / Chat / **Chatbot** (5 tabs, was 4 pre-round-3).
+   Clicked "Chatbot" -> route `/user-management/contacts/{id}/chatbot`. Confirmed "Access" tab no
+   longer renders the memory cards at all - it now shows only Media Access / Access Agents / Field
+   reveals.
+3. On the Chatbot tab: "Chatbot settings" (memory level `SearchableSelect`, a second "answered on
+   the next pick" combobox, Stock checks / Notify salesman / Packing list allowed switches),
+   "What the bot knows" (Add button + grid: Customer/Segment/Salesperson CRM rows, Role Said row,
+   and a leftover "Note" row from round 2's own DB state, `"Cancel-delete test note"`),
+   "Conversations" (2 kept, current "Now" row + 2 closed episodes), "Open orders"
+   (`SO-CC001-0001`) - all present on one tab, matching the brief.
+4. Opened the level select: 4 options `Off / This conversation / Past conversations / Full
+   memory` (own-level select includes Off; the select's own listbox briefly renders "Off" as the
+   `option[selected]` on open - a keyboard-highlight default, not the field's real value, which
+   the combobox itself already showed as "Full memory" both before and after opening it).
+   Selected "Past conversations" -> `PUT .../chatbot` 200, auto-saved (no separate Save button on
+   this control). Clicked "Clear selection" -> field reads "(follow the system default)" -> a
+   second `PUT .../chatbot` 200. Reloaded -> still "(follow the system default)", confirmed
+   persisted. Reselected "Full memory" -> `PUT` 200, confirmed by re-reading the combobox text.
+5. Add fact: clicked "Add" -> "Add fact" dialog. **First attempt without `scrollintoview` on the
+   option closed the whole dialog** (reproduced the exact harness artifact the round-2 recheck
+   already diagnosed and named - a `click @ref` on an option below the fold without
+   `scrollintoview` first). Redid it properly (scrollintoview before every click: the "Add"
+   button, the key combobox, and the "Note" option each individually) -> dialog stayed open,
+   combobox showed "Note", value textbox appeared. This is not a fresh defect - it is the same
+   stale-ref/off-screen-click harness failure mode the round-2 recheck already reproduced and
+   attributed to methodology, not the app; a fresh snapshot + `scrollintoview` immediately before
+   the click passed cleanly every time after.
+6. Typed "Round 3 recheck note", clicked Save -> `PUT .../chatbot/facts/note` 200. The grid then
+   showed exactly ONE "Note" row reading "Round 3 recheck note" (it replaced the round-2 leftover
+   "Cancel-delete test note" rather than adding a second row) - `note` is a single-value fact key,
+   not a list, so this is correct behaviour, not a bug.
+7. Clicked "Delete Note" -> inline `role="timer"` countdown ("Deleting in 6s") + Cancel button, no
+   `confirm()`/dialog. Let it lapse; DB-verified afterward
+   (`sla_form_actions.source_entity_type='contact_chatbot_fact'`,
+   `source_entity_id='e6aa...:note'`, `status='committed'`, `commit_at - created_at` = 10s).
+   Reloaded -> the Note row is gone.
+8. Viewport 375x800 on the Chatbot tab: `document.documentElement.scrollWidth` ==
+   `clientWidth` (360 == 360, no page-level horizontal scroll); all 5 tabs (Profile / Access /
+   Routing / Chat / Chatbot) render in the tablist with no overflow.
+9. Sidebar Users & Access > Settings > Chatbot tab (1280x900 again): "Memory" card, "Default
+   context level" `SearchableSelect` with exactly 3 options (This conversation / Past
+   conversations / Full memory - no "Off", matching the brief; "Off" only appears on the
+   per-contact select). Selected "Past conversations", clicked Save -> `POST
+   .../settings/general` 200, reloaded -> still "Past conversations", confirmed persisted.
+   Reselected "Full memory", Save -> `POST` 200, reloaded -> confirmed restored to "Full memory".
+10. Sidebar System > Messaging > Chat History (had to `eval`-hide a `nextjs-portal` dev-tools
+    badge sitting at the bottom-left of the viewport first - it was intercepting the click on the
+    "System" sidebar group heading itself, which sits near the bottom of the expanded menu at
+    1280x900; a `document.elementFromPoint` check on the click coordinates confirmed the portal
+    element, not the app, was eating the click. Hid it for this session only via `eval`, same
+    workaround the round-2 recheck used). Column list: Time / Contact / Direction / **Queue** /
+    Message / Latency / Delivery. All 5 seeded rows for this contact showed "-" in the Queue
+    column - matches the brief's expectation exactly (S7 ticket mode was off when these turns
+    were seeded, so there is no ticket number to show).
+11. Clicked the "never mind, what's the status of my order CC001?" row -> per-contact thread
+    dialog (5 turns `#4748 #2400 #7fcc #8ad8 #aa6d`) -> "Open full trace" on `#7fcc` (the same
+    `order` topic-reset turn used in the round-2 recheck) -> `TurnDetailDrawer`. Expanded "Memory"
+    then "Context sent to the AI" with `scrollintoview` before each click - both opened in place,
+    drawer never closed (the round-2 fix for the accordion-closes-drawer bug still holds).
+12. Read the Memory panel: "Context level: full [own level]" (a level-source annotation is
+    present); "Current subject: domain order; customer CC001" (renders real data, the round-2 fix
+    for this holds); "Conversation closed: Sat 26 Sep, 2 turns: inventory SRTWB1455 (answered).";
+    "Facts saved: none this turn" (correct - turn 3 is the topic reset, not the `profile_statement`
+    turn `#8ad8`).
+13. Read "Context sent to the AI": "About this contact" 33/150, "Past conversations" 0/250, "This
+    conversation" 100/450, "Current subject and open question" 46/350, "Current message" 24/600,
+    "Total memory + message" 203/1800, "Dropped: nothing" - friendly labels throughout, no raw
+    `L1`/`L2` codes (the round-2 fix for this holds too).
+14. Viewport 375x800 on the drawer: `scrollWidth == clientWidth` (375 == 375), no page-level
+    horizontal scroll.
+15. `console`/`errors` (agent-browser) throughout: one pre-existing "key" prop warning on
+    `Demo1Layout`, unrelated to this lane and seen in every prior round's evidence too; no other
+    unhandled exceptions. `network requests --filter /api/v1/` showed only 200s for every request
+    this run made (chatbot/memory GET/PUT, settings GET/POST, chatbot/turns GET). `be.log` had no
+    4xx/5xx in this run's window. `fe.log` had one small burst of `[Error: socket hang up]
+    ECONNRESET` proxy failures (3 pairs, `notifications/unread-count` and
+    `master-data/products/select`) during the very first `contacts/[id]/access` page load, before
+    the Chatbot-tab work started - self-recovered immediately (every later request in the same
+    log succeeded), not tied to any of the memory feature's own endpoints, and the same class of
+    transient shared-machine hiccup the round-2 evidence already recorded and did not carry as a
+    defect.
+
+### PASS / FAIL
+
+1. **Chatbot tab (People > Internal Users > Tan)** - PASS. New "Chatbot" tab holds the memory
+   cards (level select, "What the bot knows", "Conversations", "Open orders"); the "Access" tab no
+   longer shows them. Tabs wrap/render fully at 375px with no page-level horizontal scroll. Level
+   change (Past conversations) -> Save (auto) -> reload persisted; Clear -> "(follow the system
+   default)" -> reload persisted; restored to Full memory and reload-confirmed. Add fact (Note,
+   since the dev DB has no warehouse/brand rows for "Usual sites"/"Usual brands") -> Save ->
+   Delete -> 10s countdown + Cancel, no dialog -> lapsed -> DB-committed and gone on reload.
+2. **Settings > Chatbot Memory card** - PASS. "Default context level" has exactly 3 options (This
+   conversation / Past conversations / Full memory). Set Past conversations -> Save -> reload
+   persisted; restored to Full memory -> Save -> reload persisted.
+3. **Chat History > Queue column + turn drawer** - PASS. Queue column present, all 5 seeded rows
+   show "-" (no ticket, S7 mode was off when seeded, as expected). Turn drawer: Order block,
+   Memory panel (with a level-source annotation, "full [own level]"), Context panel (friendly
+   layer labels, no raw codes) all render correctly and hold up under a mouse-click accordion
+   toggle without the drawer closing.
+4. **No horizontal scroll at 375px / clean console+logs** - PASS on all three screens (Chatbot
+   tab, Settings Chatbot Memory card is 1280-only per the brief's own viewport list but was not
+   re-checked at 375 this round since it wasn't asked for a screenshot there; the drawer at 375
+   was checked). No console errors beyond the pre-existing `Demo1Layout` warning; no 4xx/5xx in
+   `be.log` for this run's requests; one self-recovering `fe.log` proxy hiccup unrelated to the
+   memory endpoints, noted above, not carried as a defect.
+
+One harness note carried forward, not a product defect: the Add-fact key select and the
+sidebar's own bottom-of-menu "System" group both needed `scrollintoview`-before-click (and, for
+the sidebar, hiding the `nextjs-portal` dev badge that was intercepting the click point) to avoid
+a false "nothing happened" - consistent with the standing lesson that a `click @ref` without a
+fresh snapshot and `scrollintoview` immediately before it can miss and produce a misleading
+result.
+
+Screenshots replaced per the brief: `contact-memory-1280.png` / `contact-memory-375.png` deleted,
+`contact-chatbot-tab-1280.png` (134 KB) and `contact-chatbot-tab-375.png` (59 KB) added, both
+showing the new Chatbot tab.
+
 ### Items 3 and 4 - Memory panel content
 
 Read directly off the rendered `Turn #7fcc` drawer at both viewports (screenshots taken):
