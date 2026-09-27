@@ -76,7 +76,7 @@ from sqlalchemy import (
     union_all,
     values,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
 from sqlalchemy.orm import Session
 
 from app.models.order import Order, OrderLine, SalesOrder, SalesOrderLine
@@ -255,9 +255,15 @@ def achieved_by_period(db: Session, specs: List[PeriodSpec], company_id: str) ->
             for s in specs
         ]
     )
-    # A function in FROM sees the items before it (implicitly LATERAL).
+    # A function in FROM sees the items before it (implicitly LATERAL). Plain timestamps, so
+    # the series never runs in the session's time zone (a zone that skips a date would skip
+    # that day).
     day = (
-        func.generate_series(pv.c.pstart, pv.c.pend, literal_column("interval '1 day'"))
+        func.generate_series(
+            cast(pv.c.pstart, TIMESTAMP),
+            cast(pv.c.pend, TIMESTAMP),
+            literal_column("interval '1 day'"),
+        )
         .table_valued("day")
         .render_derived(name="d")
     )
@@ -308,6 +314,7 @@ def achieved_by_period(db: Session, specs: List[PeriodSpec], company_id: str) ->
                 case((mine, SOL.qty_ordered), else_=0).label("qty_ordered"),
                 case((mine, SOL.qty_delivered), else_=0).label("qty_delivered"),
                 case((mine, SOL.line_total), else_=0).label("line_total"),
+                mine.label("mine"),
                 SO.order_date.label("order_date"),
                 SO.sales_agent_id.label("agent_id"),
             )
@@ -374,12 +381,15 @@ def achieved_by_period(db: Session, specs: List[PeriodSpec], company_id: str) ->
         # `greatest(least(quantity, qty_ordered - prior), 0)`, `prior` the sum of the line's
         # earlier live DO lines in (DO date nulls last, DO id, line sequence) order, so the
         # first `qty_ordered` units delivered count and the rest counts nowhere (S1-8, S1-26 d).
-        # A cancelled or soft-deleted DO, or another company's DO or DO line, counts nothing:
-        # its quantity is 0 here rather than filtered out, so the planner walks the DO by its
-        # key and never by the cancelled, deleted or company index.
+        # A cancelled or soft-deleted DO, another company's DO or DO line, or any DO of another
+        # company's line, counts nothing: its quantity is 0 here rather than filtered out, so
+        # the planner walks the DO by its key and never by the cancelled, deleted or company
+        # index. (Gating the line alone is not enough: a negative DO quantity would lift
+        # `counted` or the residual above 0 on a line whose own values are 0.)
         live_qty = case(
             (
                 and_(
+                    agent_lines.c.mine,
                     ORD.is_cancelled.is_(False),
                     ORD.deleted_at.is_(None),
                     OL.company_id == company_id,

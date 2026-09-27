@@ -21,6 +21,7 @@ The figures themselves stay pinned by the S1 suites (`test_sales_targets_s1*.py`
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import date, timedelta
 from decimal import Decimal
@@ -136,7 +137,9 @@ def test_line_company_is_compared_as_uuid_never_through_a_text_cast(volume, basi
     specs = _weekly_specs(vol.agent_ids[:12], basis=basis)
     _, sql, params = _statement(db, specs, company_id)
 
-    assert "AS TEXT" not in sql.upper(), "a column is cast to text"
+    # Any spelling: CAST(x.company_id AS TEXT / VARCHAR / ...) or x.company_id::type.
+    assert not re.search(r"CAST\([^()]*company_id AS", sql, re.I), "a company column is cast"
+    assert not re.search(r"company_id\s*::", sql), "a company column is cast"
     plan = _explain(db, sql, params)
     tables = {"sales_orders", "sales_order_lines", "orders", "order_lines"}
     scans = [n for n in _nodes(plan) if n.get("Relation Name") in tables]
@@ -145,7 +148,7 @@ def test_line_company_is_compared_as_uuid_never_through_a_text_cast(volume, basi
     )
     for node in scans:
         for key in ("Filter", "Index Cond", "Recheck Cond"):
-            assert "company_id)::text" not in node.get(key, ""), node
+            assert not re.search(r"company_id\)?::", node.get(key, "")), node
 
 
 @pytest.mark.parametrize("basis", ["ordered", "delivered"])
@@ -433,3 +436,76 @@ def test_a_do_with_either_half_in_another_company_counts_nothing(api, stamp):
 
     assert achieved("2026-09-01", "2026-09-30") == 10000  # the whole residual, on the order date
     assert achieved("2026-10-01", "2026-10-31") == 0  # the half-foreign DO counts nowhere
+
+
+def test_a_foreign_line_counts_nothing_even_with_a_negative_do_quantity(api):
+    """Review of #1320: a foreign line's own values are 0, but its DOs must count 0 too, or a
+    negative DO quantity (nothing forbids one) lifts the capped count or the residual above 0."""
+    from app.models.base import company_scope
+    from app.models.order import SalesOrderLine
+
+    from .test_sales_targets_s1 import _agent, _do_line, _uid, _warehouse
+
+    client, db, company_id = api
+    agent = _agent(db, "NEG")
+    product = _product(db, company_id, _category(db, company_id).id)
+    warehouse = _warehouse(db, company_id)
+    so, _ = _so_line(
+        db, company_id, agent_id=agent.id, order_date=date(2026, 9, 20), line_total=Decimal("100"),
+        qty_ordered=10, qty_delivered=0, product_id=product.id,
+    )
+    other = _other_company(db)
+    foreign_id = _uid()
+    with company_scope(db, None):
+        db.add(SalesOrderLine(
+            id=foreign_id, company_id=other, sales_order_id=so.id, product_id=product.id,
+            qty_ordered=10, qty_delivered=0, line_total=Decimal("9999"), line_status="open",
+        ))
+        db.flush()
+    # This company's own DO lines on the foreign line: -3 then +5.
+    _do_line(db, company_id, product.id, warehouse.id, foreign_id, quantity=-3, order_date=date(2026, 10, 2))
+    _do_line(db, company_id, product.id, warehouse.id, foreign_id, quantity=5, order_date=date(2026, 10, 3))
+
+    for start, end in (("2026-09-01", "2026-09-30"), ("2026-10-01", "2026-10-31")):
+        res = client.post(BASE, json={
+            "subject_kind": "agent", "sales_agent_id": agent.id, "name": "ZZT Neg", "metric": "quantity",
+            "basis": "delivered", "product_scope": "all", "start_date": start, "end_date": end,
+            "target_value": 0,
+        })
+        assert res.status_code == 201, res.text
+        assert res.json()["periods"][0]["achieved_value"] == 0, start
+
+
+def test_overlapping_credit_windows_count_a_line_once(api):
+    """Review of #1320: one agent credited twice in one subject with overlapping windows (two
+    label siblings in one team with overlapping stays) counts each line once. A line ordered
+    25 Feb (10 units, RM 1,000) delivered 4 units by a DO on 10 Mar: March counts RM 400."""
+    import uuid
+
+    from app.services.sales import achievement_service as ach
+
+    from .test_sales_targets_s1 import _agent, _do_line, _warehouse
+
+    _, db, company_id = api
+    agent = _agent(db, "OVL")
+    product = _product(db, company_id, _category(db, company_id).id)
+    warehouse = _warehouse(db, company_id)
+    _, line = _so_line(
+        db, company_id, agent_id=agent.id, order_date=date(2026, 2, 25), line_total=Decimal("1000"),
+        qty_ordered=10, qty_delivered=4, product_id=product.id,
+    )
+    _do_line(db, company_id, product.id, warehouse.id, line.id, quantity=4, order_date=date(2026, 3, 10))
+
+    credits = [(agent.id, date(2026, 1, 1), date(2026, 6, 30)), (agent.id, date(2026, 2, 1), None)]
+    target_id = str(uuid.uuid4())
+    specs = [
+        ach.PeriodSpec(str(uuid.uuid4()), target_id, date(2026, 2, 1), date(2026, 2, 28), metric,
+                       "delivered", "all", credits)
+        for metric in ("amount", "quantity")
+    ] + [
+        ach.PeriodSpec(str(uuid.uuid4()), target_id, date(2026, 3, 1), date(2026, 3, 31), metric,
+                       "delivered", "all", credits)
+        for metric in ("amount", "quantity")
+    ]
+    got = ach.achieved_by_period(db, specs, company_id)
+    assert [got[s.period_id] for s in specs] == [0, 0, 400, 4]
