@@ -11,16 +11,31 @@ import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { readableValue } from '@/lib/spec-readable';
 import { useSpecPreview } from '../hooks/useSpecPreview';
 import type {
   SpecDerivationRule,
   SpecPreviewSampleRow,
 } from '../types/productSpec.types';
 
-const readable = (v: string | number | boolean | null) => {
-  if (v === null || v === undefined) return '-';
-  return typeof v === 'boolean' ? (v ? 'yes' : 'no') : String(v);
-};
+
+// The counts compare what the rules live today read with what the draft reads, in
+// the owner's words (fix round 4, 27 Sep).
+const COUNTS = [
+  ['changed', 'changed'],
+  ['now_set', 'now set'],
+  ['no_longer_set', 'no longer set'],
+  ['unchanged', 'unchanged'],
+] as const;
+
+/** Stored values that already differ from today's rules are not this draft's doing,
+ *  so they are not in the counts; a save re-reads them too, which is why it can
+ *  report more updates than the preview. */
+function driftLine(count: number): string {
+  return count === 1
+    ? "1 product has a stored value that differs from today's rules; saving this rule refreshes it too."
+    : `${count} products have a stored value that differs from today's rules; saving this rule refreshes them too.`;
+}
 
 /**
  * "Preview on catalogue" (AC-B.4): before saving, how many products would change and a
@@ -30,11 +45,23 @@ const readable = (v: string | number | boolean | null) => {
 export default function SpecPreviewPanel({
   specKey,
   rules,
+  unit,
+  valueLabels,
 }: {
   specKey: string;
   rules: SpecDerivationRule[];
+  /** The spec's unit and value labels, so a before/after reads the way the
+   *  rest of the screen does - "Rose gold", "Yes", "750 mm" - never a slug (B-7). */
+  unit?: string | null;
+  valueLabels?: Record<string, string>;
 }) {
   const { status, result, error, run } = useSpecPreview(specKey);
+
+  const readable = useMemo(
+    () => (v: string | number | boolean | null) =>
+      v === null || v === undefined ? '-' : readableValue(v, unit ?? undefined, valueLabels) || '-',
+    [unit, valueLabels],
+  );
 
   const columns = useMemo<ColumnDef<SpecPreviewSampleRow>[]>(
     () => [
@@ -46,7 +73,20 @@ export default function SpecPreviewPanel({
             {row.original.code}
           </span>
         ),
-        size: 160,
+        size: 120,
+      },
+      {
+        accessorKey: 'name',
+        header: 'Name',
+        cell: ({ row }) => {
+          const text = row.original.name || '-';
+          return (
+            <span className="truncate" title={text}>
+              {text}
+            </span>
+          );
+        },
+        size: 190,
       },
       {
         accessorKey: 'before',
@@ -59,7 +99,7 @@ export default function SpecPreviewPanel({
             </span>
           );
         },
-        size: 140,
+        size: 120,
       },
       {
         accessorKey: 'after',
@@ -72,10 +112,10 @@ export default function SpecPreviewPanel({
             </span>
           );
         },
-        size: 140,
+        size: 120,
       },
     ],
-    [],
+    [readable],
   );
 
   const table = useReactTable({
@@ -89,7 +129,7 @@ export default function SpecPreviewPanel({
     <div className="flex flex-col gap-2 rounded-md border bg-muted/10 p-3">
       <div className="flex items-center justify-between gap-2">
         <div className="text-xs uppercase tracking-wide text-muted-foreground">
-          Preview on catalogue
+          See what would change
         </div>
         <Button
           size="sm"
@@ -99,10 +139,10 @@ export default function SpecPreviewPanel({
         >
           {status === 'pending' ? (
             <>
-              <Loader2 className="size-3.5 animate-spin" /> Running...
+              <Loader2 className="size-3.5 animate-spin" /> Checking...
             </>
           ) : (
-            'Preview on catalogue'
+            'See what would change'
           )}
         </Button>
       </div>
@@ -117,23 +157,16 @@ export default function SpecPreviewPanel({
       {status === 'done' && result && (
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap gap-4 text-sm">
-            <span>
-              <span className="font-medium">{result.changed ?? 0}</span>{' '}
-              <span className="text-muted-foreground">changed</span>
-            </span>
-            <span>
-              <span className="font-medium">{result.added ?? 0}</span>{' '}
-              <span className="text-muted-foreground">added</span>
-            </span>
-            <span>
-              <span className="font-medium">{result.removed ?? 0}</span>{' '}
-              <span className="text-muted-foreground">removed</span>
-            </span>
-            <span>
-              <span className="font-medium">{result.unchanged ?? 0}</span>{' '}
-              <span className="text-muted-foreground">unchanged</span>
-            </span>
+            {COUNTS.map(([field, words]) => (
+              <span key={field}>
+                <span className="font-medium">{result[field] ?? 0}</span>{' '}
+                <span className="text-muted-foreground">{words}</span>
+              </span>
+            ))}
           </div>
+          {(result.drift ?? 0) > 0 && (
+            <p className="text-xs text-muted-foreground">{driftLine(result.drift ?? 0)}</p>
+          )}
 
           {(result.sample?.length ?? 0) > 0 && (
             <DataGrid
@@ -145,12 +178,6 @@ export default function SpecPreviewPanel({
             </DataGrid>
           )}
         </div>
-      )}
-
-      {status === 'idle' && (
-        <p className="text-xs text-muted-foreground">
-          Check how many products this ordering would change before saving it.
-        </p>
       )}
     </div>
   );

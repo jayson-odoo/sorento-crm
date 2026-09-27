@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { Fragment, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { ScreenLoader } from '@/components/common/screen-loader';
@@ -64,9 +64,12 @@ export default function ProtectedLayout({
           <GuideTargetSpotlight />
           <Demo1Layout>
             {/* In flow at the top of the page body: neither prompt can cover the
-                primary action of the page beneath it (AC-P16). */}
-            <PushPrompts />
-            {children}
+                primary action of the page beneath it (AC-P16). Keyed because
+                Demo1Layout renders its children as a list inside <main>, and the
+                routed page arrives with no key of its own: without these, every
+                page logged a missing-key error (the dev "1 Issue" badge, #1286). */}
+            <PushPrompts key="push-prompts" />
+            <Fragment key="page">{children}</Fragment>
           </Demo1Layout>
           <UploadActivityDrawer />
           <MyDownloadsDrawer />
