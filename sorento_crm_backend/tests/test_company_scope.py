@@ -559,7 +559,14 @@ def test_every_company_id_table_is_registered():
     # `sales.team_members` are one company's own teams and its agents' dated places in
     # them; the team routes load a team BY ID, so the mixin's filter is what hides another
     # company's team (UAC S6-8).
-    expected_owned = 140
+    # PLAN-cost-price-supplier-26sep.md (#1288, Lane A) adds 3: `product_supplier_costs`
+    # is one company's own dated cost list for its own product-supplier link,
+    # `cost_price_change_sets` is one company's upload of a supplier price list, and
+    # `supplier_price_links` is one company's link for a supplier (plan 4.1, 4.3, 4.5).
+    # The routes load a set, a line's set and a cost row BY ID, so the mixin's filter is
+    # what hides another company's prices; `cost_price_change_lines` reaches its scope
+    # through its set and is deliberately not owned.
+    expected_owned = 143
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
