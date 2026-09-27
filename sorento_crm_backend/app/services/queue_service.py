@@ -1,6 +1,7 @@
 """Queue service for background job processing."""
 import redis
 import threading
+from contextlib import contextmanager
 from rq import Queue
 from rq.job import Job, JobStatus
 from rq.command import send_stop_job_command
@@ -56,6 +57,49 @@ def get_queue(name: str = 'imports') -> Queue:
     return Queue(name, connection=redis_conn)
 
 
+def current_actor_meta() -> Dict[str, Any]:
+    """Who enqueued: written into ``job.meta["actor"]`` so the job keeps its actor (AC-10)."""
+    from app.audit_context import get_actor, get_trace_id
+
+    actor = get_actor()
+    return {
+        "user_id": actor.user_id if actor is not None else None,
+        "real_user_id": (actor.real_user_id or actor.user_id) if actor is not None else None,
+        "trace_id": get_trace_id(),
+    }
+
+
+@contextmanager
+def job_actor_scope(job):
+    """Run a job as `worker`, on behalf of whoever enqueued it (identity S0, AC-10).
+
+    Shared by the RQ work-horse (`worker.ForkSafeWorker.perform_job`) and the
+    in-process drain (`run_sync_rq_jobs`). Restores the previous actor afterwards,
+    because both run on threads that outlive the job.
+    """
+    from app.audit_context import AuditActor, actor_scope, get_trace_id, set_trace_id
+
+    meta = {}
+    try:
+        meta = (getattr(job, "meta", None) or {}).get("actor") or {}
+    except Exception:
+        meta = {}
+    user_id = meta.get("user_id")
+    actor = AuditActor(
+        actor_type="worker",
+        user_id=user_id,
+        real_user_id=meta.get("real_user_id") or user_id,
+        job_id=str(getattr(job, "id", "") or "") or None,
+    )
+    previous_trace = get_trace_id()
+    set_trace_id(meta.get("trace_id") or previous_trace)
+    try:
+        with actor_scope(actor):
+            yield actor
+    finally:
+        set_trace_id(previous_trace)
+
+
 def enqueue_job(
     func,
     *args,
@@ -72,10 +116,15 @@ def enqueue_job(
     Drain uses atomic `lpop`, so concurrent drainers cannot double-claim.
     """
     queue = get_queue(queue_name)
+    # The job's audit actor rides in its meta (identity S0, AC-10); a caller's own
+    # meta keys are kept.
+    meta = dict(kwargs.pop("meta", None) or {})
+    meta.setdefault("actor", current_actor_meta())
     job = queue.enqueue(
         func,
         *args,
         job_timeout=job_timeout,
+        meta=meta,
         **kwargs
     )
     logger.info(f"Job {job.id} enqueued to {queue_name} queue")
@@ -171,7 +220,8 @@ def run_sync_rq_jobs(queue_name: str, max_jobs: int) -> dict[str, int]:
         try:
             job.set_status(JobStatus.STARTED)
             job.save()
-            job.func(*job.args, **job.kwargs)
+            with job_actor_scope(job):
+                job.func(*job.args, **job.kwargs)
             job.set_status(JobStatus.FINISHED)
             job.save()
             try:

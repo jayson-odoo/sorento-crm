@@ -33,7 +33,7 @@ from app.schemas.user import (
     ContactAgentAccessCreate, ContactAgentAccessUpdate,
     TeamCreate, TeamUpdate,
 )
-from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
+from app.services.error_handler import AppException, handle_not_found, handle_conflict, handle_validation_error
 
 # NOTE: RespondClient is imported lazily inside the two methods that use it.
 # A module-level `from app.services.integration_service import RespondClient`
@@ -57,6 +57,20 @@ def _normalize_email_for_storage(value: Optional[str]) -> str:
     if value is None:
         return ""
     return str(value).strip().lower()
+
+
+def normalize_email(value: Optional[str]) -> Optional[str]:
+    """The stored form of an email (identity S0, AC-03): trimmed, lowercased; blank is NULL."""
+    return _normalize_email_for_storage(value) or None
+
+
+def user_label(user) -> str:
+    """A person's name for a message: name, else email, else "another user".
+    Never an id, and never a phone number (a 409 must not disclose one)."""
+    for value in (getattr(user, "name", None), getattr(user, "email", None)):
+        if value and str(value).strip():
+            return str(value).strip()
+    return "another user"
 
 
 def _rr_user_id_key(value: Optional[object]) -> str:
@@ -436,7 +450,11 @@ class UserService:
             q = q.filter(User.id != exclude_user_id)
         users = q.all()
         return [
-            {"id": u.id, "name": getattr(u, "name", None) or "", "email": getattr(u, "email", None) or ""}
+            {
+                "id": u.id,
+                "name": getattr(u, "name", None) or "",
+                "email": getattr(u, "email", None) or "",
+            }
             for u in users
         ]
 
@@ -450,7 +468,10 @@ class UserService:
         existing = self._users_with_respond_user_id(respond_user_id, exclude_user_id=exclude_user_id)
         if not existing:
             return
-        parts = [f"{u['name']} ({u['email']})".strip() or u["email"] or u["id"] for u in existing]
+        parts = [
+            (f"{u['name']} ({u['email']})" if u["name"] and u["email"] else (u["name"] or u["email"] or "another user"))
+            for u in existing
+        ]
         msg = "Respond User ID is already used by: " + "; ".join(parts)
         raise handle_conflict(msg)
 
@@ -464,6 +485,65 @@ class UserService:
             raise handle_conflict(
                 f"Phone number {contact_number} is already used by another user."
             )
+
+    def _check_email_free(self, email: Optional[str], exclude_user_id: Optional[str]) -> None:
+        """409 EMAIL_TAKEN when another user holds this email in any case (AC-03)."""
+        if not email:
+            return
+        q = self.db.query(User).filter(func.lower(User.email) == email.lower())
+        if exclude_user_id:
+            q = q.filter(User.id != exclude_user_id)
+        other = q.first()
+        if other is not None:
+            raise AppException(
+                status_code=409,
+                message=f"Email already belongs to {user_label(other)}",
+                code="EMAIL_TAKEN",
+            )
+
+    def _check_contact_free(self, respond_contact_id: Optional[str], exclude_user_id: Optional[str]) -> None:
+        """409 CONTACT_ALREADY_LINKED when another user holds this WhatsApp contact (AC-01)."""
+        if not respond_contact_id:
+            return
+        q = self.db.query(User).filter(User.respond_contact_id == respond_contact_id)
+        if exclude_user_id:
+            q = q.filter(User.id != exclude_user_id)
+        other = q.first()
+        if other is not None:
+            raise AppException(
+                status_code=409,
+                message=f"WhatsApp contact already linked to {user_label(other)}",
+                code="CONTACT_ALREADY_LINKED",
+            )
+
+    def _other_user(self, condition, exclude_user_id: Optional[str]):
+        q = self.db.query(User).filter(condition)
+        if exclude_user_id:
+            q = q.filter(User.id != exclude_user_id)
+        return q.first()
+
+    def _raise_identity_conflict(self, exc: IntegrityError, *, email: Optional[str],
+                                 respond_contact_id: Optional[str], exclude_user_id: Optional[str]) -> None:
+        """A write that passed the pre-checks but lost the race to the unique index
+        (a concurrent write in between) is the same 409, not a 500. Re-raises
+        anything else."""
+        self.db.rollback()
+        detail = str(getattr(exc, "orig", exc))
+        if "uq_users_email_lower" in detail and email:
+            other = self._other_user(func.lower(User.email) == email.lower(), exclude_user_id)
+            raise AppException(
+                status_code=409,
+                message=f"Email already belongs to {user_label(other)}",
+                code="EMAIL_TAKEN",
+            ) from exc
+        if "uq_users_respond_contact_id" in detail and respond_contact_id:
+            other = self._other_user(User.respond_contact_id == respond_contact_id, exclude_user_id)
+            raise AppException(
+                status_code=409,
+                message=f"WhatsApp contact already linked to {user_label(other)}",
+                code="CONTACT_ALREADY_LINKED",
+            ) from exc
+        raise exc
 
     def _user_create_data(self, user_data: UserCreate) -> dict:
         """Build User model dict from UserCreate, excluding role_ids/company_ids."""
@@ -489,56 +569,66 @@ class UserService:
 
     def create_user(self, user_data: UserCreate):
         """Create a new user and assign roles via user_role_assignments."""
-        existing = self.db.query(User).filter(User.email == user_data.email).first()
-        if existing:
-            raise handle_conflict("Email is already registered.")
         data = self._user_create_data(user_data)
+        data["email"] = normalize_email(data.get("email"))
+        self._check_email_free(data["email"], exclude_user_id=None)
+        self._check_contact_free(data.get("respond_contact_id"), exclude_user_id=None)
         rid = _normalize_respond_user_id(data.get("respond_user_id"))
         if rid:
             self._check_respond_user_id_unique(rid, exclude_user_id=None)
             data["respond_user_id"] = rid
         if data.get("contact_number"):
             self._check_contact_number_unique(data["contact_number"], exclude_user_id=None)
-        user = User(**data)
-        self.db.add(user)
-        self.db.flush()
-        role_ids = user_data.role_ids
-        if not role_ids:
-            default_role = self.db.query(UserRole).filter(UserRole.is_default == True).first()
-            if default_role:
-                role_ids = [default_role.id]
-        for role_id in role_ids or []:
-            role = self.db.query(UserRole).filter(UserRole.id == role_id).first()
-            if role:
-                self.db.add(UserRoleAssignment(user_id=user.id, role_id=role_id))
-        self._grant_companies(user, user_data.company_ids)
-        self.db.commit()
+        try:
+            user = User(**data)
+            self.db.add(user)
+            self.db.flush()
+            role_ids = user_data.role_ids
+            if not role_ids:
+                default_role = self.db.query(UserRole).filter(UserRole.is_default == True).first()
+                if default_role:
+                    role_ids = [default_role.id]
+            for role_id in role_ids or []:
+                role = self.db.query(UserRole).filter(UserRole.id == role_id).first()
+                if role:
+                    self.db.add(UserRoleAssignment(user_id=user.id, role_id=role_id))
+            self._grant_companies(user, user_data.company_ids)
+            self.db.commit()
+        except IntegrityError as exc:
+            self._raise_identity_conflict(
+                exc, email=data.get("email"), respond_contact_id=data.get("respond_contact_id"), exclude_user_id=None
+            )
         self.db.refresh(user)
         return user
 
     def invite_user(self, user_data: UserCreate, invited_by_user_id: str):
         """Create a user without a password and mark them as invited. Used for invitation flow."""
-        existing = self.db.query(User).filter(User.email == user_data.email).first()
-        if existing:
-            raise handle_conflict("Email is already registered.")
         data = self._user_create_data(user_data)
+        data["email"] = normalize_email(data.get("email"))
+        self._check_email_free(data["email"], exclude_user_id=None)
+        self._check_contact_free(data.get("respond_contact_id"), exclude_user_id=None)
         data["password"] = None
         data["invited_by_user_id"] = invited_by_user_id
         data["status"] = "INACTIVE"
-        user = User(**data)
-        self.db.add(user)
-        self.db.flush()
-        role_ids = user_data.role_ids
-        if not role_ids:
-            default_role = self.db.query(UserRole).filter(UserRole.is_default == True).first()
-            if default_role:
-                role_ids = [default_role.id]
-        for role_id in role_ids or []:
-            role = self.db.query(UserRole).filter(UserRole.id == role_id).first()
-            if role:
-                self.db.add(UserRoleAssignment(user_id=user.id, role_id=role_id))
-        self._grant_companies(user, user_data.company_ids)
-        self.db.commit()
+        try:
+            user = User(**data)
+            self.db.add(user)
+            self.db.flush()
+            role_ids = user_data.role_ids
+            if not role_ids:
+                default_role = self.db.query(UserRole).filter(UserRole.is_default == True).first()
+                if default_role:
+                    role_ids = [default_role.id]
+            for role_id in role_ids or []:
+                role = self.db.query(UserRole).filter(UserRole.id == role_id).first()
+                if role:
+                    self.db.add(UserRoleAssignment(user_id=user.id, role_id=role_id))
+            self._grant_companies(user, user_data.company_ids)
+            self.db.commit()
+        except IntegrityError as exc:
+            self._raise_identity_conflict(
+                exc, email=data.get("email"), respond_contact_id=data.get("respond_contact_id"), exclude_user_id=None
+            )
         self.db.refresh(user)
         return user
 
@@ -563,26 +653,22 @@ class UserService:
         email_changed = False
         if "email" in update_data:
             new_email = update_data.pop("email")
+            new_email = normalize_email(new_email)
             if new_email is None:
                 pass  # treat as no email field
             else:
                 current_norm = _normalize_email_for_storage(user.email)
                 if new_email != current_norm:
-                    existing = (
-                        self.db.query(User)
-                        .filter(
-                            func.lower(User.email) == new_email,
-                            User.id != user_id,
-                        )
-                        .first()
-                    )
-                    if existing:
-                        raise handle_conflict("Email is already registered.")
+                    self._check_email_free(new_email, exclude_user_id=user_id)
                     old_email_for_notification = (user.email or "").strip() or user.email
                     user.email = new_email
                     user.email_verified_at = None
                     email_changed = True
         
+        # One WhatsApp contact == one user (AC-01); the unique index is the backstop.
+        if update_data.get("respond_contact_id"):
+            self._check_contact_free(update_data["respond_contact_id"], exclude_user_id=user_id)
+
         # Enforce Respond User ID uniqueness before applying any updates
         if "respond_user_id" in update_data:
             rid = _normalize_respond_user_id(update_data["respond_user_id"])
@@ -624,7 +710,17 @@ class UserService:
             replace_scopes(self.db, user_id, scope_items or [])
 
         logger.info(f"Before commit - respond_user_id: {user.respond_user_id}, superior_id: {user.superior_id}")
-        self.db.commit()
+        # Read before the commit: after a failed flush the instance is expired.
+        email_for_conflict = user.email
+        try:
+            self.db.commit()
+        except IntegrityError as exc:
+            self._raise_identity_conflict(
+                exc,
+                email=email_for_conflict,
+                respond_contact_id=update_data.get("respond_contact_id"),
+                exclude_user_id=user_id,
+            )
         self.db.refresh(user)
         logger.info(f"After commit - respond_user_id: {user.respond_user_id}, superior_id: {user.superior_id}")
         if email_changed and old_email_for_notification is not None:
@@ -729,6 +825,13 @@ class UserService:
             self.db.commit()
             self.db.refresh(user)
 
+        if not (user.email or "").strip():
+            # A phone-only user has nothing to compare against (identity S0, 9.1 Q6).
+            setattr(user, "respond_synced", "failed")
+            self.db.commit()
+            self.db.refresh(user)
+            return {"status": "failed", "message": "User has no email."}
+
         from app.services.integration_service import RespondClient
 
         client = RespondClient()
@@ -745,7 +848,7 @@ class UserService:
             self.db.refresh(user)
             return {"status": "failed", "message": "Respond user email not found."}
 
-        if email.strip().lower() == user.email.strip().lower():
+        if email.strip().lower() == (user.email or "").strip().lower():
             setattr(user, "respond_synced", "successful")
             self.db.commit()
             self.db.refresh(user)

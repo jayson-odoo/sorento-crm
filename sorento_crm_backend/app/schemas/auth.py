@@ -14,7 +14,8 @@ class LoginResponse(BaseModel):
     # sends it as `Authorization: Bearer <token>` to every /api/v1/* call.
     token: str
     id: str
-    email: EmailStr
+    # Optional since identity S0: a phone-only user has no email (S1 phone sign-in).
+    email: EmailStr | None = None
     name: str | None = None
     avatar: str | None = None
     status: str
