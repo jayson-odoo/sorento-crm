@@ -10,8 +10,12 @@ import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
-import { getSalesOpportunityProductOptions } from '../services/salesOpportunityService';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { formatCurrency } from '@/lib/helpers';
+import {
+  getSalesOpportunityProductOptions,
+  type SalesOpportunityProductOption,
+} from '../services/salesOpportunityService';
 
 let lineKeySeq = 0;
 export function nextLineKey(): string {
@@ -23,10 +27,27 @@ export interface LineDraft {
   key: string;
   productId: string;
   qty: string;
+  /** String all the way through, same reasoning `InlineLineTable` gives: the API wants a
+   *  decimal string, and a number input round-trips `392.85` as `392.85000000000002`. */
+  unitPrice: string;
   /** An existing line's own label (edit in place, Phase 3 fix B2) - seeds the row's
    *  "keep the picked option" state so an already-saved line shows its product
    *  immediately, rather than only once a fetch happens to include it. */
   productLabel?: string;
+}
+
+/** `qty x unitPrice`, or null when the row has no usable price (fix round 2 F7). */
+export function lineAmount(line: Pick<LineDraft, 'qty' | 'unitPrice'>): number | null {
+  if (line.unitPrice.trim() === '') return null;
+  const price = Number(line.unitPrice);
+  const qty = Number(line.qty);
+  if (!Number.isFinite(price) || !Number.isFinite(qty)) return null;
+  return qty * price;
+}
+
+/** The live total across every line - what Expected amount defaults to while untouched. */
+export function sumLineAmounts(lines: Pick<LineDraft, 'qty' | 'unitPrice'>[]): number {
+  return lines.reduce((sum, line) => sum + (lineAmount(line) ?? 0), 0);
 }
 
 /**
@@ -43,7 +64,7 @@ export function OpportunityLineRow({
   onChange: (patch: Partial<LineDraft>) => void;
   onRemove: () => void;
 }) {
-  const [options, setOptions] = useState<SearchableSelectOption[]>([]);
+  const [options, setOptions] = useState<SalesOpportunityProductOption[]>([]);
   // Reviewer should-fix 7: a later search REPLACES `options` wholesale, and a picked
   // product from an earlier search is gone from that replacement the moment the reader
   // types again - the trigger would then find no match for `line.productId` and fall
@@ -51,7 +72,7 @@ export function OpportunityLineRow({
   // option itself, merged back in, means it survives regardless of what the next search
   // returns (the static-mode equivalent of `selectedOption`, which only applies in
   // `fetchOptions` mode).
-  const [selected, setSelected] = useState<SearchableSelectOption | null>(
+  const [selected, setSelected] = useState<SalesOpportunityProductOption | null>(
     line.productId && line.productLabel ? { value: line.productId, label: line.productLabel } : null,
   );
 
@@ -70,22 +91,32 @@ export function OpportunityLineRow({
     return [selected, ...options];
   }, [options, selected]);
 
+  // A fresh pick prefills Unit price from the product's own list price (the price the
+  // dealer flyer prints) - the product picked is the fact; a hand-typed edit afterward
+  // simply overwrites it, same as any other field.
+  const handleOptionChange = (option: SalesOpportunityProductOption | null) => {
+    setSelected(option);
+    if (option?.listPrice) onChange({ unitPrice: option.listPrice });
+  };
+
+  const amount = lineAmount(line);
+
   return (
-    <div data-testid="opportunity-line-row" className="flex items-end gap-2">
-      <div className="flex-1 flex flex-col gap-1.5">
+    <div data-testid="opportunity-line-row" className="flex flex-wrap items-end gap-2">
+      <div className="flex w-full flex-col gap-1.5 sm:w-auto sm:flex-1">
         <Label htmlFor={`Product-${line.key}`}>Product</Label>
         <SearchableSelect
           id={`Product-${line.key}`}
           value={line.productId}
           onChange={(v) => onChange({ productId: v })}
-          onOptionChange={setSelected}
+          onOptionChange={handleOptionChange}
           options={mergedOptions}
           onSearchChange={(q) => getSalesOpportunityProductOptions(q).then(setOptions)}
           placeholder="Search products..."
           wrapOptions
         />
       </div>
-      <div className="w-24 flex flex-col gap-1.5">
+      <div className="flex w-20 flex-col gap-1.5">
         <Label htmlFor={`Qty-${line.key}`}>Qty</Label>
         <Input
           id={`Qty-${line.key}`}
@@ -94,6 +125,26 @@ export function OpportunityLineRow({
           step="0.01"
           value={line.qty}
           onChange={(e) => onChange({ qty: e.target.value })}
+        />
+      </div>
+      <div className="flex w-28 flex-col gap-1.5">
+        <Label htmlFor={`UnitPrice-${line.key}`}>Unit price</Label>
+        <Input
+          id={`UnitPrice-${line.key}`}
+          type="number"
+          min="0"
+          step="0.01"
+          value={line.unitPrice}
+          onChange={(e) => onChange({ unitPrice: e.target.value })}
+        />
+      </div>
+      <div className="flex w-28 flex-col gap-1.5">
+        <Label htmlFor={`Amount-${line.key}`}>Amount</Label>
+        <Input
+          id={`Amount-${line.key}`}
+          readOnly
+          tabIndex={-1}
+          value={formatCurrency(amount)}
         />
       </div>
       <Button type="button" variant="ghost" size="sm" aria-label="Remove line" onClick={onRemove}>

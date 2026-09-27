@@ -15,6 +15,7 @@ import {
   deleteSalesOpportunity,
   getSalesOpportunities,
   getSalesOpportunity,
+  getSalesOpportunityProductOptions,
   updateSalesOpportunity,
 } from './salesOpportunityService';
 
@@ -94,6 +95,22 @@ describe('salesOpportunityService', () => {
     apiFetch.mockResolvedValue(ok({}));
     await deleteSalesOpportunity('o1');
     expect(apiFetch).toHaveBeenCalledWith('/api/v1/sales/opportunities/o1', { method: 'DELETE' });
+  });
+
+  it('fix round2 F7: carries a product\'s list price into the option, omitted when zero or unset', async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        data: [
+          { id: 'p1', product_code: 'ZZT-001', product_name: 'ZZT Basin', list_price: '15.50' },
+          { id: 'p2', product_code: 'ZZT-002', product_name: 'ZZT Faucet', list_price: '0.00' },
+          { id: 'p3', product_code: 'ZZT-003', product_name: 'ZZT Sink', list_price: null },
+        ],
+      }),
+    );
+    const options = await getSalesOpportunityProductOptions('');
+    expect(options.find((o) => o.value === 'p1')?.listPrice).toBe('15.50');
+    expect(options.find((o) => o.value === 'p2')?.listPrice).toBeUndefined();
+    expect(options.find((o) => o.value === 'p3')?.listPrice).toBeUndefined();
   });
 
   it('routes a server error message through extractApiError', async () => {

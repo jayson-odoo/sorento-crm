@@ -1,53 +1,58 @@
 /**
- * The portal Sales Opportunity form (UAC S2-10, S2-15, S2-16; plan 3.5, N10, N11).
+ * The portal Sales Opportunity form (UAC S2-10, S2-15, S2-16; plan 3.5, N10, N11; F4/F7).
  *
  * Same "Customer or prospect" search and Products table contract as the CRM modal, against the
- * portal service. No agent field anywhere - the agent comes from the token, never the form.
+ * portal service, now over the system `SearchableSelect` (F4) rather than the portal's own
+ * `AsyncCombobox` - the mock below mirrors the one the CRM's own
+ * `SalesOpportunityModal.test.tsx` uses, so both surfaces are exercised the same way.
  */
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
-vi.mock('../../components/AsyncCombobox', () => ({
-  AsyncCombobox: (props: {
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: (props: {
     id?: string;
+    'aria-label'?: string;
     value: string;
-    onChange: (v: string, item?: unknown) => void;
-    fetchOptions: (q: string) => Promise<unknown[]>;
-    optionValue: (o: any) => string;
-    optionLabel: (o: any) => string;
+    onChange: (v: string) => void;
+    onOptionChange?: (o: { value: string; label: string; disabled?: boolean } | null) => void;
+    options?: { value: string; label: string; disabled?: boolean }[];
+    fetchOptions?: (
+      q: string,
+      page: number,
+    ) => Promise<{ value: string; label: string; disabled?: boolean }[]>;
     placeholder?: string;
+    emptyMessage?: string;
   }) => {
     const [query, setQuery] = React.useState('');
-    const [options, setOptions] = React.useState<any[]>([]);
+    const [options, setOptions] = React.useState(props.options ?? []);
     React.useEffect(() => {
-      props.fetchOptions(query).then(setOptions);
+      if (props.fetchOptions) props.fetchOptions(query, 0).then(setOptions);
     }, [query]);
+    const label = props['aria-label'] ?? props.placeholder ?? props.id ?? 'select';
     return (
       <div>
-        <input
-          aria-label={props.placeholder ?? props.id ?? 'search'}
-          value={query}
+        {props.fetchOptions ? (
+          <input aria-label={`${label} search`} value={query} onChange={(e) => setQuery(e.target.value)} />
+        ) : null}
+        {options.length === 0 ? <p data-testid={`${label}-empty`}>{props.emptyMessage}</p> : null}
+        <select
+          aria-label={label}
+          value={props.value}
           onChange={(e) => {
-            setQuery(e.target.value);
-            // Real AsyncCombobox: a keystroke fires onChange with no item - only a
-            // click on an option below carries one (see the other overload).
             props.onChange(e.target.value);
+            const opt = options.find((o) => o.value === e.target.value) ?? null;
+            props.onOptionChange?.(opt);
           }}
-        />
-        <ul>
-          {options.map((o, i) => (
-            <li key={i}>
-              <button
-                type="button"
-                disabled={o.disabled}
-                onClick={() => props.onChange(props.optionValue(o), o)}
-              >
-                {props.optionLabel(o)}
-              </button>
-            </li>
+        >
+          <option value="" />
+          {options.map((o) => (
+            <option key={o.value} value={o.value} disabled={o.disabled}>
+              {o.label}
+            </option>
           ))}
-        </ul>
+        </select>
       </div>
     );
   },
@@ -65,7 +70,9 @@ import SalesOpportunityPortalForm from './SalesOpportunityPortalForm';
 beforeEach(() => {
   Object.values(service).forEach((fn) => fn.mockReset());
   service.getPortalCustomerOptions.mockResolvedValue({ items: [], prospect: null, blocked: null });
-  service.getPortalProductOptions.mockResolvedValue([{ id: 'p1', code: 'ZZT-001', name: 'ZZT Basin' }]);
+  service.getPortalProductOptions.mockResolvedValue([
+    { id: 'p1', code: 'ZZT-001', name: 'ZZT Basin', listPrice: '100.00' },
+  ]);
   service.createPortalSalesOpportunity.mockResolvedValue({ id: 'opp-1' });
 });
 
@@ -76,6 +83,13 @@ describe('SalesOpportunityPortalForm', () => {
     expect(screen.queryByText(/sales agent/i)).toBeNull();
   });
 
+  it('F3: says the agent has no customers when the query is empty', async () => {
+    render(<SalesOpportunityPortalForm />);
+    expect(
+      await screen.findByText('You have no customers linked yet; type a name to add a prospect'),
+    ).toBeTruthy();
+  });
+
   it('offers "Add ... as a new prospect" when nothing matches and creates with prospect_name', async () => {
     service.getPortalCustomerOptions.mockResolvedValue({
       items: [],
@@ -84,11 +98,16 @@ describe('SalesOpportunityPortalForm', () => {
     });
     render(<SalesOpportunityPortalForm />);
 
-    fireEvent.change(screen.getByLabelText(/customer or prospect/i), {
+    fireEvent.change(screen.getByLabelText('Customer or prospect search'), {
       target: { value: 'Seri Indah Renovation' },
     });
-    const prospectOption = await screen.findByText('Add "Seri Indah Renovation" as a new prospect');
-    fireEvent.click(prospectOption);
+    const select = await screen.findByLabelText('Customer or prospect');
+    await waitFor(() =>
+      expect(screen.getByRole('option', { name: 'Add "Seri Indah Renovation" as a new prospect' })).toBeTruthy(),
+    );
+    fireEvent.change(select, {
+      target: { value: 'prospect:Seri Indah Renovation' },
+    });
 
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'ZZT Opp' } });
     fireEvent.change(screen.getByLabelText('Expected amount'), { target: { value: '500' } });
@@ -100,7 +119,7 @@ describe('SalesOpportunityPortalForm', () => {
     await waitFor(() => expect(service.createPortalSalesOpportunity).toHaveBeenCalledTimes(1));
     const payload = service.createPortalSalesOpportunity.mock.calls[0][0];
     expect(payload.prospect_name).toBe('Seri Indah Renovation');
-    expect(payload.customer_id).toBeFalsy();
+    expect(payload.customer_id).toBeUndefined();
   });
 
   it('shows a disabled option for a blocked exact match', async () => {
@@ -110,11 +129,13 @@ describe('SalesOpportunityPortalForm', () => {
       blocked: { name: 'Seri Indah', message: "Seri Indah is another agent's customer" },
     });
     render(<SalesOpportunityPortalForm />);
-    fireEvent.change(screen.getByLabelText(/customer or prospect/i), {
+    fireEvent.change(screen.getByLabelText('Customer or prospect search'), {
       target: { value: 'Seri Indah' },
     });
-    const blockedButton = await screen.findByText("Seri Indah is another agent's customer");
-    expect((blockedButton as HTMLButtonElement).disabled).toBe(true);
+    const blockedOption = await screen.findByRole('option', {
+      name: "Seri Indah is another agent's customer",
+    });
+    expect((blockedOption as HTMLOptionElement).disabled).toBe(true);
   });
 
   it('shows "No products yet" until a row is added, and Add product adds one', () => {
@@ -133,27 +154,34 @@ describe('SalesOpportunityPortalForm', () => {
     expect(screen.getAllByRole('button', { name: /remove/i }).length).toBe(1);
   });
 
-  it('fix reviewer-6: clears the chosen customer once the typed text no longer matches it', async () => {
-    service.getPortalCustomerOptions.mockResolvedValue({
-      items: [{ customer_id: 'cust-1', customer_code: 'C1', customer_name: 'Kedai Mine' }],
-      prospect: null,
-      blocked: null,
-    });
+  it('F7: picking a product prefills unit price, shows the line amount, and tracks the expected amount total', async () => {
     render(<SalesOpportunityPortalForm />);
+    fireEvent.click(screen.getByRole('button', { name: /add product/i }));
 
-    fireEvent.change(screen.getByLabelText(/customer or prospect/i), {
-      target: { value: 'Kedai' },
-    });
-    const customerOption = await screen.findByText('C1 - Kedai Mine');
-    fireEvent.click(customerOption);
+    const productSelect = await screen.findByLabelText('Search products...');
+    await waitFor(() => expect(screen.getByRole('option', { name: 'ZZT-001 - ZZT Basin' })).toBeTruthy());
+    fireEvent.change(productSelect, { target: { value: 'p1' } });
 
-    // Now edit the text away from the picked customer, with no fresh selection.
-    fireEvent.change(screen.getByLabelText(/customer or prospect/i), {
-      target: { value: 'Kedai Something Else' },
-    });
+    expect((screen.getByLabelText('Unit price') as HTMLInputElement).value).toBe('100.00');
+    expect(screen.getByText('RM 100.00')).toBeTruthy();
+    await waitFor(() =>
+      expect((screen.getByLabelText('Expected amount') as HTMLInputElement).value).toBe('100.00'),
+    );
+
+    // Typing an amount by hand stops the auto total from overriding it.
+    fireEvent.change(screen.getByLabelText('Expected amount'), { target: { value: '999' } });
+    fireEvent.change(screen.getByLabelText('Qty'), { target: { value: '2' } });
+    expect((screen.getByLabelText('Expected amount') as HTMLInputElement).value).toBe('999');
+  });
+
+  it('F7: sends unit_price on every line', async () => {
+    render(<SalesOpportunityPortalForm />);
+    fireEvent.click(screen.getByRole('button', { name: /add product/i }));
+    const productSelect = await screen.findByLabelText('Search products...');
+    await waitFor(() => expect(screen.getByRole('option', { name: 'ZZT-001 - ZZT Basin' })).toBeTruthy());
+    fireEvent.change(productSelect, { target: { value: 'p1' } });
 
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'ZZT Opp' } });
-    fireEvent.change(screen.getByLabelText('Expected amount'), { target: { value: '500' } });
     fireEvent.change(screen.getByLabelText('Expected close date'), {
       target: { value: '2026-11-01' },
     });
@@ -161,6 +189,6 @@ describe('SalesOpportunityPortalForm', () => {
 
     await waitFor(() => expect(service.createPortalSalesOpportunity).toHaveBeenCalledTimes(1));
     const payload = service.createPortalSalesOpportunity.mock.calls[0][0];
-    expect(payload.customer_id).toBeFalsy();
+    expect(payload.lines[0]).toEqual({ product_id: 'p1', qty: 1, unit_price: 100 });
   });
 });

@@ -91,25 +91,38 @@ export async function getSalesOpportunityCustomerOptions(
   );
 }
 
+/** A product option carrying its list price (F7) - the price the dealer flyer prints,
+ *  and what a line's Unit price prefills to once this product is picked. Omitted when
+ *  the catalog has no usable price ("0.00" reads as none, same as the flyer itself). */
+export interface SalesOpportunityProductOption extends SearchableSelectOption {
+  listPrice?: string;
+}
+
 /** The catalog's own async picker (LESSONS-LEARNT: never a capped static list). */
 export async function getSalesOpportunityProductOptions(
   query: string,
   pageIndex = 0,
   pageSize = 50,
-): Promise<SearchableSelectOption[]> {
+): Promise<SalesOpportunityProductOption[]> {
   const usp = new URLSearchParams({
     limit: String(pageSize),
     offset: String(pageIndex * pageSize),
   });
   if (query) usp.set('query', query);
-  const body = await read<{ data: { id: string; product_code: string; product_name: string }[] }>(
+  const body = await read<{
+    data: { id: string; product_code: string; product_name: string; list_price: string | null }[];
+  }>(
     await apiFetch(`/api/v1/master-data/products/select?${usp.toString()}`),
     'Failed to search products',
   );
-  return body.data.map((p) => ({
-    value: p.id,
-    label: `${p.product_code} - ${p.product_name}`,
-  }));
+  return body.data.map((p) => {
+    const price = p.list_price != null ? Number(p.list_price) : 0;
+    return {
+      value: p.id,
+      label: `${p.product_code} - ${p.product_name}`,
+      ...(Number.isFinite(price) && price > 0 ? { listPrice: p.list_price as string } : {}),
+    };
+  });
 }
 
 export async function getSalesOpportunityMeta(): Promise<SalesOpportunityMeta> {

@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { useSaveSalesOpportunity } from '../hooks/useSalesOpportunities';
-import { OpportunityLineRow, nextLineKey, type LineDraft } from './OpportunityLineRow';
+import { OpportunityLineRow, nextLineKey, sumLineAmounts, type LineDraft } from './OpportunityLineRow';
 import {
   BLOCKED_VALUE,
   PROSPECT_PREFIX,
@@ -51,6 +51,9 @@ export default function SalesOpportunityModal({
   const [customerOrProspect, setCustomerOrProspect] = useState('');
   const [title, setTitle] = useState('');
   const [expectedAmount, setExpectedAmount] = useState('');
+  // F7: Expected amount defaults to the live sum of the product lines until the field is
+  // actually typed into - once it is, the typed value wins over any further line change.
+  const [amountTouched, setAmountTouched] = useState(false);
   const [expectedCloseDate, setExpectedCloseDate] = useState('');
   const [lines, setLines] = useState<LineDraft[]>([]);
 
@@ -59,6 +62,7 @@ export default function SalesOpportunityModal({
     setCustomerOrProspect(presetCustomerId ?? '');
     setTitle('');
     setExpectedAmount('');
+    setAmountTouched(false);
     setExpectedCloseDate('');
     setLines([]);
   }, [open, presetCustomerId]);
@@ -68,10 +72,18 @@ export default function SalesOpportunityModal({
     [],
   );
 
-  const addLine = () => setLines((prev) => [...prev, { key: nextLineKey(), productId: '', qty: '1' }]);
+  const addLine = () =>
+    setLines((prev) => [...prev, { key: nextLineKey(), productId: '', qty: '1', unitPrice: '' }]);
   const removeLine = (key: string) => setLines((prev) => prev.filter((l) => l.key !== key));
   const updateLine = (key: string, patch: Partial<LineDraft>) =>
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+
+  const linesSum = sumLineAmounts(lines);
+  const effectiveAmount = amountTouched
+    ? expectedAmount
+    : linesSum > 0
+      ? linesSum.toFixed(2)
+      : expectedAmount;
 
   const isProspect = customerOrProspect.startsWith(PROSPECT_PREFIX);
   // Customer-or-prospect validity (including the exact-name-match rules, S2-15) stays
@@ -81,7 +93,7 @@ export default function SalesOpportunityModal({
   const canSave =
     customerOrProspect !== BLOCKED_VALUE &&
     title.trim().length > 0 &&
-    !!expectedAmount &&
+    !!effectiveAmount &&
     !!expectedCloseDate &&
     !save.isPending;
 
@@ -90,14 +102,18 @@ export default function SalesOpportunityModal({
     if (!canSave) return;
     const payload = {
       title: title.trim(),
-      expected_amount: expectedAmount,
+      expected_amount: effectiveAmount,
       expected_close_date: expectedCloseDate,
       ...(isProspect
         ? { prospect_name: customerOrProspect.slice(PROSPECT_PREFIX.length) }
         : { customer_id: customerOrProspect }),
       lines: lines
         .filter((l) => l.productId)
-        .map((l) => ({ product_id: l.productId, qty: Number(l.qty) || 0 })),
+        .map((l) => ({
+          product_id: l.productId,
+          qty: Number(l.qty) || 0,
+          unit_price: l.unitPrice ? l.unitPrice : null,
+        })),
     };
     try {
       await save.mutateAsync(payload);
@@ -149,8 +165,11 @@ export default function SalesOpportunityModal({
                 type="number"
                 min="0"
                 step="0.01"
-                value={expectedAmount}
-                onChange={(e) => setExpectedAmount(e.target.value)}
+                value={effectiveAmount}
+                onChange={(e) => {
+                  setExpectedAmount(e.target.value);
+                  setAmountTouched(true);
+                }}
               />
             </div>
             <div className="flex flex-col gap-1.5">

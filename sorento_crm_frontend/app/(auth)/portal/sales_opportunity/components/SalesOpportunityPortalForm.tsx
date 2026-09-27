@@ -1,26 +1,33 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { LoaderCircleIcon, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { toast } from '@/lib/toast';
-import { AsyncCombobox } from '../../components/AsyncCombobox';
 import { createPortalSalesOpportunity } from '../../lib/sales-opportunity-service';
 import {
-  type CustomerComboOption,
+  BLOCKED_VALUE,
+  NO_CUSTOMERS_MESSAGE,
+  PROSPECT_PREFIX,
   fetchCustomerOrProspectOptions,
 } from '../lib/customerOrProspect';
-import { PortalOpportunityLineRow, nextLineKey, type LineDraft } from './PortalOpportunityLineRow';
+import {
+  PortalOpportunityLineRow,
+  nextLineKey,
+  sumLineDraftAmounts,
+  type LineDraft,
+} from './PortalOpportunityLineRow';
 
 /**
- * The portal Sales Opportunity CREATE form (UAC S2-10, S2-15, S2-16; plan 3.5, N10, N11).
+ * The portal Sales Opportunity CREATE form (UAC S2-10, S2-15, S2-16; plan 3.5, N10, N11; F4/F7).
  *
  * The same "Customer or prospect" search and Products table contract as the CRM modal, over
- * the portal's own service and `AsyncCombobox` (the complaint form's product-line pattern).
- * No agent field anywhere - the agent comes from the token, never the form.
+ * the portal's own service and the system `SearchableSelect` (F4) - no agent field anywhere,
+ * the agent comes from the token, never the form.
  *
  * Edit lives on `SalesOpportunityPortalDetail` itself, in place (Phase 3 fix2 should-fix 5) -
  * this component is create-only; an earlier round routed Edit through a second instance of it
@@ -35,41 +42,38 @@ export default function SalesOpportunityPortalForm({
    *  without mocking `next/navigation`. */
   onCreated?: (id: string) => void;
 }) {
-  const [customerValue, setCustomerValue] = useState('');
-  const [customerId, setCustomerId] = useState<string | undefined>();
-  const [prospectName, setProspectName] = useState<string | undefined>();
+  const [customerOrProspect, setCustomerOrProspect] = useState('');
   const [title, setTitle] = useState('');
   const [expectedAmount, setExpectedAmount] = useState('');
+  const [amountTouched, setAmountTouched] = useState(false);
   const [expectedCloseDate, setExpectedCloseDate] = useState('');
   const [lines, setLines] = useState<LineDraft[]>([]);
   const [saving, setSaving] = useState(false);
 
-  const handleCustomerChange = (value: string, item?: CustomerComboOption) => {
-    setCustomerValue(value);
-    if (item) {
-      if (item.customerId) {
-        setCustomerId(item.customerId);
-        setProspectName(undefined);
-      } else if (item.prospectName) {
-        setProspectName(item.prospectName);
-        setCustomerId(undefined);
-      }
-      return;
-    }
-    // Reviewer should-fix 6: a keystroke with no item means the typed text no longer
-    // matches whatever was picked before - clear the stale selection, or a customer
-    // chosen earlier and since edited away from would still be the one submitted.
-    setCustomerId(undefined);
-    setProspectName(undefined);
-  };
+  // F7: the expected amount tracks the lines total until the salesperson types one in.
+  useEffect(() => {
+    if (amountTouched) return;
+    const sum = sumLineDraftAmounts(lines);
+    setExpectedAmount(sum > 0 ? sum.toFixed(2) : '');
+  }, [lines, amountTouched]);
+
+  const isProspect = customerOrProspect.startsWith(PROSPECT_PREFIX);
 
   const addLine = () =>
-    setLines((prev) => [...prev, { key: nextLineKey(), productId: '', productLabel: '', qty: '1' }]);
+    setLines((prev) => [
+      ...prev,
+      { key: nextLineKey(), productId: '', productLabel: '', qty: '1', unitPrice: '' },
+    ]);
   const removeLine = (key: string) => setLines((prev) => prev.filter((l) => l.key !== key));
   const updateLine = (key: string, patch: Partial<LineDraft>) =>
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
-  const canSave = title.trim().length > 0 && !!expectedAmount && !!expectedCloseDate && !saving;
+  const canSave =
+    customerOrProspect !== BLOCKED_VALUE &&
+    title.trim().length > 0 &&
+    !!expectedAmount &&
+    !!expectedCloseDate &&
+    !saving;
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -79,10 +83,16 @@ export default function SalesOpportunityPortalForm({
       title: title.trim(),
       expected_amount: expectedAmount,
       expected_close_date: expectedCloseDate,
-      ...(prospectName ? { prospect_name: prospectName } : { customer_id: customerId }),
+      ...(isProspect
+        ? { prospect_name: customerOrProspect.slice(PROSPECT_PREFIX.length) }
+        : { customer_id: customerOrProspect }),
       lines: lines
         .filter((l) => l.productId)
-        .map((l) => ({ product_id: l.productId, qty: Number(l.qty) || 0 })),
+        .map((l) => ({
+          product_id: l.productId,
+          qty: Number(l.qty) || 0,
+          unit_price: l.unitPrice === '' ? null : Number(l.unitPrice),
+        })),
     };
     try {
       const created = await createPortalSalesOpportunity(payload);
@@ -104,16 +114,15 @@ export default function SalesOpportunityPortalForm({
         <CardContent className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="customer-or-prospect">Customer or prospect</Label>
-            <AsyncCombobox<CustomerComboOption>
+            <SearchableSelect
               id="customer-or-prospect"
-              value={customerValue}
-              onChange={handleCustomerChange}
+              aria-label="Customer or prospect"
+              value={customerOrProspect}
+              onChange={setCustomerOrProspect}
               fetchOptions={fetchCustomerOrProspectOptions}
-              optionValue={(o) => o.id}
-              optionLabel={(o) => o.label}
-              optionDisabled={(o) => !!o.disabled}
               placeholder="Search customer or prospect..."
-              allowFreeText={false}
+              emptyMessage={NO_CUSTOMERS_MESSAGE}
+              wrapOptions
             />
           </div>
           <div className="flex flex-col gap-1.5">
@@ -133,7 +142,10 @@ export default function SalesOpportunityPortalForm({
               min="0"
               step="0.01"
               value={expectedAmount}
-              onChange={(e) => setExpectedAmount(e.target.value)}
+              onChange={(e) => {
+                setExpectedAmount(e.target.value);
+                setAmountTouched(true);
+              }}
             />
           </div>
           <div className="flex flex-col gap-1.5">

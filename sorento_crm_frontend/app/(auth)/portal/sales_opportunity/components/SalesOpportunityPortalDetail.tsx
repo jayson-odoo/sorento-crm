@@ -1,33 +1,32 @@
 'use client';
 
 /**
- * Portal Sales Opportunity detail (UAC S2-11): stage buttons come from
- * `available_transitions` only; Lost reveals a required reason select sourced from the
- * shared meta endpoint's `lost_reasons` (same values the CRM detail page offers). Won and
- * Lost both need an explicit confirm step (reviewer should-fix 8) - closing an opportunity
- * either way is a one-way door (Phase 3 fix N7: neither can be edited again after) - every
- * other transition (Qualified, ...) applies the moment its button is clicked.
+ * Portal Sales Opportunity detail (UAC S2-11; F6/F7).
+ *
+ * F6: one CTA (Edit, while the opportunity is open) plus a gear dropdown (`DetailActionsMenu`)
+ * holding the stage moves from `available_transitions` - Lost opens a small dialog for the
+ * required reason, every other move runs the moment it is clicked. The old "Move stage" button
+ * row is gone.
  *
  * Edit is IN PLACE (Phase 3 fix2 should-fix 5) - the SAME cards in the SAME order, title,
  * customer or prospect, amount, close date and product lines each swap for an input where
- * they stand, exactly as the CRM's own `SalesOpportunityDetail` does. An earlier round routed
- * Edit through a second `SalesOpportunityPortalForm` (the CREATE form) with an `initial` prop,
- * which replaced the whole read view with a different layout instead of editing this one;
- * reverted, and that component is create-only again.
+ * they stand, exactly as the CRM's own `SalesOpportunityDetail` does.
  *
  * No `useRouter` - this component is unit-tested without a Next.js router context, so
  * navigation is plain `<Link>`s throughout, same as `SalesOpportunityPortalList`.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, LoaderCircleIcon, Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { AsyncCombobox } from '../../components/AsyncCombobox';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import type { RecordAction } from '@/components/common/recordActions';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { toast } from '@/lib/toast';
 import { formatCurrency, formatDate } from '@/lib/helpers';
@@ -37,25 +36,33 @@ import {
   updatePortalSalesOpportunity,
   type PortalSalesOpportunity,
 } from '../../lib/sales-opportunity-service';
-import { type CustomerComboOption, fetchCustomerOrProspectOptions } from '../lib/customerOrProspect';
-import { PortalOpportunityLineRow, nextLineKey, type LineDraft } from './PortalOpportunityLineRow';
+import {
+  BLOCKED_VALUE,
+  NO_CUSTOMERS_MESSAGE,
+  PROSPECT_PREFIX,
+  fetchCustomerOrProspectOptions,
+} from '../lib/customerOrProspect';
+import {
+  PortalOpportunityLineRow,
+  nextLineKey,
+  sumLineDraftAmounts,
+  type LineDraft,
+} from './PortalOpportunityLineRow';
 
 export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
   const [opportunity, setOpportunity] = useState<PortalSalesOpportunity | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [lostReasonOptions, setLostReasonOptions] = useState<SearchableSelectOption[]>([]);
-  const [pendingKey, setPendingKey] = useState<string | null>(null);
-  const [pendingToStatusId, setPendingToStatusId] = useState<string | null>(null);
+  const [lostToStatusId, setLostToStatusId] = useState<string | null>(null);
   const [lostReason, setLostReason] = useState('');
   const [saving, setSaving] = useState(false);
 
   const [isEditing, setIsEditing] = useState(false);
   const [title, setTitle] = useState('');
-  const [customerValue, setCustomerValue] = useState('');
-  const [customerId, setCustomerId] = useState<string | undefined>();
-  const [prospectName, setProspectName] = useState<string | undefined>();
+  const [customerOrProspect, setCustomerOrProspect] = useState('');
   const [expectedAmount, setExpectedAmount] = useState('');
+  const [amountTouched, setAmountTouched] = useState(false);
   const [expectedCloseDate, setExpectedCloseDate] = useState('');
   const [lines, setLines] = useState<LineDraft[]>([]);
 
@@ -71,7 +78,7 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
   useEffect(() => {
     load();
     // The reason picker just falls back to an empty list on failure - Lost still works,
-    // it only offers nothing to pick until a retry (Move stage) succeeds.
+    // it only offers nothing to pick until a retry succeeds.
     getPortalOpportunityMeta()
       .then((meta) =>
         setLostReasonOptions(meta.lost_reasons.map((r) => ({ value: r.value, label: r.label }))),
@@ -79,6 +86,23 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // F7: while the salesperson has not typed an amount, it tracks the lines total.
+  useEffect(() => {
+    if (amountTouched) return;
+    const sum = sumLineDraftAmounts(lines);
+    setExpectedAmount(sum > 0 ? sum.toFixed(2) : '');
+  }, [lines, amountTouched]);
+
+  const customerLabel = opportunity?.customer_name ?? opportunity?.prospect_name ?? undefined;
+  const customerSelectedOption = useMemo(() => {
+    if (!opportunity || !customerLabel) return undefined;
+    if (opportunity.customer_id) return { value: opportunity.customer_id, label: customerLabel };
+    if (opportunity.prospect_name) {
+      return { value: `${PROSPECT_PREFIX}${opportunity.prospect_name}`, label: customerLabel };
+    }
+    return undefined;
+  }, [opportunity, customerLabel]);
 
   if (loading) {
     return (
@@ -113,51 +137,48 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
   // N7 (Phase 3): once closed, the server rejects every field edit with 422
   // OPPORTUNITY_CLOSED - Edit has no reason to appear once that door is shut.
   const canEditFields = opportunity.outcome === 'open';
+  const viewTotal = lines_.reduce((acc, line) => acc + Number(line.line_amount ?? 0), 0);
 
   const beginEdit = () => {
     setTitle(opportunity.title);
-    setCustomerValue(opportunity.customer_id ? opportunity.customer_name ?? '' : opportunity.prospect_name ?? '');
-    setCustomerId(opportunity.customer_id ?? undefined);
-    setProspectName(opportunity.customer_id ? undefined : opportunity.prospect_name ?? undefined);
-    setExpectedAmount(String(opportunity.expected_amount ?? ''));
-    setExpectedCloseDate(opportunity.expected_close_date ?? '');
-    setLines(
-      lines_.map((line) => ({
-        key: nextLineKey(),
-        productId: line.product_id,
-        productLabel: `${line.product_code ?? ''} - ${line.product_name ?? ''}`,
-        qty: String(line.qty),
-      })),
+    setCustomerOrProspect(
+      opportunity.customer_id ?? (opportunity.prospect_name ? `${PROSPECT_PREFIX}${opportunity.prospect_name}` : ''),
     );
+    setExpectedCloseDate(opportunity.expected_close_date ?? '');
+    const nextLines: LineDraft[] = lines_.map((line) => ({
+      key: nextLineKey(),
+      productId: line.product_id,
+      productLabel: `${line.product_code ?? ''} - ${line.product_name ?? ''}`,
+      qty: String(line.qty),
+      unitPrice: line.unit_price ?? '',
+    }));
+    setLines(nextLines);
+    // F7: touched only when the stored amount is not what the stored lines add up to -
+    // otherwise a plain re-save would silently drop a hand-typed amount the moment any
+    // line changes.
+    const storedSum = sumLineDraftAmounts(nextLines).toFixed(2);
+    setAmountTouched(opportunity.expected_amount !== storedSum);
+    setExpectedAmount(String(opportunity.expected_amount ?? ''));
     setIsEditing(true);
   };
 
-  const handleCustomerChange = (value: string, item?: CustomerComboOption) => {
-    setCustomerValue(value);
-    if (item) {
-      if (item.customerId) {
-        setCustomerId(item.customerId);
-        setProspectName(undefined);
-      } else if (item.prospectName) {
-        setProspectName(item.prospectName);
-        setCustomerId(undefined);
-      }
-      return;
-    }
-    // Reviewer should-fix 6 (same rule the create form applies): a keystroke with no item
-    // means the typed text no longer matches whatever was picked before.
-    setCustomerId(undefined);
-    setProspectName(undefined);
-  };
+  const isProspect = customerOrProspect.startsWith(PROSPECT_PREFIX);
 
   const addLine = () =>
-    setLines((prev) => [...prev, { key: nextLineKey(), productId: '', productLabel: '', qty: '1' }]);
+    setLines((prev) => [
+      ...prev,
+      { key: nextLineKey(), productId: '', productLabel: '', qty: '1', unitPrice: '' },
+    ]);
   const removeLine = (key: string) => setLines((prev) => prev.filter((l) => l.key !== key));
   const updateLine = (key: string, patch: Partial<LineDraft>) =>
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
   const canSaveEdit =
-    title.trim().length > 0 && !!expectedAmount && !!expectedCloseDate && !saving;
+    customerOrProspect !== BLOCKED_VALUE &&
+    title.trim().length > 0 &&
+    !!expectedAmount &&
+    !!expectedCloseDate &&
+    !saving;
 
   const handleSaveEdit = async () => {
     if (!canSaveEdit) return;
@@ -171,12 +192,16 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
         // service fills an absent key from the row already on the opportunity, so
         // switching customer <-> prospect with the other key merely missing re-sent the
         // old value and 422'd CUSTOMER_AND_PROSPECT_TOGETHER.
-        ...(prospectName
-          ? { prospect_name: prospectName, customer_id: null }
-          : { customer_id: customerId, prospect_name: null }),
+        ...(isProspect
+          ? { prospect_name: customerOrProspect.slice(PROSPECT_PREFIX.length), customer_id: null }
+          : { customer_id: customerOrProspect, prospect_name: null }),
         lines: lines
           .filter((l) => l.productId)
-          .map((l) => ({ product_id: l.productId, qty: Number(l.qty) || 0 })),
+          .map((l) => ({
+            product_id: l.productId,
+            qty: Number(l.qty) || 0,
+            unit_price: l.unitPrice === '' ? null : Number(l.unitPrice),
+          })),
       });
       toast.success('Opportunity saved');
       setIsEditing(false);
@@ -193,9 +218,6 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
     try {
       await updatePortalSalesOpportunity(id, { status_id: toStatusId, ...extra });
       toast.success('Opportunity updated');
-      setPendingKey(null);
-      setPendingToStatusId(null);
-      setLostReason('');
       load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to update the opportunity.');
@@ -204,32 +226,36 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
     }
   };
 
-  const cancelPending = () => {
-    setPendingKey(null);
-    setPendingToStatusId(null);
+  const openLostDialog = (toStatusId: string) => {
+    setLostToStatusId(toStatusId);
     setLostReason('');
   };
 
-  const handleStageClick = (key: string, toStatusId: string) => {
-    // Won and Lost both close the opportunity for good (Phase 3 fix N7) - a confirm
-    // step for both, not just the one that happens to collect an extra field.
-    if (key === 'lost' || key === 'won') {
-      setPendingKey(key);
-      setPendingToStatusId(toStatusId);
-      return;
-    }
-    void applyStatus(toStatusId);
+  const cancelLostDialog = () => {
+    setLostToStatusId(null);
+    setLostReason('');
   };
 
-  const confirmPending = () => {
-    if (!pendingToStatusId) return;
-    if (pendingKey === 'lost') {
-      if (!lostReason) return;
-      void applyStatus(pendingToStatusId, { lost_reason: lostReason });
-      return;
-    }
-    void applyStatus(pendingToStatusId);
+  const confirmLost = () => {
+    if (!lostToStatusId || !lostReason) return;
+    void applyStatus(lostToStatusId, { lost_reason: lostReason });
+    setLostToStatusId(null);
+    setLostReason('');
   };
+
+  // F6: every other move runs the instant it is clicked - only Lost needs the reason first.
+  const stageActions: RecordAction[] = transitions.map((t) => ({
+    key: `stage-${t.to_status_id}`,
+    label: t.label,
+    kind: t.key === 'lost' ? 'destructive' : 'secondary',
+    run: () => {
+      if (t.key === 'lost') {
+        openLostDialog(t.to_status_id);
+        return;
+      }
+      void applyStatus(t.to_status_id);
+    },
+  }));
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4 px-3 pb-8 pt-4">
@@ -264,22 +290,20 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
           {isEditing ? (
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="portal-opportunity-edit-customer">Customer or prospect</Label>
-              <AsyncCombobox<CustomerComboOption>
+              <SearchableSelect
                 id="portal-opportunity-edit-customer"
-                value={customerValue}
-                onChange={handleCustomerChange}
+                aria-label="Customer or prospect"
+                value={customerOrProspect}
+                onChange={setCustomerOrProspect}
                 fetchOptions={fetchCustomerOrProspectOptions}
-                optionValue={(o) => o.id}
-                optionLabel={(o) => o.label}
-                optionDisabled={(o) => !!o.disabled}
+                selectedOption={customerSelectedOption}
                 placeholder="Search customer or prospect..."
-                allowFreeText={false}
+                emptyMessage={NO_CUSTOMERS_MESSAGE}
+                wrapOptions
               />
             </div>
           ) : (
-            <span className="text-xs text-muted-foreground">
-              {opportunity.customer_name ?? opportunity.prospect_name ?? '-'}
-            </span>
+            <span className="text-xs text-muted-foreground">{customerLabel ?? '-'}</span>
           )}
           {isEditing ? (
             <div className="grid grid-cols-2 gap-3">
@@ -292,7 +316,10 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
                   min="0"
                   step="0.01"
                   value={expectedAmount}
-                  onChange={(e) => setExpectedAmount(e.target.value)}
+                  onChange={(e) => {
+                    setExpectedAmount(e.target.value);
+                    setAmountTouched(true);
+                  }}
                 />
               </div>
               <div className="flex flex-col gap-1.5">
@@ -320,21 +347,29 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
               Lost reason: <span className="font-medium text-foreground">{opportunity.lost_reason_label}</span>
             </p>
           ) : null}
-          {isEditing ? (
-            <div className="flex items-center gap-2">
-              <Button type="button" size="sm" onClick={handleSaveEdit} disabled={!canSaveEdit}>
-                {saving ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
-                Save
-              </Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => setIsEditing(false)} disabled={saving}>
-                Cancel
-              </Button>
-            </div>
-          ) : canEditFields ? (
-            <Button type="button" variant="outline" size="sm" className="self-start" onClick={beginEdit}>
-              Edit
-            </Button>
-          ) : null}
+          {/* F6: one CTA (Edit) plus the gear holding the stage moves. */}
+          <div className="flex items-center gap-2">
+            {isEditing ? (
+              <>
+                <Button type="button" size="sm" onClick={handleSaveEdit} disabled={!canSaveEdit}>
+                  {saving ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
+                  Save
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={() => setIsEditing(false)} disabled={saving}>
+                  Cancel
+                </Button>
+              </>
+            ) : (
+              <>
+                {canEditFields ? (
+                  <Button type="button" size="sm" onClick={beginEdit}>
+                    Edit
+                  </Button>
+                ) : null}
+                <DetailActionsMenu actions={stageActions} ariaLabel="Actions" disabled={saving} />
+              </>
+            )}
+          </div>
         </CardContent>
       </Card>
 
@@ -367,81 +402,68 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
           ) : lines_.length === 0 ? (
             <p className="text-sm text-muted-foreground">No products yet</p>
           ) : (
-            <ul className="flex flex-col divide-y rounded-lg border">
-              {lines_.map((line) => (
-                <li
-                  key={line.id ?? line.product_id}
-                  className="flex items-center justify-between gap-2 px-3 py-2 text-sm"
-                >
-                  <span className="min-w-0 flex-1 truncate">
-                    <span>{line.product_code}</span> - <span>{line.product_name}</span>
-                  </span>
-                  <span className="text-muted-foreground">{line.qty}</span>
-                </li>
-              ))}
-            </ul>
+            <>
+              <ul className="flex flex-col divide-y rounded-lg border">
+                {lines_.map((line) => (
+                  <li
+                    key={line.id ?? line.product_id}
+                    className="flex flex-col gap-1 px-3 py-2 text-sm"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 flex-1 truncate">
+                        <span>{line.product_code}</span> - <span>{line.product_name}</span>
+                      </span>
+                      <span className="text-muted-foreground">{line.qty}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <span>{formatCurrency(line.unit_price)}</span>
+                      <span>{formatCurrency(line.line_amount)}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex items-center justify-between text-sm font-semibold">
+                <span>Total</span>
+                <span>{formatCurrency(viewTotal)}</span>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
 
-      <Card>
-        <CardContent className="flex flex-col gap-3 py-4">
-          <span className="text-sm font-semibold">Move stage</span>
-          {transitions.length === 0 ? (
-            <p className="text-sm text-muted-foreground">This is the last stage.</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {transitions.map((t) => (
-                <Button
-                  key={t.to_status_id}
-                  type="button"
-                  variant={pendingKey && pendingToStatusId === t.to_status_id ? 'primary' : 'outline'}
-                  size="sm"
-                  disabled={saving || isEditing}
-                  onClick={() => handleStageClick(t.key, t.to_status_id)}
-                >
-                  {saving && pendingToStatusId === t.to_status_id ? (
-                    <LoaderCircleIcon className="size-4 animate-spin" />
-                  ) : null}
-                  {t.label}
-                </Button>
-              ))}
-            </div>
-          )}
-          {pendingKey ? (
-            <div className="flex flex-col gap-3 rounded-lg border p-3">
-              {pendingKey === 'lost' ? (
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="portal-opportunity-lost-reason">Lost reason</Label>
-                  <SearchableSelect
-                    id="portal-opportunity-lost-reason"
-                    aria-label="Lost reason"
-                    value={lostReason}
-                    onChange={setLostReason}
-                    options={lostReasonOptions}
-                    placeholder="Pick a reason"
-                    wrapOptions
-                  />
-                </div>
-              ) : null}
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={confirmPending}
-                  disabled={(pendingKey === 'lost' && !lostReason) || saving}
-                >
-                  {saving ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
-                  Confirm
-                </Button>
-                <Button type="button" variant="outline" size="sm" onClick={cancelPending}>
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+      <Dialog
+        open={lostToStatusId !== null}
+        onOpenChange={(open) => {
+          if (!open) cancelLostDialog();
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Mark as lost</DialogTitle>
+          </DialogHeader>
+          <DialogBody className="flex flex-col gap-1.5">
+            <Label htmlFor="portal-opportunity-lost-reason">Lost reason</Label>
+            <SearchableSelect
+              id="portal-opportunity-lost-reason"
+              aria-label="Lost reason"
+              value={lostReason}
+              onChange={setLostReason}
+              options={lostReasonOptions}
+              placeholder="Pick a reason"
+              wrapOptions
+            />
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" size="sm" onClick={cancelLostDialog}>
+              Cancel
+            </Button>
+            <Button type="button" size="sm" onClick={confirmLost} disabled={!lostReason || saving}>
+              {saving ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
+              Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

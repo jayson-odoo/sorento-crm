@@ -217,7 +217,86 @@ describe('SalesOpportunityModal', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
-    expect(save.mutateAsync.mock.calls[0][0].lines).toEqual([{ product_id: 'p1', qty: 3 }]);
+    expect(save.mutateAsync.mock.calls[0][0].lines).toEqual([
+      { product_id: 'p1', qty: 3, unit_price: null },
+    ]);
+  });
+
+  it('fix round2 F7: picking a product prefills Unit price, and Amount is qty x price', async () => {
+    service.getSalesOpportunityProductOptions.mockResolvedValue([
+      { value: 'p1', label: 'ZZT-001 - ZZT Basin', listPrice: '10.00' },
+    ]);
+    render(<SalesOpportunityModal open onOpenChange={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /add product/i }));
+    const rows = screen.getAllByTestId('opportunity-line-row');
+    const productSelect = within(rows[0]).getByRole('combobox', { name: /product/i }) as HTMLSelectElement;
+    await waitFor(() =>
+      expect(Array.from(productSelect.options).map((o) => o.value)).toContain('p1'),
+    );
+    fireEvent.change(productSelect, { target: { value: 'p1' } });
+
+    const unitPrice = within(rows[0]).getByLabelText(/unit price/i) as HTMLInputElement;
+    await waitFor(() => expect(unitPrice.value).toBe('10.00'));
+    const amount = within(rows[0]).getByLabelText(/^amount$/i) as HTMLInputElement;
+    expect(amount.value).toBe('RM 10.00');
+  });
+
+  it('fix round2 F7: Expected amount defaults to the live line total until typed into', async () => {
+    service.getSalesOpportunityProductOptions.mockResolvedValue([
+      { value: 'p1', label: 'ZZT-001 - ZZT Basin', listPrice: '10.00' },
+    ]);
+    render(<SalesOpportunityModal open onOpenChange={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /add product/i }));
+    const rows = screen.getAllByTestId('opportunity-line-row');
+    const productSelect = within(rows[0]).getByRole('combobox', { name: /product/i }) as HTMLSelectElement;
+    await waitFor(() =>
+      expect(Array.from(productSelect.options).map((o) => o.value)).toContain('p1'),
+    );
+    fireEvent.change(productSelect, { target: { value: 'p1' } });
+
+    const amountInput = screen.getByLabelText('Expected amount') as HTMLInputElement;
+    await waitFor(() => expect(amountInput.value).toBe('10.00'));
+
+    fireEvent.change(within(rows[0]).getByLabelText(/qty/i), { target: { value: '3' } });
+    await waitFor(() => expect(amountInput.value).toBe('30.00'));
+
+    // Typing into it directly makes the typed value win, even as the lines keep changing.
+    fireEvent.change(amountInput, { target: { value: '999' } });
+    fireEvent.change(within(rows[0]).getByLabelText(/qty/i), { target: { value: '5' } });
+    expect(amountInput.value).toBe('999');
+  });
+
+  it('fix round2 F7: sends the summed amount when Expected amount is left untouched', async () => {
+    service.getSalesOpportunityCustomerOptions.mockResolvedValue({
+      items: [{ customer_id: 'cust-1', customer_code: 'C1', customer_name: 'ZZT Customer' }],
+      prospect: null,
+      blocked: null,
+    });
+    service.getSalesOpportunityProductOptions.mockResolvedValue([
+      { value: 'p1', label: 'ZZT-001 - ZZT Basin', listPrice: '10.00' },
+    ]);
+    render(<SalesOpportunityModal open onOpenChange={() => {}} />);
+    await selectOption('Customer or prospect', 'cust-1');
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'ZZT Opp' } });
+    fireEvent.change(screen.getByLabelText('Expected close date'), {
+      target: { value: '2026-11-01' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /add product/i }));
+    const rows = screen.getAllByTestId('opportunity-line-row');
+    const productSelect = within(rows[0]).getByRole('combobox', { name: /product/i }) as HTMLSelectElement;
+    await waitFor(() =>
+      expect(Array.from(productSelect.options).map((o) => o.value)).toContain('p1'),
+    );
+    fireEvent.change(productSelect, { target: { value: 'p1' } });
+    fireEvent.change(within(rows[0]).getByLabelText(/qty/i), { target: { value: '2' } });
+
+    await waitFor(() =>
+      expect((screen.getByLabelText('Expected amount') as HTMLInputElement).value).toBe('20.00'),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(save.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(save.mutateAsync.mock.calls[0][0].expected_amount).toBe('20.00');
   });
 
   it('fix reviewer-7: a preset customer shows its own name, not a blank field', () => {

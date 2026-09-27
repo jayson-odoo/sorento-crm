@@ -15,6 +15,8 @@ export interface PortalSalesOpportunityLine {
   product_code?: string;
   product_name?: string;
   qty: number | string;
+  unit_price: string | null;
+  line_amount: string | null;
 }
 
 export interface PortalSalesOpportunity {
@@ -44,7 +46,7 @@ export interface PortalSalesOpportunitySavePayload {
   prospect_name?: string | null;
   status_id?: string;
   lost_reason?: string | null;
-  lines?: { product_id: string; qty: number }[];
+  lines?: { product_id: string; qty: number; unit_price: number | string | null }[];
 }
 
 export interface PortalCustomerOptionItem {
@@ -102,6 +104,9 @@ export interface PortalProductOption {
   id: string;
   code: string;
   name: string | null;
+  /** Null when the product has no real price (owner: "my product no price one" - the
+   *  line's Unit price then starts blank instead of guessing at a number). */
+  listPrice: string | null;
 }
 
 /** The catalog's own portal lookup (LESSONS-LEARNT: never a capped static list). */
@@ -109,11 +114,21 @@ export async function getPortalProductOptions(q: string): Promise<PortalProductO
   const url = `/api/v1/public/portal/lookups/products?q=${encodeURIComponent(q)}`;
   const res = await portalFetch(url);
   const items = await unwrap<
-    { product_id?: string | null; product_code: string; product_name: string | null }[]
+    {
+      product_id?: string | null;
+      product_code: string;
+      product_name: string | null;
+      list_price?: string | null;
+    }[]
   >(res, 'Failed to search products.');
   return items
     .filter((item) => !!item.product_id)
-    .map((item) => ({ id: item.product_id as string, code: item.product_code, name: item.product_name }));
+    .map((item) => ({
+      id: item.product_id as string,
+      code: item.product_code,
+      name: item.product_name,
+      listPrice: item.list_price ?? null,
+    }));
 }
 
 export interface PortalSalesOpportunityMeta {

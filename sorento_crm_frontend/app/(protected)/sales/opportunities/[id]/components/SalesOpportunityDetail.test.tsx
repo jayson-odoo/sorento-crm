@@ -1,13 +1,15 @@
 /**
- * `/sales/opportunities/{id}` detail page (UAC S2-11, S2-12, S2-13; plan section 16).
+ * `/sales/opportunities/{id}` detail page (UAC S2-11, S2-12, S2-13; plan section 16; fix
+ * round 2 F5-F7).
  *
- * Stage buttons come from `available_transitions` only; Lost reveals a required reason select
- * and blocks save without it; Won reveals an optional sales order select; every section
- * (Opportunity, Products, Stage) renders with an empty state; a RecordNavigation is present.
+ * Stage moves (`available_transitions`) live in the gear, before Delete; Lost opens a dialog
+ * with a required reason select and blocks Confirm without it; Won opens a dialog with an
+ * optional sales order select; every section (the Details tab's Opportunity card, the
+ * Products tab) renders with an empty state; a RecordNavigation is present.
  */
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -17,18 +19,29 @@ vi.mock('@/components/common/RecordNavigation', () => ({
   RecordNavigation: () => <nav aria-label="record navigation" />,
 }));
 
+// The gear renders its items as buttons inside `data-testid="gear"` (same pattern
+// `SalesTeamDetail.test.tsx` uses), so a test can tell an item apart from the primary CTA.
 vi.mock('@/components/common/DetailActions', () => ({
   default: ({
     pagerNode,
+    actions,
     primary,
     pendingAction,
   }: {
     pagerNode?: React.ReactNode;
+    actions?: { key: string; label: string; run: () => void; disabled?: boolean }[];
     primary?: React.ReactNode;
     pendingAction?: React.ReactNode;
   }) => (
     <div data-testid="detail-actions">
       {pagerNode}
+      <div data-testid="gear">
+        {(actions ?? []).map((a) => (
+          <button key={a.key} type="button" disabled={a.disabled} onClick={() => a.run()}>
+            {a.label}
+          </button>
+        ))}
+      </div>
       {pendingAction ?? primary}
     </div>
   ),
@@ -85,9 +98,12 @@ const hooks = vi.hoisted(() => ({
 }));
 vi.mock('../../hooks/useSalesOpportunities', () => hooks);
 
-vi.mock('../../actions', () => ({
-  useSalesOpportunityActions: () => ({ actions: [], dialogs: null, pending: null }),
-}));
+// A thin stand-in for the real hook (F6): it turns `transitions` into gear items the same
+// way `actions.tsx` does, so this file can exercise the wiring (canEdit-gated, disabled
+// while editing, `onTransition` called on click) without also mocking `useDeferredAction`
+// for a Delete item none of these tests exercise.
+const actionsMock = vi.hoisted(() => ({ useSalesOpportunityActions: vi.fn() }));
+vi.mock('../../actions', () => actionsMock);
 
 const service = vi.hoisted(() => ({
   getSalesOpportunitySalesOrderOptions: vi.fn(),
@@ -159,6 +175,26 @@ beforeEach(() => {
   });
   hooks.useSalesOpportunityAgentOptions.mockReturnValue({ data: [] });
   perms.granted = new Set(['sales.opportunities.edit']);
+  actionsMock.useSalesOpportunityActions.mockReset();
+  actionsMock.useSalesOpportunityActions.mockImplementation(
+    (
+      _opportunity: unknown,
+      options: {
+        transitions?: { to_status_id: string; key: string; label: string }[];
+        onTransition?: (t: { to_status_id: string; key: string; label: string }) => void;
+        transitionsDisabled?: boolean;
+      } = {},
+    ) => {
+      const { transitions = [], onTransition, transitionsDisabled } = options;
+      const actions = transitions.map((t) => ({
+        key: `sales_opportunity.stage.${t.to_status_id}`,
+        label: t.label,
+        disabled: transitionsDisabled,
+        run: () => onTransition?.(t),
+      }));
+      return { actions, dialogs: null, pending: null };
+    },
+  );
   service.getSalesOpportunitySalesOrderOptions.mockReset();
   service.getSalesOpportunitySalesOrderOptions.mockResolvedValue([
     { id: 'so-1', so_number: 'SO-000001', customer_id: 'cust-1', customer_name: 'ZZT Dealer', order_date: '2026-10-01' },
@@ -177,22 +213,46 @@ describe('SalesOpportunityDetail', () => {
     expect(screen.getByLabelText('record navigation')).toBeTruthy();
   });
 
-  it('offers only the stages named in available_transitions', () => {
+  it('offers only the stages named in available_transitions, as gear items', () => {
     render(<SalesOpportunityDetail id="opp-1" />);
-    expect(screen.getByRole('button', { name: 'Qualified' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Won' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Lost' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Proposal' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Negotiation' })).toBeNull();
+    const gear = within(screen.getByTestId('gear'));
+    expect(gear.getByRole('button', { name: 'Qualified' })).toBeTruthy();
+    expect(gear.getByRole('button', { name: 'Won' })).toBeTruthy();
+    expect(gear.getByRole('button', { name: 'Lost' })).toBeTruthy();
+    expect(gear.queryByRole('button', { name: 'Proposal' })).toBeNull();
+    expect(gear.queryByRole('button', { name: 'Negotiation' })).toBeNull();
   });
 
-  it('choosing Lost reveals a required reason select and blocks save without it', async () => {
+  it('fix round2 F6: no stage items in the gear without sales.opportunities.edit', () => {
+    perms.granted = new Set();
     render(<SalesOpportunityDetail id="opp-1" />);
-    fireEvent.click(screen.getByRole('button', { name: 'Lost' }));
+    expect(within(screen.getByTestId('gear')).queryByRole('button')).toBeNull();
+  });
+
+  it('fix round2 F6: a non-lost/won transition (Qualify) runs immediately, no dialog', async () => {
+    render(<SalesOpportunityDetail id="opp-1" />);
+    fireEvent.click(within(screen.getByTestId('gear')).getByRole('button', { name: 'Qualified' }));
+    await waitFor(() =>
+      expect(save.mutateAsync).toHaveBeenCalledWith({ id: 'opp-1', status_id: 'st-qualified' }),
+    );
+    expect(screen.queryByLabelText(/lost reason/i)).toBeNull();
+  });
+
+  it('fix round2 F6: the stage items disable while an edit session is open', () => {
+    render(<SalesOpportunityDetail id="opp-1" />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    const gear = within(screen.getByTestId('gear'));
+    expect(gear.getByRole('button', { name: 'Qualified' })).toBeDisabled();
+  });
+
+  it('choosing Lost opens a dialog with a required reason select and blocks Confirm without it', async () => {
+    render(<SalesOpportunityDetail id="opp-1" />);
+    fireEvent.click(within(screen.getByTestId('gear')).getByRole('button', { name: 'Lost' }));
+    expect(screen.getByRole('heading', { name: 'Lost' })).toBeTruthy();
     const reasonSelect = await screen.findByLabelText(/lost reason/i);
     expect(reasonSelect).toBeTruthy();
 
-    const confirm = screen.getByRole('button', { name: /confirm|save/i });
+    const confirm = screen.getByRole('button', { name: /^confirm$/i });
     fireEvent.click(confirm);
     expect(save.mutateAsync).not.toHaveBeenCalled();
 
@@ -201,9 +261,9 @@ describe('SalesOpportunityDetail', () => {
     await waitFor(() => expect(save.mutateAsync).toHaveBeenCalled());
   });
 
-  it('choosing Won reveals an optional sales order select', async () => {
+  it('choosing Won opens a dialog with an optional sales order select', async () => {
     render(<SalesOpportunityDetail id="opp-1" />);
-    fireEvent.click(screen.getByRole('button', { name: 'Won' }));
+    fireEvent.click(within(screen.getByTestId('gear')).getByRole('button', { name: 'Won' }));
     expect(await screen.findByLabelText(/sales order/i)).toBeTruthy();
   });
 
@@ -214,9 +274,11 @@ describe('SalesOpportunityDetail', () => {
       isError: false,
     });
     render(<SalesOpportunityDetail id="opp-1" />);
+    expect(screen.getByRole('tab', { name: 'Details' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Products' })).toBeTruthy();
     expect(screen.getByText('Opportunity')).toBeTruthy();
-    expect(screen.getByText('Products')).toBeTruthy();
-    expect(screen.getByText('Stage')).toBeTruthy();
+
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Products' }), { button: 0 });
     expect(screen.getByText(/no products yet/i)).toBeTruthy();
   });
 
@@ -228,7 +290,7 @@ describe('SalesOpportunityDetail', () => {
 
   it('fix reviewer-2: Lost reason options come from meta.lost_reasons, not a hardcoded list', async () => {
     render(<SalesOpportunityDetail id="opp-1" />);
-    fireEvent.click(screen.getByRole('button', { name: 'Lost' }));
+    fireEvent.click(within(screen.getByTestId('gear')).getByRole('button', { name: 'Lost' }));
     await screen.findByLabelText(/lost reason/i);
     expect(screen.getByRole('option', { name: 'Price' })).toBeTruthy();
     expect(screen.getByRole('option', { name: 'Competitor' })).toBeTruthy();
@@ -239,7 +301,7 @@ describe('SalesOpportunityDetail', () => {
 
   it('fix reviewer-3: the sales order picker searches by q and labels "SO - customer"', async () => {
     render(<SalesOpportunityDetail id="opp-1" />);
-    fireEvent.click(screen.getByRole('button', { name: 'Won' }));
+    fireEvent.click(within(screen.getByTestId('gear')).getByRole('button', { name: 'Won' }));
     await screen.findByLabelText(/sales order/i);
     await waitFor(() =>
       expect(service.getSalesOpportunitySalesOrderOptions).toHaveBeenCalledWith('opp-1', ''),
@@ -293,7 +355,7 @@ describe('SalesOpportunityDetail', () => {
     const payload = save.mutateAsync.mock.calls[0][0];
     expect(payload.id).toBe('opp-1');
     expect(payload.title).toBe('ZZT Deal Renamed');
-    expect(payload.lines).toEqual([{ product_id: 'p1', qty: 2 }]);
+    expect(payload.lines).toEqual([{ product_id: 'p1', qty: 2, unit_price: null }]);
   });
 
   it('fix B2: Cancel leaves the record unchanged and exits edit mode', () => {

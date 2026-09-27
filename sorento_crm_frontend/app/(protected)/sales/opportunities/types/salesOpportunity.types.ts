@@ -8,6 +8,11 @@ export interface SalesOpportunityLine {
   product_code: string;
   product_name: string;
   qty: string | number;
+  /** Prefilled from the product's list price (the dealer flyer's price) when omitted on
+   *  create/update and that price is above zero; null otherwise (plan section 16, F7). */
+  unit_price: string | null;
+  /** `qty x unit_price`, 2dp; null when there is no unit price. */
+  line_amount: string | null;
 }
 
 export interface SalesOpportunityTransition {
@@ -53,6 +58,8 @@ export type SalesOpportunityDetail = SalesOpportunityListItem;
 export interface SalesOpportunityLineInput {
   product_id: string;
   qty: number;
+  /** Omitted or null - the server fills the product's list price when it is above zero. */
+  unit_price?: string | number | null;
 }
 
 /** CRM create/update payload - the same field names the backend reads (plan section 16). */
