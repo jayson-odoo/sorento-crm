@@ -30,7 +30,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from sqlalchemy import Integer, cast, func, or_, select, text
 from sqlalchemy.orm import Session
 
-from app.models.product import Product, ProductCategory
+from app.models.product import Brand, Product, ProductCategory
 from app.models.sales import (
     SalesTarget,
     SalesTargetPeriod,
@@ -52,6 +52,7 @@ FOLLOWED_FIELDS = (
     "product_scope",
     "category_ids",
     "product_ids",
+    "brand_ids",
     "start_date",
     "end_date",
     "split_every",
@@ -103,7 +104,14 @@ def _children(db: Session, target_id: str) -> List[SalesTarget]:
     )
 
 
-def _scope_ids(db: Session, target_id: str) -> Tuple[List[str], List[str]]:
+#: One target's scope ids: (category ids, product ids, brand ids).
+ScopeIds = Tuple[List[str], List[str], List[str]]
+
+#: A plain-words refusal for a half-empty range (owner ruling N6: both dates are required).
+DATES_REQUIRED_MESSAGE = "A target needs both a start date and an end date."
+
+
+def _scope_ids(db: Session, target_id: str) -> ScopeIds:
     rows = (
         db.query(SalesTargetScope)
         .filter(SalesTargetScope.target_id == target_id)
@@ -113,6 +121,7 @@ def _scope_ids(db: Session, target_id: str) -> Tuple[List[str], List[str]]:
     return (
         [r.product_category_id for r in rows if r.product_category_id],
         [r.product_id for r in rows if r.product_id],
+        [r.brand_id for r in rows if r.brand_id],
     )
 
 
@@ -177,17 +186,28 @@ def _next_target_nos(db: Session, company_id: str, n: int) -> List[str]:
 
 
 def _validate_scope(
-    db: Session, product_scope: str, category_ids: Sequence[str], product_ids: Sequence[str]
-) -> Tuple[List[str], List[str]]:
-    """Plan 3.1: `all` has no rows, `categories` only categories, `products` only products."""
+    db: Session,
+    product_scope: str,
+    category_ids: Sequence[str],
+    product_ids: Sequence[str],
+    brand_ids: Sequence[str] = (),
+) -> ScopeIds:
+    """Plan 3.1: `all` has no rows; `categories`, `products` and `brands` (the hand test of
+    27 Sep) each take at least one row of their own kind and none of the others."""
     category_ids = list(dict.fromkeys(str(i) for i in category_ids or []))
     product_ids = list(dict.fromkeys(str(i) for i in product_ids or []))
-    if product_scope == "all" and (category_ids or product_ids):
-        raise _unprocessable("All products takes no category or product.", "INVALID_SCOPE")
-    if product_scope == "categories" and (not category_ids or product_ids):
-        raise _unprocessable("Pick at least one category, and no products.", "INVALID_SCOPE")
-    if product_scope == "products" and (not product_ids or category_ids):
-        raise _unprocessable("Pick at least one product, and no categories.", "INVALID_SCOPE")
+    brand_ids = list(dict.fromkeys(str(i) for i in brand_ids or []))
+    given = {"categories": category_ids, "products": product_ids, "brands": brand_ids}
+    others = [kind for kind, ids in given.items() if ids and kind != product_scope]
+    if product_scope == "all" and others:
+        raise _unprocessable(
+            "All products takes no category, product or brand.", "INVALID_SCOPE"
+        )
+    noun = {"categories": "category", "products": "product", "brands": "brand"}
+    if product_scope in given and (not given[product_scope] or others):
+        raise _unprocessable(
+            f"Pick at least one {noun[product_scope]}, and nothing else.", "INVALID_SCOPE"
+        )
     if category_ids:
         found = {
             c.id for c in db.query(ProductCategory).filter(ProductCategory.id.in_(category_ids))
@@ -198,11 +218,19 @@ def _validate_scope(
         found = {p.id for p in db.query(Product).filter(Product.id.in_(product_ids))}
         if len(found) != len(product_ids):
             raise _unprocessable("One or more products were not found.", "INVALID_SCOPE")
-    return category_ids, product_ids
+    if brand_ids:
+        found = {b.id for b in db.query(Brand).filter(Brand.id.in_(brand_ids))}
+        if len(found) != len(brand_ids):
+            raise _unprocessable("One or more brands were not found.", "INVALID_SCOPE")
+    return category_ids, product_ids, brand_ids
 
 
 def _write_scope(
-    db: Session, target: SalesTarget, category_ids: Sequence[str], product_ids: Sequence[str]
+    db: Session,
+    target: SalesTarget,
+    category_ids: Sequence[str],
+    product_ids: Sequence[str],
+    brand_ids: Sequence[str] = (),
 ) -> None:
     db.query(SalesTargetScope).filter(SalesTargetScope.target_id == target.id).delete(
         synchronize_session=False
@@ -217,6 +245,8 @@ def _write_scope(
         db.add(
             SalesTargetScope(company_id=target.company_id, target_id=target.id, product_id=product_id)
         )
+    for brand_id in brand_ids:
+        db.add(SalesTargetScope(company_id=target.company_id, target_id=target.id, brand_id=brand_id))
 
 
 def _add_periods(db: Session, target: SalesTarget, bounds, values: Sequence[Decimal]) -> None:
@@ -299,11 +329,13 @@ def _new_header(company_id: str, target_no: str, user_id: Optional[str], **field
 
 def create_target(db: Session, payload, *, user_id: Optional[str] = None) -> SalesTarget:
     company_id = acting_company_id(db)
+    if payload.start_date is None or payload.end_date is None:
+        raise _unprocessable(DATES_REQUIRED_MESSAGE, "DATES_REQUIRED")
     bounds = generate_periods(
         payload.start_date, payload.end_date, payload.split_every, payload.split_unit
     )
-    category_ids, product_ids = _validate_scope(
-        db, payload.product_scope, payload.category_ids, payload.product_ids
+    scope_ids = _validate_scope(
+        db, payload.product_scope, payload.category_ids, payload.product_ids, payload.brand_ids
     )
     common = dict(
         name=payload.name,
@@ -330,7 +362,7 @@ def create_target(db: Session, payload, *, user_id: Optional[str] = None) -> Sal
         )
         db.add(target)
         db.flush()
-        _write_scope(db, target, category_ids, product_ids)
+        _write_scope(db, target, *scope_ids)
         _add_periods(db, target, bounds, [payload.target_value] * len(bounds))
         db.flush()
         return target
@@ -374,7 +406,7 @@ def create_target(db: Session, payload, *, user_id: Optional[str] = None) -> Sal
     )
     db.add(target)
     db.flush()
-    _write_scope(db, target, category_ids, product_ids)
+    _write_scope(db, target, *scope_ids)
     _add_periods(db, target, bounds, [0] * len(bounds))
     for number, figure in zip(numbers[1:], figures):
         child = _new_header(
@@ -388,7 +420,7 @@ def create_target(db: Session, payload, *, user_id: Optional[str] = None) -> Sal
         )
         db.add(child)
         db.flush()
-        _write_scope(db, child, category_ids, product_ids)
+        _write_scope(db, child, *scope_ids)
         _add_periods(db, child, bounds, [figure.target_value] * len(bounds))
     resum_team(db, target)
     return target
@@ -401,6 +433,8 @@ def create_target(db: Session, payload, *, user_id: Optional[str] = None) -> Sal
 
 def _apply_header(db: Session, target: SalesTarget, changes: dict) -> None:
     """Write the non-name header fields in `changes` to one target, scope and periods included."""
+    if any(key in changes and changes[key] is None for key in ("start_date", "end_date")):
+        raise _unprocessable(DATES_REQUIRED_MESSAGE, "DATES_REQUIRED")
     for key in ("metric", "basis", "start_date", "end_date", "split_every", "split_unit"):
         if key in changes:
             setattr(target, key, changes[key])
@@ -413,18 +447,17 @@ def _apply_header(db: Session, target: SalesTarget, changes: dict) -> None:
     if (target.split_every is None) != (target.split_unit is None):
         raise _unprocessable("A split needs both how many and which unit.", "INVALID_SPLIT")
 
-    if {"product_scope", "category_ids", "product_ids"} & set(changes):
+    keys = ("category_ids", "product_ids", "brand_ids")
+    if {"product_scope", *keys} & set(changes):
         scope = changes.get("product_scope") or target.product_scope
-        current_categories, current_products = _scope_ids(db, target.id)
+        current = dict(zip(keys, _scope_ids(db, target.id)))
         if "product_scope" in changes:
-            categories = changes.get("category_ids") or []
-            products = changes.get("product_ids") or []
+            lists = [changes.get(key) or [] for key in keys]
         else:
-            categories = changes.get("category_ids", current_categories) or []
-            products = changes.get("product_ids", current_products) or []
-        categories, products = _validate_scope(db, scope, categories, products)
+            lists = [changes.get(key, current[key]) or [] for key in keys]
+        scope_ids = _validate_scope(db, scope, *lists)
         target.product_scope = scope
-        _write_scope(db, target, categories, products)
+        _write_scope(db, target, *scope_ids)
 
     if {"start_date", "end_date", "split_every", "split_unit"} & set(changes):
         _regenerate_periods(db, target)
@@ -484,7 +517,7 @@ def add_child(
     _require_member(db, parent.sales_team_id, agent_id, parent.start_date, parent.end_date)
     if any(c.sales_agent_id == agent_id for c in _children(db, parent.id)):
         raise _unprocessable("That agent already has a figure on this target.", "AGENT_HAS_FIGURE")
-    categories, products = _scope_ids(db, parent.id)
+    scope_ids = _scope_ids(db, parent.id)
     (number,) = _next_target_nos(db, parent.company_id, 1)
     child = _new_header(
         parent.company_id,
@@ -504,7 +537,7 @@ def add_child(
     )
     db.add(child)
     db.flush()
-    _write_scope(db, child, categories, products)
+    _write_scope(db, child, *scope_ids)
     bounds = [(p.period_start, p.period_end) for p in _periods(db, parent.id)]
     _add_periods(db, child, bounds, [value] * len(bounds))
     resum_team(db, parent)
@@ -560,8 +593,7 @@ def _copy(
     )
     db.add(copy)
     db.flush()
-    categories, products = _scope_ids(db, source.id)
-    _write_scope(db, copy, categories, products)
+    _write_scope(db, copy, *_scope_ids(db, source.id))
     figures = [p.target_value for p in _periods(db, source.id)] or [Decimal("0")]
     bounds = generate_periods(start, end, source.split_every, source.split_unit)
     _add_periods(db, copy, bounds, [figures[min(i, len(figures) - 1)] for i in range(len(bounds))])
@@ -641,10 +673,23 @@ def _covering_on(db: Session, on: date):
     )
 
 
-def _scope_labels(db: Session, target_ids: Iterable[str]) -> Dict[str, List[Tuple[str, str]]]:
-    """`{target_id: [(category or product id, label)]}` in a stable order."""
+def _code_name(code: Optional[str], name: Optional[str]) -> str:
+    """ "CODE - Name", the label every scope picker shows (never an id, the hand test F5)."""
+    return " - ".join(part for part in (code, name) if part)
+
+
+def category_label(category: ProductCategory) -> str:
+    return _code_name(category.category_code, category.category_name)
+
+
+def brand_label(brand: Brand) -> str:
+    return _code_name(brand.brand_code, brand.brand_name)
+
+
+def _scope_labels(db: Session, target_ids: Iterable[str]) -> Dict[str, List[Tuple[str, str, str]]]:
+    """`{target_id: [(id, kind, label)]}` in a stable order; kind is category, product or brand."""
     ids = list(set(target_ids))
-    out: Dict[str, List[Tuple[str, str]]] = {i: [] for i in ids}
+    out: Dict[str, List[Tuple[str, str, str]]] = {i: [] for i in ids}
     if not ids:
         return out
     categories = (
@@ -654,7 +699,7 @@ def _scope_labels(db: Session, target_ids: Iterable[str]) -> Dict[str, List[Tupl
         .all()
     )
     for target_id, category in sorted(categories, key=lambda r: r[1].category_name):
-        out[target_id].append((category.id, category.category_name))
+        out[target_id].append((category.id, "category", category_label(category)))
     products = (
         db.query(SalesTargetScope.target_id, Product)
         .join(Product, Product.id == SalesTargetScope.product_id)
@@ -662,7 +707,17 @@ def _scope_labels(db: Session, target_ids: Iterable[str]) -> Dict[str, List[Tupl
         .all()
     )
     for target_id, product in sorted(products, key=lambda r: r[1].product_code):
-        out[target_id].append((product.id, f"{product.product_code} - {product.product_name}"))
+        out[target_id].append(
+            (product.id, "product", _code_name(product.product_code, product.product_name))
+        )
+    brands = (
+        db.query(SalesTargetScope.target_id, Brand)
+        .join(Brand, Brand.id == SalesTargetScope.brand_id)
+        .filter(SalesTargetScope.target_id.in_(ids))
+        .all()
+    )
+    for target_id, brand in sorted(brands, key=lambda r: r[1].brand_code):
+        out[target_id].append((brand.id, "brand", brand_label(brand)))
     return out
 
 
@@ -812,7 +867,7 @@ def list_targets(
                 "metric": target.metric,
                 "basis": target.basis,
                 "product_scope": target.product_scope,
-                "scope_labels": [label for _, label in scopes.get(target.id, [])],
+                "scope_labels": [label for _, _, label in scopes.get(target.id, [])],
                 "period_id": period.id,
                 "period_start": period.period_start,
                 "period_end": period.period_end,
@@ -848,6 +903,112 @@ def list_targets(
         "unassigned_amount": float(ach.unassigned_amount(db, on, company_id)),
         "no_team_count": no_team_count,
     }
+
+
+def list_all_targets(
+    db: Session,
+    *,
+    subject: str = "team",
+    sales_team_id: Optional[str] = None,
+    query: Optional[str] = None,
+) -> dict:
+    """Targets > Teams and Targets > Agents (the owner's hand test of 27 Sep, "it should show a
+    list of team target, that's it"): one row per target of the kind, whatever its dates, with
+    the whole range's figures (the sum of its periods' targets and achievements). No date
+    filter and no "No target" rows. On the Agents tab the Team filter is the agent's team
+    today, or `none` for agents in no team today."""
+    on = _today()
+    company_id = acting_company_id(db)
+    if sales_team_id == "none" and subject != "agent":
+        raise _unprocessable("No team filters agents only.", "INVALID_FILTER")
+    team_of_agent: Dict[str, SalesTeam] = {m.sales_agent_id: t for m, t in _covering_on(db, on)}
+
+    targets_q = db.query(SalesTarget).filter(SalesTarget.subject_kind == subject)
+    if subject == "team" and sales_team_id:
+        targets_q = targets_q.filter(SalesTarget.sales_team_id == sales_team_id)
+    targets = targets_q.all()
+    if subject == "agent" and sales_team_id == "none":
+        targets = [t for t in targets if t.sales_agent_id not in team_of_agent]
+    elif subject == "agent" and sales_team_id:
+        targets = [
+            t for t in targets if getattr(team_of_agent.get(t.sales_agent_id), "id", None) == sales_team_id
+        ]
+
+    if subject == "agent":
+        agents = _agents_by_id(db, company_id, {t.sales_agent_id for t in targets})
+        # An agent this reader cannot see is not listed (the agent visibility rule).
+        targets = [t for t in targets if t.sales_agent_id in agents]
+        labels = {agent_id: agent_label(agent) for agent_id, agent in agents.items()}
+    else:
+        teams = {
+            t.id: t
+            for t in db.query(SalesTeam).filter(SalesTeam.id.in_({x.sales_team_id for x in targets}))
+        } if targets else {}
+        labels = {team_id: team.name for team_id, team in teams.items()}
+
+    periods_by_target: Dict[str, List[SalesTargetPeriod]] = {}
+    if targets:
+        for period in db.query(SalesTargetPeriod).filter(
+            SalesTargetPeriod.target_id.in_([t.id for t in targets])
+        ):
+            periods_by_target.setdefault(period.target_id, []).append(period)
+    pairs = [(t, p) for t in targets for p in periods_by_target.get(t.id, [])]
+    achieved = ach.achieved_by_period(db, _specs(db, company_id, pairs), company_id)
+    scopes = _scope_labels(db, {t.id for t in targets})
+
+    rows: List[dict] = []
+    for target in targets:
+        periods = periods_by_target.get(target.id, [])
+        goal = sum((p.target_value for p in periods), Decimal("0"))
+        value = sum((achieved.get(p.id, Decimal("0")) for p in periods), Decimal("0"))
+        if subject == "agent":
+            team = team_of_agent.get(target.sales_agent_id)
+            subject_id = target.sales_agent_id
+            subject_fields = {
+                "sales_agent_id": subject_id,
+                "team_id": team.id if team else None,
+                "team_name": team.name if team else None,
+            }
+        else:
+            subject_id = target.sales_team_id
+            subject_fields = {
+                "sales_team_id": subject_id,
+                "team_id": subject_id,
+                "team_name": labels.get(subject_id),
+            }
+        rows.append(
+            {
+                **subject_fields,
+                "subject_kind": subject,
+                "subject_label": labels.get(subject_id, ""),
+                "members": None,
+                "target_id": target.id,
+                "target_no": target.target_no,
+                "name": target.name,
+                "metric": target.metric,
+                "basis": target.basis,
+                "product_scope": target.product_scope,
+                "scope_labels": [label for _, _, label in scopes.get(target.id, [])],
+                "start_date": target.start_date,
+                "end_date": target.end_date,
+                "target_value": _num(goal),
+                "achieved_value": _num(value),
+                "achieved_pct": ach.achieved_pct(value, goal),
+                "parent_target_id": target.parent_target_id,
+            }
+        )
+
+    if query and query.strip():
+        needle = query.strip().lower()
+        rows = [
+            r
+            for r in rows
+            if any(needle in (r.get(key) or "").lower() for key in ("subject_label", "name", "target_no"))
+        ]
+    # Newest range first, then by who and the number, so the current targets lead.
+    rows.sort(key=lambda r: (r["subject_label"].lower(), r["target_no"]))
+    rows.sort(key=lambda r: r["start_date"], reverse=True)
+    return {"on": on, "rows": rows, "unassigned_amount": 0.0, "no_team_count": 0}
 
 
 def counts_label(db: Session, basis: str, company_id: str) -> str:
@@ -943,8 +1104,8 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
         "split_unit": target.split_unit,
         "counts_label": counts_label(db, target.basis, company_id),
         "scope": [
-            {"id": item_id, "label": label}
-            for item_id, label in _scope_labels(db, [target.id])[target.id]
+            {"id": item_id, "kind": kind, "label": label}
+            for item_id, kind, label in _scope_labels(db, [target.id])[target.id]
         ],
         "periods": [
             {
@@ -995,6 +1156,7 @@ def options(db: Session) -> dict:
         .order_by(ProductCategory.category_name)
         .all()
     )
+    brands = db.query(Brand).filter(Brand.is_active.is_(True)).order_by(Brand.brand_code).all()
     return {
         "agents": team_service.agent_options(db, company_id=company_id),
         "teams": [
@@ -1007,9 +1169,10 @@ def options(db: Session) -> dict:
             for t in teams
         ],
         "categories": [
-            {"id": c.id, "label": c.category_name, "parent_category_id": c.parent_category_id}
+            {"id": c.id, "label": category_label(c), "parent_category_id": c.parent_category_id}
             for c in categories
         ],
+        "brands": [{"id": b.id, "label": brand_label(b)} for b in brands],
     }
 
 

@@ -7,7 +7,8 @@ shown, whatever mix of subjects, metrics, bases and scopes they carry.
 **Which lines count for a period.** `sales_order_lines` of a sales order that is not
 cancelled, on a line that is not cancelled (the sales report's own predicate), with a non-null
 `order_date` (a null date never counts, either basis), inside the target's product scope
-(a category counts its sub-categories, through a recursive CTE over `parent_category_id`), and
+(a category counts its sub-categories, through a recursive CTE over `parent_category_id`; a
+brand counts every product whose `brand_id` is one of the target's brands), and
 credited to the subject:
 
 - **An agent** (G2, R2): the order's `sales_agent_id` is the agent or one of their label
@@ -441,6 +442,17 @@ def achieved_by_period(db: Session, specs: List[PeriodSpec], company_id: str) ->
                 SalesTargetScope.target_id == p.c.target_id,
                 SalesTargetScope.company_id == company_id,
                 SalesTargetScope.product_id == pairs.c.product_id,
+            ),
+        ),
+        # A brand counts every product carrying it (the owner's hand test of 27 Sep).
+        and_(
+            p.c.product_scope == "brands",
+            exists().where(
+                SalesTargetScope.target_id == p.c.target_id,
+                SalesTargetScope.company_id == company_id,
+                SalesTargetScope.brand_id.isnot(None),
+                Product.id == pairs.c.product_id,
+                Product.brand_id == SalesTargetScope.brand_id,
             ),
         ),
     )

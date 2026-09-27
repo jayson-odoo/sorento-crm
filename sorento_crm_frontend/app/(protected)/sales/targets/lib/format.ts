@@ -43,6 +43,13 @@ export function shortDate(day: string | null | undefined): string {
   return `${date} ${MONTHS[month - 1]} ${year}`;
 }
 
+/** `1 Sep to 30 Nov 2026`, the year once when both ends share it; `''` without both ends. */
+export function dateRange(start: string | null | undefined, end: string | null | undefined): string {
+  if (!start || !end) return '';
+  if (start.slice(0, 4) !== end.slice(0, 4)) return `${shortDate(start)} to ${shortDate(end)}`;
+  return `${shortDate(start).slice(0, -5)} to ${shortDate(end)}`;
+}
+
 export const METRIC_LABEL: Record<TargetMetric, string> = {
   amount: 'Amount',
   quantity: 'Quantity',
@@ -55,6 +62,7 @@ export const SCOPE_LABEL: Record<TargetProductScope, string> = {
   all: 'All products',
   categories: 'Categories',
   products: 'Products',
+  brands: 'Brands',
 };
 
 /** RM for an amount target, units for a quantity one. */
@@ -62,22 +70,16 @@ export function unitOf(metric: TargetMetric | null | undefined): string {
   return metric === 'quantity' ? 'units' : 'RM';
 }
 
-/** "All products", "3 categories", "1 product". */
+/** "All products", "3 categories", "1 product", "2 brands". */
 export function scopeSummary(
   scope: TargetProductScope | null,
   count: number,
 ): string {
   if (!scope || scope === 'all') return 'All products';
-  const noun = scope === 'categories' ? 'categor' : 'product';
-  const plural =
-    scope === 'categories'
-      ? count === 1
-        ? 'y'
-        : 'ies'
-      : count === 1
-        ? ''
-        : 's';
-  return `${count} ${noun}${plural}`;
+  if (scope === 'categories')
+    return `${count} ${count === 1 ? 'category' : 'categories'}`;
+  const noun = scope === 'brands' ? 'brand' : 'product';
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
 }
 
 /** "Every 2 weeks", "Every month", or "Off". */

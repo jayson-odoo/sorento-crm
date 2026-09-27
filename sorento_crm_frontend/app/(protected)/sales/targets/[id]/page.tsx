@@ -2,7 +2,7 @@ import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
-import { SalesTargetPage } from './components/SalesTargetPage';
+import TargetRecord from '../components/TargetRecord';
 
 export const metadata: Metadata = {
   title: 'Target',
@@ -20,7 +20,7 @@ export default async function TargetPage({ params }: { params: Promise<{ id: str
         />
       </Container>
       <Container>
-        <SalesTargetPage id={id} />
+        <TargetRecord id={id} />
       </Container>
     </>
   );

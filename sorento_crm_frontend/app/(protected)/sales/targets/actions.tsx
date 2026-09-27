@@ -1,19 +1,17 @@
 'use client';
 
 /**
- * The target page's actions (D15, S1-23): Duplicate, a visible header button beside Edit, and
- * Delete, in the row menu.
+ * The target record's actions (D15, S1-23): Duplicate, then Delete, in the gear dropdown.
  *
- * Edit is the target page's primary button, so it is not in this menu. Delete asks nothing
+ * The record adds Edit ahead of these (the S1 hand test of 27 Sep, F2 and F4: Edit lives in
+ * the gear, beside the pager, never as a button of its own). Delete asks nothing
  * (D7): it parks `sales_target.delete` on the server for the hard-delete window and the
  * countdown takes over the primary button. A team target's children go with it (FK cascade),
  * so the countdown names them: "Deleting North FY26 H2 and 2 agent targets" (plan 3.8).
  */
 
-import type React from 'react';
 import { useRouter } from 'next/navigation';
 import { Copy, Trash2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import type {
   RecordAction,
   RecordActionSet,
@@ -38,7 +36,7 @@ export function deleteSubject(target: TargetRef): string {
 export function useSalesTargetActions(
   target: TargetRef | undefined | null,
   { onDeleted }: { onDeleted?: () => void } = {},
-): RecordActionSet & { duplicateButton: React.ReactNode } {
+): RecordActionSet {
   const router = useRouter();
   const canEdit = useHasPermission('sales.targets.edit');
   const canDelete = useHasPermission('sales.targets.delete');
@@ -58,8 +56,7 @@ export function useSalesTargetActions(
   });
 
   const actions: RecordAction[] = [];
-  if (!target)
-    return { actions, dialogs: null, pending: null, duplicateButton: null };
+  if (!target) return { actions, dialogs: null, pending: null };
 
   const runDuplicate = async () => {
     try {
@@ -70,19 +67,15 @@ export function useSalesTargetActions(
     }
   };
   // Hidden while a delete counts down: the record on its way out offers only Cancel.
-  const duplicateButton =
-    canEdit && !deletion.countdown ? (
-      <Button
-        variant="outline"
-        size="sm"
-        className="gap-1.5"
-        disabled={duplicate.isPending}
-        onClick={runDuplicate}
-      >
-        <Copy className="size-4" />
-        Duplicate
-      </Button>
-    ) : null;
+  if (canEdit && !deletion.countdown) {
+    actions.push({
+      key: 'sales_target.duplicate',
+      label: 'Duplicate',
+      icon: Copy,
+      disabled: duplicate.isPending,
+      run: runDuplicate,
+    });
+  }
 
   if (canDelete) {
     actions.push({
@@ -99,6 +92,5 @@ export function useSalesTargetActions(
     actions,
     dialogs: null,
     pending: deletion.countdown,
-    duplicateButton,
   };
 }

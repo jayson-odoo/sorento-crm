@@ -367,7 +367,7 @@ UuidStr = Annotated[str, BeforeValidator(_uuid_str)]
 
 Metric = Literal["amount", "quantity"]
 Basis = Literal["ordered", "delivered"]
-ProductScope = Literal["all", "categories", "products"]
+ProductScope = Literal["all", "categories", "products", "brands"]
 SplitUnit = Literal["day", "week", "month"]
 
 
@@ -402,8 +402,11 @@ class SalesTargetCreate(BaseModel):
     product_scope: ProductScope = "all"
     category_ids: List[UuidStr] = Field(default_factory=list, max_length=500)
     product_ids: List[UuidStr] = Field(default_factory=list, max_length=500)
-    start_date: DateType
-    end_date: DateType
+    brand_ids: List[UuidStr] = Field(default_factory=list, max_length=500)
+    #: Both required; optional here only so a missing one is refused by the service in plain
+    #: words ("A target needs both a start date and an end date."), not "Field required".
+    start_date: Optional[DateType] = None
+    end_date: Optional[DateType] = None
     split_every: Optional[int] = Field(None, ge=1, le=99)
     split_unit: Optional[SplitUnit] = None
     #: Agent targets: the figure written to every period. Rejected on a team target (T3).
@@ -417,6 +420,15 @@ class SalesTargetCreate(BaseModel):
         return _clean_target_name(value)
 
 
+#: What a person reads for each header field a PATCH may not empty (no snake_case in the UI).
+_REQUIRED_HEADER_LABELS = {
+    "name": "Target name",
+    "metric": "Measure",
+    "basis": "Counts",
+    "product_scope": "Applies to",
+}
+
+
 class SalesTargetUpdate(BaseModel):
     """The header. The subject is not editable (not in this schema, so it is 422)."""
 
@@ -428,6 +440,7 @@ class SalesTargetUpdate(BaseModel):
     product_scope: Optional[ProductScope] = None
     category_ids: Optional[List[UuidStr]] = Field(None, max_length=500)
     product_ids: Optional[List[UuidStr]] = Field(None, max_length=500)
+    brand_ids: Optional[List[UuidStr]] = Field(None, max_length=500)
     start_date: Optional[DateType] = None
     end_date: Optional[DateType] = None
     #: Sent as null (both): the split is turned off.
@@ -444,9 +457,10 @@ class SalesTargetUpdate(BaseModel):
         # Leaving a field out keeps it; sending null for one the header cannot be without is
         # a 422 here, never a NOT NULL violation at the database. Only the split may be null
         # (it turns the split off).
-        for key in ("name", "metric", "basis", "product_scope", "start_date", "end_date"):
+        # The dates are the service's (one plain-words message for either end, F6).
+        for key, label in _REQUIRED_HEADER_LABELS.items():
             if key in self.model_fields_set and getattr(self, key) is None:
-                raise ValueError(f"{key} cannot be empty")
+                raise ValueError(f"{label} cannot be empty.")
         return self
 
 
@@ -494,6 +508,8 @@ class SalesTargetRow(BaseModel):
     period_id: Optional[str] = None
     period_start: Optional[DateType] = None
     period_end: Optional[DateType] = None
+    #: The whole list (`all=true`): the target's own first day. Its last day is `end_date`.
+    start_date: Optional[DateType] = None
     end_date: Optional[DateType] = None
     target_value: Optional[float] = None
     achieved_value: Optional[float] = None
@@ -511,8 +527,11 @@ class SalesTargetList(BaseModel):
 
 
 class SalesTargetScopeItem(BaseModel):
-    #: The category or product id.
+    #: The category, product or brand id.
     id: str
+    #: `category`, `product` or `brand`, so the record's pickers can seed their selected names.
+    kind: str
+    #: "CODE - Name", never an id.
     label: str
 
 
@@ -605,10 +624,16 @@ class SalesTargetOptionCategory(BaseModel):
     parent_category_id: Optional[str] = None
 
 
+class SalesTargetOptionBrand(BaseModel):
+    id: str
+    label: str
+
+
 class SalesTargetOptions(BaseModel):
     agents: List[SalesTargetOptionAgent]
     teams: List[SalesTargetOptionTeam]
     categories: List[SalesTargetOptionCategory]
+    brands: List[SalesTargetOptionBrand]
 
 
 # --------------------------------------------------------------------------------------

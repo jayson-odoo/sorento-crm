@@ -1,9 +1,9 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { LoaderCircleIcon, Plus, SquarePen, Target, X } from 'lucide-react';
+import { Info, LoaderCircleIcon, Plus, SquarePen, Target, UsersRound, X } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
@@ -11,9 +11,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import DetailActions from '@/components/common/DetailActions';
 import { PillOverflow } from '@/components/common/PillOverflow';
 import RecordNavigation from '@/components/common/RecordNavigation';
+import type { RecordAction } from '@/components/common/recordActions';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -28,15 +30,14 @@ import { useSalesTeamActions } from '../../actions';
 import { agentOptionLabel, agentsMovingIn, leftLabel } from '../../lib/moves';
 import type { SalesTeamDetail as Detail } from '../../types/salesTeam.types';
 import { useSalesTargets } from '../../../targets/hooks/useSalesTargets';
-import SetTargetModal from '../../../targets/components/SetTargetModal';
 import { foldBySubject } from '../../../targets/lib/fold';
 import {
   BASIS_LABEL,
   METRIC_LABEL,
   formatFigure,
   formatPct,
+  dateRange,
   scopeSummary,
-  shortDate,
 } from '../../../targets/lib/format';
 import type { SalesTargetRow } from '../../../targets/types/salesTarget.types';
 
@@ -83,45 +84,63 @@ function AgentTargets({ rows, label }: { rows: SalesTargetRow[]; label: string }
   );
 }
 
+type TeamTab = 'details' | 'targets' | 'agents';
+
+const TEAM_TABS: { value: TeamTab; label: string; icon: typeof Info }[] = [
+  { value: 'details', label: 'Details', icon: Info },
+  { value: 'targets', label: 'Targets', icon: Target },
+  { value: 'agents', label: 'Agents', icon: UsersRound },
+];
+
+/** A labelled read-only value, or its input while editing (the same place, S6-13). */
+function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      {htmlFor ? (
+        <Label htmlFor={htmlFor} className="text-xs text-muted-foreground">
+          {label}
+        </Label>
+      ) : (
+        <span className="text-xs text-muted-foreground">{label}</span>
+      )}
+      <div className="min-w-0 text-sm">{children}</div>
+    </div>
+  );
+}
+
 /**
  * A sales team's own page (UAC S6-13, S6-15; owner rulings 26 Sep 06:01 (Lavish) N5 and
- * 26 Sep 06:09 T2).
+ * 26 Sep 06:09 T2; the S1 hand test of 27 Sep, F2).
  *
- * VIEW AND EDIT ARE THE SAME LAYOUT. Edit swaps the name for an input and the Active badge
- * for a switch, in place, and gives the Agents section an Add agents picker and a remove
- * control per row; nothing moves. Read-only metadata (agent count, Created, Updated) sits in
- * the header's meta strip.
+ * The Users record pattern: a header card (the name, the Active badge, and the agent count,
+ * Created and Updated in the meta strip; prev/next, the gear and Set target on the right),
+ * then line tabs in the order **Details** (name and leader), **Targets** (every team target
+ * of the team) and **Agents** (each agent's line with their own figures on the date). Edit is an
+ * item in the gear, not a button of its own; the edit view is this same record, same tabs,
+ * each value swapped for its input in place, with Cancel and Save in the header card.
  *
- * Two sections, in order, always rendered (S6-13, S1): **Team targets** (one line per team
- * target active on the date, "No team target" with Set target) and **Agents**, each agent's
- * line carrying their own targets and the first one's Target, Achieved and %. The date is the
- * Targets page's Active on (`?on=`), today otherwise. An agent who left this month keeps a
- * muted line with a "Left 14 Oct" pill, so the team's figure for the month is explained on
- * screen. Set target is the header's primary action and presets this team (plan 3.9), Edit
- * the secondary one; on an agent's line, Set target presets that agent.
- * Each agent is one line, however often they left and came back (owner ruling 26 Sep ~13:05Z).
- *
- * The leader (owner ruling 26 Sep ~13:25Z, W1) is named on its own line under the team name,
- * and their row carries a "Leader" tag. In edit that line becomes the Leader picker, offering
- * the agents kept and added in this session only; removing the leader clears it.
+ * The Agents tab's date is the Targets page's `?on=`, today otherwise. An agent who left this
+ * month keeps a muted line with a "Left 14 Oct" pill, so the team's figure for the month is
+ * explained on screen; each agent is one line, however often they left and came back (owner
+ * ruling 26 Sep ~13:05Z). The leader (W1) is named in Details and tagged on their row; in edit
+ * the Leader picker offers the agents kept and added in this session only.
  */
 export function SalesTeamDetail({ id }: { id: string }) {
   const router = useRouter();
   const params = useSearchParams();
-  // The Targets page's Active on date, carried in the URL; today when opened any other way.
   const on = params.get('on') || todayMalaysiaYyyyMmDd();
   const canEdit = useHasPermission('sales.teams.edit');
   const canSetTarget = useHasPermission('sales.targets.add');
   const { data: team, isLoading, isError } = useSalesTeam(id, on);
-  const { data: teamTargets } = useSalesTargets({ on, subject: 'team', salesTeamId: id });
+  const { data: teamTargets } = useSalesTargets({ all: true, subject: 'team', salesTeamId: id });
   const { data: agentTargets } = useSalesTargets({ on, subject: 'agent', salesTeamId: id });
-  const [setTarget, setSetTarget] = useState<{ kind: 'agent' | 'team'; subjectId: string } | null>(null);
   const { data: list } = useSalesTeams('');
   const save = useSaveSalesTeam();
-  const { actions, pending } = useSalesTeamActions(team, {
+  const { actions: teamActions, pending } = useSalesTeamActions(team, {
     onDeleted: () => router.push('/sales/teams'),
   });
 
+  const [tab, setTab] = useState<TeamTab>('details');
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState('');
   const [isActive, setIsActive] = useState(true);
@@ -134,7 +153,6 @@ export function SalesTeamDetail({ id }: { id: string }) {
   const teams = list?.data ?? [];
   const index = teams.findIndex((t) => t.id === id);
 
-  // Team targets active on the date, one line each; an agent's own targets folded to one line.
   const teamLines = useMemo(
     () => (teamTargets?.rows ?? []).filter((r) => r.target_id && r.sales_team_id === id),
     [teamTargets, id],
@@ -229,35 +247,32 @@ export function SalesTeamDetail({ id }: { id: string }) {
     }
   };
 
+  const newTargetHref = (kind: 'team' | 'agent', subjectId: string) =>
+    `/sales/targets/new?kind=${kind}&subject=${subjectId}`;
+  const setTeamTarget = () => router.push(newTargetHref('team', team.id));
+  const startAddAgents = () => {
+    beginEdit(team);
+    setTab('agents');
+  };
+
+  // Edit leads the gear (F2); Delete stays last, in red.
+  const actions: RecordAction[] = canEdit
+    ? [{ key: 'sales_team.edit', label: 'Edit', icon: SquarePen, run: () => beginEdit(team) }, ...teamActions]
+    : teamActions;
   const agentCount = `${team.member_count} agent${team.member_count === 1 ? '' : 's'}`;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <Card>
         <CardHeader className="block py-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex min-w-0 flex-col gap-2">
+            <div className="flex min-w-0 flex-col gap-1.5">
               <div className="flex min-w-0 flex-wrap items-center gap-3">
+                <h2 className="truncate text-lg font-semibold" title={team.name}>
+                  {team.name}
+                </h2>
                 {isEditing ? (
-                  <div className="flex flex-col gap-1">
-                    <Label htmlFor="sales-team-edit-name" className="text-xs text-muted-foreground">
-                      Team name
-                    </Label>
-                    <Input
-                      id="sales-team-edit-name"
-                      value={name}
-                      maxLength={120}
-                      onChange={(e) => setName(e.target.value)}
-                      className="h-8 w-64 max-w-full"
-                    />
-                  </div>
-                ) : (
-                  <h2 className="truncate text-lg font-semibold" title={team.name}>
-                    {team.name}
-                  </h2>
-                )}
-                {isEditing ? (
-                  <div className="flex items-center gap-2">
+                  <span className="flex items-center gap-2">
                     <Switch
                       id="sales-team-edit-active"
                       aria-label="Active"
@@ -265,7 +280,7 @@ export function SalesTeamDetail({ id }: { id: string }) {
                       onCheckedChange={setIsActive}
                     />
                     <Label htmlFor="sales-team-edit-active">Active</Label>
-                  </div>
+                  </span>
                 ) : (
                   <Badge variant={team.is_active ? 'success' : 'secondary'} appearance="light">
                     <BadgeDot />
@@ -273,28 +288,6 @@ export function SalesTeamDetail({ id }: { id: string }) {
                   </Badge>
                 )}
               </div>
-              {isEditing ? (
-                <div className="flex flex-col gap-1">
-                  <Label htmlFor="sales-team-edit-leader" className="text-xs text-muted-foreground">
-                    Leader
-                  </Label>
-                  <SearchableSelect
-                    id="sales-team-edit-leader"
-                    value={leaderId}
-                    onChange={setLeaderId}
-                    options={leaderOptions}
-                    placeholder="No leader"
-                    emptyMessage="No agents in this team."
-                    clearable
-                    wrapOptions
-                    className="w-64 max-w-full"
-                  />
-                </div>
-              ) : (
-                <div className="truncate text-sm" title={team.leader_label ?? undefined}>
-                  {team.leader_label ? `Leader: ${team.leader_label}` : 'No leader'}
-                </div>
-              )}
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                 <span>{agentCount}</span>
                 {left.length ? <span>{`${left.length} left this month`}</span> : null}
@@ -313,15 +306,6 @@ export function SalesTeamDetail({ id }: { id: string }) {
                 </Button>
               </div>
             ) : (
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-              {/* Edit is the secondary action (plan 3.9, team form view); it steps aside while a
-                  delete is counting down, as DetailActions' own primary does. */}
-              {canEdit && !pending ? (
-                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => beginEdit(team)}>
-                  <SquarePen className="size-4" />
-                  Edit
-                </Button>
-              ) : null}
               <DetailActions
                 pagerNode={
                   <RecordNavigation
@@ -336,204 +320,241 @@ export function SalesTeamDetail({ id }: { id: string }) {
                 }
                 actions={actions}
                 pendingAction={pending}
+                gearLabel="Sales team options"
                 primary={
                   canSetTarget ? (
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      className="gap-1.5"
-                      onClick={() => setSetTarget({ kind: 'team', subjectId: team.id })}
-                    >
+                    <Button variant="primary" size="sm" className="gap-1.5" onClick={setTeamTarget}>
                       <Target className="size-4" />
                       Set target
                     </Button>
                   ) : undefined
                 }
               />
-              </div>
             )}
           </div>
         </CardHeader>
       </Card>
 
-      <Card>
-        <section aria-label="Team targets" className="flex flex-col gap-3 p-4">
-          <h3 className="text-sm font-semibold">Team targets</h3>
-          {teamLines.length === 0 ? (
-            <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed py-8 text-center">
-              <span className="text-sm font-medium">No team target</span>
-              {/* Outline: the header's Set target is the page's one primary action. */}
-              {canSetTarget ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setSetTarget({ kind: 'team', subjectId: team.id })}
-                >
-                  <Plus className="size-4" />
-                  Set target
-                </Button>
-              ) : null}
-            </div>
-          ) : (
-            <ul className="flex flex-col divide-y rounded-lg border">
-              {teamLines.map((row) => (
-                <li
-                  key={row.target_id}
-                  className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-3 py-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1.5fr)_7rem_6rem_6rem_4rem]"
-                >
-                  <Link
-                    href={`/sales/targets/${row.target_id}`}
-                    className="truncate text-sm text-primary hover:underline"
-                    title={row.name ?? undefined}
-                  >
-                    {row.name}
-                  </Link>
-                  <span className="hidden min-w-0 sm:block">
-                    <PillOverflow
-                      ariaLabel={`What ${row.name} counts`}
-                      items={measurePills(row)}
-                      renderPopover={(items) => (
-                        <ul className="flex flex-col gap-1 text-sm">
-                          {items.map((i) => (
-                            <li key={i.key}>{i.label}</li>
-                          ))}
-                          {row.scope_labels.map((label) => (
-                            <li key={label} className="truncate text-muted-foreground" title={label}>
-                              {label}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    />
-                  </span>
-                  <span className="hidden truncate text-xs text-muted-foreground sm:block">
-                    {row.period_end ? `to ${shortDate(row.end_date ?? row.period_end)}` : ''}
-                  </span>
-                  <span className="hidden text-end text-sm tabular-nums sm:block">{formatFigure(row.target_value)}</span>
-                  <span className="hidden text-end text-sm tabular-nums sm:block">{formatFigure(row.achieved_value)}</span>
-                  <span className="text-end text-sm font-medium tabular-nums">{formatPct(row.achieved_pct)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      </Card>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as TeamTab)}>
+        <TabsList variant="line" className="mb-5">
+          {TEAM_TABS.map((t) => (
+            <TabsTrigger key={t.value} value={t.value} onClick={() => setTab(t.value)}>
+              <t.icon className="size-4" />
+              <span>{t.label}</span>
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-      <Card>
-        <section aria-label="Agents" className="flex flex-col gap-3 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold">Agents</h3>
-            {canEdit && !isEditing && !isEmpty ? (
-              <Button variant="outline" size="sm" onClick={() => beginEdit(team)}>
-                <Plus className="size-4" />
-                Add agents
-              </Button>
-            ) : null}
-          </div>
-
-          {isEditing ? (
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-              <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-                <Label htmlFor="sales-team-add-agents">Add agents</Label>
-                <SearchableMultiSelect
-                  id="sales-team-add-agents"
-                  value={addIds}
-                  onChange={pickAddIds}
-                  options={addOptions}
-                  placeholder="Pick agents"
-                  emptyMessage="No other active sales agents."
-                  wrapOptions
-                />
-              </div>
-              {moving.length ? (
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="sales-team-edit-moves-on">Moves on</Label>
+        <TabsContent value="details">
+          <Card>
+            <section aria-label="Details" className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2">
+              <Field label="Team name" htmlFor={isEditing ? 'sales-team-edit-name' : undefined}>
+                {isEditing ? (
                   <Input
-                    id="sales-team-edit-moves-on"
-                    type="date"
-                    required
-                    max={todayMalaysiaYyyyMmDd()}
-                    value={movesOn}
-                    onChange={(e) => setMovesOn(e.target.value)}
-                    className="w-44"
+                    id="sales-team-edit-name"
+                    value={name}
+                    maxLength={120}
+                    onChange={(e) => setName(e.target.value)}
+                    className="h-8"
                   />
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          {isEmpty ? (
-            <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed py-8 text-center">
-              <span className="text-sm font-medium">No agents in this team</span>
-              {canEdit && !isEditing ? (
-                <Button variant="primary" size="sm" onClick={() => beginEdit(team)}>
-                  <Plus className="size-4" />
-                  Add agents
-                </Button>
-              ) : null}
-            </div>
-          ) : (
-            <ul className="flex flex-col divide-y rounded-lg border">
-              {shownActive.map((m) => (
-                <li key={m.sales_agent_id} className="flex min-w-0 items-center justify-between gap-2 px-3 py-2">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span className="truncate text-sm" title={m.label}>
-                      {m.label}
-                    </span>
-                    {m.sales_agent_id === (isEditing ? leaderId : team.leader_sales_agent_id) ? (
-                      <Badge variant="primary" appearance="light" size="sm">
-                        Leader
-                      </Badge>
-                    ) : null}
+                ) : (
+                  <span className="block truncate" title={team.name}>
+                    {team.name}
                   </span>
-                  <AgentFigures
-                    line={agentLines.get(m.sales_agent_id)}
-                    label={m.label}
-                    canSetTarget={canSetTarget && !isEditing}
-                    onSetTarget={() => setSetTarget({ kind: 'agent', subjectId: m.sales_agent_id })}
+                )}
+              </Field>
+              <Field label="Leader" htmlFor={isEditing ? 'sales-team-edit-leader' : undefined}>
+                {isEditing ? (
+                  <SearchableSelect
+                    id="sales-team-edit-leader"
+                    value={leaderId}
+                    onChange={setLeaderId}
+                    options={leaderOptions}
+                    placeholder="No leader"
+                    emptyMessage="No agents in this team."
+                    clearable
+                    wrapOptions
                   />
-                  {isEditing ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      mode="icon"
-                      aria-label={`Remove ${m.label}`}
-                      onClick={() => removeAgent(m.sales_agent_id)}
-                    >
-                      <X className="size-4" />
+                ) : (
+                  <span className="block truncate" title={team.leader_label ?? undefined}>
+                    {team.leader_label ?? 'No leader'}
+                  </span>
+                )}
+              </Field>
+            </section>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="targets">
+          <Card>
+            <section aria-label="Team targets" className="flex flex-col gap-3 p-5">
+              {teamLines.length === 0 ? (
+                <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed py-8 text-center">
+                  <span className="text-sm font-medium">No team target</span>
+                  {/* Outline: the header's Set target is the page's one primary action. */}
+                  {canSetTarget ? (
+                    <Button variant="outline" size="sm" onClick={setTeamTarget}>
+                      <Plus className="size-4" />
+                      Set target
                     </Button>
                   ) : null}
-                </li>
-              ))}
-              {left.map((m) => (
-                <li
-                  key={`left-${m.sales_agent_id}-${m.valid_to}`}
-                  data-left="true"
-                  className="flex min-w-0 items-center gap-2 px-3 py-2 text-muted-foreground"
-                >
-                  <span className="truncate text-sm" title={m.label}>
-                    {m.label}
-                  </span>
-                  {m.valid_to ? (
-                    <Badge variant="warning" appearance="light" size="sm">
-                      {leftLabel(m.valid_to)}
-                    </Badge>
+                </div>
+              ) : (
+                <ul className="flex flex-col divide-y rounded-lg border">
+                  {teamLines.map((row) => (
+                    <li
+                      key={row.target_id}
+                      className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-3 py-2 sm:grid-cols-[6.5rem_minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,1.6fr)_6rem_6rem_4rem]"
+                    >
+                      <span className="hidden truncate text-xs text-muted-foreground sm:block">{row.target_no}</span>
+                      <Link
+                        href={`/sales/targets/${row.target_id}`}
+                        className="truncate text-sm text-primary hover:underline"
+                        title={row.name ?? undefined}
+                      >
+                        {row.name}
+                      </Link>
+                      <span className="hidden min-w-0 sm:block">
+                        <PillOverflow
+                          ariaLabel={`What ${row.name} counts`}
+                          items={measurePills(row)}
+                          renderPopover={(items) => (
+                            <ul className="flex flex-col gap-1 text-sm">
+                              {items.map((i) => (
+                                <li key={i.key}>{i.label}</li>
+                              ))}
+                              {row.scope_labels.map((label) => (
+                                <li key={label} className="truncate text-muted-foreground" title={label}>
+                                  {label}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        />
+                      </span>
+                      <span className="hidden truncate text-xs text-muted-foreground sm:block">
+                        {dateRange(row.start_date, row.end_date)}
+                      </span>
+                      <span className="hidden text-end text-sm tabular-nums sm:block">{formatFigure(row.target_value)}</span>
+                      <span className="hidden text-end text-sm tabular-nums sm:block">{formatFigure(row.achieved_value)}</span>
+                      <span className="text-end text-sm font-medium tabular-nums">{formatPct(row.achieved_pct)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="agents">
+          <Card>
+            <section aria-label="Agents" className="flex flex-col gap-3 p-5">
+              {canEdit && !isEditing && !isEmpty ? (
+                <div className="flex justify-end">
+                  <Button variant="outline" size="sm" onClick={startAddAgents}>
+                    <Plus className="size-4" />
+                    Add agents
+                  </Button>
+                </div>
+              ) : null}
+
+              {isEditing ? (
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                  <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                    <Label htmlFor="sales-team-add-agents">Add agents</Label>
+                    <SearchableMultiSelect
+                      id="sales-team-add-agents"
+                      value={addIds}
+                      onChange={pickAddIds}
+                      options={addOptions}
+                      placeholder="Pick agents"
+                      emptyMessage="No other active sales agents."
+                      wrapOptions
+                    />
+                  </div>
+                  {moving.length ? (
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="sales-team-edit-moves-on">Moves on</Label>
+                      <Input
+                        id="sales-team-edit-moves-on"
+                        type="date"
+                        required
+                        max={todayMalaysiaYyyyMmDd()}
+                        value={movesOn}
+                        onChange={(e) => setMovesOn(e.target.value)}
+                        className="w-44"
+                      />
+                    </div>
                   ) : null}
-                  <AgentFigures line={agentLines.get(m.sales_agent_id)} label={m.label} canSetTarget={false} />
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      </Card>
-      {setTarget ? (
-        <SetTargetModal
-          open
-          onOpenChange={(open) => (open ? null : setSetTarget(null))}
-          presetKind={setTarget.kind}
-          presetSubjectId={setTarget.subjectId}
-        />
-      ) : null}
+                </div>
+              ) : null}
+
+              {isEmpty ? (
+                <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed py-8 text-center">
+                  <span className="text-sm font-medium">No agents in this team</span>
+                  {canEdit && !isEditing ? (
+                    <Button variant="outline" size="sm" onClick={startAddAgents}>
+                      <Plus className="size-4" />
+                      Add agents
+                    </Button>
+                  ) : null}
+                </div>
+              ) : (
+                <ul className="flex flex-col divide-y rounded-lg border">
+                  {shownActive.map((m) => (
+                    <li key={m.sales_agent_id} className="flex min-w-0 items-center justify-between gap-2 px-3 py-2">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate text-sm" title={m.label}>
+                          {m.label}
+                        </span>
+                        {m.sales_agent_id === (isEditing ? leaderId : team.leader_sales_agent_id) ? (
+                          <Badge variant="primary" appearance="light" size="sm">
+                            Leader
+                          </Badge>
+                        ) : null}
+                      </span>
+                      <AgentFigures
+                        line={agentLines.get(m.sales_agent_id)}
+                        label={m.label}
+                        canSetTarget={canSetTarget && !isEditing}
+                        onSetTarget={() => router.push(newTargetHref('agent', m.sales_agent_id))}
+                      />
+                      {isEditing ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          mode="icon"
+                          aria-label={`Remove ${m.label}`}
+                          onClick={() => removeAgent(m.sales_agent_id)}
+                        >
+                          <X className="size-4" />
+                        </Button>
+                      ) : null}
+                    </li>
+                  ))}
+                  {left.map((m) => (
+                    <li
+                      key={`left-${m.sales_agent_id}-${m.valid_to}`}
+                      data-left="true"
+                      className="flex min-w-0 items-center gap-2 px-3 py-2 text-muted-foreground"
+                    >
+                      <span className="truncate text-sm" title={m.label}>
+                        {m.label}
+                      </span>
+                      {m.valid_to ? (
+                        <Badge variant="warning" appearance="light" size="sm">
+                          {leftLabel(m.valid_to)}
+                        </Badge>
+                      ) : null}
+                      <AgentFigures line={agentLines.get(m.sales_agent_id)} label={m.label} canSetTarget={false} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
