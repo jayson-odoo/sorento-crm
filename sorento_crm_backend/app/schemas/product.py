@@ -65,6 +65,9 @@ class BrandBase(BaseModel):
     flows_to_purchasing: bool = True
     # Owner ruling R1 on PR #833: the brand's chatbot weight (0 = no preference).
     chatbot_weight: float = Field(0, ge=0, le=9999)
+    # "Customers can ask for this brand" (#1286, D3). False keeps a placeholder brand
+    # (OTHERS, NO LOGO) out of what the chatbot offers and binds on a single word.
+    is_searchable: bool = True
 
 
 class BrandCreate(BrandBase):
@@ -81,6 +84,7 @@ class BrandUpdate(BaseModel):
     access_levels: Optional[list[str]] = None
     flows_to_purchasing: Optional[bool] = None
     chatbot_weight: Optional[float] = Field(None, ge=0, le=9999)
+    is_searchable: Optional[bool] = None
 
 
 class BrandResponse(BrandBase):

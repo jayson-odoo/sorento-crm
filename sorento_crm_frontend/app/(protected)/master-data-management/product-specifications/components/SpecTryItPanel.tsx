@@ -8,10 +8,11 @@ import { fetchProductPickerOptions } from '../services/productSpecService';
 import type { TryItSource } from '../hooks/useSpecTryIt';
 
 /**
- * "Try it on" (AC-B.3): pick a real product, or paste text, and see what the DRAFT
- * rules read from it. Sits above the rule list; the per-row reads it drives are
- * rendered INTO those rows (a `readResult` prop on `SpecRuleEditor`), not here - this
- * panel only owns the source and the description it reads from.
+ * "Try it on" (AC-S1.8): pick a real product, or paste text, and see what the
+ * rule(s) read from it. Mounted inside `SpecRuleModal` for a single rule (its
+ * own read shows below the box) and inside `RulesTab` in view mode for the
+ * whole list, whose per-row reads render INTO `SpecRulesGrid`'s rows, not
+ * here - this panel only owns the source and the description it reads from.
  */
 export default function SpecTryItPanel({
   source,
@@ -63,6 +64,8 @@ export default function SpecTryItPanel({
           variant="sm"
           className="min-h-[2.25rem] min-w-[16rem] flex-1"
           placeholder="Paste a product description to try instead"
+          // The server reads at most 4000 characters of pasted text.
+          maxLength={4000}
           value={pastedText}
           onChange={(e) => {
             const text = e.target.value;
@@ -89,13 +92,6 @@ export default function SpecTryItPanel({
           <span className="text-muted-foreground">Description: </span>
           <span className="font-mono">{description}</span>
         </div>
-      )}
-
-      {!source && (
-        <p className="text-xs text-muted-foreground">
-          Pick a product or paste text to see what each rule below reads from
-          it.
-        </p>
       )}
     </div>
   );

@@ -178,6 +178,10 @@ export interface Brand {
   // weighted brand is answered first and the others follow by weight (0 = none).
   // Owner ruling R1 on PR #833, replacing round 2's default-brand switch.
   chatbot_weight?: number;
+  // Default true; false for the placeholder brands OTHERS and NO LOGO (S0,
+  // PLAN-product-specs-non-technical-26sep.md D3). Search and the understanding
+  // prompt skip a brand where this is false - nobody ever names OTHERS.
+  is_searchable?: boolean;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;

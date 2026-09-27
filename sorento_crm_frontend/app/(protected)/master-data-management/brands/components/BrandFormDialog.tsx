@@ -39,6 +39,10 @@ const BrandFormSchema = z.object({
   flows_to_purchasing: z.boolean(),
   // The chatbot's brand preference: higher weights are answered first (0 = none).
   chatbot_weight: z.coerce.number().min(0, 'Enter 0 or more').max(9999, 'Enter 9999 or less'),
+  // "Customers can ask for this brand" (S0, D3, fix round 3 D4): default true;
+  // false for the placeholder brands OTHERS and NO LOGO, which record the
+  // absence of a brand rather than name a real one.
+  is_searchable: z.boolean(),
 });
 
 interface BrandFormDialogProps {
@@ -71,6 +75,7 @@ export default function BrandFormDialog({
       access_levels: [],
       flows_to_purchasing: true,
       chatbot_weight: 0,
+      is_searchable: true,
     },
   });
 
@@ -85,6 +90,7 @@ export default function BrandFormDialog({
           access_levels: brand.access_levels ?? [],
           flows_to_purchasing: brand.flows_to_purchasing,
           chatbot_weight: brand.chatbot_weight ?? 0,
+          is_searchable: brand.is_searchable ?? true,
         });
       } else if (copyFromBrand) {
         form.reset({
@@ -96,6 +102,7 @@ export default function BrandFormDialog({
           flows_to_purchasing: copyFromBrand.flows_to_purchasing,
           // A copy never takes the preference of the brand it was copied from.
           chatbot_weight: 0,
+          is_searchable: copyFromBrand.is_searchable ?? true,
         });
       } else {
         form.reset({
@@ -106,6 +113,7 @@ export default function BrandFormDialog({
           access_levels: [],
           flows_to_purchasing: true,
           chatbot_weight: 0,
+          is_searchable: true,
         });
       }
     }
@@ -121,6 +129,7 @@ export default function BrandFormDialog({
         access_levels: data.access_levels ?? [],
         flows_to_purchasing: data.flows_to_purchasing,
         chatbot_weight: data.chatbot_weight,
+        is_searchable: data.is_searchable,
       };
 
       if (brandId) {
@@ -130,7 +139,7 @@ export default function BrandFormDialog({
       }
       onOpenChange(false);
       form.reset();
-    } catch (error) {
+    } catch {
       // Error handled by mutation
     }
   };
@@ -285,6 +294,24 @@ export default function BrandFormDialog({
                     />
                   </FormControl>
                   <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="is_searchable"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                  <div className="space-y-0.5">
+                    <FormLabel className="text-base">Customers can ask for this brand</FormLabel>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
                 </FormItem>
               )}
             />

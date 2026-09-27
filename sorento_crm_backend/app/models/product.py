@@ -127,6 +127,13 @@ class Brand(Base, CompanyScopedMixin):
     # brand it reaches first and names the other brands in weight order. 0 = no preference.
     # Seeded Sorento 1.5 by migration bcw_0001; edited on Master Data > Brands.
     chatbot_weight = Column(Numeric(6, 2), nullable=False, default=0, server_default=text("0"))
+    # "Customers can ask for this brand" (#1286, D3). False for OTHERS and NO LOGO,
+    # which is how the catalogue records the ABSENCE of a brand: the understanding
+    # model is never offered them, and a single word never binds one in search (a
+    # multi-word name still binds on the full phrase, so "no logo kitchen sink" works).
+    # Same name and meaning as `product_categories.is_searchable`. It replaced the
+    # `excluded_values` of the removed Brand specification.
+    is_searchable = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)

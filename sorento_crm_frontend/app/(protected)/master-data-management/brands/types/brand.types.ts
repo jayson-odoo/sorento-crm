@@ -13,4 +13,5 @@ export interface BrandFormData {
   access_levels?: string[];
   flows_to_purchasing?: boolean;
   chatbot_weight?: number;
+  is_searchable?: boolean;
 }
