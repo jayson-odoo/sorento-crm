@@ -1286,7 +1286,8 @@ def _top_selling_verdict(
     focus = state.focus
     slot = focus.top_selling if isinstance(focus.top_selling, dict) else None
     ranking = focus.status == "top_selling" or bool(slot and slot.get("hop"))
-    claimed = _ranking_words_claim(verdict, text)
+    # An out of scope reading inside a ranking keeps round 5's one short question (R6).
+    claimed = None if ranking and verdict.get("message_type") == "out_of_scope" else _ranking_words_claim(verdict, text)
     if claimed is not None:
         verdict = claimed
     if slot is not None:
