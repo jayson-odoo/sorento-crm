@@ -4,9 +4,9 @@ Lets an admin enter the public submission portal as a contact without going
 through the OTP verification step. The minted portal token is marked verified
 at issuance, so it bypasses the OTP gate in ``PortalService.resolve_token``.
 
-Audit / created_by / updated_by on anything the admin does inside the portal
-remain the real admin via ``set_audit_context`` (the portal write paths use
-the same audit context as the rest of the app for these endpoints).
+Anything the admin does inside the portal is audited with the admin as
+``real_user_id`` (identity S0, AC-11): ``public/portal.py`` ``_portal_actor``
+stamps it from the contact impersonation session.
 """
 import logging
 import secrets

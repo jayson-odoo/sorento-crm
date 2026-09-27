@@ -46,11 +46,16 @@ def _decode_jwt_user(token: str) -> dict:
 
 def _load_user_dict_from_db(db: Session, user_id: str) -> Optional[dict]:
     """Load a user dict (same shape as JWT-derived) from DB, including primary role slug."""
+    return _load_user_and_contact(db, user_id)[0]
+
+
+def _load_user_and_contact(db: Session, user_id: str) -> tuple[Optional[dict], Optional[str]]:
+    """The user dict plus the user's linked WhatsApp contact id (for the audit actor)."""
     from app.models.user import User, UserRoleAssignment, UserRole
 
     row = db.query(User).filter(User.id == user_id, User.is_trashed.is_(False)).first()
     if not row:
-        return None
+        return None, None
     role_slug = (
         db.query(UserRole.slug)
         .join(UserRoleAssignment, UserRoleAssignment.role_id == UserRole.id)
@@ -72,7 +77,60 @@ def _load_user_dict_from_db(db: Session, user_id: str) -> Optional[dict]:
         "avatar": row.avatar,
         "status": row.status,
         "role_name": role_slug[0] if role_slug else None,
-    }
+    }, row.respond_contact_id
+
+
+def _client_ip(request: Request) -> Optional[str]:
+    return request.client.host if request.client else None
+
+
+def _stamp_session_actor(request: Request, db: Session, real_user: dict) -> None:
+    """Stamp a staff Bearer session as the audit actor (identity S0, plan 8.1)."""
+    from app.audit_context import AuditActor, stamp_actor
+
+    stamp_actor(
+        AuditActor(
+            actor_type="user",
+            user_id=str(real_user["id"]),
+            real_user_id=str(real_user["id"]),
+            auth_method=getattr(request.state, "session_auth_method", None) or "password",
+            session_id=getattr(request.state, "session_id", None),
+            contact_id=getattr(request.state, "session_user_contact_id", None),
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+        ),
+        db=db,
+        request=request,
+    )
+
+
+def _clean_tool_name(raw: Optional[str]) -> Optional[str]:
+    """X-Tool-Name as it may land in an audit description: control characters
+    (below 0x20, and 0x7f) stripped first, then capped at 128."""
+    if not raw:
+        return None
+    cleaned = "".join(ch for ch in raw if ord(ch) >= 0x20 and ord(ch) != 0x7F).strip()
+    return cleaned[:128] or None
+
+
+def _stamp_integration_actor(request: Request, db: Session, user: dict) -> None:
+    """Stamp an integration API key as the audit actor (identity S0, AC-09)."""
+    from app.audit_context import AuditActor, stamp_actor
+
+    stamp_actor(
+        AuditActor(
+            actor_type="integration",
+            user_id=str(user["id"]),
+            real_user_id=str(user["id"]),
+            auth_method="api_key",
+            integration_id=user.get("integration_id"),
+            tool_name=_clean_tool_name(request.headers.get("X-Tool-Name")),
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+        ),
+        db=db,
+        request=request,
+    )
 
 
 def _resolve_session_to_user(token: str, request: Request, db: Session) -> dict:
@@ -93,7 +151,7 @@ def _resolve_session_to_user(token: str, request: Request, db: Session) -> dict:
             detail={"code": e.reason, "message": e.detail},
             headers={"WWW-Authenticate": "Bearer"},
         )
-    user = _load_user_dict_from_db(db, str(session_row.user_id))
+    user, contact_id = _load_user_and_contact(db, str(session_row.user_id))
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -108,6 +166,9 @@ def _resolve_session_to_user(token: str, request: Request, db: Session) -> dict:
     # Expose the current session for "this device" / revoke-others / logout.
     request.state.session_id = str(session_row.id)
     request.state.session_token = token
+    # Read by the audit actor stamp (identity S0, AC-07 / AC-08).
+    request.state.session_auth_method = getattr(session_row, "auth_method", None) or "password"
+    request.state.session_user_contact_id = contact_id
     return user
 
 
@@ -145,11 +206,22 @@ def _maybe_apply_impersonation(
     if not target_user or target_user.get("status") != "ACTIVE":
         return real_user
     request.state.impersonation_session_id = session_row.id
-    # Refresh audit context so created_by/updated_by overrides know both ids.
-    from app.audit_context import set_audit_context
+    # The target is the effective actor, the admin is at the keyboard (plan 8.1/8.2).
+    from app.audit_context import AuditActor, stamp_actor
 
-    ip = request.client.host if request.client else None
-    set_audit_context(real_user["id"], ip, effective_user_id=target_user["id"])
+    stamp_actor(
+        AuditActor(
+            actor_type="user",
+            user_id=str(target_user["id"]),
+            real_user_id=str(real_user["id"]),
+            auth_method="impersonation",
+            session_id=getattr(request.state, "session_id", None),
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+        ),
+        db=db,
+        request=request,
+    )
     return target_user
 
 
@@ -219,10 +291,7 @@ async def get_current_user(
     
     try:
         real_user = _resolve_session_to_user(token, request, db)
-        from app.audit_context import set_audit_context
-        ip = request.client.host if request.client else None
-        # Audit context always uses the *real* user id, even when impersonating.
-        set_audit_context(real_user["id"], ip)
+        _stamp_session_actor(request, db, real_user)
         effective_user = _maybe_apply_impersonation(request, db, real_user)
         return effective_user
     except HTTPException:
@@ -270,9 +339,7 @@ async def get_current_user_optional(
     except Exception:
         return None
     try:
-        from app.audit_context import set_audit_context
-        ip = request.client.host if request.client else None
-        set_audit_context(real_user["id"], ip)
+        _stamp_session_actor(request, db, real_user)
         return _maybe_apply_impersonation(request, db, real_user)
     except Exception:
         return real_user
@@ -303,9 +370,7 @@ async def get_real_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     real_user = _resolve_session_to_user(token, request, db)
-    from app.audit_context import set_audit_context
-    ip = request.client.host if request.client else None
-    set_audit_context(real_user["id"], ip)
+    _stamp_session_actor(request, db, real_user)
     request.state.real_user = real_user
     return real_user
 
@@ -505,7 +570,6 @@ async def get_external_api_user(
     RBAC applies. Nothing reads the env var at runtime; the legacy shared key
     keeps working because its *hash* was seeded as an integration (AC-AC-09).
     """
-    from app.audit_context import set_audit_context
     from app.services.integration_auth import resolve_integration_principal
 
     if not api_key:
@@ -515,13 +579,11 @@ async def get_external_api_user(
         )
 
     user = resolve_integration_principal(db, api_key)
-
-    ip = request.client.host if request.client else None
-    set_audit_context(str(user["id"]), ip)
+    _stamp_integration_actor(request, db, user)
     return user
 
 
-def get_current_user_or_api_key(
+async def get_current_user_or_api_key(
     request: Request,
     token: Optional[str] = Depends(oauth2_scheme),
     api_key: Optional[str] = Depends(get_api_key),
@@ -531,6 +593,9 @@ def get_current_user_or_api_key(
     Validate either JWT token (from NextAuth) or API key and return user information.
     
     This dependency allows both authenticated users and external API key access.
+
+    ``async def`` (identity S0, AC-12) so its audit actor stamp lands on the request's
+    own context, not on a threadpool thread's copy that the flush never sees.
     """
     import logging
     logger = logging.getLogger(__name__)
@@ -547,13 +612,10 @@ def get_current_user_or_api_key(
         # The env var is no longer consulted at runtime -- the legacy shared key
         # keeps working because its hash was seeded as an integration, not
         # because anything reads EXTERNAL_API_KEY (AC-AC-01 / AC-AC-09).
-        from app.audit_context import set_audit_context
         from app.services.integration_auth import resolve_integration_principal
 
         user = resolve_integration_principal(db, api_key)
-
-        ip = request.client.host if request.client else None
-        set_audit_context(str(user["id"]), ip)
+        _stamp_integration_actor(request, db, user)
 
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info("auth.get_current_user_or_api_key done mode=%s elapsed_ms=%.1f", auth_mode, elapsed_ms)
@@ -573,9 +635,7 @@ def get_current_user_or_api_key(
     
     try:
         real_user = _resolve_session_to_user(token, request, db)
-        from app.audit_context import set_audit_context
-        ip = request.client.host if request.client else None
-        set_audit_context(real_user["id"], ip)
+        _stamp_session_actor(request, db, real_user)
         effective_user = _maybe_apply_impersonation(request, db, real_user)
         effective_user["auth_method"] = "jwt"
         elapsed_ms = (time.perf_counter() - started) * 1000
