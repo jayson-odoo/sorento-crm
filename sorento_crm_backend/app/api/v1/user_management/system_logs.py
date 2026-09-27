@@ -1,9 +1,8 @@
 """System logs API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Body
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel
 from app.database import get_db
 from app.dependencies import require_permission
 from app.models.user import SystemLog, User
@@ -11,15 +10,6 @@ from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 from sqlalchemy import or_, and_
 
-
-class SystemLogCreate(BaseModel):
-    event: str
-    user_id: str
-    entity_id: Optional[str] = None
-    entity_type: Optional[str] = None
-    description: Optional[str] = None
-    ip_address: Optional[str] = None
-    meta: Optional[str] = None
 
 router = APIRouter()
 
@@ -143,25 +133,6 @@ async def get_user_system_logs(
     )
 
 
-@router.post("/", status_code=status.HTTP_201_CREATED)
-async def create_system_log(
-    log_data: SystemLogCreate,
-    db: Session = Depends(get_db)
-):
-    """Create a system log entry."""
-    try:
-        log = SystemLog(
-            user_id=log_data.user_id,
-            event=log_data.event,
-            entity_id=log_data.entity_id,
-            entity_type=log_data.entity_type,
-            description=log_data.description,
-            ip_address=log_data.ip_address,
-            meta=log_data.meta
-        )
-        db.add(log)
-        db.commit()
-        db.refresh(log)
-        return {"message": "System log created successfully", "id": log.id}
-    except Exception as e:
-        raise handle_internal_error(str(e))
+# No write route (#1281): a POST here trusted a body-supplied user_id and ip_address
+# behind no permission, so anyone could forge a log line for anyone. System logs are
+# written in-process with the real actor (app/services/system_log.py).

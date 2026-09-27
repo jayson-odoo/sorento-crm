@@ -143,6 +143,11 @@ def admin_listing_company_filter(db, column) -> Optional[ColumnElement]:
     does, showing all rows (a role-gated admin can see everything anyway) is safer
     than hiding every row and looking broken. ``company_id IS NULL`` is always
     OR-ed in on the frozenset branch so legacy/unstamped rows stay visible.
+
+    A caller reachable by a NON-admin must not rely on this for isolation: it has
+    to refuse UNSET/empty itself first. ``_authorize_log_read`` in
+    ``app/api/v1/audit/audit_logs.py`` does that for the per-record audit history
+    read, which staff reach with a record's view permission (#1281).
     """
     scope = get_company_scope(db)
     if scope is None:
