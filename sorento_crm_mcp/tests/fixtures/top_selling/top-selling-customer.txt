@@ -4,6 +4,7 @@ Basis: Delivered (transferred to DO)
 Items with sales: 4
 Customer: HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I]
 Category: all
+Brand: all
 Sales agent: all
 Channel: all
 Delivery date: 01/07/2026 to 30/09/2026

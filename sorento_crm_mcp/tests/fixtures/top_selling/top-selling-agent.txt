@@ -4,6 +4,7 @@ Basis: Delivered (transferred to DO)
 Items with sales: 96
 Customer: all
 Category: all
+Brand: all
 Sales agent: SEAN I
 Note: only 87% of sales orders in this period carry a sales agent.
 Channel: all

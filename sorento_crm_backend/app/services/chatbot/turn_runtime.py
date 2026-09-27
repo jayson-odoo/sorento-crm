@@ -2777,6 +2777,9 @@ def envelope_of(
         # `focus.top_selling` (`turn/apply.record_top_selling_asked`), reviewer B2 on
         # PR #1273.
         "top_selling_asked": fetched.get("top_selling_asked"),
+        # Slot keys the reply asks to forget (a category word it said it does not
+        # know), applied by the same `record_top_selling_asked`.
+        "top_selling_drop": fetched.get("top_selling_drop"),
     }
     if raw_fragment is not None:
         # R4 (PLAN-chatbot-answer-half-reattach.md): the UNTOUCHED `business.run_fetch`

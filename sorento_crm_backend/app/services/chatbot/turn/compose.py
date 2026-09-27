@@ -16,7 +16,7 @@ from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_la
 from app.services.chatbot.turn.pending import (
     ask as pending_ask,
     is_roster,
-    quick_replies_suppressed,
+    quick_replies as pending_quick_replies,
     top_selling_pick,
 )
 from app.services.chatbot.turn.policy import Policy
@@ -619,9 +619,7 @@ def compose_question(pending: Any, state: State | None = None) -> Answer:
         # AC-1866: a `member_offer` re-print keeps its numbered text list but not the
         # names as quick-reply buttons (owner ruling 23 Sep 2026) - `result_set` below
         # still carries the roster, so a numbered reply still resolves.
-        "quick_replies": None if quick_replies_suppressed(pending.kind) else (
-            ", ".join(labels) if labels else None
-        ),
+        "quick_replies": pending_quick_replies(pending.kind, labels),
         "result_set": list(pending.options),
     }
     return Answer(sections=[], question=pending, offer=None, canned=[], files=[], actions=[action], text=body)

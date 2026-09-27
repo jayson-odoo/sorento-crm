@@ -66,7 +66,7 @@ from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
-from app.models.product import Product, ProductCategory
+from app.models.product import Brand, Product, ProductCategory
 from app.models.sales_agent import SalesAgent
 from app.services.error_handler import handle_not_found
 from app.services.order_service import resolve_warehouse_ids
@@ -571,6 +571,22 @@ def _names_in_order(db: Session, column_id, column_name, ids: Optional[list[str]
     return ", ".join(names) or None
 
 
+def _category_echo(db: Session, ids: Optional[list[str]]) -> Optional[str]:
+    """The category filter as the reply header names it. Categories that all share
+    one class ("Water Closet" is SRT-WC, CBN-WC, ...) print that class, the word the
+    customer typed (fix lane round 4: live category names are copies of their codes,
+    and the chatbot narrows a class word to every category of that class); otherwise
+    the category names, as `_names_in_order`."""
+    if ids:
+        labels = {
+            (row[0] or "").strip()
+            for row in db.query(ProductCategory.class_label).filter(ProductCategory.id.in_(ids)).all()
+        }
+        if len(labels) == 1 and "" not in labels:
+            return labels.pop()
+    return _names_in_order(db, ProductCategory.id, ProductCategory.category_name, ids)
+
+
 def top_selling(
     db: Session,
     *,
@@ -582,11 +598,13 @@ def top_selling(
     customer_ids: Optional[list[str]] = None,
     category_ids: Optional[list[str]] = None,
     sales_agent_ids: Optional[list[str]] = None,
+    brand_ids: Optional[list[str]] = None,
     channel: Optional[str] = None,
     date_from: date,
     date_to: date,
     dealer_scoped: bool = False,
     detail_code: Optional[str] = None,
+    direction: str = "top",
 ) -> dict:
     """Rank items (or categories) by summed quantity or amount on `basis`.
 
@@ -600,7 +618,12 @@ def top_selling(
 
     `detail_code` (AC-1935, the detail offer) narrows everything to the one
     product code (item grain) or category code (category grain), matched
-    case-insensitively, and adds that code's customers and months."""
+    case-insensitively, and adds that code's customers and months.
+
+    Fix lane round 4 (owner retest, 27 Sep 2026): `brand_ids` keeps products of those
+    brands (`Product.brand_id`, the narrowing PR #1301 gives the outstanding report),
+    and `direction="bottom"` ranks the least sold first (both metrics and the code
+    ascending). A group with no sale is never ranked, whichever the direction."""
     qty_expr, amount_expr = _basis_figures(basis)
     qty_sum = func.coalesce(func.sum(qty_expr), 0)
     amount_sum = func.coalesce(func.sum(amount_expr), 0)
@@ -613,6 +636,8 @@ def top_selling(
     )
     if category_ids is not None:
         filters.append(Product.category_id.in_(category_ids))
+    if brand_ids is not None:
+        filters.append(Product.brand_id.in_(brand_ids))
     agent_filter = SalesOrder.sales_agent_id.in_(sales_agent_ids) if sales_agent_ids is not None else None
 
     if group == "category":
@@ -624,6 +649,8 @@ def top_selling(
         filters.append(func.upper(code_col) == detail_code.upper())
 
     metric, other = (qty_sum, amount_sum) if rank_by == "quantity" else (amount_sum, qty_sum)
+    bottom = direction == "bottom"
+    ordering = (metric.asc(), other.asc()) if bottom else (metric.desc(), other.desc())
 
     def _base(query, *, with_customer=False):
         query = query.select_from(SalesOrderLine).join(
@@ -641,7 +668,7 @@ def top_selling(
         return (
             query.group_by(*key)
             .having(or_(qty_sum != 0, amount_sum != 0))
-            .order_by(metric.desc(), other.desc(), tiebreak.asc().nullslast())
+            .order_by(*ordering, tiebreak.asc().nullslast())
         )
 
     ranked = _base(
@@ -715,12 +742,14 @@ def top_selling(
         "rank_by": rank_by,
         "basis": basis,
         "group": group,
+        "direction": "bottom" if bottom else "top",
         "n": n,
         "date_from": _as_date(date_from),
         "date_to": _as_date(date_to),
         "filters": {
             "customer_name": _customer_echo(db, customer_query, customer_ids),
-            "category_name": _names_in_order(db, ProductCategory.id, ProductCategory.category_name, category_ids),
+            "category_name": _category_echo(db, category_ids),
+            "brand_name": _names_in_order(db, Brand.id, Brand.brand_name, brand_ids),
             "sales_agent": _names_in_order(db, SalesAgent.id, SalesAgent.sales_agent, sales_agent_ids),
             "channel": channel,
             "dealer_scoped": dealer_scoped,

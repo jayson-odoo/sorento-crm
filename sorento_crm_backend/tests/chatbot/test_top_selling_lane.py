@@ -684,13 +684,17 @@ class TestFollowUp:
 
 
 class TestMissAndHeader:
-    def test_miss_takes_not_found_path(self, session_factory, monkeypatch, route) -> None:
+    def test_miss_says_no_sales_without_escalating(self, session_factory, monkeypatch, route) -> None:
+        """AC-1957 as amended by the owner's retest (27 Sep 2026, PR #1273): a top
+        selling ask never falls into "Could not find order" and never opens the
+        customer service routing picker. A ranking with no sales is its own answer:
+        the header and "No sales found.", no escalate offer."""
         route.codes = []
         _seed_contact(session_factory, variables={})
         reply, captured = _turn(session_factory, monkeypatch, _ts(), "top 5 by quantity")
         assert _calls(captured)
         assert "No sales found." in reply
-        assert "escalate" in reply.lower()
+        assert "escalate" not in reply.lower()
         assert _open_question(session_factory).get("kind") != "top_selling_pick"
 
     def test_header_skipped(self, session_factory, monkeypatch, route) -> None:

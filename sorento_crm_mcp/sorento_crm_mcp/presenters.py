@@ -2508,6 +2508,8 @@ def _top_selling_axes(report: dict) -> list[str]:
     lines = [
         f"Customer: {_or_all('customer_name')}",
         f"Category: {_or_all('category_name')}",
+        # Fix lane round 4 (owner retest, 27 Sep 2026): the brand filter.
+        f"Brand: {_or_all('brand_name')}",
         f"Sales agent: {_or_all('sales_agent')}",
     ]
     note = _top_selling_agent_note(report)
@@ -2525,24 +2527,41 @@ def _top_selling_metric_lines(report: dict) -> list[str]:
     ]
 
 
-def _top_selling_header(report: dict) -> str:
-    """Title, metric, basis, the FULL count (owner: the header states it), then
-    every filter axis."""
+def _top_selling_is_bottom(report: dict) -> bool:
+    return report.get("direction") == "bottom"
+
+
+#: Fix lane round 4 (owner retest, 27 Sep 2026): how a least sold ranking treats an
+#: item that sold nothing. The plan never ranks one (the route ranks sales), so the
+#: reply says so instead of letting "least sold" read as "sold least of everything".
+TOP_SELLING_NO_SALE_LINE = "Items with no sale in this period are not ranked."
+
+
+def _top_selling_title(report: dict) -> str:
+    """``*Top N selling items*`` / ``*Top selling items*``; a bottom ranking reads
+    ``*Bottom N selling items*`` / ``*Least sold items*`` (owner retest, 27 Sep 2026:
+    "cold selling" and "least sold" rank ascending)."""
     noun = "categories" if _top_selling_is_category(report) else "items"
     n = report.get("n")
     if _filled(n):
         one = str(n) == "1"
-        title = f"*Top {n} selling {('category' if noun == 'categories' else 'item') if one else noun}*"
-    else:
-        title = f"*Top selling {noun}*"
-    return "\n".join(
-        [
-            title,
-            *_top_selling_metric_lines(report),
-            f"{noun.capitalize()} with sales: {_outstanding_fmt_int(_top_selling_count(report))}",
-            *_top_selling_axes(report),
-        ]
-    )
+        word = ("category" if noun == "categories" else "item") if one else noun
+        return f"*{'Bottom' if _top_selling_is_bottom(report) else 'Top'} {n} selling {word}*"
+    return f"*Least sold {noun}*" if _top_selling_is_bottom(report) else f"*Top selling {noun}*"
+
+
+def _top_selling_header(report: dict) -> str:
+    """Title, metric, basis, the FULL count (owner: the header states it), then
+    every filter axis."""
+    noun = "categories" if _top_selling_is_category(report) else "items"
+    lines = [
+        _top_selling_title(report),
+        *_top_selling_metric_lines(report),
+        f"{noun.capitalize()} with sales: {_outstanding_fmt_int(_top_selling_count(report))}",
+    ]
+    if _top_selling_is_bottom(report):
+        lines.append(TOP_SELLING_NO_SALE_LINE.replace("Items", noun.capitalize()))
+    return "\n".join([*lines, *_top_selling_axes(report)])
 
 
 def _top_selling_code(row: dict) -> str:

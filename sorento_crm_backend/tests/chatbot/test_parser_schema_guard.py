@@ -98,6 +98,9 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     "rank_by": "app/services/chatbot/turn/apply.py",
     "basis": "app/services/chatbot/turn/apply.py",
     "rank_group": "app/services/chatbot/turn/apply.py",
+    # Fix lane round 4 (owner retest, 27 Sep 2026): "cold selling", "least sold".
+    # 39 declared keys -> 40.
+    "rank_direction": "app/services/chatbot/turn/apply.py",
 }
 
 

@@ -1905,6 +1905,16 @@ async def get_top_selling(
             "the body carries sales_agent_fill_rate."
         ),
     ),
+    brand_ids: Optional[list[str]] = Query(
+        None, description="Brand UUIDs (csv/JSON/repeated): products.brand_id IN. Echoed as filters.brand_name.",
+    ),
+    direction: Optional[str] = Query(
+        None,
+        description=(
+            "top (default) ranks the most sold first | bottom ranks the least sold first. "
+            "Either way only items with a sale in the window are ranked."
+        ),
+    ),
     channel: Optional[str] = Query(
         None, description="dealer | project - sales_orders.demand_class ('retail' / 'project'). Absent = all.",
     ),
@@ -1969,6 +1979,7 @@ async def get_top_selling(
     rank_by_norm = _choice(rank_by, "rank_by", ("quantity", "amount"))
     basis_norm = _choice(basis, "basis", ("delivered", "ordered"), default="delivered")
     group_norm = _choice(group, "group", ("item", "category"), default="item")
+    direction_norm = _choice(direction, "direction", ("top", "bottom"), default="top")
     channel_norm = (channel or "").strip().lower() or None
     if channel_norm is not None:
         channel_norm = _choice(channel_norm, "channel", ("dealer", "project"))
@@ -2001,10 +2012,12 @@ async def get_top_selling(
     resolved_customer_ids = parse_uuid_list(customer_ids, param_name="customer_ids")
     resolved_category_ids = parse_uuid_list(category_ids, param_name="category_ids")
     resolved_agent_ids = parse_uuid_list(sales_agent_ids, param_name="sales_agent_ids")
+    resolved_brand_ids = parse_uuid_list(brand_ids, param_name="brand_ids")
     for values, name in (
         (resolved_customer_ids, "customer_ids"),
         (resolved_category_ids, "category_ids"),
         (resolved_agent_ids, "sales_agent_ids"),
+        (resolved_brand_ids, "brand_ids"),
     ):
         if values is not None and len(values) > 50:
             raise AppException(
@@ -2072,11 +2085,13 @@ async def get_top_selling(
         customer_ids=resolved_customer_ids,
         category_ids=resolved_category_ids,
         sales_agent_ids=resolved_agent_ids,
+        brand_ids=resolved_brand_ids,
         channel=channel_norm,
         date_from=window_from,
         date_to=window_to,
         dealer_scoped=dealer_scoped,
         detail_code=detail_code_stripped,
+        direction=direction_norm,
     )
     if count_only:
         data["n"] = None

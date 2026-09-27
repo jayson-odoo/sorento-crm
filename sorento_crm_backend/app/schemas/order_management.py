@@ -296,6 +296,8 @@ class TopSellingFilters(BaseModel):
 
     customer_name: Optional[str] = None
     category_name: Optional[str] = None
+    # Fix lane round 4 (owner retest, 27 Sep 2026): the brand filter's names.
+    brand_name: Optional[str] = None
     sales_agent: Optional[str] = None
     channel: Optional[str] = None
     dealer_scoped: bool = False
@@ -336,6 +338,8 @@ class TopSellingResponse(BaseModel):
     rank_by: str
     basis: str
     group: str
+    # `top` (most sold first) or `bottom` (least sold first), fix lane round 4.
+    direction: str = "top"
     n: Optional[int] = None
     date_from: date
     date_to: date

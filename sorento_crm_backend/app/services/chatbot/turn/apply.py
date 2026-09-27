@@ -880,7 +880,7 @@ def _focus_rules(
 #: `turn_runtime.lane_parse_output`, read by `lanes/business.run_fetch`'s override).
 TOP_SELLING_STATUS = "top_selling"
 #: The parser keys a top selling ask carries (`head/parser.py`), plus `top_n`.
-TOP_SELLING_KEYS = ("rank_by", "basis", "rank_group", "top_n")
+TOP_SELLING_KEYS = ("rank_by", "basis", "rank_group", "rank_direction", "top_n")
 #: A picked row's own key: the detail is ONE answer, so it never outlives the turn that
 #: picked (`_without_top_selling_pick`), while a category pick's filter does.
 TOP_SELLING_ONE_SHOT = ("detail_code",)
@@ -896,6 +896,44 @@ TOP_SELLING_CLARIFY_AXES = {
     "basis": "basis",
     "category": "category_words",
 }
+
+
+#: The metric question lists quantity first and amount second ("By quantity or by
+#: amount?"), so a bare "1" or "2" under it is that option (owner retest, 27 Sep 2026).
+TOP_SELLING_METRIC_ORDER = ("quantity", "amount")
+
+#: The narrowing words a top selling ask resolves itself (`engine._top_selling_narrowing`
+#: and `lanes/business`), never through the generic resolver: a message naming only
+#: these narrows the ranking on screen, it does not leave it.
+TOP_SELLING_NARROWING_HINTS = frozenset({"category", "brand", "sales_agent"})
+
+#: A slot filter a correction's `broaden_axis` clears (`broaden_to: "all"`), by axis.
+#: `customer` also clears the focus customers (the generic `_broaden` rule does that).
+TOP_SELLING_BROADEN_KEYS = {
+    "customer": ("customer_ids",),
+    "sales_agent": ("agent_ids", "agent_words"),
+    "brand": ("brand_ids",),
+    "category": ("category_words", "category_code"),
+}
+
+
+def _narrows_the_ranking(verdict: dict[str, Any]) -> bool:
+    """Is this message only narrowing the ranking on screen, whatever the parser said
+    about `domain_in_message`? True when it carries a top selling key of its own, or
+    names only category / brand / sales agent words, or only widens an axis, and asks
+    no other order question (owner retest, 27 Sep 2026: "water closet only" fell out
+    of the ranking into "Could not find order")."""
+    status = verdict.get("order_status")
+    if status not in (None, "", TOP_SELLING_STATUS):
+        return False
+    if verdict.get("domain_hint") not in (None, "", "order"):
+        return False
+    if any(verdict.get(k) is not None for k in ("rank_by", "basis", "rank_group", "rank_direction")):
+        return True
+    hints = [e.get("hint") for e in (verdict.get("entities") or []) if isinstance(e, dict)]
+    if hints:
+        return all(h in TOP_SELLING_NARROWING_HINTS for h in hints)
+    return broaden_level(verdict) == EVERYTHING
 
 
 def _top_selling_waiting(asked: Any, own: dict[str, Any]) -> bool:
@@ -925,6 +963,12 @@ def record_top_selling_asked(focus: Focus, envelopes: list[dict[str, Any]]) -> N
         slot["asked"] = asked
     else:
         slot.pop("asked", None)
+    # A category word the reply said it does not know is dropped, so the next turn
+    # neither repeats the line nor filters by it (owner retest, 27 Sep 2026).
+    for e in envelopes or []:
+        if isinstance(e, dict):
+            for key in e.get("top_selling_drop") or ():
+                slot.pop(key, None)
 
 
 def _top_selling_rules(
@@ -955,7 +999,7 @@ def _top_selling_rules(
     names_its_ask = decision.starts_fresh or domain_in_message(verdict) is True
     if asked:
         focus.status = TOP_SELLING_STATUS
-    elif focus.status == TOP_SELLING_STATUS and names_its_ask:
+    elif focus.status == TOP_SELLING_STATUS and names_its_ask and not _narrows_the_ranking(verdict):
         focus.status = None
         focus.top_selling = None
         trace.rules_fired.append("new_ask_leaves_top_selling")
@@ -966,6 +1010,8 @@ def _top_selling_rules(
     carried = dict(focus.top_selling or {})
     # What the last reply asked lives one turn: this turn's reply records its own.
     asked_last = carried.pop("asked", None)
+    # A word the last reply said it does not know is said once (owner retest, 27 Sep).
+    carried.pop("unknown", None)
     own = {k: verdict.get(k) for k in TOP_SELLING_KEYS if verdict.get(k) is not None}
     positions = [p for p in (verdict.get("reference_positions") or []) if isinstance(p, (int, float))]
     if (
@@ -978,6 +1024,37 @@ def _top_selling_rules(
     ):
         own["top_n"] = int(positions[0])
         trace.rules_fired.append("top_selling_position_is_the_count")
+    picked = "answer_top_selling_pick" in trace.rules_fired
+    if (
+        "rank_by" not in own
+        and not picked
+        and asked_last == "metric"
+        and len(positions) == 1
+        and int(positions[0]) in (1, 2)
+    ):
+        # "1" / "2" under "By quantity or by amount?" (owner retest, 27 Sep 2026): the
+        # parser's own position, in the order the question lists the two.
+        own["rank_by"] = TOP_SELLING_METRIC_ORDER[int(positions[0]) - 1]
+        trace.rules_fired.append("top_selling_position_is_the_metric")
+    who = carried.pop("who", None)
+    if isinstance(who, dict) and asked_last == "who" and not picked and len(positions) == 1:
+        # "1" the customer, "2" the sales agent (`lanes/business` asks it, the engine's
+        # `_top_selling_narrowing` stored both candidates).
+        if int(positions[0]) == 1 and who.get("customer_ids"):
+            carried["customer_ids"] = list(who["customer_ids"])
+            carried.pop("agent_ids", None)
+            focus.customers = []
+            trace.rules_fired.append("top_selling_who_is_the_customer")
+        elif int(positions[0]) == 2 and who.get("agent_ids"):
+            carried["agent_ids"] = list(who["agent_ids"])
+            trace.rules_fired.append("top_selling_who_is_the_agent")
+    if broaden_level(verdict) == EVERYTHING and not decision.answers:
+        # A correction widening an axis ("customer is everyone") clears that axis's
+        # filter on the ranking too; `broaden_axis: "all"` clears every one.
+        axis = broaden_kind(verdict)
+        for key in axis_keys(axis):
+            if carried.pop(key, None) is not None:
+                trace.rules_fired.append(f"top_selling_broaden_clears_{key}")
     categories = [
         e.get("raw")
         for e in (verdict.get("entities") or [])
@@ -996,6 +1073,13 @@ def _top_selling_rules(
         trace.rules_fired.append("top_selling_fresh_ask")
     carried.update(own)
     focus.top_selling = carried
+
+
+def axis_keys(axis: str | None) -> tuple[str, ...]:
+    """The slot keys `broaden_axis` clears: that axis's, or every axis's for None."""
+    if axis is None:
+        return tuple(k for keys in TOP_SELLING_BROADEN_KEYS.values() for k in keys)
+    return TOP_SELLING_BROADEN_KEYS.get(axis, ())
 
 
 def _drop_unnamed_filters(focus: Focus, verdict: dict[str, Any]) -> None:

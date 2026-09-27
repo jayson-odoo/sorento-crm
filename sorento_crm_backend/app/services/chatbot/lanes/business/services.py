@@ -606,3 +606,120 @@ def resolve_category_token(db: Session, token: str) -> list[tuple[str, str, str]
 
     return [r for r in rows if _has_run(r[2])]
 
+
+
+# --------------------------------------------------------------------------- #
+# Fix lane round 4 (owner retest of top selling, 27 Sep 2026): the words a ranking is
+# narrowed by, matched against their own tables under the engine's per-contact company
+# scope. Never the generic resolver, which types a brand or a person as a customer.
+# --------------------------------------------------------------------------- #
+
+
+def _norm(text: str | None) -> str:
+    return " ".join((text or "").split()).lower()
+
+
+def _whole_word_run(needle: str, haystack: str) -> bool:
+    """`needle`'s words appear together, in order, inside `haystack`'s words."""
+    want, have = _category_words(needle), _category_words(haystack)
+    return bool(want) and any(have[i : i + len(want)] == want for i in range(len(have) - len(want) + 1))
+
+
+def resolve_sales_agent_token(db: Session, token: str) -> list[tuple[str, str]]:
+    """Sales agents a word names, as `(id, sales_agent code)`. Matched the way the
+    route matches a customer name (a case-insensitive part of the name), on the agent
+    code ("FANNY", "SEAN I") and on its person label, whole words only, so "an" never
+    names every agent. Inactive agents still sold what they sold, so they match too."""
+    from app.models.sales_agent import SalesAgent
+
+    word = _norm(token)
+    if not word:
+        return []
+    rows = db.query(SalesAgent.id, SalesAgent.sales_agent, SalesAgent.person_label).order_by(SalesAgent.sales_agent).all()
+    exact = [(str(r[0]), r[1]) for r in rows if word in (_norm(r[1]), _norm(r[2]))]
+    if exact:
+        return exact
+    return [(str(r[0]), r[1]) for r in rows if _whole_word_run(word, r[1] or "") or _whole_word_run(word, r[2] or "")]
+
+
+def customers_named(db: Session, token: str, *, limit: int = 50) -> list[tuple[str, str]]:
+    """Customers whose name carries the word as whole words, `(id, customer_name)`, at
+    most `limit`: enough to tell whether "fanny" could also be a customer."""
+    from app.models.order import Customer
+    from app.services.sales_report_service import _LIKE_ESCAPE, _escape_like
+
+    word = _norm(token)
+    if len(word) < 3:
+        return []
+    rows = (
+        db.query(Customer.id, Customer.customer_name)
+        .filter(Customer.customer_name.ilike(f"%{_escape_like(word)}%", escape=_LIKE_ESCAPE))
+        .order_by(Customer.customer_name)
+        .limit(limit)
+        .all()
+    )
+    return [(str(r[0]), r[1] or "") for r in rows if _whole_word_run(word, r[1] or "")]
+
+
+def resolve_brand_token(db: Session, token: str, *, exact_only: bool = False) -> list[tuple[str, str]]:
+    """Brands a word names, `(id, brand_name)`, from the live `brands` table (the list
+    PR #1301 reads for its `Known brands` line). An exact brand name or code wins;
+    otherwise, unless `exact_only`, a brand whose name is a whole word of the message's
+    word ("sorento brand" names Sorento)."""
+    from app.models.product import Brand
+
+    word = _norm(token)
+    if not word:
+        return []
+    rows = db.query(Brand.id, Brand.brand_name, Brand.brand_code).order_by(Brand.brand_name).all()
+    exact = [(str(r[0]), r[1]) for r in rows if word in (_norm(r[1]), _norm(r[2]))]
+    if exact or exact_only:
+        return exact
+    return [(str(r[0]), r[1]) for r in rows if _whole_word_run(r[1] or "", word)]
+
+
+def resolve_category_class(db: Session, token: str) -> tuple[list[str], list[str]]:
+    """A category word through the catalogue's class vocabulary, the one the stock ask
+    reads (`product_class_signal.resolve_classes_for_term`: a class label, its synonyms,
+    classes products carry, staff synonyms). Returns `(category ids, class labels)`.
+    Category names are copies of their codes on live rows (SRT-WC), so "water closet"
+    only ever meets its categories here.
+
+    No exact hit: the class whose label or synonym is a whole word run of the word
+    ("water tap" holds "tap"), taken only when exactly one class answers; several are
+    returned as labels with no ids for the lane to ask about."""
+    from app.models.product import ProductCategory
+    from app.services.product_class_signal import resolve_classes_for_term
+
+    word = _norm(token)
+    if not word:
+        return [], []
+    labels = set(resolve_classes_for_term(db, word))
+    singular = " ".join(_category_words(word))
+    if not labels and singular != word:
+        labels = set(resolve_classes_for_term(db, singular))
+    if not labels:
+        rows = (
+            db.query(ProductCategory.class_label, ProductCategory.search_synonyms)
+            .filter(ProductCategory.is_searchable.is_(True), ProductCategory.class_label.isnot(None))
+            .all()
+        )
+        vocabulary: dict[str, set[str]] = {}
+        for label, synonyms in rows:
+            words = {label, *[str(x) for x in (synonyms or [])]}
+            vocabulary.setdefault(label, set()).update(words)
+        labels = {
+            label for label, words in vocabulary.items() if any(_whole_word_run(w, word) for w in words if w)
+        }
+        if len(labels) > 1:
+            return [], sorted(labels)
+    if not labels:
+        return [], []
+    ids = [
+        str(r[0])
+        for r in db.query(ProductCategory.id)
+        .filter(ProductCategory.class_label.in_(sorted(labels)))
+        .order_by(ProductCategory.category_code)
+        .all()
+    ]
+    return ids, sorted(labels)

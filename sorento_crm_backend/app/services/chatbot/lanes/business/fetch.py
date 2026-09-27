@@ -721,17 +721,30 @@ def entity_ids_transformer(
         category_ids = jsc.get(semantic_input, "top_selling_category_ids")
         if isinstance(category_ids, list) and category_ids and not category_grain:
             out["category_ids"] = category_ids
+        chosen = slot.get("customer_ids")
+        if isinstance(chosen, list) and chosen:
+            # "1" to "customer or sales agent?" (owner retest, 27 Sep 2026).
+            out["customer_ids"] = [jsc.js_string(i) for i in chosen]
         dealer_ids = slot.get("dealer_customer_ids")
         if isinstance(dealer_ids, list) and dealer_ids:
             # A linked dealer's own ledgers its words named (`engine._top_selling_dealer_scope`).
             out["customer_ids"] = [jsc.js_string(i) for i in dealer_ids]
-        agent_ids = [
+        # The agent and brand the ranking is narrowed by (`engine._top_selling_narrowing`,
+        # owner retest 27 Sep 2026), never a customer.
+        agent_ids = [jsc.js_string(i) for i in (slot.get("agent_ids") or []) if jsc.truthy(i)]
+        agent_ids += [
             jsc.get(e, "uuid")
             for e in jsc.array(entities)
             if isinstance(e, dict) and e.get("entity_type") == "sales_agent" and e.get("uuid")
         ]
         if agent_ids:
-            out["sales_agent_ids"] = agent_ids
+            out["sales_agent_ids"] = list(dict.fromkeys(agent_ids))
+        brand_ids = [jsc.js_string(i) for i in (slot.get("brand_ids") or []) if jsc.truthy(i)]
+        if brand_ids:
+            out["brand_ids"] = brand_ids
+        if slot.get("rank_direction") == "bottom":
+            # "cold selling", "least sold": the least sold first.
+            out["direction"] = "bottom"
         channel = jsc.get(semantic_input, "sales_channel")
         if jsc.truthy(channel):
             out["channel"] = jsc.js_string(channel)
@@ -2152,14 +2165,22 @@ def _top_selling_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
     * `has_result: false` is the miss (AC-1957): the not-found path, escalate offer and
       all."""
     envelope = result if isinstance(result, dict) else {}
+    semantic_input = ctx.get("semantic_input") if isinstance(ctx.get("semantic_input"), dict) else {}
     if "response" in envelope:
         text = jsc.js_string(envelope.get("response") or "")
-        has_result = envelope.get("has_result") is True
+        # Owner retest (27 Sep 2026): a ranking with no sales is an ANSWER ("No sales
+        # found." under its own header), never "Could not find order" and never the
+        # escalation offer with its routing picker.
+        has_result = envelope.get("has_result") is True or (
+            envelope.get("result_type") == "top_selling" and bool(text.strip())
+        )
     else:
         text = result if isinstance(result, str) else jsc.js_string(result)
         has_result = bool(text.strip())
+    notes = [jsc.js_string(n) for n in jsc.array(semantic_input.get("top_selling_notes")) if jsc.truthy(n)]
+    if notes and text.strip():
+        text = "\n".join(notes) + "\n\n" + text
     rows = [r for r in jsc.array(envelope.get("result_set")) if isinstance(r, dict)]
-    semantic_input = ctx.get("semantic_input") if isinstance(ctx.get("semantic_input"), dict) else {}
     slot = semantic_input.get("top_selling") if isinstance(semantic_input.get("top_selling"), dict) else {}
     outstanding_ask = (
         {
@@ -2189,6 +2210,7 @@ def _top_selling_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
         # next bare number is its count, while a list or a single row asks nothing and
         # the next ask naming the ranking starts fresh.
         "top_selling_asked": "how_many" if envelope.get("result_type") == "top_selling_how_many" else None,
+        "top_selling_drop": list(semantic_input.get("top_selling_drop") or []) or None,
     }
 
 

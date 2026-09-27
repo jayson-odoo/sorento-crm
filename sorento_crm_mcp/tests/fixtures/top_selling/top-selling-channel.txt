@@ -4,6 +4,7 @@ Basis: Ordered
 Items with sales: 57
 Customer: all
 Category: all
+Brand: all
 Sales agent: all
 Channel: Project
 Delivery date: 01/08/2026 to 31/08/2026

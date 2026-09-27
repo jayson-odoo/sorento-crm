@@ -214,6 +214,9 @@ def _build_json_schema() -> dict[str, Any]:
             "rank_by": {"type": ["string", "null"], "enum": ["quantity", "amount", None]},
             "basis": {"type": ["string", "null"], "enum": ["delivered", "ordered", "unclear", None]},
             "rank_group": {"type": ["string", "null"], "enum": ["item", "category", "unclear", None]},
+            # Fix lane round 4 (owner retest, 27 Sep 2026): "cold selling", "least sold"
+            # rank ascending. Same shape and same exemption as the three above.
+            "rank_direction": {"type": ["string", "null"], "enum": ["top", "bottom", None]},
             "correction": {"type": ["boolean", "null"]},
             "routing": {
                 "type": "object",
@@ -347,6 +350,7 @@ def _build_json_schema() -> dict[str, Any]:
             "rank_by",
             "basis",
             "rank_group",
+            "rank_direction",
             "correction",
             "routing",
             "escalation",
@@ -378,9 +382,10 @@ DECLARED_KEYS: frozenset[str] = frozenset(PARSE_OUTPUT_JSON_SCHEMA["required"])
 #: it HAS to be declared at the wire, and no prompt version before the sales report
 #: addendum ever emits it - so every recorded emission and every `mock_reformulator_
 #: output` a console case carries lacks it, and reads as null.
-#: The top selling keys (`rank_by`, `basis`, `rank_group`) join for the same reason.
+#: The top selling keys (`rank_by`, `basis`, `rank_group`, `rank_direction`) join for
+#: the same reason.
 TOLERATED_ABSENT: frozenset[str] = frozenset(
-    {"broaden_to", "domain_in_message", "sales_channel", "rank_by", "basis", "rank_group"}
+    {"broaden_to", "domain_in_message", "sales_channel", "rank_by", "basis", "rank_group", "rank_direction"}
 )
 
 

@@ -181,14 +181,31 @@ def quick_replies_suppressed(kind: str | None) -> bool:
     as WhatsApp quick-reply buttons (a wall of up to a dozen taps). `result_set` stays
     populated (a numbered reply still resolves through it); only `quick_replies` is
     suppressed, and only for this one kind - `team_pick`, `company_pick` and every
-    roster kind keep theirs. One kind does not need a table; the day a second one
-    needs this, it earns the set back.
+    roster kind keep theirs. The top X ranking (`top_selling_pick`) is the second
+    (owner retest of top selling, 27 Sep 2026: about 100 product chips under a Top 100
+    answer); its one "Reply with a rank number" line is the offer.
 
     One predicate, called from every seam that turns a pending's options into the
     `quick_replies` string, so the rule lives in one place rather than being
     reimplemented (and risking drift) at each site.
     """
-    return kind == "member_offer"
+    return kind in ("member_offer", "top_selling_pick")
+
+
+#: WhatsApp shows at most three reply buttons (owner retest of top selling, 27 Sep
+#: 2026: "the whatsapp will explode"). A question with more options than this goes out
+#: as its numbered text list alone, never as a wall of chips.
+MAX_QUICK_REPLIES = 3
+
+
+def quick_replies(kind: str | None, labels: list[str]) -> str | None:
+    """n8n's `quick_replies` for one question: the option labels comma joined, or None
+    when the kind withholds them (`quick_replies_suppressed`) or there are more than
+    `MAX_QUICK_REPLIES` of them. The one seam every caller turns options into chips."""
+    kept = [str(label) for label in labels if label]
+    if quick_replies_suppressed(kind) or not kept or len(kept) > MAX_QUICK_REPLIES:
+        return None
+    return ", ".join(kept)
 
 
 #: AC-816 rule 1: how many turns an unanswered escalation offer stays on the customer's

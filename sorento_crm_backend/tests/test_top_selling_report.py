@@ -1193,7 +1193,7 @@ def test_brand_filter_narrows_and_echoes_the_brand(client, db):
 
 
 def test_brand_ids_must_be_uuids(client, db):
-    assert _get(client, rank_by="quantity", brand_ids="sorento").status_code == 422
+    assert _get(client, rank_by="quantity", brand_ids="sorento").status_code == 400
 
 
 def test_direction_bottom_ranks_ascending(client, db):

@@ -781,9 +781,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "the count and ask how many; never omit `n` to pull every row.\n\n"
             "FILTERS (all optional, ANDed): `customer_ids` (csv/JSON/repeated UUIDs), "
             "`customer_query` (partial customer NAME, min 3 chars), `category_ids`, "
-            "`sales_agent_ids` (sales_orders.sales_agent_id), `channel` dealer | project, "
+            "`sales_agent_ids` (sales_orders.sales_agent_id), `brand_ids` (products.brand_id), "
+            "`channel` dealer | project, "
             "`date_from`/`date_to` on the bucket date (required_date, else order_date); both "
             "omitted = the current calendar year.\n\n"
+            "DIRECTION: `direction` top (default, most sold first) | bottom (least sold first, "
+            "for 'cold selling', 'least sold'). Only items with a sale in the window are ranked "
+            "either way.\n\n"
             "DETAIL: `detail_code` = one row's code (a product code, or a category code under "
             "group=category) answers the detail offer: `rows`/`totals` narrow to that code and "
             "`detail` carries its `by_customer` and `by_month`, same filters and basis.\n\n"
@@ -797,8 +801,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (
             "rank_by", "basis", "group", "n", "customer_ids", "customer_query",
-            "category_ids", "sales_agent_ids", "channel", "date_from", "date_to",
-            "contact_id", "space_id", "detail_code", "count_only",
+            "category_ids", "sales_agent_ids", "brand_ids", "channel", "date_from", "date_to",
+            "contact_id", "space_id", "detail_code", "count_only", "direction",
         ),
         domain="orders",
         related_tools=("crm_sales_report",),

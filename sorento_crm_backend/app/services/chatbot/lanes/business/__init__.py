@@ -460,28 +460,56 @@ def _top_selling_question(slot: dict[str, Any]) -> tuple[str, str] | None:
     return None
 
 
-def _top_selling_category_ids(slot: dict[str, Any], *, db: Any) -> tuple[list[str], bool, list[str]]:
+def _top_selling_category_ids(
+    slot: dict[str, Any], *, db: Any
+) -> tuple[list[str], bool, list[str], list[str]]:
     """The category filter a top selling ask carries, as ids: a picked category row's
     exact code (`category_code`), else the category words the messages named
-    (`category_words`). Returns `(ids, named, ambiguous)`; `named` with no ids means a
-    category word matched nothing, which is a miss, never a silent widening to every
-    category. `ambiguous` is the codes of every category ONE word matched when it matched
-    several: the lane asks which (reviewer S1, PR #1273), it never takes them all.
-    `db is None` (a direct `run_fetch` test) resolves nothing."""
+    (`category_words`). Returns `(ids, named, ambiguous, unknown)`. `ambiguous` is what
+    ONE word matched when it matched several (category codes, or class labels): the lane
+    asks which (reviewer S1, PR #1273), it never takes them all. `unknown` is every word
+    that matched nothing: the lane says so and keeps the ranking (owner retest, 27 Sep
+    2026), never a miss and never a silent widening said nowhere.
+
+    A word matching no category code or name goes through the catalogue's class
+    vocabulary (`services.resolve_category_class`, the stock ask's own words): category
+    names are copies of their codes on live rows, so "water closet" only meets its
+    categories there. `db is None` (a direct `run_fetch` test) resolves nothing."""
     code = jsc.js_string(slot.get("category_code") or "").strip()
     words = [jsc.js_string(w).strip() for w in (slot.get("category_words") or []) if jsc.truthy(w)]
     tokens = [code] if code else words
     if not tokens or db is None:
-        return [], bool(tokens), []
+        return [], bool(tokens), [], []
     ids: list[str] = []
+    unknown: list[str] = []
     for token in tokens:
         matched = business_services.resolve_category_token(db, token)
         if len(matched) > 1:
-            return [], True, [row[1] for row in matched]
-        for category_id, _code, _name in matched:
+            return [], True, [row[1] for row in matched], []
+        found = [row[0] for row in matched]
+        if not found and not code:
+            found, labels = business_services.resolve_category_class(db, token)
+            if not found and len(labels) > 1:
+                return [], True, labels, []
+        if not found:
+            unknown.append(token)
+        for category_id in found:
             if category_id not in ids:
                 ids.append(category_id)
-    return ids, True, []
+    return ids, True, [], unknown
+
+
+def _top_selling_ask_who(who: dict[str, Any]) -> str:
+    """Owner retest (27 Sep 2026): a word naming a customer AND a sales agent is asked
+    about in one short question; "1" takes the customer, "2" the agent."""
+    word = jsc.js_string(who.get("word") or "").strip()
+    customer = jsc.js_string(who.get("customer_label") or "").strip()
+    customer_part = f"customer {customer}" if customer else f"a customer named '{word}'"
+    agent = jsc.js_string(who.get("agent_label") or "").strip() or word
+    return (
+        f"Do you mean {customer_part} or sales agent {agent}? "
+        "Reply 1 for the customer, 2 for the sales agent."
+    )
 
 
 def _top_selling_ask_category(codes: list[str]) -> str:
@@ -1418,22 +1446,34 @@ def run_fetch(
             if trace is not None:
                 trace.add("top_selling", {"refused": "customer_not_permitted"})
             return _fixed_reply(TOP_SELLING_REFUSED_OTHER_CUSTOMER)
+        who = slot.get("who")
+        if isinstance(who, dict):
+            if trace is not None:
+                trace.add("top_selling", {"asked": "who", "word": who.get("word")})
+            return _fixed_reply(_top_selling_ask_who(who), top_selling_asked="who")
         question = _top_selling_question(slot)
         if question is not None:
             axis, line = question
             if trace is not None:
                 trace.add("top_selling", {"asked": line})
             return _fixed_reply(line, top_selling_asked=axis)
-        category_ids, category_named, ambiguous = _top_selling_category_ids(slot, db=db)
+        category_ids, _category_named, ambiguous, unknown = _top_selling_category_ids(slot, db=db)
         if ambiguous:
             if trace is not None:
                 trace.add("top_selling", {"asked": "category", "codes": ambiguous})
             return _fixed_reply(_top_selling_ask_category(ambiguous), top_selling_asked="category")
-        if category_named and not category_ids:
-            return _error_fragment(
-                "top selling: the category named matches no product category",
-                outcome="not_found",
-            )
+        # Owner retest (27 Sep 2026): a word the ranking cannot narrow by is said in one
+        # line above the ranking, which runs without it; the category word is then
+        # forgotten (`top_selling_drop`), the brand and agent words were never kept.
+        notes = [
+            f"I don't know '{word}' as a {kind}."
+            for kind, word in (slot.get("unknown") or [])
+            if jsc.truthy(word)
+        ]
+        notes += [f"I don't know '{word}' as a category." for word in unknown]
+        if unknown:
+            semantic_input["top_selling_drop"] = ["category_words", "category_code"]
+        semantic_input["top_selling_notes"] = notes
         semantic_input["top_selling_category_ids"] = category_ids
     elif tool_name in fetch_mod.ORDER_TOOLS and order_status_raw == "so_outstanding":
         # S2 (security review, 13 Sep 2026), narrowed by R13: the LEGACY bucket now only

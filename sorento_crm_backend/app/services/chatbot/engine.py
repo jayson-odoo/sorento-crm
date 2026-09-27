@@ -809,6 +809,105 @@ def _top_selling_dealer_scope(
     return {**parse_output, "entities": [e for e in entities if not _is_customer(e)]}
 
 
+def _top_selling_narrowing(
+    db: Session, parse_output: dict[str, Any], focus: Any, *, dealer: bool
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Owner retest of top selling (27 Sep 2026, PR #1273): the words that narrow a
+    ranking never reach the generic resolver, which read "fanny" (a sales agent) and
+    "sorento" (a brand) as customers and answered "Could not find" for a brand under
+    `order`. Returns the resolver's input without them, and the slot updates this
+    message makes (`_apply_top_selling_updates` writes them after the resolver, so the
+    resolver's re-entry into APPLY cannot drop them).
+
+    * hint `category`: stripped; the lane resolves it (`category_words`, AC-1954).
+    * hint `brand`, or a `customer` word that IS a brand's name or code: the brand
+      filter (`brand_ids`); a word naming no brand is said once (`unknown`).
+    * hint `sales_agent`: the agent filter (`agent_ids`); unknown is said once.
+    * hint `customer` naming a sales agent: the agent, unless a customer carries the
+      word too, then one question asks which (`who`). A dealer never has the customer
+      table searched (its customer words are its own ledgers, `_top_selling_dealer_scope`).
+    Only this message's own words are resolved; a carried row of these hints is just
+    kept away from the resolver."""
+    entities = [e for e in (parse_output.get("entities") or []) if isinstance(e, dict)]
+    updates: dict[str, Any] = {}
+    kept: list[dict[str, Any]] = []
+    unknown: list[list[str]] = []
+
+    def _add(key: str, ids: list[str]) -> None:
+        bucket = updates.setdefault(key, [])
+        bucket.extend(i for i in ids if i not in bucket)
+
+    for e in entities:
+        hint = jsc.js_string(e.get("hint") or e.get("entity_type") or "")
+        raw = jsc.js_string(e.get("raw") or "").strip()
+        current = e.get("current_message") is not False and not e.get("uuid")
+        if hint == "category":
+            continue
+        if hint not in ("brand", "sales_agent", "customer"):
+            kept.append(e)
+            continue
+        if not current or not raw:
+            if hint == "customer":
+                kept.append(e)
+            continue
+        if hint == "brand":
+            brands = business_services.resolve_brand_token(db, raw)
+            if brands:
+                _add("brand_ids", [b[0] for b in brands])
+            else:
+                unknown.append(["brand", raw])
+            continue
+        if hint == "sales_agent":
+            agents = business_services.resolve_sales_agent_token(db, raw)
+            if agents:
+                _add("agent_ids", [a[0] for a in agents])
+            else:
+                unknown.append(["sales agent", raw])
+            continue
+        brands = business_services.resolve_brand_token(db, raw, exact_only=True)
+        if brands:
+            _add("brand_ids", [b[0] for b in brands])
+            continue
+        agents = [] if dealer else business_services.resolve_sales_agent_token(db, raw)
+        if not agents:
+            kept.append(e)
+            updates["customer_named"] = True
+            continue
+        customers = business_services.customers_named(db, raw)
+        if customers:
+            updates["who"] = {
+                "word": raw,
+                "customer_ids": [c[0] for c in customers],
+                "customer_label": customers[0][1] if len(customers) == 1 else None,
+                "agent_ids": [a[0] for a in agents],
+                "agent_label": ", ".join(a[1] for a in agents),
+            }
+        else:
+            _add("agent_ids", [a[0] for a in agents])
+    if unknown:
+        updates["unknown"] = unknown
+    return {**parse_output, "entities": kept}, updates
+
+
+def _apply_top_selling_updates(focus: Any, updates: dict[str, Any]) -> None:
+    """Write `_top_selling_narrowing`'s updates onto the ranking's slot. A new agent,
+    brand or customer word replaces that axis (the ranking is narrowed by what the
+    customer names NOW, owner retest 27 Sep 2026)."""
+    if not updates or focus.status != "top_selling":
+        return
+    slot = focus.top_selling if isinstance(focus.top_selling, dict) else {}
+    for key in ("agent_ids", "brand_ids"):
+        if key in updates:
+            slot[key] = list(updates[key])
+    if updates.get("customer_named"):
+        slot.pop("customer_ids", None)
+    if "who" in updates:
+        slot["who"] = dict(updates["who"])
+    if updates.get("unknown"):
+        slot["unknown"] = [list(u) for u in updates["unknown"]]
+    focus.top_selling = slot
+
+
 def run_turn(
     envelope: Envelope, *, session_factory: SessionFactory, offload: bool | None = None
 ) -> TurnResult:
@@ -1767,6 +1866,7 @@ def _run_stages(  # noqa: PLR0915
                 },
             )
 
+        top_selling_updates: dict[str, Any] = {}
         resolved_kinds: dict[str, dict[str, int]] = {}
         compatible_entities: list[dict[str, Any]] = []
         predicate: dict[str, Any] | None = None
@@ -1833,15 +1933,17 @@ def _run_stages(  # noqa: PLR0915
             # picker. A top selling ask resolves its category words itself, against
             # `product_categories` (`lanes/business._top_selling_category_ids`), so the
             # resolver is never asked about them.
-            if jsc.js_string(resolver_parse_output.get("order_status") or "").strip() == "top_selling":
-                resolver_parse_output = {
-                    **resolver_parse_output,
-                    "entities": [
-                        e
-                        for e in (resolver_parse_output.get("entities") or [])
-                        if not (isinstance(e, dict) and e.get("hint") == "category")
-                    ],
-                }
+            # Owner retest (27 Sep 2026): read off the FOCUS, not the verdict, so a
+            # message that only narrows the ranking ("sold by fanny", no ask word of
+            # its own) is kept away from the resolver too.
+            if state_out.focus.status == "top_selling":
+                dealer = (
+                    business_services.top_selling_dealer_ledgers(db, contact_respond_id, space_id_for_turn)
+                    is not None
+                )
+                resolver_parse_output, top_selling_updates = _top_selling_narrowing(
+                    db, resolver_parse_output, state_out.focus, dealer=dealer
+                )
                 resolver_parse_output = _top_selling_dealer_scope(
                     db, resolver_parse_output, state_out.focus, contact_respond_id, space_id_for_turn
                 )
@@ -1927,6 +2029,7 @@ def _run_stages(  # noqa: PLR0915
                     resolved_candidates,
                     frozenset(unplaced_tokens),
                 )
+            _apply_top_selling_updates(state_out.focus, top_selling_updates)
 
         # D ROUTE. Two facts outrank the plan and neither is IN one: a refused access
         # agent (contract 58, fail closed) and the stock-denial switch, which is decided
@@ -2552,6 +2655,15 @@ def _run_stages(  # noqa: PLR0915
                     # has moved on, and "more" must not resume a set they left.
                     state_out.focus.set_page = None
                 record_top_selling_asked(state_out.focus, envelopes)
+                if (
+                    (state_out.focus.top_selling or {}).get("asked")
+                    and state_out.pending is not None
+                    and state_out.pending.kind == "top_selling_pick"
+                ):
+                    # Owner retest (27 Sep 2026): the lane asked a question over a
+                    # ranking still on screen, so the "2" that answers it must not
+                    # pick row 2 of the old list. The question closes the list.
+                    state_out = dataclasses_replace(state_out, pending=None)
                 turn_trace.record(
                     "looked_up",
                     summary="Looked the answer up.",
@@ -3151,10 +3263,8 @@ def _quick_replies_of(answer: Any) -> str | None:
     """
     if answer.question is None:
         return None
-    if turn_pending.quick_replies_suppressed(getattr(answer.question, "kind", None)):
-        return None
     labels = [str(o.get("label")) for o in answer.question.options if o.get("label")]
-    return ", ".join(labels) if labels else None
+    return turn_pending.quick_replies(getattr(answer.question, "kind", None), labels)
 
 
 def _reply_of(answer: Any) -> dict[str, Any]:
