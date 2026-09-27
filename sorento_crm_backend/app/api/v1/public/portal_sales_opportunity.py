@@ -24,6 +24,7 @@ from app.models.base import UNSET, company_scope, get_company_scope, set_company
 from app.models.portal import PortalToken
 from app.models.sales_agent import SalesAgent
 from app.schemas.sales import (
+    PortalMyTargets,
     PortalSalesOpportunityCreate,
     PortalSalesOpportunityUpdate,
     SalesOpportunityCustomerOptionsResponse,
@@ -163,6 +164,19 @@ def portal_opportunity_meta(
 ):
     _require_agent(db, token)
     return svc.meta(db)
+
+
+@router.get("/sales-opportunities/my-targets", response_model=PortalMyTargets)
+def portal_my_targets(
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """The logging agent's own active targets with achieved, gap and the open opportunities
+    closing before each end date (fix lane round 2, F2)."""
+    from app.services.sales import target_service
+
+    agent = _require_agent(db, token)
+    return target_service.agent_progress(db, agent.id)
 
 
 @router.get(

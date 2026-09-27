@@ -609,3 +609,44 @@ class SalesTargetOptions(BaseModel):
     agents: List[SalesTargetOptionAgent]
     teams: List[SalesTargetOptionTeam]
     categories: List[SalesTargetOptionCategory]
+
+
+# --------------------------------------------------------------------------------------
+# Portal My target (fix lane round 2, F2)
+# --------------------------------------------------------------------------------------
+
+
+class PortalMyTargetOpportunity(BaseModel):
+    id: str
+    opportunity_no: str
+    title: str
+    customer_or_prospect: Optional[str] = None
+    stage_label: Optional[str] = None
+    expected_close_date: DateType
+    #: What it adds if won: the expected amount, or the lines' quantity on a quantity target.
+    value: Decimal
+
+
+class PortalMyTarget(BaseModel):
+    target_id: str
+    target_no: str
+    name: str
+    metric: str
+    basis: str
+    counts_label: str
+    product_scope: str
+    scope_labels: List[str]
+    start_date: DateType
+    end_date: DateType
+    target_value: Decimal
+    achieved_value: Decimal
+    gap_value: Decimal
+    pipeline_value: Decimal
+    projected_value: Decimal
+    short_value: Decimal
+    opportunities: List[PortalMyTargetOpportunity]
+
+
+class PortalMyTargets(BaseModel):
+    today: DateType
+    targets: List[PortalMyTarget]
