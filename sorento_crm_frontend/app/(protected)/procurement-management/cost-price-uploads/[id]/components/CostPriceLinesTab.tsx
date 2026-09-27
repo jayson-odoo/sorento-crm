@@ -635,7 +635,7 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
                 disabled={!actions.can_apply || apply.isPending}
                 title={actions.apply_blocked_reason ?? undefined}
               >
-                Apply {actions.apply_count} changes
+                Apply {actions.apply_count} {actions.apply_count === 1 ? 'change' : 'changes'}
               </Button>
             )}
           </div>
