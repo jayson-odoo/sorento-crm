@@ -568,13 +568,13 @@ def persist_messages(db: Session, contact: ThreadContact, items: Iterable[dict])
         # AC-L6: the quoted EXCERPT is persisted alongside the quoted id. Without
         # it the fallback (local) lane renders a "replying to" block with nothing
         # in it - the id alone cannot be shown to a reader.
-        reply_to_text = mask_otp_text(_respond_item_text(reply_to)) if reply_to else None
+        reply_to_text = _respond_item_text(reply_to) if reply_to else None
         rows.append(
             {
                 "channel": contact.channel,
                 "contact_id": contact.respond_io_id,
                 "phone_number": contact.phone_number,
-                "message": mask_otp_text(_respond_item_text(item)),
+                "message": _respond_item_text(item),
                 "sent_at": sent_at,
                 "first_name": contact.first_name,
                 "last_name": contact.last_name,

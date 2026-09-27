@@ -83,6 +83,7 @@ def test_r2_b1_fifth_attempt_with_the_right_code_signs_in(rate_limit_cleanup):
 SIGNIN_CODE = "418273"
 PORTAL_CODE = "592046"
 TEMPLATE_CODE = "730915"
+BUTTON_CODE = "864209"
 OTP_TEMPLATE = "zzt_auth_code_r2"
 
 
@@ -130,10 +131,30 @@ def _respond_items() -> list[dict]:
                             "text": "{{1}} is your verification code.",
                             "parameters": [{"type": "text", "text": TEMPLATE_CODE}],
                         },
+                    ],
+                },
+            },
+            "status": [],
+        },
+        {
+            # An authentication template not (or no longer) mapped as a
+            # default: its copy-code button still marks the code.
+            "messageId": 1780751892500000,
+            "traffic": "outgoing",
+            "message": {
+                "type": "whatsapp_template",
+                "template": {
+                    "name": "zzt_other_auth_r2",
+                    "components": [
+                        {
+                            "type": "body",
+                            "text": "{{1}} is your code.",
+                            "parameters": [{"type": "text", "text": BUTTON_CODE}],
+                        },
                         {
                             "type": "button",
                             "sub_type": "copy_code",
-                            "parameters": [{"type": "coupon_code", "coupon_code": TEMPLATE_CODE}],
+                            "parameters": [{"type": "coupon_code", "coupon_code": BUTTON_CODE}],
                         },
                     ],
                 },
@@ -189,6 +210,7 @@ def test_r2_b2_respond_thread_page_and_cache_carry_no_code():
             # OTP bodies must not.
             assert f"code is {code}" not in dumped
         assert TEMPLATE_CODE not in dumped
+        assert BUTTON_CODE not in dumped
         texts = [i["message"].get("text") for i in page["items"]]
         assert "Order 418273 is on its way." in texts, texts
 
@@ -197,11 +219,12 @@ def test_r2_b2_respond_thread_page_and_cache_carry_no_code():
             .filter(ChatHistory.contact_id == contact.respond_io_id)
             .all()
         )
-        assert len(rows) == 4
+        assert len(rows) == 5
         stored = " | ".join(r.message or "" for r in rows)
         assert f"code is {SIGNIN_CODE}" not in stored
         assert f"code is {PORTAL_CODE}" not in stored
         assert TEMPLATE_CODE not in stored
+        assert BUTTON_CODE not in stored
         assert "Order 418273 is on its way." in stored
 
 
@@ -305,7 +328,47 @@ def test_r2_b2_respond_client_list_messages_carries_no_code():
     assert f"code is {SIGNIN_CODE}" not in dumped
     assert f"code is {PORTAL_CODE}" not in dumped
     assert TEMPLATE_CODE not in dumped
+    assert BUTTON_CODE not in dumped
     assert "Order 418273 is on its way." in dumped
+
+
+def test_r2_b2_respond_client_get_message_carries_no_code():
+    """The single-message read (the thread's jump-to-anchor) is a Respond
+    read too."""
+    from app.services.integration_service import RespondClient
+
+    response = MagicMock()
+    response.content = b"x"
+    response.json.return_value = _respond_items()[-1]
+    response.raise_for_status.return_value = None
+    http = MagicMock()
+    http.__enter__.return_value.get.return_value = response
+
+    with patch("app.services.integration_service.httpx.Client", return_value=http):
+        item = RespondClient(api_key="k", base_url="http://respond.test").get_message(
+            "123", 1780751891000000
+        )
+
+    assert f"code is {SIGNIN_CODE}" not in json.dumps(item)
+    assert "sign-in code is ******" in item["message"]["text"]
+
+
+def test_r2_b2_thread_anchor_page_carries_no_code():
+    """The ``around`` read (search result jump) fetches its anchor with
+    ``get_message``; the anchor must be masked like the rest of the page."""
+    items = _respond_items()
+    with blank_session() as db:
+        _otp_default(db)
+        contact = _thread_contact()
+        client = MagicMock()
+        client.list_messages.return_value = {"items": []}
+        client.get_message.return_value = json.loads(json.dumps(items[1]))
+        page = thread_svc.fetch_thread_page(
+            db, contact, around=str(items[1]["messageId"]), limit=3, client=client
+        )
+
+    assert [str(i["messageId"]) for i in page["items"]] == [str(items[1]["messageId"])]
+    assert TEMPLATE_CODE not in json.dumps(page)
 
 
 # --------------------------------------------------------------------------- #
