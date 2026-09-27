@@ -177,3 +177,23 @@ The owner's rule: Words BLACK, value Black, Only when Chopping board is Yes.
 | Its values for a spec with no choices | `evidence/r4-f1-no-choices-yet-1280.png` | "Basin style has no choices yet." |
 | The rule in one sentence | `evidence/r4-f3-rule-sentence-1280.png`, `-375.png` | "When the description or flyer contains the word BLACK and Chopping board is Yes, set Finish or colour to Black." |
 | See what would change | `evidence/r4-f2-preview-black-only-when-board-1280.png`, `-375.png` | 0 changed, 1 now set, 0 no longer set, 6 unchanged; "2 products have a stored value that differs from today's rules; saving this rule refreshes them too."; one row, SK-BLK-CB, Black sink with board, - to Black. TP-BLK (black, no board), M3049-S and M4808SS are not listed. |
+
+## 8. Fix round 5, the record header card and the Add a rule placement (27 Sep)
+
+Browser pass on the cloud lane's CI database (empty schema; the shipped registry seeded, 49
+specifications, plus twelve products read through the real derivation), frontend dev server,
+agent-browser at 1280 and 375. The `product` module was installed for the default tenant first;
+after that the page was reached by sidebar clicks from `/` (Products, Specifications, Product
+Specifications, Finish or colour, How it is read, Add a rule, Cancel, Choices and words, Edit).
+Finish or colour carries its 22 shipped rules, as on the owner's screen.
+
+| Step | Evidence | Seen |
+| --- | --- | --- |
+| Header card, read | `evidence/r5-01-record-header-read-1280.png` | Title "Finish or colour", pill "In use", pager "10 / 49" and Edit on the right; Type List, Choices 10, Products 9, Last read 27/09/2026. |
+| Rules grid, read | `evidence/r5-02-rules-toolbar-read-1280.png` | "Add a rule" at the top right, on the toolbar row above Order / Where to look / Kind; the footer reads only "22 rules.". |
+| Add a rule from read | `evidence/r5-03-add-rule-from-read-opens-form-1280.png` | The page enters edit mode and "Add a rule to Finish or colour" opens. |
+| Rules grid, edit | `evidence/r5-04-rules-toolbar-edit-1280.png` | Header card unchanged beside Cancel and Save; "Add a rule" at the top right; footer "22 rules.". |
+| Choices and words, edit | `evidence/r5-05-choices-toolbar-edit-1280.png` | "Add a choice" at the top right, above Choice / Words customers say / Products. |
+| Choices and words, read, 375 | `evidence/r5-06-choices-toolbar-read-375.png` | Header card stacks to two columns; "Add a choice" top right. |
+| Header and rules, read, 375 | `evidence/r5-07-header-and-rules-read-375.png` | Every header field present; "Add a rule" top right; "22 rules." below. |
+| Header and rules, edit, 375 | `evidence/r5-08-header-and-rules-edit-375.png` | Same, with Cancel and Save; page `scrollWidth` 375 at a 375 viewport (no horizontal scroll). |

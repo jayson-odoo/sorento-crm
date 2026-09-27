@@ -15,7 +15,10 @@ list now means "no rules" (NULL alone means "the shipped rules"), and `brand` is
 every stored visibility policy (ruling assumed: the brand stays out of the registry and is always
 shown). Fix round 4 (owner hand test, 27 Sep): Only when on a yes-or-no specification offers Yes
 and No, See what would change compares the draft with the LIVE rules (stored drift is one line of
-its own), and the rule modal says the rule in one sentence. Planning history:
+its own), and the rule modal says the rule in one sentence. Fix round 5 (owner retest, 27 Sep
+13:20 MYT): the record header card carries the name, In use, type, choices, products and last
+read (the last two from `/spec-registry/coverage`), and Add a rule / Add a choice sit at the top
+right of their grids in read and edit mode. Planning history:
 DRAFT round 4, 27 Sep 2026; round 1 owner rulings, the round 3 Lavish mockup rulings and the
 round 4 Lavish notes applied (the three rulings sections below, and section 8).
 **Alignment page:** `alignment-product-specs-27sep.html` (owner review surface in Lavish; it
