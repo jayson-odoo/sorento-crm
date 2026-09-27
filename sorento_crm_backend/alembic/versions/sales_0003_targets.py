@@ -18,7 +18,7 @@ Downgrade drops the three tables, the order date index and the DO column with it
 keeps the schema (ADR-0011) and the permission rows (S6 precedent).
 
 Revision ID: sales_0003_targets
-Revises: sales_0002_team_leader
+Revises: merge_27sep_three_heads
 Create Date: 2026-09-26
 """
 import sqlalchemy as sa
@@ -26,7 +26,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "sales_0003_targets"
-down_revision = "sales_0002_team_leader"
+down_revision = "merge_27sep_three_heads"
 branch_labels = None
 depends_on = None
 
