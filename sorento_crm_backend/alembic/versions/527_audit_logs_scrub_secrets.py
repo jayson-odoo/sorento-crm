@@ -17,12 +17,12 @@ row locks on the matching rows until the transaction commits.
 Downgrade is a no-op on purpose: a stripped hash cannot, and must not, come back.
 
 Revision ID: 527_audit_logs_scrub_secrets
-Revises: sales_0002_team_leader
+Revises: merge_27sep_three_heads
 """
 from alembic import op
 
 revision = "527_audit_logs_scrub_secrets"
-down_revision = "sales_0002_team_leader"
+down_revision = "merge_27sep_three_heads"
 branch_labels = None
 depends_on = None
 
