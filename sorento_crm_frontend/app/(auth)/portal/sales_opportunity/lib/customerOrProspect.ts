@@ -35,3 +35,10 @@ export async function fetchCustomerOrProspectOptions(query: string): Promise<Sea
   }
   return options;
 }
+
+/** The closed field's text: a picked prospect shows its name, not the "Add ..." option text. */
+export function customerTriggerLabel(option: SearchableSelectOption): string {
+  return option.value.startsWith(PROSPECT_PREFIX)
+    ? option.value.slice(PROSPECT_PREFIX.length)
+    : option.label;
+}

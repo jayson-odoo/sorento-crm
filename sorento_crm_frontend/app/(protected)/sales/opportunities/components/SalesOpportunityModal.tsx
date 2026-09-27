@@ -20,6 +20,7 @@ import {
   BLOCKED_VALUE,
   PROSPECT_PREFIX,
   fetchCustomerOrProspectOptions,
+  customerTriggerLabel,
 } from '../lib/customerOrProspect';
 
 /**
@@ -138,6 +139,7 @@ export default function SalesOpportunityModal({
                 onChange={setCustomerOrProspect}
                 options={customerOptions}
                 fetchOptions={fetchCustomerOrProspectOptions}
+                renderTriggerLabel={customerTriggerLabel}
                 selectedOption={
                   presetCustomerId && presetCustomerLabel
                     ? { value: presetCustomerId, label: presetCustomerLabel }

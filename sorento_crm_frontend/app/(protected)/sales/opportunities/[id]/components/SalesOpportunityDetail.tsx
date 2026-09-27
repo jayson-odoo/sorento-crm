@@ -42,6 +42,7 @@ import {
   BLOCKED_VALUE,
   PROSPECT_PREFIX,
   fetchCustomerOrProspectOptions,
+  customerTriggerLabel,
 } from '../../lib/customerOrProspect';
 import type { SalesOpportunityTransition } from '../../types/salesOpportunity.types';
 
@@ -368,6 +369,7 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
                       value={customerOrProspect}
                       onChange={setCustomerOrProspect}
                       fetchOptions={fetchCustomerOrProspectOptions}
+                      renderTriggerLabel={customerTriggerLabel}
                       selectedOption={
                         opportunity.customer_id
                           ? { value: opportunity.customer_id, label: customerLabel }

@@ -14,6 +14,7 @@ import {
   NO_CUSTOMERS_MESSAGE,
   PROSPECT_PREFIX,
   fetchCustomerOrProspectOptions,
+  customerTriggerLabel,
 } from '../lib/customerOrProspect';
 import {
   PortalOpportunityLineRow,
@@ -128,6 +129,7 @@ export default function SalesOpportunityPortalForm({
               onOptionChange={(option) => setCustomerSelectedOption(option ?? undefined)}
               selectedOption={customerSelectedOption}
               fetchOptions={fetchCustomerOrProspectOptions}
+              renderTriggerLabel={customerTriggerLabel}
               placeholder="Search customer or prospect..."
               emptyMessage={NO_CUSTOMERS_MESSAGE}
               wrapOptions
