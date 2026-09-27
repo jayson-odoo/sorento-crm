@@ -804,7 +804,9 @@ def test_s2_16_zero_lines_is_valid(api):
     assert created["lines"] == []
 
 
-def test_s2_16_expected_amount_is_required(api):
+def test_s2_16_expected_amount_left_out_defaults_from_the_lines(api):
+    # Owner ruling of 27 Sep (PR #1296, F7) replaced "required": left out, the amount is the
+    # sum of the priced lines (tests/test_sales_opportunity_line_prices_r2.py pins the sum).
     client, db, company_id = api
     customer = _customer(db, company_id)
     res = client.post(
@@ -815,7 +817,8 @@ def test_s2_16_expected_amount_is_required(api):
             "expected_close_date": "2026-11-01",
         },
     )
-    assert res.status_code == 422, res.text
+    assert res.status_code == 201, res.text
+    assert Decimal(res.json()["expected_amount"]) == Decimal("0")
 
 
 def test_s2_16_patch_replaces_the_line_set(api):

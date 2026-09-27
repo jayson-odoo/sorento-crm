@@ -8,6 +8,7 @@ Stages live on the status engine (`app.modules.sales.status_entities`, entity ty
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Dict, List, Optional
 
 from sqlalchemy import or_
@@ -22,6 +23,7 @@ from app.models.sales_agent import SalesAgent
 from app.models.status import Status
 from app.models.user import User
 from app.services import status_service
+from app.services.dealer_kit.pricing import flyer_price
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 from app.services.sales import team_service
@@ -174,30 +176,42 @@ def _assert_agent_visible(db: Session, *, sales_agent_id: str, company_id: str) 
 
 def _replace_lines(db: Session, opportunity: SalesOpportunity, lines: List[dict]) -> None:
     product_ids = [line["product_id"] for line in lines]
+    list_prices: dict = {}
     if product_ids:
         # N6 (Phase 3): an inactive product counts as "not found" here too - a
         # discontinued product has no business being added to a NEW line.
-        found = {
-            row[0]
-            for row in db.query(Product.id)
+        list_prices = {
+            row[0]: row[1]
+            for row in db.query(Product.id, Product.list_price)
             .filter(Product.id.in_(product_ids), Product.is_active.is_(True))
             .all()
         }
-        missing = [pid for pid in product_ids if pid not in found]
+        missing = [pid for pid in product_ids if pid not in list_prices]
         if missing:
             raise _unprocessable("One or more products were not found.", "UNKNOWN_PRODUCT")
 
     opportunity.lines.clear()
     db.flush()
     for index, line in enumerate(lines):
+        unit_price = line.get("unit_price")
+        if unit_price is None:
+            # F7 (fix round 2): the price the dealer flyer prints, zero meaning none.
+            unit_price = flyer_price(list_prices[line["product_id"]])
         opportunity.lines.append(
             SalesOpportunityLine(
                 company_id=opportunity.company_id,
                 product_id=line["product_id"],
                 qty=line["qty"],
+                unit_price=unit_price,
                 sort_order=index,
             )
         )
+
+
+def _line_amount(line) -> Optional[Decimal]:
+    if line.unit_price is None:
+        return None
+    return (Decimal(line.qty) * Decimal(line.unit_price)).quantize(Decimal("0.01"))
 
 
 def _serialize_lines(db: Session, opportunity: SalesOpportunity) -> List[dict]:
@@ -218,6 +232,8 @@ def _serialize_lines(db: Session, opportunity: SalesOpportunity) -> List[dict]:
                 "product_code": product.product_code if product else "",
                 "product_name": product.product_name if product else "",
                 "qty": line.qty,
+                "unit_price": line.unit_price,
+                "line_amount": _line_amount(line),
             }
         )
     return out
@@ -277,7 +293,7 @@ def create_opportunity(
         title=payload["title"],
         status_id=initial.id,
         outcome="open",
-        expected_amount=payload["expected_amount"],
+        expected_amount=payload.get("expected_amount") or 0,
         expected_close_date=payload["expected_close_date"],
         source=source,
         created_by_user_id=created_by_user_id,
@@ -288,6 +304,13 @@ def create_opportunity(
     db.flush()
     _replace_lines(db, opportunity, payload.get("lines") or [])
     db.flush()
+    if payload.get("expected_amount") is None:
+        # F7 (fix round 2): nothing typed, so the lines are the estimate.
+        opportunity.expected_amount = sum(
+            (amount for amount in map(_line_amount, opportunity.lines) if amount is not None),
+            Decimal("0"),
+        )
+        db.flush()
     return opportunity
 
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from decimal import Decimal
 from typing import Annotated, Optional
 
 from fastapi import (
@@ -54,6 +55,7 @@ from app.services.error_handler import (
     handle_validation_error,
 )
 from app.services.uuid_path_param import validate_uuid_path
+from app.services.dealer_kit.pricing import flyer_price
 from app.services.portal_service import (
     PORTAL_ATTACHMENT_TYPE_CODE,
     PortalAuthError,
@@ -393,6 +395,8 @@ class ProductLookupItem(BaseModel):
     category_id: Optional[str] = None
     category_code: Optional[str] = None
     category_name: Optional[str] = None
+    #: The price the dealer flyer prints; null when the product has none (F7, PR #1296).
+    list_price: Optional[Decimal] = None
 
 
 @router.get("/lookups/products", response_model=list[ProductLookupItem])
@@ -421,6 +425,7 @@ def lookup_products(
             category_id=str(p.category_id) if p.category_id else None,
             category_code=c.category_code if c else None,
             category_name=c.category_name if c else None,
+            list_price=flyer_price(p.list_price),
         )
         for (p, c) in rows
     ]

@@ -146,6 +146,8 @@ class SalesTeamAgentOption(BaseModel):
 class SalesOpportunityLineInput(BaseModel):
     product_id: str
     qty: Decimal = Field(..., gt=0, max_digits=12, decimal_places=2)
+    #: Left out or null: the product's list price, the price the dealer flyer prints (F7).
+    unit_price: Optional[Decimal] = Field(None, ge=0, max_digits=15, decimal_places=2)
 
     @field_validator("product_id")
     @classmethod
@@ -156,7 +158,6 @@ class SalesOpportunityLineInput(BaseModel):
 #: Shared bounds for both CRM and portal create/update bodies (Phase 3 fix S3): an
 #: unbounded `expected_amount`/`lines` list is a 500 or a silent truncation somewhere
 #: downstream, not a validation error where a caller can see and fix it.
-_AMOUNT_FIELD = Field(..., ge=0, max_digits=15, decimal_places=2)
 _AMOUNT_FIELD_OPTIONAL = Field(None, ge=0, max_digits=15, decimal_places=2)
 _LINES_FIELD = Field(None, max_length=100)
 
@@ -167,7 +168,8 @@ class SalesOpportunityCreate(BaseModel):
     are ignored rather than accepted (section 16)."""
 
     title: str = Field(..., min_length=1, max_length=200)
-    expected_amount: Decimal = _AMOUNT_FIELD
+    #: Left out: the sum of the line amounts (F7).
+    expected_amount: Optional[Decimal] = _AMOUNT_FIELD_OPTIONAL
     expected_close_date: DateType
     customer_id: Optional[str] = None
     prospect_name: Optional[str] = Field(None, max_length=200)
@@ -215,7 +217,8 @@ class PortalSalesOpportunityCreate(BaseModel):
     `sales_order_id` (only the CRM sends it, section 16)."""
 
     title: str = Field(..., min_length=1, max_length=200)
-    expected_amount: Decimal = _AMOUNT_FIELD
+    #: Left out: the sum of the line amounts (F7).
+    expected_amount: Optional[Decimal] = _AMOUNT_FIELD_OPTIONAL
     expected_close_date: DateType
     customer_id: Optional[str] = None
     prospect_name: Optional[str] = Field(None, max_length=200)
@@ -259,6 +262,9 @@ class SalesOpportunityLineResponse(BaseModel):
     product_code: str
     product_name: str
     qty: Decimal
+    unit_price: Optional[Decimal] = None
+    #: qty x unit_price, null when the line has no price.
+    line_amount: Optional[Decimal] = None
 
 
 class SalesOpportunityTransition(BaseModel):

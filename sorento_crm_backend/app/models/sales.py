@@ -279,10 +279,11 @@ class SalesOpportunity(CompanyScopedMixin, Base):
 
 
 class SalesOpportunityLine(CompanyScopedMixin, Base):
-    """One product an opportunity names, with a quantity (plan 3.4; round 4, N11).
+    """One product an opportunity names, with a quantity and a unit price (plan 3.4; round 4,
+    N11; fix round 2, F7).
 
-    Optional (zero lines is valid - an early lead may not know yet). No unit price: the
-    expected amount stays a typed figure, never priced from these lines (plan 3.4).
+    Optional (zero lines is valid - an early lead may not know yet). `unit_price` defaults to
+    the product's list price at write time and stays null for a product with no price.
     """
 
     __tablename__ = "opportunity_lines"
@@ -298,6 +299,7 @@ class SalesOpportunityLine(CompanyScopedMixin, Base):
         UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False
     )
     qty = Column(Numeric(12, 2), nullable=False)
+    unit_price = Column(Numeric(15, 2), nullable=True)
     # The order the salesperson entered them, entered order preserved (S2-16).
     sort_order = Column(SmallInteger, nullable=False, default=0, server_default=text("0"))
 
@@ -305,6 +307,10 @@ class SalesOpportunityLine(CompanyScopedMixin, Base):
 
     __table_args__ = (
         CheckConstraint("qty > 0", name="ck_sales_opportunity_lines_qty_positive"),
+        CheckConstraint(
+            "unit_price IS NULL OR unit_price >= 0",
+            name="ck_sales_opportunity_lines_unit_price_nonneg",
+        ),
         Index("ix_sales_opportunity_lines_product_id", "product_id"),
         {"schema": SCHEMA},
     )
