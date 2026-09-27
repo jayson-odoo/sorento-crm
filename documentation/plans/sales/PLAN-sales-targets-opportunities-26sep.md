@@ -1762,7 +1762,8 @@ taken while building, each the direct reading of the plan unless it says otherwi
   sales`, `sales.teams`, `sales.team_members` (with `company_id` NOT NULL, security review), the
   four `sales.teams.*` slugs granted to admin and superadmin, and the `sales` catalog row with no
   `tenant_modules` row: **the module ships dormant**, as `scm` and `dealer_kit` did, and is
-  switched on in System > App Store. Downgrade drops both tables and the catalog row, and leaves
+  switched on in System > App Store (retail sales reports S1, #1269, keeps it so: its migration
+  writes no `tenant_modules` row, review round 2 S2). Downgrade drops both tables and the catalog row, and leaves
   the schema (ADR-0011) and the permission rows.
 - **One extra read route**, `GET /sales/teams/agent-options` (gated `sales.teams.view`): the team
   picker lists active agents with the team each is in now, without needing
