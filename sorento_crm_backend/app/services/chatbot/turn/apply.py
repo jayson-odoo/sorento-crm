@@ -935,7 +935,7 @@ TOP_SELLING_NARROWING_HINTS = frozenset({"category", "brand", "sales_agent"})
 #: `customer` also clears the focus customers (the generic `_broaden` rule does that).
 TOP_SELLING_BROADEN_KEYS = {
     "customer": ("customer_ids",),
-    "sales_agent": ("agent_ids", "agent_words"),
+    "sales_agent": ("agent_ids",),
     "brand": ("brand_ids",),
     "category": ("category_words", "category_code"),
 }
@@ -1076,9 +1076,13 @@ def _top_selling_rules(
         # A correction widening an axis ("customer is everyone") clears that axis's
         # filter on the ranking too; `broaden_axis: "all"` clears every one.
         axis = broaden_kind(verdict)
-        for key in axis_keys(axis):
+        for key in _top_selling_axis_keys(axis):
             if carried.pop(key, None) is not None:
                 trace.rules_fired.append(f"top_selling_broaden_clears_{key}")
+    # A message stating no axis of its own and naming only narrowing words ("sold by
+    # fanny", "water closet only") narrows the ranking on screen even when the parser
+    # says it names the ask (owner retest, 27 Sep 2026): it never restarts it.
+    only_narrows = not own and _narrows_the_ranking(verdict)
     categories = [
         e.get("raw")
         for e in (verdict.get("entities") or [])
@@ -1087,7 +1091,7 @@ def _top_selling_rules(
     if categories:
         own["category_words"] = categories
         carried.pop("category_code", None)
-    if asked and names_its_ask and not _top_selling_waiting(asked_last, own):
+    if asked and names_its_ask and not only_narrows and not _top_selling_waiting(asked_last, own):
         # A fresh ask names the ask ITSELF ("top 10 selling items": `domain_in_message`);
         # "by amount" under a ranking names only the axis it changes. A fresh ask states
         # its own filters too (owner: never assume): a customer, channel or date window
@@ -1099,7 +1103,7 @@ def _top_selling_rules(
     focus.top_selling = carried
 
 
-def axis_keys(axis: str | None) -> tuple[str, ...]:
+def _top_selling_axis_keys(axis: str | None) -> tuple[str, ...]:
     """The slot keys `broaden_axis` clears: that axis's, or every axis's for None."""
     if axis is None:
         return tuple(k for keys in TOP_SELLING_BROADEN_KEYS.values() for k in keys)

@@ -728,3 +728,21 @@ class TestOwnerTranscript:
         text, (args,) = say(_narrow(sales_channel="dealer"), "only for dealer")
         assert args["channel"] == "dealer" and "\nChannel: Dealer\n" in text
         assert len(replies) == 21
+
+
+class TestNarrowingNeverRestarts:
+    def test_a_narrowing_marked_as_naming_the_ask_keeps_the_metric_and_count(
+        self, session_factory, monkeypatch, cat
+    ) -> None:
+        """"sold by fanny" read with order_status top_selling AND `domain_in_message`
+        true still narrows the ranking on screen: no metric question, the count kept."""
+        _ranked(session_factory, monkeypatch)
+        reply, calls = _turn(
+            session_factory, monkeypatch,
+            _narrow(_e("fanny", "sales_agent"), order_status="top_selling", domain_hint="order", domain_in_message=True),
+            "sold by fanny",
+        )
+        (args,) = calls
+        assert args["sales_agent_ids"] == [cat.fanny_agent]
+        assert args["rank_by"] == "quantity" and args["n"] == 100
+        assert _text(reply) != ASK_METRIC

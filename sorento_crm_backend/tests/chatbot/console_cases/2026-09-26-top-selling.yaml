@@ -54,6 +54,7 @@ cases:
             - |-
               Customer: all
               Category: all
+              Brand: all
               Sales agent: all
               Channel: all
               Delivery date: 01/01/2026 to 31/12/2026

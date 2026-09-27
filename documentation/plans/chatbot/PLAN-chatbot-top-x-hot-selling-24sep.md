@@ -12,8 +12,12 @@ on the same PR, and main (dc10a1af) is merged with the lane's migrations re-pare
 on the local stack. Fix lane round 3 (27 Sep, owner hand test, ruling assumed pending the
 owner): any ACTIVE office access type makes a contact staff for top selling whatever other
 types or customer links it holds (`orders._top_selling_is_staff`, shared by the lane's
-`top_selling_dealer_ledgers`); no active office type keeps link-else-403. S5 (sales agent
-resolver), S6 (review + live console) and S7 (per-month breakdown) open. Track: full track (new route + MCP tool = a new external
+`top_selling_dealer_ledgers`); no active office type keeps link-else-403. Fix lane round 4
+(27 Sep, owner retest at 9ab7f89d, parser v34): F1 to F8 below ("As built (fix lane round
+4)"), main (11bf373e) merged, the lane's first migration re-parented onto
+`merge_27sep_three_heads`, the parser prompt republished unlabelled by
+`chatbot_top_selling_vocab_r4`. S5 (sales agent) is built by round 4 as a lane-side
+resolver; S6 (review + live console) and S7 (per-month breakdown) open. Track: full track (new route + MCP tool = a new external
 ingest surface, one policy-row migration, one prompt migration, one entity-kind migration;
 the diff will pass 300 lines).
 Issue: #1171. UAC: `chatbot-top-x-hot-selling-24sep-acceptance-criteria.md` (AC-19xx).
@@ -543,6 +547,60 @@ Where S4 differs from the two sections above, and which ruling decides it.
 - Not built in S4: the month clarify and the per-month breakdown (S7), the sales agent
   entity kind and resolver (S5; the arg block already maps a resolved `sales_agent`
   entity to `sales_agent_ids`).
+
+### As built (fix lane round 4, owner retest 27 Sep 2026)
+
+Source: the owner's PR #1273 comment "Owner ruling from the retest of top selling (27 Sep
+11:27 to 11:35 MYT ...)", verbatim from chat, and its seven transcript items. Pinned by
+`tests/chatbot/test_top_selling_round4.py`, which types the owner's own messages and
+replays the transcript in order.
+
+- F1 quick replies: a ranked list sends no per-product chips (`top_selling_pick` joins
+  `turn/pending.quick_replies_suppressed`); the "Reply with a rank number" line stays and a
+  typed rank still opens the row. No question sends more than three chips
+  (`pending.MAX_QUICK_REPLIES`, WhatsApp's own button limit); a longer list goes out as its
+  numbered text alone.
+- F2 sales agent: "sold by fanny", "sales agent is fanny", "by agent fanny" are an entity
+  with hint `sales_agent` (prompt). `engine._top_selling_narrowing` keeps these words away
+  from the generic resolver and matches them against `sales_agents` (code or person label,
+  whole words, `services.resolve_sales_agent_token`); the ids ride on the slot as
+  `agent_ids`. A `customer` word that names an agent and no customer is the agent; one
+  that names both is asked: "Do you mean customer X or sales agent Y? Reply 1 for the
+  customer, 2 for the sales agent." A word naming no agent is said once ("I don't know
+  'X' as a sales agent.") above the ranking. A dealer's customer words are never searched
+  against other customers (its own-ledger rule stands).
+- F3 corrections: "customer is everyone", "all customers", "any customer", "everyone" are
+  `broaden_axis: customer`, `broaden_to: all` (prompt); the generic `_broaden` clears the
+  focus customers and `_top_selling_rules` clears the slot's own filter for that axis
+  (`TOP_SELLING_BROADEN_KEYS`). No new "nothing changed" reply: the correction is applied.
+- F4 metric: "1" and "2" under "By quantity or by amount?" are the parser's position, read
+  in the order the question lists (`top_selling_position_is_the_metric`); "qty",
+  "quantity", "amt", "amount" are taught. An answer carrying more ("amount, top 100, water
+  closet") is applied whole. A lane question closes the old ranked list, so the "2" that
+  answers it never picks row 2.
+- F5 category: live category names are copies of their codes (SRT-WC), so a word with no
+  code or name hit goes through the stock ask's class vocabulary
+  (`product_class_signal.resolve_classes_for_term`: class label, synonyms, classes products
+  carry, staff synonyms), then a whole-word run of one class's label or synonym ("water
+  tap" holds "tap"), taken only when exactly one class answers
+  (`services.resolve_category_class`). The route echoes the shared class label ("Category:
+  Water Closet"). A word matching nothing is said once ("I don't know 'X' as a
+  category.") and the ranking runs without it. A narrowing message ("water closet only")
+  never leaves the ranking (`apply._narrows_the_ranking`), and a ranking with no sales is
+  its own answer ("No sales found.") with no escalate offer and no routing picker
+  (amends AC-1957).
+- F6 brand: `brand_ids` on the route (`Product.brand_id`, the narrowing PR #1301 gives the
+  outstanding report), echoed as `filters.brand_name` and printed on every header as
+  `Brand:` (`all` when none). A `brand` word, or a `customer` word that IS a brand's name
+  or code, resolves against the live `brands` table (`services.resolve_brand_token`),
+  never through the customer resolver.
+- F7 direction: new nullable parser key `rank_direction` (`top` | `bottom`), required for
+  strict mode and in `TOLERATED_ABSENT`; the route takes `direction` (`top` default,
+  `bottom` ranks both metrics and the code ascending). Titles: `*Bottom N selling items*`,
+  `*Least sold items*` with no N. Items with no sale are not ranked (the plan never ranks
+  them); the bottom header says so in one line: "Items with no sale in this period are
+  not ranked."
+- F8: every reply in the replay is checked for snake_case and dashes.
 
 ## Filters combination matrix (rewritten for the 26 Sep rulings)
 
