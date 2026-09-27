@@ -9,6 +9,7 @@ words as the version after the one `sales_s1_reports_module` promoted, label unm
 Merge-main round 2, 27 Sep 2026: main at 721ca398 (sales targets #1297, identity S0 #1303)
 merged in; `mem_0001_frames_level` now hangs off main's head `identity_0001_s0_model`. Main's
 new migrations touch no parser prompt, so the memory words and their publish rule are unchanged.
+Main's identity S0 head pin now drops revisions stacked above it (the memory chain sits there).
 Planning history: DRAFT round 3, 27 Sep 2026. Owner rulings of 26 Sep 23:45 MYT (grill questions 1, 2,
 7, 10) and 27 Sep 00:10 MYT (3, 6, 8) applied; the 27 Sep 00:45 and 00:50 MYT notes applied
 (final UI mockups, pictures in place of the flagged paragraphs); question 9's term named
