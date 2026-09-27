@@ -1171,26 +1171,32 @@ class TestParserPromptAndContractsTeachSalesReport:
         stays RETIRED on this lane (S0 dropped the dev/prod dual-body split; only ONE
         body ships now, `SEMANTIC_PARSER_PROMPT`) - main's own edit to the SLIM body
         is deliberately dropped, so the original "both texts ship" premise (dev vs
-        prod split) no longer applies. `SALES_REPORT_ADDENDUM` was the newest
-        addendum when this test was written; `QUANTITY_ADDENDUM` (issue #1262 slice
-        5, 26 Sep 2026) then `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep
-        2026) now stack after it, so it is checked by
-        `.removesuffix` rather than a bare `.endswith`."""
+        prod split) no longer applies. `STOCK_TASK_ADDENDUM`, `SALES_ANALYSIS_ADDENDUM`
+        (#1267 S1), `QUANTITY_ADDENDUM` (issue #1262 slice 5, 26 Sep 2026) then
+        `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep 2026) now stack after it,
+        newest outermost, so it is checked by `.removesuffix` rather than a bare
+        `.endswith`."""
         from app.services.chatbot_parser_prompt import (
             KNOWN_BRANDS_ADDENDUM,
             QUANTITY_ADDENDUM,
+            SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
+            STOCK_TASK_ADDENDUM,
         )
 
+        assert SEMANTIC_PARSER_PROMPT.endswith(KNOWN_BRANDS_ADDENDUM)
         assert (
             SEMANTIC_PARSER_PROMPT.removesuffix(KNOWN_BRANDS_ADDENDUM)
             .removesuffix(QUANTITY_ADDENDUM)
+            .removesuffix(SALES_ANALYSIS_ADDENDUM)
+            .removesuffix(STOCK_TASK_ADDENDUM)
             .endswith(SALES_REPORT_ADDENDUM)
         ), (
             "SEMANTIC_PARSER_PROMPT does not end with SALES_REPORT_ADDENDUM once the "
-            "newer KNOWN_BRANDS_ADDENDUM/QUANTITY_ADDENDUM are stripped - "
-            "SALES_REPORT_ADDENDUM must stay the tail beneath them"
+            "newer KNOWN_BRANDS_ADDENDUM/QUANTITY_ADDENDUM/SALES_ANALYSIS_ADDENDUM/"
+            "STOCK_TASK_ADDENDUM are stripped - SALES_REPORT_ADDENDUM must stay the tail "
+            "beneath them"
         )
 
     def test_the_addendum_stacks_after_low_stock(self) -> None:
@@ -1204,13 +1210,17 @@ class TestParserPromptAndContractsTeachSalesReport:
             KNOWN_BRANDS_ADDENDUM,
             LOW_STOCK_ADDENDUM,
             QUANTITY_ADDENDUM,
+            SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
+            STOCK_TASK_ADDENDUM,
         )
 
         assert (
             SEMANTIC_PARSER_PROMPT.removesuffix(KNOWN_BRANDS_ADDENDUM)
             .removesuffix(QUANTITY_ADDENDUM)
+            .removesuffix(SALES_ANALYSIS_ADDENDUM)
+            .removesuffix(STOCK_TASK_ADDENDUM)
             .removesuffix(SALES_REPORT_ADDENDUM)
             .endswith(LOW_STOCK_ADDENDUM)
         ), "SALES_REPORT_ADDENDUM must stack AFTER LOW_STOCK_ADDENDUM"

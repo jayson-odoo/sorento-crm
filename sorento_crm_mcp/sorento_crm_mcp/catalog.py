@@ -471,6 +471,10 @@ CATALOG: tuple[ToolSpec, ...] = (
             "'50' after being asked how many), pass that number as `requested_qty`. Some contacts are "
             "answered yes/no against it instead of with quantities, and without it the reply can only "
             "ask how many units they need.\n\n"
+            "QUANTITY PER PRODUCT: when the user named a DIFFERENT quantity for MORE THAN ONE product "
+            "in the same ask ('MWT5727SS-CR 5, MHS1028 60'), pass `requested_quantities` - a JSON object "
+            "mapping each product's UUID to ITS OWN quantity - instead of, or alongside, `requested_qty`. "
+            "Per product the map wins; `requested_qty` only fills a product the map does not name.\n\n"
             "OUTSTANDING SO: pass `include_sellable=true` to add `Outstanding` (that warehouse row's "
             "own open sales-order quantity, not yet a delivery order) to every stock row, and an "
             "`(O/S: n)` suffix on the compact block's Total and warehouse lines. Default false. "
@@ -483,7 +487,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (
             "page", "limit", "product_ids", "sort", "dir", "warehouse_ids", "quantity_operator",
-            "quantity_value", "status", "requested_qty", "include_sellable", "contact_id", "space_id",
+            "quantity_value", "status", "requested_qty", "requested_quantities", "include_sellable",
+            "contact_id", "space_id",
         ),
         domain="inventory",
         related_tools=("crm_inventory_warehouses_list",),
@@ -767,6 +772,36 @@ CATALOG: tuple[ToolSpec, ...] = (
         ),
         domain="orders",
         related_tools=("crm_outstanding_report",),
+        escalation_team="sales",
+        restricted_fields=(("sales_orders.sales_report", "Sales report"),),
+    ),
+    ToolSpec(
+        "crm_sales_analysis",
+        (
+            "A COMPANY'S OWN SALES TOTALS - by month, by year or in total, dealer or project "
+            "or both, on the ordered or the delivered (transferred to DO) basis - with NO "
+            "product or customer subject (use crm_sales_report for those). The same query as "
+            "the Yearly comparison screen. Answers the WHOLE table as text AND the same query "
+            "as an Excel file (attached when ready, else 'The Excel follows here.' and the "
+            "file is pushed to the chat).\n\n"
+            "AXES: `rows` and `cols` are month | year | channel (never equal); 'by month' is "
+            "rows=month, cols=year. `channel` dealer | project, absent = all. `basis` ordered "
+            "| delivered (REQUIRED; delivered unless the person said ordered). `company` - the "
+            "company NAME the person named (Sorento, Mocha); absent = the contact's only "
+            "company, or the bot is asked 'Sorento or Mocha?'. `date_from`/`date_to` on the "
+            "sales order date; absent = this calendar year to today. `n` (1 to 100) - the top "
+            "N rows by total, after the full count and totals.\n\n"
+            "REQUIRED: pass BOTH `contact_id` (Respond.io contact id) and `space_id` - the "
+            "answer is per contact (their company, their reveal key, their chat for the file)."
+        ),
+        "/api/v1/sales/analysis",
+        (),
+        (
+            "rows", "cols", "channel", "basis", "company", "date_from", "date_to", "n",
+            "contact_id", "space_id",
+        ),
+        domain="orders",
+        related_tools=("crm_sales_report",),
         escalation_team="sales",
         restricted_fields=(("sales_orders.sales_report", "Sales report"),),
     ),

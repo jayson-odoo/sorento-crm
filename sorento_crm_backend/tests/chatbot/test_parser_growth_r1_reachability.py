@@ -41,7 +41,9 @@ from app.services.chatbot_parser_prompt import (
     LAST_COST_ADDENDUM,
     LOW_STOCK_ADDENDUM,
     QUANTITY_ADDENDUM,
+    SALES_ANALYSIS_ADDENDUM,
     SALES_REPORT_ADDENDUM,
+    STOCK_TASK_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
 )
 
@@ -119,9 +121,13 @@ class TestTheSchemaDeclaresTheTwoNewKeys:
                 "`None` the schema exists to prevent"
             )
 
-    def test_group_by_is_the_six_axes_and_null(self) -> None:
+    def test_group_by_is_the_six_axes_the_sales_axes_and_null(self) -> None:
+        # PLAN-retail-sales-reports-26sep S1 (#1267) adds `month` and `year`, the sales
+        # analysis's own axes, after the six growth axes.
         assert parser_mod.PARSE_OUTPUT_JSON_SCHEMA["properties"]["group_by"]["enum"] == [
             *GROUP_BY_AXES,
+            "month",
+            "year",
             None,
         ]
 
@@ -153,7 +159,8 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         The strong `.endswith` form is restored (review S4, 12 Sep 2026) by stripping the
         LATER addenda first, newest outermost: `KNOWN_BRANDS_ADDENDUM` (issue #1262
         slice 9, 26 Sep 2026), then `QUANTITY_ADDENDUM` (issue #1262 slice 5,
-        26 Sep 2026), then `SALES_REPORT_ADDENDUM`
+        26 Sep 2026), then `SALES_ANALYSIS_ADDENDUM` (#1267 S1), then
+        `STOCK_TASK_ADDENDUM` (chatbot-stock-ask-v2 S3), then `SALES_REPORT_ADDENDUM`
         (PLAN-chatbot-sales-report.md S4 wiring point 1), then `LOW_STOCK_ADDENDUM`
         (PLAN-low-stock-report.md S7, 14 Sep 2026), then `LAST_COST_ADDENDUM`. Each stacks
         AFTER `GROWTH_R1_ADDENDUM` on both bodies, the same way this addendum itself
@@ -162,6 +169,8 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         for body in (SEMANTIC_PARSER_PROMPT,):
             assert body.removesuffix(KNOWN_BRANDS_ADDENDUM).removesuffix(
                 QUANTITY_ADDENDUM
+            ).removesuffix(SALES_ANALYSIS_ADDENDUM).removesuffix(
+                STOCK_TASK_ADDENDUM
             ).removesuffix(
                 SALES_REPORT_ADDENDUM
             ).removesuffix(

@@ -31,7 +31,9 @@ from app.services.chatbot_parser_prompt import (
     LIVE_SYSTEM_MESSAGE_SHA256,
     LOW_STOCK_ADDENDUM,
     QUANTITY_ADDENDUM,
+    SALES_ANALYSIS_ADDENDUM,
     SALES_REPORT_ADDENDUM,
+    STOCK_TASK_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
 )
 
@@ -163,7 +165,25 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # `_requested_attributes_block` exemption covers a different span) - that test
 # stays skipped without `CHATBOT_LIVE_SYSTEM_MESSAGE` set, which is every CI run;
 # flagged for whoever next re-derives the constant from a live fetch.
-CONSTANT_CHARS = 63711
+# -602 chars (PR #1247 round 8, owner ruling 26 Sep 2026 ~09:50Z, "that one can
+# remove"): the n8n `{{ (() => ...)() }}` expression after "Companies OFFERED" is cut. The
+# CRM registry never evaluated it, so it reached the model as literal JavaScript. See
+# `COMPANIES_OFFERED_CUT` for the same edit applied to the live file in the derivation.
+#
+# Merge of main into the #1262 lane (fix lane round 5, 27 Sep 2026): main's -602
+# (63657 -> 63055) and this lane's +54 (63657 -> 63711) touch different spans of the
+# body and both stand: 63055 + 54 = 63109.
+CONSTANT_CHARS = 63109
+
+#: The line the round 8 cut rewrote, as the live file carries it and as the constant does.
+COMPANIES_OFFERED_LIVE = (
+    'Companies OFFERED in the pending offer (from state; "(none)" when no offer is '
+    "pending): " + "{{ (() => { const st = $('When Executed by Another Workflow').first().json.previous_conversation_state || {}; const rp = Array.isArray(st.routing_roster_plan) ? st.routing_roster_plan : []; const src = rp.length ? rp : (Array.isArray(st.routing_companies) ? st.routing_companies : []); return src.map(c => (c && typeof c.company_name === 'string') ? c.company_name : '').filter((n, i, a) => n && a.indexOf(n) === i).map(n => { const k = n.toLowerCase(); const code = k === 'sorento' ? 'SRT' : (k === 'mocha' ? 'MCH' : (k === 'cabana' ? 'CBN' : '')); return code ? (n + ' (code ' + code + ')') : n; }).join(' / ') || '(none)'; })() }}"
+)
+COMPANIES_OFFERED_CUT = (
+    "Companies OFFERED in the pending offer: the companies the Previous response "
+    'offered; "(none)" when no offer is pending.'
+)
 
 
 def _without_growth_r1_addendum(text: str) -> str:
@@ -186,6 +206,12 @@ def _without_growth_r1_addendum(text: str) -> str:
         text = text[: -len(KNOWN_BRANDS_ADDENDUM)]
     if text.endswith(QUANTITY_ADDENDUM):
         text = text[: -len(QUANTITY_ADDENDUM)]
+    # SALES_ANALYSIS_ADDENDUM (#1267 S1) comes off next (the #1262 pair above is outermost),
+    # then STOCK_TASK_ADDENDUM (ported from PR #1118, not merged, chatbot-stock-ask-v2 S3).
+    if text.endswith(SALES_ANALYSIS_ADDENDUM):
+        text = text[: -len(SALES_ANALYSIS_ADDENDUM)]
+    if text.endswith(STOCK_TASK_ADDENDUM):
+        text = text[: -len(STOCK_TASK_ADDENDUM)]
     if text.endswith(SALES_REPORT_ADDENDUM):
         text = text[: -len(SALES_REPORT_ADDENDUM)]
     if text.endswith(LOW_STOCK_ADDENDUM):
@@ -289,6 +315,8 @@ def test_the_constant_is_reproducible_from_the_live_file() -> None:
     assert raw.startswith("=")
     assert raw.count(DATE_EXPR) == 1
     derived = raw[1:].replace(DATE_EXPR, "{{current_date}}")
+    assert derived.count(COMPANIES_OFFERED_LIVE) == 1
+    derived = derived.replace(COMPANIES_OFFERED_LIVE, COMPANIES_OFFERED_CUT)
 
     body = _without_growth_r1_addendum(SEMANTIC_PARSER_PROMPT)
     d_start, d_end = _requested_attributes_block(derived)

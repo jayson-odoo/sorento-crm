@@ -127,14 +127,20 @@ def _phrase(key: str, value) -> str:
     return table.get(str(value), _plain(value).capitalize())
 
 
-def render_spec_sentence(values: dict) -> str | None:
+def render_spec_sentence(values: dict, brand: str | None = None) -> str | None:
     """The embeddable sentence for one product, or None when there is nothing to say.
+
+    `brand` is the product's own brand field (`products.brand_id` -> `brands.brand_name`).
+    It is not a specification (#1286, D1), so it arrives beside the values rather than
+    inside them, and the sentence still leads with it.
 
     Returning None matters: an empty sentence embeds to a vector that sits near
     everything, so a product with no specs would surface for every query.
     """
-    if not values:
+    brand = str(brand or "").strip() or None
+    if not values and not brand:
         return None
+    values = values or {}
 
     def read(key):
         entry = values.get(key)
@@ -147,11 +153,11 @@ def render_spec_sentence(values: dict) -> str | None:
     # Brand names are stored the way the catalog shouts them ("SORENTO"), and this
     # sentence is read by a customer in a chat reply, where all-caps reads as shouting.
     # `.title()` rather than `.capitalize()` so a two-word brand keeps both words.
-    brand, class_label = read("brand"), read("class")
+    class_label = read("class")
     if brand:
-        brand = str(brand).title()
+        brand = brand.title()
     if class_label:
-        head = f"{brand} {str(class_label).lower()}" if brand else str(class_label)
+        head = f"{brand} {_plain(class_label).lower()}" if brand else str(class_label)
         parts.append(head)
     elif brand:
         parts.append(str(brand))

@@ -942,6 +942,11 @@ def _respond_io_id_for(db, contact_id: str, download_id: str) -> Optional[str]:
 
 
 def _tell_chat_the_report_failed(db, download_id: str) -> None:
+    """The low stock report's own wording, kept as its caller always had it."""
+    _tell_chat_the_download_failed(db, download_id, text=LOW_STOCK_BUILD_FAILED_TEXT)
+
+
+def _tell_chat_the_download_failed(db, download_id: str, *, text: str) -> None:
     """Reviewer item 1: the contact was told "it will be sent here when ready" - tell them
     when it never will be.
 
@@ -965,13 +970,13 @@ def _tell_chat_the_report_failed(db, download_id: str) -> None:
     if not respond_io_id:
         return
 
-    payload = {"message": {"type": "text", "text": LOW_STOCK_BUILD_FAILED_TEXT}}
+    payload = {"message": {"type": "text", "text": text}}
     try:
         respond_chat_template_service.send_chat_message_for(
             db,
             identifier=str(respond_io_id),
             respond_contact_id=str(claimed),
-            text=LOW_STOCK_BUILD_FAILED_TEXT,
+            text=text,
             chat_use_case="conversation_chat",
             business_table="user_downloads",
             business_id=str(download_id),
@@ -1001,6 +1006,11 @@ def _tell_chat_the_report_failed(db, download_id: str) -> None:
 
 
 def _push_low_stock_to_chat(db, download_id: str, *, provider: str, key: str) -> None:
+    """The low stock report's name for the one push every chat-delivered download uses."""
+    _push_download_to_chat(db, download_id, provider=provider, key=key)
+
+
+def _push_download_to_chat(db, download_id: str, *, provider: str, key: str) -> None:
     """Push the finished workbook to the contact the chat turn handed it over to (AC-45).
 
     The turn CLAIMS delivery for the worker by writing `deliver_to_contact_id` when its own

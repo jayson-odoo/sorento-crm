@@ -267,18 +267,22 @@ def test_the_backfilled_owned_class_rules_derive_the_sample_exactly_as_before(sa
     product classed exactly as it was.
     """
     from app.services.product_spec_derivation import shipped_rules
+    from app.services.product_spec_rules import legacy_to_builder
 
     shipped = shipped_rules()
-    hidden = [rule for rule in shipped["class"] if rule["match"] in {"name_head", "from_field"}]
+    hidden = [rule for rule in shipped["class"] if rule["builder"]["kind"] == "product"]
     assert len(hidden) == 2, "the class readers that used to run outside the list"
 
     # As migration 450 leaves the list: a human's own rules, their code rows moved down
     # to where the old engine ran them (it ran every text rule first, wherever the code
-    # row sat), then the two readers that used to run outside the list entirely.
+    # row sat), then the two readers that used to run outside the list entirely. The
+    # stored rules are the pre-builder shape, converted the way migration spec_0002 does
+    # (#1286).
     stored = list(GOLDEN["owned_class_rules"])
     code_rows = [rule for rule in stored if rule["match"].startswith("code_")]
+    ordered = [rule for rule in stored if rule not in code_rows] + code_rows
     rules = dict(shipped)
-    rules["class"] = [rule for rule in stored if rule not in code_rows] + code_rows + hidden
+    rules["class"] = [{"builder": legacy_to_builder(rule, "class")} for rule in ordered] + hidden
     scopes = shipped_scopes()
 
     differences: list[str] = []
