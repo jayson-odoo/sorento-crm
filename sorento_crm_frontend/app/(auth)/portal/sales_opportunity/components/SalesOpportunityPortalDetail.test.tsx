@@ -106,9 +106,9 @@ function detail(over: Partial<Record<string, unknown>> = {}) {
       },
     ],
     available_transitions: [
-      { to_status_id: 'st-qualified', key: 'qualified', label: 'Qualified' },
-      { to_status_id: 'st-won', key: 'won', label: 'Won' },
-      { to_status_id: 'st-lost', key: 'lost', label: 'Lost' },
+      { to_status_id: 'st-qualified', key: 'qualified', label: 'Qualify' },
+      { to_status_id: 'st-won', key: 'won', label: 'Mark won' },
+      { to_status_id: 'st-lost', key: 'lost', label: 'Mark lost' },
     ],
     ...over,
   };
@@ -144,10 +144,10 @@ describe('SalesOpportunityPortalDetail', () => {
     render(<SalesOpportunityPortalDetail id="opp-1" />);
     await screen.findByText('OPP-000001');
     openGear();
-    expect(screen.getByRole('menuitem', { name: 'Qualified' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: 'Won' })).toBeTruthy();
-    expect(screen.getByRole('menuitem', { name: 'Lost' })).toBeTruthy();
-    expect(screen.queryByRole('menuitem', { name: 'Proposal' })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: 'Qualify' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Mark won' })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: 'Mark lost' })).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: 'Send proposal' })).toBeNull();
   });
 
   it('F6: the header has one CTA (Edit) plus the gear - no "Move stage" button row', async () => {
@@ -158,32 +158,33 @@ describe('SalesOpportunityPortalDetail', () => {
     expect(screen.getByRole('button', { name: 'Actions' })).toBeTruthy();
   });
 
-  it('clicking Lost opens a dialog with a required reason picker sourced from meta lost_reasons', async () => {
+  it('clicking Mark lost opens a dialog titled with the transition label, with a required reason picker sourced from meta lost_reasons', async () => {
     render(<SalesOpportunityPortalDetail id="opp-1" />);
     await screen.findByText('OPP-000001');
     openGear();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Lost' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Mark lost' }));
+    expect(screen.getByRole('heading', { name: 'Mark lost' })).toBeTruthy();
     const reasonSelect = await screen.findByLabelText('Lost reason');
     expect(screen.getByRole('option', { name: 'Price' })).toBeTruthy();
     expect(screen.getByRole('option', { name: 'Competitor' })).toBeTruthy();
     expect(reasonSelect).toBeTruthy();
   });
 
-  it('confirming Lost without a reason does not call updatePortalSalesOpportunity', async () => {
+  it('confirming Mark lost without a reason does not call updatePortalSalesOpportunity', async () => {
     render(<SalesOpportunityPortalDetail id="opp-1" />);
     await screen.findByText('OPP-000001');
     openGear();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Lost' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Mark lost' }));
     await screen.findByLabelText('Lost reason');
     fireEvent.click(screen.getByRole('button', { name: /confirm/i }));
     expect(service.updatePortalSalesOpportunity).not.toHaveBeenCalled();
   });
 
-  it('confirming Lost with a reason PATCHes status_id and lost_reason', async () => {
+  it('confirming Mark lost with a reason PATCHes status_id and lost_reason', async () => {
     render(<SalesOpportunityPortalDetail id="opp-1" />);
     await screen.findByText('OPP-000001');
     openGear();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Lost' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Mark lost' }));
     const reasonSelect = await screen.findByLabelText('Lost reason');
     fireEvent.change(reasonSelect, { target: { value: 'price' } });
     fireEvent.click(screen.getByRole('button', { name: /confirm/i }));
@@ -195,11 +196,11 @@ describe('SalesOpportunityPortalDetail', () => {
     );
   });
 
-  it('clicking Qualified in the gear PATCHes status_id right away, no confirm step', async () => {
+  it('clicking Qualify in the gear PATCHes status_id right away - not a terminal move, no confirm step', async () => {
     render(<SalesOpportunityPortalDetail id="opp-1" />);
     await screen.findByText('OPP-000001');
     openGear();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Qualified' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Qualify' }));
     await waitFor(() =>
       expect(service.updatePortalSalesOpportunity).toHaveBeenCalledWith('opp-1', {
         status_id: 'st-qualified',
@@ -207,16 +208,33 @@ describe('SalesOpportunityPortalDetail', () => {
     );
   });
 
-  it('clicking Won in the gear PATCHes status_id right away, no confirm step', async () => {
+  // Won is terminal (a closed opportunity cannot be edited again) - it gets the same
+  // confirm step Lost does, just without a reason field (reviewer ruling stands).
+  it('F6: clicking Mark won opens a confirm dialog titled with the transition label; Confirm PATCHes status_id only', async () => {
     render(<SalesOpportunityPortalDetail id="opp-1" />);
     await screen.findByText('OPP-000001');
     openGear();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Won' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Mark won' }));
+    expect(service.updatePortalSalesOpportunity).not.toHaveBeenCalled();
+    expect(screen.getByRole('heading', { name: 'Mark won' })).toBeTruthy();
+    expect(screen.getByText('This closes the opportunity.')).toBeTruthy();
+    expect(screen.queryByLabelText('Lost reason')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /confirm/i }));
     await waitFor(() =>
       expect(service.updatePortalSalesOpportunity).toHaveBeenCalledWith('opp-1', {
         status_id: 'st-won',
       }),
     );
+  });
+
+  it('F6: Cancel on a pending Mark won sends nothing', async () => {
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    await screen.findByText('OPP-000001');
+    openGear();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Mark won' }));
+    fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+    expect(service.updatePortalSalesOpportunity).not.toHaveBeenCalled();
   });
 
   it('has no sales order field anywhere in the portal', async () => {

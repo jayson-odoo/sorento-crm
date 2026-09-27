@@ -54,7 +54,14 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [lostReasonOptions, setLostReasonOptions] = useState<SearchableSelectOption[]>([]);
-  const [lostToStatusId, setLostToStatusId] = useState<string | null>(null);
+  // Won and Lost are both terminal (a closed opportunity cannot be edited again) - both
+  // get a confirm dialog, titled with the transition's own label; only Lost also collects
+  // a reason. Every other move (Qualify, ...) runs the instant it is clicked.
+  const [pendingTransition, setPendingTransition] = useState<{
+    toStatusId: string;
+    key: string;
+    label: string;
+  } | null>(null);
   const [lostReason, setLostReason] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -226,31 +233,36 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
     }
   };
 
-  const openLostDialog = (toStatusId: string) => {
-    setLostToStatusId(toStatusId);
+  const TERMINAL_KEYS = new Set(['won', 'lost']);
+
+  const cancelPending = () => {
+    setPendingTransition(null);
     setLostReason('');
   };
 
-  const cancelLostDialog = () => {
-    setLostToStatusId(null);
+  const confirmPending = () => {
+    if (!pendingTransition) return;
+    if (pendingTransition.key === 'lost') {
+      if (!lostReason) return;
+      void applyStatus(pendingTransition.toStatusId, { lost_reason: lostReason });
+    } else {
+      void applyStatus(pendingTransition.toStatusId);
+    }
+    setPendingTransition(null);
     setLostReason('');
   };
 
-  const confirmLost = () => {
-    if (!lostToStatusId || !lostReason) return;
-    void applyStatus(lostToStatusId, { lost_reason: lostReason });
-    setLostToStatusId(null);
-    setLostReason('');
-  };
-
-  // F6: every other move runs the instant it is clicked - only Lost needs the reason first.
+  // F6: a terminal move (Won, Lost) opens the confirm dialog first - Won is terminal too
+  // (a closed opportunity cannot be edited again), so it gets the same dialog Lost does,
+  // just without the reason field. Every other move runs the instant it is clicked.
   const stageActions: RecordAction[] = transitions.map((t) => ({
     key: `stage-${t.to_status_id}`,
     label: t.label,
     kind: t.key === 'lost' ? 'destructive' : 'secondary',
     run: () => {
-      if (t.key === 'lost') {
-        openLostDialog(t.to_status_id);
+      if (TERMINAL_KEYS.has(t.key)) {
+        setPendingTransition({ toStatusId: t.to_status_id, key: t.key, label: t.label });
+        setLostReason('');
         return;
       }
       void applyStatus(t.to_status_id);
@@ -432,32 +444,43 @@ export default function SalesOpportunityPortalDetail({ id }: { id: string }) {
       </Card>
 
       <Dialog
-        open={lostToStatusId !== null}
+        open={pendingTransition !== null}
         onOpenChange={(open) => {
-          if (!open) cancelLostDialog();
+          if (!open) cancelPending();
         }}
       >
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>Mark as lost</DialogTitle>
+            <DialogTitle>{pendingTransition?.label}</DialogTitle>
           </DialogHeader>
           <DialogBody className="flex flex-col gap-1.5">
-            <Label htmlFor="portal-opportunity-lost-reason">Lost reason</Label>
-            <SearchableSelect
-              id="portal-opportunity-lost-reason"
-              aria-label="Lost reason"
-              value={lostReason}
-              onChange={setLostReason}
-              options={lostReasonOptions}
-              placeholder="Pick a reason"
-              wrapOptions
-            />
+            {pendingTransition?.key === 'lost' ? (
+              <>
+                <Label htmlFor="portal-opportunity-lost-reason">Lost reason</Label>
+                <SearchableSelect
+                  id="portal-opportunity-lost-reason"
+                  aria-label="Lost reason"
+                  value={lostReason}
+                  onChange={setLostReason}
+                  options={lostReasonOptions}
+                  placeholder="Pick a reason"
+                  wrapOptions
+                />
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">This closes the opportunity.</p>
+            )}
           </DialogBody>
           <DialogFooter>
-            <Button type="button" variant="outline" size="sm" onClick={cancelLostDialog}>
+            <Button type="button" variant="outline" size="sm" onClick={cancelPending}>
               Cancel
             </Button>
-            <Button type="button" size="sm" onClick={confirmLost} disabled={!lostReason || saving}>
+            <Button
+              type="button"
+              size="sm"
+              onClick={confirmPending}
+              disabled={(pendingTransition?.key === 'lost' && !lostReason) || saving}
+            >
               {saving ? <LoaderCircleIcon className="size-4 animate-spin" /> : null}
               Confirm
             </Button>
