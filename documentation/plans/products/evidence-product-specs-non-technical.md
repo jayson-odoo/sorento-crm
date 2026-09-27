@@ -22,6 +22,15 @@ The owner (or the orchestrator on the Mini) runs it once against the dev copy be
 pastes the output under each heading. The S0 and S1 migrations also log, at `WARNING`, every
 value they clear and every rule they convert, so the deploy log carries the same list.
 
+Fix round 2 (reviewer pass at ea0b804b) widened what the script and the migrations report:
+section 1 now carries the Brand row's `is_active`, `rank_weight` and `value_weights` (a
+non-empty `value_weights` is a house preference that stops applying: the owner rules on it
+before merge); 1b lists every other rule or scope gated on brand (those rules stop reading);
+1c lists every visibility policy naming brand. Section 2 counts the same hand-set sources the
+migration does (`human`, `supplier`, `flyer`). `spec_0003_rules_null_brand_pol` then logs each
+policy it takes brand out of, and the keys whose empty stored rule list becomes the shipped-rules
+marker (NULL); after it, an empty list means "no rules".
+
 Nothing in S0 copies a typed Brand value into `products.brand_id`. Where section 2 or 3 shows a
 typed value naming a real brand on a product with no brand field, the owner decides by hand.
 
