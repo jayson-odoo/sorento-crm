@@ -238,6 +238,17 @@ def apply_crossdomain_hit(
             return answer
         figures = envelope.get("figures")
         item = {"answers": [r for r in figures if isinstance(r, dict)]} if isinstance(figures, list) else {}
+        # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+        # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3, D17, review round 10: the
+        # DEALER's availability block rides along with the rows, because it is what
+        # turns the whole ladder off (`crossdomain_zeroset`'s own `stock_availability`
+        # gate). Rebuilt from `figures` alone, this item lost the block, so that gate
+        # never saw it on a HIT and the ladder listed rungs beside the verdict and
+        # offered an escalation the dealer had not asked for. A stray offer also
+        # competes with the dealer's own open stock task.
+        availability = envelope.get("stock_availability")
+        if isinstance(availability, list) and availability:
+            item["stock_availability"] = availability
         result = _run_crossdomain_ladder(
             parser=parser,
             resolved=_hit_ladder_resolved(resolved, focus_products),
@@ -1431,6 +1442,7 @@ def answer_for(
     trace: Any = None,
     dry_run: bool = True,
     carried_pending: Any = None,
+    dealer_stock_ask: bool = False,
 ) -> turn_compose.Answer | None:
     """The MISS seam (R4): `None` outside its own two triggers (see module docstring),
     so a hit, an `access_denied` refusal, an infrastructure error and a multi-domain plan
@@ -1548,6 +1560,20 @@ def answer_for(
         space_id=space_id,
         trace=trace,
         dry_run=dry_run,
+        # Ported from PR #1118 (not merged), D17, review round 10: the dealer's
+        # availability block turns the whole ladder off (`crossdomain_zeroset`'s own
+        # gate). The MISS arm hands the ladder an empty item, so the block has to
+        # travel here too - measured unreachable on this shape today (an availability
+        # reply carries an entry per named product, so it is a HIT), carried anyway
+        # because "no rung on a dealer reply" is a rule about the REPLY, not about
+        # which arm composed it.
+        item=(
+            {"stock_availability": envelope["stock_availability"]}
+            if isinstance(envelope, Mapping)
+            and isinstance(envelope.get("stock_availability"), list)
+            and envelope.get("stock_availability")
+            else None
+        ),
     )
 
     miss_gate = _scope_gate(raw_fragment)
@@ -1695,4 +1721,50 @@ def answer_for(
             payload={**carried_pending.payload, "escalate_offered": True},
         )
     text = _apply_crossdomain_render(text, crossdomain_result)
+    if dealer_stock_ask:
+        # Owner ruling 26 Sep 2026 (hand test F1): a dealer's stock ask never offers
+        # an escalation. The did-you-mean is a pick of the suggested code(s), carrying
+        # the quantity the dealer typed - one candidate included, which AC-1691's
+        # two-option minimum above would otherwise turn into a team offer. With no
+        # candidate at all, `engine._dealer_refers_to_salesman` strips the offer.
+        dealer = _dealer_did_you_mean(offer, parser, asked_at_turn)
+        if dealer is not None:
+            return turn_compose.Answer(text=dealer[0], question=dealer[1])
     return turn_compose.Answer(text=text, question=question)
+
+
+def _dealer_did_you_mean(
+    offer: Any, parser: Mapping[str, Any] | None, asked_at_turn: int | None
+) -> tuple[str, pending.Pending] | None:
+    from app.services.chatbot import dealer_stock as dealer_mod
+
+    if not isinstance(offer, Mapping):
+        return None
+    rows = [row for row in (offer.get("suggest_last_result_set") or []) if isinstance(row, Mapping)]
+    if not rows:
+        return None
+    named = [
+        e
+        for e in ((parser or {}).get("entities") or [])
+        if isinstance(e, Mapping) and e.get("hint") in (None, "product")
+    ]
+    typed = next(
+        (
+            c.get("for_raw")
+            for c in (offer.get("dym_candidates") or [])
+            if isinstance(c, Mapping) and c.get("for_raw")
+        ),
+        None,
+    ) or next((e.get("raw") for e in named if e.get("raw")), "")
+    quantities = {
+        int(e["quantity"])
+        for e in named
+        if isinstance(e.get("quantity"), (int, float)) and not isinstance(e.get("quantity"), bool)
+    }
+    quantity = next(iter(quantities)) if len(quantities) == 1 else (parser or {}).get("demand_qty")
+    return dealer_mod.did_you_mean(
+        str(typed),
+        [dict(row) for row in rows],
+        quantity=quantity,
+        asked_at_turn=asked_at_turn,
+    )
