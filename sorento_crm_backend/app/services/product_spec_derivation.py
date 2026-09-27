@@ -1253,14 +1253,17 @@ def configured_rules(db: Session) -> dict[str, list[dict]]:
         # stop being offered - otherwise suppression is cosmetic and the catalog keeps
         # filling in a value the business says it does not use. The stored rule is left
         # alone, so putting the value back brings its rules back with it.
-        dropped = {str(v).strip() for v in (row.suppressed_values or [])}
-        if dropped and rules.get(row.spec_key):
-            rules[row.spec_key] = [
-                rule
-                for rule in rules[row.spec_key]
-                if str(builder_of(rule).get("value", "")).strip() not in dropped
-            ]
+        if rules.get(row.spec_key):
+            rules[row.spec_key] = without_suppressed(rules[row.spec_key], row.suppressed_values)
     return rules
+
+
+def without_suppressed(rules: list[dict], suppressed_values) -> list[dict]:
+    """`rules` less every rule that sets a value the business has taken away."""
+    dropped = {str(v).strip() for v in (suppressed_values or [])}
+    if not dropped:
+        return list(rules)
+    return [rule for rule in rules if str(builder_of(rule).get("value", "")).strip() not in dropped]
 
 
 def derive_for_code(

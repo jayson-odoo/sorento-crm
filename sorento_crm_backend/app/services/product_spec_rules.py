@@ -432,13 +432,18 @@ def gate_passes(builder: dict, held: dict) -> bool:
 
     `is: true` needs the other spec to hold one of the values; `is: false` needs it not
     to. A spec the derivation has not read leaves `is: false` met and `is: true` unmet,
-    which is exactly how the old `applies_when` / `unless` gates behaved.
+    which is exactly how the old `applies_when` / `unless` gates behaved - except for
+    the value "false" (a yes-or-no spec's No), which an unread spec does hold.
     """
     only_when = builder.get("only_when")
     if not isinstance(only_when, dict) or not only_when.get("spec"):
         return True
     value = held.get(only_when["spec"])
     allowed = {str(v).strip().lower() for v in only_when.get("values") or []}
+    # A yes-or-no specification is only ever SET to Yes, so one nothing has read is
+    # No: "Chopping board is No" must match every product without a chopping board.
+    if value is None and "false" in allowed:
+        value = False
     hit = value is not None and str(value).strip().lower() in allowed
     return hit is bool(only_when.get("is", True))
 

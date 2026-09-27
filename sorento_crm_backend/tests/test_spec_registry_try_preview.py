@@ -182,6 +182,8 @@ def api():
 
 # "The number between ( and MM" - a rule is its builder (#1286, D5).
 _ONE_ROW = [{"builder": {"kind": "number", "after": ["("], "before": ["MM"]}}]
+# The rule LIVE today in the count test: the number between [ and MM.
+_LIVE_SQUARE = [{"builder": {"kind": "number", "after": ["["], "before": ["MM"]}}]
 
 
 # --------------------------------------------------------------------------- #
@@ -547,22 +549,24 @@ def test_preview_refuses_a_second_run_while_one_is_running(api, monkeypatch):
 
 
 def test_preview_job_counts_and_sample_excluding_hand_set(api):
-    """Run the comparison inline (AC-B.2): changed, added, removed, unchanged, and a
-    hand-set value counted in none of them."""
+    """Run the comparison inline (AC-B.2): changed, now set, no longer set, unchanged,
+    and a hand-set value counted in none of them. "Before" is what the rules LIVE
+    today read (fix round 4), not the stored value: the live rule reads the number in
+    [ ], the draft the number in ( )."""
     db, _as = api
     _as(_EDITOR)
-    _key(db, "zzt_length")
+    _key(db, "zzt_length", derivation_rules=_LIVE_SQUARE)
 
-    changed_product = _product(db, "TAP A (800MM)")
+    changed_product = _product(db, "TAP A [700MM] (800MM)")
     _spec(db, changed_product, {"zzt_length": {"value": 700}}, {"zzt_length": {"source": "derived"}})
 
     added_product = _product(db, "TAP B (500MM)")
     _spec(db, added_product, {}, {})
 
-    removed_product = _product(db, "TAP C - no size here")
+    removed_product = _product(db, "TAP C [300MM] no round size here")
     _spec(db, removed_product, {"zzt_length": {"value": 300}}, {"zzt_length": {"source": "derived"}})
 
-    unchanged_product = _product(db, "TAP D (200MM)")
+    unchanged_product = _product(db, "TAP D [200MM] (200MM)")
     _spec(db, unchanged_product, {"zzt_length": {"value": 200}}, {"zzt_length": {"source": "derived"}})
 
     hand_set_product = _product(db, "TAP E (999MM)")
@@ -581,13 +585,15 @@ def test_preview_job_counts_and_sample_excluding_hand_set(api):
     state = product_spec_preview.get(job_id)
     assert state["status"] == "done"
     assert state["changed"] == 1
-    assert state["added"] == 1
-    assert state["removed"] == 1
+    assert state["now_set"] == 1
+    assert state["no_longer_set"] == 1
     assert state["unchanged"] == 1
+    assert state["drift"] == 0
 
     by_code = {row["code"]: row for row in state["sample"]}
     assert by_code[changed_product.product_code] == {
         "code": changed_product.product_code,
+        "name": changed_product.product_name,
         "before": 700,
         "after": 800,
     }
@@ -618,7 +624,7 @@ def test_preview_scans_with_the_all_companies_scope(api):
     """
     db, _as = api
     _as(_EDITOR)
-    _key(db, "zzt_length")
+    _key(db, "zzt_length", derivation_rules=_ONE_ROW)
     product = _product(db, "TAP F (600MM)")
     _spec(db, product, {"zzt_length": {"value": 600}}, {"zzt_length": {"source": "derived"}})
 
@@ -631,8 +637,8 @@ def test_preview_scans_with_the_all_companies_scope(api):
 
     state = product_spec_preview.get(job_id)
     assert state["status"] == "done"
-    # Unchanged, not "nothing scanned": the row was found and read the same as stored.
+    # Unchanged, not "nothing scanned": the row was found and read the same both ways.
     assert state["unchanged"] == 1
     assert state["changed"] == 0
-    assert state["added"] == 0
-    assert state["removed"] == 0
+    assert state["now_set"] == 0
+    assert state["no_longer_set"] == 0

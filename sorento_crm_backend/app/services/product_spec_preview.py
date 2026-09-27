@@ -4,8 +4,10 @@ Same shape as `product_spec_rederive.py` on purpose - a background thread with a
 status anyone can poll - because that plumbing already exists and a preview needs
 nothing more from it: no new table, no queue, no worker restart (AC-B.2). The only
 difference is scope: `reread-catalogue` re-reads everything with the RULES THAT ARE
-LIVE; this compares one key's stored values against what an UNSAVED draft would read,
-and never writes anything.
+LIVE; this re-reads one key twice, with the live rules and with an UNSAVED draft, and
+compares the two, so it shows only what the draft changes (owner, 27 Sep: a one-word
+BLACK rule listed 66 products that had nothing to do with BLACK, because the baseline
+was the STORED values and those had drifted from today's rules). It never writes.
 
 Jobs are in-process state, like the rederive run: they are progress for whoever
 pressed "Preview", not a record. Kept for the last `_MAX_JOBS` runs so an old `jobId`
@@ -88,11 +90,15 @@ def readings_for_key(
     rules_by_key: dict[str, list[dict]],
     scopes_by_key: dict[str, dict],
     max_values: dict[str, float],
+    live_rules_by_key: dict[str, list[dict]] | None = None,
 ):
     """Every active product's stored `spec_key` value beside what the given rules read,
-    as `{"code", "before", "after"}` - the one comparison both "See what would change"
-    (a draft) and a saved rule's re-read (AC-S1.16, D10) make, so the products a save
-    re-reads are exactly the ones the preview counted as changing (`before != after`).
+    as `{"code", "name", "before", "after"}` - the comparison a saved rule's re-read
+    makes (AC-S1.16, D10): the products whose stored value differs are re-read.
+
+    Given `live_rules_by_key`, each entry also carries `live`: what the rules that are
+    live today read. "See what would change" compares `live` with `after`, so it
+    reports only what the draft changes; `before != live` is drift a save re-reads too.
 
     A person's own answer is skipped: it is not derived, so no rule can change it
     (AUTHORED_SOURCES, product_spec_write). Yields one entry per product row, so a code
@@ -107,6 +113,10 @@ def readings_for_key(
 
     keys = _reading_keys(spec_key, rules_by_key, scopes_by_key)
     reading_rules = {key: rules_by_key[key] for key in rules_by_key if key in keys}
+    live_rules = None
+    if live_rules_by_key is not None:
+        live_keys = _reading_keys(spec_key, live_rules_by_key, scopes_by_key)
+        live_rules = {key: live_rules_by_key[key] for key in live_rules_by_key if key in live_keys}
 
     # ALL-COMPANIES, same reason `derive_product_specs` runs under it: a product code
     # exists once per company, and a session with no scope set sees NONE of them
@@ -156,7 +166,22 @@ def readings_for_key(
                 )
                 after = (out.values.get(spec_key) or {}).get("value")
                 before = (existing_values.get(spec_key) or {}).get("value")
-                yield {"code": product.product_code, "before": before, "after": after}
+                row = {
+                    "code": product.product_code,
+                    "name": product.product_name,
+                    "before": before,
+                    "after": after,
+                }
+                if live_rules is not None:
+                    live_out = derive(
+                        product,
+                        category,
+                        rules_by_key=live_rules,
+                        scopes_by_key=scopes_by_key,
+                        max_values=max_values,
+                    )
+                    row["live"] = (live_out.values.get(spec_key) or {}).get("value")
+                yield row
 
             last_product = page[-1][0]
             cursor = (last_product.product_code, last_product.id)
@@ -165,16 +190,31 @@ def readings_for_key(
 
 
 def _compare(db: Session, spec_key: str, rules: list[dict]) -> dict:
+    """What the draft `rules` change for `spec_key`, against the rules live today.
+
+    `changed` / `now_set` / `no_longer_set` / `unchanged` compare the live read with
+    the draft read, so a stored value that has drifted from today's rules never shows
+    as something this draft does. `drift` counts those products on its own: a save
+    re-reads them too, which is why a save can update more products than the preview
+    listed. The sample row carries the product's code and name.
+    """
+    from app.models.product_spec import ProductSpecRegistry
     from app.services.product_spec_derivation import (
         configured_max_values,
         configured_rules,
         configured_scopes,
+        without_suppressed,
     )
 
-    rules_by_key = dict(configured_rules(db))
-    rules_by_key[spec_key] = rules
+    live_rules_by_key = configured_rules(db)
+    registry_row = db.query(ProductSpecRegistry).filter_by(spec_key=spec_key).first()
+    rules_by_key = dict(live_rules_by_key)
+    # The same filter the live list went through, so an unedited list previews nothing.
+    rules_by_key[spec_key] = without_suppressed(
+        rules, registry_row.suppressed_values if registry_row is not None else None
+    )
 
-    changed = added = removed = unchanged = 0
+    changed = now_set = no_longer_set = unchanged = drift = 0
     sample: list[dict] = []
     for row in readings_for_key(
         db,
@@ -182,25 +222,31 @@ def _compare(db: Session, spec_key: str, rules: list[dict]) -> dict:
         rules_by_key=rules_by_key,
         scopes_by_key=configured_scopes(db),
         max_values=configured_max_values(db),
+        live_rules_by_key=live_rules_by_key,
     ):
-        before, after = row["before"], row["after"]
+        stored, before, after = row["before"], row["live"], row["after"]
+        if stored != before:
+            drift += 1
         if before == after:
             unchanged += 1
             continue
         if before is None:
-            added += 1
+            now_set += 1
         elif after is None:
-            removed += 1
+            no_longer_set += 1
         else:
             changed += 1
         if len(sample) < 20:
-            sample.append(row)
+            sample.append(
+                {"code": row["code"], "name": row["name"], "before": before, "after": after}
+            )
 
     return {
         "changed": changed,
-        "added": added,
-        "removed": removed,
+        "now_set": now_set,
+        "no_longer_set": no_longer_set,
         "unchanged": unchanged,
+        "drift": drift,
         "sample": sample,
     }
 
