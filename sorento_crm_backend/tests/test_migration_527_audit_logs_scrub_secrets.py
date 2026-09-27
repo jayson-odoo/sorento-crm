@@ -31,7 +31,7 @@ def _load():
 def test_revision_fits_alembic_version():
     module = _load()
     assert len(module.revision) <= 32
-    assert module.down_revision == "sales_0002_team_leader"
+    assert module.down_revision == "merge_27sep_three_heads"
 
 
 def test_key_list_matches_the_listener_deny_list():
