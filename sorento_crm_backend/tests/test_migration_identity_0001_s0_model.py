@@ -17,6 +17,7 @@ replays the real logic, and the whole thing rolls back at teardown either way.
 from __future__ import annotations
 
 import importlib.util
+import os
 import uuid
 from pathlib import Path
 
@@ -46,13 +47,25 @@ def _load():
     return module
 
 
-def _current_other_heads() -> set[str]:
+def _script(*extra_version_dirs: Path) -> ScriptDirectory:
+    """The real alembic graph, plus any extra version directories (a test's
+    throwaway migrations stacked on top of this one)."""
+    cfg = Config(str(Path(__file__).resolve().parent / ".." / "alembic.ini"))
+    if extra_version_dirs:
+        # alembic.ini's value carries an inline comment alembic cannot parse.
+        cfg.set_main_option("version_path_separator", "os")
+        cfg.set_main_option(
+            "version_locations",
+            os.pathsep.join(str(d) for d in (VERSIONS, *extra_version_dirs)),
+        )
+    return ScriptDirectory.from_config(cfg)
+
+
+def _current_other_heads(script: ScriptDirectory) -> set[str]:
     """Every alembic head of the graph WITHOUT this migration (computed, never
     hard-coded). Once this migration exists it IS the head, so `get_heads()` minus
     itself is empty; the heads it must sit on are the ones left when it is removed.
     More than one means this migration doubles as their merge revision."""
-    cfg = Config(str(Path(__file__).resolve().parent / ".." / "alembic.ini"))
-    script = ScriptDirectory.from_config(cfg)
     others = [r for r in script.walk_revisions() if r.revision != MODULE_NAME]
     pointed_at: set[str] = set()
     for rev in others:
@@ -75,11 +88,30 @@ def _mk_id() -> str:
     return str(uuid.uuid4())
 
 
-def test_revision_id_fits_alembic_version_and_sits_on_the_current_head():
-    module = _load()
+def _assert_placement(module, script: ScriptDirectory) -> None:
     assert len(module.revision) <= 32
     down = module.down_revision
-    assert set(down if isinstance(down, (tuple, list)) else (down,)) == _current_other_heads()
+    assert set(down if isinstance(down, (tuple, list)) else (down,)) == _current_other_heads(script)
+
+
+def test_revision_id_fits_alembic_version_and_sits_on_the_current_head():
+    _assert_placement(_load(), _script())
+
+
+def test_placement_check_survives_a_later_migration_stacked_on_top(tmp_path):
+    """Any PR that adds its own migration above this one (PR #1313) must not turn
+    this file red: the graph is still correct and single-headed there."""
+    (tmp_path / "zzt_0001_on_top_of_identity.py").write_text(
+        'revision = "zzt_0001_on_top_of_identity"\n'
+        f'down_revision = "{MODULE_NAME}"\n'
+        "branch_labels = None\n"
+        "depends_on = None\n\n\n"
+        "def upgrade():\n    pass\n\n\n"
+        "def downgrade():\n    pass\n"
+    )
+    script = _script(tmp_path)
+    assert script.get_heads() == ["zzt_0001_on_top_of_identity"]
+    _assert_placement(_load(), script)
 
 
 def test_preflight_blocks_on_case_duplicate_emails_names_users_no_ids():
