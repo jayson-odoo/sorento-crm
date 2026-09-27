@@ -1,6 +1,6 @@
 # PLAN: a contact's turns are answered in WhatsApp send order, not arrival order
 
-Status: implemented, fix lane round 4 done (reviewer S1, N1 of the 680e23e8 pass), awaiting review. Track: feature by line count (product code is ~480 lines
+Status: implemented, fix lane round 4 done (reviewer S1, N1 of the 680e23e8 pass), fix lane round 5 merged main d8395cb8 (import-line conflict only), awaiting merge. Track: feature by line count (product code is ~480 lines
 including docstrings, over the ~300 small-fix line), otherwise small-fix shaped: no migration,
 no auth / RBAC change, no new ingest surface, no frontend. One lane, one PR.
 UAC: `chatbot-turn-order-by-send-time-acceptance-criteria.md`.
