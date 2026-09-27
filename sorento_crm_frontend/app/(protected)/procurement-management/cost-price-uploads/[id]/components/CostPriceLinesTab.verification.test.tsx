@@ -143,7 +143,7 @@ describe('AC-S2-15: verification off - none of the verification-only controls re
       }),
     );
 
-    expect(screen.getByRole('button', { name: /Apply 1 changes/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Apply 1 change\b/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Submit for verification/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: 'Decision' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Accept all/i })).not.toBeInTheDocument();
@@ -168,7 +168,7 @@ describe('AC-S2-15: verification on - the uploader gets Submit in place of Apply
     );
 
     expect(screen.getByRole('button', { name: /Submit for verification/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Apply 1 changes/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Apply 1 change\b/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: 'Decision' })).not.toBeInTheDocument();
   });
 });
@@ -195,7 +195,7 @@ describe('AC-S2-15: verification on, Pending - the verifier gets Decision, Accep
     expect(screen.getByRole('button', { name: /Accept all/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Return to submitter/i })).toBeInTheDocument();
 
-    const applyButton = screen.getByRole('button', { name: /Apply 1 changes/i });
+    const applyButton = screen.getByRole('button', { name: /Apply 1 change\b/i });
     expect(applyButton).toBeDisabled();
     expect(applyButton).toHaveAttribute('title', '1 row still needs a decision');
   });
@@ -215,7 +215,7 @@ describe('AC-S2-15: verification on, Pending - the verifier gets Decision, Accep
       }),
     );
 
-    const applyButton = screen.getByRole('button', { name: /Apply 1 changes/i });
+    const applyButton = screen.getByRole('button', { name: /Apply 1 change\b/i });
     expect(applyButton).not.toBeDisabled();
     expect(applyButton).not.toHaveAttribute('title');
   });
