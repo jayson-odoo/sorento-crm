@@ -1,6 +1,6 @@
 # PLAN: escalation resolves the brand from the focus product (#865)
 
-Status: IN REVIEW (fix round 2 folded in: S1, S2, N1, N2, N3 of the reviewer pass at df577453), small fix track (backend only, under ~300 changed app lines, no migration, no auth/RBAC change, no new ingest surface). PR #1300, branch `fix/chatbot-escalation-brand-from-focus`.
+Status: IN REVIEW (fix round 3 folded in: the owner's console retest of 27 Sep; round 2's S1, S2, N1, N2, N3 before it), small fix track (backend only, under ~300 changed app lines, no migration, no auth/RBAC change, no new ingest surface). PR #1300, branch `fix/chatbot-escalation-brand-from-focus`.
 
 Source: the root-cause report on #865 ("Root cause: null brand on escalation after a spec answer (backup of 25 Sep)") and the owner ruling of 27 Sep 00:20 MYT authorising its fix option 1. UAC: `chatbot-escalation-brand-from-focus-acceptance-criteria.md`.
 
@@ -17,6 +17,15 @@ The escalation lane never looked up a brand (H26, `escalation_services._not_live
 5. Observability: `looked_up` facts carry `routing` (next-assignee `team_code`, `brand_code`, `routing_source`, `cursor_key`, assignee, `brand_matched`). `/external/next-assignee` echoes `cursor_key` (additive).
 
 No migration, no new session key: contract 129's five-key wire shape is unchanged (option 3 was rejected).
+
+## Fix round 3: the owner's console retest (27 Sep)
+
+The owner sent "check spec srtwc286", then "please escalate to marketing team", in the console (dry run). The draw went out with `brand_code: null`, `routing_source: none`, to the mocha-only member.
+
+- **Diagnosis.** Hypothesis 1 (the console forgets between dry runs) does not hold: a dry run writes no session, but the console already carries its own. The engine returns the turn's `session_patch` on a dry run, `console_service._next_state` hands it back as `session_vars`, and `useChatbotConsole` sends it as `previous_conversation_state` on the next turn. Turn 2's `remembered_keys: 1` is that focus. (`recalled_frames` is opt-in topic recall and unrelated.) Hypothesis 2 holds one layer down. "check spec srtwc286" leaves the focus entry UNSETTLED (`raw`/`canonical_code` "srtwc286", no `uuid`), because master_products does not narrow on product, so `turn/apply.py`'s `focus_settles_product` never runs. The live path writes the same entry. The brand read matched an unsettled code by EXACT `product_code`, so "SRTWC286" never found "SRTWC286-SH". The 24 Sep script passed only because "SRTKS8650A" is the full code. This was a live defect as well, not only a console one.
+- **Fix.** `focus_product_brand` finds an unsettled code's rows by the resolver's own code tiers, `entity_resolver._probe_product` (exact) and then `_prefix_probe_product` (prefix, then substring). These are the rows the answer showed. One brand among them is the brand, and several brands name none, as before.
+- **R2, the console carry.** No change was needed; it is the console's own per-session carry (the `session_patch` round trip above), not a dry-run memory write. It is now pinned: the `session_vars` a console turn returns carry the same focus the live turn writes.
+- **R3, where it went.** `lanes/escalation.routing_line` renders the draw as one line: `Routing: team <code>, brand <code|none>, source <rung>, assignee <name|none>`. The escalation's `looked_up` stage summary carries it (trace screen), `ConsoleTurnResponse.trace_summary.routing_line` carries it, and the console shows it under the turn's first bubble. The reply the customer sees is unchanged.
 
 ## From #866's plan
 
