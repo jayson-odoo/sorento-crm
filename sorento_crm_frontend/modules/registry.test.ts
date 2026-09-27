@@ -27,6 +27,7 @@ describe('module registry purge manifests', () => {
   it('exposes the sales module with its schema-qualified tables (plan 3.7)', () => {
     expect(modulesWithDataPurge()).toContain('sales');
     expect(modulePurgeTables().sales.tables).toEqual([
+      'sales.target_commission_tiers',
       'sales.target_scope',
       'sales.target_periods',
       'sales.targets',

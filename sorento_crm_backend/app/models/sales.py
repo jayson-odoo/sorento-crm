@@ -247,6 +247,10 @@ class SalesTarget(CompanyScopedMixin, Base):
     end_date = Column(Date, nullable=False)
     split_every = Column(SmallInteger, nullable=True)
     split_unit = Column(String(8), nullable=True)
+    #: How the tiers pay (plan 3.3): `none`, `marginal` or `retroactive` (`sales_0005`).
+    commission_method = Column(
+        String(16), nullable=False, default="none", server_default=text("'none'")
+    )
     #: Set only on an agent target that is one line of a team target (T3).
     parent_target_id = Column(
         UUID(as_uuid=False),
@@ -289,6 +293,10 @@ class SalesTarget(CompanyScopedMixin, Base):
         CheckConstraint(
             "parent_target_id IS NULL OR subject_kind = 'agent'",
             name="ck_sales_targets_parent_agent",
+        ),
+        CheckConstraint(
+            "commission_method IN ('none', 'marginal', 'retroactive')",
+            name="ck_sales_targets_commission_method",
         ),
         {"schema": SCHEMA},
     )
@@ -346,6 +354,38 @@ class SalesTargetScope(CompanyScopedMixin, Base):
         CheckConstraint(
             "num_nonnulls(product_category_id, product_id, brand_id) = 1",
             name="ck_sales_target_scope_one",
+        ),
+        {"schema": SCHEMA},
+    )
+
+
+class SalesTargetCommissionTier(CompanyScopedMixin, Base):
+    """One commission tier of a target (plan 3.3; the owner's retest of 27 Sep, `sales_0005`).
+
+    `from_pct` is the achievement % the tier starts at; `rate` is a % of the achieved amount on
+    an amount target, RM per unit on a quantity target; `bonus_amount` is paid once per period
+    when `from_pct` is reached. Computed per period by `commission_service`, never stored.
+    """
+
+    __tablename__ = "target_commission_tiers"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    target_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(f"{SCHEMA}.targets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    from_pct = Column(Numeric(7, 2), nullable=False)
+    rate = Column(Numeric(9, 4), nullable=False, default=0, server_default=text("0"))
+    bonus_amount = Column(Numeric(15, 2), nullable=True)
+
+    __table_args__ = (
+        Index("uq_sales_target_commission_tiers_target_from", "target_id", "from_pct", unique=True),
+        CheckConstraint("from_pct >= 0", name="ck_sales_target_commission_tiers_from_pct"),
+        CheckConstraint("rate >= 0", name="ck_sales_target_commission_tiers_rate"),
+        CheckConstraint(
+            "bonus_amount IS NULL OR bonus_amount >= 0",
+            name="ck_sales_target_commission_tiers_bonus",
         ),
         {"schema": SCHEMA},
     )

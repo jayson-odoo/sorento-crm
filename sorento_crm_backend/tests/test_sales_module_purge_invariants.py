@@ -116,6 +116,7 @@ def test_purge_empties_the_module_and_leaves_sales_agents():
                 "sales.team_members": 1,
                 "sales.teams": 1,
                 "sales.target_periods": 0,
+                "sales.target_commission_tiers": 0,
                 "sales.target_scope": 0,
                 "sales.targets": 0,
             }

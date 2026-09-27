@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from app.models.product import Brand, Product, ProductCategory
 from app.models.sales import (
     SalesTarget,
+    SalesTargetCommissionTier,
     SalesTargetPeriod,
     SalesTargetScope,
     SalesTeam,
@@ -41,6 +42,7 @@ from app.models.sales import (
 from app.models.sales_agent import SalesAgent
 from app.services.error_handler import AppException
 from app.services.sales import achievement_service as ach
+from app.services.sales import commission_service
 from app.services.sales import team_service
 from app.services.sales.period_service import add_months, generate_periods
 from app.services.sales.team_service import acting_company_id, agent_label
@@ -318,6 +320,65 @@ def resum_team(db: Session, team_target: SalesTarget) -> None:
     db.flush()
 
 
+def _tiers(db: Session, target_id: str) -> List[SalesTargetCommissionTier]:
+    return (
+        db.query(SalesTargetCommissionTier)
+        .filter(SalesTargetCommissionTier.target_id == target_id)
+        .order_by(SalesTargetCommissionTier.from_pct)
+        .all()
+    )
+
+
+def _write_commission(db: Session, target: SalesTarget, commission: dict) -> None:
+    """How tiers pay and the tiers (plan 3.3, UAC S4-1). `commission` holds `commission_method`
+    and/or `tiers` (the full list, replacing every tier). A method with no tiers, or tiers with
+    `none`, is refused, and so is the same `from_pct` twice."""
+    if not commission:
+        return
+    method = commission.get("commission_method") or target.commission_method or "none"
+    if "tiers" in commission:
+        tiers = [
+            (Decimal(str(t.from_pct)), Decimal(str(t.rate)), t.bonus_amount)
+            for t in commission["tiers"] or []
+        ]
+    else:
+        tiers = [(t.from_pct, t.rate, t.bonus_amount) for t in _tiers(db, target.id)]
+    if method == "none" and tiers:
+        raise _unprocessable(
+            "Pick how the tiers pay, or remove the tiers.", "INVALID_TIERS"
+        )
+    if method != "none" and not tiers:
+        raise _unprocessable("Add at least one tier.", "INVALID_TIERS")
+    froms = [from_pct.quantize(Decimal("0.01")) for from_pct, _, _ in tiers]
+    if len(set(froms)) != len(froms):
+        raise _unprocessable("Two tiers start at the same %.", "INVALID_TIERS")
+    target.commission_method = method
+    if "tiers" in commission:
+        db.query(SalesTargetCommissionTier).filter(
+            SalesTargetCommissionTier.target_id == target.id
+        ).delete(synchronize_session=False)
+        for from_pct, rate, bonus in tiers:
+            db.add(
+                SalesTargetCommissionTier(
+                    company_id=target.company_id,
+                    target_id=target.id,
+                    from_pct=from_pct,
+                    rate=rate,
+                    bonus_amount=None if bonus is None else _money(bonus),
+                )
+            )
+    db.flush()
+
+
+def _commission_of(payload) -> dict:
+    """The commission fields a create or PATCH payload actually sent."""
+    return {
+        key: getattr(payload, key)
+        for key in ("commission_method", "tiers")
+        if key in payload.model_fields_set
+    }
+
+
 # --------------------------------------------------------------------------------------
 # create
 # --------------------------------------------------------------------------------------
@@ -364,6 +425,7 @@ def create_target(db: Session, payload, *, user_id: Optional[str] = None) -> Sal
         db.flush()
         _write_scope(db, target, *scope_ids)
         _add_periods(db, target, bounds, [payload.target_value] * len(bounds))
+        _write_commission(db, target, _commission_of(payload))
         db.flush()
         return target
 
@@ -422,6 +484,7 @@ def create_target(db: Session, payload, *, user_id: Optional[str] = None) -> Sal
         db.flush()
         _write_scope(db, child, *scope_ids)
         _add_periods(db, child, bounds, [figure.target_value] * len(bounds))
+    _write_commission(db, target, _commission_of(payload))
     resum_team(db, target)
     return target
 
@@ -464,26 +527,81 @@ def _apply_header(db: Session, target: SalesTarget, changes: dict) -> None:
     db.flush()
 
 
-def update_target(db: Session, target: SalesTarget, payload) -> SalesTarget:
+def _write_figures(db: Session, target: SalesTarget, figures) -> None:
+    """The batched save (the owner's retest of 27 Sep, F1): each figure's period must be one of
+    this agent target's own, or on a team target one of its agents' (a team period is their sum,
+    422 `TEAM_TARGET_IS_SUM`). Anything else is 422 `UNKNOWN_PERIOD` and nothing is written."""
+    if not figures:
+        return
+    wanted = {str(f.period_id): f.target_value for f in figures}
+    if target.subject_kind == "team":
+        if wanted.keys() & {p.id for p in _periods(db, target.id)}:
+            raise _unprocessable(
+                "A team target is the sum of its agents' figures; change an agent's figure.",
+                "TEAM_TARGET_IS_SUM",
+            )
+        owners = [c.id for c in _children(db, target.id)]
+    else:
+        owners = [target.id]
+    periods = (
+        db.query(SalesTargetPeriod)
+        .filter(SalesTargetPeriod.id.in_(list(wanted)), SalesTargetPeriod.target_id.in_(owners))
+        .all()
+        if owners
+        else []
+    )
+    if len(periods) != len(wanted):
+        raise _unprocessable("A figure names a period this target does not have.", "UNKNOWN_PERIOD")
+    for period in periods:
+        period.target_value = _money(wanted[period.id])
+    db.flush()
+
+
+def update_target(
+    db: Session, target: SalesTarget, payload, *, user_id: Optional[str] = None
+) -> SalesTarget:
+    """The header, the commission tiers and every changed figure, in one request (F1, F2).
+
+    A child follows its parent for what counts and its dates (T3); its name, its figures and
+    its tiers are its own (T4), and its figures write through to the team target's sum (F3).
+    """
     changes = {key: getattr(payload, key) for key in payload.model_fields_set}
+    figures = changes.pop("figures", None) or []
+    new_agents = changes.pop("new_agents", None) or []
+    commission = {k: changes.pop(k) for k in ("commission_method", "tiers") if k in changes}
     if "name" in changes and changes["name"] is None:
         changes.pop("name")
     if target.parent_target_id and set(changes) - {"name"}:
         raise _unprocessable(
             "This target follows its team target; change it there.", "CHILD_FOLLOWS_PARENT"
         )
+    if new_agents and target.subject_kind != "team":
+        raise _unprocessable("Only a team target has agent figures.", "NOT_A_TEAM_TARGET")
     if "name" in changes:
         target.name = changes.pop("name")
-    if not changes:
-        db.flush()
-        return target
 
-    _apply_header(db, target, changes)
-    if target.subject_kind == "team":
-        # Every child is rewritten the same way in this transaction, then the sum again.
-        for child in _children(db, target.id):
-            _apply_header(db, child, changes)
+    _write_figures(db, target, figures)
+    for entry in new_agents:
+        _new_child(
+            db,
+            target,
+            entry.sales_agent_id,
+            {f.period_start: f.target_value for f in entry.figures},
+            user_id=user_id,
+        )
+    _write_commission(db, target, commission)
+
+    if changes:
+        _apply_header(db, target, changes)
+        if target.subject_kind == "team":
+            # Every child is rewritten the same way in this transaction, then the sum again.
+            for child in _children(db, target.id):
+                _apply_header(db, child, changes)
+    if target.subject_kind == "team" and (changes or figures or new_agents):
         resum_team(db, target)
+    elif target.parent_target_id and figures:
+        resum_team(db, get_target_or_404(db, target.parent_target_id))
+    db.flush()
     return target
 
 
@@ -511,6 +629,22 @@ def add_child(
     db: Session, parent: SalesTarget, agent_id: str, value: float, *, user_id: Optional[str] = None
 ) -> SalesTarget:
     """Add figure: a team member with no figure on this team target gets their own (S1-28)."""
+    starts = [p.period_start for p in _periods(db, parent.id)]
+    _new_child(db, parent, agent_id, {start: value for start in starts}, user_id=user_id)
+    resum_team(db, parent)
+    return parent
+
+
+def _new_child(
+    db: Session,
+    parent: SalesTarget,
+    agent_id: str,
+    values: Dict[date, float],
+    *,
+    user_id: Optional[str] = None,
+) -> SalesTarget:
+    """A child agent target for a team member with no figure yet; `values` by period start, a
+    period left out at 0. The caller re-sums the parent."""
     if parent.subject_kind != "team":
         raise _unprocessable("Only a team target has agent figures.", "NOT_A_TEAM_TARGET")
     _visible_agent(db, parent.company_id, agent_id)
@@ -539,9 +673,11 @@ def add_child(
     db.flush()
     _write_scope(db, child, *scope_ids)
     bounds = [(p.period_start, p.period_end) for p in _periods(db, parent.id)]
-    _add_periods(db, child, bounds, [value] * len(bounds))
-    resum_team(db, parent)
-    return parent
+    if set(values) - {start for start, _ in bounds}:
+        raise _unprocessable("A figure names a period this target does not have.", "UNKNOWN_PERIOD")
+    _add_periods(db, child, bounds, [values.get(start, 0) for start, _ in bounds])
+    db.flush()
+    return child
 
 
 # --------------------------------------------------------------------------------------
@@ -590,10 +726,21 @@ def _copy(
         end_date=end,
         split_every=source.split_every,
         split_unit=source.split_unit,
+        commission_method=source.commission_method,
     )
     db.add(copy)
     db.flush()
     _write_scope(db, copy, *_scope_ids(db, source.id))
+    for tier in _tiers(db, source.id):
+        db.add(
+            SalesTargetCommissionTier(
+                company_id=copy.company_id,
+                target_id=copy.id,
+                from_pct=tier.from_pct,
+                rate=tier.rate,
+                bonus_amount=tier.bonus_amount,
+            )
+        )
     figures = [p.target_value for p in _periods(db, source.id)] or [Decimal("0")]
     bounds = generate_periods(start, end, source.split_every, source.split_unit)
     _add_periods(db, copy, bounds, [figures[min(i, len(figures) - 1)] for i in range(len(bounds))])
@@ -1026,6 +1173,21 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
         db, _specs(db, company_id, [(target, p) for p in periods]), company_id
     )
 
+    tiers = _tiers(db, target.id)
+    tier_values = [
+        commission_service.Tier(t.from_pct, t.rate, t.bonus_amount) for t in tiers
+    ]
+
+    def commission(period: SalesTargetPeriod):
+        earned, bonus = commission_service.commission_for(
+            target.commission_method,
+            tier_values,
+            period.target_value,
+            achieved.get(period.id, Decimal("0")),
+            metric=target.metric,
+        )
+        return _num(earned), _num(bonus)
+
     team_name = None
     if target.subject_kind == "agent":
         agent = db.get(SalesAgent, target.sales_agent_id)
@@ -1116,12 +1278,18 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
                 "achieved_value": float(achieved.get(p.id, 0)),
                 "achieved_pct": ach.achieved_pct(achieved.get(p.id, Decimal("0")), p.target_value),
                 "is_current": p.period_start <= on <= p.period_end,
+                **dict(zip(("commission_earned", "bonus_earned"), commission(p))),
             }
             for p in periods
         ],
         "children": children_out,
         "members_without_figure": without_figure,
         "child_count": child_count,
+        "commission_method": target.commission_method or "none",
+        "tiers": [
+            {"from_pct": _num(t.from_pct), "rate": _num(t.rate), "bonus_amount": _num(t.bonus_amount)}
+            for t in tiers
+        ],
         "created_at": target.created_at,
         "updated_at": target.updated_at,
     }

@@ -563,7 +563,9 @@ def test_every_company_id_table_is_registered():
     # `sales.target_periods` and `sales.target_scope` are one company's own targets, their
     # per-period figures and their product scope rows; every target route loads BY ID, so the
     # mixin's filter is what hides another company's target (UAC S1-13).
-    expected_owned = 143
+    # The S1 fix round 3 (PR #1297) adds 1: `sales.target_commission_tiers` are one target's
+    # own tiers, read and replaced only through that scoped target (plan 3.3).
+    expected_owned = 144
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
