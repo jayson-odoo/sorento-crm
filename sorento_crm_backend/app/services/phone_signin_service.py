@@ -164,7 +164,12 @@ def send_signin_code(db: Session, contact: RespondContact, *, dispatch_inline: b
             dispatch_inline=dispatch_inline,
         )
     except Exception as e:  # noqa: BLE001
-        logger.warning("Phone sign-in OTP not sent for contact %s: %s", contact.id, e)
+        # Fix lane round 2 (reviewer Nit 3): the type only above DEBUG. A
+        # Respond.io error body can echo the message it was sent, code included.
+        logger.warning(
+            "Phone sign-in OTP not sent for contact %s: %s", contact.id, type(e).__name__
+        )
+        logger.debug("Phone sign-in OTP send failure detail: %s", e)
 
 
 def mark_code_requested(num: str) -> None:
@@ -243,6 +248,12 @@ def reserve_verify_attempt(num: str) -> WrongAttemptResult:
     looks at the code. A caller whose compare then succeeds calls
     :func:`clear_redis_state` so a right answer does not count against the
     budget.
+
+    Fix lane round 2 (reviewer B1, #1280): the lock used to trip at
+    ``value >= MAX_WRONG_ATTEMPTS``, i.e. on the 5th call BEFORE its code was
+    compared, so a user really got 4 tries and a right 5th code answered 429.
+    Only a call PAST the cap is refused unseen now; the 5th is compared with
+    ``attempts_left == 0``, and the router turns a wrong 5th into the 429.
     """
     r = _redis()
     if r is None:
@@ -252,7 +263,7 @@ def reserve_verify_attempt(num: str) -> WrongAttemptResult:
         value = int(r.incr(key))
         if value == 1:
             r.expire(key, _TRIES_LOCK_SECONDS)
-        if value >= MAX_WRONG_ATTEMPTS:
+        if value > MAX_WRONG_ATTEMPTS:
             ttl = r.ttl(key)
             retry = int(ttl) if isinstance(ttl, int) and ttl > 0 else _TRIES_LOCK_SECONDS
             return WrongAttemptResult(locked=True, retry_after_seconds=retry)
@@ -375,21 +386,21 @@ def attempt_verify(
 
     portal = PortalService(db)
     eligible = find_eligible(db, num)
-    if eligible is None:
-        portal.reserve_attempt(NIL_OTP_ID)
-        portal.consume_reserved(NIL_OTP_ID, _utcnow())
-        return None
-    user, contact = eligible
 
+    # Fix lane round 2 (reviewer Nit 2): the OTP lookup runs for every number,
+    # keyed by the nil id when nobody is eligible (0 rows), so an unknown
+    # number pays for the same SELECT an eligible one does.
     otp = (
         db.query(PortalOtpCode)
         .filter(
-            PortalOtpCode.contact_id == contact.id,
+            PortalOtpCode.contact_id == (eligible[1].id if eligible else NIL_OTP_ID),
             PortalOtpCode.consumed_at.is_(None),
         )
         .order_by(PortalOtpCode.created_at.desc())
         .first()
     )
+    if eligible is None:
+        otp = None
     # No OTP row, or an expired one, reserves against the nil id instead (0
     # rows either way) - reserve_attempt's own WHERE clause already guards
     # expiry, so this pays for the identical two statements as the eligible
@@ -403,6 +414,11 @@ def attempt_verify(
         portal.consume_reserved(NIL_OTP_ID, _utcnow())
         return None
     _attempts_after, code_hash = reserved
+    # A reservation only succeeds against a real row, which only an eligible
+    # number's lookup can return.
+    if eligible is None:
+        return None
+    user = eligible[0]
 
     if not hmac.compare_digest(code_hash, _hash_otp(code)):
         return None

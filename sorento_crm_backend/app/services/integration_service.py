@@ -511,7 +511,11 @@ class RespondClient:
             response = client.get(url, headers=self._headers(), params=params)
             response.raise_for_status()
             payload = response.json() if response.content else {"items": [], "pagination": {}}
-        return self._fill_template_message_text(payload)
+        # Fix lane round 2 (reviewer B2, #1280): every screen that reads a
+        # contact's messages comes through here; none may show an OTP code.
+        from app.services.otp_redaction import redact_otp_payload
+
+        return self._fill_template_message_text(redact_otp_payload(payload))
 
     @staticmethod
     def _fill_template_message_text(payload: dict) -> dict:
@@ -559,7 +563,10 @@ class RespondClient:
         with httpx.Client(timeout=15) as client:
             response = client.get(url, headers=self._headers())
             response.raise_for_status()
-            return response.json() if response.content else {}
+            item = response.json() if response.content else {}
+        from app.services.otp_redaction import redact_otp_item
+
+        return redact_otp_item(item)
 
     def set_conversation_assignee(self, identifier: str, assignee_id: str) -> dict:
         """

@@ -610,6 +610,10 @@ class PortalService:
                 space_id,
                 queue_name="respond_io",
                 job_timeout=180,
+                # Fix lane round 2 (reviewer Should fix 1): RQ's worker logs
+                # the job description at INFO, and the default one renders
+                # every argument, the code included.
+                description=f"{task.__module__}.{task.__name__}(<redacted>)",
             )
         except Exception as e:  # noqa: BLE001
             # Enqueue itself failed (e.g. Redis unreachable) - refund the code so

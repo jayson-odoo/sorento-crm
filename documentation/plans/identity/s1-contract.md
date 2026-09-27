@@ -46,10 +46,18 @@ Request `{ "phone": "012-345 6789" }` (any format; normalised by `normalize_msis
   `send_login_otp_respond_message` on the `respond_io` queue, which writes an `integration_logs`
   row on success and on failure. When the contact's own DB cooldown or daily cap (shared with the
   portal) blocks a send, nothing is sent and the answer is still the same 200.
-- Unknown numbers do the same lookups; only the insert and the enqueue are skipped. Nothing is
-  ever created for a contact with no user, and no user is ever created.
+- Every number, known or not, gets the same one enqueue of `dispatch_phone_signin_code` on the
+  `respond_io` queue (security round S1); eligibility is decided in that job, on the worker, so
+  the route does identical work either way. Nothing is ever created for a contact with no user,
+  and no user is ever created.
 - Every 200 records "a code was requested for this number now" in Redis (10 minute TTL) for the
   verify step's messages.
+- No sign-in or portal code is readable anywhere in the CRM (fix lane round 2, reviewer B2): the
+  outbox row carries `******`, the portal job's RQ description is redacted, and every read of a
+  contact's WhatsApp messages (`RespondClient.list_messages` / `get_message`, the thread's Respond
+  and local lanes, in-thread search, the `chat_histories` cache and the n8n mirror ingest) masks
+  the in-window texts and the `otp_code` parameter of the `portal_otp` / `login_otp` template
+  (plus any copy-code button) via `app/services/otp_redaction.py`.
 
 ### `POST /api/v1/auth/phone/verify` (public, AC-23, AC-24, AC-27)
 
@@ -65,8 +73,12 @@ Request `{ "phone": "...", "code": "123456" }`.
   contact whose code is missing. The tries count is kept per typed number (Redis), so an unknown
   number counts down exactly like a known one.
 - 429 `{ code: "RATE_LIMITED", message: "Too many tries. Try again in N minutes.",
-  retry_after_seconds }` on the fifth wrong try and after, for 15 minutes per number; a new
-  request-code does not lift it. Also the per-IP limit.
+  retry_after_seconds }` on the fifth wrong try and after, for 15 minutes per number: four wrong
+  tries read 4, 3, 2 and 1 tries left, the fifth try is still compared (a right fifth code signs
+  in), a wrong fifth answers the 429, and any later try is refused without a compare. A new
+  request-code does not lift it. There is no per-IP limit on verify (security round S4): behind
+  NextAuth every caller shares the Next.js server's address, so the per-number bound is the one
+  that holds.
 - 422 for an invalid number or a code that is not 6 digits.
 
 ### `POST /api/v1/auth/login` (AC-26)

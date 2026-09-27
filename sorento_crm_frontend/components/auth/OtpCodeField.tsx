@@ -51,6 +51,9 @@ export function OtpCodeField({
 
   useEffect(() => {
     const trimmed = value.trim();
+    // A cleared box (the phone step clears it after an error) re-arms the
+    // guard, so retyping the same code after a network blip submits again.
+    if (trimmed === '') lastAutoVerifiedRef.current = null;
     if (trimmed.length !== 6) return;
     if (pending || disabled) return;
     if (!sent) return;

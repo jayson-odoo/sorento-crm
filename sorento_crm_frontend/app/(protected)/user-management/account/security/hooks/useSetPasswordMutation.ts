@@ -10,7 +10,7 @@ import {
 /**
  * Account > Security's Password card (plan 5.3). `onSuccess` closes the
  * dialog; the mutation's own `error` is read inline in the form (`change-
- * password-dialog.tsx`), same as `change-email-dialog.tsx` does today.
+ * password-dialog.tsx`) and is not toasted a second time.
  */
 export function useSetPasswordMutation(options: { onSuccess?: () => void } = {}) {
   const queryClient = useQueryClient();
@@ -22,8 +22,7 @@ export function useSetPasswordMutation(options: { onSuccess?: () => void } = {})
       queryClient.invalidateQueries({ queryKey: ['account-profile'] });
       options.onSuccess?.();
     },
-    onError: (error: Error) => {
-      toast.error(error.message);
-    },
+    // No onError toast: the dialog shows the error inline, once (fix lane
+    // round 2, reviewer Nit 4).
   });
 }

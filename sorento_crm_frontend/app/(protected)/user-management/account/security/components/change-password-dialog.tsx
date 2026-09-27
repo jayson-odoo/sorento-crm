@@ -6,7 +6,6 @@ import { useForm } from 'react-hook-form';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
-  CardDescription,
   CardHeader,
   CardHeading,
   CardTitle,
@@ -71,7 +70,6 @@ const ChangePasswordDialog = ({ open, closeDialog, hasPassword }: Props) => {
         <CardHeader className="py-5">
           <CardHeading>
             <CardTitle>{title}</CardTitle>
-            <CardDescription>Manage your sign-in password</CardDescription>
           </CardHeading>
         </CardHeader>
         <Form {...form}>

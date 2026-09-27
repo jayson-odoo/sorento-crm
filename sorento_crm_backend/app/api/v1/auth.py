@@ -645,6 +645,11 @@ def phone_verify(payload: PhoneVerifyRequest, request: Request, db: Session = De
         svc.clear_redis_state(num)
         return login_response
 
+    if reservation.attempts_left == 0:
+        # Fix lane round 2 (reviewer B1): the 5th wrong answer spends the
+        # budget, so it answers the lock itself, not "0 tries left".
+        return _rate_limited_response(svc.check_locked(num) or 900)
+
     if reservation.attempts_left is not None:
         tries_word = "try" if reservation.attempts_left == 1 else "tries"
         content = {
