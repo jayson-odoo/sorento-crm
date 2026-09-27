@@ -552,6 +552,14 @@ def resolve_entity_body(
             "resolve-entity: ctx.parse.output.entities is not an array, so the token map "
             "cannot be built (n8n throws on the same read)"
         )
+    # Fix round 8 on PR #833: a grounded `specification` entity (`head/grounding.py`) is
+    # not a record to look up. It travels as a registry binding (`extracted_specs`), and
+    # a value the registry does not know as `unknown_values`, said back before anything
+    # is counted; the resolver's token map never sees it.
+    from app.services.chatbot.head.grounding import specification_entities
+
+    grounded = specification_entities(entities)
+    entities = [e for e in entities if not any(e is g for g in grounded)]
 
     match_mode = parse_output.get("match_mode")
     match_mode = match_mode if jsc.truthy(match_mode) else "and"
@@ -586,6 +594,25 @@ def resolve_entity_body(
     }
     if dry_run:
         body["dry_run"] = True
+    grounded_specs = [
+        {"key": g.get("spec_key"), "value": g.get("spec_value"), "evidence": g.get("raw"), "grounded": True}
+        for g in grounded
+        if g.get("spec_key") and g.get("spec_value") is not None
+    ]
+    if grounded_specs:
+        body["extracted_specs"] = grounded_specs
+    unknown_values = [
+        {
+            "key": g.get("spec_key") or "",
+            "label": g.get("spec_label") or "",
+            "said": g.get("raw") or "",
+            "known": list(g.get("spec_known") or []),
+        }
+        for g in grounded
+        if g.get("spec_value") is None and (g.get("raw") or "").strip()
+    ]
+    if unknown_values:
+        body["unknown_values"] = unknown_values
     if jsc.js_string(match_mode).lower() != "and":
         pins: dict[str, Any] = {}
         for x in entities:
@@ -646,7 +673,7 @@ def resolve_entity_body(
     # READ at all rather than only refusing to page it. A described ask ("which taps have
     # a cert") names a `product_type` / `category` word and is untouched; a turn naming
     # both a code and a class word keeps its scope term and is untouched too.
-    if require is not None and not scope_terms and _names_a_typed_code(parse_output):
+    if require is not None and not scope_terms and not grounded_specs and _names_a_typed_code(parse_output):
         require = None
     if require is not None:
         body["require"] = require

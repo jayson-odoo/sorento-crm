@@ -30,7 +30,7 @@ from typing import Any, Callable
 
 from sqlalchemy import String as _String
 from sqlalchemy import cast as _cast
-from sqlalchemy import case, exists, func, or_
+from sqlalchemy import case, exists, func, literal_column, or_, true
 from sqlalchemy.dialects.postgresql import ARRAY as _ARRAY
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session, aliased
@@ -520,12 +520,22 @@ _CERTIFICATE_ID_CAP = 200
 
 # One entry per domain. A new domain lands as one function + one line here + one
 # noun in the n8n parser - never as another inline block in references.py.
+def _leg_price(db: Session, value: Any, access_levels: list[str] | None = None) -> ColumnElement:
+    """Every product of the described set: a price ask ("any gunmetal basin price") is
+    answered for the set itself, each row the product-code price answer. Fix round 8 on
+    PR #833 (owner retest of round 7: the set answer is the product-code answer "for
+    incoming, product attachment etc and every other domain"). No filter: a product with
+    no list price is still one the customer asked about, and its row says so."""
+    return true()
+
+
 REQUIRE_LEGS: dict[str, Callable[..., ColumnElement]] = {
     "attachment_type": _leg_attachment_type,
     "certificate": _leg_certificate,
     "promotion": _leg_promotion,
     "stock": _leg_stock,
     "incoming": _leg_incoming,
+    "price": _leg_price,
 }
 
 
@@ -669,11 +679,18 @@ def describe_set(
         row = rows.get(key)
         labels = dict(getattr(row, "value_labels", None) or {})
         values = [display_spec_value(v, labels) for v in membership[key]]
+        # Fix round 8 on PR #833: a grounded number reads with its unit ("1.2 mm").
+        unit = getattr(row, "unit", None) if row is not None and (row.data_type or "") == "numeric" else None
+        if unit:
+            values = [f"{v} {unit}" for v in values]
         out.append(
             {
                 "key": key,
                 "label": (row.label if row is not None and row.label else _sentence_case(key)),
                 "value": " or ".join(values),
+                # Fix round 8: how the set's intro says it ("with thickness 1.2 mm",
+                # "gunmetal", "rimless").
+                "kind": (row.data_type or "enum").lower() if row is not None else "enum",
             }
         )
     return out
@@ -733,6 +750,9 @@ def _near_miss(db: Session, *, membership: dict[str, list[str]], legs: list, bra
         return None
     key = props[0]
     value = membership[key][0]
+    if not isinstance(value, str):
+        # A grounded number (fix round 8) has no other choices to recount by.
+        return None
     rest = {k: v for k, v in membership.items() if k != key}
     parent = aliased(Product)
     family = func.coalesce(parent.product_code, Product.product_code)
@@ -744,7 +764,12 @@ def _near_miss(db: Session, *, membership: dict[str, list[str]], legs: list, bra
     as_list = case(
         (func.jsonb_typeof(stored) == "array", stored),
         (func.jsonb_typeof(stored) == "string", func.jsonb_build_array(stored)),
-        else_=_cast("[]", JSONB),
+        # A literal empty ARRAY. `_cast("[]", JSONB)` bound the Python string "[]" as the
+        # JSON string "\"[]\"", a scalar, so any member with no value for the key made
+        # the whole recount fail ("cannot extract elements from a scalar") and the turn
+        # lost its predicate (fix round 8 on PR #833: the owner's "Could not find
+        # incoming for category gunmetal basin").
+        else_=literal_column("'[]'::jsonb", JSONB),
     )
     element = func.jsonb_array_elements_text(as_list)
     query = (
@@ -1188,7 +1213,7 @@ def resolve_product_set(
     # W4: the set's own description, exactly as counted, so a page of it replays the
     # SAME set (`turn_runtime.page_the_set`) instead of re-reading the parser's words.
     outcome["set_specs"] = [
-        {"key": key, "value": value}
+        {"key": key, "value": value, **({"grounded": True} if isinstance(value, (int, float)) else {})}
         for key, values in (verdict.get("membership") or {}).items()
         for value in values
     ]

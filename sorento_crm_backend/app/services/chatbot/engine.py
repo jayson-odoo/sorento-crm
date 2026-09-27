@@ -47,7 +47,7 @@ from app.services.chatbot.contracts import (
 )
 from app.services.chatbot.delegate import enabled_lanes_from
 from app.services.error_handler import AppException
-from app.services.chatbot.head import parser
+from app.services.chatbot.head import grounding, parser
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
@@ -1586,6 +1586,14 @@ def _run_stages(  # noqa: PLR0915
     # below is made against the CARRIED agent, not the default. No `session=` (reviewer
     # round 1, SHOULD-4): no writer ever produces a prior-turn agent nest to read.
     verdict = turn_runtime.with_routing_agent_default(verdict, pending=state_in.pending)
+    # Fix round 8 on PR #833 (owner retest of round 7): every descriptor the parser
+    # emitted is grounded against the specification registry before anything reads the
+    # verdict - the category keeps what the thing IS, a colour or a size becomes a
+    # `specification` entity, and nothing is a document type unless it is on the list.
+    with _session(session_factory) as grounding_db:
+        verdict, grounding_notes = grounding.ground(grounding_db, verdict)
+    if grounding_notes:
+        turn_trace.add("grounding", {"changes": grounding_notes})
     # Reviewer S1 on PR #833: the answer to "how many should I show?" must not rest on
     # the parser filling `top_n` for a bare "10" - its prompt has no example of one, and
     # its positional rule pulls a bare number toward `reference_positions`.

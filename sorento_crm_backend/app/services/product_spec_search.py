@@ -25,7 +25,7 @@ import json
 import re
 from decimal import Decimal
 
-from sqlalchemy import and_, cast, func, literal, or_
+from sqlalchemy import Float, and_, cast, func, literal, or_
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
@@ -876,10 +876,22 @@ def membership_clause(membership: dict[str, Any]):
         # containment branch (case-sensitive, against the stored spelling the
         # resolvers returned) exists because a value may be a LIST - two finishes
         # on one product - and `#>>` renders a list as its JSON text.
+        stored = ProductSpecifications.values[key]["value"]
+        # Fix round 8 on PR #833: a grounded number matches the stored number exactly
+        # (a JSON number, never a string that happens to read like one).
+        numbers = sorted(v for v in values if isinstance(v, (int, float)) and not isinstance(v, bool))
+        if numbers:
+            key_clauses.append(
+                and_(
+                    func.jsonb_typeof(stored) == "number",
+                    or_(*[cast(stored.astext, Float).between(n - 1e-6, n + 1e-6) for n in numbers]),
+                )
+            )
+            continue
         lowered = [value.lower() for value in values]
-        scalar = func.lower(ProductSpecifications.values[key]["value"].astext).in_(lowered)
+        scalar = func.lower(stored.astext).in_(lowered)
         contained = [
-            ProductSpecifications.values[key]["value"].op("@>")(cast(literal(json.dumps(value)), JSONB))
+            stored.op("@>")(cast(literal(json.dumps(value)), JSONB))
             for value in sorted(values)
         ]
         # R15/AC-1339 (third console pass): a category-sourced class row IS real
@@ -961,7 +973,15 @@ def filter_specs(
             membership.setdefault(str(key), set()).add(value)
 
     for entry in specs or []:
-        _join(entry.get("key"), entry.get("value"))
+        value = entry.get("value")
+        # Fix round 8 on PR #833: a number the customer SAID as a property ("thickness 1.2
+        # mm") is grounded against the registry (`chatbot/head/grounding.py`) and defines
+        # membership like a named choice does. A number the reader only bound by
+        # proximity stays a ranking boost (R27/AC-1352).
+        if entry.get("grounded") and isinstance(value, (int, float)) and not isinstance(value, bool) and entry.get("key"):
+            membership.setdefault(str(entry["key"]), set()).add(value)
+            continue
+        _join(entry.get("key"), value)
 
     vocabulary = _search_vocabulary(db) if terms else frozenset()
     unrecognized: list[str] = []

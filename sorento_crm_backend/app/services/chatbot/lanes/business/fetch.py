@@ -526,54 +526,6 @@ def _set_list_size(semantic_input: Any) -> int:
     return min(named, answer_mod.SET_LIST_MAX) if named else answer_mod.SET_LIST_MAX
 
 
-#: The facts a compact set row says per leg, in order, by the tool's own field labels
-#: (round 4 R3: "then the one or two facts the ask was about"). A leg missing here, or a
-#: tool whose rows carry none of these, falls back to the row's first two plain fields.
-_SET_ROW_FACTS: dict[str, tuple[str, ...]] = {
-    "stock": ("Total",),
-    "certificate": ("Certificate Number", "Valid Until"),
-    "incoming": ("Incoming Quantity", "Estimated Arrival Date", "ETA"),
-    "attachment_type": ("Attachment Type",),
-}
-#: Fields a fallback fact never is: identity the name line already says, and file
-#: plumbing that is not a fact about the product.
-_SET_ROW_NOT_FACTS = frozenset(
-    {"Product Code", "Product Name", "Description", "Company", "Dimensions", "List Price", "File Name", "File Link"}
-)
-_SET_ROW_FACT_MAX = 2
-#: Legs whose set rows keep the normal answer's full field structure (owner hand test of
-#: rounds 4 to 6 on PR #833): the owner reads an ETA or a certificate by its fields.
-_FULL_ROW_LEGS = frozenset({"incoming", "certificate", "attachment_type"})
-
-
-def _set_row_code(it: Any) -> str:
-    fields = [f for f in (jsc.get(it, "fields") or []) if isinstance(f, dict)]
-    # The attachments presenter leaves "Product Code" unkeyed; the stock one keys it.
-    code_field = next(
-        (
-            f
-            for f in fields
-            if jsc.js_string(f.get("key") or "") == "product_code"
-            or jsc.js_string(f.get("label") or "") == "Product Code"
-        ),
-        None,
-    )
-    return jsc.nullish_str(code_field.get("value") if code_field else jsc.get(it, "title")).strip()
-
-
-def _set_row_facts(it: Any, require: Any) -> list[str]:
-    fields = [f for f in (jsc.get(it, "fields") or []) if isinstance(f, dict)]
-    by_label = {jsc.js_string(f.get("label") or ""): f for f in fields}
-    wanted = [label for key in (require or {}) for label in _SET_ROW_FACTS.get(key, ())]
-    picked = [by_label[label] for label in wanted if label in by_label]
-    if not picked:
-        picked = [f for f in fields if jsc.js_string(f.get("label") or "") not in _SET_ROW_NOT_FACTS]
-    return [
-        f"*{jsc.js_string(f.get('label'))}:* {_fmt_value(f.get('value'))}"
-        for f in picked[:_SET_ROW_FACT_MAX]
-    ]
-
-
 def _names_the_ask(attribute: str) -> bool:
     """Is this requested attribute the ask's own word ("incoming", "eta", "stock",
     "cert"), rather than a field of the answer? Owner hand test of rounds 4 to 6 on PR
@@ -582,41 +534,6 @@ def _names_the_ask(attribute: str) -> bool:
     from app.services.chatbot.lanes.business.predicate import names_a_leg
 
     return names_a_leg(attribute)
-
-
-def set_rows_text(items: list[Any], row_labels: dict[str, Any], *, require: Any, offset: int = 0) -> str:
-    """A counted set's rows, one per product, at most two lines each (round 4 R3, owner
-    console test on PR #833: "one product is at most 2 lines (name with code, then the
-    one or two facts the ask was about); details on request"):
-
-        1. Sorento Close Couple WC (SRTWC286-SH-NEW-P)
-        *Total:* 34
-
-    Line 1 is the product's name (the resolver's `row_labels`) with its code; line 2 is
-    what the ask was about, by leg (`_SET_ROW_FACTS`). A product the tool returned as
-    several rows (three certificate files, two shipments) is one row that says how many.
-    A product with nothing to say past its name is one line. Rows are numbered from
-    `offset + 1` (a page that continues a list, W4). A blank line between products."""
-    grouped: dict[str, list[Any]] = {}
-    for it in items:
-        grouped.setdefault(_set_row_code(it), []).append(it)
-    out = ""
-    for n, (code, rows) in enumerate(grouped.items(), start=offset + 1):
-        described = row_labels.get(code) if isinstance(row_labels, dict) else None
-        name = jsc.js_string((described or {}).get("name") or "").strip() if isinstance(described, dict) else ""
-        first = f"{n}. {name} ({code})" if name and name != code else f"{n}. {code}"
-        flags = [jsc.get(r, "flags") for r in rows]
-        if any(jsc.truthy(f) and jsc.truthy(jsc.get(f, "discontinued")) for f in flags):
-            first += " *(Discontinued)*"
-        facts = _set_row_facts(rows[0], require)
-        if len(rows) > 1:
-            keys = set(require or {})
-            noun = "files" if keys & {"certificate", "attachment_type"} else "shipments" if "incoming" in keys else "rows"
-            facts.append(f"{len(rows)} {noun}")
-        if any(jsc.truthy(f) and jsc.truthy(jsc.get(f, "expired")) for f in flags):
-            facts.append("*(Expired)*")
-        out += first + ("\n" + ", ".join(facts) if facts else "") + "\n\n"
-    return out
 
 
 def _rendered_product_count(items: list[Any]) -> int | None:
@@ -2641,28 +2558,15 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if len(action_links):
         msg += "\n"
 
-    # Round 4 R3 (owner console test on PR #833, "i said 10 but it come out so many"): a
-    # counted-set row is at most two lines, `set_rows_text`. The name comes from the
-    # resolver (`predicate.row_labels`, keyed by product code).
+    # Fix round 8 on PR #833 (owner retest of round 7: "the answer should look exactly
+    # when i check stock by product code, ... this applies to incoming, product attachment
+    # etc and every other domain"): a counted set's rows are the product-code rows, from
+    # the same tool in the same mode, through `_item_line` below. Only the intro differs.
+    # W4: a page that continues a list numbers its rows where the list stands.
     set_predicate = ctx.get("predicate") if isinstance(ctx.get("predicate"), dict) else None
-    set_row_labels = jsc.get(set_predicate, "row_labels") if set_predicate is not None else None
-    set_row_labels = set_row_labels if isinstance(set_row_labels, dict) else None
-    # W4: a page that continues a list numbers its rows where the list stands ("Here are
-    # 11 to 50." over rows 11 to 50). Display only: a set answer mints no pick roster.
     set_row_offset = int(jsc.get(set_predicate, "offset") or 0) if set_predicate is not None else 0
 
-    set_require = jsc.get(set_predicate, "require") if set_predicate is not None else None
-    # Owner hand test of rounds 4 to 6 on PR #833, items 1 and 7: an incoming, certificate
-    # or attachment set renders each row as the normal ETA or attachment ask does (product
-    # code, container, ETA, ..., incoming quantity; attachment type, certificate number,
-    # valid until, validity), with its files. Only a stock (or promotion) set keeps the
-    # two-line rows of round 4 R3.
-    if set_row_labels is not None and set(set_require or {}) & _FULL_ROW_LEGS:
-        set_row_labels = None
-
     def _item_line(position: int, it: Any, *, numbered: bool = True) -> str:
-        if set_row_labels is not None:
-            return set_rows_text([it], set_row_labels, require=set_require, offset=position - 1).rstrip("\n")
         field_lines = "\n".join(
             f"*{jsc.js_string(jsc.get(f, 'label', jsc.UNDEFINED))}:* "
             f"{_fmt_value(jsc.get(f, 'value'))}"
@@ -2733,14 +2637,8 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # MESSAGE, never from the STATE - `answers` below is untouched, so a positional pick
     # still resolves against the same page rows. And ONLY the numbered list goes: the
     # multi-company note reads `e.items` for attribution and must keep seeing the real rows.
-    if set_row_labels is not None and not (qs_render or groups_render):
-        # R3: a counted set lists one compact row per PRODUCT, whatever number of tool
-        # rows (files, shipments) it came back as.
-        msg += set_rows_text(e.get("items") or [], set_row_labels, require=set_require, offset=set_row_offset)
     for i, it in enumerate(
-        []
-        if (qs_render or groups_render or stock_ask_render or set_row_labels is not None)
-        else (e.get("items") or [])
+        [] if (qs_render or groups_render or stock_ask_render) else (e.get("items") or [])
     ):
         msg += _item_line(i + 1 + set_row_offset, it, numbered=not stock_availability_answered) + "\n\n"
     # Item 8: the product projection's miss lines, one per asked word, AFTER the items
@@ -2884,16 +2782,28 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             shown,
             set_noun,
             require,
+            intro=e.get("intro"),
             description=jsc.get(predicate, "description"),
             not_understood=jsc.get(predicate, "unrecognized_terms"),
             offset=offset,
             previous_total=jsc.get(predicate, "previous_total"),
         )
         set_header = header
-        msg = header if set_withheld else f"{header}\n\n{msg}"
-        # Round 3 W4: the default brand answered, so the reply CLOSES with the others.
+        # Round 3 W4: the default brand answered, so the reply closes with the others -
+        # above the footer, which stays the last line as it is on the product-code answer.
         other_brands = answer_mod.other_brands_line(jsc.get(predicate, "other_brands"), require)
-        if other_brands:
+        if set_withheld:
+            msg = header
+        else:
+            body = msg.strip()
+            footer = f"_Data last updated: {ts}_" if ts else ""
+            if other_brands:
+                if footer and body.endswith(footer):
+                    body = f"{body[: -len(footer)].strip()}\n\n{other_brands}\n\n{footer}"
+                else:
+                    body = f"{body}\n\n{other_brands}"
+            msg = f"{header}\n\n{body}"
+        if set_withheld and other_brands:
             msg = f"{msg.strip()}\n\n{other_brands}"
 
     final_response = msg.strip()

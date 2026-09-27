@@ -2595,9 +2595,14 @@ def _header_predicate_phrase(require: dict[str, Any]) -> str:
             if scheme:
                 parts.append(f"{scheme} certificates")
                 continue
+        if key == "price":
+            # A price set is the described products themselves: nothing to "have".
+            continue
         noun = _HEADER_PREDICATE_NOUN.get(key)
         if noun:
             parts.append(noun)
+    if not parts and "price" in (require or {}):
+        return ""
     return _and_list(parts) if parts else "that"
 
 
@@ -2605,28 +2610,6 @@ def _header_predicate_phrase(require: dict[str, Any]) -> str:
 #: that fits one WhatsApp message (about 50 rows) is listed in full"). Read at call time
 #: (`answer.SET_LIST_MAX`) so a test can lower it rather than seed fifty products.
 SET_LIST_MAX = 50
-
-
-def describe_set_line(description: Any) -> str:
-    """The resolver's own labelled bindings (`product_predicate_service.describe_set`),
-    one filter per line with its label bold, or "" when the set was described by nothing
-    it could name:
-
-        *Brand:* Sorento
-        *Product type:* Wash basin
-        *Mounting:* Wall hung
-
-    Owner brief W2 on PR #833 named the bindings; round 4 R2 (owner console test, 27 Sep
-    2026: "Brand, product type needs to be line by line, label needs to be bold") put
-    each on its own line. Bold is the WhatsApp markup the rows already use ("*Label:*"),
-    the same contract #1279's console renderer reads."""
-    lines = []
-    for entry in jsc.array(description):
-        label = jsc.js_string(jsc.get(entry, "label") or "").strip()
-        value = jsc.js_string(jsc.get(entry, "value") or "").strip()
-        if label and value:
-            lines.append(f"*{label}:* {value}")
-    return "\n".join(lines)
 
 
 def not_understood_line(words: Any) -> str:
@@ -2638,39 +2621,106 @@ def not_understood_line(words: Any) -> str:
     return f"I did not understand {quoted}, so it is not part of this search."
 
 
+#: The sentence a set answer opens with, per leg, when the tool's own intro does not
+#: name "the requested products" (fix round 8 on PR #833): the product-code answer's
+#: sentence, so the set reads as that answer about the described set.
+_SET_INTRO_BY_LEG: dict[str, str] = {
+    "stock": "Stock summary for the requested products.",
+    "incoming": "Incoming stock found for the requested products.",
+    "certificate": "Certificates found for the requested products.",
+    "attachment_type": "Files found for the requested products.",
+    "promotion": "Promotions found for the requested products.",
+    "price": "Prices for the requested products.",
+}
+_REQUESTED = "the requested products"
+
+
+def _value_words(value: str) -> str:
+    """A display value inside a sentence: lower case, an acronym or a single capital
+    letter kept ("P trap", "PVC")."""
+    return " ".join(w if w.isupper() or w.lower() in SPEC_ACRONYMS else w.lower() for w in value.split())
+
+
+def described_set_phrase(description: Any, set_noun: str, require: dict[str, Any]) -> str:
+    """The described set in one phrase: "Sorento gunmetal wash basins with incoming
+    stock", "Sorento kitchen sinks with thickness 1.2 mm with stock".
+
+    Off the resolver's own labelled bindings (`product_predicate_service.describe_set`):
+    the brand, then every named choice as a word before the noun, then the noun (the
+    product type when one was named, else the class), then each measurement, then what
+    the set has. Fix round 8 on PR #833: this replaces the bold "*Label:* value" lines the
+    set header used to carry (owner retest of round 7: "the answer should look exactly
+    when i check stock by product code")."""
+    brand = ""
+    noun = ""
+    before: list[str] = []
+    after: list[str] = []
+    for entry in jsc.array(description):
+        key = jsc.js_string(jsc.get(entry, "key") or "").strip()
+        label = jsc.js_string(jsc.get(entry, "label") or "").strip()
+        value = jsc.js_string(jsc.get(entry, "value") or "").strip()
+        kind = jsc.js_string(jsc.get(entry, "kind") or "").strip()
+        if not value:
+            continue
+        if key == "brand":
+            brand = value
+        elif key == "class":
+            noun = set_noun if " or " in value else set_noun_for([value])
+        elif kind == "numeric":
+            after.append(f"{label.lower()} {value}")
+        elif kind == "boolean":
+            before.append(label.lower() if value.lower() == "yes" else f"not {label.lower()}")
+        else:
+            before.append(_value_words(value))
+    words = [w for w in [brand, *before, noun or set_noun] if w]
+    phrase = " ".join(words)
+    if after:
+        phrase += f" with {_and_list(after)}"
+    has = _header_predicate_phrase(require)
+    return f"{phrase} with {has}" if has else phrase
+
+
 def build_set_header(
     qualifying_total: int,
     shown: int,
     set_noun: str,
     require: dict[str, Any],
     *,
+    intro: Any = None,
     description: Any = None,
     not_understood: Any = None,
     offset: int = 0,
     previous_total: int | None = None,
     exhausted: bool = False,
 ) -> str:
-    """AC-1316: "<qualifying_total> <set noun> have <predicate noun>." - the counted set's
-    own line, ahead of the rows. No paging (owner ruling, 26 Sep 2026: no "Showing 5", no
-    "more"):
+    """A counted set's ONE intro line (fix round 8 on PR #833, owner retest of round 7):
+    the product-code answer's own intro with "the requested products" replaced by the
+    described set and its count, so the rows under it are exactly the product-code rows:
 
-    - every qualifying product listed (`shown >= qualifying_total`): the count alone;
-    - some listed because the customer named how many (`0 < shown < qualifying_total`):
-      "Here are the first <shown>.";
-    - none listed (`shown == 0`, a set longer than `SET_LIST_MAX`): the count, then the
-      question - how many to show, or ask again naming a brand or size (reviewer S2 on
-      PR #833: a bare "grohe" reply is not carried against the set, so the question offers
-      the full re-ask, which is).
+        Stock summary for Sorento wash basins with stock (276, showing 1 to 10).
+
+    `intro` is the tool's own intro for these rows (the detailed and compact stock modes
+    say different ones); a tool intro that names no products ("Here are the product
+    files I found.") gives way to the leg's own sentence. No paging (owner ruling, 26 Sep
+    2026): every qualifying product listed says the count alone; a named count says
+    which ones; none listed (a set longer than `SET_LIST_MAX`) asks how many to show.
 
     A pure string function: `qualifying_total` and `shown` are counts the caller already
-    has, never re-derived here.
-    """
-    verb = "has" if qualifying_total == 1 else "have"
-    header = f"{qualifying_total:,} {set_noun} {verb} {_header_predicate_phrase(require)}."
-    # W2 / R2: what the set was identified as leads, one filter per line.
-    described = describe_set_line(description)
-    if described:
-        header = f"{described}\n{header}"
+    has, never re-derived here."""
+    phrase = described_set_phrase(description, set_noun, require)
+    withheld = not exhausted and shown <= 0 and qualifying_total > 0
+    if withheld or exhausted or shown >= qualifying_total - offset:
+        count = f"{qualifying_total:,}"
+    else:
+        count = f"{qualifying_total:,}, showing {offset + 1} to {offset + shown}"
+    tool_intro = jsc.js_string(intro or "").strip() if isinstance(intro, str) else ""
+    leg = next(iter(require or {}), "")
+    base = (
+        tool_intro
+        if _REQUESTED in tool_intro
+        else _SET_INTRO_BY_LEG.get(leg, "Here are the results for the requested products.")
+    )
+    header = base.replace(_REQUESTED, f"{phrase} ({count})")
     missed = not_understood_line(not_understood)
     if missed:
         header += f" {missed}"
@@ -2680,17 +2730,11 @@ def build_set_header(
     if exhausted:
         # Round 3 W2: a count after the last page; every product was already listed.
         header += f" That is all {qualifying_total:,}."
-    elif offset and shown > 0:
-        # W4: "another N" continues the list; the numbers say where.
-        header += f" Here are {offset + 1} to {offset + shown}."
-    elif qualifying_total > shown:
-        if shown > 0:
-            header += f" Here are the first {shown}."
-        else:
-            header += (
-                " That is too many to list in one message. How many should I show "
-                f"(up to {SET_LIST_MAX})? Or ask again naming a brand or size."
-            )
+    elif withheld:
+        header += (
+            " That is too many to list in one message. How many should I show "
+            f"(up to {SET_LIST_MAX})? Or ask again naming a brand or size."
+        )
     return header
 
 
@@ -2772,7 +2816,11 @@ def unknown_values_sentence(unknown: Any) -> str:
         said = jsc.js_string(jsc.get(u, "said")).strip()
         label = jsc.js_string(jsc.get(u, "label")).strip().lower()
         known = [jsc.js_string(k) for k in jsc.array(jsc.get(u, "known")) if jsc.truthy(k)]
-        if not said or not label:
+        if not said:
+            continue
+        if not label:
+            # Fix round 8 on PR #833: a descriptor no specification names at all.
+            parts.append(f"I don't know '{said}' as anything I can search products by.")
             continue
         line = f"I don't know '{said}' as a {label}."
         if known:
@@ -2965,9 +3013,18 @@ def not_found_error_message(
             kept = [e for e in entities_list if not_access(jsc.get(e, "raw"))]
             # #11: '' (not 'the requested item') so the " for ..." segment can be dropped
             # entirely - the access suffix already says what was searched for.
+            # Fix round 8 on PR #833: the owner read "Could not find incoming for category
+            # gunmetal basin": a set the resolver described is named as its answer would
+            # name it, and an entity kind is never said as its internal key.
+            described = jsc.array(jsc.get(predicate, "description")) if isinstance(predicate, dict) else []
+            labels = [jsc.js_string(c) for c in jsc.array(jsc.get(predicate, "class_labels")) if jsc.truthy(c)] if described else []
             requested = (
-                ", ".join(
-                    f"{jsc.js_string(jsc.get(e, 'hint') or 'item')} {jsc.js_string(jsc.get(e, 'raw'))}"
+                described_set_phrase(described, set_noun_for(labels), {}).removesuffix(" with that")
+                if described
+                else ", ".join(
+                    jsc.js_string(jsc.get(e, "raw"))
+                    if jsc.get(e, "hint") in ("specification", "category", "product_type")
+                    else f"{_plain_words(jsc.get(e, 'hint') or 'item')} {jsc.js_string(jsc.get(e, 'raw'))}"
                     for e in kept
                 )
                 if kept
@@ -3657,11 +3714,22 @@ def not_found_error_message(
                     if checked_codes
                     else ""
                 )
-                escalate_message = (
-                    f"Couldn't find {subject_phrase} with "
-                    f"{_predicate_phrase(jsc.get(predicate, 'require') or {})}{checked}. "
-                    f"Would you like me to escalate to {team} team?"
-                )
+                described = jsc.array(jsc.get(predicate, "description"))
+                if described:
+                    # Fix round 8 on PR #833: the miss names the described set the way
+                    # its answer would have ("Sorento kitchen sinks with thickness 1.2 mm
+                    # with incoming stock"), every grounded property included.
+                    labels = [jsc.js_string(c) for c in jsc.array(jsc.get(predicate, "class_labels")) if jsc.truthy(c)]
+                    phrase = described_set_phrase(
+                        described, set_noun_for(labels), jsc.get(predicate, "require") or {}
+                    )
+                    escalate_message = f"Couldn't find {phrase}{checked}. Would you like me to escalate to {team} team?"
+                else:
+                    escalate_message = (
+                        f"Couldn't find {subject_phrase} with "
+                        f"{_predicate_phrase(jsc.get(predicate, 'require') or {})}{checked}. "
+                        f"Would you like me to escalate to {team} team?"
+                    )
             elif domain_hint == "product_attachment":
                 # FIX B: natural, parser-driven phrasing - never leak the internal literal.
                 product_raws = [

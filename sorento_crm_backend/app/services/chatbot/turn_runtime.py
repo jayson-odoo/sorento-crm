@@ -823,7 +823,7 @@ def with_clarify_answer(verdict: dict[str, Any], message: Any, *, carried: Any) 
 
 #: The entity hints that describe WHICH products a set is: its class word, its spec
 #: words, its brand, and the codes of an earlier answer.
-_SET_DESCRIBING_HINTS = frozenset({"product_type", "category", "spec", "brand", "product"})
+_SET_DESCRIBING_HINTS = frozenset({"product_type", "category", "spec", "specification", "brand", "product"})
 
 
 def with_new_set_words(verdict: dict[str, Any]) -> dict[str, Any]:
@@ -2880,6 +2880,12 @@ def with_carried_entities(
             }
             if row.get("uuid"):
                 entity["uuid"] = row["uuid"]
+            # Fix round 8 on PR #833: a grounded specification keeps its registry key and
+            # value, so "cert?" after "any gunmetal basin has incoming?" asks about the
+            # SAME gunmetal basins.
+            for name in ("spec_key", "spec_value", "spec_unit", "spec_label", "spec_words", "spec_known"):
+                if name in row:
+                    entity[name] = row[name]
             carried.append(entity)
     if not carried:
         return parse_output

@@ -115,6 +115,11 @@ _LEG_BY_ATTRIBUTE_WORD: dict[str, str] = {
     "promotions": "promotion",
     "promo": "promotion",
     "promosi": "promotion",
+    # Fix round 8 on PR #833: a price ask about a described set is a set answer too.
+    "price": "price",
+    "prices": "price",
+    "list price": "price",
+    "harga": "price",
 }
 
 
@@ -296,6 +301,7 @@ _DOMAIN_BY_LEG: dict[str, str] = {
     "stock": "inventory",
     "promotion": "promotion",
     "certificate": "product_attachment",
+    "price": "master_products",
 }
 
 

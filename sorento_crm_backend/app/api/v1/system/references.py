@@ -1358,6 +1358,16 @@ class ResolveReferenceRequest(BaseModel):
             "picker. Only used when `spec_fallback` is true."
         ),
     )
+    unknown_values: list[dict] | None = Field(
+        default=None,
+        description=(
+            "Fix round 8 on PR #833: descriptors the chatbot's grounding step "
+            "(`chatbot/head/grounding.py`) could not place on any choice of the "
+            "specification registry, as [{key, label, said, known}] ('pink' said as a "
+            "finish or colour). Answered like `unknown_spec_values`: said back with "
+            "the known choices before anything is counted or searched."
+        ),
+    )
     hidden_spec_keys: list[str] | None = Field(
         default=None,
         description=(
@@ -1618,6 +1628,15 @@ def _stock_policy_for(db: Session, payload: "ResolveReferenceRequest"):
         db, contact_id=payload.contact_id, space_id=payload.space_id
     )
     return resolve_policy(db, resolved or payload.contact_id, payload.space_id)
+
+
+def _with_grounded_unknowns(found: list[dict], grounded: list[dict] | None) -> list[dict]:
+    """The registry's own unknown-value reading of the message, plus the ones the
+    chatbot's grounding step found (fix round 8 on PR #833), one per key. Grounding wins
+    for a key both name: it read the parser's placed words, not the whole sentence."""
+    extra = [dict(u) for u in (grounded or []) if isinstance(u, dict) and str(u.get("said") or "").strip()]
+    keys = {u.get("key") for u in extra if u.get("key")}
+    return extra + [u for u in found if u.get("key") not in keys]
 
 
 def _strip_predicate_words(text: str, words: list[str] | None) -> str:
@@ -2704,7 +2723,10 @@ def resolve_reference_post(
         # with it dropped or read as its nearest neighbour.
         from app.services.product_spec_search import unknown_spec_values
 
-        unknown = unknown_spec_values(db, " ".join([payload.query or "", *(payload.scope_terms or [])]))
+        unknown = _with_grounded_unknowns(
+            unknown_spec_values(db, " ".join([payload.query or "", *(payload.scope_terms or [])])),
+            payload.unknown_values,
+        )
         if unknown:
             result["predicate"] = {
                 "require": payload.require,
@@ -2945,7 +2967,10 @@ def resolve_reference_post(
         # never searched for as its nearest neighbour, so no spec candidate is offered.
         from app.services.product_spec_search import unknown_spec_values
 
-        unknown = unknown_spec_values(db, payload.query or "", registry_rows=registry_rows)
+        unknown = _with_grounded_unknowns(
+            unknown_spec_values(db, payload.query or "", registry_rows=registry_rows),
+            payload.unknown_values,
+        )
         if unknown:
             result["unknown_spec_values"] = unknown
             return _stamp_brand_on_products(db, result)

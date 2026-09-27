@@ -533,7 +533,25 @@ def ground(db: "Session", verdict: dict[str, Any], *, vocab: Vocabulary | None =
         out.append(entity)
     if not notes:
         return verdict, []
-    return {**verdict, "entities": out}, notes
+    grounded_verdict = {**verdict, "entities": out}
+    # The document domain was chosen for the misfiled descriptor alone ("any pink colour
+    # water closet?" read as a photo ask): with no document type left and no document
+    # word among the requested attributes, the ask is about the products themselves.
+    had_document = any(
+        isinstance(e, dict) and str(e.get("hint") or "").strip().lower() == _ATTACHMENT_HINT for e in entities
+    )
+    has_document = any(
+        isinstance(e, dict) and str(e.get("hint") or "").strip().lower() == _ATTACHMENT_HINT for e in out
+    )
+    asked_document = any(
+        isinstance(a, str) and a.strip() and _on_attachment_list(db, a, vocab)
+        for a in verdict.get("requested_attributes") or []
+    )
+    if had_document and not has_document and not asked_document and verdict.get("domain_hint") == "product_attachment":
+        grounded_verdict["domain_hint"] = "master_products"
+        grounded_verdict["intent_hint"] = "check_product"
+        notes.append({"from": "domain", "raw": "product_attachment", "to": "master_products"})
+    return grounded_verdict, notes
 
 
 def specification_entities(entities: Any) -> list[dict[str, Any]]:
