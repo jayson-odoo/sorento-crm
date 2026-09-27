@@ -213,3 +213,33 @@ def test_f7_migration_adds_unit_price_after_the_s2_tables():
 
     column = SalesOpportunityLine.__table__.c.unit_price
     assert column.nullable is True
+
+
+def test_f7_an_explicit_null_price_keeps_the_line_unpriced(api):
+    # A blank Unit price in the form is sent as null: "no price", not "use the list price"
+    # (review of fix round 2), so the saved line matches the amount the screen showed.
+    client, db, company_id = api
+    customer = _customer(db, company_id)
+    product = _product(db)
+    res = _post(
+        client,
+        BASE,
+        customer.id,
+        expected_amount="1",
+        lines=[{"product_id": product.id, "qty": "1", "unit_price": None}],
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["lines"][0]["unit_price"] is None
+
+
+def test_f7_patch_with_a_null_amount_takes_the_lines_sum_not_a_500(api):
+    client, db, company_id = api
+    customer = _customer(db, company_id)
+    product = _product(db)
+    created = _post(client, BASE, customer.id, expected_amount="5").json()
+    res = client.patch(
+        f"{BASE}/{created['id']}",
+        json={"expected_amount": None, "lines": [{"product_id": product.id, "qty": "2"}]},
+    )
+    assert res.status_code == 200, res.text
+    assert Decimal(res.json()["expected_amount"]) == Decimal("200.00")

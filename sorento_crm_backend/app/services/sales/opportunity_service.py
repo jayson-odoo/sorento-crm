@@ -193,8 +193,10 @@ def _replace_lines(db: Session, opportunity: SalesOpportunity, lines: List[dict]
     opportunity.lines.clear()
     db.flush()
     for index, line in enumerate(lines):
-        unit_price = line.get("unit_price")
-        if unit_price is None:
+        if "unit_price" in line:
+            # Typed, or null for "no price" (a blank field in the form).
+            unit_price = line["unit_price"]
+        else:
             # F7 (fix round 2): the price the dealer flyer prints, zero meaning none.
             unit_price = flyer_price(list_prices[line["product_id"]])
         opportunity.lines.append(
@@ -306,12 +308,16 @@ def create_opportunity(
     db.flush()
     if payload.get("expected_amount") is None:
         # F7 (fix round 2): nothing typed, so the lines are the estimate.
-        opportunity.expected_amount = sum(
-            (amount for amount in map(_line_amount, opportunity.lines) if amount is not None),
-            Decimal("0"),
-        )
+        opportunity.expected_amount = _lines_sum(opportunity)
         db.flush()
     return opportunity
+
+
+def _lines_sum(opportunity: SalesOpportunity) -> Decimal:
+    return sum(
+        (amount for amount in map(_line_amount, opportunity.lines) if amount is not None),
+        Decimal("0"),
+    )
 
 
 def _validate_lost_reason(db: Session, lost_reason: Optional[str]) -> str:
@@ -411,7 +417,7 @@ def update_opportunity(
 
     if "title" in payload:
         opportunity.title = payload["title"]
-    if "expected_amount" in payload:
+    if payload.get("expected_amount") is not None:
         opportunity.expected_amount = payload["expected_amount"]
     if "expected_close_date" in payload:
         opportunity.expected_close_date = payload["expected_close_date"]
@@ -433,6 +439,11 @@ def update_opportunity(
 
     if "lines" in payload:
         _replace_lines(db, opportunity, payload.get("lines") or [])
+
+    if "expected_amount" in payload and payload["expected_amount"] is None:
+        # An explicit null is "the lines are the estimate", the create rule (F7).
+        db.flush()
+        opportunity.expected_amount = _lines_sum(opportunity)
 
     db.flush()
     return opportunity
