@@ -53,7 +53,18 @@ def _current_other_heads() -> set[str]:
     More than one means this migration doubles as their merge revision."""
     cfg = Config(str(Path(__file__).resolve().parent / ".." / "alembic.ini"))
     script = ScriptDirectory.from_config(cfg)
-    others = [r for r in script.walk_revisions() if r.revision != MODULE_NAME]
+    # A later migration chained on this one (finance S0's `fin_0001_billing_documents` was
+    # the first) is not a head this one sits on, so its descendants leave the graph too.
+    descendants = {
+        r.revision
+        for r in script.iterate_revisions("heads", MODULE_NAME)
+        if r.revision != MODULE_NAME
+    }
+    others = [
+        r
+        for r in script.walk_revisions()
+        if r.revision != MODULE_NAME and r.revision not in descendants
+    ]
     pointed_at: set[str] = set()
     for rev in others:
         down = rev.down_revision
