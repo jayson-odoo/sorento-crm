@@ -680,6 +680,11 @@ def test_ac23_verify_burst_for_different_numbers_from_one_client_is_not_globally
 
 
 def test_ac23_five_wrong_verify_attempts_count_down_then_lock_identically(rate_limit_cleanup):
+    """AC-23: five wrong attempts per code. Fix lane round 2 (reviewer B1 at
+    56daafae) rewrote this test: it used to pin the off-by-one (a 429 on the
+    5th call, before its code was ever compared). Now 4 wrong answers read 4,
+    3, 2 and 1 tries left, the 5th wrong answer is the 429, and a 6th call is
+    refused without a compare, for a known and an unknown number alike."""
     with blank_session() as db:
         ws, contact, user, digits = _eligible_chain(db)
         unknown = _digits()
@@ -708,7 +713,15 @@ def test_ac23_five_wrong_verify_attempts_count_down_then_lock_identically(rate_l
                 status_code, body = results[4]
                 assert status_code == 429, (number, body)
                 assert body.get("code") == "RATE_LIMITED", (number, body)
-                assert "retry_after_seconds" in body
+                assert body.get("retry_after_seconds", 0) > 0
+                assert "15 minutes" in body.get("message", ""), body
+
+                with patch("hmac.compare_digest") as mock_compare:
+                    sixth = client.post(
+                        "/api/v1/auth/phone/verify", json={"phone": number, "code": "123456"}
+                    )
+                assert sixth.status_code == 429, (number, sixth.text)
+                mock_compare.assert_not_called()
 
 
 def test_ac23_never_requested_code_is_401_code_expired(rate_limit_cleanup):
@@ -730,6 +743,13 @@ def test_ac23_never_requested_code_is_401_code_expired(rate_limit_cleanup):
 
 
 def test_ac23_new_request_code_does_not_lift_the_verify_lock(rate_limit_cleanup):
+    """Fix lane round 2 (reviewer Should fix 3 at 56daafae): the second
+    request-code used to land inside the 60 s per-number cooldown, answer an
+    unasserted 429 and never reach `mark_code_requested`, so this test could
+    not tell a lock-lifting request-code apart. The cooldown bucket is now
+    cleared first and the second request-code must answer 200."""
+    from app.services.queue_service import redis_conn
+
     with blank_session() as db:
         ws, contact, user, digits = _eligible_chain(db)
         rate_limit_cleanup.append(digits)
@@ -737,17 +757,21 @@ def test_ac23_new_request_code_does_not_lift_the_verify_lock(rate_limit_cleanup)
             with patch("app.services.queue_service.enqueue_job"):
                 client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
             code = _seed_signin_code(db, contact)
+            wrong = "000000" if code != "000000" else "111111"
 
             for _ in range(5):
-                client.post("/api/v1/auth/phone/verify", json={"phone": digits, "code": "000000"})
+                client.post("/api/v1/auth/phone/verify", json={"phone": digits, "code": wrong})
 
             locked = client.post(
                 "/api/v1/auth/phone/verify", json={"phone": digits, "code": code}
             )
             assert locked.status_code == 429, locked.text
 
+            for key in redis_conn.keys(f"*phone_signin_otp_cooldown*{digits}*"):
+                redis_conn.delete(key)
             with patch("app.services.queue_service.enqueue_job"):
-                client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
+                again = client.post("/api/v1/auth/phone/request-code", json={"phone": digits})
+            assert again.status_code == 200, again.text
 
             still_locked = client.post(
                 "/api/v1/auth/phone/verify", json={"phone": digits, "code": code}
