@@ -52,17 +52,23 @@ def _reraise(db: Session, exc: Exception):
     raise handle_internal_error()
 
 
-def _stamp_actor(user: dict) -> None:
+def _stamp_actor(db: Session, user: dict) -> None:
     """Attribute an audited write to the acting user (S2-9).
 
     `require_permission` reads `current_user` off `Depends(get_current_user)`, whose real
-    body is what normally calls this; stamped here too so the audit row is correct even
-    when a caller (a test) overrides that dependency directly with a bare dict, the same
-    `db.info["actor_contact_id"]` reasoning the portal router carries for its own actor.
+    body stamps the full session actor (identity S0); stamped here only when that has not
+    happened for this user, so the audit row is still correct when a caller (a test)
+    overrides that dependency directly with a bare dict, and the richer actor is kept.
     """
-    from app.audit_context import set_audit_context
+    from app.audit_context import AuditActor, get_actor, stamp_actor
 
-    set_audit_context(user.get("id"), None)
+    user_id = user.get("id")
+    if not user_id:
+        return
+    actor = get_actor(db)
+    if actor is not None and str(user_id) in (actor.user_id, actor.real_user_id):
+        return
+    stamp_actor(AuditActor(actor_type="user", user_id=str(user_id), real_user_id=str(user_id)), db=db)
 
 
 def _list(data: list) -> dict:
@@ -153,7 +159,7 @@ def create_opportunity(
     db: Session = Depends(get_db),
 ):
     try:
-        _stamp_actor(current_user)
+        _stamp_actor(db, current_user)
         company_id = team_service.acting_company_id(db)
         body = payload.model_dump(exclude_unset=True)
         opportunity = svc.create_opportunity(
@@ -194,7 +200,7 @@ def update_opportunity(
     db: Session = Depends(get_db),
 ):
     try:
-        _stamp_actor(current_user)
+        _stamp_actor(db, current_user)
         validate_uuid_path(opportunity_id, resource="Sales Opportunity")
         opportunity = svc.get_opportunity_or_404(db, opportunity_id)
         svc.update_opportunity(db, opportunity, payload.model_dump(exclude_unset=True))
@@ -213,7 +219,7 @@ def delete_opportunity(
 ):
     """Immediate hard delete. The screen parks it as a deferred action instead (D7)."""
     try:
-        _stamp_actor(current_user)
+        _stamp_actor(db, current_user)
         validate_uuid_path(opportunity_id, resource="Sales Opportunity")
         opportunity = svc.get_opportunity_or_404(db, opportunity_id)
         name = opportunity.title

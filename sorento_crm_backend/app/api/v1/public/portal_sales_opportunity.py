@@ -77,8 +77,15 @@ def _require_agent(db: Session, token: PortalToken) -> SalesAgent:
     # Attribute an audited write in this request to the acting contact, the same stamp
     # `get_portal_token` itself makes - set here too so it holds even when a caller (a
     # test) overrides that dependency directly (LESSONS: db.info survives the thread hop
-    # a contextvar would not).
-    db.info["actor_contact_id"] = str(token.contact_id)
+    # a contextvar would not). The fuller actor `get_portal_token` stamped is kept.
+    from app.audit_context import AuditActor, get_actor, stamp_actor
+
+    actor = get_actor(db)
+    if actor is None or actor.contact_id != str(token.contact_id):
+        stamp_actor(
+            AuditActor(actor_type="contact", auth_method="portal_token", contact_id=str(token.contact_id)),
+            db=db,
+        )
     # Phase 3 fix2 should-fix 4: NARROW only, never widen. `apply_company_scope` (the
     # router-level dependency in `app/main.py`) already resolved the scope for THIS
     # CONTACT'S OWN companies (`respond_contact_companies`) before this ever runs - an
