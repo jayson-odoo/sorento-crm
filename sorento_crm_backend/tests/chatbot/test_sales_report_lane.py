@@ -1171,22 +1171,25 @@ class TestParserPromptAndContractsTeachSalesReport:
         stays RETIRED on this lane (S0 dropped the dev/prod dual-body split; only ONE
         body ships now, `SEMANTIC_PARSER_PROMPT`) - main's own edit to the SLIM body
         is deliberately dropped, so the original "both texts ship" premise (dev vs
-        prod split) no longer applies. `SALES_REPORT_ADDENDUM` is still the newest
-        addendum, so it is still the tail of the one body that exists."""
+        prod split) no longer applies. `SALES_ANALYSIS_ADDENDUM` (#1267 S1) now stacks
+        after it, newest outermost, so `SALES_REPORT_ADDENDUM` is the tail of the one
+        body that exists once that is stripped."""
         from app.services.chatbot_parser_prompt import (
+            SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
             STOCK_TASK_ADDENDUM,
         )
 
         # `STOCK_TASK_ADDENDUM` (ported from PR #1118, not merged, chatbot-stock-ask-v2
-        # S3) stacked after this one, newest outermost, so it comes off first - the
-        # same treatment this addendum itself gave `LOW_STOCK_ADDENDUM` when it landed.
-        assert SEMANTIC_PARSER_PROMPT.removesuffix(STOCK_TASK_ADDENDUM).endswith(
-            SALES_REPORT_ADDENDUM
-        ), (
+        # S3) and then `SALES_ANALYSIS_ADDENDUM` (#1267 S1) stacked after this one,
+        # newest outermost, so they come off first.
+        assert SEMANTIC_PARSER_PROMPT.endswith(SALES_ANALYSIS_ADDENDUM)
+        assert SEMANTIC_PARSER_PROMPT.removesuffix(SALES_ANALYSIS_ADDENDUM).removesuffix(
+            STOCK_TASK_ADDENDUM
+        ).endswith(SALES_REPORT_ADDENDUM), (
             "SEMANTIC_PARSER_PROMPT does not end with SALES_REPORT_ADDENDUM once the "
-            "newer STOCK_TASK_ADDENDUM is stripped - it must stay the tail beneath it"
+            "newer SALES_ANALYSIS_ADDENDUM and STOCK_TASK_ADDENDUM are stripped"
         )
 
     def test_the_addendum_stacks_after_low_stock(self) -> None:
@@ -1198,13 +1201,15 @@ class TestParserPromptAndContractsTeachSalesReport:
         `test_the_addendum_is_appended_to_the_single_body` above) - one body, not two."""
         from app.services.chatbot_parser_prompt import (
             LOW_STOCK_ADDENDUM,
+            SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
             STOCK_TASK_ADDENDUM,
         )
 
         assert (
-            SEMANTIC_PARSER_PROMPT.removesuffix(STOCK_TASK_ADDENDUM)
+            SEMANTIC_PARSER_PROMPT.removesuffix(SALES_ANALYSIS_ADDENDUM)
+            .removesuffix(STOCK_TASK_ADDENDUM)
             .removesuffix(SALES_REPORT_ADDENDUM)
             .endswith(LOW_STOCK_ADDENDUM)
         ), "SALES_REPORT_ADDENDUM must stack AFTER LOW_STOCK_ADDENDUM"

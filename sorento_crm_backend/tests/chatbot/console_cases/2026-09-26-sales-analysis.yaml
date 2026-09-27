@@ -1,0 +1,385 @@
+# Console cases for the retail sales reports S1 chatbot answer (#1267, PLAN-retail-sales-reports-26sep
+# R4.2 / 5.5; UAC AC-S1-20, AC-S1-21, AC-S1-23, AC-R4-1 to AC-R4-4).
+#
+# Every turn carries its own `parser:` block, so the file runs with `--mock-parser` on a stack
+# with no LLM key (the lane's cloud VM has none). On the Mini, run it WITHOUT `--mock-parser`
+# to grade the live parser against the same expectations:
+#
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-26-sales-analysis.yaml --base-url http://127.0.0.1:8000
+#
+# Prerequisites: migration `sales_s1_reports_module` has run (it promotes the parser prompt that
+# teaches `order_status "sales_analysis"`); the MCP server restarted; the act-as user holds
+# `sales.reports.view`; contact 437264483 (Sorento) and 437264484 (Sorento + Mocha) hold the
+# `sales_orders.sales_report` reveal key; 437264485 is linked to a customer (a dealer) and holds
+# the key; 437264486 does not hold it. Substitute real contacts on the Mini.
+contact: '437264483'
+cases:
+- name: 'S1 AC-S1-20 compare dealer sales 2025 vs 2026 by month: the whole table as text and the Excel'
+  cold: true
+  turns:
+  - text: compare dealer sales 2025 vs 2026 by month
+    parser:
+      message_type: business_query
+      intent_hint: check_order
+      domain_hint: order
+      scope_intent: general
+      is_affirmative: null
+      user_goal: sales figures
+      continuation: null
+      access_levels: []
+      broaden_axis: null
+      broaden_to: null
+      date_mode: null
+      date_filter_start: '2025-01-01'
+      date_filter_end: '2026-12-31'
+      match_mode: and
+      demand_qty: null
+      entities: []
+      entity_op: replace_combine
+      domain_in_message: true
+      requested_attributes: []
+      contains_flyer: false
+      reference_positions: []
+      reference_target: null
+      person_mention: null
+      is_active: null
+      order_status: sales_analysis
+      group_by: month
+      top_n: null
+      sales_channel: dealer
+      sales_basis: null
+      sales_company: null
+      correction: false
+      routing:
+        suggested_team: null
+        suggested_agent: null
+        team_source: null
+      escalation:
+        is_escalation_confirmation: false
+        company_pick: null
+      document: null
+      status: null
+      asks: null
+      topic_reset: null
+      anaphora:
+        backward_reference: null
+      answers_open_question:
+        resolved: null
+        picks: null
+        answer: null
+    expect:
+      branch_kind: business_query
+      reply_contains:
+      - '*Sales, Sorento*'
+      - 'Channel: Dealer'
+      - 'Basis: Delivered (transferred to DO)'
+      - 'Months: 12'
+      - 'Month: 2025 | 2026 | Difference'
+      - 'JAN: '
+      - 'DEC: '
+      - 'Total: '
+      reply_not_contains:
+      - more
+      - lagi
+      - Full table
+      - not enabled
+      no_uuid: true
+- name: 'S1 AC-R4-1 total project sales this year: one figure, still text + file'
+  cold: true
+  turns:
+  - text: total project sales this year
+    parser:
+      message_type: business_query
+      intent_hint: check_order
+      domain_hint: order
+      scope_intent: general
+      is_affirmative: null
+      user_goal: sales figures
+      continuation: null
+      access_levels: []
+      broaden_axis: null
+      broaden_to: null
+      date_mode: null
+      date_filter_start: null
+      date_filter_end: null
+      match_mode: and
+      demand_qty: null
+      entities: []
+      entity_op: replace_combine
+      domain_in_message: true
+      requested_attributes: []
+      contains_flyer: false
+      reference_positions: []
+      reference_target: null
+      person_mention: null
+      is_active: null
+      order_status: sales_analysis
+      group_by: null
+      top_n: null
+      sales_channel: project
+      sales_basis: null
+      sales_company: null
+      correction: false
+      routing:
+        suggested_team: null
+        suggested_agent: null
+        team_source: null
+      escalation:
+        is_escalation_confirmation: false
+        company_pick: null
+      document: null
+      status: null
+      asks: null
+      topic_reset: null
+      anaphora:
+        backward_reference: null
+      answers_open_question:
+        resolved: null
+        picks: null
+        answer: null
+    expect:
+      branch_kind: business_query
+      reply_contains:
+      - '*Sales, Sorento*'
+      - 'Channel: Project team'
+      - 'Channels: 1'
+      - 'Project team: RM '
+      - 'Total: RM '
+      no_uuid: true
+- name: S1 AC-S1-21 a contact in both companies naming neither is asked, no file
+  cold: true
+  contact: '437264484'
+  turns:
+  - text: sales this year
+    parser:
+      message_type: business_query
+      intent_hint: check_order
+      domain_hint: order
+      scope_intent: general
+      is_affirmative: null
+      user_goal: sales figures
+      continuation: null
+      access_levels: []
+      broaden_axis: null
+      broaden_to: null
+      date_mode: null
+      date_filter_start: null
+      date_filter_end: null
+      match_mode: and
+      demand_qty: null
+      entities: []
+      entity_op: replace_combine
+      domain_in_message: true
+      requested_attributes: []
+      contains_flyer: false
+      reference_positions: []
+      reference_target: null
+      person_mention: null
+      is_active: null
+      order_status: sales_analysis
+      group_by: null
+      top_n: null
+      sales_channel: null
+      sales_basis: null
+      sales_company: null
+      correction: false
+      routing:
+        suggested_team: null
+        suggested_agent: null
+        team_source: null
+      escalation:
+        is_escalation_confirmation: false
+        company_pick: null
+      document: null
+      status: null
+      asks: null
+      topic_reset: null
+      anaphora:
+        backward_reference: null
+      answers_open_question:
+        resolved: null
+        picks: null
+        answer: null
+    expect:
+      branch_kind: business_query
+      reply_contains:
+      - Sorento or Mocha?
+      reply_not_contains:
+      - attached
+      - Excel
+      no_uuid: true
+  - text: Mocha sales by month this year
+    parser:
+      message_type: business_query
+      intent_hint: check_order
+      domain_hint: order
+      scope_intent: general
+      is_affirmative: null
+      user_goal: sales figures
+      continuation: null
+      access_levels: []
+      broaden_axis: null
+      broaden_to: null
+      date_mode: null
+      date_filter_start: null
+      date_filter_end: null
+      match_mode: and
+      demand_qty: null
+      entities: []
+      entity_op: replace_combine
+      domain_in_message: true
+      requested_attributes: []
+      contains_flyer: false
+      reference_positions: []
+      reference_target: null
+      person_mention: null
+      is_active: null
+      order_status: sales_analysis
+      group_by: month
+      top_n: null
+      sales_channel: null
+      sales_basis: null
+      sales_company: Mocha
+      correction: false
+      routing:
+        suggested_team: null
+        suggested_agent: null
+        team_source: null
+      escalation:
+        is_escalation_confirmation: false
+        company_pick: null
+      document: null
+      status: null
+      asks: null
+      topic_reset: null
+      anaphora:
+        backward_reference: null
+      answers_open_question:
+        resolved: null
+        picks: null
+        answer: null
+    expect:
+      branch_kind: business_query
+      reply_contains:
+      - '*Sales, Mocha*'
+      - 'JAN: RM '
+      no_uuid: true
+- name: S1 AC-S1-23 a dealer contact is refused, nothing fetched
+  cold: true
+  contact: '437264485'
+  turns:
+  - text: total sales this year
+    parser:
+      message_type: business_query
+      intent_hint: check_order
+      domain_hint: order
+      scope_intent: general
+      is_affirmative: null
+      user_goal: sales figures
+      continuation: null
+      access_levels: []
+      broaden_axis: null
+      broaden_to: null
+      date_mode: null
+      date_filter_start: null
+      date_filter_end: null
+      match_mode: and
+      demand_qty: null
+      entities: []
+      entity_op: replace_combine
+      domain_in_message: true
+      requested_attributes: []
+      contains_flyer: false
+      reference_positions: []
+      reference_target: null
+      person_mention: null
+      is_active: null
+      order_status: sales_analysis
+      group_by: null
+      top_n: null
+      sales_channel: null
+      sales_basis: null
+      sales_company: null
+      correction: false
+      routing:
+        suggested_team: null
+        suggested_agent: null
+        team_source: null
+      escalation:
+        is_escalation_confirmation: false
+        company_pick: null
+      document: null
+      status: null
+      asks: null
+      topic_reset: null
+      anaphora:
+        backward_reference: null
+      answers_open_question:
+        resolved: null
+        picks: null
+        answer: null
+    expect:
+      branch_kind: business_query
+      reply_contains:
+      - Sorry, I can only share sales figures for your own account.
+      no_uuid: true
+- name: 'S1 gate: a contact without the Sales report key is refused before any fetch'
+  cold: true
+  contact: '437264486'
+  turns:
+  - text: total sales this year
+    parser:
+      message_type: business_query
+      intent_hint: check_order
+      domain_hint: order
+      scope_intent: general
+      is_affirmative: null
+      user_goal: sales figures
+      continuation: null
+      access_levels: []
+      broaden_axis: null
+      broaden_to: null
+      date_mode: null
+      date_filter_start: null
+      date_filter_end: null
+      match_mode: and
+      demand_qty: null
+      entities: []
+      entity_op: replace_combine
+      domain_in_message: true
+      requested_attributes: []
+      contains_flyer: false
+      reference_positions: []
+      reference_target: null
+      person_mention: null
+      is_active: null
+      order_status: sales_analysis
+      group_by: null
+      top_n: null
+      sales_channel: null
+      sales_basis: null
+      sales_company: null
+      correction: false
+      routing:
+        suggested_team: null
+        suggested_agent: null
+        team_source: null
+      escalation:
+        is_escalation_confirmation: false
+        company_pick: null
+      document: null
+      status: null
+      asks: null
+      topic_reset: null
+      anaphora:
+        backward_reference: null
+      answers_open_question:
+        resolved: null
+        picks: null
+        answer: null
+    expect:
+      branch_kind: business_query
+      reply_contains:
+      - Sales report is not enabled for your account.
+      no_uuid: true
