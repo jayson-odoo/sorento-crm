@@ -29,12 +29,18 @@ export function DeliveryScheduleConfirmDialog({
   open,
   onOpenChange,
   blocking,
+  partialRead = false,
   pending,
   onConfirm,
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
   blocking: ColumnState[];
+  /**
+   * Part of the document was not read. The server refuses that without an acknowledgement
+   * exactly as it refuses an unreconciled column, so the dialog asks for one the same way.
+   */
+  partialRead?: boolean;
   pending: boolean;
   onConfirm: (body: DeliveryScheduleConfirmBody) => Promise<void> | void;
 }) {
@@ -49,7 +55,8 @@ export function DeliveryScheduleConfirmDialog({
   }, [open]);
 
   const hasBlockers = blocking.length > 0;
-  const blocked = hasBlockers && (!acknowledge || reason.trim().length === 0);
+  const needsAcknowledgement = hasBlockers || partialRead;
+  const blocked = needsAcknowledgement && (!acknowledge || reason.trim().length === 0);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -61,7 +68,9 @@ export function DeliveryScheduleConfirmDialog({
               ? `${blocking.length} column${
                   blocking.length === 1 ? ' does' : 's do'
                 } not add up yet.`
-              : 'Every column agrees with the PO. Its areas go onto the project.'}
+              : partialRead
+                ? 'Part of this schedule could not be read.'
+                : 'Every column agrees with the PO. Its areas go onto the project.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -70,7 +79,7 @@ export function DeliveryScheduleConfirmDialog({
             event.preventDefault();
             if (blocked) return;
             await onConfirm(
-              hasBlockers
+              needsAcknowledgement
                 ? { acknowledge_unreconciled: true, reason: reason.trim() }
                 : {},
             );
@@ -97,7 +106,7 @@ export function DeliveryScheduleConfirmDialog({
               </ul>
             )}
 
-            {hasBlockers && (
+            {needsAcknowledgement && (
               <div className="space-y-3">
                 <label className="flex items-start gap-2 text-sm">
                   <Checkbox

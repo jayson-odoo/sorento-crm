@@ -79,7 +79,8 @@ def register_ideation_tools(mcp: Any, settings: Settings) -> None:
         a test turn: the idea is stored but hidden from the board, and no
         session state is persisted for the contact.
 
-        Returns ``{status, reply_text, link?, session_vars}`` as JSON text.
+        Returns ``{status, reply_text, link?, session_vars, offered_media}`` as
+        JSON text (``offered_media``: the media menu this reply offered, #1277).
         """
         client = ctx.request_context.lifespan_context["client"]
         spec = _SPECS["crm_ideation_turn"]

@@ -256,7 +256,10 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // Chatbot turn re-architecture (S1): Chatbot Domains and Entity kinds are two
     // new DataGrid list segments, found by the walk itself - no BODY_ONLY_SEGMENTS
     // entry needed. Total: 143.
-    expect(requiredSegmentNames.length).toBe(143);
+    // Sales module S6 (PLAN-sales-targets-opportunities-26sep.md): `sales/teams` is a new
+    // DataGrid list segment with its own `loading.tsx`, found by the walk itself - no
+    // BODY_ONLY_SEGMENTS entry needed. Total: 144.
+    expect(requiredSegmentNames.length).toBe(144);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);

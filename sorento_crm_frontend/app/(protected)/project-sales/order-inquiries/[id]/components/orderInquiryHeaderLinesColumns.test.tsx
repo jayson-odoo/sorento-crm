@@ -16,6 +16,11 @@
  * column this list used to end with is retired - the State cell itself is the reserve
  * click target now (`AC-RS-68` suite below), so the census here drops back to one column
  * per fact.
+ *
+ * Owner rulings 26 Sep 2026 (`PLAN-oi-no-double-count-25sep.md` S0, issue #1248): the grid
+ * is one row per sales order line. No. replaces SO line; SO Qty / Requested / Taken /
+ * Remaining replace Qty / Taken / Remaining (G4); one History icon per line replaces the
+ * reserve History icon and the decision trail icon (G3); no Was / now on the line (G1).
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -40,6 +45,8 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 }));
 
 import { useOrderInquiryHeaderLinesColumns } from './orderInquiryHeaderLinesColumns';
+import { foldInquiryLines, toLineRows } from '../../../_shared/lib/orderInquiryLineFold';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
 
 function renderWithClient(node: React.ReactElement) {
@@ -62,9 +69,13 @@ describe('AC-B3-1: the Lines tab reads Product, Qty, Taken, Remaining, Delivery 
 
     expect(titles).toEqual([
       'Expand',
+      // AC-ND-3, owner ruling 26 Sep (G4): No. replaces SO line; SO Qty and Requested
+      // replace Qty.
+      'No.',
       'Product',
-      'SO line',
-      'Qty',
+      'Confirmed',
+      'SO Qty',
+      'Requested',
       'Taken',
       'Remaining',
       'Delivery date',
@@ -152,7 +163,7 @@ function LinesFooter({ rows }: { rows: OrderInquiryWorklistRow[] }) {
 describe('AC-B3-5: the Lines tab footers total the buy rows only', () => {
   it('excludes notice rows and cancelled rows from Qty, Taken and Remaining alike', () => {
     const buyRows = Array.from({ length: 10 }, (_unused, index) =>
-      linesRow({ id: `buy-${index}`, qty: '10', linked_qty: '4' }),
+      linesRow({ id: `buy-${index}`, qty: '10', linked_qty: '4', so_line_qty: '10' }),
     );
     render(
       <LinesFooter
@@ -173,7 +184,10 @@ describe('AC-B3-5: the Lines tab footers total the buy rows only', () => {
       />,
     );
 
-    expect(screen.getByTestId('footer-qty')).toHaveTextContent(/^100$/);
+    // AC-ND-17 (owner ruling 26 Sep, G4): SO Qty (the server's `so_line_qty`, S2) and
+    // Requested; the notice and cancelled rows name no sales order line Qty here.
+    expect(screen.getByTestId('footer-so_qty')).toHaveTextContent(/^100$/);
+    expect(screen.getByTestId('footer-requested')).toHaveTextContent(/^100$/);
     expect(screen.getByTestId('footer-taken')).toHaveTextContent(/^40$/);
     expect(screen.getByTestId('footer-remaining')).toHaveTextContent(/^60$/);
   });
@@ -195,7 +209,7 @@ describe('AC-RS-83 / 83b / 83c: the reserve icons live inside the State cell', (
   ) {
     const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns(options as never));
     const stateColumn = result.current.find(
-      (column) => (column as { accessorKey?: string }).accessorKey === 'state',
+      (column) => ((column as { id?: string }).id ?? (column as { accessorKey?: string }).accessorKey) === 'state',
     ) as { cell: (context: unknown) => React.ReactNode } | undefined;
     expect(stateColumn).toBeDefined();
     return stateColumn!.cell({ row: { original: row } });
@@ -230,7 +244,7 @@ describe('AC-RS-83 / 83b / 83c: the reserve icons live inside the State cell', (
       useOrderInquiryHeaderLinesColumns({ canReserve: true } as never),
     );
     const stateColumn = result.current.find(
-      (column) => (column as { accessorKey?: string }).accessorKey === 'state',
+      (column) => ((column as { id?: string }).id ?? (column as { accessorKey?: string }).accessorKey) === 'state',
     ) as { size?: number; minSize?: number };
     // Round 2 (`PLAN-oi-decision-trail-ui.md`): 380 -> 410, room for the new Decision
     // trail icon beside the pill and the reserve icons.
@@ -250,7 +264,9 @@ describe('AC-RS-83 / 83b / 83c: the reserve icons live inside the State cell', (
     render(<>{stateCell(declinedRow, { canReserve: true })}</>);
     expect(screen.getByText('Not reserved')).toBeInTheDocument();
     expect(screen.getByLabelText('Amend reserve')).toBeInTheDocument();
-    expect(screen.getByLabelText('History')).toBeInTheDocument();
+    // AC-ND-13 (owner ruling 26 Sep, G3): the line's ONE History icon; the reserve
+    // History icon is gone.
+    expect(screen.getAllByLabelText('History')).toHaveLength(1);
   });
 
   it('a line with no reserve state: the plain state pill, no icons', () => {
@@ -607,40 +623,274 @@ describe('AC-DT-6: the Raised via column (PLAN-oi-decision-trail-ui.md)', () => 
   });
 });
 
-describe('AC-DT-5 (PLAN-oi-decision-trail-ui.md, round 2): the decision trail icon lives in the State cell', () => {
+describe('AC-ND-13 (owner ruling 26 Sep, G3): ONE History icon per line, in the State cell', () => {
   function stateCellFor(row: OrderInquiryWorklistRow, options: Record<string, unknown> = {}) {
     const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns(options as never));
     const stateColumn = result.current.find(
-      (column) => (column as { accessorKey?: string }).accessorKey === 'state',
+      (column) => ((column as { id?: string }).id ?? (column as { accessorKey?: string }).accessorKey) === 'state',
     ) as { cell: (context: unknown) => React.ReactNode } | undefined;
     expect(stateColumn).toBeDefined();
     return stateColumn!.cell({ row: { original: row } });
   }
 
-  it('renders the icon for a plain (non-reserved) row that names a core sales-order line', () => {
-    render(<>{stateCellFor(linesRow({ id: 'row-plain', core_line_id: 'core-line-1' }))}</>);
-    expect(screen.getByRole('button', { name: /decision trail/i })).toBeInTheDocument();
+  it('renders one History icon on a plain line and hands the line to the caller', () => {
+    const onLineHistoryClick = vi.fn();
+    render(
+      <>
+        {stateCellFor(linesRow({ id: 'row-plain', core_line_id: 'core-line-1' }), {
+          onLineHistoryClick,
+        })}
+      </>,
+    );
+    const buttons = screen.getAllByRole('button', { name: 'History' });
+    expect(buttons).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: /decision trail/i })).not.toBeInTheDocument();
+    fireEvent.click(buttons[0]);
+    expect(onLineHistoryClick).toHaveBeenCalledTimes(1);
+    expect(onLineHistoryClick.mock.calls[0][0].primary.id).toBe('row-plain');
   });
 
-  it('renders the icon beside the reserve icons too, on a reserved line with the permission', () => {
+  it('still one History icon on a reserved line with the permission, beside Amend reserve', () => {
     render(
       <>
         {stateCellFor(
-          linesRow({
-            id: 'row-reserved',
-            reserve_state: 'reserved',
-            core_line_id: 'core-line-1',
-          }),
+          linesRow({ id: 'row-reserved', reserve_state: 'reserved', core_line_id: 'core-line-1' }),
           { canReserve: true },
         )}
       </>,
     );
-    expect(screen.getByRole('button', { name: /decision trail/i })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'History' })).toHaveLength(1);
     expect(screen.getByLabelText('Amend reserve')).toBeInTheDocument();
   });
 
-  it('renders nothing for a row that names no core sales-order line', () => {
+  it('renders the icon even for a row that names no core sales-order line', () => {
     render(<>{stateCellFor(linesRow({ id: 'row-no-core-line' }))}</>);
-    expect(screen.queryByRole('button', { name: /decision trail/i })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'History' })).toHaveLength(1);
+  });
+
+  it('AC-ND-10 (G7): a cancelled line reads Line cancelled', () => {
+    render(<>{stateCellFor(linesRow({ id: 'row-c', line_cancelled: true }))}</>);
+    expect(screen.getByText('Line cancelled')).toBeInTheDocument();
+  });
+
+  it('AC-ND-11 (O2): a line with only used rows reads Nothing to buy', () => {
+    render(<>{stateCellFor(linesRow({ id: 'row-u', redirected_to_pool: true }))}</>);
+    expect(screen.getByText('Nothing to buy')).toBeInTheDocument();
+  });
+});
+
+describe('AC-ND-7 (owner ruling 26 Sep, G1): no Was / now on the line row', () => {
+  it('the #1248 line renders no Qty (i) Was trigger and no used pill', () => {
+    const [lineRow] = toLineRows(
+      foldInquiryLines([
+        linesRow({ id: 'used', core_line_id: 'cl-1', qty: '2', so_line_qty: '5', redirected_to_pool: true, ack_state: 'changed' }),
+        linesRow({ id: 'fresh', core_line_id: 'cl-1', qty: '5', so_line_qty: '5', previous_qty: '2', ack_state: 'changed' }),
+      ]),
+    );
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const cells = result.current
+      .filter((column) => ['so_qty', 'requested', 'taken', 'remaining'].includes((column as { id?: string }).id ?? ''))
+      .map((column) => (column as { cell: (context: unknown) => React.ReactNode }).cell({ row: { original: lineRow } }));
+    const { container } = render(<>{cells.map((cell, index) => <span key={index}>{cell}</span>)}</>);
+    expect(container.textContent).toBe('5505');
+    expect(container.querySelector('[data-testid^="qty-annotation-trigger"]')).toBeNull();
+    expect(screen.queryByText('used')).not.toBeInTheDocument();
+    expect(screen.queryByText(/was 2/i)).not.toBeInTheDocument();
+  });
+
+  const case1248 = () =>
+    toLineRows(
+      foldInquiryLines([
+        linesRow({ id: 'used', core_line_id: 'cl-1', qty: '2', state: 'placed', redirected_to_pool: true, ack_state: 'changed' }),
+        linesRow({
+          id: 'fresh',
+          core_line_id: 'cl-1',
+          qty: '5',
+          previous_qty: '2',
+          ack_state: 'changed',
+          note: 'Replaces 2 used; PO-2026/09-0023 received 24 Sep 2026 into BRW-IB',
+        }),
+      ]),
+    )[0];
+
+  function cellOf(key: string, lineRow: OrderInquiryWorklistRow) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const column = result.current.find(
+      (c) => ((c as { id?: string }).id ?? (c as { accessorKey?: string }).accessorKey) === key,
+    ) as { cell: (context: unknown) => React.ReactNode };
+    return column.cell({ row: { original: lineRow } });
+  }
+
+  it('B1: the #1248 line State reads To confirm, per the approved mockup', () => {
+    render(<>{cellOf('state', case1248())}</>);
+    expect(screen.getByText('To confirm')).toBeInTheDocument();
+    expect(screen.queryByText('To buy')).not.toBeInTheDocument();
+  });
+
+  it('B2: the Instruction cell carries no note (i), so "Replaces 2 used" never reads on the main grid', () => {
+    const { container } = render(<>{cellOf('verb', case1248())}</>);
+    expect(screen.getByText('ORDER')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Why this instruction' })).not.toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/replaces|used/i);
+  });
+
+  it('Nit N1: a cancelled line reads "-" in Instruction, as the mockup draws it', () => {
+    const [lineRow] = toLineRows(foldInquiryLines([linesRow({ id: 'c', core_line_id: 'cl-5', line_cancelled: true })]));
+    const { container } = render(<>{cellOf('verb', lineRow)}</>);
+    expect(container.textContent).toBe('-');
+  });
+});
+
+/**
+ * PR #1266 fix round W1 (owner, 26 Sep 2026: "i just realized after we click confirm, at
+ * the line level can't really see it is confirmed, can we have an icon here to show it is
+ * confirmed?"). A new `confirmation` column sits between Product and SO Qty.
+ */
+describe('W1 line confirmation column', () => {
+  function confirmationCell(lineRow: OrderInquiryWorklistRow) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const column = result.current.find(
+      (c) => (c as { id?: string }).id === 'confirmation',
+    ) as { cell: (context: unknown) => React.ReactNode } | undefined;
+    expect(column).toBeDefined();
+    return column!.cell({ row: { original: lineRow } });
+  }
+
+  it('W1: a fully confirmed line shows the check with Confirmed by <name> on <date>', () => {
+    const [lineRow] = toLineRows(
+      foldInquiryLines([
+        linesRow({
+          id: 'a',
+          core_line_id: 'cl-w1',
+          ack_state: 'acknowledged',
+          acknowledged_by_name: 'Aisyah',
+          acknowledged_at: '2026-09-26T11:20:00Z',
+        }),
+      ]),
+    );
+    render(<>{confirmationCell(lineRow)}</>);
+    const expectedLabel = `Confirmed by Aisyah on ${formatDateInMalaysia('2026-09-26T11:20:00Z')}`;
+    const mark = screen.getByTestId('line-confirmed-mark');
+    expect(mark).toHaveAttribute('aria-label', expectedLabel);
+    expect(mark).toHaveAttribute('title', expectedLabel);
+    expect(screen.queryByTestId('line-partly-confirmed-mark')).not.toBeInTheDocument();
+    // Review N5: the worklist's confirmed mark, not just any icon.
+    const icon = mark.querySelector('svg');
+    expect(icon).toHaveClass('lucide-circle-check');
+    expect(icon).toHaveClass('text-emerald-600');
+  });
+
+  it('W1: a partly confirmed line shows the half-state mark reading n of m', () => {
+    const [lineRow] = toLineRows(
+      foldInquiryLines([
+        linesRow({ id: 'a', core_line_id: 'cl-w2', ack_state: 'acknowledged' }),
+        linesRow({ id: 'b', core_line_id: 'cl-w2', ack_state: 'awaiting' }),
+      ]),
+    );
+    render(<>{confirmationCell(lineRow)}</>);
+    const mark = screen.getByTestId('line-partly-confirmed-mark');
+    expect(mark).toHaveAttribute('aria-label', '1 of 2 rows confirmed');
+    expect(mark).toHaveAttribute('title', '1 of 2 rows confirmed');
+    const icon = mark.querySelector('svg');
+    expect(icon).toHaveClass('lucide-circle-dashed');
+    expect(icon).toHaveClass('text-muted-foreground');
+    expect(screen.queryByTestId('line-confirmed-mark')).not.toBeInTheDocument();
+  });
+
+  it('W1: a line with nothing to confirm shows no mark', () => {
+    const [lineRow] = toLineRows(
+      foldInquiryLines([linesRow({ id: 'a', core_line_id: 'cl-w3', ack_state: 'awaiting' })]),
+    );
+    render(<>{confirmationCell(lineRow)}</>);
+    expect(screen.queryByTestId('line-confirmed-mark')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('line-partly-confirmed-mark')).not.toBeInTheDocument();
+  });
+
+  it('W1: the column sits between Product and SO Qty and does not sort', () => {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const ids = result.current.map((column) => (column as { id?: string; accessorKey?: string }).id ?? (column as { accessorKey?: string }).accessorKey);
+    const productIndex = ids.indexOf('item_code');
+    const confirmationIndex = ids.indexOf('confirmation');
+    const soQtyIndex = ids.indexOf('so_qty');
+    expect(productIndex).toBeGreaterThanOrEqual(0);
+    expect(confirmationIndex).toBe(productIndex + 1);
+    expect(soQtyIndex).toBe(confirmationIndex + 1);
+    const confirmationColumn = result.current.find(
+      (c) => (c as { id?: string }).id === 'confirmation',
+    ) as { enableSorting?: boolean; size?: number; meta?: { draggable?: boolean } } | undefined;
+    expect(confirmationColumn?.enableSorting).toBe(false);
+    // Review N4: a blank header carries no lone drag grip.
+    expect(confirmationColumn?.meta?.draggable).toBe(false);
+    expect(confirmationColumn?.size ?? 0).toBeLessThanOrEqual(48);
+  });
+});
+
+describe('AC-ND-9 (G5): the SPO cell lists every document of the line as first + "+N"', () => {
+  it('a 364 + 364 split on two SPOs reads the first SPO and +1, and +1 lists both', async () => {
+    const [lineRow] = toLineRows(
+      foldInquiryLines([
+        linesRow({
+          id: 'a',
+          core_line_id: 'cl-3',
+          qty: '364',
+          state: 'placed',
+          links: [{ kind: 'spo', document: 'SPO-2026/09-0007', qty: '364' }] as never,
+        }),
+        linesRow({
+          id: 'b',
+          core_line_id: 'cl-3',
+          qty: '364',
+          state: 'placed',
+          links: [{ kind: 'spo', document: 'SPO-2026/09-0009', qty: '364' }] as never,
+        }),
+      ]),
+    );
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const spoColumn = result.current.find(
+      (column) => (column as { id?: string }).id === 'spo_number',
+    ) as { cell: (context: unknown) => React.ReactNode };
+    renderWithClient(<>{spoColumn.cell({ row: { original: lineRow } })}</>);
+    expect(screen.getByText('SPO-2026/09-0007')).toBeInTheDocument();
+    // Nit N3: the accessible name says what "+1" means, never "plus one".
+    const more = screen.getByRole('button', { name: '1 more SPO' });
+    expect(more).toHaveTextContent('+1');
+    fireEvent.click(more);
+    expect(await screen.findByText('SPO-2026/09-0009')).toBeInTheDocument();
+  });
+});
+
+/**
+ * PR #1266 review at d0d328d7f, State-sort nit: the State column sorted on the primary
+ * row's raw `state`, so a line reading To confirm, Line cancelled or Nothing to buy sorted
+ * as raised / placed. It sorts on what the cell shows, the line's own State.
+ */
+describe('State sorts on the line State, not the primary row state', () => {
+  it('reads to_confirm, line_cancelled and nothing_to_buy through its accessor', () => {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const stateColumn = result.current.find(
+      (column) => (column as { id?: string }).id === 'state',
+    ) as { accessorFn?: (row: unknown, index: number) => unknown } | undefined;
+    expect(typeof stateColumn?.accessorFn).toBe('function');
+
+    const base = {
+      verb: 'ORDER',
+      qty: '5',
+      linked_qty: '0',
+      reserved_qty: '0',
+      bundled_qty: '0',
+      state: 'placed',
+    } as Partial<OrderInquiryWorklistRow>;
+    const lineRows = toLineRows(
+      foldInquiryLines([
+        { ...base, id: 'a', core_line_id: 'cl-1', line_no: 1, ack_state: 'changed' },
+        { ...base, id: 'b', core_line_id: 'cl-2', line_no: 2, line_cancelled: true },
+        { ...base, id: 'c', core_line_id: 'cl-3', line_no: 3, redirected_to_pool: true, ack_state: 'acknowledged' },
+      ] as OrderInquiryWorklistRow[]),
+    );
+    expect(lineRows.map((row, index) => stateColumn!.accessorFn!(row, index))).toEqual([
+      'to_confirm',
+      'line_cancelled',
+      'nothing_to_buy',
+    ]);
   });
 });

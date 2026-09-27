@@ -2,24 +2,23 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import {
-  AlertTriangle,
-  ArrowRight,
-  CheckCircle2,
-  ExternalLink,
-  FileText,
-  Loader2,
-  RefreshCw,
-} from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { AlertTriangle, History, RefreshCw } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
+import {
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
-import DetailActions from '@/components/common/DetailActions';
+import { PageHeader } from '@/components/common/PageHeader';
 import RecordNavigation from '@/components/common/RecordNavigation';
-import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useProject } from '../../../_shared/hooks/useProjects';
@@ -32,14 +31,19 @@ import {
 import { usePOVersion } from '../../../_shared/hooks/usePOIntake';
 import { useReviewOriginHref } from '../../../_shared/hooks/useReviewOrigin';
 import { resolveExtractionPhase } from '../../../_shared/types/deliverySchedule.types';
-import { describeReadingTime, describeWaitingFor } from '../../../_shared/lib/readingTime';
-import type { DeliveryScheduleConfirmBody } from '../../../_shared/types/deliverySchedule.types';
-import { ReconciliationBadge } from '../../components/DeliverySchedulesPanel';
+import type {
+  DeliveryScheduleConfirmBody,
+  DeliveryScheduleVersion,
+} from '../../../_shared/types/deliverySchedule.types';
+import { DeliveryScheduleUploadDialog } from '../../components/DeliveryScheduleUploadDialog';
+import { POIntakeDocumentViewer } from '../../components/POIntakeDocumentViewer';
+import { POIntakeExtractionProgress } from '../../components/POIntakeExtractionStatus';
 import {
   demoScheduleVersionState,
   useDemoScheduleState,
 } from '../_demo/scheduleDemo';
 import {
+  blocksConfirm,
   buildCellMap,
   buildCellMetaMap,
   buildColumnStates,
@@ -57,18 +61,35 @@ import { DeliveryScheduleMatrix } from './DeliveryScheduleMatrix';
 import type { ColumnFocusRequest, ScheduleGridController } from './DeliveryScheduleMatrix';
 import { DeliveryScheduleNotes } from './DeliveryScheduleNotes';
 import { poProductOptions } from './DeliveryScheduleProductPicker';
-import { DeliveryScheduleReconciliationList } from './DeliveryScheduleReconciliationList';
 import { DeliveryScheduleRevisionDiff } from './DeliveryScheduleRevisionDiff';
 import { DeliveryScheduleRevisionProposals } from './DeliveryScheduleRevisionProposals';
-import { useRouter } from 'next/navigation';
+
+type ReviewTab = 'schedule' | 'documents';
+type RowFilter = 'attention' | 'all';
 
 /**
- * Reviewing one version of a delivery schedule.
+ * The chosen segment of "By area | By date" and "Need attention | All rows" (W2).
  *
- * This is a reconciliation surface, not an accept-or-reject. Measured on the client's own two
- * documents, 29 of 37 and 35 of 38 columns reconciled on the first pass, so the job is to fix
- * the handful that did not: every column shows our total, the schedule's own TOTAL QTY and the
- * PO quantity side by side, and the ones that disagree are the work.
+ * Owner hand test, 26 Sep: the outline toggle's selected state, a slightly whiter background,
+ * left them unable to tell which segment was on. Filled with the accent and bold, the same
+ * selected style as the dealer-kit segmented control (`PrintBySelect`). The focus ring is a
+ * ring offset from the edge, never a fill, so focus and selection read as two things.
+ */
+const SEGMENT_CLASS =
+  'px-3 data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:font-semibold ' +
+  'data-[state=on]:text-primary-foreground data-[state=on]:hover:bg-primary/90 ' +
+  'data-[state=on]:hover:text-primary-foreground focus-visible:ring-2 focus-visible:ring-ring ' +
+  'focus-visible:ring-offset-2';
+
+/**
+ * Reviewing one version of a delivery schedule (S5, mockups/delivery-schedule-review.html).
+ *
+ * One page, one table: the matrix IS the reconciliation. A column that does not agree with the
+ * PO carries its Flag on its own row, with the fix and "Dismiss with a reason" behind it (R20),
+ * and while the version is unconfirmed the matrix opens on "Need attention", the rows that hold
+ * up Confirm schedule by the same rule the server applies. The schedule file has its own
+ * Documents tab (R18); the revision diff, the re-dating proposals and the document notes sit
+ * behind one History button rather than three tabs. One primary button.
  */
 export function DeliveryScheduleReviewClient({
   projectId,
@@ -82,12 +103,6 @@ export function DeliveryScheduleReviewClient({
   const live = useDeliveryScheduleVersion(versionId, { enabled: !demo });
   const view = demo ? demoScheduleVersionState(demo) : live;
   const version = view.data;
-  // Only once the read has finished. Beside a spinner a duration reads as the total,
-  // which it is not yet.
-  const readingTime =
-    version && version.extraction_state !== 'queued' && version.extraction_state !== 'running'
-      ? describeReadingTime(version.extraction_elapsed_ms)
-      : null;
 
   const {
     saveCells,
@@ -100,12 +115,10 @@ export function DeliveryScheduleReviewClient({
   } = useDeliveryScheduleVersionMutations(projectId, versionId);
   /** Which proposal a request is in flight for, so only its own card shows pending. */
   const [pendingProposalIndex, setPendingProposalIndex] = React.useState<number | null>(null);
-  // The demo screen has no server behind it, so it has no neighbours to ask for either.
   /**
-   * The walk is the project's SCHEDULES, the list this review was opened from,
-   * each stepped to at its latest version - not "every version in the project",
-   * which was never a list anybody was looking at. Opening an older version is
-   * not on that list, so the pager hides itself there (S3-05).
+   * The walk is the project's SCHEDULES, the list this review was opened from, each stepped to
+   * at its latest version. Opening an older version is not on that list, so the pager hides
+   * itself there (S3-05). The demo screen has no neighbours to ask for.
    */
   const router = useRouter();
   const originHref = useReviewOriginHref();
@@ -125,12 +138,8 @@ export function DeliveryScheduleReviewClient({
   const priorVersion = useDeliverySchedulePriorVersion(version, { enabled: !demo });
 
   /**
-   * The PO this schedule was checked against, for the column pickers.
-   *
-   * A column has to land on a line of THIS PO or it cannot reconcile, so the pickers offer
-   * the PO's own products rather than the whole catalogue. Read once here rather than in
-   * each picker: the three views mount a picker per unreconciled column and they would
-   * otherwise ask for the same document a dozen times.
+   * The PO this schedule was checked against, for the column pickers: a column has to land on
+   * a line of THIS PO or it cannot reconcile. Read once here rather than once per Flag.
    */
   const poVersion = usePOVersion(version?.po_version_id ?? undefined, !demo);
   const poOptions = React.useMemo(
@@ -139,23 +148,21 @@ export function DeliveryScheduleReviewClient({
   );
 
   const [drafts, setDrafts] = React.useState<Map<string, string>>(new Map());
-  const [learnedColumns, setLearnedColumns] = React.useState<number[]>([]);
   const [confirming, setConfirming] = React.useState(false);
+  const [historyOpen, setHistoryOpen] = React.useState(false);
+  const [uploading, setUploading] = React.useState(false);
+  const [activeTab, setActiveTab] = React.useState<ReviewTab>('schedule');
+  const [documentPage, setDocumentPage] = React.useState(1);
+  /** Null until the reviewer picks one, so the default can follow the version's state. */
+  const [rowFilter, setRowFilter] = React.useState<RowFilter | null>(null);
   /**
-   * The column a "Fix the quantities" press asked to be put INSIDE.
-   *
-   * Scrolling a column into view leaves the reviewer next to the thing they have to type in
-   * rather than in it, which on a 38-column matrix still means hunting for the cell. The
-   * nonce is what makes a second press of the same button fire again: the key alone would
-   * be an unchanged value and the views would ignore it.
+   * The column a "Fix the quantities" press asked to be put INSIDE. The nonce is what makes a
+   * second press of the same button fire again.
    */
   const [focusRequest, setFocusRequest] = React.useState<ColumnFocusRequest>(null);
   /**
-   * A column has TWO nodes, not one: the matrix and the phone cards are both mounted and a
-   * media query hides one of them. A single slot per column would hold whichever registered
-   * last, so a reconciliation row clicked on a desktop would scroll to a `display: none`
-   * card and appear to do nothing. Both are kept, and the one that is actually laid out is
-   * chosen at click time.
+   * A column has TWO nodes: the matrix row and the phone card are both mounted and a media
+   * query hides one. Both are kept, and the one actually laid out is chosen at jump time.
    */
   const columnRefs = React.useRef<Map<string, Set<HTMLElement>>>(new Map());
 
@@ -173,18 +180,13 @@ export function DeliveryScheduleReviewClient({
   );
 
   /**
-   * The document turned round by date rather than by phase (section 9.8). Built off the
-   * whole cell list, not just what By date is currently showing, so the hint chip below can
-   * count the moved cells even while By phase is the one on screen.
+   * By area is the document's own columns; By date turns the same cells round by their
+   * EFFECTIVE date, so an accepted re-date shows under the date it now goes out on.
    */
   const [viewMode, setViewMode] = React.useState<'phase' | 'date'>('phase');
   const dateColumnsData = React.useMemo(
     () => buildDateColumns({ phases: version?.phases ?? [], cells: version?.cells ?? [] }),
     [version?.phases, version?.cells],
-  );
-  const overrideCount = React.useMemo(
-    () => (version?.cells ?? []).filter((cell) => cell.delivery_date_override).length,
-    [version?.cells],
   );
 
   const columns = React.useMemo(
@@ -203,32 +205,23 @@ export function DeliveryScheduleReviewClient({
     [version?.phases],
   );
 
-  const blocking = React.useMemo(
-    () => columns.filter((column) => !column.reconciled),
-    [columns],
-  );
-  const reconciledCount = columns.length - blocking.length;
+  /** One rule for what blocks, shared by Confirm, its dialog and "Need attention" (lesson e). */
+  const blocking = React.useMemo(() => columns.filter(blocksConfirm), [columns]);
+  const effectiveFilter: RowFilter = rowFilter ?? (version?.confirmed_at ? 'all' : 'attention');
   /**
-   * Everything worth a look: what blocks, what was dismissed, and what carries a warning.
-   *
-   * A dismissed column no longer blocks and stays here all the same: this is the only place
-   * the dismissal and its reason are visible, and it is where the Undo lives. Dropping the
-   * row the moment it stopped counting would leave a reviewer no way back from a decision
-   * they had just taken.
-   *
-   * A warning is not work - the column agrees with the PO - but it is the one place the
-   * sentence behind it can be read, so it is listed in the same table with an amber pill
-   * rather than hidden among the thirty columns that had nothing to say. Filtered in ONE
-   * pass so a column that is both blocked and warned appears once, in document order, which
-   * is the order the matrix beside it uses.
+   * Rows typed into since "Need attention" was last chosen. They stay in it even once they add
+   * up: the keystroke that fixes a row must not unmount the input being typed into, or it never
+   * blurs and the fix is never saved. Choosing the view again lets them go.
    */
-  const listedColumns = React.useMemo(
-    () =>
-      columns.filter(
-        (column) => !column.reconciled || column.dismissed || Boolean(column.warning),
-      ),
-    [columns],
-  );
+  const [touched, setTouched] = React.useState<ReadonlySet<string>>(new Set());
+  const chooseFilter = (next: RowFilter) => {
+    setTouched(new Set());
+    setRowFilter(next);
+  };
+  const visibleColumns =
+    effectiveFilter === 'attention'
+      ? columns.filter((column) => blocksConfirm(column) || touched.has(column.key))
+      : columns;
 
   const registerColumnRef = React.useCallback((key: string, node: HTMLElement | null) => {
     // A ref callback reports its unmount as a bare null and never says which node it was
@@ -244,23 +237,21 @@ export function DeliveryScheduleReviewClient({
     const nodes = columnRefs.current.get(key);
     if (!nodes) return;
     for (const node of nodes) if (!node.isConnected) nodes.delete(node);
-    // `offsetParent` is null for anything a media query has hidden, which is exactly the
-    // shape of the grid this width is not using. jsdom lays nothing out, so it is null
-    // there for every node and the first one stands in.
-    const live = Array.from(nodes);
-    const target = live.find((node) => node.offsetParent !== null) ?? live[0];
+    // `offsetParent` is null for anything a media query has hidden. jsdom lays nothing out,
+    // so it is null there for every node and the first one stands in.
+    const all = Array.from(nodes);
+    const target = all.find((node) => node.offsetParent !== null) ?? all[0];
     target?.scrollIntoView?.({ behavior: 'smooth', inline: 'center', block: 'nearest' });
   }, []);
 
   /**
-   * Both: bring the column on screen, then hand it the cursor.
-   *
-   * The two views answer the request themselves because only they know which of their own
-   * cells is the first editable one, and on a phone the card has to open before there is a
-   * field to focus at all.
+   * Bring the column on screen, then hand it the cursor. The quantities are only editable in
+   * By area, so a press from By date switches there first; the views answer the request
+   * themselves because only they know which cell is the first editable one.
    */
   const jumpAndFocusColumn = React.useCallback(
     (key: string) => {
+      setViewMode('phase');
       jumpToColumn(key);
       setFocusRequest((previous) => ({ key, nonce: (previous?.nonce ?? 0) + 1 }));
     },
@@ -284,6 +275,9 @@ export function DeliveryScheduleReviewClient({
         next.set(cellMapKey(phaseId, columnKey), value);
         return next;
       });
+      setTouched((previous) =>
+        previous.has(columnKey) ? previous : new Set(previous).add(columnKey),
+      );
     },
     [],
   );
@@ -298,11 +292,9 @@ export function DeliveryScheduleReviewClient({
   }, []);
 
   /**
-   * Saves one cell on blur.
-   *
-   * The column total is recomputed locally from the drafts, so a corrected column flips to
-   * reconciled as the number is typed rather than after the round trip. The write still goes
-   * out, and the response replaces the version in the cache.
+   * Saves one cell on blur. The column total is recomputed locally from the drafts, so a
+   * corrected column flips to reconciled as the number is typed rather than after the round
+   * trip. The write still goes out, and the response replaces the version in the cache.
    */
   const commit = React.useCallback(
     (phaseId: string, column: ColumnState) => {
@@ -336,55 +328,60 @@ export function DeliveryScheduleReviewClient({
     [demo, drafts, dropDraft, saveCells, storedCells],
   );
 
+  /** A picked product is remembered for the customer's next schedule, and says so once. */
   const onResolveProduct = React.useCallback(
     (columnIndex: number, productId: string) => {
-      const remember = () =>
-        setLearnedColumns((previous) =>
-          previous.includes(columnIndex) ? previous : [...previous, columnIndex],
-        );
+      const customerCode = columns.find((column) => column.index === columnIndex)?.customerCode;
+      const remembered = () => {
+        if (customerCode) {
+          toast.success(
+            `${customerCode} will resolve to this product on this customer's next schedule.`,
+          );
+        }
+      };
       if (demo) {
-        remember();
+        remembered();
         return;
       }
-      resolveProduct.mutate(
-        { productIndex: columnIndex, productId },
-        { onSuccess: remember },
-      );
+      resolveProduct.mutate({ productIndex: columnIndex, productId }, { onSuccess: remembered });
     },
-    [demo, resolveProduct],
-  );
-
-  const onDismissColumn = React.useCallback(
-    (columnIndex: number, dismissed: boolean, reason?: string) => {
-      if (demo) return;
-      dismissColumn.mutate({ columnIndex, dismissed, reason: reason ?? null });
-    },
-    [demo, dismissColumn],
+    [columns, demo, resolveProduct],
   );
 
   const controller: ScheduleGridController = {
-    columns,
+    columns: visibleColumns,
+    totalsColumns: columns,
     phaseGroups,
     valueFor,
     setDraft,
     commit,
-    resolveProduct: onResolveProduct,
-    poOptions,
     canEdit,
-    learnedColumns,
+    flagActions: {
+      canEdit,
+      poOptions,
+      resolveProduct: onResolveProduct,
+      fixQuantities: jumpAndFocusColumn,
+      // The hook toasts a refusal; the dialog closes either way.
+      dismiss: demo
+        ? undefined
+        : (columnIndex, reason) =>
+            dismissColumn
+              .mutateAsync({ columnIndex, dismissed: true, reason })
+              .catch(() => undefined),
+      undoDismiss: demo
+        ? undefined
+        : (columnIndex) => dismissColumn.mutate({ columnIndex, dismissed: false, reason: null }),
+      dismissing: dismissColumn.isPending,
+    },
     registerColumnRef,
     focusRequest,
     metaFor: (phaseId, columnKey) => cellMeta.get(cellMapKey(phaseId, columnKey)),
   };
 
   /**
-   * The PO this schedule is checked against, for the gear menu.
-   *
-   * The PO record (`pos/{id}`, its lines and documents) rather than the document confirm
-   * screen: amending a PO is what the reviewer comes here to do. `purchase_order_id` arrives
-   * on the schedule version; the PO version we already read for the pickers is the fallback,
-   * and the version review screen the last resort. Null when this schedule was checked
-   * against no PO at all - a dead link is worse than no link.
+   * The PO this schedule is checked against, from the meta line. The PO record rather than
+   * the document confirm screen; the version screen the last resort. It opens in a new tab:
+   * the reviewer is mid-reconciliation and leaving the page loses the cells they have typed.
    */
   const poHref = version?.purchase_order_id
     ? `/project-sales/${projectId}/pos/${version.purchase_order_id}`
@@ -394,60 +391,69 @@ export function DeliveryScheduleReviewClient({
         ? `/project-sales/${projectId}/purchase-orders/${version.po_version_id}`
         : null;
 
+  const crumbs = [
+    { title: 'Project Sales' },
+    { title: 'Pipeline', path: '/project-sales/pipeline' },
+    { title: project.data?.title ?? 'Project', path: `/project-sales/${projectId}` },
+  ];
+
   if (view.isLoading) {
     return <ReviewSkeleton />;
   }
 
   if (view.isError || !version) {
     return (
-      <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">
-        <h2 className="text-sm font-semibold text-destructive">
-          This schedule could not be loaded
-        </h2>
-        <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-          {view.error instanceof Error ? view.error.message : 'It may have been deleted.'}
-        </p>
-        <Button asChild variant="outline" className="mt-4">
-          <Link href={`/project-sales/${projectId}?tab=schedules`}>
-            Back to delivery schedules
-          </Link>
-        </Button>
+      <div className="space-y-4">
+        <PageHeader title="Delivery schedule" crumbs={crumbs} />
+        <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">
+          <h2 className="text-sm font-semibold text-destructive">
+            This schedule could not be loaded
+          </h2>
+          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+            {view.error instanceof Error ? view.error.message : 'It may have been deleted.'}
+          </p>
+          <Button asChild variant="outline" className="mt-4">
+            <Link href={`/project-sales/${projectId}?tab=schedules`}>
+              Back to delivery schedules
+            </Link>
+          </Button>
+        </div>
       </div>
     );
   }
 
   const readingNow = phase === 'queued' || phase === 'running';
+  const title = version.po_number
+    ? `Schedule ${version.po_number} v${version.version_no}`
+    : `Schedule v${version.version_no}`;
+
+  /** One primary button: Confirm schedule, or once confirmed, the amendment it left owing. */
+  const primary = !version.confirmed_at ? (
+    <Button
+      type="button"
+      disabled={!canEdit || readingNow || phase === 'failed' || columns.length === 0}
+      onClick={() => setConfirming(true)}
+    >
+      Confirm schedule
+    </Button>
+  ) : version.amendment_preview_url ? (
+    <Button asChild>
+      <Link href={version.amendment_preview_url}>Review the amendment</Link>
+    </Button>
+  ) : null;
 
   return (
-    <div className="space-y-5">
-      {/* flex-col until sm: a wrapping title and the actions cannot share a row on a phone. */}
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 break-words">
-          <h2 className="text-xl font-semibold">
-            {version.po_number
-              ? `Delivery schedule for ${version.po_number}`
-              : 'Delivery schedule'}
-          </h2>
-          <p className="mt-0.5 flex flex-wrap items-center gap-x-3 text-sm text-muted-foreground">
-            <span>{`Version ${version.version_no}`}</span>
-            {version.revision_label && <span>{version.revision_label}</span>}
-            {version.issuer_party_label && (
-              <span>{`Issued by ${version.issuer_party_label}`}</span>
-            )}
-            {version.schedule_date && (
-              <span>{`Dated ${formatDateInMalaysia(version.schedule_date)}`}</span>
-            )}
-            {version.po_version_no !== null && version.po_version_no !== undefined && (
-              <span>{`Checked against PO version ${version.po_version_no}`}</span>
-            )}
-            {readingTime && <span>{readingTime}</span>}
-          </p>
-        </div>
-
-        {/* The project's schedules, each at its latest version, walked one after
-            another rather than through the project tab between each. */}
-        <DetailActions
-          pagerNode={
+    <div className="space-y-4">
+      <PageHeader
+        title={
+          <span className="inline-flex flex-wrap items-center gap-2">
+            {title}
+            <StatusPill version={version} phase={phase} />
+          </span>
+        }
+        crumbs={crumbs}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
             <RecordNavigation
               index={scheduleIndex >= 0 ? scheduleIndex + 1 : null}
               total={scheduleRows.length}
@@ -458,102 +464,27 @@ export function DeliveryScheduleReviewClient({
               isLoading={schedules.isLoading}
               ariaLabel="schedule"
             />
-          }
-          gear={
-            <>
-            {/* Everything that only takes you somewhere lives behind the gear. The header used
-                to carry a button per destination, and the row of them competed with Confirm,
-                which is the one thing this screen is for. Both open in a new tab: the reviewer
-                is mid-reconciliation and leaving the page loses the cells they have typed. */}
-            {(poHref || version.document_url) && (
-              <DetailActionsMenu ariaLabel="Schedule actions">
-                {poHref && (
-                  <DropdownMenuItem asChild>
-                    <a href={poHref} target="_blank" rel="noopener noreferrer">
-                      <ExternalLink className="size-4" aria-hidden />
-                      View PO
-                    </a>
-                  </DropdownMenuItem>
-                )}
-                {version.document_url && (
-                  <DropdownMenuItem asChild>
-                    <a href={version.document_url} target="_blank" rel="noopener noreferrer">
-                      <FileText className="size-4" aria-hidden />
-                      View document
-                    </a>
-                  </DropdownMenuItem>
-                )}
-              </DetailActionsMenu>
-            )}
-            </>
-          }
-          primary={
-            <>
-            {!version.confirmed_at && (
-              <Button
-                type="button"
-                size="sm"
-                disabled={!canEdit || readingNow || columns.length === 0}
-                onClick={() => setConfirming(true)}
-              >
-                Confirm schedule
-              </Button>
-            )}
-            </>
-          }
-        />
-      </header>
-
-      {version.confirmed_at && (
-        <div className="flex flex-col gap-3 rounded-lg border border-border bg-accent px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <CheckCircle2 className="size-4 text-[var(--color-success-accent,var(--color-green-500))]" aria-hidden />
-            <span className="break-words">
-              {`Confirmed ${formatDateTimeInMalaysia(version.confirmed_at)}`}
-              {version.confirmed_by_name ? ` by ${version.confirmed_by_name}` : ''}
-            </span>
+            {primary}
           </div>
-          {/* Confirming is the end of this screen's job and the start of the next one.
-              Without a way onward, the person who just finished has to work out for
-              themselves that sales orders live back on the project, which is exactly
-              the dead end they hit after confirming a PO. */}
-          <Button asChild size="sm" variant="outline" className="shrink-0">
-            <Link href={`/project-sales/${projectId}?tab=sales-orders`}>
-              Back to the project to build the sales orders
-              <ArrowRight className="size-4" aria-hidden />
-            </Link>
-          </Button>
-        </div>
-      )}
+        }
+      >
+        <p className="text-sm text-muted-foreground" data-testid="schedule-meta">
+          <MetaLine version={version} project={project.data} poHref={poHref} />
+        </p>
+      </PageHeader>
 
-      {version.amendment_preview_url && (
-        <div
-          data-testid="amendment-needed-banner"
-          className="flex flex-col gap-3 rounded-lg border border-[var(--color-warning-accent,var(--color-yellow-500))]/50 bg-[var(--color-warning-soft,var(--color-yellow-100))] px-3 py-2 text-sm dark:bg-[var(--color-warning-soft,var(--color-yellow-950))] sm:flex-row sm:items-center sm:justify-between"
-        >
-          <span className="break-words">
-            This schedule is confirmed; the linked sales order has not been amended yet.
-          </span>
-          <Button asChild size="sm" variant="outline" className="shrink-0">
-            <Link href={version.amendment_preview_url}>Review the amendment</Link>
-          </Button>
-        </div>
-      )}
-
-      {readingNow && <ExtractionProgress version={version} />}
+      {readingNow && <POIntakeExtractionProgress version={version} />}
 
       {phase === 'failed' && (
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-8 text-center">
           <h2 className="text-sm font-semibold text-destructive">
             This document could not be read
           </h2>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground break-words">
+          <p className="mx-auto mt-1 max-w-md break-words text-sm text-muted-foreground">
             {version.extraction_error ?? 'Nothing was extracted from the file.'}
           </p>
-          {/* Reading it again leads, because the commonest failure is not the document:
-              a reader that was killed part-way says nothing about the scan, and asking
-              for a better one is advice that cannot help. Re-uploading stays available
-              for the case where the document really is the problem. */}
+          {/* Reading it again leads: the commonest failure is a reader killed part-way, which
+              says nothing about the scan. Re-uploading stays for when the document is it. */}
           <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
             {!demo && (
               <Button
@@ -569,187 +500,196 @@ export function DeliveryScheduleReviewClient({
               </Button>
             )}
             <Button asChild variant="outline">
-              <Link href={`/project-sales/${projectId}?tab=schedules`}>
-                Upload it again
-              </Link>
+              <Link href={`/project-sales/${projectId}?tab=schedules`}>Upload it again</Link>
             </Button>
           </div>
         </div>
       )}
 
       {phase === 'partial' && (
-        <div className="flex flex-col gap-1 rounded-lg border border-[var(--color-warning-accent,var(--color-yellow-500))]/50 bg-[var(--color-warning-soft,var(--color-yellow-100))] px-3 py-2.5 text-sm dark:bg-[var(--color-warning-soft,var(--color-yellow-950))]">
-          <span className="flex items-center gap-2 font-medium">
-            <AlertTriangle className="size-4" aria-hidden />
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-[var(--color-warning-accent,var(--color-yellow-500))]/50 bg-[var(--color-warning-soft,var(--color-yellow-100))] px-3 py-2 text-sm font-medium dark:bg-[var(--color-warning-soft,var(--color-yellow-950))]">
+          <AlertTriangle className="size-4 shrink-0" aria-hidden />
+          <span className="break-words">
             {typeof version.pages_extracted === 'number' &&
             typeof version.page_count === 'number'
               ? `Only ${version.pages_extracted} of ${version.page_count} pages were read`
               : 'Some of this document was not read'}
           </span>
-          <span className="text-muted-foreground">
-            {version.extraction_error ??
-              'The columns below are only what came out of the pages that were read.'}
-          </span>
-        </div>
-      )}
-
-      {!readingNow && phase !== 'failed' && columns.length === 0 && (
-        <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
-          <h2 className="text-sm font-semibold">No columns came out of this document</h2>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            Nothing was read that looks like a product column. Check the file is the schedule
-            itself and upload it again.
-          </p>
-          <Button asChild variant="outline" className="mt-4">
-            <Link href={`/project-sales/${projectId}?tab=schedules`}>
-              Back to delivery schedules
-            </Link>
-          </Button>
-        </div>
-      )}
-
-      {!readingNow && columns.length > 0 && (
-        <>
-          <DeliveryScheduleNotes notes={version.notes ?? []} />
-
-          <DeliveryScheduleRevisionProposals
-            proposals={version.revision_proposals ?? []}
-            canDecide={canEdit}
-            pendingIndex={pendingProposalIndex}
-            onAccept={(index) => {
-              if (demo) return;
-              setPendingProposalIndex(index);
-              acceptProposal.mutate(index, {
-                onSettled: () => setPendingProposalIndex(null),
-              });
-            }}
-            onReject={(index) => {
-              if (demo) return;
-              setPendingProposalIndex(index);
-              rejectProposal.mutate(index, {
-                onSettled: () => setPendingProposalIndex(null),
-              });
-            }}
-          />
-
-          {version.version_no > 1 && (
-            <DeliveryScheduleRevisionDiff
-              version={version}
-              priorVersion={priorVersion.data}
-              priorLoading={priorVersion.isLoading}
-            />
+          {version.extraction_error && (
+            <span className="break-words font-normal text-muted-foreground">
+              {version.extraction_error}
+            </span>
           )}
+        </div>
+      )}
 
-          <Card>
-            <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
-              <CardTitle className="text-sm">Reconciliation</CardTitle>
-              <ReconciliationBadge reconciled={reconciledCount} total={columns.length} />
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {/* What the section is for, in one line. Without it the rows read as a list
-                  of complaints with no stated purpose, which is what "what do I need to do
-                  with them" was asking. */}
-              <p className="text-sm text-muted-foreground">
-                {canEdit
-                  ? 'Every column has to agree with the PO before this schedule can be confirmed.'
-                  : 'This schedule is confirmed, so nothing here can be changed. What follows is what did not agree with the PO at the time it was confirmed.'}
-              </p>
-              {listedColumns.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  Nothing to fix. Every one of them matches the PO and the schedule&apos;s
-                  own totals.
-                </p>
-              ) : (
-                <>
-                  {/* How much is left, so a column fixed is a number going down rather than
-                      a row quietly leaving a list. */}
-                  {/* "Still to fix" is a to-do. On a confirmed schedule there is nothing
-                      to do, so the same number has to be reported as a finding instead, or
-                      the screen asks for work it will not accept. */}
-                  <p data-testid="reconciliation-remaining" className="text-sm font-medium">
-                    {blocking.length === 0
-                      ? 'Nothing left to fix. What follows was dismissed, or carries a warning that does not block.'
-                      : canEdit
-                        ? blocking.length === 1
-                          ? '1 column still to fix.'
-                          : `${blocking.length} columns still to fix.`
-                        : blocking.length === 1
-                          ? '1 column did not agree.'
-                          : `${blocking.length} columns did not agree.`}
-                  </p>
-                  <DeliveryScheduleReconciliationList
-                    columns={listedColumns}
-                    canEdit={canEdit}
-                    poOptions={poOptions}
-                    onJump={jumpToColumn}
-                    onFixQuantities={jumpAndFocusColumn}
-                    onResolveProduct={onResolveProduct}
-                    onDismissColumn={demo ? undefined : onDismissColumn}
+      {!readingNow && phase !== 'failed' && (
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as ReviewTab)}>
+          <TabsList variant="line" aria-label="Schedule sections">
+            <TabsTrigger value="schedule">Schedule</TabsTrigger>
+            <TabsTrigger value="documents">Documents</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="schedule" className="space-y-3">
+            {columns.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
+                <h2 className="text-sm font-semibold">No columns came out of this document</h2>
+                <Button asChild variant="outline" className="mt-4">
+                  <Link href={`/project-sales/${projectId}?tab=schedules`}>
+                    Back to delivery schedules
+                  </Link>
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  <ToggleGroup
+                    type="single"
+                    variant="outline"
+                    value={viewMode}
+                    onValueChange={(next) => next && setViewMode(next as 'phase' | 'date')}
+                  >
+                    <ToggleGroupItem value="phase" className={SEGMENT_CLASS}>
+                      By area
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="date" className={SEGMENT_CLASS}>
+                      By date
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                  <ToggleGroup
+                    type="single"
+                    variant="outline"
+                    value={effectiveFilter}
+                    onValueChange={(next) => next && chooseFilter(next as RowFilter)}
+                  >
+                    <ToggleGroupItem value="attention" className={SEGMENT_CLASS}>
+                      {`Need attention (${blocking.length})`}
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="all" className={SEGMENT_CLASS}>
+                      {`All rows (${columns.length})`}
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="ms-auto"
+                    onClick={() => setHistoryOpen(true)}
+                  >
+                    <History className="size-4" aria-hidden />
+                    History
+                  </Button>
+                </div>
+
+                {visibleColumns.length === 0 ? (
+                  <div
+                    data-testid="schedule-all-clear"
+                    className="rounded-lg border border-dashed border-border px-6 py-10 text-center text-sm text-muted-foreground"
+                  >
+                    Nothing needs attention
+                  </div>
+                ) : viewMode === 'phase' ? (
+                  /* One grid, two shapes. The matrix needs room; a phone gets the cards. */
+                  <>
+                    <div className="hidden md:block">
+                      <DeliveryScheduleMatrix controller={controller} />
+                    </div>
+                    <div className="md:hidden">
+                      <DeliveryScheduleColumnCards controller={controller} />
+                    </div>
+                  </>
+                ) : (
+                  /* Read-only, on every width: the inputs live in By area. */
+                  <DeliveryScheduleByDateMatrix
+                    controller={controller}
+                    dateColumns={dateColumnsData}
                   />
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* By phase is the document's own columns, unchanged; By date turns the same
-              cells round by their EFFECTIVE date, so an accepted re-date shows the quantity
-              sitting under the date it now goes out on, not the one it left (the captain's
-              own question, 19 Aug). */}
-          <div className="flex flex-wrap items-center gap-2">
-            <ToggleGroup
-              type="single"
-              variant="outline"
-              value={viewMode}
-              onValueChange={(next) => next && setViewMode(next as 'phase' | 'date')}
-            >
-              <ToggleGroupItem value="phase" className="px-3">
-                By area
-              </ToggleGroupItem>
-              <ToggleGroupItem value="date" className="px-3">
-                By date
-              </ToggleGroupItem>
-            </ToggleGroup>
-            {viewMode === 'phase' && overrideCount > 0 && (
-              <button
-                type="button"
-                onClick={() => setViewMode('date')}
-                className="rounded-full border border-border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted"
-              >
-                {`${overrideCount} cell${overrideCount === 1 ? '' : 's'} re-dated - view by date`}
-              </button>
+                )}
+              </>
             )}
-          </div>
+          </TabsContent>
 
-          {viewMode === 'phase' ? (
-            /* One grid, two shapes. The matrix needs room; a phone gets the per-column view. */
-            <>
-              <div className="hidden md:block">
-                <DeliveryScheduleMatrix controller={controller} />
-              </div>
-              <div className="md:hidden">
-                <DeliveryScheduleColumnCards controller={controller} />
-              </div>
-            </>
-          ) : (
-            /* Read-only, on every width: the inputs live in By phase, and building a
-               phone-specific by-date card view is not the trivial change the phone view
-               otherwise gets left alone for. */
-            <DeliveryScheduleByDateMatrix controller={controller} dateColumns={dateColumnsData} />
-          )}
-        </>
+          {/* The whole document and nothing under it (owner hand test on PR #1237, item 4).
+              `dvh`, not `vh`: this tab is verified at 375px. */}
+          <TabsContent value="documents" className="flex h-[calc(100dvh-14rem)] flex-col">
+            {version.document_url ? (
+              <POIntakeDocumentViewer
+                documentUrl={version.document_url}
+                documentKey={version.id}
+                attachmentId={version.attachment_id}
+                pageCount={version.page_count ?? null}
+                page={documentPage}
+                onPageChange={setDocumentPage}
+                className="flex-1"
+                documentLabel="Delivery schedule"
+              />
+            ) : (
+              <DocumentEmptyState
+                onReupload={canEdit && !demo ? () => setUploading(true) : undefined}
+              />
+            )}
+          </TabsContent>
+        </Tabs>
       )}
+
+      <Sheet open={historyOpen} onOpenChange={setHistoryOpen}>
+        <SheetContent className="w-full gap-0 p-0 sm:max-w-xl">
+          <SheetHeader className="border-b border-border px-5 py-4">
+            <SheetTitle>History</SheetTitle>
+          </SheetHeader>
+          <SheetBody
+            className="space-y-4 overflow-y-auto px-5 py-4"
+            data-testid="schedule-history"
+          >
+            {version.version_no > 1 ? (
+              <DeliveryScheduleRevisionDiff
+                version={version}
+                priorVersion={priorVersion.data}
+                priorLoading={priorVersion.isLoading}
+              />
+            ) : (
+              <Card>
+                <CardContent className="space-y-1 py-4 text-sm">
+                  <p className="font-medium">Changes since the previous version</p>
+                  <p className="text-muted-foreground">-</p>
+                </CardContent>
+              </Card>
+            )}
+            <DeliveryScheduleRevisionProposals
+              proposals={version.revision_proposals ?? []}
+              canDecide={canEdit}
+              pendingIndex={pendingProposalIndex}
+              onAccept={(index) => {
+                if (demo) return;
+                setPendingProposalIndex(index);
+                acceptProposal.mutate(index, {
+                  onSettled: () => setPendingProposalIndex(null),
+                });
+              }}
+              onReject={(index) => {
+                if (demo) return;
+                setPendingProposalIndex(index);
+                rejectProposal.mutate(index, {
+                  onSettled: () => setPendingProposalIndex(null),
+                });
+              }}
+            />
+            <DeliveryScheduleNotes notes={version.notes ?? []} />
+          </SheetBody>
+        </SheetContent>
+      </Sheet>
 
       <DeliveryScheduleConfirmDialog
         open={confirming}
         onOpenChange={setConfirming}
         blocking={blocking}
+        partialRead={phase === 'partial'}
         pending={confirm.isPending}
         onConfirm={async (body: DeliveryScheduleConfirmBody) => {
           try {
             await confirm.mutateAsync(body);
             setConfirming(false);
             // S4: Confirm schedule returns the user to where they came from. With no origin
-            // (a deep link or a bookmark) it stays on the page, as before this slice.
+            // (a deep link or a bookmark) it stays on the page.
             if (originHref) router.push(originHref);
           } catch {
             // The mutation hook already surfaced the message; keep the dialog open so the
@@ -757,72 +697,101 @@ export function DeliveryScheduleReviewClient({
           }
         }}
       />
+
+      {uploading && project.data && (
+        <DeliveryScheduleUploadDialog
+          project={project.data}
+          schedules={scheduleRows}
+          onDone={() => setUploading(false)}
+        />
+      )}
     </div>
   );
 }
 
-/** Honest progress: page counts when the backend gives them, no invented percentage. */
-function ExtractionProgress({
+/** The header's one status pill: what stage of reading and confirming it is at. */
+function StatusPill({
   version,
+  phase,
 }: {
-  version: {
-    extraction_state: string;
-    page_count?: number | null;
-    pages_extracted?: number | null;
-    extraction_started_at?: string | null;
-  };
+  version: DeliveryScheduleVersion;
+  phase: ReturnType<typeof resolveExtractionPhase>;
 }) {
-  const read = version.pages_extracted;
-  const total = version.page_count;
-  const waitingFor = describeWaitingFor(version.extraction_started_at);
-  const detail =
-    version.extraction_state === 'queued'
-      ? typeof total === 'number'
-        ? `${total} page${total === 1 ? '' : 's'} waiting to be read.`
-        : 'Waiting to be read.'
-      : typeof read === 'number' && typeof total === 'number'
-        ? `Page ${Math.min(read + 1, total)} of ${total}.`
-        : 'Reading the document.';
-
-  return (
-    <Card>
-      <CardContent className="space-y-4 py-6">
-        <div className="flex items-center gap-2 text-sm">
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-          <span className="font-medium">
-            {version.extraction_state === 'queued' ? 'Queued' : 'Reading the schedule'}
-          </span>
-          <Badge variant="secondary" size="sm">
-            {detail}
-          </Badge>
-          {waitingFor ? (
-            <span className="text-xs text-muted-foreground">{waitingFor}</span>
-          ) : null}
-        </div>
-        <MatrixSkeleton />
-      </CardContent>
-    </Card>
+  if (phase === 'queued') return <Badge variant="secondary">Waiting to be read</Badge>;
+  if (phase === 'running') return <Badge variant="secondary">Being read</Badge>;
+  if (phase === 'failed') return <Badge variant="destructive">Could not be read</Badge>;
+  return version.confirmed_at ? (
+    <Badge variant="success">Confirmed</Badge>
+  ) : (
+    <Badge variant="warning">To confirm</Badge>
   );
 }
 
-function MatrixSkeleton() {
+/** Project, date, which PO it was checked against, and who confirmed it: `-` where unknown. */
+function MetaLine({
+  version,
+  project,
+  poHref,
+}: {
+  version: DeliveryScheduleVersion;
+  project: { title: string; project_code?: string | null } | undefined;
+  poHref: string | null;
+}) {
+  const projectLabel = project
+    ? project.project_code
+      ? `${project.title} (${project.project_code})`
+      : project.title
+    : '-';
+  const checkedAgainst =
+    version.po_version_no !== null && version.po_version_no !== undefined
+      ? `Checked against PO v${version.po_version_no}`
+      : null;
   return (
-    <div className="space-y-2" aria-hidden>
-      <div className="flex gap-2">
-        <Skeleton className="h-9 w-[200px] shrink-0" />
-        <Skeleton className="h-9 flex-1" />
-      </div>
-      {[0, 1, 2, 3, 4].map((row) => (
-        <div key={row} className="flex gap-2">
-          <Skeleton className="h-7 w-[200px] shrink-0" />
-          <Skeleton className="h-7 flex-1" />
-        </div>
-      ))}
+    <>
+      {projectLabel}
+      {` · Dated ${version.schedule_date ? formatDateInMalaysia(version.schedule_date) : '-'}`}
+      {checkedAgainst && (
+        <>
+          {' · '}
+          {poHref ? (
+            <a
+              href={poHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline-offset-4 hover:underline"
+            >
+              {checkedAgainst}
+            </a>
+          ) : (
+            checkedAgainst
+          )}
+        </>
+      )}
+      {version.confirmed_at &&
+        ` · Confirmed ${formatDateTimeInMalaysia(version.confirmed_at)}${
+          version.confirmed_by_name ? ` by ${version.confirmed_by_name}` : ''
+        }`}
+    </>
+  );
+}
+
+/** R13: a missing file is a plain empty state, never an error code. */
+function DocumentEmptyState({ onReupload }: { onReupload?: () => void }) {
+  return (
+    <div className="rounded-lg border border-dashed border-border px-6 py-12 text-center">
+      <h3 className="text-sm font-semibold">This PDF is not available yet</h3>
+      <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+        The source file has not finished uploading, or could not be found.
+      </p>
+      {onReupload && (
+        <Button type="button" className="mt-4" onClick={onReupload}>
+          Upload the schedule again
+        </Button>
+      )}
     </div>
   );
 }
 
-/** Matches the shape the page settles into, so nothing jumps when the data lands. */
 function ReviewSkeleton() {
   return (
     <div className="space-y-5">
@@ -833,7 +802,7 @@ function ReviewSkeleton() {
         </div>
         <Skeleton className="h-8 w-40" />
       </div>
-      <Skeleton className="h-24 w-full" />
+      <Skeleton className="h-9 w-56" />
       <Skeleton className="h-80 w-full" />
     </div>
   );

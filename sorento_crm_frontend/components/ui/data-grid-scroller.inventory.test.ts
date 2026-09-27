@@ -162,6 +162,13 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
     1,
   ],
   [
+    'app/(protected)/project-sales/order-inquiries/[id]/components/OrderInquiryLineHistoryDialog.tsx',
+    // PLAN-oi-no-double-count-25sep.md S0 (G2, G3): the History dialog's Rows tab, one
+    // DataGrid of the line's rows inside its own DialogBody (overflow-y-auto); the grid's
+    // own scroller carries the sideways scroll at 375.
+    1,
+  ],
+  [
     'app/(protected)/project-sales/order-inquiries/components/OrderInquiryDocumentDialog.tsx',
     2, // two PanelDataGrid bodies (PO, SPO) inside one DialogBody that already owns the scroll
   ],

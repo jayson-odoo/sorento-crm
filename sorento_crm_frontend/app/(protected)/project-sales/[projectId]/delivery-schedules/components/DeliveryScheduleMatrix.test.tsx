@@ -72,10 +72,14 @@ function controller(overrides: Partial<ScheduleGridController> = {}): ScheduleGr
     valueFor: (phaseId) => (phaseId === 'ph1' ? '927' : ''),
     setDraft: vi.fn(),
     commit: vi.fn(),
-    resolveProduct: vi.fn(),
-    poOptions: [],
     canEdit: true,
-    learnedColumns: [],
+    flagActions: {
+      canEdit: overrides.canEdit ?? true,
+      poOptions: [],
+      resolveProduct: vi.fn(),
+      fixQuantities: vi.fn(),
+      dismissing: false,
+    },
     registerColumnRef: vi.fn(),
     focusRequest: null,
     metaFor: () => undefined,
@@ -169,7 +173,7 @@ describe('DeliveryScheduleMatrix', () => {
   it('keeps the product column visible while the dates scroll', () => {
     render(<DeliveryScheduleMatrix controller={controller()} />);
 
-    const productHeader = screen.getByRole('columnheader', { name: 'Product' });
+    const productHeader = screen.getByRole('columnheader', { name: 'Product (customer code)' });
     expect(productHeader.className).toContain('sticky');
     expect(productHeader.className).toContain('left-0');
 
@@ -220,7 +224,7 @@ describe('DeliveryScheduleMatrix', () => {
   it('lets the cell pinned on both axes win the corner it shares', () => {
     render(<DeliveryScheduleMatrix controller={controller({ columns: mixedColumns() })} />);
 
-    const headerCorner = screen.getByRole('columnheader', { name: 'Product' });
+    const headerCorner = screen.getByRole('columnheader', { name: 'Product (customer code)' });
     const totalsCorner = screen.getByRole('rowheader', { name: 'Our total for the date' });
     const dateCell = screen.getByRole('columnheader', { name: /01\/07\/2026/ });
     const productCell = screen.getByRole('rowheader', { name: /SRTWC8613-RL/ });
@@ -252,21 +256,42 @@ describe('DeliveryScheduleMatrix', () => {
     expect(screen.getByRole('columnheader', { name: /COMMON AREA/ })).toBeInTheDocument();
   });
 
-  it('closes every product row with its three totals, side by side', () => {
+  it('puts the Flag beside the product and closes every row with Schedule and PO (S5-3)', () => {
     const { container } = render(<DeliveryScheduleMatrix controller={controller()} />);
 
-    // The transpose of the old totals band: what were three rows under a product column are
-    // three cells at the end of a product row.
+    // The mockup's columns: Product (customer code), Flag, the dates, Schedule, PO.
     const head = within(container.querySelector('thead') as HTMLElement);
-    expect(head.getByText('Our total')).toBeInTheDocument();
-    expect(head.getByText('Schedule TOTAL QTY')).toBeInTheDocument();
-    expect(head.getByText('PO quantity')).toBeInTheDocument();
+    expect(head.getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual([
+      'Product (customer code)',
+      'Flag',
+      expect.stringContaining('01/07/2026'),
+      expect.stringContaining('01/06/2027'),
+      'Schedule',
+      'PO',
+    ]);
 
     const row = screen.getByRole('rowheader', { name: /SRTWC8613-RL/ }).closest('tr');
     const cells = Array.from(row?.querySelectorAll('td') ?? []);
-    // Two dates, then the three numbers.
+    // The Flag, two dates, then the two numbers.
     expect(cells).toHaveLength(5);
-    expect(cells.slice(2).map((cell) => cell.textContent)).toEqual(['927', '927', '927']);
+    expect(cells[0]).toHaveTextContent('Agrees');
+    expect(cells.slice(3).map((cell) => cell.textContent)).toEqual(['927', '927']);
+  });
+
+  it('pins the Flag column beside the product, so a flag stays in view as the dates scroll', () => {
+    render(<DeliveryScheduleMatrix controller={controller()} />);
+    const flag = screen.getByRole('columnheader', { name: 'Flag' });
+    expect(flag.className).toContain('sticky');
+    expect(flag.className).toContain('left-[240px]');
+  });
+
+  it('keeps a flagged row one line of pills, the sentences only behind the pill', () => {
+    render(<DeliveryScheduleMatrix controller={controller({ columns: mixedColumns() })} />);
+    const row = screen.getByRole('rowheader', { name: /SRTFV1001/ }).closest('tr') as HTMLElement;
+    expect(within(row).getByRole('button', { name: /Blocks publish, 2 on SRTFV1001/ })).toBeInTheDocument();
+    // No card, no picker and no sentence stacked in the row itself.
+    expect(within(row).queryByLabelText(/the product for/)).toBeNull();
+    expect(within(row).queryByText(/Correct an area quantity/)).toBeNull();
   });
 
   it('totals each date at the foot, because that is what the top axis now asks', () => {
@@ -278,35 +303,49 @@ describe('DeliveryScheduleMatrix', () => {
     const totals = Array.from(
       container.querySelectorAll('tfoot td'),
     ).map((cell) => cell.textContent);
-    // 927 goes out on the first date, nothing on the second, 927 across the sheet.
-    expect(totals).toEqual(['927', '', '927', '', '']);
+    // Under the Flag nothing, 927 on the first date, nothing on the second, 927 across.
+    expect(totals).toEqual(['', '927', '', '927', '']);
   });
 
-  it('shows a remembered customer code as remembered', () => {
+  it('totals every column at the foot even while a filter shows only some rows', () => {
+    const { container } = render(
+      <DeliveryScheduleMatrix
+        controller={controller({ columns: [], totalsColumns: controller().columns })}
+      />,
+    );
+    const totals = Array.from(container.querySelectorAll('tfoot td')).map((cell) => cell.textContent);
+    expect(totals).toEqual(['', '927', '', '927', '']);
+  });
+
+  it('shows the customer code whole, never truncated', () => {
     render(<DeliveryScheduleMatrix controller={controller()} />);
-    expect(screen.getByText('Remembered code')).toBeInTheDocument();
-    expect(screen.getByText('BUI-HB-SRTWC8613-RL')).toBeInTheDocument();
+    const code = screen.getByText('BUI-HB-SRTWC8613-RL');
+    expect(code.className).not.toContain('truncate');
+    expect(code.className).toContain('break-all');
   });
 
-  it('lets a column that resolved to the wrong product be re-picked', () => {
+  it('lets a column that resolved to the wrong product be re-picked, from its Flag', async () => {
     render(<DeliveryScheduleMatrix controller={controller({ columns: mixedColumns() })} />);
 
     // SRTFV1001 has a product and still does not reconcile, which is what a wrong match
     // looks like: withholding the picker from it left the reviewer nothing to press.
+    fireEvent.click(screen.getByRole('button', { name: /Blocks publish, 2 on SRTFV1001/ }));
     expect(
-      screen.getByLabelText('Change the product for BUI-HB-SRTFV1001'),
+      await screen.findByLabelText('Change the product for BUI-HB-SRTFV1001'),
     ).toBeInTheDocument();
-    // A column that agrees with the PO is not asking to be changed.
-    expect(screen.queryByLabelText(/for BUI-HB-SRTWC8613-RL/)).toBeNull();
+    // A column that agrees with the PO has no Flag to open at all.
+    expect(screen.queryByRole('button', { name: /on SRTWC8613-RL/ })).toBeNull();
   });
 
-  it('offers no editing at all when the user cannot edit', () => {
+  it('offers no editing at all when the user cannot edit', async () => {
     render(
       <DeliveryScheduleMatrix
         controller={controller({ canEdit: false, columns: mixedColumns() })}
       />,
     );
     expect(screen.getByLabelText('Level 2 & 7, SRTWC8613-RL')).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: /Blocks publish, 2 on SRTFV1001/ }));
+    await screen.findByTestId('flag-lines');
     expect(screen.queryByLabelText(/Change the product/)).toBeNull();
     expect(screen.queryByLabelText(/Pick the product/)).toBeNull();
   });

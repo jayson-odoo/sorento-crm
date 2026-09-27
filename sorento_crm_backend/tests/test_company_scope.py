@@ -555,7 +555,11 @@ def test_every_company_id_table_is_registered():
     # against its own order inquiry row, written and trimmed by
     # `ProjectOrderInquiryService._write_suggested_links` off the scoped row - owned the
     # same reason `order_inquiry_links` beside it is owned.
-    expected_owned = 138
+    # PLAN-sales-targets-opportunities-26sep.md (S6) adds 2: `sales.teams` and
+    # `sales.team_members` are one company's own teams and its agents' dated places in
+    # them; the team routes load a team BY ID, so the mixin's filter is what hides another
+    # company's team (UAC S6-8).
+    expected_owned = 140
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

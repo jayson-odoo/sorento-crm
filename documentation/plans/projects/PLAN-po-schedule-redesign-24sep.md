@@ -9,13 +9,17 @@ agent-browser evidence NOT captured in this cloud lane, per `documentation/agent
 and no NextAuth login (no `.env.local`, no seeded user), and that doc names "a browser pass on
 prod-copy data" as staying local by rule, not something to seed here. Owner (or a local session)
 still owes the S6-6/S4-6 browser pass before this reads "implemented". S3, S4 and S6 merged
-(#1237, main 46711c618). S7 implemented on `claude/po-schedule-redesign-s7-b98yd8` (26 Sep 2026),
-vitest/type-check green. Owner hand test fix round 2 (26 Sep 2026, five notes) on the same
-branch: one-line Lines table, drag without a toggle, stock location derived from the sales
-agent's location group (a small backend read, no migration), one-line Sales orders list with a
-Value footer total; browser evidence at 1280 and 375 under `evidence/pr1264-owner-notes/`, on
-seeded cloud data, so the prod-copy S7-5 pass on PSO-000003 is still the owner's. S5 not
-started.
+(#1237, main 46711c618). S7 merged (#1264, main 006e409f); the prod-copy S7-5 pass on
+PSO-000003 is still the owner's. S5 implemented on `claude/po-schedule-redesign-s5-xbp75f`, full
+track; vitest/type-check green; browser evidence is component-level (the real client off its
+`?demo=` fixture in Chromium, no live stack in the cloud lane); the S5-7 pass on HQ/26/01/121 v2
+stays owed on a local stack. Reviewer pass on #1265 (26 Sep): B1, B2, S1 and S2 fixed on the
+same branch, test-first (S2 adds a backend gate on the schedule's `document_url`, no
+migration). Owner hand test 26 Sep (round 3): W1 picker options one line, W2 filled segments,
+W3 the schedule read shows the PO read's progress bar (pages read of total); fixed on the same
+branch, test-first. Round 4 (26 Sep): main 253dafaf1 merged; the schedule Documents tab now
+draws through main's in-app PdfViewer (#1256) and reads the file same-origin via the version's
+attachment_id, as the PO screen does.
 Track per slice: S1 small fix; S4 small fix; S2, S3, S5, S6, S7 full track.
 
 UAC: `documentation/plans/projects/po-schedule-redesign-24sep-acceptance-criteria.md`.

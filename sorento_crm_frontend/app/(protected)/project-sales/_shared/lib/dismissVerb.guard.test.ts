@@ -3,11 +3,10 @@
  * Enforced by grep rather than by review, the same shape as `scm/lib/format.guard.test.ts`: a
  * verb drifts one screen at a time, and review catches the first drift and misses the fifth.
  *
- * "Override with a reason" and "Clear with a reason" are the two verbs this guards against -
- * both considered and rejected in favour of one shared verb across every finding, on every
- * review screen. The third rejected string, "Dismiss as false signal", is NOT checked here: it
- * is still live on purpose in `DeliveryScheduleReconciliationList.tsx` (S3-2 reviewer note,
- * 25 Sep 2026) - renaming it is S5's job, not this round's.
+ * "Override with a reason", "Clear with a reason" and "Dismiss as false signal" are the three
+ * verbs this guards against - all considered and rejected in favour of one shared verb across
+ * every finding, on every review screen. The third went with the schedule review screen's
+ * separate reconciliation table (S5).
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -17,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 /** The `project-sales/` tree, resolved from this file so the guard does not depend on the cwd. */
 const PROJECT_SALES_ROOT = join(import.meta.dirname, '..', '..');
 
-const BANNED = ['Override with a reason', 'Clear with a reason'];
+const BANNED = ['Override with a reason', 'Clear with a reason', 'Dismiss as false signal'];
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -42,7 +41,7 @@ describe('project-sales has one dismiss verb', () => {
     expect(files.length).toBeGreaterThan(50);
   });
 
-  it('never says "Override with a reason" or "Clear with a reason"', () => {
+  it('never says "Override with a reason", "Clear with a reason" or "Dismiss as false signal"', () => {
     const offenders: string[] = [];
     for (const file of sourceFiles(PROJECT_SALES_ROOT)) {
       const rel = relative(PROJECT_SALES_ROOT, file);

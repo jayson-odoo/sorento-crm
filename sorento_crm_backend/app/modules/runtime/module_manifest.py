@@ -124,6 +124,12 @@ _RAW: Dict[str, dict] = {
             "sla",
         ],
     },
+    "sales": {
+        "display_name": "Sales",
+        "description": "Sales teams, targets with live achievement, opportunities and WhatsApp updates.",
+        # `product` for the sales agents master, `order` for the sales orders targets count.
+        "dependencies": ["base", "product", "order"],
+    },
     "projects": {
         "display_name": "Project sales",
         "description": (
