@@ -41,7 +41,7 @@ export default function QuotedContextBlock({
   const excerpt = stripWhatsAppMarkup(context.excerpt);
   const inner = (
     <>
-      <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide opacity-70">
+      <span className="flex items-center gap-1 text-2xs font-semibold uppercase tracking-wide opacity-70">
         <CornerUpLeft className="size-3" />
         {senderLabel ? `Replying to ${senderLabel}` : 'Replying to'}
       </span>

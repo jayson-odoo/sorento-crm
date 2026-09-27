@@ -119,10 +119,9 @@ beforeEach(() => {
 });
 
 describe('TicketConversationPanel reply-to', () => {
-  it('AC-RT-1/6: opts the thread into the bubble menu', () => {
+  it('AC-RT-1/6: hands the thread a Reply (the menu itself is on every RespondChatList)', () => {
     render(<TicketConversationPanel ticketId="t1" />);
     const props = chatListProps.at(-1)!;
-    expect(props.messageMenu).toBe(true);
     expect(typeof props.onReply).toBe('function');
   });
 
@@ -178,7 +177,6 @@ describe('TicketConversationPanel reply-to', () => {
     interventionTicket.mockReturnValue(ticketResult({ ...TICKET, is_resolved: true }));
     render(<TicketConversationPanel ticketId="t1" />);
     const props = chatListProps.at(-1)!;
-    expect(props.messageMenu).toBe(true);
     expect(props.onReply).toBeUndefined();
   });
 
