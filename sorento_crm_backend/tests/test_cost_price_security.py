@@ -540,9 +540,11 @@ def test_settings_verification_enabled_null_is_422(cost_price_env):
 
 
 def test_migration_downgrade_removes_only_the_new_slugs():
-    """Static source read (running the migration is exercised elsewhere,
-    `test_cost_price_permissions.py`): `downgrade()` must delete exactly the 8 slugs
-    `_NEW_PERMS` names, and nothing naming an existing role or an unrelated permission."""
+    """Static source read (the real downgrade-then-upgrade run is
+    `test_cost_price_review_round2.py::test_b3_cpc1_downgrade_runs_and_removes_only_what_it_added`):
+    `downgrade()` deletes exactly the 4 slugs this lane introduced (`_ADMIN_GRANT_SLUGS`),
+    never the 4 `procurement.product_suppliers.*` slugs that predate it, and nothing naming
+    an existing role or an unrelated permission."""
     import ast
     from pathlib import Path
 
@@ -550,30 +552,26 @@ def test_migration_downgrade_removes_only_the_new_slugs():
     source = path.read_text()
 
     tree = ast.parse(source)
-    new_perms_slugs = None
+    new_slugs = None
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "_NEW_PERMS" for t in node.targets
+            isinstance(t, ast.Name) and t.id == "_ADMIN_GRANT_SLUGS" for t in node.targets
         ):
-            new_perms_slugs = [elt.elts[0].value for elt in node.value.elts]
-    assert new_perms_slugs, "could not find _NEW_PERMS in the migration"
-
-    expected = {
+            new_slugs = [elt.value for elt in node.value.elts]
+    assert set(new_slugs or ()) == {
         "procurement.cost_price_changes.upload",
         "procurement.cost_price_changes.view",
         "procurement.cost_price_changes.verify",
         "procurement.suppliers.price_link",
-        "procurement.product_suppliers.view",
-        "procurement.product_suppliers.add",
-        "procurement.product_suppliers.edit",
-        "procurement.product_suppliers.delete",
     }
-    assert set(new_perms_slugs) == expected
 
     downgrade_src = source[source.index("def downgrade"):]
-    assert "DELETE FROM user_role_permissions" in downgrade_src
-    assert "DELETE FROM user_permissions WHERE slug = ANY(:slugs)" in downgrade_src
-    assert "_NEW_PERMS" in downgrade_src
-    assert "scm.proforma_invoice.upload" not in downgrade_src
-    assert "'admin'" not in downgrade_src
-    assert '"admin"' not in downgrade_src
+    body = downgrade_src[downgrade_src.index('"""', downgrade_src.index('"""') + 3) + 3:]
+    assert "DELETE FROM user_role_permissions" in body
+    assert "DELETE FROM user_permissions WHERE slug = ANY(:slugs)" in body
+    assert "_ADMIN_GRANT_SLUGS" in body
+    assert "_NEW_PERMS" not in body
+    assert "product_suppliers" not in body.replace("product_supplier_costs", "")
+    assert "scm.proforma_invoice.upload" not in body
+    assert "'admin'" not in body
+    assert '"admin"' not in body

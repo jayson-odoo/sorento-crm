@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 import app.services.scm.proforma_invoice_service as pi_service
 import app.services.scm.supplier_code_matcher as matcher
 from app.services.error_handler import AppException
+from app.services.pdf_render import today_in_malaysia
 from app.services.procurement.supplier_price_list_reader import read_supplier_price_list
 from app.services.scm.currency_resolution import supplier_price_list_currency
 
@@ -297,7 +298,7 @@ def _create_change_set_code(db: Session, company_id: Optional[str]) -> str:
 
     def _next() -> Optional[str]:
         return NumberingService(db).get_next_number(
-            COST_PRICE_CHANGE_SET_DOC_TYPE, date.today(), company_id=company_id, commit_rule=False
+            COST_PRICE_CHANGE_SET_DOC_TYPE, today_in_malaysia(), company_id=company_id, commit_rule=False
         )
 
     number = _next()

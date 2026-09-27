@@ -81,12 +81,12 @@ def register_handler(key: str, handler: TaskHandler) -> None:
 
 def _handler_cost_price_daily_tick(db: Session, task: ScheduledTask) -> dict[str, Any]:
     """The daily tick (#1288, AC-CL-05): every product-supplier link with cost list rows
-    gets its `unit_cost`/`currency` recomputed from `price_in_force(link, today)`."""
-    from datetime import date
-
+    gets its `unit_cost`/`currency` recomputed from `price_in_force(link, today)`, today being
+    the Malaysia day: the tick fires at 00:05 MYT, which is still yesterday on a UTC host."""
+    from app.services.pdf_render import today_in_malaysia
     from app.services.procurement.supplier_cost_service import refresh_prices_in_force
 
-    changed = refresh_prices_in_force(db, date.today())
+    changed = refresh_prices_in_force(db, today_in_malaysia())
     return {"changed": changed}
 
 

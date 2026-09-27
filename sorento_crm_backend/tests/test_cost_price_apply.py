@@ -51,11 +51,10 @@ def test_verification_off_uploader_applies_directly(cost_price_env):
 
 def test_apply_writes_one_cost_row_per_line_with_set_dates_and_source(cost_price_env):
     """AC-S1-27's row shape, with a FUTURE start date. The line's `current_unit_cost` (100)
-    was never backed by a cost list row - a plain `product_suppliers.unit_cost` a earlier
-    writer set directly - so the moment Apply gives the link its FIRST cost row, `unit_cost`
-    stops being that leftover value and starts being `price_in_force(link, today)` alone
-    (AC-CL-01, AC-CL-04): with only a future-dated row, nothing covers today, so the answer
-    is null, not the old number. `test_apply_without_dates_sets_unit_cost_to_new_price`
+    was never backed by a cost list row - a plain `product_suppliers.unit_cost` an earlier
+    writer set directly. With only a future-dated row nothing covers today, so the link
+    keeps that 100 CNY until the row comes into force (Blocking 2 of the review at
+    232e5706: never null the price). `test_apply_without_dates_sets_unit_cost_to_new_price`
     below is the undated counterpart, where the new row IS in force at once."""
     from app.models.cost_price import ProductSupplierCost
     from app.models.procurement import ProductSupplier
@@ -83,9 +82,9 @@ def test_apply_writes_one_cost_row_per_line_with_set_dates_and_source(cost_price
     assert row.end_date is None
 
     link = e.db.query(ProductSupplier).filter_by(product_id=product.id).one()
-    # Nothing covers today (the only cost row starts 2026-10-01): price_in_force is None.
-    assert link.unit_cost is None
-    assert link.currency is None
+    # Nothing covers today (the only cost row starts in the future): the price stays.
+    assert link.unit_cost == Decimal("100.00")
+    assert link.currency == "CNY"
 
 
 def test_apply_without_dates_sets_unit_cost_to_new_price(cost_price_env):

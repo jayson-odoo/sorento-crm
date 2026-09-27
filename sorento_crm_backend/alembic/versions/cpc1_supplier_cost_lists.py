@@ -69,6 +69,16 @@ _PRODUCT_SUPPLIER_WRITE_SWEEP = (
     ("procurement.product_suppliers.edit", "procurement.product_suppliers.view"),
     ("procurement.product_suppliers.delete", "procurement.product_suppliers.view"),
 )
+#: Whoever could reach a link through the product screens before this lane keeps it (AC-S2-14,
+#: Should fix 1 of the review at 232e5706): a products viewer keeps the product Suppliers tab,
+#: a products editor keeps the supplier section of the product form. Runs AFTER the sweep
+#: above, so a products viewer gains `.view` without inheriting the writes.
+_PRODUCT_ROLE_SWEEP = (
+    ("procurement.product_suppliers.view", "master_data.products.view"),
+    ("procurement.product_suppliers.add", "master_data.products.edit"),
+    ("procurement.product_suppliers.edit", "master_data.products.edit"),
+    ("procurement.product_suppliers.delete", "master_data.products.edit"),
+)
 _ADMIN_GRANT_SLUGS = (
     "procurement.cost_price_changes.upload",
     "procurement.cost_price_changes.view",
@@ -105,7 +115,10 @@ def _insert_permission(bind, slug: str, name: str, description: str) -> None:
     )
 
 
-def _sweep(bind, target: str, source: str) -> None:
+def _sweep(bind, target: str, source: str, *, skip_product_viewers: bool = False) -> None:
+    """`skip_product_viewers` leaves out a role holding `master_data.products.view` without
+    `.edit` or the purchasing source: `_PRODUCT_ROLE_SWEEP` gives such a role `.view` only,
+    and without this a second run would read that `.view` back as a reason to grant writes."""
     bind.execute(
         sa.text(
             """
@@ -117,10 +130,27 @@ def _sweep(bind, target: str, source: str) -> None:
             CROSS JOIN user_permissions tgt
             WHERE tgt.slug = :target
               AND r.slug NOT LIKE :excluded
+              AND NOT (
+                :skip_product_viewers
+                AND EXISTS (
+                    SELECT 1 FROM user_role_permissions v
+                    JOIN user_permissions vp ON vp.id = v.permission_id
+                    WHERE v.role_id = rp.role_id AND vp.slug = 'master_data.products.view'
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM user_role_permissions w
+                    JOIN user_permissions wp ON wp.id = w.permission_id
+                    WHERE w.role_id = rp.role_id
+                      AND wp.slug IN ('master_data.products.edit', :purchasing)
+                )
+              )
             ON CONFLICT (role_id, permission_id) DO NOTHING
             """
         ),
-        {"source": source, "target": target, "excluded": _EXCLUDED_ROLE_PREFIX},
+        {
+            "source": source, "target": target, "excluded": _EXCLUDED_ROLE_PREFIX,
+            "skip_product_viewers": skip_product_viewers, "purchasing": _PURCHASING_SOURCE_PERM,
+        },
     )
 
 
@@ -148,7 +178,7 @@ def upgrade() -> None:
         op.create_table(
             "cost_price_change_sets",
             sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
-            sa.Column("company_id", postgresql.UUID(as_uuid=False), nullable=True),
+            sa.Column("company_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("companies.id"), nullable=True),
             sa.Column("code", sa.String(length=30), nullable=False),
             sa.Column("supplier_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("suppliers.id", ondelete="RESTRICT"), nullable=False),
             sa.Column("channel", sa.String(length=20), nullable=False, server_default=sa.text("'staff_upload'")),
@@ -176,6 +206,7 @@ def upgrade() -> None:
             sa.CheckConstraint("status IN ('draft', 'pending_verification', 'applied')", name="ck_cost_price_change_sets_status"),
         )
         op.create_index("ix_cost_price_change_sets_supplier", "cost_price_change_sets", ["supplier_id"])
+        op.create_index("ix_cost_price_change_sets_company_id", "cost_price_change_sets", ["company_id"])
         op.create_index("ix_cost_price_change_sets_code", "cost_price_change_sets", ["company_id", "code"])
         op.create_index(
             "uq_cost_price_change_sets_open_per_supplier", "cost_price_change_sets",
@@ -226,7 +257,7 @@ def upgrade() -> None:
         op.create_table(
             "product_supplier_costs",
             sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
-            sa.Column("company_id", postgresql.UUID(as_uuid=False), nullable=True),
+            sa.Column("company_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("companies.id"), nullable=True),
             sa.Column("product_supplier_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("product_suppliers.id", ondelete="CASCADE"), nullable=False),
             sa.Column("unit_cost", sa.Numeric(12, 2), nullable=False),
             sa.Column("currency", sa.String(length=3), nullable=False),
@@ -240,12 +271,13 @@ def upgrade() -> None:
             sa.CheckConstraint("end_date IS NULL OR start_date IS NULL OR end_date >= start_date", name="ck_product_supplier_costs_end_after_start"),
         )
         op.create_index("ix_product_supplier_costs_link_start", "product_supplier_costs", ["product_supplier_id", "start_date"])
+        op.create_index("ix_product_supplier_costs_company_id", "product_supplier_costs", ["company_id"])
 
     if not _has_table(bind, "supplier_price_links"):
         op.create_table(
             "supplier_price_links",
             sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
-            sa.Column("company_id", postgresql.UUID(as_uuid=False), nullable=True),
+            sa.Column("company_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("companies.id"), nullable=True),
             sa.Column("supplier_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False),
             sa.Column("token", sa.String(length=64), nullable=False),
             sa.Column("recipient_name", sa.String(length=255), nullable=True),
@@ -259,6 +291,7 @@ def upgrade() -> None:
         )
         op.create_index("uq_supplier_price_links_token", "supplier_price_links", ["token"], unique=True)
         op.create_index("ix_supplier_price_links_supplier", "supplier_price_links", ["supplier_id"])
+        op.create_index("ix_supplier_price_links_company_id", "supplier_price_links", ["company_id"])
 
     # ------------------------------------------------------------------------- columns
     op.execute(
@@ -273,6 +306,8 @@ def upgrade() -> None:
     for target, source in _PURCHASING_SWEEP:
         _sweep(bind, target, source)
     for target, source in _PRODUCT_SUPPLIER_WRITE_SWEEP:
+        _sweep(bind, target, source, skip_product_viewers=True)
+    for target, source in _PRODUCT_ROLE_SWEEP:
         _sweep(bind, target, source)
     for slug in _ADMIN_GRANT_SLUGS:
         _grant_to_roles(bind, slug, _GRANT_ROLE_SLUGS)
@@ -302,24 +337,25 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Removes only what `upgrade()` added. The four `procurement.product_suppliers.*` slugs
+    predate this revision (`permission_registry._crud`, synced at startup) and were never
+    enforced before it, so they and every grant on them stay: deleting them would also take
+    grants admin and custom roles held before cpc1 (Blocking 3 of the review at 232e5706)."""
     bind = op.get_bind()
-    slugs = [slug for slug, _, _ in _NEW_PERMS]
     bind.execute(
         sa.text(
             "DELETE FROM user_role_permissions WHERE permission_id IN "
             "(SELECT id FROM user_permissions WHERE slug = ANY(:slugs))"
         ),
-        {"slugs": slugs},
+        {"slugs": list(_ADMIN_GRANT_SLUGS)},
     )
-    bind.execute(sa.text("DELETE FROM user_permissions WHERE slug = ANY(:slugs)"), {"slugs": slugs})
+    bind.execute(sa.text("DELETE FROM user_permissions WHERE slug = ANY(:slugs)"), {"slugs": list(_ADMIN_GRANT_SLUGS)})
     bind.execute(sa.text("DELETE FROM import_field_alias WHERE doc_type = 'supplier_price_list'"))
+    if _has_table(bind, "document_numbering_rules"):
+        bind.execute(sa.text("DELETE FROM document_numbering_rules WHERE doc_type = 'cost_price_change_set'"))
 
-    if _has_table(bind, "cost_price_change_lines"):
-        op.drop_table("cost_price_change_lines")
-    if _has_table(bind, "product_supplier_costs"):
-        op.drop_table("product_supplier_costs")
-    if _has_table(bind, "cost_price_change_sets"):
-        op.drop_table("cost_price_change_sets")
-    if _has_table(bind, "supplier_price_links"):
-        op.drop_table("supplier_price_links")
+    # `product_supplier_costs.source_change_line_id` references the lines table: drop it first.
+    for table in ("product_supplier_costs", "cost_price_change_lines", "cost_price_change_sets", "supplier_price_links"):
+        if _has_table(bind, table):
+            op.drop_table(table)
     op.execute("ALTER TABLE system_settings DROP COLUMN IF EXISTS cost_price_verification_enabled")

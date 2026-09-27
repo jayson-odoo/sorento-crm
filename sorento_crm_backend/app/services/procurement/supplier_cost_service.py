@@ -13,6 +13,7 @@ from typing import Iterable, Optional, Sequence
 from sqlalchemy.orm import Session
 
 from app.services.error_handler import AppException
+from app.services.pdf_render import today_in_malaysia
 
 STATUS_ALWAYS = "always"
 STATUS_IN_FORCE = "in_force"
@@ -56,10 +57,13 @@ def cost_status(row, rows: Sequence, day: date) -> str:
 def refresh_link(db: Session, link, day: Optional[date] = None) -> bool:
     """Recompute one `ProductSupplier` link's `unit_cost`/`currency` from its own cost list
     rows. Returns True when the link's stored price actually changed. A link with NO cost
-    list rows is never touched (AC-CL-04) - it keeps whatever a non-cost-list writer set."""
+    list rows is never touched (AC-CL-04) - it keeps whatever a non-cost-list writer set.
+    Nor is a link none of whose rows covers `day`: it keeps its current price until a row
+    is in force, never null (like an ERP price list, a future rule never erases the base
+    price; Blocking 2 of the review at 232e5706)."""
     from app.models.cost_price import ProductSupplierCost
 
-    day = day or date.today()
+    day = day or today_in_malaysia()
     rows = (
         db.query(ProductSupplierCost)
         .filter(ProductSupplierCost.product_supplier_id == link.id)
@@ -69,8 +73,10 @@ def refresh_link(db: Session, link, day: Optional[date] = None) -> bool:
         return False
 
     winner = price_in_force(rows, day)
-    new_cost = winner.unit_cost if winner else None
-    new_currency = winner.currency if winner else None
+    if winner is None:
+        return False
+    new_cost = winner.unit_cost
+    new_currency = winner.currency
     changed = (link.unit_cost != new_cost) or (link.currency != new_currency)
     if changed:
         link.unit_cost = new_cost
@@ -87,7 +93,7 @@ def refresh_prices_in_force(db: Session, day: Optional[date] = None) -> int:
     from app.models.procurement import ProductSupplier
     from app.services.audit_service import log_audit
 
-    day = day or date.today()
+    day = day or today_in_malaysia()
     link_ids = {
         row[0]
         for row in db.query(ProductSupplierCost.product_supplier_id).distinct().all()
@@ -189,7 +195,7 @@ def create_cost(db: Session, link_id: str, body: dict, current_user: dict):
         user_id=current_user.get("id"),
     )
     db.commit()
-    return _serialize_cost_row(row, [row], date.today())
+    return _serialize_cost_row(row, [row], today_in_malaysia())
 
 
 def update_cost(db: Session, link_id: str, cost_id: str, body: dict, current_user: dict):
@@ -222,7 +228,7 @@ def update_cost(db: Session, link_id: str, cost_id: str, body: dict, current_use
     )
     db.commit()
     rows = db.query(type(row)).filter(type(row).product_supplier_id == link_id).all()
-    return _serialize_cost_row(row, rows, date.today())
+    return _serialize_cost_row(row, rows, today_in_malaysia())
 
 
 def delete_cost(db: Session, link_id: str, cost_id: str, current_user: dict) -> None:
@@ -284,7 +290,7 @@ def _serialize_cost_row(row, siblings: Sequence, today: date) -> dict:
 def costs_for_link(db: Session, link_id: str, *, today: Optional[date] = None) -> list[dict]:
     from app.models.cost_price import ProductSupplierCost
 
-    today = today or date.today()
+    today = today or today_in_malaysia()
     rows = (
         db.query(ProductSupplierCost)
         .filter(ProductSupplierCost.product_supplier_id == link_id)
@@ -303,7 +309,7 @@ def list_cost_lists_for_supplier(
     from app.models.product import Product
     from app.models.scm import SupplierProductCodeAlias
 
-    today = date.today()
+    today = today_in_malaysia()
     statuses = {s.strip() for s in (status or "").split(",") if s.strip()}
 
     q = (
