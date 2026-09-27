@@ -30,7 +30,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.audit_context import set_audit_context
+from app.audit_context import AuditActor, clear_actor, stamp_actor
 from app.models.audit import AuditLog
 from app.models.base import set_company_scope
 from app.models.company import Company
@@ -57,7 +57,7 @@ def _listeners():
 @pytest.fixture(autouse=True)
 def _no_leaked_actor():
     yield
-    set_audit_context(None, None)
+    clear_actor()
 
 
 def _aliases(session) -> None:
@@ -117,7 +117,7 @@ def test_an_edit_records_the_value_it_moved_from_and_the_value_it_moved_to():
         )
         customer_id = str(customer.id)
 
-        set_audit_context(editor, "10.0.0.9")
+        stamp_actor(AuditActor(actor_type="user", user_id=editor, real_user_id=editor, ip_address="10.0.0.9"))
         service.update_customer(customer_id, CustomerUpdate(phone_number="03-2222222"))
 
         updates = [r for r in _audit_rows(session, customer_id) if r.action == "UPDATE"]

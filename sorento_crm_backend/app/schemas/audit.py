@@ -18,6 +18,7 @@ class AuditLogResponse(BaseModel):
     id: str
     entity_type: str
     entity_id: str
+    entity_label: Optional[str] = None  # the record in words (activity feed resolver), never an id
     action: str
     user_id: Optional[str] = None
     contact_id: Optional[str] = None  # acting contact (respond_contacts.id) for portal/public writes
@@ -27,10 +28,19 @@ class AuditLogResponse(BaseModel):
     new_values: Optional[dict[str, Any]] = None
     description: Optional[str] = None
     ip_address: Optional[str] = None
+    # Audit actor (identity S0, AC-13). `actor_label` is the actor in words, never an id.
+    actor_type: Optional[str] = None
+    auth_method: Optional[str] = None
+    real_user_id: Optional[str] = None
+    integration_id: Optional[str] = None
+    job_id: Optional[str] = None
+    actor_label: Optional[str] = None
 
     _normalize_id = field_validator("id", mode="before")(_str_or_uuid)
     _normalize_entity_id = field_validator("entity_id", mode="before")(_str_or_uuid)
     _normalize_user_id = field_validator("user_id", mode="before")(_str_or_uuid)
+    _normalize_real_user_id = field_validator("real_user_id", mode="before")(_str_or_uuid)
+    _normalize_integration_id = field_validator("integration_id", mode="before")(_str_or_uuid)
 
     class Config:
         from_attributes = True
