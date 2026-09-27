@@ -631,6 +631,8 @@ def run(
                 },
                 "routing": routing,
             }
+        if routed is not None and routed["kind"] == "clarify_product":
+            return _product_clarify_result(context_item, routed, dry_run=True, routing=routing)
         if routed is not None and routed["kind"] == "assign":
             team = routed["team"]
         actions = _assignment_actions(
@@ -699,6 +701,14 @@ def _human_intervention(
             },
             "routing": _routing_record(context_item, None, None),
         }
+    asked = _product_clarify(context_item, routed, team, services)
+    if asked is not None:
+        return _product_clarify_result(
+            context_item,
+            asked,
+            dry_run=False,
+            routing=_routing_record({**context_item, "team": asked["team"]}, None, None),
+        )
     if routed is not None and routed["kind"] == "assign":
         actions, routing = _assign(
             ctx,
@@ -765,6 +775,91 @@ def _apply_focus_brand(context_item: dict[str, Any], services: Any) -> dict[str,
         **item,
         "brand_code": jsc.js_string(brand).strip().lower(),
         "routing_source": "focus_product",
+    }
+
+
+def _product_clarify(
+    context_item: dict[str, Any], routed: Any, team: Any, services: Any
+) -> dict[str, Any] | None:
+    """The did-you-mean for a typed product code no company holds, asked INSIDE the
+    escalation (fix round 5, R2), or None.
+
+    Owner hand test, 28 Sep: "pelase escalate to marketing team MWc-SC8609-)PP water
+    closet" is an escalation about a product whose code has a typo. The product lane would
+    answer a spec sheet or a "Couldn't find ... would you like me to escalate to customer
+    service team?" miss; here the customer already said where it goes. So the lane asks
+    once, with the resolver's own trigram neighbours (`product_suggestions`, the product
+    lane's did-you-mean), names the team it will go to, and the number the customer
+    replies with is an acceptance (`turn/apply.py::_answer_offer`) that settles the picked
+    code onto the focus, whose brand the draw then reads.
+
+    Only for a code-shaped token (letters and digits: a class word such as "water closet"
+    is never asked about), only after the team is settled (a team clarify asks first, one
+    question at a time), never over a named person, and never when nothing is near enough
+    to offer: then the escalation goes out as before, naming no brand.
+    """
+    if routed is not None and routed["kind"] != "assign":
+        return None
+    if routed is not None and routed.get("assignee") is not None:
+        return None
+    missing = {jsc.js_string(c).strip().upper() for c in jsc.array(jsc.get(context_item, "product_not_found"))}
+    seam = getattr(services, "product_suggestions", None) if services is not None else None
+    if not missing or seam is None:
+        return None
+    typed = None
+    for entry in jsc.array(jsc.get(context_item, "focus_products")):
+        if not isinstance(entry, dict) or entry.get("hint") not in (None, "product"):
+            continue
+        code = jsc.nullish_str(entry.get("canonical_code") or entry.get("raw")).strip()
+        if code.upper() in missing and any(c.isdigit() for c in code) and any(c.isalpha() for c in code):
+            typed = jsc.nullish_str(entry.get("raw")).strip() or code
+            break
+    if typed is None:
+        return None
+    try:
+        codes = [jsc.js_string(c).strip() for c in (seam(typed) or []) if jsc.truthy(c)]
+    except Exception:  # noqa: BLE001 - a did-you-mean nobody could read is not a failed turn
+        logger.warning("chatbot: the escalation's product did-you-mean did not run", exc_info=True)
+        return None
+    if not codes:
+        return None
+    chosen = routed["team"] if routed is not None else team
+    lines = "\n".join(f"{i}. {code}" for i, code in enumerate(codes, start=1))
+    return {
+        "kind": "clarify_product",
+        "team": chosen,
+        "text": (
+            f'Couldn\'t find "{typed}". Did you mean:\n{lines}\n'
+            f"Reply with the number and I will pass it to the {_pretty_team(chosen)} team."
+        ),
+        "option_pairs": [
+            {"position": i, "label": code, "product_code": code, "team": chosen}
+            for i, code in enumerate(codes, start=1)
+        ],
+    }
+
+
+def _product_clarify_result(
+    context_item: dict[str, Any], asked: dict[str, Any], *, dry_run: bool, routing: Any
+) -> dict[str, Any]:
+    """The lane's answer when it asks the product did-you-mean: nothing is drawn, the
+    question is sent, and `engine._question_offered` mints its options as an escalation
+    offer (`clarify_product`)."""
+    clarify = {
+        **context_item,
+        "team": asked["team"],
+        "clarify_product": True,
+        "clarify_text": asked["text"],
+        "clarify_product_options": asked["option_pairs"],
+    }
+    return {
+        "arm": "clarify",
+        "clarify": clarify,
+        # The numbered list is the whole answer; no quick replies (as the CS member
+        # picker, #1147).
+        "actions": _clarify_actions(asked["text"], options=[], dry_run=dry_run),
+        "pending": {"kind": "product_clarify", "options": asked["option_pairs"]},
+        "routing": routing,
     }
 
 
@@ -1085,6 +1180,31 @@ def _named_teams(output: Any) -> list[str]:
     return [t for t in ESCALATION_TEAMS if t in teams]
 
 
+# Fix round 5 (R1): the words that hand a matter to a person, as the parser's `user_goal`
+# spells them (its spelling fixed: "pelase esclate" reads "escalate").
+_ESCALATE_WORD = re.compile(
+    r"\b(?:escalat\w*|eskalasi|transfer\w*|forward\w*"
+    r"|hand(?:s|ed|ing)?\s+(?:\w+\s+){0,2}(?:over|to)"
+    r"|pass(?:es|ed|ing)?\s+(?:\w+\s+){0,2}(?:on\s+)?to"
+    r"|(?:talk|speak)(?:s|ed|ing)?\s+(?:\w+\s+)?(?:to|with))\b"
+)
+
+
+def asks_for_a_named_team(output: Any) -> bool:
+    """Did the customer ask to hand this to a team they named (fix round 5, R1)?
+
+    The parser's own MESSAGE TYPE rule 1 says so already: asking for a specific team or to
+    escalate is `request_for_help`, "even if they also mention a product or order". The
+    owner's "pelase escalate to marketing team MWc-SC8609-)PP water closet" came back a
+    master_products business query anyway, while its `user_goal` kept the words. So this
+    reads the same field `_named_teams` reads (the parser's reading, never the raw text,
+    D11): an escalate word AND a named team. A team mentioned with no escalate word
+    ("the spec of SRTWC286 for the marketing team") is not a request for anyone.
+    """
+    goal = jsc.nullish_str(jsc.get(output, "user_goal")).lower()
+    return bool(goal and _ESCALATE_WORD.search(goal) and _named_teams(output))
+
+
 def _catalogue_teams(word: Any) -> list[str]:
     """The catalogue members the parser's own team WORD names, in catalogue order.
 
@@ -1213,6 +1333,9 @@ def _preview_routing(
     def _both(bundle: Any) -> tuple[dict[str, Any] | None, Any, dict[str, Any] | None]:
         item = _apply_focus_brand(context_item, bundle)
         routed = _person_routing(ctx, item, team, bundle)
+        asked = _product_clarify(item, routed, team, bundle)
+        if asked is not None:
+            return asked, None, _routing_record({**item, "team": asked["team"]}, None, None)
         if routed is not None and routed["kind"] == "assign" and routed.get("assignee") is None:
             # A named TEAM is a rotation draw (fix round 4, R1), so preview the draw from
             # that team exactly as the live branch makes it.

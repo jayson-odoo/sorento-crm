@@ -675,6 +675,43 @@ def _accepted_pending_brand(pending: Pending | None, verdict: Mapping[str, Any])
     return _accepted_pending_field(pending, verdict, "brand_code")
 
 
+#: The domains whose help requests are answered rather than escalated (contract 21, 22):
+#: the same pair `turn/apply._HELP_EXEMPT_DOMAINS` keeps.
+_NAMED_TEAM_EXEMPT_DOMAINS = frozenset({"portal_link", "ideate"})
+
+
+def with_named_team_escalation(verdict: dict[str, Any]) -> dict[str, Any]:
+    """An escalate word plus a named team is a help request, whatever else the message
+    carries (#865 round 5, R1).
+
+    The parser prompt's MESSAGE TYPE rule 1 already says it: asking for a specific team or
+    to escalate is `request_for_help`, and it "takes priority over business_query,
+    clarification, and casual ... even if they also mention a product or order". The
+    owner's "pelase escalate to marketing team MWc-SC8609-)PP water closet" came back a
+    master_products business query and was answered with a spec sheet; its `user_goal`
+    still read "escalate ... to the marketing team". This makes the prompt's rule hold on
+    the verdict, from the parser's own reading of the message
+    (`lanes/escalation.asks_for_a_named_team`, the reader round 4's `_named_teams` uses;
+    never the raw text, D11).
+
+    Stamps `escalation.named_teams`, the catalogue teams the customer named, the one
+    structured fact `turn/apply.py` acts on: such a turn plans no fetch, asks no narrowing
+    or kind question, and accepts no open offer made for a different team (an explicit
+    team beats a pending offer, #706). Its product words stay on the verdict as the
+    escalation's focus.
+    """
+    from app.services.chatbot.lanes.escalation import _named_teams, asks_for_a_named_team
+
+    if verdict.get("domain_hint") in _NAMED_TEAM_EXEMPT_DOMAINS or not asks_for_a_named_team(verdict):
+        return verdict
+    escalation = verdict.get("escalation") if isinstance(verdict.get("escalation"), dict) else {}
+    return {
+        **verdict,
+        "message_type": "request_for_help",
+        "escalation": {**escalation, "named_teams": _named_teams(verdict)},
+    }
+
+
 def with_routing_agent_default(
     verdict: dict[str, Any],
     *,

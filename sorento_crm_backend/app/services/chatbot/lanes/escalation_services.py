@@ -14,6 +14,7 @@ is what lets the 66-fixture replay run as JSON in, JSON out.
 | (the member roster) | `team_members` | `app.api.v1.external.team_members` |
 | (new, 6 Sep 2026) | `staff_lookup` | `users` x `team_members` x `agent_teams`, read here |
 | (new, 27 Sep 2026, #865) | `product_brand` | `products` x `brands` x `companies`, read here (`focus_product_origin`) |
+| (new, 28 Sep 2026, #865 round 5) | `product_suggestions` | the resolver's trigram did-you-mean (`entity_resolver._trgm_lookup`), in the contact's scope |
 
 Every test in `test_s5_escalation_lane.py` injects its own `services`, which is the point
 of the seam; `test_s5_escalation_seams.py` covers THIS module - the wiring that runs once
@@ -63,6 +64,9 @@ class EscalationServices:
     # escalation is about, read off the product row. Defaulted so an older injected
     # bundle keeps working and simply resolves no brand, exactly as before.
     product_brand: Any = None
+    # #865 round 5: the did-you-mean for a product code no company holds, so a typo is
+    # settled inside the escalation. Defaulted for the same reason as `product_brand`.
+    product_suggestions: Any = None
 
 
 def _next_assignee(db: Any):
@@ -334,6 +338,42 @@ def _product_brand(db: Any):
     return call
 
 
+#: How many codes the escalation's did-you-mean offers: the product lane's own "did you
+#: mean A, B, or C" length.
+SUGGESTIONS_CAP = 3
+
+
+def product_suggestions(db: Any, code: str) -> list[str]:
+    """The product codes the resolver offers for a code it cannot place (#865 round 5).
+
+    The same did-you-mean the product lane shows: `entity_resolver._trgm_lookup`, the
+    trigram neighbours `resolve()` turns into a token's alternatives, floored at
+    `ENTITY_MISS_SUGGEST_FLOOR`. It runs on the lane's session, so it is scoped to the
+    contact's companies exactly as the product lane's is: a customer is never shown a
+    code their companies do not hold. Best effort inside a savepoint; a failed probe
+    offers nothing and the escalation goes out as before.
+    """
+    from app.services.entity_resolver import ENTITY_MISS_SUGGEST_FLOOR, _trgm_lookup
+
+    with db.begin_nested():
+        hits = _trgm_lookup(db, code, frozenset({"product"}))
+    codes: list[str] = []
+    for hit in hits:
+        if hit.entity_type != "product" or (hit.similarity or 0.0) < ENTITY_MISS_SUGGEST_FLOOR:
+            continue
+        found = str(hit.canonical_code or "").strip()
+        if found and found not in codes:
+            codes.append(found)
+    return codes[:SUGGESTIONS_CAP]
+
+
+def _product_suggestions(db: Any):
+    def call(code: str) -> list[str]:
+        return product_suggestions(db, code)
+
+    return call
+
+
 def _not_live(name: str):
     def call(*_args: Any, **_kwargs: Any) -> Any:
         raise NotImplementedError(
@@ -400,4 +440,5 @@ def build(db: Any) -> EscalationServices:
         team_members=_not_live("team_members"),
         staff_lookup=_staff_lookup(db),
         product_brand=_product_brand(db),
+        product_suggestions=_product_suggestions(db),
     )

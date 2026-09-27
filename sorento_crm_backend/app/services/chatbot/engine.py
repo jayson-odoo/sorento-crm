@@ -1585,6 +1585,9 @@ def _run_stages(  # noqa: PLR0915
     # below is made against the CARRIED agent, not the default. No `session=` (reviewer
     # round 1, SHOULD-4): no writer ever produces a prior-turn agent nest to read.
     verdict = turn_runtime.with_routing_agent_default(verdict, pending=state_in.pending)
+    # #865 round 5 (R1): an escalate word plus a named team, in the parser's own reading
+    # of the message, is a help request whatever product words follow.
+    verdict = turn_runtime.with_named_team_escalation(verdict)
 
     # -- access, C APPLY, D ROUTE ------------------------------------------- #
     stage[0] = "access"
@@ -3818,7 +3821,9 @@ def _run_escalation_arm(
     turn_trace.record(
         "looked_up",
         summary=(
-            "Asked which company should take it."
+            "Asked which product the escalation is about."
+            if arm == "clarify" and jsc.truthy(jsc.get(clarify, "clarify_product"))
+            else "Asked which company should take it."
             if arm == "clarify"
             else " ".join(filter(None, ("Handed the conversation to a person.", routed_to)))
         ),
@@ -4763,6 +4768,34 @@ def _question_offered(
 
     clarify = values.get("clarify")
     if jsc.truthy(clarify):
+        if jsc.truthy(jsc.get(clarify, "clarify_product")):
+            # #865 round 5: the escalation's own product did-you-mean. Each option is a
+            # product and the team the escalation goes to, so the number the customer
+            # replies with is an ACCEPTANCE (`turn/apply.py::_answer_offer`) that settles
+            # that product onto the focus. `uuid` stays empty: an option is not a person
+            # (`preferred_assignee_id`) and not a row to fetch with.
+            routing = jsc.get(jsc.get(jsc.get(ctx, "parse"), "output") or {}, "routing") or {}
+            return turn_pending.ask(
+                "team_pick",
+                [
+                    {
+                        "position": jsc.get(row, "position") or index + 1,
+                        "label": jsc.get(row, "label"),
+                        "uuid": None,
+                        "uuids": [],
+                        "entity_type": "product",
+                        "payload": {
+                            "team": jsc.get(row, "team"),
+                            "product_code": jsc.get(row, "product_code"),
+                            "agent": jsc.get(routing, "suggested_agent"),
+                        },
+                    }
+                    for index, row in enumerate(jsc.array(jsc.get(clarify, "clarify_product_options")))
+                    if jsc.truthy(row)
+                ],
+                team=jsc.get(clarify, "team"),
+                expects="pick",
+            )
         if jsc.truthy(jsc.get(clarify, "clarify_team")):
             return turn_pending.ask(
                 "team_pick", _options(jsc.get(clarify, "clarify_team_options"), "team"), expects="pick"
