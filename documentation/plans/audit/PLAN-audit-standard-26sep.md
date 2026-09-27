@@ -6,7 +6,9 @@ lane; merge order is #1298, then #1303, then #1299. The actor on every audit row
 (identity plan section 8); S0 adds no actor column. Measurement gate: run on the 25 Sep
 production copy (27 Sep 06:42 MYT), failed as built; round 3 implements the B3 exclusion ruling
 (assumed, owner to confirm): projected 3,136 rows a day at most, 2,015 expected, against 480
-today (section "Measurement"). S1, S2, S3 not started.
+today (section "Measurement"). Round 3 runs: the touched and audit, identity, queue, worker,
+scheduler, ingest and import suites (178 files) 2981 passed, 73 skipped, 0 failed; kill tests
+K1 to K15 all red. S1, S2, S3 not started.
 Plan created: 2026-09-26 (from the investigation report on #1281, comment 5846914028, sections 7
 to 10, investigated at `51d30ccc5`).
 Domain: audit (CORE, not a module: every install needs a trail; the `audit` App Store key keeps
