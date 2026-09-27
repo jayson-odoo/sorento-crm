@@ -321,9 +321,31 @@ def test_revise_re_deals_the_pull_on_the_source_purchase_order_line():
         assert [q for _id, q in svc.parse_source_ref(po_line.source_ref)["pulls"]] == [30.0]
 
 
-def test_a_planner_state_round_trip_saved_unchanged_writes_no_row_difference():
+@pytest.mark.parametrize("allocation_order", ["as_read", "largest_first", "smallest_first"])
+def test_a_planner_state_round_trip_saved_unchanged_writes_no_row_difference(
+    monkeypatch, allocation_order
+):
     """The safety net under every edit: opening an SPO and pressing Save without touching
-    anything leaves the database exactly where it was."""
+    anything leaves the database exactly where it was.
+
+    Issue #1289: `_own_state` reads the allocations with no ORDER BY, so they come back in
+    heap order, and a row's heap slot moves when another worker's churn gets its page pruned.
+    Under xdist that put B (30) ahead of A (40) and the Save re-dealt the project row's one
+    40 link as 30 + 10. The order is pinned here both ways rather than left to the heap."""
+    if allocation_order != "as_read":
+        own_state = svc._own_state
+
+        def _reordered(*args, **kwargs):
+            out = own_state(*args, **kwargs)
+            for held in out.values():
+                held["allocations"].sort(
+                    key=lambda a: a.allocated_quantity,
+                    reverse=allocation_order == "largest_first",
+                )
+            return out
+
+        monkeypatch.setattr(svc, "_own_state", _reordered)
+
     with pg_session() as db:
         w = World(db)
         supplier = w.supplier()
