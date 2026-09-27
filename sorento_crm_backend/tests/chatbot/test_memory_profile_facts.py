@@ -496,15 +496,23 @@ class TestStatedValidation:
         assert "\n" not in result["value"]
         assert len(result["value"]) <= 60, result
 
-    def test_about_over_200_chars_per_entry_is_rejected(self, session_factory) -> None:
+    def test_about_over_120_chars_is_cut_not_rejected(self, session_factory) -> None:
+        """Round 3 (AC-MEM033) changes `about` from reject-over-length to CUT: a long
+        `about` statement is truncated to 120 chars, never dropped outright - unlike
+        `project` (still a hard cap, cut) and `note` (still reject-over-length, a
+        staff-only key untouched by this AC). Newlines are also stripped."""
         profile_facts = _load_profile_facts()
         cid = _cid()
-        _seed_contact(session_factory, cid)
+        contact_pk = _seed_contact(session_factory, cid)
         db = session_factory()
-        too_long = "x" * 201
-        assert profile_facts.apply_statement(db, cid, "about", too_long, turn_id="t1") is None
-        ok = "x" * 199
-        assert profile_facts.apply_statement(session_factory(), cid, "about", ok, turn_id="t2") is not None
+        too_long = "line one\nline two " + "x" * 150
+        result = profile_facts.apply_statement(db, cid, "about", too_long, turn_id="t1")
+        assert result is not None, "an over-length about must be CUT, not rejected"
+        assert len(result["value"]) <= 120, result
+        assert "\n" not in result["value"], result
+        stored = _profile_row(session_factory, contact_pk)
+        about_entry = next(f for f in stored["facts"] if f["key"] == "about")
+        assert len(about_entry["value"]) <= 120, about_entry
 
 
 # --------------------------------------------------------------------------- #

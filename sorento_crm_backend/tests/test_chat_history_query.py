@@ -149,6 +149,54 @@ def test_search_matches_phone(db):
 
 
 # --------------------------------------------------------------------------- #
+# AC-MEM015 (round 3 UAC, merged 5b110df8) - the Chat History list rows carry  #
+# the turn's queue ticket, the FE's System > Messaging > Chat History screen.  #
+# --------------------------------------------------------------------------- #
+
+
+def _turn(db, *, contact_respond_id, queue_event=None):
+    """A minimal `chatbot.turns` row, optionally carrying a `queue` trace event
+    the way `engine.py`'s `turn_trace.add("queue", {"ticket": ..., "waited_ms":
+    ...})` writes it - the ONLY place a ticket is ever recorded (S7 mode)."""
+    from app.models.chatbot_turn import ChatbotTurn
+
+    trace = [{"kind": "queue", "at": NOW.isoformat(), **queue_event}] if queue_event else None
+    row = ChatbotTurn(
+        contact_respond_id=contact_respond_id,
+        ingress="webhook",
+        envelope={},
+        is_test=False,
+        status="done",
+        stage="sent",
+        trace=trace,
+    )
+    db.add(row)
+    db.commit()
+    return row
+
+
+class TestQueueTicketOnChatHistoryRows:
+    def test_a_row_whose_turn_recorded_a_ticket_returns_it(self, db) -> None:
+        turn = _turn(db, contact_respond_id="ZZT-qt-1", queue_event={"ticket": 4, "waited_ms": 250})
+        _msg(db, sent_at=NOW, contact_id="ZZT-qt-1", message="ticketed", turn_id=str(turn.id))
+
+        rows, _ = _list(db, date_from=NOW - timedelta(hours=1), date_to=NOW + timedelta(hours=1))
+        row = next(r for r in rows if r.message == "ticketed")
+        assert row.queue_ticket == 4, (
+            "AC-MEM015: a Chat History row whose turn recorded a queue ticket must "
+            f"surface it as `queue_ticket`, got {row!r}"
+        )
+
+    def test_a_row_whose_turn_never_queued_returns_none(self, db) -> None:
+        turn = _turn(db, contact_respond_id="ZZT-qt-2", queue_event=None)
+        _msg(db, sent_at=NOW, contact_id="ZZT-qt-2", message="unticketed", turn_id=str(turn.id))
+
+        rows, _ = _list(db, date_from=NOW - timedelta(hours=1), date_to=NOW + timedelta(hours=1))
+        row = next(r for r in rows if r.message == "unticketed")
+        assert row.queue_ticket is None
+
+
+# --------------------------------------------------------------------------- #
 # Ordering + keyset pagination                                                #
 # --------------------------------------------------------------------------- #
 def test_newest_first(db):

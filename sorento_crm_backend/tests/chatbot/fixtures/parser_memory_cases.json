@@ -64,8 +64,8 @@
         }
       ],
       "message_type": null,
-      "profile_statement": null,
-      "domain_hint": "inventory"
+      "domain_hint": "inventory",
+      "profile_statements": []
     }
   },
   {
@@ -133,8 +133,8 @@
         }
       ],
       "message_type": null,
-      "profile_statement": null,
-      "domain_hint": "inventory"
+      "domain_hint": "inventory",
+      "profile_statements": []
     }
   },
   {
@@ -198,8 +198,8 @@
         }
       ],
       "message_type": null,
-      "profile_statement": null,
-      "domain_hint": "inventory"
+      "domain_hint": "inventory",
+      "profile_statements": []
     }
   },
   {
@@ -263,8 +263,8 @@
         }
       ],
       "message_type": null,
-      "profile_statement": null,
-      "domain_hint": "order"
+      "domain_hint": "order",
+      "profile_statements": []
     }
   },
   {
@@ -328,8 +328,8 @@
         }
       ],
       "message_type": null,
-      "profile_statement": null,
-      "domain_hint": null
+      "domain_hint": null,
+      "profile_statements": []
     }
   },
   {
@@ -389,8 +389,8 @@
         }
       ],
       "message_type": null,
-      "profile_statement": null,
-      "domain_hint": "order"
+      "domain_hint": "order",
+      "profile_statements": []
     }
   },
   {
@@ -453,8 +453,8 @@
         }
       ],
       "message_type": null,
-      "profile_statement": null,
-      "domain_hint": "inventory"
+      "domain_hint": "inventory",
+      "profile_statements": []
     }
   },
   {
@@ -517,8 +517,8 @@
         }
       ],
       "message_type": null,
-      "profile_statement": null,
-      "domain_hint": "inventory"
+      "domain_hint": "inventory",
+      "profile_statements": []
     }
   },
   {
@@ -581,8 +581,8 @@
         }
       ],
       "message_type": null,
-      "profile_statement": null,
-      "domain_hint": "order"
+      "domain_hint": "order",
+      "profile_statements": []
     }
   },
   {
@@ -641,8 +641,8 @@
         }
       ],
       "message_type": null,
-      "profile_statement": null,
-      "domain_hint": null
+      "domain_hint": null,
+      "profile_statements": []
     }
   },
   {
@@ -702,8 +702,8 @@
         }
       ],
       "message_type": null,
-      "profile_statement": null,
-      "domain_hint": null
+      "domain_hint": null,
+      "profile_statements": []
     }
   },
   {
@@ -762,8 +762,8 @@
         }
       ],
       "message_type": null,
-      "profile_statement": null,
-      "domain_hint": "inventory"
+      "domain_hint": "inventory",
+      "profile_statements": []
     }
   },
   {
@@ -817,8 +817,8 @@
     "expected": {
       "entities": null,
       "message_type": null,
-      "profile_statement": null,
-      "domain_hint": "order"
+      "domain_hint": "order",
+      "profile_statements": []
     }
   },
   {
@@ -872,8 +872,8 @@
     "expected": {
       "entities": null,
       "message_type": null,
-      "profile_statement": null,
-      "domain_hint": "order"
+      "domain_hint": "order",
+      "profile_statements": []
     }
   },
   {
@@ -927,8 +927,8 @@
     "expected": {
       "entities": null,
       "message_type": null,
-      "profile_statement": null,
-      "domain_hint": "order"
+      "domain_hint": "order",
+      "profile_statements": []
     }
   },
   {
@@ -982,8 +982,8 @@
     "expected": {
       "entities": null,
       "message_type": "history_question",
-      "profile_statement": null,
-      "domain_hint": null
+      "domain_hint": null,
+      "profile_statements": []
     }
   },
   {
@@ -1037,8 +1037,8 @@
     "expected": {
       "entities": null,
       "message_type": "history_question",
-      "profile_statement": null,
-      "domain_hint": null
+      "domain_hint": null,
+      "profile_statements": []
     }
   },
   {
@@ -1092,8 +1092,8 @@
     "expected": {
       "entities": null,
       "message_type": "history_question",
-      "profile_statement": null,
-      "domain_hint": null
+      "domain_hint": null,
+      "profile_statements": []
     }
   },
   {
@@ -1147,11 +1147,13 @@
     "expected": {
       "entities": null,
       "message_type": null,
-      "profile_statement": {
-        "key": "role",
-        "value": "purchaser"
-      },
-      "domain_hint": null
+      "domain_hint": null,
+      "profile_statements": [
+        {
+          "key": "role",
+          "value": "purchaser"
+        }
+      ]
     }
   },
   {
@@ -1205,11 +1207,13 @@
     "expected": {
       "entities": null,
       "message_type": null,
-      "profile_statement": {
-        "key": "language",
-        "value": "ms"
-      },
-      "domain_hint": null
+      "domain_hint": null,
+      "profile_statements": [
+        {
+          "key": "language",
+          "value": "ms"
+        }
+      ]
     }
   },
   {
@@ -1263,11 +1267,13 @@
     "expected": {
       "entities": null,
       "message_type": null,
-      "profile_statement": {
-        "key": "project",
-        "value": "Riverside Tower Phase 2"
-      },
-      "domain_hint": null
+      "domain_hint": null,
+      "profile_statements": [
+        {
+          "key": "project",
+          "value": "Riverside Tower Phase 2"
+        }
+      ]
     }
   },
   {
@@ -1321,10 +1327,12 @@
     "expected": {
       "entities": null,
       "message_type": null,
-      "profile_statement": {
-        "key": "about"
-      },
-      "domain_hint": null
+      "domain_hint": null,
+      "profile_statements": [
+        {
+          "key": "about"
+        }
+      ]
     }
   },
   {
@@ -1378,13 +1386,15 @@
     "expected": {
       "entities": null,
       "message_type": null,
-      "profile_statement": {
-        "key": "usual_brands",
-        "value": [
-          "Sorento"
-        ]
-      },
-      "domain_hint": null
+      "domain_hint": null,
+      "profile_statements": [
+        {
+          "key": "usual_brands",
+          "value": [
+            "Sorento"
+          ]
+        }
+      ]
     }
   },
   {
@@ -1438,13 +1448,15 @@
     "expected": {
       "entities": null,
       "message_type": null,
-      "profile_statement": {
-        "key": "usual_sites",
-        "value": [
-          "Miri"
-        ]
-      },
-      "domain_hint": null
+      "domain_hint": null,
+      "profile_statements": [
+        {
+          "key": "usual_sites",
+          "value": [
+            "Miri"
+          ]
+        }
+      ]
     }
   },
   {
@@ -1502,8 +1514,8 @@
         }
       ],
       "message_type": null,
-      "profile_statement": null,
-      "domain_hint": "inventory"
+      "domain_hint": "inventory",
+      "profile_statements": []
     }
   },
   {
@@ -1566,8 +1578,8 @@
         }
       ],
       "message_type": null,
-      "profile_statement": null,
-      "domain_hint": "inventory"
+      "domain_hint": "inventory",
+      "profile_statements": []
     }
   },
   {
@@ -1626,8 +1638,8 @@
         }
       ],
       "message_type": null,
-      "profile_statement": null,
-      "domain_hint": null
+      "domain_hint": null,
+      "profile_statements": []
     }
   },
   {
@@ -1681,8 +1693,8 @@
     "expected": {
       "entities": [],
       "message_type": "casual",
-      "profile_statement": null,
-      "domain_hint": null
+      "domain_hint": null,
+      "profile_statements": []
     }
   },
   {
@@ -1736,8 +1748,8 @@
     "expected": {
       "entities": [],
       "message_type": "casual",
-      "profile_statement": null,
-      "domain_hint": null
+      "domain_hint": null,
+      "profile_statements": []
     }
   },
   {
@@ -1791,8 +1803,8 @@
     "expected": {
       "entities": [],
       "message_type": "casual",
-      "profile_statement": null,
-      "domain_hint": null
+      "domain_hint": null,
+      "profile_statements": []
     }
   }
 ]

@@ -96,6 +96,173 @@ class TestContextTraceEvent:
 
 
 # --------------------------------------------------------------------------- #
+# AC-MEM052 (round 3, merged 5b110df8): the `context` trace event also records
+# WHERE the level came from - own / default / off.
+# --------------------------------------------------------------------------- #
+
+
+class TestContextEventLevelSource:
+    def _context_payload(self, session_factory, result):
+        from app.models.chatbot_turn import ChatbotTurn
+
+        row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
+        records = [r for r in (row.trace or []) if isinstance(r, dict) and r.get("kind") == "context"]
+        assert records, f"expected a `context` trace event, trace was: {row.trace}"
+        return records[-1]
+
+    def _set_system_memory(self, session_factory, *, enabled: bool, default_level: str) -> None:
+        from app.models.user import SystemSetting
+
+        db = session_factory()
+        row = db.query(SystemSetting).first()
+        if row is None:
+            row = SystemSetting()
+            db.add(row)
+        row.chatbot_memory = {"enabled": enabled, "default_level": default_level}
+        db.commit()
+
+    def test_a_contacts_own_level_reports_source_own(
+        self, session_factory, stub_parser, stub_access
+    ) -> None:
+        from app.services.chatbot import engine as engine_mod
+
+        cid = str(CONTACT_ID)
+        _seed_contact(session_factory, cid, memory_level="full")
+        stub_access()
+        stub_parser(verdict(domain_hint="inventory", entities=[entity("SRTWB1455")]))
+        envelope = _envelope()
+        envelope.message["message"]["messageId"] = "ZZT-ctxeng-src-own-1"
+        result = engine_mod.run_turn(envelope, session_factory=session_factory)
+
+        payload = self._context_payload(session_factory, result)
+        assert payload.get("level_source") == "own", payload
+
+    def test_no_own_level_with_memory_enabled_reports_source_default(
+        self, session_factory, stub_parser, stub_access
+    ) -> None:
+        from app.services.chatbot import engine as engine_mod
+
+        cid = str(CONTACT_ID)
+        _seed_contact(session_factory, cid, memory_level=None)
+        self._set_system_memory(session_factory, enabled=True, default_level="episodes")
+        stub_access()
+        stub_parser(verdict(domain_hint="inventory", entities=[entity("SRTWB1455")]))
+        envelope = _envelope()
+        envelope.message["message"]["messageId"] = "ZZT-ctxeng-src-default-1"
+        result = engine_mod.run_turn(envelope, session_factory=session_factory)
+
+        payload = self._context_payload(session_factory, result)
+        assert payload.get("level_source") == "default", payload
+
+    def test_memory_disabled_with_no_own_level_reports_source_off(
+        self, session_factory, stub_parser, stub_access
+    ) -> None:
+        from app.services.chatbot import engine as engine_mod
+
+        cid = str(CONTACT_ID)
+        _seed_contact(session_factory, cid, memory_level=None)
+        self._set_system_memory(session_factory, enabled=False, default_level="full")
+        stub_access()
+        stub_parser(verdict(domain_hint="inventory", entities=[entity("SRTWB1455")]))
+        envelope = _envelope()
+        envelope.message["message"]["messageId"] = "ZZT-ctxeng-src-off-1"
+        result = engine_mod.run_turn(envelope, session_factory=session_factory)
+
+        payload = self._context_payload(session_factory, result)
+        assert payload.get("level_source") == "off", payload
+
+
+# --------------------------------------------------------------------------- #
+# AC-MEM056 (round 3, merged 5b110df8): toggling "Memory for all contacts" on
+# changes the NEXT turn's resolved level for a contact with no own level, and
+# does not change one that has its own level set - across two REAL turns, not a
+# unit call, so a per-turn cache (there is none today, but nothing pins it) would
+# be caught here.
+# --------------------------------------------------------------------------- #
+
+
+class TestAC_MEM056TogglingMemoryAffectsOnlyNoOwnLevelContacts:  # noqa: N801
+    def _context_payload(self, session_factory, result):
+        from app.models.chatbot_turn import ChatbotTurn
+
+        row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
+        records = [r for r in (row.trace or []) if isinstance(r, dict) and r.get("kind") == "context"]
+        assert records, f"expected a `context` trace event, trace was: {row.trace}"
+        return records[-1]
+
+    def _set_system_memory(self, session_factory, *, enabled: bool, default_level: str) -> None:
+        from app.models.user import SystemSetting
+
+        db = session_factory()
+        row = db.query(SystemSetting).first()
+        if row is None:
+            row = SystemSetting()
+            db.add(row)
+        row.chatbot_memory = {"enabled": enabled, "default_level": default_level}
+        db.commit()
+
+    def test_a_no_own_level_contact_follows_the_switch_across_turns(
+        self, session_factory, stub_parser, stub_access
+    ) -> None:
+        from app.services.chatbot import engine as engine_mod
+
+        cid = str(CONTACT_ID)
+        _seed_contact(session_factory, cid, memory_level=None)
+        self._set_system_memory(session_factory, enabled=False, default_level="conversation")
+        stub_access()
+        stub_parser(verdict(domain_hint="inventory", entities=[entity("SRTWB1455")]))
+
+        e1 = _envelope()
+        e1.message["message"]["messageId"] = "ZZT-ctxeng-mem056-noown-1"
+        r1 = engine_mod.run_turn(e1, session_factory=session_factory)
+        p1 = self._context_payload(session_factory, r1)
+        assert p1.get("level") == "off", p1
+        assert p1.get("level_source") == "off", p1
+
+        self._set_system_memory(session_factory, enabled=True, default_level="conversation")
+
+        e2 = _envelope()
+        e2.message["message"]["messageId"] = "ZZT-ctxeng-mem056-noown-2"
+        r2 = engine_mod.run_turn(e2, session_factory=session_factory)
+        p2 = self._context_payload(session_factory, r2)
+        assert p2.get("level") == "conversation", (
+            f"a no-own-level contact's NEXT turn must pick up the newly-enabled "
+            f"system default: {p2}"
+        )
+        assert p2.get("level_source") == "default", p2
+
+    def test_a_contact_with_its_own_level_off_ignores_the_switch(
+        self, session_factory, stub_parser, stub_access
+    ) -> None:
+        from app.services.chatbot import engine as engine_mod
+
+        cid = str(CONTACT_ID)
+        _seed_contact(session_factory, cid, memory_level="off")
+        self._set_system_memory(session_factory, enabled=False, default_level="full")
+        stub_access()
+        stub_parser(verdict(domain_hint="inventory", entities=[entity("SRTWB1455")]))
+
+        e1 = _envelope()
+        e1.message["message"]["messageId"] = "ZZT-ctxeng-mem056-own-1"
+        r1 = engine_mod.run_turn(e1, session_factory=session_factory)
+        p1 = self._context_payload(session_factory, r1)
+        assert p1.get("level") == "off", p1
+        assert p1.get("level_source") == "own", p1
+
+        self._set_system_memory(session_factory, enabled=True, default_level="full")
+
+        e2 = _envelope()
+        e2.message["message"]["messageId"] = "ZZT-ctxeng-mem056-own-2"
+        r2 = engine_mod.run_turn(e2, session_factory=session_factory)
+        p2 = self._context_payload(session_factory, r2)
+        assert p2.get("level") == "off", (
+            f"a contact with an explicit own level of off must NOT change when the "
+            f"system switch flips on: {p2}"
+        )
+        assert p2.get("level_source") == "own", p2
+
+
+# --------------------------------------------------------------------------- #
 # AC-MEM063 (Q5): recall re-parse is gone
 # --------------------------------------------------------------------------- #
 
@@ -287,6 +454,108 @@ class TestRecallDeleted:
         assert "Earlier in this conversation" not in block, block
         assert "Recent conversations" not in block, block
         assert "About this contact" not in block, block
+
+    def test_off_level_contact_still_learns_and_saves_a_stated_fact(
+        self, session_factory, stub_access
+    ) -> None:
+        """AC-MEM049 (round 3, plan 6.0): NO memory layer reaches the parser at
+        level off, but a stated `profile_statements` fact on a LIVE turn is still
+        learned and saved - "Off" gates what the assistant is TOLD, never what it
+        LEARNS."""
+        from app.services.chatbot import engine as engine_mod
+
+        cid = str(CONTACT_ID)
+        db = session_factory()
+        db.execute(
+            text(
+                "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars, "
+                "chatbot_recall_enabled) "
+                "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb), false)"
+            ),
+            {"cid": cid, "phone": f"+6011{uuid.uuid4().hex[:8]}", "sv": json.dumps({"variables": {}})},
+        )
+        db.commit()
+        stub_access()
+
+        from app.services.chatbot.head import parser as parser_mod
+        from unittest import mock
+
+        def fake_resolve_config(db2, *, current_date, override_version_id=None):
+            return parser_mod.ParserConfig(
+                system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
+            )
+
+        def fake_parse(config, user_block):
+            return verdict(
+                domain_hint="inventory",
+                entities=[entity("SRTWB1455")],
+                profile_statements=[{"key": "role", "value": "purchaser"}],
+            )
+
+        with mock.patch.object(parser_mod, "resolve_config", fake_resolve_config), \
+             mock.patch.object(parser_mod, "parse", fake_parse):
+            envelope = _envelope()
+            envelope.message["message"]["messageId"] = "ZZT-ctxeng-off-fact-1"
+            engine_mod.run_turn(envelope, session_factory=session_factory)
+
+        stored = session_factory().execute(
+            text("SELECT chatbot_profile FROM respond_contacts WHERE respond_io_id = :c"), {"c": cid}
+        ).scalar()
+        facts = (stored or {}).get("facts") or []
+        assert any(f.get("key") == "role" and f.get("value") == "purchaser" for f in facts), (
+            f"a stated fact must be learned and saved even at context level off, got facts={facts}"
+        )
+
+    def test_a_dry_run_never_writes_the_profile_at_any_level(
+        self, session_factory, stub_access
+    ) -> None:
+        """AC-MEM049/AC-MEM033: "a dry run still never writes the profile" - D14's
+        blanket no-writes-outside-`chatbot.turns` rule, pinned specifically for a
+        stated `profile_statements` fact so a level-off carve-out cannot also
+        accidentally carve out dry runs."""
+        from app.services.chatbot import engine as engine_mod
+
+        cid = str(CONTACT_ID)
+        db = session_factory()
+        db.execute(
+            text(
+                "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars, "
+                "chatbot_recall_enabled) "
+                "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb), false)"
+            ),
+            {"cid": cid, "phone": f"+6011{uuid.uuid4().hex[:8]}", "sv": json.dumps({"variables": {}})},
+        )
+        db.commit()
+        stub_access()
+
+        from app.services.chatbot.head import parser as parser_mod
+        from unittest import mock
+
+        def fake_resolve_config(db2, *, current_date, override_version_id=None):
+            return parser_mod.ParserConfig(
+                system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
+            )
+
+        def fake_parse(config, user_block):
+            return verdict(
+                domain_hint="inventory",
+                entities=[entity("SRTWB1455")],
+                profile_statements=[{"key": "role", "value": "purchaser"}],
+            )
+
+        with mock.patch.object(parser_mod, "resolve_config", fake_resolve_config), \
+             mock.patch.object(parser_mod, "parse", fake_parse):
+            envelope = _envelope(test_run_id="ZZT-ctxeng-dry-fact-1")
+            assert envelope.dry_run is True
+            engine_mod.run_turn(envelope, session_factory=session_factory)
+
+        stored = session_factory().execute(
+            text("SELECT chatbot_profile FROM respond_contacts WHERE respond_io_id = :c"), {"c": cid}
+        ).scalar()
+        facts = (stored or {}).get("facts") or []
+        assert not any(f.get("key") == "role" for f in facts), (
+            f"a dry run must never write the profile, even at level off, got facts={facts}"
+        )
 
 
 # --------------------------------------------------------------------------- #

@@ -117,7 +117,7 @@ def test_every_case_declares_needs_memory() -> None:
 def test_expected_shape_is_the_four_declared_keys_only() -> None:
     """`expected` is graded by the live runner against exactly these four verdict
     keys (plan 8.2) - an extra key here would silently never be graded."""
-    allowed = {"entities", "message_type", "profile_statement", "domain_hint"}
+    allowed = {"entities", "message_type", "profile_statements", "domain_hint"}
     for case in _load_cases():
         extra = set(case["expected"]) - allowed
         assert not extra, f"{case['id']}: expected has undeclared keys {extra}"

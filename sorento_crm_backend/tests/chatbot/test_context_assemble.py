@@ -162,6 +162,82 @@ class TestWorstCaseBudget:
         assert dropped_layers, "an oversized worst-case fixture must drop something somewhere"
 
 
+class TestAC_MEM053PerLevelMemoryBudget:  # noqa: N801
+    """AC-MEM053 (round 3, merged 5b110df8): worst-case MEMORY tokens per level, on the
+    SAME 3x-cap fixture `TestWorstCaseBudget` uses, measured as the delta over level
+    `off`'s own total (off already carries `previous_response`/`current_message`/
+    `current_subject`/pending - none of which are a memory layer) - `off +0`,
+    `conversation +200`, `episodes (was "past") +450`, `full +600`.
+    """
+
+    def _oversized_layers(self, context, *, level: str):
+        return context.ContextLayers(
+            level=level,
+            profile_facts=[{"key": "note", "value": "x" * (context.CAPS["L5"] * 3 * 3)}],
+            summaries=[f"summary {i} " + "y" * 300 for i in range(9)],
+            earlier_messages=[{"created_at": f"day{i}", "text": "z" * 300} for i in range(9)],
+            previous_response="p" * (context.CAPS["L3"] * 3 * 3),
+            current_subject="s" * (context.CAPS["L2"] * 3 * 3),
+            pending_kind="product_pick",
+            pending_options=[f"option {i}" for i in range(30)],
+            settings_profile_line=None,
+            current_message="m" * (context.CAPS["L1"] * 3 * 3),
+            reply_to="q" * (context.CAPS["L1"] * 3 * 3),
+            media_line=None,
+        )
+
+    def _total(self, context, *, level: str) -> int:
+        layers = self._oversized_layers(context, level=level)
+        _text, report = context.assemble(layers)
+        return report["total_est_tokens"]
+
+    def test_off_adds_no_memory_tokens_over_itself(self) -> None:
+        context = _load_context()
+        off_total = self._total(context, level="off")
+        assert off_total - off_total == 0
+
+    def test_conversation_level_adds_at_most_200_over_off(self) -> None:
+        context = _load_context()
+        off_total = self._total(context, level="off")
+        conversation_total = self._total(context, level="conversation")
+        delta = conversation_total - off_total
+        assert delta <= 200, (
+            f"This conversation level must add at most 200 est. memory tokens over "
+            f"Off on the 3x-cap fixture, got +{delta} (off={off_total}, "
+            f"conversation={conversation_total})"
+        )
+
+    def test_episodes_level_adds_at_most_450_over_off(self) -> None:
+        """Round 3 renames `past` to `episodes` (AC-MEM051) - a level value this
+        module does not recognise today falls through to no memory layers at all,
+        which is itself the gap this test is pinned against."""
+        context = _load_context()
+        off_total = self._total(context, level="off")
+        episodes_total = self._total(context, level="episodes")
+        delta = episodes_total - off_total
+        assert delta <= 450, (
+            f"Past conversations (now `episodes`) must add at most 450 est. memory "
+            f"tokens over Off on the 3x-cap fixture, got +{delta} (off={off_total}, "
+            f"episodes={episodes_total})"
+        )
+        # The level must actually be RECOGNISED - a silent fallthrough to the
+        # `conversation` (or `off`) rendering would trivially satisfy the numeric
+        # cap above without ever adding the L4 "Recent conversations" layer.
+        assert "Recent conversations:" in context.assemble(
+            self._oversized_layers(context, level="episodes")
+        )[0], "level=episodes must still render the L4 recent-conversations layer"
+
+    def test_full_level_adds_at_most_600_over_off(self) -> None:
+        context = _load_context()
+        off_total = self._total(context, level="off")
+        full_total = self._total(context, level="full")
+        delta = full_total - off_total
+        assert delta <= 600, (
+            f"Full memory must add at most 600 est. memory tokens over Off on the "
+            f"3x-cap fixture, got +{delta} (off={off_total}, full={full_total})"
+        )
+
+
 class TestDropOrder:
     def test_l3_drops_oldest_earlier_message_first_then_cuts_previous_response(self) -> None:
         context = _load_context()
@@ -293,7 +369,7 @@ class TestLevels:
 
     def test_past_level_adds_l4_not_l5(self) -> None:
         context = _load_context()
-        layers = _base_layers(context, level="past", profile_facts=[{"key": "customer", "value": "Chin Chun Trading"}])
+        layers = _base_layers(context, level="episodes", profile_facts=[{"key": "customer", "value": "Chin Chun Trading"}])
         text, _report = context.assemble(layers)
         assert "Recent conversations" in text
         assert "About this contact" not in text
@@ -316,7 +392,7 @@ class TestAC_MEM065:
         context = _load_context()
         layers = _base_layers(
             context,
-            level="past",
+            level="episodes",
             summaries=[
                 "newest: Thu 25 Sep summary",
                 "middle: Tue 23 Sep summary",
