@@ -2280,14 +2280,19 @@ and `pipeline_value`, `pipeline_count` on each row.
 ## 18. S2 fix lane round 2: the owner's hand test (27 Sep, PR #1296)
 
 Owner rulings, verbatim on the PR ("Owner ruling from the hand test of sales S2 opportunities"
-and its addendum). Track: full (a migration, `sales_0004_opp_line_price`). Branch
+and its addendum). Track: full (a migration, `sales_0005_opp_line_price`). Branch
 `claude/sales-opportunities-s2-32eppn`, started at 576c2c829.
 
 - **S1 merged in, never rebased.** The portal target panel reuses S1's achievement query, so
   `origin/claude/sales-targets-s1-ex0fyg` (aa907f53) is merged into this branch, and so is
   origin/main (d8395cb8). `sales_0003_opportunities` now sits on `sales_0003_targets`. origin/main
   carried three alembic heads on `sales_0002_team_leader`; `sales_0003m_merge_main_heads` (no
-  schema change) joins them with the sales chain so the branch has one head.
+  schema change) joined them with the sales chain so the branch had one head. Relaunch (27 Sep,
+  from 59432501): S1's head 133b88cc and origin/main 11bf373e merged in (merges, never
+  rebases). S1 now sits on main's `merge_27sep_three_heads` (PR #1308), so
+  `sales_0003m_merge_main_heads` is dropped and the chain is `merge_27sep_three_heads` ->
+  `sales_0003_targets` -> `sales_0004_target_brands` -> `sales_0003_opportunities` ->
+  `sales_0005_opp_line_price`, one head.
 - **F1, one kind like Price Tag Request.** `sales_opportunity` joins `LANDING_KINDS` after
   `price_tag_request` (label "Sales Opportunity", singular like every kind), so it gets the
   same selector, count badge, search, filter, sort, list and grid toggles and New button. The
@@ -2306,6 +2311,34 @@ and its addendum). Track: full (a migration, `sales_0004_opp_line_price`). Branc
   forecast the owner finds misleading). Projected = achieved + those; short = target -
   projected, floored at 0. Layout: the mockup's option 1 (timeline plus bar towards the target),
   posted on the PR before building.
+- **Owner's notes on the mockup** ("the wording too long already", "make it structured and
+  simple"). The sentence is gone. Each target card shows four labelled figures (Target,
+  Achieved, Open (n), Short), one bar (achieved, then open), a bare timeline (start and end
+  dates, a today tick, one pin per opportunity) and the opportunity rows. The figures' colour
+  dots are the legend. `MyTargetPanel.tsx`.
+- **F3, no customers.** The scope stays the agent's own customers (the widening question is
+  still open on the PR). With nothing typed and no customers, the dropdown says "You have no
+  customers linked yet; type a name to add a prospect" (`NO_CUSTOMERS_MESSAGE`).
+- **F4, the system dropdown.** The portal opportunity screens drop `AsyncCombobox` for
+  `SearchableSelect` (customer or prospect, product, lost reason); the blocked name renders
+  disabled. Transition labels are the seeded ones (Qualify, Mark won, Mark lost), never keys.
+- **F5, the CRM record.** A header card (title, stage badge, number, created, updated, pager,
+  gear, Edit), then `Tabs variant="line"`: Details (customer or prospect, amount, close date,
+  agent, and once set the sales order or lost reason) and Products. The Stage card is gone.
+  Same tabs in view and edit (`SalesAgentDetail` shape).
+- **F6, one CTA plus the gear.** CRM and portal: Edit is the one primary button. The stage
+  moves are gear items (`RecordAction`, before Delete on the CRM), shown only with
+  `sales.opportunities.edit` and only while open. Non-terminal moves run on click. Mark won
+  (CRM: optional sales order) and Mark lost (required reason) open a small form dialog, since
+  both close the record for good. The list row menu is unchanged.
+- **F7, line prices.** `sales.opportunity_lines.unit_price` numeric(15,2) null, check `>= 0`
+  (`sales_0005_opp_line_price`). A line written without a price takes
+  `dealer_kit.pricing.flyer_price(product.list_price)`, the price the dealer flyer prints (zero
+  means none, 46% of the catalogue). Responses carry `unit_price` and `line_amount`
+  (qty x price, 2 dp, null when unpriced). `expected_amount` left out on create is the sum of
+  the line amounts. The CRM select and the portal lookup carry `list_price`, so the forms
+  prefill it. In the forms the amount follows the sum until the user types one (on edit, it
+  follows only if the stored amount equals the stored lines' sum).
 
 
 ## 17. S1 fix lane round 2 (27 Sep, the owner's hand test; UAC S1-30 to S1-35)
