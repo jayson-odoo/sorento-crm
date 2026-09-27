@@ -1176,13 +1176,14 @@ class TestParserPromptAndContractsTeachSalesReport:
         from app.services.chatbot_parser_prompt import (
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
-            STOCK_TASK_ADDENDUM,
+            SPECIFICATION_ADDENDUM,
+    STOCK_TASK_ADDENDUM,
         )
 
         # `STOCK_TASK_ADDENDUM` (ported from PR #1118, not merged, chatbot-stock-ask-v2
         # S3) stacked after this one, newest outermost, so it comes off first - the
         # same treatment this addendum itself gave `LOW_STOCK_ADDENDUM` when it landed.
-        assert SEMANTIC_PARSER_PROMPT.removesuffix(STOCK_TASK_ADDENDUM).endswith(
+        assert SEMANTIC_PARSER_PROMPT.removesuffix(SPECIFICATION_ADDENDUM).removesuffix(STOCK_TASK_ADDENDUM).endswith(
             SALES_REPORT_ADDENDUM
         ), (
             "SEMANTIC_PARSER_PROMPT does not end with SALES_REPORT_ADDENDUM once the "
@@ -1200,11 +1201,12 @@ class TestParserPromptAndContractsTeachSalesReport:
             LOW_STOCK_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
-            STOCK_TASK_ADDENDUM,
+            SPECIFICATION_ADDENDUM,
+    STOCK_TASK_ADDENDUM,
         )
 
         assert (
-            SEMANTIC_PARSER_PROMPT.removesuffix(STOCK_TASK_ADDENDUM)
+            SEMANTIC_PARSER_PROMPT.removesuffix(SPECIFICATION_ADDENDUM).removesuffix(STOCK_TASK_ADDENDUM)
             .removesuffix(SALES_REPORT_ADDENDUM)
             .endswith(LOW_STOCK_ADDENDUM)
         ), "SALES_REPORT_ADDENDUM must stack AFTER LOW_STOCK_ADDENDUM"

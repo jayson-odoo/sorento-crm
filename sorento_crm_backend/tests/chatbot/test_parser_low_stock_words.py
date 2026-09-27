@@ -87,13 +87,14 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         `LOW_STOCK_ADDENDUM` landed."""
         from app.services.chatbot_parser_prompt import (
             SALES_REPORT_ADDENDUM,
-            STOCK_TASK_ADDENDUM,
+            SPECIFICATION_ADDENDUM,
+    STOCK_TASK_ADDENDUM,
         )
 
 
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
-            assert body.removesuffix(STOCK_TASK_ADDENDUM).removesuffix(
+            assert body.removesuffix(SPECIFICATION_ADDENDUM).removesuffix(STOCK_TASK_ADDENDUM).removesuffix(
                 SALES_REPORT_ADDENDUM
             ).endswith(addendum), (
                 f"{name} body does not end with LOW_STOCK_ADDENDUM once the newer "
@@ -110,13 +111,14 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         from app.services.chatbot_parser_prompt import (
             LAST_COST_ADDENDUM,
             SALES_REPORT_ADDENDUM,
-            STOCK_TASK_ADDENDUM,
+            SPECIFICATION_ADDENDUM,
+    STOCK_TASK_ADDENDUM,
         )
 
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
             assert (
-                body.removesuffix(STOCK_TASK_ADDENDUM)
+                body.removesuffix(SPECIFICATION_ADDENDUM).removesuffix(STOCK_TASK_ADDENDUM)
                 .removesuffix(SALES_REPORT_ADDENDUM)
                 .removesuffix(addendum)
                 .endswith(LAST_COST_ADDENDUM)

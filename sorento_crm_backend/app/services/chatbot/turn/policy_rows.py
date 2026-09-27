@@ -359,6 +359,17 @@ PRODUCT_BASE_PROPERTY_WORDS: dict[str, str] = {
     "brand": "brand_id",
 }
 
+SPECIFICATION_KIND_ROW: dict[str, Any] = dict(
+    kind="specification",
+    label="Specification",
+    resolver_source="product_spec_registry",
+    did_you_mean=False,
+    default_narrowing="optional_filter",
+    family_grouping=None,
+    base_property_words={},
+    roster_cap=10,
+)
+
 DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
     dict(
         kind="product",
@@ -479,7 +490,9 @@ DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
         family_grouping=None,
         base_property_words={},
         roster_cap=10,
-    ),
+    ),    # Fix round 8 on PR #833 (migration `spk_0001_specification_kind`): a product
+    # property, grounded against the specification registry after the parse.
+    SPECIFICATION_KIND_ROW,
 ]
 
 # `DEFAULT_TIER_ORDER` used to live here (AC-1502). Gone (AC-1594, S6): the one literal is

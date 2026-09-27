@@ -200,6 +200,9 @@ ENTITY_HINTS = (
     "category",
     "brand",
     "attachment_type",
+    # Fix round 8 on PR #833: a product property from the specification registry
+    # (`head/grounding.py`), never a document type.
+    "specification",
 )
 EntityHint = Literal[ENTITY_HINTS]  # type: ignore[valid-type]
 

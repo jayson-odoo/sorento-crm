@@ -30,6 +30,7 @@ from app.services.chatbot_parser_prompt import (
     LIVE_SYSTEM_MESSAGE_SHA256,
     LOW_STOCK_ADDENDUM,
     SALES_REPORT_ADDENDUM,
+    SPECIFICATION_ADDENDUM,
     STOCK_TASK_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
 )
@@ -177,6 +178,10 @@ def _without_growth_r1_addendum(text: str) -> str:
     """
     # STOCK_TASK_ADDENDUM (ported from PR #1118, not merged, chatbot-stock-ask-v2 S3)
     # is the newest addendum, so it comes off FIRST.
+    # SPECIFICATION_ADDENDUM (fix round 8 on PR #833) is newer still, so it comes off
+    # before it.
+    if text.endswith(SPECIFICATION_ADDENDUM):
+        text = text[: -len(SPECIFICATION_ADDENDUM)]
     if text.endswith(STOCK_TASK_ADDENDUM):
         text = text[: -len(STOCK_TASK_ADDENDUM)]
     if text.endswith(SALES_REPORT_ADDENDUM):

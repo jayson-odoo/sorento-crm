@@ -163,6 +163,14 @@ def _build_json_schema() -> dict[str, Any]:
                         # absent from `required`, and a key the provider is never
                         # forced to reason about is a key it never fills.
                         "quantity": {"type": ["number", "null"]},
+                        # Fix round 8 on PR #833 (owner retest of round 7): a
+                        # `specification` entity names its registry key and the choice
+                        # (or number) the words mean; null on every other kind. The
+                        # vocabulary is the policy block's Specification lines, and
+                        # `head/grounding.py` checks both against the registry after the
+                        # parse. Required like every other key: strict mode.
+                        "spec_key": string_or_null,
+                        "spec_value": {"type": ["string", "number", "boolean", "null"]},
                     },
                     "required": [
                         "raw",
@@ -172,6 +180,8 @@ def _build_json_schema() -> dict[str, Any]:
                         "confident",
                         "hint_confident",
                         "quantity",
+                        "spec_key",
+                        "spec_value",
                     ],
                 },
             },

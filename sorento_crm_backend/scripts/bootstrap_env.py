@@ -728,9 +728,14 @@ def seed_chatbot_policy() -> None:
     s9 = _load("_chatbot_rearch_s9", "chatbot_rearch_s9.py")
     s11 = _load("_chatbot_rearch_s11", "chatbot_rearch_s11.py")
     s12 = _load("_chatbot_rearch_s12", "chatbot_rearch_s12.py")
+    # Fix round 8 on PR #833: the `specification` entity kind, BEFORE the republish so
+    # the published blocks carry its entity-kind line.
+    spk = _load("_spk_0001_specification_kind", "spk_0001_specification_kind.py")
 
     with engine.begin() as conn:
         domains_inserted, kinds_inserted = s0.seed_domains_and_kinds(conn)
+    with engine.begin() as conn:
+        kinds_inserted += int(spk.insert_kind(conn))
     with engine.begin() as conn:
         s4.publish_policy_blocks(conn)
     with engine.begin() as conn:
