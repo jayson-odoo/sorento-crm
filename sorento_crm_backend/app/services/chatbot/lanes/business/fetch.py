@@ -959,6 +959,30 @@ def entity_ids_transformer(
         attributes = access.get("attributes") if isinstance(access.get("attributes"), list) else []
         if "inventory.sellable" in attributes:
             out["include_sellable"] = True
+        # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+        # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3, D13/D20: the dealer's OWN
+        # quantity, per product, as the `{product uuid: int}` map the route declares
+        # and parses (`parse_requested_quantities`). Absent, never null, on a turn
+        # that states no quantity at all - the tool's scalar `requested_qty` contract
+        # (n8n, direct callers) is untouched, and an ask with no quantity still comes
+        # back `needs_quantity`, which is what OPENS the task in the first place.
+        #
+        # MUST cross the MCP as a JSON STRING, not a native dict (review round 3, the
+        # live pass): the route (`app/api/v1/inventory/stock.py`) declares
+        # `requested_quantities: Optional[str]`, and the MCP's `_compile_tool` types
+        # every query param off `_scalar_union` (no dict case) unless the tool is
+        # listed in `TOOL_OBJECT_QUERY_PARAMS` - sent as a string here either way, so
+        # the value round-trips identically whichever path compiles it.
+        #
+        # Review round 6, finding B: NOT key-sorted. The map is built in the order
+        # the dealer named the products (`turn_runtime._spec_quantities`, over the
+        # spec's own entities), and sorting the keys here would throw that order away
+        # - the reply then notes the products back in an order the dealer never used.
+        quantities = jsc.get(semantic_input, "requested_quantities")
+        if isinstance(quantities, dict) and quantities:
+            out["requested_quantities"] = json.dumps(
+                dict(quantities), separators=(",", ":")
+            )
 
     # group_by / top_n (A3, AC-909/AC-910): additive parser keys, uniform across
     # every list tool this plan touches. `top_n` aliases to `limit` for the
@@ -2522,6 +2546,27 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             "please check with the office."
         )
 
+    # Chatbot stock ask v2 S3 fix round 1, Blocking 1 (R6/R14/AC-SA312): once every
+    # product in an `availability` reply has a branch, the presenter's per-item title
+    # (`sorento_crm_mcp.presenters._availability_line`) already carries the whole R14
+    # sentence - product, quantity, and the answer. A shared intro in front of it, or a
+    # position number ("1. ") on it, both say something the four fixed sentences never
+    # said: the old `_AVAILABILITY_NO` intro read as a statement about OUR stock even
+    # for a `too_big` entry with plenty on hand, which R6 B1 forbids ("never reveal
+    # stock"). So an answered `availability` reply gets no intro line and no numbering
+    # (plan sample (g)); the presenter itself already returns "" for `intro` in this
+    # case (see `_availability_intro`).
+    stock_availability_answered = bool(
+        jsc.js_string(e.get("result_type") or "") == "stock_availability"
+        and isinstance(e.get("items"), list)
+        and len(e["items"])
+        and not any(
+            jsc.truthy(jsc.get(jsc.get(it, "flags"), "needs_quantity"))
+            for it in e["items"]
+            if jsc.truthy(it)
+        )
+    )
+
     # The PRESENTER owns the intro whenever it emits `summary_items` - it states the page
     # geometry there, and this override would replace it with a sentence that says less.
     qs_presenter_owns_intro = bool(
@@ -2550,7 +2595,11 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             else "Here are the delivered orders I found."
         )
 
-    msg = jsc.js_string(e.get("intro") or "Here are the results.").strip() + "\n\n"
+    msg = (
+        ""
+        if stock_availability_answered
+        else jsc.js_string(e.get("intro") or "Here are the results.").strip() + "\n\n"
+    )
     if isinstance(ctx.get("predicate"), dict):
         # Round 3 W1 (owner hand test on PR #833, "the message too long already"): a
         # counted set's header says what the list is; the tool's own intro under it
@@ -2611,7 +2660,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if set_row_labels is not None and set(set_require or {}) & _FULL_ROW_LEGS:
         set_row_labels = None
 
-    def _item_line(position: int, it: Any) -> str:
+    def _item_line(position: int, it: Any, *, numbered: bool = True) -> str:
         if set_row_labels is not None:
             return set_rows_text([it], set_row_labels, require=set_require, offset=position - 1).rstrip("\n")
         field_lines = "\n".join(
@@ -2619,11 +2668,17 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             f"{_fmt_value(jsc.get(f, 'value'))}"
             for f in (jsc.get(it, "fields") or [])
         )
-        # An item with no fields at all (the stock tool's availability mode renders the
-        # product and nothing else, so a dealer is never shown a quantity) is named by its
-        # own title, the product code; without this it printed as a bare "1. ".
-        title = jsc.nullish_str(jsc.get(it, "title")).strip()
-        line = f"{position}. {field_lines if field_lines else title}"
+        # An item with no fields at all is named by its own title: the stock tool's
+        # availability mode renders the product and nothing else, so a dealer is never
+        # shown a quantity (without this it printed as a bare "1. "), and an answered
+        # `availability` item's title carries the whole verdict sentence (ported from
+        # PR #1118 for chatbot-stock-ask-v2 S3, review round 3, Observation B).
+        if not field_lines:
+            field_lines = jsc.nullish_str(jsc.get(it, "title")).strip()
+        # Chatbot stock ask v2 S3 fix round 1, Blocking 1 (R14/AC-SA312): an answered
+        # `availability` item's title already starts "<code> x <Q>:", so it is not
+        # numbered (plan sample (g) shows plain lines, not a numbered list).
+        line = field_lines if not numbered else f"{position}. {field_lines}"
         flags = jsc.get(it, "flags")
         if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "discontinued")):
             line += "\n⚠️  *(PRODUCT DISCONTINUED)*"
@@ -2656,6 +2711,23 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
                 position += 1
                 msg += _item_line(position, it) + "\n\n"
 
+    # Ported from PR #1118 (not merged), review round 3 (Observation B): while ANY
+    # product still needs a quantity (D14), `intro` (`_noted_and_missing_question`)
+    # has already said everything relevant - the items themselves carry no fields at
+    # all and, before the `_item_line` title fallback above existed, printed as a
+    # numbered list of nothing. Suppressed only while the ask is open; once every
+    # product has a quantity the items DO carry the per-product verdict line and must
+    # print, same as `qs_render`/`groups_render` above.
+    stock_ask_render = bool(
+        jsc.js_string(e.get("result_type") or "") == "stock_availability"
+        and isinstance(e.get("items"), list)
+        and any(
+            jsc.truthy(jsc.get(jsc.get(it, "flags"), "needs_quantity"))
+            for it in e["items"]
+            if jsc.truthy(it)
+        )
+    )
+
     # A quantity ask prints the SUMMARY ONLY: the two order perspectives are separate
     # questions and the parser already separates them. The ROWS are suppressed from the
     # MESSAGE, never from the STATE - `answers` below is untouched, so a positional pick
@@ -2665,8 +2737,12 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         # R3: a counted set lists one compact row per PRODUCT, whatever number of tool
         # rows (files, shipments) it came back as.
         msg += set_rows_text(e.get("items") or [], set_row_labels, require=set_require, offset=set_row_offset)
-    for i, it in enumerate([] if (qs_render or groups_render or set_row_labels is not None) else (e.get("items") or [])):
-        msg += _item_line(i + 1 + set_row_offset, it) + "\n\n"
+    for i, it in enumerate(
+        []
+        if (qs_render or groups_render or stock_ask_render or set_row_labels is not None)
+        else (e.get("items") or [])
+    ):
+        msg += _item_line(i + 1 + set_row_offset, it, numbered=not stock_availability_answered) + "\n\n"
     # Item 8: the product projection's miss lines, one per asked word, AFTER the items
     # (`_project_product_specs`). Byte-inert when the key is absent.
     for miss in e.get("spec_misses") or []:
@@ -2727,7 +2803,19 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if access_notes:
         msg += "\n".join(access_notes) + "\n\n"
 
-    ts = _fmt_ts(e.get("last_updated_at"))
+    # Chatbot stock ask v2 S3 fix round 2, Blocking 1 (R6 B1, R14, AC-SA312): production
+    # always sets `last_updated_at` (`StockService._apply_stock_visibility`, every policy
+    # mode, availability included), so an answered `availability` reply would otherwise
+    # end in a line that is not one of the four R6 sentences and whose digits are ours -
+    # exactly what the intro and the numbering were already gated off of above, for the
+    # same reason. `compact` and `detailed` are untouched (R10): neither is a
+    # `stock_availability` reply.
+    #
+    # Owner hand test 26 Sep, slice 1: keyed on the RESULT TYPE, not on "answered". The
+    # quantity question ("How many units do you need?") is an availability reply too,
+    # and it printed the timestamp on T1, T3, T8, T13 and T16.
+    stock_availability_reply = jsc.js_string(e.get("result_type") or "") == "stock_availability"
+    ts = None if stock_availability_reply else _fmt_ts(e.get("last_updated_at"))
     if ts:
         msg += f"_Data last updated: {ts}_"
 
@@ -2849,6 +2937,15 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     )
     if len(lookup_cos) > 1:
         out["lookup_companies"] = lookup_cos
+    if isinstance(e.get("stock_availability"), list):
+        # Ported from PR #1118 (not merged), D25: the backend states, per product,
+        # whether a quantity is still required - the one fact the open stock task is
+        # built from (`turn/task.py::tasks_after_reply`). Carried through UNREAD by
+        # this lane: the sentence the dealer sees is the MCP presenter's, as it
+        # already is for every other row.
+        out["stock_availability"] = [
+            row for row in e["stock_availability"] if isinstance(row, dict)
+        ]
     if jsc.js_string(ctx.get("tool") or "") == _FORMS_LIST_TOOL:
         # Beside `out["answers"]`, never instead of it: the numbered list still prints
         # through the generic per-row grammar, and `forms_ask` only gives `envelope_of`
