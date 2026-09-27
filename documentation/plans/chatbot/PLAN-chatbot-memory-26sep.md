@@ -2,6 +2,10 @@
 
 Status: lane A (S0 to S3) BUILT on PR #1304, 27 Sep 2026, awaiting review and the owner's S3T
 test; S4 is lane B, not started. Build rulings and deviations: `chatbot-memory-lane-a-contract.md`.
+Merge-main round, 27 Sep 2026: main at 52b0ac24 merged in; `mem_0001_frames_level` now hangs off
+main's single merge revision `sales_s1_reports_module`, and the parser prompt chain ends
+`SALES_ANALYSIS_ADDENDUM + MEMORY_ADDENDUM`, so `mem_0002_parser_memory` publishes the memory
+words as the version after the one `sales_s1_reports_module` promoted, label unmoved.
 Planning history: DRAFT round 3, 27 Sep 2026. Owner rulings of 26 Sep 23:45 MYT (grill questions 1, 2,
 7, 10) and 27 Sep 00:10 MYT (3, 6, 8) applied; the 27 Sep 00:45 and 00:50 MYT notes applied
 (final UI mockups, pictures in place of the flagged paragraphs); question 9's term named
