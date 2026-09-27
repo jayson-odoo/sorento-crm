@@ -4,8 +4,10 @@ Same shape as `product_spec_rederive.py` on purpose - a background thread with a
 status anyone can poll - because that plumbing already exists and a preview needs
 nothing more from it: no new table, no queue, no worker restart (AC-B.2). The only
 difference is scope: `reread-catalogue` re-reads everything with the RULES THAT ARE
-LIVE; this compares one key's stored values against what an UNSAVED draft would read,
-and never writes anything.
+LIVE; this re-reads one key twice, with the live rules and with an UNSAVED draft, and
+compares the two, so it shows only what the draft changes (owner, 27 Sep: a one-word
+BLACK rule listed 66 products that had nothing to do with BLACK, because the baseline
+was the STORED values and those had drifted from today's rules). It never writes.
 
 Jobs are in-process state, like the rederive run: they are progress for whoever
 pressed "Preview", not a record. Kept for the last `_MAX_JOBS` runs so an old `jobId`
@@ -16,11 +18,13 @@ nobody.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 import uuid
 from collections import OrderedDict
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -58,26 +62,61 @@ def get(job_id: str) -> dict | None:
         return dict(state) if state is not None else None
 
 
-def _compare(db: Session, spec_key: str, rules: list[dict]) -> dict:
+def _reading_keys(
+    spec_key: str, rules_by_key: dict[str, list[dict]], scopes_by_key: dict[str, dict]
+) -> set[str]:
+    """The keys whose rules decide `spec_key`: itself, and every key its Only when or its
+    scope reads, followed through. Everything else in the catalogue's rules cannot move
+    this key's value, so it is not run - which is what lets a save compare the whole
+    catalogue for one key inside the request."""
+    from app.services.product_spec_rules import gate_keys
+
+    wanted: set[str] = set()
+    pending = [spec_key]
+    while pending:
+        key = pending.pop()
+        if key in wanted:
+            continue
+        wanted.add(key)
+        pending.extend(gate_keys({key: rules_by_key.get(key) or []}))
+        pending.extend((scopes_by_key.get(key) or {}).keys())
+    return wanted
+
+
+def readings_for_key(
+    db: Session,
+    spec_key: str,
+    *,
+    rules_by_key: dict[str, list[dict]],
+    scopes_by_key: dict[str, dict],
+    max_values: dict[str, float],
+    live_rules_by_key: dict[str, list[dict]] | None = None,
+):
+    """Every active product's stored `spec_key` value beside what the given rules read,
+    as `{"code", "name", "before", "after"}` - the comparison a saved rule's re-read
+    makes (AC-S1.16, D10): the products whose stored value differs are re-read.
+
+    Given `live_rules_by_key`, each entry also carries `live`: what the rules that are
+    live today read. "See what would change" compares `live` with `after`, so it
+    reports only what the draft changes; `before != live` is drift a save re-reads too.
+
+    A person's own answer is skipped: it is not derived, so no rule can change it
+    (AUTHORED_SOURCES, product_spec_write). Yields one entry per product row, so a code
+    held by two companies can appear twice.
+    """
     import sqlalchemy as sa
     from app.models.base import company_scope
     from app.models.product import Product, ProductCategory
     from app.models.product_spec import ProductSpecifications
-    from app.services.product_spec_derivation import (
-        configured_max_values,
-        configured_rules,
-        configured_scopes,
-        derive,
-    )
+    from app.services.product_spec_derivation import derive
     from app.services.product_spec_write import AUTHORED_SOURCES
 
-    rules_by_key = dict(configured_rules(db))
-    rules_by_key[spec_key] = rules
-    scopes_by_key = configured_scopes(db)
-    max_values = configured_max_values(db)
-
-    changed = added = removed = unchanged = 0
-    sample: list[dict] = []
+    keys = _reading_keys(spec_key, rules_by_key, scopes_by_key)
+    reading_rules = {key: rules_by_key[key] for key in rules_by_key if key in keys}
+    live_rules = None
+    if live_rules_by_key is not None:
+        live_keys = _reading_keys(spec_key, live_rules_by_key, scopes_by_key)
+        live_rules = {key: live_rules_by_key[key] for key in live_rules_by_key if key in live_keys}
 
     # ALL-COMPANIES, same reason `derive_product_specs` runs under it: a product code
     # exists once per company, and a session with no scope set sees NONE of them
@@ -114,11 +153,6 @@ def _compare(db: Session, spec_key: str, rules: list[dict]) -> dict:
             for product, category, spec in page:
                 existing_values = (spec.values if spec else {}) or {}
                 existing_provenance = (spec.provenance if spec else {}) or {}
-
-                # A person's own answer is not derived, so a draft rule cannot
-                # "change" it - counting it either way would report a number nobody
-                # could act on: saving the draft will not touch this row
-                # (AUTHORED_SOURCES, product_spec_write).
                 provenance = existing_provenance.get(spec_key) or {}
                 if provenance.get("source") in AUTHORED_SOURCES:
                     continue
@@ -126,37 +160,93 @@ def _compare(db: Session, spec_key: str, rules: list[dict]) -> dict:
                 out = derive(
                     product,
                     category,
-                    rules_by_key=rules_by_key,
+                    rules_by_key=reading_rules,
                     scopes_by_key=scopes_by_key,
                     max_values=max_values,
                 )
                 after = (out.values.get(spec_key) or {}).get("value")
                 before = (existing_values.get(spec_key) or {}).get("value")
-
-                if before == after:
-                    unchanged += 1
-                    continue
-                if before is None:
-                    added += 1
-                elif after is None:
-                    removed += 1
-                else:
-                    changed += 1
-                if len(sample) < 20:
-                    sample.append(
-                        {"code": product.product_code, "before": before, "after": after}
+                row = {
+                    "code": product.product_code,
+                    "name": product.product_name,
+                    "before": before,
+                    "after": after,
+                }
+                if live_rules is not None:
+                    live_out = derive(
+                        product,
+                        category,
+                        rules_by_key=live_rules,
+                        scopes_by_key=scopes_by_key,
+                        max_values=max_values,
                     )
+                    row["live"] = (live_out.values.get(spec_key) or {}).get("value")
+                yield row
 
             last_product = page[-1][0]
             cursor = (last_product.product_code, last_product.id)
             if len(page) < _PAGE_SIZE:
                 break
 
+
+def _compare(db: Session, spec_key: str, rules: list[dict]) -> dict:
+    """What the draft `rules` change for `spec_key`, against the rules live today.
+
+    `changed` / `now_set` / `no_longer_set` / `unchanged` compare the live read with
+    the draft read, so a stored value that has drifted from today's rules never shows
+    as something this draft does. `drift` counts those products on its own: a save
+    re-reads them too, which is why a save can update more products than the preview
+    listed. The sample row carries the product's code and name.
+    """
+    from app.models.product_spec import ProductSpecRegistry
+    from app.services.product_spec_derivation import (
+        configured_max_values,
+        configured_rules,
+        configured_scopes,
+        without_suppressed,
+    )
+
+    live_rules_by_key = configured_rules(db)
+    registry_row = db.query(ProductSpecRegistry).filter_by(spec_key=spec_key).first()
+    rules_by_key = dict(live_rules_by_key)
+    # The same filter the live list went through, so an unedited list previews nothing.
+    rules_by_key[spec_key] = without_suppressed(
+        rules, registry_row.suppressed_values if registry_row is not None else None
+    )
+
+    changed = now_set = no_longer_set = unchanged = drift = 0
+    sample: list[dict] = []
+    for row in readings_for_key(
+        db,
+        spec_key,
+        rules_by_key=rules_by_key,
+        scopes_by_key=configured_scopes(db),
+        max_values=configured_max_values(db),
+        live_rules_by_key=live_rules_by_key,
+    ):
+        stored, before, after = row["before"], row["live"], row["after"]
+        if stored != before:
+            drift += 1
+        if before == after:
+            unchanged += 1
+            continue
+        if before is None:
+            now_set += 1
+        elif after is None:
+            no_longer_set += 1
+        else:
+            changed += 1
+        if len(sample) < 20:
+            sample.append(
+                {"code": row["code"], "name": row["name"], "before": before, "after": after}
+            )
+
     return {
         "changed": changed,
-        "added": added,
-        "removed": removed,
+        "now_set": now_set,
+        "no_longer_set": no_longer_set,
         "unchanged": unchanged,
+        "drift": drift,
         "sample": sample,
     }
 
@@ -185,12 +275,127 @@ def _run_job(job_id: str, spec_key: str, rules: list[dict], db: Session | None =
         logger.exception("spec preview %s (%s) failed", job_id, spec_key)
         _remember(job_id, {"status": "failed", "spec_key": spec_key, "error": str(exc)})
     finally:
+        _release_database_lock(job_id)
         with _RUNNING_LOCK:
             if _RUNNING_JOB_ID == job_id:
                 _RUNNING_JOB_ID = None
 
 
-def start(spec_key: str, rules: list[dict]) -> str:
+# The message a save or a remove answers with while another catalogue read runs.
+CATALOGUE_READ_BUSY = (
+    "Products are still being updated from another change. Try again in a moment."
+)
+
+
+# The slot above is per process, and production runs several API workers (review S-8).
+# The same slot is also a Postgres advisory lock, held on a connection of its own for as
+# long as the read runs, so a save in one worker and a preview in another still take
+# turns. Keyed on the schema the request reads, so each catalogue has one slot.
+_DATABASE_LOCKS: dict[str, tuple] = {}
+_DATABASE_LOCKS_GUARD = threading.Lock()
+
+
+def catalogue_read_lock_key(db: Session) -> int:
+    """The advisory lock key for the catalogue `db` reads (one per schema)."""
+    schema = db.execute(text("SELECT current_schema()")).scalar() or "public"
+    digest = hashlib.sha256(f"sorento-spec-catalogue-read:{schema}".encode()).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
+def _take_database_lock(token: str, db: Session) -> bool:
+    from app.database import engine
+
+    key = catalogue_read_lock_key(db)
+    connection = engine.connect()
+    try:
+        taken = connection.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": key}).scalar()
+        connection.commit()
+    except Exception:
+        connection.close()
+        raise
+    if not taken:
+        connection.close()
+        return False
+    with _DATABASE_LOCKS_GUARD:
+        _DATABASE_LOCKS[token] = (connection, key)
+    return True
+
+
+def _release_database_lock(token: str | None) -> None:
+    with _DATABASE_LOCKS_GUARD:
+        held = _DATABASE_LOCKS.pop(token, None) if token else None
+    if held is None:
+        return
+    connection, key = held
+    try:
+        connection.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": key})
+        connection.commit()
+    except Exception:  # noqa: BLE001
+        logger.warning("spec catalogue-read lock release failed", exc_info=True)
+        # `close()` alone hands a pooled connection back with the session lock still
+        # held; invalidating it closes the database session, which releases the lock
+        # (review N-R5).
+        try:
+            connection.invalidate()
+        except Exception:  # noqa: BLE001
+            logger.warning("spec catalogue-read connection invalidate failed", exc_info=True)
+    finally:
+        connection.close()
+
+
+def _busy():
+    from app.services.error_handler import AppException
+
+    return AppException(
+        status_code=409, message=CATALOGUE_READ_BUSY, code="spec_catalogue_read_running"
+    )
+
+
+def _claim(token: str, db: Session | None, refusal) -> None:
+    """Take both halves of the slot for `token`, or raise and hold neither."""
+    global _RUNNING_JOB_ID
+    with _RUNNING_LOCK:
+        if _RUNNING_JOB_ID is not None:
+            raise refusal(_RUNNING_JOB_ID)
+        _RUNNING_JOB_ID = token
+    taken = False
+    try:
+        taken = db is None or _take_database_lock(token, db)
+    finally:
+        if not taken:
+            with _RUNNING_LOCK:
+                if _RUNNING_JOB_ID == token:
+                    _RUNNING_JOB_ID = None
+    if not taken:
+        raise _busy()
+
+
+def begin_catalogue_read(db: Session | None = None) -> str:
+    """Take the ONE catalogue-read slot for a save's re-read, or refuse with a 409.
+
+    A rule save, a rule remove and a preview each read the whole catalogue for one key,
+    and all three share the slot a preview already guards itself with (security review
+    S1, #1286): two at once would each hold a request thread for seconds and race to
+    write the same products. The slot is taken BEFORE anything is saved, so a refused
+    save stores nothing. Given `db`, it is also taken across processes (review S-8).
+    Give the token back with `end_catalogue_read`.
+    """
+    token = f"save-{uuid.uuid4().hex[:12]}"
+    _claim(token, db, lambda _holder: _busy())
+    return token
+
+
+def end_catalogue_read(token: str | None) -> None:
+    global _RUNNING_JOB_ID
+    if token is None:
+        return
+    _release_database_lock(token)
+    with _RUNNING_LOCK:
+        if _RUNNING_JOB_ID == token:
+            _RUNNING_JOB_ID = None
+
+
+def start(spec_key: str, rules: list[dict], db: Session | None = None) -> str:
     """Kick off a preview run. Returns the job id to poll.
 
     Refuses a second run while one is already in flight - 409 `spec_preview_running`,
@@ -199,18 +404,26 @@ def start(spec_key: str, rules: list[dict]) -> str:
     """
     from app.services.error_handler import AppException
 
-    global _RUNNING_JOB_ID
-    with _RUNNING_LOCK:
-        if _RUNNING_JOB_ID is not None:
-            raise AppException(
-                status_code=409,
-                message="A preview is already running. Wait for it to finish.",
-                code="spec_preview_running",
-                detail=_RUNNING_JOB_ID,
-            )
-        job_id = uuid.uuid4().hex[:12]
-        _RUNNING_JOB_ID = job_id
+    def refusal(holder: str):
+        # A save holding the slot is not a preview (review N-4): say what is running.
+        if holder.startswith("save-"):
+            return _busy()
+        return AppException(
+            status_code=409,
+            message="A preview is already running. Wait for it to finish.",
+            code="spec_preview_running",
+            detail=holder,
+        )
+
+    job_id = uuid.uuid4().hex[:12]
+    _claim(job_id, db, refusal)
 
     _remember(job_id, {"status": "pending", "spec_key": spec_key})
-    threading.Thread(target=_run_job, args=(job_id, spec_key, rules), daemon=True).start()
+    try:
+        threading.Thread(target=_run_job, args=(job_id, spec_key, rules), daemon=True).start()
+    except Exception:
+        # `_run_job`'s `finally` gives the slot back; a thread that never started
+        # would hold both halves of it for the life of the process.
+        end_catalogue_read(job_id)
+        raise
     return job_id

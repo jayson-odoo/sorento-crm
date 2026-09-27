@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.models.product_spec import ProductSpecRegistry, ProductSpecSearchPolicy
+from app.models.product_spec import ProductSpecSearchPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -38,30 +38,31 @@ _FINGERPRINT_KEY = "_derived_rules_fingerprint"
 
 
 def rules_fingerprint(db: Session) -> str:
-    """A stable hash of how every key is read. Changes when any of it is edited.
+    """A stable hash of how every key is read right now. Changes when any of it does.
 
-    Covers the rules, the scope AND the cap, because all three decide what a product
-    ends up carrying: narrowing `has_drainer` to Kitchen Sink changes 74 rows without
-    touching a single rule, and dropping `dim_length`'s cap from 5000 to 500 changes
-    every reading over 500 without touching a rule OR a scope - the screen has to say
-    the catalogue is out of date for that too (S2).
+    The RUNNING rules, not only the stored column: the configured rules with the shipped
+    fallback for a key that has none, every key's scope and cap, and
+    `DERIVATION_VERSION`. A deploy that changes the shipped rules (or the engine)
+    therefore moves it even when nobody edited a row, which is what lets the worker
+    catch the catalogue up on start (D10, AC-S3.5). Scope and cap are in it because they
+    decide what a product carries as much as a rule does: narrowing `has_drainer` to
+    Kitchen Sink changes 74 rows without touching a rule.
     """
     import hashlib
 
-    rows = (
-        db.query(
-            ProductSpecRegistry.spec_key,
-            ProductSpecRegistry.derivation_rules,
-            ProductSpecRegistry.applies_when,
-            ProductSpecRegistry.max_value,
-        )
-        .order_by(ProductSpecRegistry.spec_key)
-        .all()
+    from app.services.product_spec_derivation import (
+        DERIVATION_VERSION,
+        configured_max_values,
+        configured_rules,
+        configured_scopes,
     )
+
     payload = json.dumps(
         {
-            key: {"rules": rules, "scope": scope, "max_value": str(max_value)}
-            for key, rules, scope, max_value in rows
+            "version": DERIVATION_VERSION,
+            "rules": configured_rules(db),
+            "scopes": configured_scopes(db),
+            "max_values": configured_max_values(db),
         },
         sort_keys=True,
         default=str,
@@ -143,3 +144,171 @@ def start(db: Session) -> dict:
     fingerprint = rules_fingerprint(db)
     threading.Thread(target=_run, args=(fingerprint,), daemon=True).start()
     return {"status": "running", "started_at": _STATE["started_at"]}
+
+
+# --------------------------------------------------------------------------- #
+# reading runs itself (#1286, D10): after a save, and after a deploy
+# --------------------------------------------------------------------------- #
+def enqueue_job(func, *args, **kwargs):
+    """`queue_service.enqueue_job`, looked up when called so a test can stand in for it
+    and a module import never needs Redis."""
+    from app.services.queue_service import enqueue_job as _enqueue
+
+    return _enqueue(func, *args, **kwargs)
+
+
+def catch_up_on_worker_start() -> bool:
+    """Queue one catalogue re-read when the running rules are not the ones the catalogue
+    was last read with. Returns whether it queued one. Never raises.
+
+    Called once by `worker.py` on start, when that worker drains `imports`. A deploy
+    that changes the shipped rules moves the running fingerprint, and nobody is asked to
+    press anything (owner ruling, 27 Sep 2026: no re-read concept on any screen). The
+    job stores the fingerprint it read with when it finishes, so the next start queues
+    nothing.
+    """
+    import app.database as database
+
+    try:
+        with database.SessionLocal() as db:
+            running = rules_fingerprint(db)
+            stored = _stored_fingerprint(db)
+        if stored == running:
+            logger.info("spec catch-up: the catalogue was read with the running rules")
+            return False
+        # One job per running fingerprint (review S-9): several workers starting on the
+        # same deploy each ask, and only the first one queues the re-read.
+        job_id = f"spec-catch-up-{running}"
+        if _already_queued(job_id):
+            logger.info("spec catch-up: %s is already queued", job_id)
+            return False
+        from app.tasks.product_spec_tasks import reread_catalogue
+
+        enqueue_job(
+            reread_catalogue,
+            queue_name="imports",
+            job_id=job_id,
+            run_label="worker-start catch-up",
+        )
+        logger.info("spec catch-up: rules changed since the last read, catalogue re-read queued")
+        return True
+    except Exception:  # noqa: BLE001 - a worker must start whatever this finds
+        logger.warning("spec catch-up could not run", exc_info=True)
+        return False
+
+
+def _already_queued(job_id: str) -> bool:
+    """Whether the job is waiting or running on the queue. False when Redis cannot say."""
+    try:
+        from rq.job import Job, JobStatus
+
+        from app.services.queue_service import get_queue
+
+        job = Job.fetch(job_id, connection=get_queue("imports").connection)
+        return job.get_status() in {
+            JobStatus.QUEUED,
+            JobStatus.STARTED,
+            JobStatus.DEFERRED,
+            JobStatus.SCHEDULED,
+        }
+    except Exception:  # noqa: BLE001 - no such job, or no Redis: queue it
+        return False
+
+
+def reread_catalogue_and_store(run_label: str | None = None) -> dict:
+    """Re-read every product, then store the fingerprint of the rules it read with.
+
+    The fingerprint is taken BEFORE the run so a rule edited while it runs is not
+    credited to it.
+    """
+    import app.database as database
+    from app.tasks.product_spec_tasks import derive_product_specs
+
+    with database.SessionLocal() as db:
+        fingerprint = rules_fingerprint(db)
+    result = derive_product_specs(run_label=run_label or "catalogue re-read")
+    with database.SessionLocal() as db:
+        _store_fingerprint(db, fingerprint)
+    return result
+
+
+def reread_codes_and_store(codes: list[str], fingerprint: str) -> dict:
+    """Re-read the codes a save changed, then store the fingerprint of the rules they
+    were read with. What a save queues when it changed too many products to read on the
+    request: the fingerprint moves only once the codes are read (review S-9), so a job
+    that fails leaves the catch-up owed rather than marking the catalogue current."""
+    import app.database as database
+    from app.tasks.product_spec_tasks import derive_product_specs
+
+    result = derive_product_specs(sorted(codes), run_label="rule save")
+    with database.SessionLocal() as db:
+        _store_fingerprint(db, fingerprint)
+    return result
+
+
+def reread_after_save(db: Session, spec_key: str, *, fingerprint_before: str) -> int:
+    """Re-read exactly the products whose `spec_key` value the saved rules change.
+
+    The save already knows which products change: it is the same comparison See what
+    would change makes (`product_spec_preview.readings_for_key`). Those codes go through
+    `rederive_codes`, the path a product edit takes - a few inline, many on the
+    `imports` queue. Returns how many products that is, for the toast "Saved. N products
+    updated." (AC-S1.16).
+
+    The stored fingerprint moves to the new rules only when it matched the rules before
+    this save: then the catalogue was current and now is again, so the worker has
+    nothing to catch up. When it did not match (a deploy's catch-up is still owed), it
+    is left alone so that catch-up still runs.
+    """
+    from app.services import product_spec_change_listener as listener
+    from app.services.product_spec_derivation import (
+        configured_max_values,
+        configured_rules,
+        configured_scopes,
+    )
+    from app.services.product_spec_preview import readings_for_key
+
+    was_current = _stored_fingerprint(db) == fingerprint_before
+    changed = {
+        row["code"]
+        for row in readings_for_key(
+            db,
+            spec_key,
+            rules_by_key=configured_rules(db),
+            scopes_by_key=configured_scopes(db),
+            max_values=configured_max_values(db),
+        )
+        if row["before"] != row["after"]
+    }
+    fingerprint = rules_fingerprint(db)
+    if was_current and len(changed) > listener.INLINE_REDERIVE_LIMIT:
+        try:
+            enqueue_job(
+                reread_codes_and_store, sorted(changed), fingerprint, queue_name="imports"
+            )
+            return len(changed)
+        except Exception:  # noqa: BLE001 - no queue: read them here, as rederive_codes does
+            logger.warning("spec re-read after save could not be queued", exc_info=True)
+    if changed:
+        listener.rederive_codes(changed)
+    if was_current:
+        _store_fingerprint(db, fingerprint)
+    return len(changed)
+
+
+def reread_after_save_logged(db: Session, spec_key: str, *, fingerprint_before: str) -> int:
+    """`reread_after_save` for a save that has ALREADY committed. Never raises.
+
+    A failure here must not answer 500 for a save that landed (review S-7): saving again
+    would see no change and re-read nothing. It is logged, 0 is reported, and the stored
+    fingerprint is left as it was, so the worker's catch-up still re-reads the catalogue.
+    """
+    try:
+        return reread_after_save(db, spec_key, fingerprint_before=fingerprint_before)
+    except Exception:  # noqa: BLE001 - see above
+        logger.exception("spec re-read after saving %s failed; the catch-up will run", spec_key)
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return 0

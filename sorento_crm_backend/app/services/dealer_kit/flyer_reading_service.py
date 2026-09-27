@@ -1323,7 +1323,24 @@ def adopt_code(
     db.add(record)
     db.commit()
     db.refresh(record)
+    _reread_specs(product.product_code)
     return record
+
+
+def _reread_specs(product_code: str) -> None:
+    """Re-read one product's specifications now that a flyer card is tied to it (#1286, D9).
+
+    A flyer is not a derivation input, so nothing else re-reads the product when its card
+    is adopted, and the owner ruled out a button for it (27 Sep 2026). Post-commit and
+    best-effort, like every spec re-read: `rederive_codes` never raises, and this guards
+    the import too, so the adoption that already committed can never 500.
+    """
+    try:
+        from app.services import product_spec_change_listener as listener
+
+        listener.rederive_codes({product_code})
+    except Exception:  # noqa: BLE001 - a post-commit side effect never raises
+        logger.warning("spec re-read after adopting %s failed", product_code, exc_info=True)
 
 
 def unadopt_code(
