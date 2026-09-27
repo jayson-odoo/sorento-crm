@@ -1,6 +1,6 @@
 # PLAN: escalation resolves the brand from the focus product (#865)
 
-Status: IN REVIEW (fix round 5 folded in: the owner's hand test of round 4, 28 Sep 00:05 MYT; round 4 the owner's retest of round 3, 27 Sep 21:19 MYT; round 3 the owner's console retest of 27 Sep; round 2's S1, S2, N1, N2, N3 before it), small fix track (backend only, under ~300 changed app lines, no migration, no auth/RBAC change, no new ingest surface). PR #1300, branch `fix/chatbot-escalation-brand-from-focus`.
+Status: IN REVIEW (fix round 6 folded in: the owner ruling of 28 Sep 00:2x MYT, the n8n escalation behaviour of sorento-crm-n8n PR #23 ported into the turn engine; fix round 5: the owner's hand test of round 4, 28 Sep 00:05 MYT; round 4 the owner's retest of round 3, 27 Sep 21:19 MYT; round 3 the owner's console retest of 27 Sep; round 2's S1, S2, N1, N2, N3 before it), small fix track (backend only, under ~300 changed app lines, no migration, no auth/RBAC change, no new ingest surface). PR #1300, branch `fix/chatbot-escalation-brand-from-focus`.
 
 Source: the root-cause report on #865 ("Root cause: null brand on escalation after a spec answer (backup of 25 Sep)") and the owner ruling of 27 Sep 00:20 MYT authorising its fix option 1. UAC: `chatbot-escalation-brand-from-focus-acceptance-criteria.md`.
 
@@ -46,10 +46,22 @@ Three escalations in one console conversation. 1 ("check spec srtwc286", then "p
 - **R3.** With the business lane never reached, no customer service offer and no kind menu can appear on such a turn. A miss outside an escalation keeps #1142's chain.
 - No prompt version, no migration: the rule is already the prompt's own words. Trigger to publish one: a recorded escalate-to-a-named-team turn whose `user_goal` also dropped the escalate word or the team.
 
+## Fix round 6: the n8n escalation behaviour is the reference (owner ruling, 28 Sep 00:2x MYT)
+
+"we did it in n8n and it was quite ok ady, we need to put it into our chatbot turn". The spec is sorento-crm-n8n PR #23 (`n8n-workflows-init/plans/miss-company-routing-plan.md`, `tests/miss-company-routing-UAC.md`, the parser fork's `output_exchange` rev-5). Most of it was already ported: the silent-company offer names the miss company (`answer_bridge.apply_silent_company_offer`), a both-company miss mints a company offer and a bare yes over it clarifies (`_miss_question`, `escalation._clarify_gate`), the multi-company member picker prints bold `*Mocha:*` / `*Sorento:*` headers and the company-name sentence (`tail/member_offer.build_cs_member_offer`), and a qty-0 row counts its company as answered. What was missing or contradicted:
+
+- **R1.** A partial miss on an order enquiry (routing `customer_service` / `order_enquiries`, n8n's `members: true` lane) now also prints the miss company's own CS roster, numbered on from the reply's own numbered blocks, then "If you have no preference, just reply 'yes' and we'll assign automatically." (`answer_bridge._miss_company_picker`). Every other lane keeps the plain phrase (rev-3: members are for customer order enquiries only).
+- **R3 (contradicted).** The member picker's pending carried no company pool and no team, so a bare yes over a two-company picker, or a company word, assigned from the default pool. Every member picker now carries `team` and `payload.roster_plan` (the companies whose rosters it printed), each member option carries its company, and `turn.pending.offered_companies` is the one reader of the pool (`turn_runtime.escalation_roster_plan`, the company-pick tier, the offer hold). A clarify over a member picker keeps the picker open (n8n re-persists the offer), so a member number still picks after it.
+- **R3 (missing).** n8n's deterministic company-pick tier (`_coCompanyPick`: name, code, alias, filler words stripped, the short and long bounds, negators, a product-code token refuses) was deleted with `head/output_exchange` in #952. Ported as `turn_runtime.company_pick` / `with_company_pick`, run once after the parse; the parser's own `escalation.company_pick` is the fallback, accepted only against the offered pool, never on a bare confirmation, a negated reply or a domain question. It reads the customer's text as n8n's did (D11-reproduced).
+- **R4.** A clarify after an offer that showed no member picker says "reply with the company (Mocha / Sorento)", n8n's rev-3 copy; after a picker the copy is unchanged.
+- **R5.** Junk over an open offer of two or more companies (no pick, no yes or no, no question of its own) takes the `offer_hold` lane: the company clarify is asked again and the offer stays open (`apply._holds_the_offer`). A single-company offer is not held (rev-4 (E)).
+- **R6.** A roster arm (`company_pick`, `prior_state`) whose row names a company and no brand carries the offer turn's brand, else the focus product's; the row keeps the company (n8n escalation-context rev-2).
+- No prompt version, no migration: the prompt already carries the COMPANY-NAME REPLY block, and the tier reads the reply itself.
+
 ## From #866's plan
 
 D7 ("brand is the resolved product's") is what this builds. D1, D2 and D6 (the verb, team and did-you-mean ladder) do not fit option 1. They stay with #866's remaining rows, which are not revived here.
 
 ## Tests
 
-`sorento_crm_backend/tests/chatbot/test_escalation_brand_from_focus.py`. Each UAC maps to one test.
+`sorento_crm_backend/tests/chatbot/test_escalation_brand_from_focus.py` (rounds 1 to 4), `test_escalation_round5_escalation_words_win.py` (round 5), `test_escalation_round6_n8n_behaviour.py` (round 6). Each UAC maps to one test.
