@@ -257,7 +257,10 @@ describe('quoted reply rendering (AC-RT-20..23)', () => {
     expect(scrollIntoView).toHaveBeenCalled();
     const target = scrollIntoView.mock.instances[0] as unknown as HTMLElement;
     expect(target.getAttribute('data-message-id')).toBe(String(question.messageId));
-    expect(bubbleOf('Is the sink in stock?').className).toContain('ring-emerald-500');
+    const original = document.querySelector(
+      `[data-message-id="${question.messageId}"] [data-testid="message-bubble"]`,
+    ) as HTMLElement;
+    expect(original.className).toContain('ring-emerald-500');
   });
 
   it('AC-RT-21/22: a quote with no loaded original reads "Replying to" and is not a button', () => {
