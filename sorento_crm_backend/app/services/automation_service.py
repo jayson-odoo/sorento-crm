@@ -710,6 +710,9 @@ class AutomationService:
                     subject=rendered["subject"],
                     body_html=rendered["body_html"],
                     body_text=rendered["body_text"],
+                    # #1312: `email_attachments` is NOT forwarded here - only the
+                    # ONE_EMAIL branch above does (AC-E2 is about the OI handover,
+                    # which always dispatches one_email=True).
                     metadata={
                         "automation_id": str(automation.id),
                         "automation_run_id": str(run.id),

@@ -17,7 +17,6 @@ type's own config must not turn this into an arbitrary-file upload.
 from __future__ import annotations
 
 import logging
-import mimetypes
 import uuid as uuid_module
 from typing import Optional
 
@@ -70,6 +69,15 @@ _MIME_BY_EXT = {
 #: max_length=...)` on the request schema) rather than this module ever seeing them.
 MAX_LOOKUP_IDS = 1000
 
+#: security L1 (fix round 1): the amount actually read off the wire per file,
+#: HARDCODED regardless of the attachment type row's own `max_file_size_mb` - an
+#: admin widening that column (or a row missing/misconfigured) must not turn this
+#: into an unbounded-memory upload. `upload()` reads with `.read(_MAX_BYTES + 1)`
+#: rather than `.read()`, so a file over the cap is never fully buffered.
+_MAX_BYTES = 10 * 1024 * 1024
+#: security L1: files per request, also hardcoded rather than left open-ended.
+_MAX_FILES_PER_REQUEST = 10
+
 
 def _line_or_404(db: Session, line_id: str) -> SalesOrderLine:
     """Scoped by ``CompanyScopedMixin`` (the session's active company scope) - a line
@@ -114,13 +122,6 @@ def _validated_ext(filename: str) -> str:
             "(jpg, jpeg, png, webp, gif, pdf, xlsx or xls).",
         )
     return ext
-
-
-def _content_type_for(filename: str, ext: str, content_type: Optional[str]) -> str:
-    if content_type:
-        return content_type
-    guessed, _ = mimetypes.guess_type(filename)
-    return guessed or _MIME_BY_EXT.get(ext, "application/octet-stream")
 
 
 def _serialize(link: EntityAttachmentLink) -> dict:
@@ -193,6 +194,11 @@ async def upload(
     batch purges whatever THAT file already put in storage and re-raises naming it -
     the files before it stay linked, exactly as committed.
     """
+    if len(files) > _MAX_FILES_PER_REQUEST:
+        raise AppException(
+            400, f"Upload up to {_MAX_FILES_PER_REQUEST} files at a time."
+        )
+
     line = _line_or_404(db, line_id)
     attachment_type = _type_row(db)
     entity_svc = EntityAttachmentService(db)
@@ -202,10 +208,26 @@ async def upload(
 
     landed: list[str] = []
     for upload_file in files:
-        content = await upload_file.read()
+        # security nit: the extension is checked off the FILENAME alone, before a
+        # single byte of the body is read - a disallowed file costs nothing here.
         original_filename = sanitize_storage_filename(upload_file.filename or "file")
         ext = _validated_ext(original_filename)
-        content_type = _content_type_for(original_filename, ext, upload_file.content_type)
+        # security M1: the client's own `Content-Type` header is NEVER trusted - a
+        # browser (or a hand-crafted request) can claim anything regardless of the
+        # actual bytes, so what gets stored and thumbnailed is always derived from
+        # the (already-validated) extension instead.
+        content_type = _MIME_BY_EXT[ext]
+
+        # security L1: bounded read - `.read(_MAX_BYTES + 1)` never buffers more
+        # than one byte past the cap, so an oversized file is rejected before it
+        # costs real memory, and the 10 MB ceiling holds regardless of what the
+        # attachment type row's own (admin-editable) `max_file_size_mb` says.
+        content = await upload_file.read(_MAX_BYTES + 1)
+        if len(content) > _MAX_BYTES:
+            raise AppException(
+                400,
+                f"{original_filename} exceeds the {_MAX_BYTES // (1024 * 1024)} MB limit.",
+            )
 
         s3_key: Optional[str] = None
         thumbnail_path: Optional[str] = None
@@ -337,21 +359,31 @@ def handover_attachments(db: Session, core_line_ids: list[str]) -> dict[str, lis
 
     Runs on the drain's own FRESH session, over ids `_record_handover` already
     resolved and trusts (not user input), so no company-scope narrowing is applied
-    here (unlike `lookup` above).
+    here (unlike `lookup` above) - but a scope must still be SET, or reads UNSET
+    (fail-closed). `fresh = SessionLocal()` (`_fire_pending_handover`) never sets
+    one, and `Attachment` is company-scoped (`__company_shared__`, so UNSET reads
+    only its NULL-company rows) - a real upload is stamped with the uploader's own
+    company, so without this every real attachment was invisible here (fix round 1
+    blocker 1: the handover never actually attached anything in production). `None`
+    means "every company", the same fallback `AutomationService._stamp_expiry_batch`
+    uses for its own drain-time re-query.
     """
     if not core_line_ids:
         return {}
     ids = sorted({str(i) for i in core_line_ids if i})
     if not ids:
         return {}
-    by_line = EntityAttachmentService(db).list_links_for_entities(ENTITY_TYPE, ids)
-    if not by_line:
-        return {}
-    attachment_ids = [link.attachment_id for links in by_line.values() for link in links]
-    attachments = {
-        str(a.id): a
-        for a in db.query(Attachment).filter(Attachment.id.in_(attachment_ids)).all()
-    }
+    from app.models.base import company_scope
+
+    with company_scope(db, None):
+        by_line = EntityAttachmentService(db).list_links_for_entities(ENTITY_TYPE, ids)
+        if not by_line:
+            return {}
+        attachment_ids = [link.attachment_id for links in by_line.values() for link in links]
+        attachments = {
+            str(a.id): a
+            for a in db.query(Attachment).filter(Attachment.id.in_(attachment_ids)).all()
+        }
     out: dict[str, list[dict]] = {}
     for line_id, links in by_line.items():
         items: list[dict] = []

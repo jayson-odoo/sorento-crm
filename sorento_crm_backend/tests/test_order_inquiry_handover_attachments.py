@@ -93,12 +93,18 @@ def test_handover_context_carries_line_attachments():
 
 
 def test_handover_size_cap_links_overflow():
+    """AC-E4, extended by fix round 1 should-fix 5: a file too big to fit must not
+    also sink every SMALLER file queued after it - 10 MB attaches, 10 MB overflows
+    (20 MB > the 15 MB cap), and the 1 MB right after it still fits (11 MB total) and
+    attaches too. Only counted toward the running total when actually attached."""
     ten_mb = 10 * 1024 * 1024
+    one_mb = 1 * 1024 * 1024
     pending = [_pending(row_id="row-9", order_inquiry_id="oi-9")]
     attachments_by_line = {
         "core-1": [
             {"filename": "first.png", "size_bytes": ten_mb, "storage_provider": "r2", "storage_key": "k1"},
             {"filename": "second.png", "size_bytes": ten_mb, "storage_provider": "r2", "storage_key": "k2"},
+            {"filename": "third.png", "size_bytes": one_mb, "storage_provider": "r2", "storage_key": "k3"},
         ],
     }
 
@@ -109,10 +115,39 @@ def test_handover_size_cap_links_overflow():
     assert line["attachments"] == [
         {"name": "SO423136-L3-first.png", "attached": True, "url": None},
         {"name": "SO423136-L3-second.png", "attached": False, "url": expected_overflow_url},
+        {"name": "SO423136-L3-third.png", "attached": True, "url": None},
     ]
     assert context["email_attachments"] == [
         {"filename": "SO423136-L3-first.png", "storage_provider": "r2", "storage_key": "k1", "optional": True},
+        {"filename": "SO423136-L3-third.png", "storage_provider": "r2", "storage_key": "k3", "optional": True},
     ]
+
+
+def test_handover_same_core_line_twice_attaches_once():
+    """Fix round 1, captain's should-fix 6: two OI rows raised against the SAME SO
+    line (a split raise) share one `core_line_id` - its files must attach to the
+    email ONCE, not once per row, while BOTH rows still print the names."""
+    pending = [
+        _pending(row_id="row-1"),
+        _pending(row_id="row-2"),
+    ]
+    attachments_by_line = {
+        "core-1": [
+            {"filename": "a.png", "size_bytes": 100, "storage_provider": "r2", "storage_key": "key-a"},
+        ],
+    }
+
+    context, _source_id = _build_handover_context(pending, attachments_by_line)
+
+    assert context["email_attachments"] == [
+        {"filename": "SO423136-L3-a.png", "storage_provider": "r2", "storage_key": "key-a", "optional": True},
+    ], "the file must attach exactly once, not once per row sharing the core line"
+    lines = context["handover"]["lines"]
+    assert len(lines) == 2
+    for line in lines:
+        assert line["attachments"] == [
+            {"name": "SO423136-L3-a.png", "attached": True, "url": None},
+        ], "both rows still print the name, even though only one MIME part exists"
 
 
 # --------------------------------------------------------------------------- #

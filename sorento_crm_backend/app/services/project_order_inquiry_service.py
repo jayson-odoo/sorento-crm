@@ -10501,6 +10501,12 @@ def _build_handover_context(
     attachments_by_line = attachments_by_line or {}
     email_attachments: List[Dict[str, Any]] = []
     running_total = 0
+    # fix round 1 (should-fix 6): the SAME core line queued twice in one write (two
+    # OI rows raised against one SO line) must attach its files ONCE, not once per
+    # row - keyed by `core_line_id`, decided on the FIRST row that names it and
+    # reused verbatim by every later one, so two rows can never disagree about
+    # which of a line's files made it into the email (both still PRINT the names).
+    printed_by_core_line: Dict[str, List[Dict[str, Any]]] = {}
 
     lines: List[Dict[str, Any]] = []
     for item in sorted(pending, key=_handover_sort_key):
@@ -10508,28 +10514,37 @@ def _build_handover_context(
         core_line_id = item.get("core_line_id")
         files = attachments_by_line.get(core_line_id) if core_line_id else None
         if files:
-            so_number = item.get("so_number") or ""
-            line_no = item.get("line_no")
-            printed: List[Dict[str, Any]] = []
-            for entry in files:
-                name = f"{so_number}-L{line_no}-{entry['filename']}"
-                running_total += entry.get("size_bytes") or 0
-                if running_total <= HANDOVER_ATTACHMENT_CAP_BYTES:
-                    printed.append({"name": name, "attached": True, "url": None})
-                    email_attachments.append(
-                        {
-                            "filename": name,
-                            "storage_provider": entry["storage_provider"],
-                            "storage_key": entry["storage_key"],
-                            "optional": True,
-                        }
-                    )
-                else:
-                    url = (
-                        f"{build_order_inquiry_link(item.get('order_inquiry_id'))}"
-                        f"?row={item.get('row_id')}"
-                    )
-                    printed.append({"name": name, "attached": False, "url": url})
+            if core_line_id in printed_by_core_line:
+                printed = printed_by_core_line[core_line_id]
+            else:
+                so_number = item.get("so_number") or ""
+                line_no = item.get("line_no")
+                printed = []
+                for entry in files:
+                    name = f"{so_number}-L{line_no}-{entry['filename']}"
+                    size = entry.get("size_bytes") or 0
+                    # fix round 1 (should-fix 5): only counted toward the running
+                    # total when it IS attached - a file too big to fit must not
+                    # also sink every SMALLER file queued after it (10 MB, 10 MB,
+                    # 1 MB attaches the first and third, not just the first).
+                    if running_total + size <= HANDOVER_ATTACHMENT_CAP_BYTES:
+                        running_total += size
+                        printed.append({"name": name, "attached": True, "url": None})
+                        email_attachments.append(
+                            {
+                                "filename": name,
+                                "storage_provider": entry["storage_provider"],
+                                "storage_key": entry["storage_key"],
+                                "optional": True,
+                            }
+                        )
+                    else:
+                        url = (
+                            f"{build_order_inquiry_link(item.get('order_inquiry_id'))}"
+                            f"?row={item.get('row_id')}"
+                        )
+                        printed.append({"name": name, "attached": False, "url": url})
+                printed_by_core_line[core_line_id] = printed
             line["attachments"] = printed
         lines.append(line)
 

@@ -483,3 +483,125 @@ def test_lookup_groups_by_line(view_and_edit_client, db, monkeypatch):
     too_many = [str(uuid.uuid4()) for _ in range(1001)]
     over_limit = view_and_edit_client.post(f"{BASE}/attachments/lookup", json={"line_ids": too_many})
     assert over_limit.status_code == 422, over_limit.text
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 1 (reviewer + security-reviewer + captain)                       #
+# --------------------------------------------------------------------------- #
+
+
+def test_handover_attachments_visible_with_no_company_scope(db, monkeypatch):
+    """Blocker 1: `_fire_pending_handover` reads on `fresh = SessionLocal()`, which
+    never sets a company scope (UNSET, fail-closed) - `Attachment` is company-scoped
+    (`__company_shared__`, so UNSET reads only its NULL-company rows), and a real
+    upload is stamped with the uploader's own company. Without the fix,
+    `handover_attachments` returned `{}` for every real upload - the handover never
+    actually attached anything in production."""
+    from app.models.base import UNSET, set_company_scope as _set_scope
+
+    _stub_backend(monkeypatch)
+    _attachment_type(db)
+    _so, line = _seed_line(db)
+    db.commit()
+
+    asyncio.run(
+        so_line_attachments.upload(
+            db, line_id=str(line.id), files=[_upload("a.png")], actor_id=None,
+        )
+    )
+    db.commit()
+
+    # Simulate the drain's own fresh session: no scope ever set on it.
+    _set_scope(db, UNSET)
+
+    out = so_line_attachments.handover_attachments(db, [str(line.id)])
+    assert out.get(str(line.id)), (
+        "a real upload's files must be visible to a session with no company scope set"
+    )
+    assert out[str(line.id)][0]["filename"] == "a.png"
+
+
+def test_upload_ignores_client_content_type(db, monkeypatch):
+    """security M1: the client's own `Content-Type` header is never trusted - the
+    stored `mime_type` is always derived from the (validated) extension."""
+    _stub_backend(monkeypatch)
+    _attachment_type(db)
+    _so, line = _seed_line(db)
+    db.commit()
+
+    out = asyncio.run(
+        so_line_attachments.upload(
+            db,
+            line_id=str(line.id),
+            files=[_upload("a.png", content_type="text/html")],
+            actor_id=None,
+        )
+    )
+    assert out[0]["content_type"] == "image/png"
+    attachment = (
+        db.query(Attachment).filter(Attachment.id == out[0]["attachment_id"]).one()
+    )
+    assert attachment.mime_type == "image/png"
+
+
+def test_upload_rejects_over_hardcoded_max_bytes_regardless_of_type_row(db, monkeypatch):
+    """security L1: 10 MiB is HARDCODED in the service - an admin widening the
+    attachment type row's own `max_file_size_mb` past it must not raise the ceiling."""
+    _stub_backend(monkeypatch)
+    _attachment_type(db, max_file_size_mb=50)
+    _so, line = _seed_line(db)
+    db.commit()
+
+    too_big = b"0" * (so_line_attachments._MAX_BYTES + 1024)
+    with pytest.raises(AppException) as excinfo:
+        asyncio.run(
+            so_line_attachments.upload(
+                db, line_id=str(line.id), files=[_upload("huge.png", data=too_big)], actor_id=None,
+            )
+        )
+    assert excinfo.value.status_code == 400
+    assert "huge.png" in _msg(excinfo.value)
+
+
+def test_upload_rejects_more_than_max_files_per_request(db, monkeypatch):
+    """security L1: at most 10 files per request, named in the message."""
+    _stub_backend(monkeypatch)
+    _attachment_type(db)
+    _so, line = _seed_line(db)
+    db.commit()
+
+    files = [_upload(f"a{i}.png") for i in range(so_line_attachments._MAX_FILES_PER_REQUEST + 1)]
+    with pytest.raises(AppException) as excinfo:
+        asyncio.run(so_line_attachments.upload(db, line_id=str(line.id), files=files, actor_id=None))
+    assert excinfo.value.status_code == 400
+    assert str(so_line_attachments._MAX_FILES_PER_REQUEST) in _msg(excinfo.value)
+
+
+def test_upload_malformed_line_id_404(view_and_edit_client):
+    """security L3: a malformed path id answers 404, never a 500 off an invalid
+    UUID literal reaching the DB layer."""
+    resp = view_and_edit_client.post(
+        f"{BASE}/not-a-real-uuid/attachments",
+        files={"files": ("a.png", _TINY_PNG, "image/png")},
+    )
+    assert resp.status_code == 404, resp.text
+
+
+def test_delete_malformed_link_id_404(view_and_edit_client, db, monkeypatch):
+    """security L3: same rule on the delete route's own `link_id`."""
+    _stub_backend(monkeypatch)
+    _attachment_type(db)
+    _so, line = _seed_line(db)
+    db.commit()
+
+    resp = view_and_edit_client.delete(f"{BASE}/{line.id}/attachments/not-a-real-uuid")
+    assert resp.status_code == 404, resp.text
+
+
+def test_lookup_malformed_id_entry_422(view_and_edit_client):
+    """security L3: `line_ids` is `List[UUID]` on the request schema - a malformed
+    entry answers 422 through FastAPI's own validation, not a 500."""
+    resp = view_and_edit_client.post(
+        f"{BASE}/attachments/lookup", json={"line_ids": ["not-a-real-uuid"]}
+    )
+    assert resp.status_code == 422, resp.text
