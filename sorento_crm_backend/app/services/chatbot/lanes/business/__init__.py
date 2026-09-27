@@ -919,21 +919,6 @@ def typed_brand_words(parse_output: dict[str, Any]) -> set[str]:
     return words
 
 
-def _brand_canonical_words(parse_output: dict[str, Any]) -> set[str]:
-    """The `canonical_code` of each brand-hinted entity, folded: the brand the parser
-    read the typed word as, off the Known brands line."""
-    words = {
-        jsc.js_string(e.get("canonical_code") or "").strip().casefold()
-        for e in [
-            *jsc.array(parse_output.get("entities")),
-            *jsc.array(parse_output.get("outstanding_refinement_entities")),
-        ]
-        if isinstance(e, dict) and jsc.js_string(e.get("hint") or "").strip().lower() == "brand"
-    }
-    words.discard("")
-    return words
-
-
 def _resolve_outstanding_brand_ids(
     parse_output: dict[str, Any],
     semantic_input: dict[str, Any],
@@ -960,19 +945,21 @@ def _resolve_outstanding_brand_ids(
         return
     brand_tokens = typed_brand_words(parse_output)
     if brand_tokens and db is not None:
-        from app.services.chatbot.turn_runtime import active_brands
+        from app.services.chatbot.turn_runtime import active_brands, brand_entity_word, brand_rows_for_word
 
-        # #1262 fix lane round 6: the raw word OR the parser's `canonical_code`, the
-        # same pair `turn_runtime._brand_hinted_entities_matching_live` reads. The
-        # published KNOWN BRANDS rule has the parser put the typed word ("sorneto") in
-        # `raw` and the brand as listed ("Sorento") in `canonical_code`; matching the
-        # raw word alone dropped a misspelt brand in silence.
-        folded_tokens = {t.casefold() for t in brand_tokens} | _brand_canonical_words(parse_output)
+        # #1262 fix lane round 7, R1: the brand is read off the TYPED word alone
+        # (`brand_rows_for_word`: exact, whole word, else the nearest brand by
+        # spelling), never off the parser's `canonical_code`, which for a misspelt word
+        # is the model's guess and was "Mocha" on one run and "Sorento" on the next.
+        live = active_brands(db)
         brand_ids: list[str] = []
-        for row in active_brands(db):
-            name = jsc.js_string(row.get("brand_name") or "").strip().casefold()
-            code = jsc.js_string(row.get("brand_code") or "").strip().casefold()
-            if (name and name in folded_tokens) or (code and code in folded_tokens):
+        for e in [
+            *jsc.array(parse_output.get("entities")),
+            *jsc.array(parse_output.get("outstanding_refinement_entities")),
+        ]:
+            if not isinstance(e, dict) or jsc.js_string(e.get("hint") or "").strip().lower() != "brand":
+                continue
+            for row in brand_rows_for_word(live, brand_entity_word(e)):
                 if row["id"] not in brand_ids:
                     brand_ids.append(row["id"])
         if brand_ids:

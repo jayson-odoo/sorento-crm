@@ -27,6 +27,7 @@ from app.services.error_handler import handle_not_found
 from app.services.order_service import (
     _delivered_status_ids,
     _outstanding_clause,
+    brand_product_condition,
     resolve_warehouse_ids,
 )
 
@@ -301,7 +302,7 @@ def _fill_so(
     # #1262 slice 9 (F1a): a brand-scoped ask narrows to that brand's products, the
     # same join `Product` already carries for `product_code` above (no second join).
     if brand_ids:
-        q = q.filter(Product.brand_id.in_(brand_ids))
+        q = q.filter(brand_product_condition(db, brand_ids))
     if customer_query:
         q = q.filter(
             Customer.customer_name.ilike(
@@ -498,7 +499,7 @@ def _fill_do(
         q = q.filter(OrderLine.product_id.in_([p.id for p in products]))
     # #1262 slice 9 (F1a): the same brand narrowing as the SO side above.
     if brand_ids:
-        q = q.filter(Product.brand_id.in_(brand_ids))
+        q = q.filter(brand_product_condition(db, brand_ids))
     # `None` means no delivered status is configured at all, so every DO is outstanding
     # and no filter is needed (`_outstanding_clause`'s own docstring).
     if outstanding_clause is not None:

@@ -25,6 +25,7 @@ from app.services.import_log_service import ImportLogService
 from app.services.calendar_service import CalendarService
 from app.services.identifier_resolver import resolve_identifier
 from app.services.company_scope import (
+    DEFAULT_COMPANY_ID,
     build_company_predicate,
     get_company_scope,
     pending_company_id,
@@ -134,6 +135,44 @@ def resolve_warehouse_ids(db, warehouse_codes: Optional[list]) -> Optional[list]
     return [r[0] for r in rows]
 
 
+def brand_product_condition(db: Session, brand_ids: list):
+    """#1262 fix lane round 7, R2: which products a brand covers, as a condition on
+    `Product` - the owner's rule from PR #1300 round 4.
+
+    A product carries the brand when its brand row is that brand, OR when it belongs
+    to a company that stands for the brand: a company other than the incumbent whose
+    name, first name word or code is the brand's name or code. The Mocha company sells
+    only Mocha and its products carry no brand row, so every Mocha company item is
+    Mocha brand. The incumbent (Sorento) carries several brands, so its products count
+    only by their brand row. Company scope is untouched: callers AND this with the
+    scope predicate as before, so a company outside the caller's scope never appears.
+    """
+    from app.models.company import Company
+    from app.models.product import Brand
+
+    ids = [str(b) for b in brand_ids]
+
+    def fold(value) -> str:
+        return " ".join(str(value or "").casefold().split())
+
+    brand_keys: set[str] = set()
+    for name, code in db.query(Brand.brand_name, Brand.brand_code).filter(Brand.id.in_(ids)).all():
+        brand_keys |= {fold(name), fold(code)}
+    brand_keys.discard("")
+    company_ids: list[str] = []
+    if brand_keys:
+        rows = db.query(Company.id, Company.name, Company.code).filter(Company.id != DEFAULT_COMPANY_ID).all()
+        for company_id, name, code in rows:
+            words = fold(name).split()
+            keys = {fold(name), fold(code), words[0] if words else ""}
+            if keys & brand_keys:
+                company_ids.append(str(company_id))
+    condition = Product.brand_id.in_(ids)
+    if company_ids:
+        condition = or_(condition, Product.company_id.in_(company_ids))
+    return condition
+
+
 def narrow_product_ids_by_brand(
     db: Session,
     resolved_product_ids: Optional[list],
@@ -155,7 +194,7 @@ def narrow_product_ids_by_brand(
     """
     if not resolved_brand_ids:
         return resolved_product_ids
-    stmt = select(Product.id).where(Product.brand_id.in_(resolved_brand_ids))
+    stmt = select(Product.id).where(brand_product_condition(db, resolved_brand_ids))
     predicate = build_company_predicate(Product, get_company_scope(db))
     if predicate is not None:
         stmt = stmt.where(predicate)

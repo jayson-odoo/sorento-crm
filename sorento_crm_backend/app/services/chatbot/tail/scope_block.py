@@ -196,6 +196,21 @@ def live_brand_words(gate_json: Mapping[str, Any] | None) -> str | None:
     return ", ".join(words) if words else None
 
 
+def _one_typed_word(rows: Any) -> str | None:
+    """#1262 fix lane round 7, R5: several carried rows that one typed word resolved to
+    ("cheng huat sentul", seven ledgers) are that word, as the turn that typed it
+    printed it - never the list of every ledger. Such rows each carry their own
+    resolved `name`; a picked ledger family (Group F) carries none and still names
+    each ledger."""
+    kept = [row for row in rows or [] if isinstance(row, Mapping)]
+    if len(kept) < 2 or not all(row.get("name") for row in kept):
+        return None
+    raws = {_printable(row.get("raw")) for row in kept}
+    if len(raws) != 1:
+        return None
+    return raws.pop() or None
+
+
 def _focus_words(rows: Any) -> str | None:
     """The SAME axis, off the FOCUS carry - AC-1695's own case, which main has no
     equivalent for because main's header runs in the tail, where the session's
@@ -207,6 +222,9 @@ def _focus_words(rows: Any) -> str | None:
     after a pick to name it. Customer and Product only: those are the two axes a
     `Focus` carries."""
     words: list[str] = []
+    typed = _one_typed_word(rows)
+    if typed:
+        return typed
     for row in rows or []:
         if not isinstance(row, Mapping):
             continue

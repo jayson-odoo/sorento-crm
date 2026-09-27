@@ -420,6 +420,82 @@ def active_brands(db: Session) -> list[dict[str, Any]]:
     ]
 
 
+_BRAND_WORD_RE = re.compile(r"[0-9a-z]+")
+
+
+def _osa_distance(a: str, b: str) -> int:
+    """Edit distance counting a swap of two neighbouring letters as one edit
+    ("sorneto" is one edit from "sorento")."""
+    rows = [list(range(len(b) + 1))]
+    for i in range(1, len(a) + 1):
+        row = [i] + [0] * len(b)
+        for j in range(1, len(b) + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            row[j] = min(rows[i - 1][j] + 1, row[j - 1] + 1, rows[i - 1][j - 1] + cost)
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                row[j] = min(row[j], rows[i - 2][j - 2] + 1)
+        rows.append(row)
+    return rows[-1][-1]
+
+
+def brand_rows_for_word(brands: list[dict[str, Any]], word: Any) -> list[dict[str, Any]]:
+    """#1262 fix lane round 7, R1: the live brand rows a typed word names, decided by
+    the word alone so the same word gives the same brand every time.
+
+    An exact name or code wins, then a word of the message that is a name or code
+    ("sorento brand"), then the nearest brand name by spelling: one edit for a word of
+    four or five letters, two for a longer one, and only when the nearest distance
+    names one brand (a tie names none). Codes are matched exactly, never by spelling.
+    No match returns [], which callers say back as a word they could not find."""
+    folded = " ".join(jsc.nullish_str(word).casefold().split())
+    if not folded:
+        return []
+
+    def keys(row: dict[str, Any]) -> set[str]:
+        out = {
+            " ".join(jsc.nullish_str(row.get(k)).casefold().split())
+            for k in ("brand_name", "brand_code")
+        }
+        out.discard("")
+        return out
+
+    exact = [row for row in brands if folded in keys(row)]
+    if exact:
+        return exact
+    words = _BRAND_WORD_RE.findall(folded)
+    whole = [row for row in brands if keys(row) & set(words)]
+    if whole:
+        return whole
+    best: int | None = None
+    nearest: list[dict[str, Any]] = []
+    for w in words:
+        if len(w) < 4:
+            continue
+        limit = 1 if len(w) <= 5 else 2
+        for row in brands:
+            name = "".join(jsc.nullish_str(row.get("brand_name")).casefold().split())
+            if len(name) < 4:
+                continue
+            distance = _osa_distance(w, name)
+            if distance > limit:
+                continue
+            if best is None or distance < best:
+                best, nearest = distance, [row]
+            elif distance == best and row not in nearest:
+                nearest.append(row)
+    names = {"".join(jsc.nullish_str(r.get("brand_name")).casefold().split()) for r in nearest}
+    return nearest if len(names) == 1 else []
+
+
+def brand_entity_word(entity: dict[str, Any]) -> str:
+    """The word a brand-hinted entity is resolved by: what the customer typed, and the
+    parser's `canonical_code` only when no typed word came with it. The parser's own
+    reading of a misspelt word is a guess that differs between runs (round 7, R1), so
+    it never decides the brand while the typed word is there."""
+    raw = jsc.nullish_str(entity.get("raw")).strip()
+    return raw or jsc.nullish_str(entity.get("canonical_code")).strip()
+
+
 def _brand_hinted_entities_matching_live(
     db: Session, entities: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -438,17 +514,10 @@ def _brand_hinted_entities_matching_live(
     if not candidates:
         return []
     live = active_brands(db)
-    live_names = {jsc.nullish_str(b.get("brand_name")).strip().casefold() for b in live}
-    live_codes = {jsc.nullish_str(b.get("brand_code")).strip().casefold() for b in live}
-    live_names.discard("")
-    live_codes.discard("")
-    matched = []
-    for e in candidates:
-        raw = jsc.nullish_str(e.get("raw")).strip().casefold()
-        code = jsc.nullish_str(e.get("canonical_code")).strip().casefold()
-        if raw in live_names or raw in live_codes or code in live_names or code in live_codes:
-            matched.append(e)
-    return matched
+    # #1262 fix lane round 7, R1: the same word-alone read the brand ids come from
+    # (`brand_rows_for_word`), so a word kept off the resolver always has a brand and a
+    # word with none always reaches it and is said back.
+    return [e for e in candidates if brand_rows_for_word(live, brand_entity_word(e))]
 
 
 def order_brand_filter(

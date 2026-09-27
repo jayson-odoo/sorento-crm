@@ -1635,6 +1635,16 @@ def _run_stages(  # noqa: PLR0915
         s7_mode = _s7_mode(db, settings_row)
         space_id_for_turn = business_services.fetch_space_id(db)
 
+        # #1262 fix lane round 7 (R3 to R5): inside an order list the message is read
+        # against the list before the parser's reading can send it anywhere else.
+        from app.services.chatbot import order_list as order_list_mod
+
+        verdict, state_in, order_list_rule = order_list_mod.order_list_verdict(
+            db, verdict, state_in, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+        )
+        if order_list_rule:
+            turn_trace.add("order_list", {"verdict_rule": order_list_rule})
+
         # C APPLY, first pass: state and plan from the verdict alone.
         state_out, plan = turn_apply(state_in, verdict, policy)
 
@@ -2563,6 +2573,11 @@ def _run_stages(  # noqa: PLR0915
                     fetch_plan,
                     verdict,
                     turn_no=turn_no,
+                )
+                # #1262 fix lane round 7, R6: inside an order list no escalate offer and
+                # no routing picker; an empty list says so in one line.
+                answer = order_list_mod.list_reply(
+                    answer, focus=state_out.focus, fetch_plan=fetch_plan, envelopes=envelopes
                 )
                 # Chatbot stock ask v2 S3, AC-SA314: an `incoming` entry answered
                 # with its own packing list attaches it to THIS reply. `answer.files`
