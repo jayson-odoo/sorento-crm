@@ -95,6 +95,7 @@ class Supplier(Base, CompanyScopedMixin):
 
 class ProductSupplier(Base, CompanyScopedMixin):
     __tablename__ = "product_suppliers"
+    __audit_skip__ = "product to supplier link from the master sync, 264 to 4,865 rows a day (measured 27 Sep 2026, review B3)"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
@@ -458,6 +459,7 @@ class SPOAllocation(Base, CompanyScopedMixin):
         a warehouse); a location we cannot place cannot cover a line standing at one.
     """
     __tablename__ = "spo_allocations"
+    __audit_skip__ = "shipping order allocation lines from the sync, 2,602 to 29,343 rows a day (measured 27 Sep 2026, review B3)"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     spo_number = Column(String(50), nullable=True)
@@ -698,6 +700,7 @@ class PickingHeader(Base, CompanyScopedMixin):
 
 class PickingLine(Base, CompanyScopedMixin):
     __tablename__ = "picking_lines"
+    __audit_skip__ = "line table, 268 to 4,047 rows a day (measured 27 Sep 2026, review B3)"
     __audit_parent__ = "picking_header_id"  # history rolls up to the header
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -815,6 +818,7 @@ class PurchaseOrder(Base, CompanyScopedMixin):
 class PurchaseOrderLine(Base, CompanyScopedMixin):
     """Open PO line - feeds on-order / net-position views by product×warehouse."""
     __tablename__ = "purchase_order_lines"
+    __audit_skip__ = "sync line table, 5,224 to 51,107 rows a day (measured 27 Sep 2026, review B3)"
     __audit_parent__ = "purchase_order_id"  # history rolls up to the header
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))

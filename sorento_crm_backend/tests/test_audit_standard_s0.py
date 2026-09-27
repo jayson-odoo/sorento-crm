@@ -403,7 +403,8 @@ class TestContext:
         with patch.object(task_scheduler, "SessionLocal", return_value=db), \
                 patch.object(db, "close"):
             with task_scheduler.scheduler_session("probe_tick") as s:
-                b = _brand(s)
+                # A tracked class: a tick is a sync writer, where default-on is off (round 3, B3).
+                b = _customer(s)
                 corr = current_audit_context().correlation_id
         (row,) = _rows(db, b.id)
         assert (row.actor_type, row.job_id, row.source) == ("scheduler", "probe_tick", "scheduler")
@@ -435,7 +436,8 @@ class TestWorker:
             meta = {"actor": {"user_id": user_id, "real_user_id": user_id}, "audit_context": business_meta_for_job()}
         job = MagicMock(id="job-123", origin="imports", meta=meta)
         with job_actor_scope(job):
-            b = _brand(db)
+            # A tracked class: an imports job is a sync writer, where default-on is off (B3).
+            b = _customer(db)
         (row,) = _rows(db, b.id)
         assert (row.user_id, row.real_user_id) == (user_id, user_id)
         assert row.correlation_id == "corr-2"

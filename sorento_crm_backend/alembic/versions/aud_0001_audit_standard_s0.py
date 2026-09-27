@@ -16,8 +16,11 @@ now, we must do the right thing now" - evolve `audit_logs` in place, no second t
    start, so every row one request wrote shared a timestamp and history order was random.
 4. Append-only: UPDATE, DELETE and TRUNCATE raise unless the transaction ran
    `SET LOCAL sorento.audit_maintenance = 'on'` AS a member of the NOLOGIN role
-   `sorento_audit_maintainer` (created here when the migration role may; with no such role,
-   only a superuser). The app login is not a member, so it cannot use the flag (review S1).
+   `sorento_audit_maintainer` (created here only when the migration runs as a superuser; with
+   no such role, only a superuser). A login with CREATEROLE is refused whatever its membership:
+   it could grant itself the role, and a CREATEROLE login that created the role is a member
+   through PG16's implicit grant (review S1-r2). So an app login cannot use the flag unless a
+   superuser grants it the role and it holds no CREATEROLE (review S1).
    The role is left in place on downgrade: roles are cluster-wide and may hold grants. The
    DDL is frozen here (a migration keeps meaning what it meant when it ran);
    `app.models.audit` carries the same text for create_all.
@@ -45,14 +48,19 @@ ENSURE_MAINTAINER_ROLE_SQL = """
 DO $do$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sorento_audit_maintainer') THEN
-        BEGIN
-            CREATE ROLE sorento_audit_maintainer NOLOGIN;
-        EXCEPTION
-            WHEN insufficient_privilege THEN
-                RAISE NOTICE 'sorento_audit_maintainer not created (needs CREATEROLE): only a superuser can maintain audit_logs';
-            WHEN duplicate_object OR unique_violation THEN
-                NULL;
-        END;
+        -- A superuser only: a CREATEROLE login that creates the role is made a member of it
+        -- (PG16's implicit ADMIN grant to the creator), which is the app login in a
+        -- single-role deployment (review S1-r2, probe P1).
+        IF coalesce((SELECT rolsuper FROM pg_roles WHERE rolname = current_user), false) THEN
+            BEGIN
+                CREATE ROLE sorento_audit_maintainer NOLOGIN;
+            EXCEPTION
+                WHEN duplicate_object OR unique_violation THEN
+                    NULL;
+            END;
+        ELSE
+            RAISE NOTICE 'sorento_audit_maintainer not created (a superuser must create it): until then only a superuser can maintain audit_logs';
+        END IF;
     END IF;
 END
 $do$
@@ -64,7 +72,15 @@ DECLARE
     maintainer boolean := false;
 BEGIN
     IF coalesce(current_setting('sorento.audit_maintenance', true), '') = 'on' THEN
-        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sorento_audit_maintainer') THEN
+        -- A CREATEROLE login can make itself a member (PG15: it may grant any non-superuser
+        -- role; PG16: it holds ADMIN on a role it created), so its membership proves nothing
+        -- (review S1-r2). session_user too: SET ROLE to the maintainer role would hide it.
+        IF EXISTS (
+            SELECT 1 FROM pg_roles
+            WHERE rolname IN (current_user, session_user) AND rolcreaterole AND NOT rolsuper
+        ) THEN
+            maintainer := false;
+        ELSIF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sorento_audit_maintainer') THEN
             maintainer := pg_has_role(current_user, 'sorento_audit_maintainer', 'MEMBER');
         ELSE
             maintainer := coalesce((SELECT rolsuper FROM pg_roles WHERE rolname = current_user), false);

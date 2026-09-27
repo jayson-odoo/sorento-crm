@@ -22,7 +22,7 @@ from app.dependencies import get_current_user_or_api_key
 from app.middleware.logging_middleware import LoggingMiddleware
 from app.models.audit import AuditLog
 from app.models.integration import Integration
-from app.models.product import Brand
+from app.models.order import Customer
 from app.models.user import User
 from app.services.audit_service import register_audit_listeners
 from app.services.company_scope import register_company_scope_listeners
@@ -51,7 +51,8 @@ def _app(db, made):
 
     @probe.post("/api/v1/{path:path}")
     def write(path: str, user=Depends(get_current_user_or_api_key), session=Depends(get_db)):
-        b = Brand(brand_code=unique_code("K")[:50], brand_name="Keyed")
+        # A tracked class: the ESB key is a sync writer, where default-on is off (round 3, B3).
+        b = Customer(customer_code=unique_code("K")[:50], customer_name="Keyed")
         session.add(b)
         session.flush()
         made["id"] = b.id

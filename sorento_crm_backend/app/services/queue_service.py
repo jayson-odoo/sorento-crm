@@ -102,9 +102,11 @@ def job_actor_scope(job):
     # job) and the rows keep the enqueuing request's correlation id.
     queue_name = getattr(job, "origin", None)
     try:
+        # An imports-queue job is an import path: default-on auditing is off in it (review B3).
         with actor_scope(actor), audit_context_scope(
             source="import" if queue_name == "imports" else "worker",
             correlation_id=business.get("correlation_id") or meta.get("trace_id") or actor.job_id,
+            sync_writer="imports" if queue_name == "imports" else None,
         ):
             yield actor
     finally:

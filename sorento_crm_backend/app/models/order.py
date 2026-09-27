@@ -361,6 +361,7 @@ class Order(Base, CompanyScopedMixin):
 class OrderLine(Base, CompanyScopedMixin):
     """Delivery order detail line: product + warehouse + qty + pricing."""
     __tablename__ = "order_lines"
+    __audit_skip__ = "line table, 699 to 32,458 rows a day (measured 27 Sep 2026, review B3)"
     __audit_parent__ = "order_id"  # history rolls up to the header
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
@@ -413,6 +414,7 @@ class SalesOrder(Base, CompanyScopedMixin):
     """SCM sales order (demand / committed source). Public core record - survives
     module uninstall. Sits with Order/DO in the order domain."""
     __tablename__ = "sales_orders"
+    __audit_skip__ = "AutoCount sales order mirror written by the ESB sync, 10,829 to 68,710 rows a day (measured 27 Sep 2026, review B3); S1 records the ingest verdict as an event"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     # Unique per COMPANY, not globally: migration 305 dropped
@@ -505,6 +507,7 @@ class SalesOrder(Base, CompanyScopedMixin):
 class SalesOrderLine(Base, CompanyScopedMixin):
     """Open SO line - feeds committed / net-position views by product×warehouse."""
     __tablename__ = "sales_order_lines"
+    __audit_skip__ = "AutoCount sync line table, 47,507 to 286,917 rows a day (measured 27 Sep 2026, review B3)"
     __audit_parent__ = "sales_order_id"  # history rolls up to the header
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)

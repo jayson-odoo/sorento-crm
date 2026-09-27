@@ -1234,6 +1234,7 @@ class OrderLinkClaim(Base, CompanyScopedMixin):
     another customer's order.
     """
     __tablename__ = "order_link_claim"
+    __audit_skip__ = "sync link table, 907 to 21,551 rows a day (measured 27 Sep 2026, review B3)"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     so_number = Column(String(100), nullable=False)

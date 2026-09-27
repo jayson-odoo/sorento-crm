@@ -164,6 +164,10 @@ _ID_MAX = 64  # correlation_id is String(64); an inbound header is caller-contro
 # API-key integration type -> audit source. Anything unlisted is a generic external caller.
 _SOURCE_BY_INTEGRATION_TYPE = {"automation": "n8n", "mcp": "mcp"}
 _CHATBOT_PATH_PREFIX = "/api/v1/external/chat/"  # not /chat-history
+# The AutoCount sync (review B3): every request the ESB's key makes, and the master and document
+# ingest routes whoever calls them. Their writes mirror an external system of record.
+_SYNC_INTEGRATION_TYPES = ("autocount_esb",)
+_SYNC_PATH_PREFIXES = ("/api/v1/external/ingest/",)
 
 # Channel when nothing more specific was recorded, by the actor's type.
 _SOURCE_BY_ACTOR_TYPE = {
@@ -197,6 +201,11 @@ class AuditContext:
     # integration key authenticates (MCP and n8n are the real producers), so an ordinary
     # caller cannot stitch its writes into someone else's business action.
     inbound_correlation_id: Optional[str] = field(default=None, repr=False)
+    # Set while an integration sync, an import job or a scheduled job is writing (review B3 at
+    # cba2b754, the volume gate): the automatic hooks then audit only the classes opted in
+    # before default-on (``__audit_track__``), not every table. Names the path, for the log.
+    # Not carried into jobs: an imports-queue job is marked by its queue.
+    sync_writer: Optional[str] = None
     # (entity_type, entity_id) pairs the flush listener wrote while ``event`` was set, so the
     # ``@audit_event`` decorator can tell which ids got no row. Not carried into jobs.
     event_hits: set = field(default_factory=set, repr=False)
@@ -255,11 +264,44 @@ def mark_integration_request(integration_type: Optional[str], path: Optional[str
         ctx.source = "chatbot"
     else:
         ctx.source = _SOURCE_BY_INTEGRATION_TYPE.get(integration_type or "", "external_api")
+    if integration_type in _SYNC_INTEGRATION_TYPES:
+        ctx.sync_writer = integration_type
+    elif path and path.startswith(_SYNC_PATH_PREFIXES):
+        ctx.sync_writer = "ingest"
 
 
 def set_source(source: Optional[str]) -> None:
     """Record the channel of the current request where the route knows it (the portal)."""
     _ensure().source = source
+
+
+@contextmanager
+def sync_writer_scope(name: str) -> Iterator[AuditContext]:
+    """Mark the block as an integration sync or import path (review B3): default-on auditing
+    is off inside it, and only ``__audit_track__`` classes are recorded by the hooks. The
+    imports queue, every scheduler actor and the AutoCount ingest are marked centrally
+    (``sync_writer_for``); this is for a sync path that runs anywhere else."""
+    ctx = _ensure()
+    previous = ctx.sync_writer
+    ctx.sync_writer = name
+    try:
+        yield ctx
+    finally:
+        ctx.sync_writer = previous
+
+
+def sync_writer_for(actor: Optional[AuditActor], ctx: Optional[AuditContext]) -> Optional[str]:
+    """The sync, import or scheduled path writing now, or None for a staff-driven write.
+
+    Marked: an imports-queue job (``job_actor_scope``), the AutoCount ESB key and the ingest
+    routes (``mark_integration_request``), ``sync_writer_scope``, and every scheduler actor
+    (each tick, heartbeat handler and Run now), whichever helper stamped it.
+    """
+    if ctx is not None and ctx.sync_writer:
+        return ctx.sync_writer
+    if actor is not None and actor.actor_type == "scheduler":
+        return f"scheduler:{actor.job_id or ''}"
+    return None
 
 
 def source_for(actor: Optional[AuditActor], ctx: Optional[AuditContext]) -> Optional[str]:

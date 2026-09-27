@@ -525,6 +525,7 @@ class ProjectSalesOrderLine(Base, CompanyScopedMixin):
     """
 
     __tablename__ = "sales_order_lines"
+    __audit_skip__ = "ingested line table, 679 to 7,502 rows a day (measured 27 Sep 2026, review B3)"
     __audit_parent__ = "project_sales_order_id"  # history rolls up to the header
     # Audit entity type pinned to the pre-move table name (ADR-0011).
     __audit_entity_type__ = "project_sales_order_lines"
@@ -999,6 +1000,7 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     """
 
     __tablename__ = "order_inquiry_rows"
+    __audit_skip__ = "line table (service writes log_audit explicitly), 451 to 4,601 rows a day (measured 27 Sep 2026, review B3)"
     # Audit entity type pinned to the pre-move table name (ADR-0011).
     __audit_entity_type__ = "project_order_inquiry_rows"
 
@@ -1162,6 +1164,7 @@ class OrderInquiryLink(Base, CompanyScopedMixin):
     """
 
     __tablename__ = "order_inquiry_links"
+    __audit_skip__ = "link table, 230 to 2,351 rows a day (measured 27 Sep 2026, review B3)"
     #: Born after migration 354, so no pre-move name constrains it; it takes the `project_`
     #: prefix its siblings carry (`tests/test_projects_audit_entity_types.py`), because
     #: `audit_log.entity_type` is one flat namespace with no schema in it and a bare

@@ -213,6 +213,7 @@ class ProductSpecifications(Base):
     """
 
     __tablename__ = "product_specifications"
+    __audit_skip__ = "derived from products by derive_product_specs, 513 to 5,220 rows a day (measured 27 Sep 2026, review B3)"
 
     # Surrogate uuid PK, per ADR-PRODUCT-STANDARDS: the polymorphic key columns can
     # only be typed uuid if every id is one. `product_id` stays the key people use - it is

@@ -107,7 +107,8 @@ class AuditLog(Base):
 # role is a member of ``sorento_audit_maintainer`` (a NOLOGIN role; with no such role, only a
 # superuser). Anyone can SET a custom setting, so the flag alone is only a statement of intent;
 # the role is what the application's own login does not have (review S1 at 7a56073f). The
-# retention job and scrub migrations run as a maintainer; a DBA grants the role to that login.
+# retention job and scrub migrations run as a maintainer; a DBA creates the role (a superuser
+# only) and grants it to that login, which must not hold CREATEROLE.
 # SET LOCAL, inside an explicit transaction: a session-level SET would leave a pooled
 # connection in bypass mode.
 #
@@ -116,7 +117,13 @@ class AuditLog(Base):
 #   1. the table's OWNER can ``ALTER TABLE audit_logs DISABLE TRIGGER`` or drop the trigger;
 #      in a single-role deployment the app login is the owner;
 #   2. a superuser can ``SET session_replication_role = replica``, which skips triggers;
-#   3. a superuser is a member of every role, so it passes the maintainer check.
+#   3. a superuser is a member of every role, so it passes the maintainer check;
+#   4. an app login with CREATEROLE could make itself a member (review S1-r2), so the trigger
+#      refuses the flag for any CREATEROLE login that is not a superuser, and only a superuser
+#      creates the role. Left open on PG15 only (the shipped compose image): a CREATEROLE
+#      login may grant any non-superuser role, so it can create a second login without
+#      CREATEROLE and grant it the role. PG16 closes that (granting needs ADMIN on the role,
+#      which a superuser-created role gives nobody). Run the app login without CREATEROLE.
 # Closing 1 needs the table owned by a migration role and ``REVOKE UPDATE, DELETE, TRUNCATE``
 # from the app login (an owner decision, PLAN-audit-standard-26sep.md 7.1).
 #
@@ -128,14 +135,19 @@ ENSURE_MAINTAINER_ROLE_SQL = """
 DO $do$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sorento_audit_maintainer') THEN
-        BEGIN
-            CREATE ROLE sorento_audit_maintainer NOLOGIN;
-        EXCEPTION
-            WHEN insufficient_privilege THEN
-                RAISE NOTICE 'sorento_audit_maintainer not created (needs CREATEROLE): only a superuser can maintain audit_logs';
-            WHEN duplicate_object OR unique_violation THEN
-                NULL;
-        END;
+        -- A superuser only: a CREATEROLE login that creates the role is made a member of it
+        -- (PG16's implicit ADMIN grant to the creator), which is the app login in a
+        -- single-role deployment (review S1-r2, probe P1).
+        IF coalesce((SELECT rolsuper FROM pg_roles WHERE rolname = current_user), false) THEN
+            BEGIN
+                CREATE ROLE sorento_audit_maintainer NOLOGIN;
+            EXCEPTION
+                WHEN duplicate_object OR unique_violation THEN
+                    NULL;
+            END;
+        ELSE
+            RAISE NOTICE 'sorento_audit_maintainer not created (a superuser must create it): until then only a superuser can maintain audit_logs';
+        END IF;
     END IF;
 END
 $do$
@@ -147,7 +159,15 @@ DECLARE
     maintainer boolean := false;
 BEGIN
     IF coalesce(current_setting('sorento.audit_maintenance', true), '') = 'on' THEN
-        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sorento_audit_maintainer') THEN
+        -- A CREATEROLE login can make itself a member (PG15: it may grant any non-superuser
+        -- role; PG16: it holds ADMIN on a role it created), so its membership proves nothing
+        -- (review S1-r2). session_user too: SET ROLE to the maintainer role would hide it.
+        IF EXISTS (
+            SELECT 1 FROM pg_roles
+            WHERE rolname IN (current_user, session_user) AND rolcreaterole AND NOT rolsuper
+        ) THEN
+            maintainer := false;
+        ELSIF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sorento_audit_maintainer') THEN
             maintainer := pg_has_role(current_user, 'sorento_audit_maintainer', 'MEMBER');
         ELSE
             maintainer := coalesce((SELECT rolsuper FROM pg_roles WHERE rolname = current_user), false);

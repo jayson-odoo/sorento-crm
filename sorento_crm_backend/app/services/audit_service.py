@@ -103,10 +103,23 @@ def _is_audited_cls(cls: type) -> bool:
     return not getattr(cls, "__audit_skip__", None)
 
 
-def _is_audited(obj: Any) -> bool:
-    if obj is None:
+def _audited_here(cls: type, actor: Any, ctx: Any) -> bool:
+    """Whether the automatic hooks record ``cls`` in the current writer context.
+
+    Staff-driven writes: every class not opted out (default-on). An integration sync, import
+    or scheduled path (``sync_writer_for``): only the classes opted in before default-on
+    (``__audit_track__``). Measured on the production copy on 27 Sep 2026, default-on for
+    those paths projected 87,788 to 675,992 rows a day against today's 480 (review B3 at
+    cba2b754, PLAN-audit-standard-26sep.md "Measurement"). Explicit ``log_audit`` /
+    ``record()`` / ``@audit_event`` rows are written either way.
+    """
+    if not _is_audited_cls(cls):
         return False
-    return _is_audited_cls(obj.__class__)
+    from app.audit_context import sync_writer_for
+
+    if sync_writer_for(actor, ctx) is None:
+        return True
+    return bool(getattr(cls, "__audit_track__", False))
 
 
 def _audit_entity_type(cls: type) -> str:
@@ -665,31 +678,41 @@ def _company_chain(cls: type, _seen: Optional[frozenset] = None) -> Optional[lis
     found = None
     if "company_id" not in mapper.local_table.c:
         parent_col = getattr(cls, "__audit_parent__", None)
-        # A NOT NULL key is ownership; a nullable one is usually a reference (system_settings
-        # .default_product_supplier_id must not pin global settings to one company).
-        columns = [mapper.local_table.c[parent_col]] if parent_col else []
-        columns += [c for c in mapper.local_table.columns if c.foreign_keys and not c.nullable]
-        hops = [
-            (mapper.get_property_by_column(column).key, fk.column.table, fk.column)
-            for column in columns
-            for fk in column.foreign_keys
-        ]
-        for hop in hops:
-            if hop[1].name == "companies" or "company_id" in hop[1].c:
-                found = [hop]
-                break
-        if found is None and len(seen) < _COMPANY_CHAIN_DEPTH:
-            for hop in hops:
-                target_cls = _class_for_table(hop[1])
-                if target_cls is None or hop[1].name in seen:
-                    continue
-                rest = _company_chain(target_cls, seen)
-                if rest:
-                    found = [hop] + rest
-                    break
+        # The declared owner's chain first, however long, before any other key's direct hop:
+        # a combo part is its combo's, not its part product's (review N-a at cba2b754).
+        if parent_col:
+            found = _chain_through(mapper, [mapper.local_table.c[parent_col]], seen)
+        if found is None:
+            # A NOT NULL key is ownership; a nullable one is usually a reference
+            # (system_settings.default_product_supplier_id must not pin global settings to
+            # one company).
+            columns = [c for c in mapper.local_table.columns if c.foreign_keys and not c.nullable]
+            found = _chain_through(mapper, columns, seen)
     if top:
         _company_chain_cache[cls] = found
     return found
+
+
+def _chain_through(mapper: Any, columns: list, seen: frozenset) -> Optional[list]:
+    """The shortest chain through ``columns``: a direct hop to a company table first, else a
+    hop to a table that itself resolves."""
+    hops = [
+        (mapper.get_property_by_column(column).key, fk.column.table, fk.column)
+        for column in columns
+        for fk in column.foreign_keys
+    ]
+    for hop in hops:
+        if hop[1].name == "companies" or "company_id" in hop[1].c:
+            return [hop]
+    if len(seen) < _COMPANY_CHAIN_DEPTH:
+        for hop in hops:
+            target_cls = _class_for_table(hop[1])
+            if target_cls is None or hop[1].name in seen:
+                continue
+            rest = _company_chain(target_cls, seen)
+            if rest:
+                return [hop] + rest
+    return None
 
 
 def _company_fk(cls: type) -> Optional[tuple[str, Any, Any]]:
@@ -764,6 +787,20 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
     def _should_skip(etype: str, eid: str) -> bool:
         return etype in skip_types or (etype, eid) in skip_set
 
+    from app.audit_context import current_audit_context, get_actor
+    # session.info wins over the contextvar (get_actor): FastAPI runs a sync
+    # dependency in a SEPARATE threadpool thread from the path op, so a contextvar
+    # it mutated is not visible here, while session.info lives on the shared Session.
+    actor = get_actor(session)
+    ctx = current_audit_context()
+    audited: dict = {}
+
+    def _is_audited(obj: Any) -> bool:
+        cls = obj.__class__
+        if cls not in audited:
+            audited[cls] = _audited_here(cls, actor, ctx)
+        return audited[cls]
+
     company_cache: dict = {}
     for obj in session.new:
         if not _is_audited(obj):
@@ -837,15 +874,9 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
     if not _audit_table_exists(session.get_bind()):
         session.info.pop("audit_pending", None)
         return
-    from app.audit_context import current_audit_context, get_actor
-    # session.info wins over the contextvar (get_actor): FastAPI runs a sync
-    # dependency in a SEPARATE threadpool thread from the path op, so a contextvar
-    # it mutated is not visible here, while session.info lives on the shared Session.
-    actor = get_actor(session)
     user_id = _uuid_or_none(actor.user_id) if actor is not None else None
     ip_address = actor.ip_address if actor is not None else None
     contact_id = actor.contact_id if actor is not None else None
-    ctx = current_audit_context()
     session.info["audit_flushing"] = True
     try:
         for entity_type, entity_id, action, old_values, new_values, entity_company_id, root in pending:
@@ -946,7 +977,11 @@ def _session_do_orm_execute(state: Any) -> None:
     table = getattr(statement, "table", None)
     # An ORM statement names its mapper; Core DML on a mapped table is looked up by table.
     cls = state.bind_mapper.class_ if state.bind_mapper is not None else _class_for_table(table)
-    if cls is None or not _is_audited_cls(cls):
+    if cls is None:
+        return
+    from app.audit_context import current_audit_context, get_actor
+
+    if not _audited_here(cls, get_actor(session), current_audit_context()):
         return
     entity_type = _audit_entity_type(cls)
     if entity_type in set(session.info.get("skip_audit_entity_types") or []):
@@ -1057,15 +1092,29 @@ def _write_bulk_rows(
             ctx.event_hits.add((entity_type, entity_id))
     if remaining > 0:
         # Every row in one company: the summary is that company's too, or the admin listing
-        # would show "N more rows" to every company (review N1). With its own column the whole
-        # match is checked, not just the itemised rows; through a parent chain only the
-        # itemised rows are known. Mixed, or unknown: company-less.
+        # would show "N more rows" to every company (review N1). The whole match is checked,
+        # not just the itemised rows: by its own column, or through the parent chain from the
+        # distinct first-hop keys (review N-b at cba2b754). Mixed, or unknown: company-less.
         companies = {entry["company_id"] for entry in out}
         if len(companies) == 1 and "company_id" in table.c:
             distinct = select(func.count(func.distinct(table.c.company_id)), func.count(table.c.company_id))
             n_companies, n_stamped = conn.execute(distinct.where(key.in_(matching)), params).one()
             if n_companies != 1 or n_stamped != len(rows) + remaining:
                 companies = set()
+        elif len(companies) == 1 and company_link is not None:
+            link_col = mapper.get_property(company_link[0]).columns[0]
+            owners = conn.execute(
+                select(link_col).where(key.in_(matching)).distinct().limit(cap + 1), params
+            ).scalars().all()
+            if len(owners) > cap:
+                companies = set()
+            else:
+                companies = {
+                    _company_from_parent(session, conn, cls, {company_link[0]: owner}, company_cache)
+                    for owner in owners
+                }
+        else:
+            companies = set()
         out.append({
             **common,
             "entity_id": "*",
