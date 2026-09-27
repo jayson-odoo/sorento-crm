@@ -12,7 +12,11 @@ const ACTION_LABELS: Record<string, string> = {
   COST_SET_APPLY: 'Applied',
   COST_LINE_MAP: 'Mapped a line',
   COST_LINE_SKIP: 'Skipped a line',
+  COST_LINE_DECISION: 'Decided a line',
 };
+
+/** No action code ever reaches the screen; an action added later reads as a plain update. */
+const actionLabel = (action: string) => ACTION_LABELS[action] ?? 'Updated';
 
 /** AC-AU-04: newest first, actor, time, one-line summary. */
 export function CostPriceHistoryTab({ setId }: { setId: string }) {
@@ -41,7 +45,7 @@ export function CostPriceHistoryTab({ setId }: { setId: string }) {
       {events.map((event, index) => (
         <li key={`${event.action}-${event.at}-${index}`} className="rounded-lg border border-border bg-card p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="font-medium">{ACTION_LABELS[event.action] ?? event.action}</span>
+            <span className="font-medium">{actionLabel(event.action)}</span>
             <span className="text-xs text-muted-foreground">{formatDateTimeInMalaysia(event.at)}</span>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">{event.summary}</p>
