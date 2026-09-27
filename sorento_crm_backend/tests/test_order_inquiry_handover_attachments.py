@@ -233,10 +233,19 @@ def test_handover_template_prints_attachments():
 
 def test_migration_idempotent_single_head():
     module = _load_soatt_migration()
-    assert module.down_revision == "sales_s1_reports_module", (
-        "soatt_0001_so_line_attachments must chain onto main's current single head "
-        "(sales_s1_reports_module) - run scripts/alembic-reparent.sh if this drifted"
-    )
+    # One head, and it is this lane's migration - read off the real revision graph
+    # rather than a pinned parent name, which every reparent onto a newer main head
+    # (scripts/alembic-reparent.sh) would otherwise break.
+    from pathlib import Path
+
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    backend_root = Path(__file__).resolve().parents[1]
+    config = Config(str(backend_root / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_root / "alembic"))
+    heads = ScriptDirectory.from_config(config).get_heads()
+    assert heads == [module.revision], heads
 
     with blank_session() as db:
         template = _r2_template(db)
