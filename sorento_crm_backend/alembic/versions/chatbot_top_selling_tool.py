@@ -11,7 +11,7 @@ override in `lanes/business/__init__.py::run_fetch`.
 unmoved and no republish follows from this migration.
 
 Revision ID: chatbot_top_selling_tool
-Revises: sales_s1_reports_module
+Revises: identity_0001_s0_model
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "chatbot_top_selling_tool"
-down_revision = "sales_s1_reports_module"
+down_revision = "identity_0001_s0_model"
 branch_labels = None
 depends_on = None
 
