@@ -1639,6 +1639,7 @@ def _run_stages(  # noqa: PLR0915
         # against the list before the parser's reading can send it anywhere else.
         from app.services.chatbot import order_list as order_list_mod
 
+        order_list_was_open = order_list_mod.is_open_order_list(state_in.focus)
         verdict, state_in, order_list_rule = order_list_mod.order_list_verdict(
             db, verdict, state_in, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
         )
@@ -2577,7 +2578,11 @@ def _run_stages(  # noqa: PLR0915
                 # #1262 fix lane round 7, R6: inside an order list no escalate offer and
                 # no routing picker; an empty list says so in one line.
                 answer = order_list_mod.list_reply(
-                    answer, focus=state_out.focus, fetch_plan=fetch_plan, envelopes=envelopes
+                    answer,
+                    was_open=order_list_was_open,
+                    fetch_plan=fetch_plan,
+                    envelopes=envelopes,
+                    order_status=parsed_output.get("order_status"),
                 )
                 # Chatbot stock ask v2 S3, AC-SA314: an `incoming` entry answered
                 # with its own packing list attaches it to THIS reply. `answer.files`

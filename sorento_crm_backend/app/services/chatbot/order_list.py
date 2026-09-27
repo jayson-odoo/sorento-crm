@@ -165,7 +165,11 @@ def order_list_verdict(db: Session, verdict: dict[str, Any], state: Any, text: s
         if clears_the_brand(text):
             state = replace(state, focus=replace(focus, outstanding_brand_ids=[]), pending=open_pending)
             return _continuation(verdict, entities=[]), state, "order_list_brand_cleared"
-        word = brand_word_alone(db, text)
+        # A word the parser read as answering the bot's own escalate offer answers it.
+        answers_offer = open_pending is not pending and (verdict.get("escalation") or {}).get(
+            "is_escalation_confirmation"
+        ) is True
+        word = None if answers_offer else brand_word_alone(db, text)
         if word is not None:
             entity = {"raw": word, "hint": "brand", "canonical_code": None, "current_message": True, "confident": True}
             return _continuation(verdict, entities=[entity]), replace(state, pending=open_pending), "order_list_brand_switched"
@@ -180,40 +184,67 @@ def order_list_verdict(db: Session, verdict: dict[str, Any], state: Any, text: s
     return verdict, state, None
 
 
-def list_reply(answer: Any, *, focus: Any, fetch_plan: Any, envelopes: list[dict[str, Any]]) -> Any:
-    """R6: a reply inside an order list carries no escalate offer and no routing picker,
-    and an empty list says so in one line under the header (`EMPTY_LIST_LINE`), keeping
-    any "could not find" note. Any other reply is returned as is."""
+def list_reply(answer: Any, *, was_open: bool, fetch_plan: Any, envelopes: list[dict[str, Any]], order_status: Any) -> Any:
+    """R6: a reply inside an order list that was already open (`was_open`, read before
+    this turn applied) carries no escalate offer and no routing picker, and an empty
+    list says so in one line under the header (`EMPTY_LIST_LINE`), keeping every other
+    line (a "could not find" note, a refusal). A first ask is answered as before."""
     fetch = list(getattr(fetch_plan, "fetch", None) or [])
-    if len(fetch) != 1 or fetch[0].domain != "order" or not envelopes:
+    if not was_open or len(fetch) != 1 or fetch[0].domain != "order" or not envelopes:
         return answer
-    if getattr(focus, "status", None) in _NOT_A_LIST:
+    if jsc.js_string(order_status or "").strip() in _NOT_A_LIST:
         return answer
     from app.services.chatbot.turn.fetch import envelope_missed
 
     text, _had = refers_to_salesman(getattr(answer, "text", "") or "")
     question = answer.question
+    dropped_options: list[dict[str, Any]] = []
     if question is not None:
         if question.kind in ESCALATION_OFFER_KINDS:
+            dropped_options = [o for o in (question.options or []) if isinstance(o, dict)]
             question = None
         elif (question.payload or {}).get("escalate_offered") is True:
             question = replace(question, payload={**question.payload, "escalate_offered": False})
+    text = _without_options(text, dropped_options)
     envelope = envelopes[0]
-    if envelope_missed(envelope) and not envelope.get("denied") and question is None:
+    if envelope_missed(envelope) and not envelope.get("denied"):
         text = _one_line_miss(text)
     if text == answer.text and question is answer.question and answer.offer is None:
         return answer
     return replace(answer, text=text, question=question, offer=None)
 
 
-_HEADER_LABELS = ("Customer:", "Product:", "Brand:", "Dates:", "Order:", "Transporter:", "Container:", "Warehouse:", "Location:", "Order date:")
+def _without_options(text: str, options: list[dict[str, Any]]) -> str:
+    """`text` without the numbered lines of a routing picker that was taken out."""
+    if not options:
+        return text
+    labels = {
+        (str(o.get("position")), jsc.js_string(o.get("label") or "").strip())
+        for o in options
+        if jsc.js_string(o.get("label") or "").strip()
+    }
+    kept = []
+    for line in (text or "").splitlines():
+        m = re.match(r"^\s*(\d+)[.)]\s*(.+?)\s*$", line)
+        if m and (m.group(1), m.group(2)) in labels:
+            continue
+        kept.append(line)
+    return "\n".join(kept).rstrip()
 
 
 def _one_line_miss(text: str) -> str:
-    """The header lines and the "could not find" notes of a miss, then one line."""
-    kept = [
-        line.strip()
-        for line in (text or "").splitlines()
-        if line.strip().startswith(_HEADER_LABELS) or "find" in line.casefold()
-    ]
-    return "\n".join([*kept, EMPTY_LIST_LINE]) if kept else EMPTY_LIST_LINE
+    """The rich miss ("Here's what you want:", its bullets and "But no order matched
+    these ...") as one line; the header and any other line are kept."""
+    kept: list[str] = []
+    dropped = False
+    for line in (text or "").splitlines():
+        bare = line.strip()
+        if bare.startswith(("Here's what you want", "\u2022", "But no ")):
+            dropped = True
+            continue
+        kept.append(line)
+    if not dropped:
+        return text
+    while kept and not kept[-1].strip():
+        kept.pop()
+    return "\n".join([*kept, EMPTY_LIST_LINE])
