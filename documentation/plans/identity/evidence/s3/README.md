@@ -1,7 +1,8 @@
 # S3 browser-verification evidence (identity, #1280)
 
-Date: 2026-09-26 (UTC). Branch `claude/identity-s3-create-link-users-6hibzg`, code as of
-`645c5f9c` (the browser-pass fixes below are in it).
+Date: 2026-09-26 (UTC). Branch `claude/identity-s3-create-link-users-6hibzg`, walked on
+`645c5f9c` (the browser-pass fixes below are in it); S0 fix round 2 merged in afterwards at
+`62065d06` (backend only, no screen change; the S3 and S0 suites re-run green after it).
 Scope: AC-48, AC-52, AC-53, AC-57, AC-59 and the S3 done-when (plan section 10), against the
 round 4 mockups 5 to 13 of `alignment-unified-identity-27sep.html`.
 
