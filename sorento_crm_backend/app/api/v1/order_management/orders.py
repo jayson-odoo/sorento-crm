@@ -1811,39 +1811,50 @@ _TOP_SELLING_N_MAX = 100
 _OFFICE_ACCESS_TYPE_RE = re.compile(r"^(sorento|cabana|mocha) office\Z")
 
 
+def _top_selling_is_staff(db: Session, contact_id: str) -> bool:
+    """True when the contact holds at least one ACTIVE office access type
+    (`_OFFICE_ACCESS_TYPE_RE`, e.g. "Sorento Office"), whatever other types it
+    holds. The chatbot lane asks the same question
+    (`business_services.top_selling_dealer_ledgers`)."""
+    from app.models.access import ContactAccessType, respond_contact_access_types
+
+    held = (
+        db.query(ContactAccessType.name)
+        .join(
+            respond_contact_access_types,
+            respond_contact_access_types.c.access_type_code == ContactAccessType.code,
+        )
+        .filter(
+            respond_contact_access_types.c.contact_id == contact_id,
+            ContactAccessType.is_active.is_(True),
+        )
+        .all()
+    )
+    return any(_OFFICE_ACCESS_TYPE_RE.match(" ".join((name or "").split()).lower()) for (name,) in held)
+
+
 def _top_selling_dealer_scope(db: Session, contact_id: str) -> Optional[list[str]]:
     """The customers a dealer contact is forced to, or None for staff.
 
-    A contact linked to any customer (`respond_contact_customers`) is that
-    customer's dealer and sees only its own ledgers, whatever else it holds.
-    Staff is positive, never the fallback: every access type the contact holds
-    reads as the office tier (`_OFFICE_ACCESS_TYPE_RE`, e.g. "Sorento Office")
-    and at least one of them is active. Anyone else (no type, end user, dealer
-    with no link, a type nobody classified) is refused (fail closed)."""
-    from app.models.access import ContactAccessType, respond_contact_access_types
+    Owner hand test on PR #1273 (27 Sep 2026, ruling assumed): any ACTIVE office
+    access type makes the contact staff (`_top_selling_is_staff`), whatever
+    dealer or end user types or customer links it also holds; staff sees every
+    ledger. Without one, a contact linked to any customer
+    (`respond_contact_customers`) is that customer's dealer and sees only its own
+    ledgers. Anyone else (no type, end user, dealer with no link, an inactive
+    office type, a type nobody classified) is refused (fail closed). The Sales
+    report reveal is checked by the caller before this, for everyone."""
     from app.services.contact_customer_service import list_links
     from app.services.error_handler import AppException
 
+    if _top_selling_is_staff(db, contact_id):
+        return None
     own = []
     for link in list_links(db, contact_id):
         if link.customer_id not in own:
             own.append(link.customer_id)
     if own:
         return own
-    held = (
-        db.query(ContactAccessType.name, ContactAccessType.is_active)
-        .join(
-            respond_contact_access_types,
-            respond_contact_access_types.c.access_type_code == ContactAccessType.code,
-        )
-        .filter(respond_contact_access_types.c.contact_id == contact_id)
-        .all()
-    )
-    is_office = [
-        bool(_OFFICE_ACCESS_TYPE_RE.match(" ".join((name or "").split()).lower())) for name, _ in held
-    ]
-    if held and all(is_office) and any(active for _, active in held):
-        return None
     raise AppException(
         403,
         "You can only see sales for your own account.",
@@ -1927,8 +1938,10 @@ async def get_top_selling(
         description=(
             "Respond.io contact id, both-or-neither with space_id. When given the route re-checks "
             "the `sales_orders.sales_report` reveal key (403 `sales_report_not_enabled`). A contact "
-            "linked to customers is forced to them (403 `customer_not_permitted` when it names "
-            "another); an unlinked contact must be office staff, else 403 `customer_not_permitted`."
+            "holding any active office access type is staff and sees every customer, whatever else "
+            "it holds. Otherwise a contact linked to customers is forced to them (403 "
+            "`customer_not_permitted` when it names another), and anyone else is 403 "
+            "`customer_not_permitted`."
         ),
     ),
     space_id: Optional[str] = Query(None, description="Respond.io workspace id, required together with contact_id."),

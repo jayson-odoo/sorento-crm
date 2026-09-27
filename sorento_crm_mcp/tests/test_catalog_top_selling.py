@@ -80,3 +80,14 @@ def test_rows_are_described_code_only() -> None:
     """Owner ruling 26 Sep ~07:40Z: a ranked row carries no name."""
     description = _spec().description
     assert "rank, code, name" not in description
+
+
+def test_access_text_states_the_office_staff_rule() -> None:
+    """Fix round 3 (owner hand test on PR #1273, 27 Sep 2026): the tool text an n8n
+    agent reads states the route's rule, so it never tells a mixed office and dealer
+    contact that it is a dealer: any active office access type is staff, whatever
+    else the contact holds; only otherwise does a customer link scope it."""
+    description = " ".join(_spec().description.split())
+    assert "any active office access type is staff" in description
+    assert "whatever else it holds" in description
+    assert "not office staff" not in description

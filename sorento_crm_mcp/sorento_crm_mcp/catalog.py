@@ -788,9 +788,10 @@ CATALOG: tuple[ToolSpec, ...] = (
             "group=category) answers the detail offer: `rows`/`totals` narrow to that code and "
             "`detail` carries its `by_customer` and `by_month`, same filters and basis.\n\n"
             "ACCESS: pass `contact_id` + `space_id` (both or neither). The contact needs the "
-            "Sales report reveal (403 `sales_report_not_enabled`); a dealer contact is forced "
-            "to its own customers and naming another is 403 `customer_not_permitted`, the "
-            "same 403 any contact that is not office staff gets."
+            "Sales report reveal (403 `sales_report_not_enabled`). A contact holding any active "
+            "office access type is staff and sees every customer, whatever else it holds. "
+            "Otherwise a contact linked to customers is forced to them and naming another is "
+            "403 `customer_not_permitted`, the same 403 any other contact gets."
         ),
         "/api/v1/order-management/top-selling",
         (),

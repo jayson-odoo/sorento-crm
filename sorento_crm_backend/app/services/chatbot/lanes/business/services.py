@@ -512,14 +512,16 @@ def top_selling_dealer_ledgers(
     db: Session, contact_respond_id: Any, space_id: str | None
 ) -> list[tuple[str, str]] | None:
     """A linked dealer contact's own customers as `(id, customer_name)`, or None when
-    the contact is linked to none (staff, or someone the route refuses on its own).
+    the contact is staff or is linked to none (someone the route refuses on its own).
 
     Reviewer S2 on PR #1273 (owner: a dealer sees only its own customers; ruling
     pending owner confirmation): the lane never shows a linked dealer the customer
-    picker, which lists other customers' names before the route could refuse. The link
-    is the route's own test (`orders._top_selling_dealer_scope`: any
-    `respond_contact_customers` row makes the contact that customer's dealer), read on
-    the engine's per-contact scoped session."""
+    picker, which lists other customers' names before the route could refuse. The
+    rule is the route's own (`orders._top_selling_dealer_scope`): any active office
+    access type makes the contact staff whatever else it holds (fix round 3, owner
+    hand test 27 Sep 2026); otherwise any `respond_contact_customers` row makes it
+    that customer's dealer. Read on the engine's per-contact scoped session."""
+    from app.api.v1.order_management.orders import _top_selling_is_staff
     from app.models.order import Customer
     from app.services.contact_customer_service import list_links
     from app.services.field_access import resolve_contact_with_null_workspace_fallback
@@ -529,7 +531,7 @@ def top_selling_dealer_ledgers(
     contact_id = resolve_contact_with_null_workspace_fallback(
         db, contact_id=str(contact_respond_id), space_id=space_id
     )
-    if not contact_id:
+    if not contact_id or _top_selling_is_staff(db, contact_id):
         return None
     ids: list[str] = []
     for link in list_links(db, contact_id):
