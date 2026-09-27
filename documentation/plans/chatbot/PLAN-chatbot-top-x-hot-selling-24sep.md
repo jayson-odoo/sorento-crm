@@ -9,7 +9,10 @@ branch `claude/top-selling-s4-parser-wiring-69mpx3` (S4 built 26 Sep 2026, see "
 (S4)"); the reviewer pass of 26 Sep 08:42Z (B1, B2, S1, S2, S3, N1, N2, kill R4) is fixed
 on the same PR, and main (dc10a1af) is merged with the lane's migrations re-parented onto
 `sales_0002_team_leader` (fix lane round 2, 26 Sep), the live-parser console run still owed
-on the local stack; S5 (sales agent
+on the local stack. Fix lane round 3 (27 Sep, owner hand test, ruling assumed pending the
+owner): any ACTIVE office access type makes a contact staff for top selling whatever other
+types or customer links it holds (`orders._top_selling_is_staff`, shared by the lane's
+`top_selling_dealer_ledgers`); no active office type keeps link-else-403. S5 (sales agent
 resolver), S6 (review + live console) and S7 (per-month breakdown) open. Track: full track (new route + MCP tool = a new external
 ingest surface, one policy-row migration, one prompt migration, one entity-kind migration;
 the diff will pass 300 lines).
