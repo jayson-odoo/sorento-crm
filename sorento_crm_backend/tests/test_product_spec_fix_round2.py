@@ -317,19 +317,29 @@ def test_b3_nineteen_gapped_skip_phrases_over_a_long_text_read_fast():
         "value": "black",
     }
 
-    def best_of_two(size: int) -> float:
+    def best_of_three(size: int) -> float:
         texts = {"description": ("A B18 C " * 1300)[:size], "flyer": "", "class_tail": ""}
         runs = []
-        for _ in range(2):
+        for _ in range(3):
             started = time.perf_counter()
             read_text(builder, texts, "")
             runs.append(time.perf_counter() - started)
         return min(runs)
 
-    short, long_ = best_of_two(4900), best_of_two(9800)
-    # Linear: twice the text, about twice the time (it was cubic: 0.3 s at 4,400).
+    # Smoke bound on a small input: 0.027 s locally, so 0.5 s only fails on a real regression.
+    smoke = best_of_three(490)
+    assert smoke < 0.5, smoke
+
+    short, long_ = best_of_three(4900), best_of_three(9800)
+    # The algorithmic property, independent of runner speed. Linear: twice the text, about
+    # twice the time (measured 1.8x to 2.1x). Quadratic would be 4x, cubic (the old code,
+    # 0.3 s at 4,400) 8x.
     assert long_ / short < 3.0, (short, long_)
-    assert long_ < 2.0
+    # Absolute ceiling with CI headroom: 9,800 characters measured 0.68 s to 0.84 s locally
+    # (cloud lane, 27 Sep 2026) and 2.30 s on the shared CI runner, so 5.0 s is over five
+    # times the local number. The ratio above is what proves linearity; this only catches a
+    # constant-factor blow-up.
+    assert long_ < 5.0, long_
 
 
 def test_b3_a_rule_takes_one_gapped_phrase():
