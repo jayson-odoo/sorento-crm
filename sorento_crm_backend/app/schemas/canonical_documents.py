@@ -378,9 +378,15 @@ _TOTAL_TOLERANCE = Decimal("0.01")
 #: Bounds matching the columns (`numeric(15,2)`, `numeric(15,4)`, `numeric(7,4)`), so a value
 #: the table cannot hold, or an exponent that would overflow the arithmetic, fails its own
 #: record by field instead of reaching the database. Non-finite values are refused too.
-_Money = Annotated[Decimal, Field(gt=Decimal("-1e13"), lt=Decimal("1e13"), allow_inf_nan=False)]
-_Qty4 = Annotated[Decimal, Field(gt=Decimal("-1e11"), lt=Decimal("1e11"), allow_inf_nan=False)]
-_Rate4 = Annotated[Decimal, Field(ge=0, lt=Decimal("1000"), allow_inf_nan=False)]
+_Money = Annotated[
+    Decimal,
+    Field(ge=Decimal("-9999999999999.99"), le=Decimal("9999999999999.99"), allow_inf_nan=False),
+]
+_Qty4 = Annotated[
+    Decimal,
+    Field(ge=Decimal("-99999999999.9999"), le=Decimal("99999999999.9999"), allow_inf_nan=False),
+]
+_Rate4 = Annotated[Decimal, Field(ge=0, le=Decimal("999.9999"), allow_inf_nan=False)]
 
 
 class CanonicalBillingDocumentLine(BaseModel):

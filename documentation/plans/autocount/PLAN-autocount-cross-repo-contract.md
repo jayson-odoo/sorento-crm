@@ -529,13 +529,18 @@ anchor's sales order line whose `source_ref` it is; the three `from_*` values ar
 
 **Verdicts.** `created`, `updated`, `failed`, and new in 2.6 `unchanged`: the push is identical to
 what is stored, or older than it by `source_modified_at` (warning `stale_ignored`); nothing is
-written. `summary.unchanged` appears only when non-zero. Each record carries `entity_id` and
-`lines: {created, updated, deleted}`.
+written. `summary.unchanged` appears only when non-zero: read a missing key as 0. Each record
+carries `entity_id` and `lines: {created, updated, deleted}`. Two concurrent FIRST pushes of the
+same document can collide on the unique index; the loser answers `failed` with a `conflict`
+error, and re-pushing it answers `unchanged` or `updated`.
 
 **Versions, cancels and deletes.** A push names the whole document: an omitted optional field is
 stored as null and a line not sent is deleted (the one exception to `absent_vs_null` on this
 surface). A line sent again keeps its id. When both stored and incoming `source_modified_at`
-exist and the incoming one is older, nothing is written. `status: "cancelled"` is an update: the
+exist and the incoming one is older, nothing is written. A push WITHOUT `source_modified_at`
+always applies and clears the stored one, which switches the guard off for that document until
+a timestamped push lands: always send it, backfill included. An offset timestamp is converted to
+UTC; a naive one is taken as UTC. `status: "cancelled"` is an update: the
 row and its lines stay, and every total leaves it out. `/deletions` hard-deletes a document and
 its lines (`deleted`), or sets it `cancelled` (`deactivated`) when a credit or debit note still
 points at it; an unknown or other-company ref is `not_found`.

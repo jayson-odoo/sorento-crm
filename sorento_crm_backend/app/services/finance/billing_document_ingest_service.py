@@ -561,7 +561,11 @@ class BillingDocumentIngestService(MasterRefResolver):
                 entity_type=BILLING_DOCUMENTS_ENTITY, source_ref=payload.against_source_ref
             )
             if target is not None and target != self_id:
-                return target
+                row = self.db.get(BillingDocument, target)
+                # Only a document a note can be against; a ref naming another note (an
+                # upstream mistake) falls through to the number.
+                if row is not None and row.document_type in AGAINST_TARGET_TYPES:
+                    return target
         if payload.against_doc_no:
             query = self.db.query(BillingDocument.id).filter(
                 BillingDocument.company_id == self.company_id,

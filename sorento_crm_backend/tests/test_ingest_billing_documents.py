@@ -861,3 +861,110 @@ class TestOverflowIsOneRecord:
         assert out[f"{MARKER}:IV:BIG"]["outcome"] == "failed"
         assert "net_total" in out[f"{MARKER}:IV:BIG"]["errors"]
         assert out[f"{MARKER}:IV:OK"]["outcome"] == "created"
+
+
+# ============================================ review round 1: the survived mutants
+class TestReviewRound1:
+    def test_another_companys_sales_agent_is_never_linked(self, env):
+        env.db.add(SalesAgent(sales_agent="ZZFIN-BAGENT", company_id=env.company_b))
+        env.db.commit()
+        res = env.push([_minimal(f"{MARKER}:IV:AG", agent_code="ZZFIN-BAGENT")])
+        out = _record(res, f"{MARKER}:IV:AG")
+        assert out["outcome"] == "created"
+        assert "agent_unresolved" in out["warnings"]
+        doc = env.doc(f"{MARKER}:IV:AG")
+        assert doc.sales_agent_id is None and doc.agent_code == "ZZFIN-BAGENT"
+
+    def test_the_anchors_own_agent_links(self, env):
+        agent = SalesAgent(sales_agent="ZZFIN-AAGENT", company_id=env.company_a)
+        env.db.add(agent)
+        env.db.commit()
+        env.push([_minimal(f"{MARKER}:IV:AA", agent_code="zzfin-aagent ")])
+        assert str(env.doc(f"{MARKER}:IV:AA").sales_agent_id) == str(agent.id)
+
+    def test_a_push_that_only_adds_a_line_is_an_update(self, env):
+        record = _minimal(f"{MARKER}:IV:ADD")
+        env.push([record])
+        grown = copy.deepcopy(record)
+        grown["lines"].append(
+            dict(record["lines"][0], source_ref=f"{MARKER}:IV:ADD:2", net_amount=0, line_total=0)
+        )
+        out = _record(env.push([grown]), f"{MARKER}:IV:ADD")
+        assert out["outcome"] == "updated"
+        assert out["lines"] == {"created": 1, "updated": 0, "deleted": 0}
+        assert len(env.lines(env.doc(f"{MARKER}:IV:ADD").id)) == 2
+
+    def test_late_fill_never_repoints_a_linked_note(self, env):
+        env.push_fixture()
+        iv3 = env.doc("SRT_DB:IV:1003")
+        cn = _minimal(
+            f"{MARKER}:CN:L1",
+            document_type="credit_note",
+            against_source_ref="SRT_DB:IV:1003",
+            against_doc_no="IV-LATE/1",
+        )
+        env.push([cn])
+        assert str(env.doc(f"{MARKER}:CN:L1").against_document_id) == str(iv3.id)
+        env.push([_minimal(f"{MARKER}:IV:LATE", doc_no="IV-LATE/1")])
+        assert str(env.doc(f"{MARKER}:CN:L1").against_document_id) == str(iv3.id)
+
+    def test_an_ambiguous_number_is_never_guessed(self, env):
+        env.push([_minimal(f"{MARKER}:IV:D1", doc_no="IV-DUP/1")])
+        env.push([_minimal(f"{MARKER}:IV:D2", doc_no="IV-DUP/1")])
+        env.push(
+            [_minimal(f"{MARKER}:CN:AMB", document_type="credit_note", against_doc_no="IV-DUP/1")]
+        )
+        # Two invoices carry the number: the note is not linked to either on its own write...
+        assert env.doc(f"{MARKER}:CN:AMB").against_document_id is None
+        # ...nor by the late fill when one of them is pushed again with a change.
+        changed = _minimal(f"{MARKER}:IV:D2", doc_no="IV-DUP/1", description="CHANGED")
+        assert _record(env.push([changed]), f"{MARKER}:IV:D2")["outcome"] == "updated"
+        assert env.doc(f"{MARKER}:CN:AMB").against_document_id is None
+
+    def test_against_source_ref_naming_another_note_is_not_a_link(self, env):
+        env.push_fixture()
+        cn = _minimal(
+            f"{MARKER}:CN:X", document_type="credit_note", against_source_ref="SRT_DB:CN:1001"
+        )
+        env.push([cn])
+        assert env.doc(f"{MARKER}:CN:X").against_document_id is None
+        # So deleting that other note is still a plain delete.
+        assert env.delete(["SRT_DB:CN:1001"]).json()["records"][0]["outcome"] == "deleted"
+
+    def test_equal_timestamp_with_new_content_applies(self, env):
+        env.push_fixture()
+        same = copy.deepcopy(load_fixture()["records"][0])
+        same["ref"] = "SAME TIME NEW REF"
+        assert _record(env.push([same]), "SRT_DB:IV:1001")["outcome"] == "updated"
+
+    def test_an_offset_timestamp_is_stored_as_naive_utc(self, env):
+        record = _minimal(f"{MARKER}:IV:TZ", source_modified_at="2026-09-10T17:00:00+08:00")
+        env.push([record])
+        from datetime import datetime
+
+        assert env.doc(f"{MARKER}:IV:TZ").source_modified_at == datetime(2026, 9, 10, 9, 0, 0)
+        older = dict(record, source_modified_at="2026-09-10T08:59:59Z", ref="OLDER")
+        out = _record(env.push([older]), f"{MARKER}:IV:TZ")
+        assert out["outcome"] == "unchanged" and "stale_ignored" in out["warnings"]
+
+    def test_more_decimals_than_the_column_replays_unchanged(self, env):
+        record = _minimal(
+            f"{MARKER}:IV:DP", net_total="10.004", tax_total="0", total="10.004",
+            local_net_total="10.004",
+        )
+        record["lines"][0]["quantity"] = "1.00004"
+        assert _record(env.push([record]), f"{MARKER}:IV:DP")["outcome"] == "created"
+        assert env.doc(f"{MARKER}:IV:DP").net_total == Decimal("10.00")
+        assert _record(env.push([record]), f"{MARKER}:IV:DP")["outcome"] == "unchanged"
+
+    def test_the_largest_column_value_lands_and_one_sen_more_fails(self, env):
+        top = "9999999999999.99"
+        ok = _minimal(f"{MARKER}:IV:TOP", net_total=top, tax_total="0", total=top, local_net_total=top)
+        over = _minimal(
+            f"{MARKER}:IV:OVER", net_total="9999999999999.995", tax_total="0",
+            total="9999999999999.995", local_net_total="0",
+        )
+        out = {r["source_ref"]: r for r in env.push([ok, over]).json()["records"]}
+        assert out[f"{MARKER}:IV:TOP"]["outcome"] == "created"
+        assert out[f"{MARKER}:IV:OVER"]["outcome"] == "failed"
+        assert "net_total" in out[f"{MARKER}:IV:OVER"]["errors"]
