@@ -101,12 +101,19 @@ def test_ac_r4_10_this_plan_adds_no_table_to_the_purge_file_or_the_sales_schema(
 
     from app.database import Base
 
-    # #1260 S6 owns the only tables in `sales` (the teams); this plan adds none (AC-R5-11).
+    # #1260 S6 (the teams) and the targets lane #1297 own the only tables in `sales`; this
+    # plan adds none (AC-R5-11).
     s6_tables = {"sales.teams", "sales.team_members"}
+    targets_tables = {
+        "sales.targets",
+        "sales.target_periods",
+        "sales.target_scope",
+        "sales.target_commission_tiers",
+    }
     purge = Path(__file__).resolve().parents[2] / "sorento_crm_frontend" / "modules" / "sales" / "purge_tables.json"
-    assert set(json.loads(purge.read_text())["tables"]) == s6_tables
+    assert set(json.loads(purge.read_text())["tables"]) == s6_tables | targets_tables
     in_sales = {t.fullname for t in Base.metadata.tables.values() if t.schema == "sales"}
-    assert in_sales == s6_tables
+    assert in_sales == s6_tables | targets_tables
     new_public = [t.fullname for t in Base.metadata.tables.values()
                   if t.name.startswith("sales_report") or t.name.startswith("report_subscription")]
     assert new_public == []

@@ -18,7 +18,7 @@ Lifetimes:
 No absolute cap on the rolling window (matches the portal). Sessions die only by
 expiry or explicit revoke (logout, password change, admin force-logout, block).
 """
-from sqlalchemy import Boolean, Column, String, DateTime, ForeignKey, Index, Text
+from sqlalchemy import Boolean, CheckConstraint, Column, String, DateTime, ForeignKey, Index, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from app.database import Base
@@ -45,8 +45,16 @@ class UserSession(Base):
     ip_address = Column(String(64), nullable=True)
     last_seen_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    # How the session was minted (identity S0, AC-07). The server default is what a
+    # row written without the column reads (every pre-S0 row, and a session the old
+    # image mints during a blue/green swap), which is always a password sign-in.
+    auth_method = Column(String(20), nullable=True, server_default="password")
 
     __table_args__ = (
         Index("ix_user_sessions_user_id", "user_id"),
         Index("ix_user_sessions_expires_at", "expires_at"),
+        CheckConstraint(
+            "auth_method IN ('password', 'phone_otp', 'portal_link', 'impersonation')",
+            name="ck_user_sessions_auth_method",
+        ),
     )

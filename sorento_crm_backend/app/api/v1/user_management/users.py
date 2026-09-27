@@ -18,7 +18,7 @@ from app.dependencies import get_current_user, require_permission, require_any_p
 from app.models.auth import VerificationToken
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.user import UserCreate, UserUpdate, UserResponse, UserSelectResponse, UserRoleResponse
-from app.services.error_handler import handle_internal_error
+from app.services.error_handler import AppException, handle_internal_error
 from app.services.notification_service import NotificationService
 from app.services.product_discontinued_scope_service import serialize_scopes
 from app.services.user_service import UserService, UserPermissionService
@@ -162,7 +162,16 @@ def _send_invitation_link_for_user(db: Session, user) -> str:
     """
     Create a verification token and send an invitation email for the given user.
     Used by both single-user resend and bulk resend flows.
+
+    A user with no email (phone-only, identity S0) is refused with 400 before any
+    token is written: there is nowhere to send the link.
     """
+    if not (getattr(user, "email", None) or "").strip():
+        raise AppException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            message="User has no email",
+            code="USER_HAS_NO_EMAIL",
+        )
     token = secrets.token_urlsafe(32)
     expires = datetime.now(timezone.utc) + timedelta(days=7)
     verification_token = VerificationToken(
