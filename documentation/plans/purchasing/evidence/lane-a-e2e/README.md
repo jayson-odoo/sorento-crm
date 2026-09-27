@@ -151,3 +151,42 @@ typed, or no reason when it is left empty (AC-S2-01). See "Fix check: the Reject
 - Verification setting was switched back off after S2, and the discarded/superseded draft set
   from the seeding false-start was removed via its own 10s deferred Discard action, not by
   editing the database.
+
+## Fix check: the Reject reason (27 Sep 2026, on top of e373596b6)
+
+Re-ran the S2 flow once more, same dev stack, same seeded supplier and products, to confirm the
+three fixes made from the previous run's findings: the Reject dialog asking for a real reason,
+bare prices in the set's own currency, and "1 sheet" in the header. A fresh set was needed since
+CPC-0001 was already Applied (one open set per supplier) - a new 2-row xlsx moved `ZZLANEA-P1`
+from its then-current 100.00 to 105.00 and `ZZLANEA-P3` from 100.00 to 95.00 (`ZZLANEA-P2` left
+out of this file; it was already changed by the earlier run). As Mei Ling: uploaded, submitted
+(`CPC-0002`, "1 sheet, 2 rows" in the header, confirming the singular-count fix on a genuinely
+1-sheet file). As Kelvin: opened Reject on `ZZLANEA-P1`, typed "GY price not agreed" into the new
+Reason textarea, confirmed; accepted `ZZLANEA-P3`; applied.
+
+| Step | Screenshot | What it showed |
+| --- | --- | --- |
+| Reject dialog, 1280 | `27-reject-dialog-1280.png` | A small dialog titled "Reject ZZLANEA-P1" with a "Reason (optional)" textarea holding the typed text and a red "Reject line" button - the desktop grid's Reject action, previously a silent hardcoded string, now genuinely asks. |
+| Reject dialog, 375 | `28-reject-dialog-375.png` | The identical dialog opened from the phone card's Reject button, same fields, legible and non-clipped; header line behind it already reads "1 sheet, 2 rows". |
+| Applied, Lines tab, 1280 | `29-applied-reason-1280.png` | Decision column: `ZZLANEA-P1` "Rejected" with "GY price not ag..." (column-width truncation, `title` carries the full string per the CRUD standard), `ZZLANEA-P3` "Accepted". Price now / New price columns read bare `100.00` / `105.00` / `95.00`, no "CNY" suffix and no truncation, since the set's own currency (CNY) is what is displayed - the ellipsis defect from the previous run is gone. Header still reads "1 sheet, 2 rows". |
+| Applied, Lines tab, 375 | `30-applied-reason-375.png` | Same two badges on the phone card, "GY price not agreed" printed in full (no truncation - the card has room the grid column does not). |
+
+Confirmed via the API in parallel with each UI step (`GET .../lines`) that the reason actually
+travelling to the backend was the exact typed string, not a placeholder: `ZZLANEA-P1` decision
+`rejected`, `decision_reason` `"GY price not agreed"`.
+
+Console checked after every step: no errors. The Next.js dev overlay's floating "N" button was
+again hidden via `document.querySelector('nextjs-portal').style.display='none'` before each
+screenshot, same as the previous run, for the same reason (it is dev-mode chrome sitting on top
+of on-screen text, not part of the app).
+
+One thing noticed in passing, not something I was asked to check and not filed as a defect: the
+phone card's "Price now to new" line still prints the full `100.00 105.00 CNY` / `100.00 95.00
+CNY` form (currency suffix kept) where the desktop grid's Price now / New price columns now print
+the bare number. Both are internally consistent and neither is wrong, but a reviewer comparing
+the two screenshots side by side will notice the phone card did not drop the "CNY" suffix the
+grid did - worth a look if that inconsistency was not intentional.
+
+**All three findings from the previous run are fixed**, confirmed against `sorento_dev` end to
+end: the Reject dialog (`fc6fe80ff` + its red test `1d7cb3843`), bare prices in the set's own
+currency and "1 sheet" in the header (`ccfcf52a7` + its red test `c063e531c`).
