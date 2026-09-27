@@ -102,6 +102,22 @@ describe('SharedConversationComposer reply-to', () => {
     await waitFor(() => expect(onClearReplyTo).toHaveBeenCalled());
   });
 
+  it('R2 (owner answer 2): a long quote goes out clipped at 160 characters with an ellipsis', async () => {
+    const long = `${'word '.repeat(80)}END`;
+    const { sendAdapter } = renderComposer({
+      replyTo: { ...REPLY_TO, excerpt: long },
+      onClearReplyTo: vi.fn(),
+    });
+    typeAndSend('Yes, 3 units.');
+    await waitFor(() => expect(sendAdapter).toHaveBeenCalledTimes(1));
+    const [quoteLine, answer] = (sendAdapter.mock.calls[0][0].text as string).split('\n');
+    expect(quoteLine.startsWith('> ')).toBe(true);
+    expect(quoteLine.endsWith('…')).toBe(true);
+    expect(quoteLine.length).toBeLessThanOrEqual(2 + 160 + 1);
+    expect(quoteLine).not.toContain('END');
+    expect(answer).toBe('Yes, 3 units.');
+  });
+
   it('AC-RT-17: the post-send clear names the target it sent, so a newer pick survives', async () => {
     const onClearReplyTo = vi.fn();
     const { sendAdapter } = renderComposer({ replyTo: REPLY_TO, onClearReplyTo });

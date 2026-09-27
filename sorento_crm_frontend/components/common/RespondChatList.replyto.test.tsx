@@ -54,7 +54,7 @@ afterEach(() => {
 describe('bubble menu (AC-RT-1..6)', () => {
   it('AC-RT-1: a chevron on the bubble opens Reply, Copy in that order', async () => {
     const onReply = vi.fn();
-    render(<RespondChatList items={[question]} contactName="Mr Loo" messageMenu onReply={onReply} />);
+    render(<RespondChatList items={[question]} contactName="Mr Loo" onReply={onReply} />);
 
     const chevron = within(bubbleOf('Is the sink in stock?')).getByRole('button', {
       name: 'Message actions',
@@ -73,7 +73,7 @@ describe('bubble menu (AC-RT-1..6)', () => {
   });
 
   it('AC-RT-2: right click on the bubble opens the same menu', async () => {
-    render(<RespondChatList items={[question]} contactName="Mr Loo" messageMenu onReply={vi.fn()} />);
+    render(<RespondChatList items={[question]} contactName="Mr Loo" onReply={vi.fn()} />);
     fireEvent.contextMenu(bubbleOf('Is the sink in stock?'), { clientX: 20, clientY: 20 });
     const items = await screen.findAllByRole('menuitem');
     expect(items.map((i) => i.textContent?.trim())).toEqual(['Reply', 'Copy']);
@@ -83,7 +83,7 @@ describe('bubble menu (AC-RT-1..6)', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     const ours = msg(2, { traffic: 'outgoing', message: { type: 'text', text: '> Is the sink in stock?\nYes, 3 units.' } });
-    render(<RespondChatList items={[question, ours]} contactName="Mr Loo" messageMenu onReply={vi.fn()} />);
+    render(<RespondChatList items={[question, ours]} contactName="Mr Loo" onReply={vi.fn()} />);
 
     fireEvent.contextMenu(bubbleOf('Yes, 3 units.'), { clientX: 20, clientY: 20 });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy' }));
@@ -93,7 +93,7 @@ describe('bubble menu (AC-RT-1..6)', () => {
   });
 
   it('AC-RT-5: without onReply the menu offers Copy only', async () => {
-    render(<RespondChatList items={[question]} messageMenu />);
+    render(<RespondChatList items={[question]} />);
     fireEvent.contextMenu(bubbleOf('Is the sink in stock?'), { clientX: 20, clientY: 20 });
     const items = await screen.findAllByRole('menuitem');
     expect(items.map((i) => i.textContent?.trim())).toEqual(['Copy']);
@@ -103,7 +103,6 @@ describe('bubble menu (AC-RT-1..6)', () => {
     render(
       <RespondChatList
         items={[question]}
-        messageMenu
         onReply={vi.fn()}
         comments={[{ id: 'n1', body: 'call him back', author_name: 'Ann', created_at: '2026-08-01T00:00:00' }]}
       />,
@@ -112,16 +111,32 @@ describe('bubble menu (AC-RT-1..6)', () => {
     expect(within(note).queryByRole('button', { name: 'Message actions' })).toBeNull();
   });
 
-  it('AC-RT-6: surfaces that do not opt in render no chevron and no menu', () => {
+  it('AC-RT-6 (owner answer 3): every surface gets the menu, with no opt-in; read-only = Copy only', async () => {
+    // The owner widened the scope on 28 Sep: the menu is on every thread
+    // surface, so a bare RespondChatList (the read-only portal draft review)
+    // has the chevron and a Copy-only menu, and a swipe moves nothing.
     render(<RespondChatList items={[question]} />);
+    const bubble = bubbleOf('Is the sink in stock?');
+    expect(within(bubble).getByRole('button', { name: 'Message actions' })).toBeInTheDocument();
+    touch(bubble, 'pointerDown', 10);
+    touch(bubble, 'pointerMove', 30);
+    touch(bubble, 'pointerMove', 80);
+    expect(bubble.style.transform).toBe('');
+    touch(bubble, 'pointerUp', 80);
+    fireEvent.contextMenu(bubble, { clientX: 20, clientY: 20 });
+    const items = await screen.findAllByRole('menuitem');
+    expect(items.map((i) => i.textContent?.trim())).toEqual(['Copy']);
+  });
+
+  it('AC-RT-6: a pending (optimistic) bubble has no menu yet', () => {
+    const pending = { ...msg(3, { traffic: 'outgoing', message: { type: 'text', text: 'sending now' } }), source: 'pending' } as RespondMessageRenderable;
+    render(<RespondChatList items={[pending]} onReply={vi.fn()} />);
     expect(screen.queryByRole('button', { name: 'Message actions' })).toBeNull();
-    fireEvent.contextMenu(screen.getByText('Is the sink in stock?'), { clientX: 20, clientY: 20 });
-    expect(screen.queryByRole('menuitem')).toBeNull();
   });
 
   it('AC-RT-11: a touch long press opens the menu', async () => {
     vi.useFakeTimers();
-    render(<RespondChatList items={[question]} messageMenu onReply={vi.fn()} />);
+    render(<RespondChatList items={[question]} onReply={vi.fn()} />);
     const bubble = bubbleOf('Is the sink in stock?');
     touch(bubble, 'pointerDown', 50);
     act(() => {
@@ -135,7 +150,7 @@ describe('bubble menu (AC-RT-1..6)', () => {
 describe('swipe right to reply (AC-RT-7..10)', () => {
   it('AC-RT-7/8: the bubble follows the finger and a release past 56px replies once', () => {
     const onReply = vi.fn();
-    render(<RespondChatList items={[question]} contactName="Mr Loo" messageMenu onReply={onReply} />);
+    render(<RespondChatList items={[question]} contactName="Mr Loo" onReply={onReply} />);
     const bubble = bubbleOf('Is the sink in stock?');
 
     touch(bubble, 'pointerDown', 10);
@@ -153,7 +168,7 @@ describe('swipe right to reply (AC-RT-7..10)', () => {
 
   it('AC-RT-8: a release at exactly 56px replies (the threshold is inclusive)', () => {
     const onReply = vi.fn();
-    render(<RespondChatList items={[question]} messageMenu onReply={onReply} />);
+    render(<RespondChatList items={[question]} onReply={onReply} />);
     const bubble = bubbleOf('Is the sink in stock?');
     touch(bubble, 'pointerDown', 10);
     touch(bubble, 'pointerMove', 30);
@@ -164,7 +179,7 @@ describe('swipe right to reply (AC-RT-7..10)', () => {
   });
 
   it('AC-RT-7: travel is capped at 80px', () => {
-    render(<RespondChatList items={[question]} messageMenu onReply={vi.fn()} />);
+    render(<RespondChatList items={[question]} onReply={vi.fn()} />);
     const bubble = bubbleOf('Is the sink in stock?');
     touch(bubble, 'pointerDown', 0);
     touch(bubble, 'pointerMove', 30);
@@ -174,7 +189,7 @@ describe('swipe right to reply (AC-RT-7..10)', () => {
 
   it('AC-RT-9: a release short of the threshold snaps back and does not reply', () => {
     const onReply = vi.fn();
-    render(<RespondChatList items={[question]} messageMenu onReply={onReply} />);
+    render(<RespondChatList items={[question]} onReply={onReply} />);
     const bubble = bubbleOf('Is the sink in stock?');
     touch(bubble, 'pointerDown', 10);
     touch(bubble, 'pointerMove', 30);
@@ -187,7 +202,7 @@ describe('swipe right to reply (AC-RT-7..10)', () => {
 
   it('AC-RT-9: a cancelled gesture snaps back without replying', () => {
     const onReply = vi.fn();
-    render(<RespondChatList items={[question]} messageMenu onReply={onReply} />);
+    render(<RespondChatList items={[question]} onReply={onReply} />);
     const bubble = bubbleOf('Is the sink in stock?');
     touch(bubble, 'pointerDown', 10);
     touch(bubble, 'pointerMove', 30);
@@ -198,7 +213,7 @@ describe('swipe right to reply (AC-RT-7..10)', () => {
   });
 
   it('AC-RT-9: swiping LEFT never moves the bubble', () => {
-    render(<RespondChatList items={[question]} messageMenu onReply={vi.fn()} />);
+    render(<RespondChatList items={[question]} onReply={vi.fn()} />);
     const bubble = bubbleOf('Is the sink in stock?');
     touch(bubble, 'pointerDown', 200);
     touch(bubble, 'pointerMove', 100);
@@ -207,7 +222,7 @@ describe('swipe right to reply (AC-RT-7..10)', () => {
 
   it('AC-RT-10: a mostly vertical drag is a scroll, not a swipe', () => {
     const onReply = vi.fn();
-    render(<RespondChatList items={[question]} messageMenu onReply={onReply} />);
+    render(<RespondChatList items={[question]} onReply={onReply} />);
     const bubble = bubbleOf('Is the sink in stock?');
     touch(bubble, 'pointerDown', 10, 100);
     touch(bubble, 'pointerMove', 30, 180);
@@ -219,7 +234,7 @@ describe('swipe right to reply (AC-RT-7..10)', () => {
 
   it('AC-RT-10: a mouse drag never swipes', () => {
     const onReply = vi.fn();
-    render(<RespondChatList items={[question]} messageMenu onReply={onReply} />);
+    render(<RespondChatList items={[question]} onReply={onReply} />);
     const bubble = bubbleOf('Is the sink in stock?');
     fireEvent.pointerDown(bubble, { pointerType: 'mouse', pointerId: 1, clientX: 10, clientY: 100, button: 0 });
     fireEvent.pointerMove(bubble, { pointerType: 'mouse', pointerId: 1, clientX: 120, clientY: 100 });
@@ -228,7 +243,7 @@ describe('swipe right to reply (AC-RT-7..10)', () => {
   });
 
   it('no swipe at all when replying is not offered', () => {
-    render(<RespondChatList items={[question]} messageMenu />);
+    render(<RespondChatList items={[question]} />);
     const bubble = bubbleOf('Is the sink in stock?');
     touch(bubble, 'pointerDown', 10);
     touch(bubble, 'pointerMove', 30);
@@ -251,6 +266,28 @@ describe('quoted reply rendering (AC-RT-20..23)', () => {
     expect(screen.getByText('Yes, 3 units.')).toBeInTheDocument();
     expect(screen.queryByText(/^> /)).toBeNull();
     expect(document.body.textContent).not.toContain('> Is the sink');
+  });
+
+  it('R2 (owner answer 2): a long quote is compact on the bubble, the reply text dominant', () => {
+    const long = 'Please check the sink model ABC-1234 with the chrome finish and the matching waste kit, plus the two mixer taps we spoke about last week and the delivery date';
+    const ours = msg(2, {
+      traffic: 'outgoing',
+      message: { type: 'text', text: `> ${long}\nYes, 3 units.` },
+    });
+    render(<RespondChatList items={[question, ours]} contactName="Mr Loo" />);
+
+    const block = screen.getByTestId('quoted-context');
+    const excerpt = within(block).getByTestId('quoted-context-excerpt');
+    // One or two lines, the rest clipped: a two-line clamp in the small size.
+    expect(excerpt).toHaveClass('line-clamp-2');
+    expect(excerpt).not.toHaveClass('line-clamp-3');
+    expect(block).toHaveClass('text-xs');
+    // The full quote stays reachable as a tooltip rather than on screen.
+    expect(excerpt).toHaveAttribute('title', long);
+    // The answer is the bubble's own full-size text, not inside the quote.
+    const answer = screen.getByText('Yes, 3 units.');
+    expect(block.contains(answer)).toBe(false);
+    expect(bubbleOf('Yes, 3 units.')).toHaveClass('text-sm');
   });
 
   it('AC-RT-22: tapping the block scrolls to the original and flashes it', () => {

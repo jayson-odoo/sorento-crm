@@ -224,8 +224,8 @@ describe('the ticket drawer and Chat Records are one chat panel', () => {
       // file green, since the shape() comparison only checks the two surfaces
       // agree with EACH OTHER, not that either of them got a real function.
       expect(typeof surface.onJumpToMessage).toBe('function');
-      // #1317: the Reply / Copy bubble menu and the swipe reach both mounts.
-      expect(surface.messageMenu).toBe(true);
+      // #1317: Reply (bubble menu + swipe) reaches both mounts. The menu itself
+      // is on every RespondChatList (owner answer 3), so there is no opt-in.
       expect(typeof surface.onReply).toBe('function');
     }
   });
