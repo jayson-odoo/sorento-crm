@@ -30,9 +30,16 @@ def focus_row_label(row: Mapping[str, Any]) -> Any:
     it beside the code, "M210-GM (x5)" - the ONE place this reads, never a second
     regex pulling a quantity back out of `raw` (owner ruling 1). A row with no
     quantity at all (every row before this slice) prints exactly as it always did.
+
+    Only a row THIS message named prints it (the S1 nit, fix lane round 2): a CARRIED
+    row (`current_message: False`, `focus_from_wire`) keeps its `quantity` for the
+    stock task's per-product loop (main, chatbot-stock-ask-v2 S3), but a later subject
+    line never repeats an earlier message's "(x5)".
     """
     label = row.get("display_name") or row.get("name") or row.get("raw") or row.get("canonical_code")
     quantity = row.get("quantity")
+    if row.get("current_message") is False:
+        return label
     if label and isinstance(quantity, (int, float)) and not isinstance(quantity, bool) and quantity:
         return f"{label} (x{quantity:g})"
     return label
@@ -290,8 +297,8 @@ def _entity(value: Any) -> dict[str, Any]:
         # Read back from the session, so named by an EARLIER message - see the docstring
         # above. A copy, never the caller's dict: the wire payload is read by other
         # readers too and this rule is about the STATE, not about the stored row.
-        # #1262 fix lane round 2 (S1's nit): the parser's `quantity` is a fact of the
-        # message that typed it, like `current_message` - a carried row drops it, so a
-        # later subject line never repeats an earlier message's "(x5)".
-        return {**{k: v for k, v in value.items() if k != "quantity"}, "current_message": False}
+        # #1262 fix lane round 2 (S1's nit) keeps `quantity` on a carried row for the
+        # stock task (main, chatbot-stock-ask-v2 S3); `focus_row_label` is what never
+        # prints a carried row's "(x5)" in a later subject line.
+        return {**value, "current_message": False}
     return {"raw": value, "canonical_code": value, "current_message": False}
