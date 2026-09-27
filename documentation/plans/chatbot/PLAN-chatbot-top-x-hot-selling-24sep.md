@@ -19,7 +19,11 @@ types or customer links it holds (`orders._top_selling_is_staff`, shared by the 
 `chatbot_top_selling_vocab_r4`. Fix lane round 5 (27 Sep, owner retest of round 4 at
 a7c6abc6, which ran the console on parser v34 although v38 was the newest full version):
 R1 to R9 below ("As built (fix lane round 5)"), the console no longer remembers a version
-pick, the parser words republished unlabelled by `chatbot_top_selling_vocab_r5`. S5 (sales
+pick, the parser words republished unlabelled by `chatbot_top_selling_vocab_r5`. Fix lane
+round 6 (27 Sep, owner retest of round 5 at d59e1dcf, parser v39): the answer to the
+ranking's own question binds in code, the "sold" words taught and republished unlabelled
+by `chatbot_top_selling_vocab_r6` ("As built (fix lane round 6)"), main (52b0ac24) merged
+and the lane's first migration re-parented onto `sales_s1_reports_module`. S5 (sales
 agent) is built by round 4 as a lane-side resolver; S6 (review + live console) and S7 (per-month breakdown) open. Track: full track (new route + MCP tool = a new external
 ingest surface, one policy-row migration, one prompt migration, one entity-kind migration;
 the diff will pass 300 lines).
@@ -669,6 +673,42 @@ transcripts in order and types the owner's own messages; live parser run:
   mean? Reply with a rank number from 1 to N.").
 - R9: every new line is plain words; the replay asserts no snake_case and no dash in any
   reply.
+
+### As built (fix lane round 6, owner retest of round 5, 27 Sep 2026)
+
+Source: the owner's PR #1273 comment "Owner retest of top selling round 5 (27 Sep 20:04
+MYT, console :3083, parser v39)": "top 100 sold item" asked "By quantity or by amount?",
+then "amount" answered the order list. Pinned by `tests/chatbot/test_top_selling_round6.py`,
+which replays both messages the way the console runs them (`console_service.
+run_console_turn`, dry run, the second turn sent the `session_vars` the first returned).
+
+- Diagnosis. The console's between-turn memory did not regress: a dry run writes no
+  session (`remembered: written false`), and the console carries its own, the turn's
+  `session_patch` handed back as `session_vars` and sent as `previous_conversation_state`
+  (`console_service._next_state`, `useChatbotConsole`), the same carry PR #1300 round 3
+  found. After turn 1 it holds `focus.status: "top_selling"` and `focus.top_selling:
+  {"top_n": 100, "asked": "metric"}`, so no console-only carry is added. No code asks the
+  metric question without the parser's `order_status: "top_selling"` (the top selling
+  override in `lanes/business` is the only asker), so v39 did read "top 100 sold item" as
+  the ranking and the ask was in progress. The parser then read "amount" as a new order
+  ask (`domain_in_message: true`, no `rank_by`), and `apply._top_selling_rules` left the
+  ranking for it; that reading alone reproduces the owner's screen.
+- R2: the answer to the ranking's own question binds before anything routes it,
+  `engine._top_selling_question_answer`, called from `_top_selling_verdict` beside round
+  5's who binding. It reads only the options the question printed
+  (`TOP_SELLING_OPTION_ANSWERS`): the metric ("qty", "quantity", "amount", "amt", "1",
+  "2"), the grain ("items", "categories"), the basis ("delivered", "ordered", "1", "2"),
+  the count under the route's how-many reply ("20", "top 20") and a code under "Which
+  category do you mean?". A message of more than four words is bound only when the parser
+  itself read it as the ranking, so "outstanding" or a new order ask under the question is
+  not taken for an answer. The question is read off `focus.top_selling.asked`, which the
+  console and WhatsApp both carry, so both land the same way. The ranking asks no
+  direction question (a direction is only ever stated), so there is none to bind.
+- R1: the parser words teach "top 100 sold item(s)", "most sold item", "top selling",
+  "top 100 hot selling item", "highest selling", "top sellers" as the ranking ask, and an
+  answer to the ranking's own question as `domain_in_message false`, never an order list.
+  Republished unlabelled by `chatbot_top_selling_vocab_r6` as the next version after
+  whatever the database holds (v40 on a database whose newest is v39).
 
 ## Filters combination matrix (rewritten for the 26 Sep rulings)
 

@@ -944,6 +944,73 @@ def _top_selling_who_answer(text: str, verdict: dict[str, Any]) -> int | None:
     return None
 
 
+#: The options each ranking question prints (`lanes/business._top_selling_question`,
+#: and the route's how-many reply), as the parser key its answer sets, the option words
+#: and the values in the order the question lists them, so "1" / "2" is that option
+#: (owner retest of round 5, 27 Sep 2026: "amount" under "By quantity or by amount?"
+#: was read as a new order ask and the order list ran).
+TOP_SELLING_OPTION_ANSWERS: dict[str, tuple[str, dict[str, str], tuple[str, ...]]] = {
+    "metric": (
+        "rank_by",
+        {"qty": "quantity", "quantity": "quantity", "units": "quantity",
+         "amount": "amount", "amt": "amount", "value": "amount", "rm": "amount"},
+        ("quantity", "amount"),
+    ),
+    "group": (
+        "rank_group",
+        {"item": "item", "items": "item", "product": "item", "products": "item",
+         "categories": "category", "category": "category"},
+        ("item", "category"),
+    ),
+    "basis": (
+        "basis",
+        {"delivered": "delivered", "delivery": "delivered", "transferred": "delivered", "do": "delivered",
+         "ordered": "ordered", "order": "ordered", "orders": "ordered", "booked": "ordered"},
+        ("delivered", "ordered"),
+    ),
+}
+#: An answer longer than this names more than the option; it is bound only when the
+#: parser itself read it as the ranking.
+_TOP_SELLING_ANSWER_WORDS = 4
+_COUNT_RE = re.compile(r"^(?:top\s+)?(\d{1,3})$")
+
+
+def _top_selling_question_answer(text: str, verdict: dict[str, Any], asked: Any) -> dict[str, Any] | None:
+    """The parser keys the answer to the ranking question the last reply asked
+    (`focus.top_selling.asked`), read off that question's own printed options, or None
+    when the message does not answer it. The question lives on the focus, which the
+    console carries between dry runs exactly as the contact's session does on WhatsApp,
+    so the answer binds the same way on both (owner retest of round 5, 27 Sep 2026)."""
+    bare = " ".join((text or "").lower().replace(",", " ").split()).strip(" .!?")
+    words = _words(text)
+    short = len(bare.split()) <= _TOP_SELLING_ANSWER_WORDS
+    own = jsc.js_string(verdict.get("order_status") or "").strip() == "top_selling"
+    if asked in TOP_SELLING_OPTION_ANSWERS:
+        key, options, order = TOP_SELLING_OPTION_ANSWERS[asked]
+        if verdict.get(key) in order:
+            return None
+        if bare in ("1", "2"):
+            return {key: order[int(bare) - 1]}
+        picked = {options[w] for w in words if w in options}
+        if len(picked) == 1 and (short or own):
+            return {key: picked.pop()}
+        return None
+    if asked == "how_many":
+        match = _COUNT_RE.match(bare)
+        if match and verdict.get("top_n") is None and int(match.group(1)) >= 1:
+            return {"top_n": int(match.group(1))}
+        return None
+    if asked == "category":
+        # "Which category do you mean? Reply with one code: ..." - the reply is the code.
+        if bare and not bare.isdigit() and short and not verdict.get("entities"):
+            return {"entities": [{
+                "raw": (text or "").strip().strip(" .!?"), "hint": "category", "canonical_code": None,
+                "current_message": True, "confident": True, "hint_confident": True,
+            }]}
+        return None
+    return None
+
+
 def _as_ranking_answer(verdict: dict[str, Any], **keys: Any) -> dict[str, Any]:
     """`verdict` re-read as a refinement of the ranking on screen: the top selling ask,
     no ask of its own, only its category and brand words kept."""
@@ -1087,6 +1154,10 @@ def _top_selling_verdict(
         answer = _top_selling_who_answer(text, verdict)
         if answer is not None:
             return _as_ranking_answer(verdict, top_selling_who=answer), state, "top_selling_who_answer"
+    if focus.status == "top_selling" and slot and slot.get("asked"):
+        answer_keys = _top_selling_question_answer(text, verdict, slot.get("asked"))
+        if answer_keys is not None:
+            return _as_ranking_answer(verdict, **answer_keys), state, "top_selling_question_answer"
     if ranking and pending is not None and pending.kind == "top_selling_pick":
         year = _bare_year(text)
         if year is not None:
