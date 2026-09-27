@@ -2292,7 +2292,14 @@ and its addendum). Track: full (a migration, `sales_0005_opp_line_price`). Branc
   rebases). S1 now sits on main's `merge_27sep_three_heads` (PR #1308), so
   `sales_0003m_merge_main_heads` is dropped and the chain is `merge_27sep_three_heads` ->
   `sales_0003_targets` -> `sales_0004_target_brands` -> `sales_0003_opportunities` ->
-  `sales_0005_opp_line_price`, one head.
+  `sales_0005_opp_line_price`. Before the final push origin/main (9751e55d) was merged again; it
+  carried two heads of its own (`527_audit_logs_scrub_secrets`, `spec_0003_rules_null_brand_pol`),
+  so `sales_0005m_merge_main_heads` (no schema change) joins them with the sales chain: one head.
+- **Browser pass** (`evidence/s2-r2/01` to `43`, portal at 375 and 1280, CRM at 1280 and 375,
+  seeded private DB): it caught the slug-tree New 404 (pages added) and a picked prospect
+  showing its option text (`customerTriggerLabel`). Two findings stand as ruled: a partial
+  name of another agent's customer is offered as a prospect (only an exact name is blocked,
+  S2-15), and an edit keeps a typed amount that differs from the stored lines' sum.
 - **F1, one kind like Price Tag Request.** `sales_opportunity` joins `LANDING_KINDS` after
   `price_tag_request` (label "Sales Opportunity", singular like every kind), so it gets the
   same selector, count badge, search, filter, sort, list and grid toggles and New button. The
