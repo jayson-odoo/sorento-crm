@@ -44,6 +44,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
   PLANNING_BOARD_KEY,
@@ -257,6 +258,10 @@ export function FulfilmentBoardPanel({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  // #1312 (Q6): the paperclip's own upload/remove is gated on the SAME grant every
+  // write on this board already is - resolved here, once, and handed to the list
+  // view as a prop rather than read there, so that view stays a pure renderer.
+  const canEditAttachments = useHasPermission('projects.projects.edit');
   const [granularity, setGranularity] = React.useState<BoardGranularity>(() =>
     granularityFrom(searchParams.get('granularity')),
   );
@@ -2246,6 +2251,8 @@ export function FulfilmentBoardPanel({
                 // so a line's Stock button reads the site-pool subtotal the tenant actually
                 // runs rather than the component's own constant default.
                 poolSharePct={board.data?.pool_share_pct}
+                // #1312: gates the paperclip's own upload/remove (Q6).
+                canEditAttachments={canEditAttachments}
               />
             ) : (
               <>
