@@ -161,6 +161,23 @@ register(
     )
 )
 
+def _delete_sales_target(db: Session, payload: dict):
+    from app.services.sales import target_service
+
+    return target_service.delete_target_by_id(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="sales_target.delete",
+        entity_types=("sales_target",),
+        execute=_delete_sales_target,
+        window=WINDOW_DESTRUCTIVE,
+        permission="sales.targets.delete",
+        label="Delete target",
+    )
+)
+
 register(
     FormAction(
         key="product.delete",
