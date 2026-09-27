@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { toast } from '@/lib/toast';
 import { createPortalSalesOpportunity } from '../../lib/sales-opportunity-service';
 import {
@@ -43,6 +43,12 @@ export default function SalesOpportunityPortalForm({
   onCreated?: (id: string) => void;
 }) {
   const [customerOrProspect, setCustomerOrProspect] = useState('');
+  // S4: an async SearchableSelect only knows about whatever page it last fetched - without
+  // keeping the picked option here, reopening the field after a different search (which
+  // doesn't happen to include it) shows blank instead of what was just chosen.
+  const [customerSelectedOption, setCustomerSelectedOption] = useState<
+    SearchableSelectOption | undefined
+  >();
   const [title, setTitle] = useState('');
   const [expectedAmount, setExpectedAmount] = useState('');
   const [amountTouched, setAmountTouched] = useState(false);
@@ -119,6 +125,8 @@ export default function SalesOpportunityPortalForm({
               aria-label="Customer or prospect"
               value={customerOrProspect}
               onChange={setCustomerOrProspect}
+              onOptionChange={(option) => setCustomerSelectedOption(option ?? undefined)}
+              selectedOption={customerSelectedOption}
               fetchOptions={fetchCustomerOrProspectOptions}
               placeholder="Search customer or prospect..."
               emptyMessage={NO_CUSTOMERS_MESSAGE}

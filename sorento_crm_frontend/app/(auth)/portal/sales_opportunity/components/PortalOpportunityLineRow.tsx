@@ -32,13 +32,15 @@ export function nextLineKey(): string {
   return `line-${lineKeySeq}`;
 }
 
-/** Null when qty or unit price is missing/invalid - the Amount cell shows "-" then. */
+/** Null when qty or unit price is missing/invalid - the Amount cell shows "-" then. Rounded
+ *  to 2dp here (not left to the caller's own display formatting) so the total sums exactly
+ *  what each line itself shows, rather than drifting a cent from summing raw floats. */
 export function lineDraftAmount(line: LineDraft): number | null {
   if (line.qty === '' || line.unitPrice === '') return null;
   const qty = Number(line.qty);
   const price = Number(line.unitPrice);
   if (!Number.isFinite(qty) || !Number.isFinite(price)) return null;
-  return qty * price;
+  return Math.round(qty * price * 100) / 100;
 }
 
 /** Sum of every line's own amount (a line with no price contributes nothing, not a blocker). */

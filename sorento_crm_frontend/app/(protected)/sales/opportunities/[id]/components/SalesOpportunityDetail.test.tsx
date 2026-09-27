@@ -182,14 +182,12 @@ beforeEach(() => {
       options: {
         transitions?: { to_status_id: string; key: string; label: string }[];
         onTransition?: (t: { to_status_id: string; key: string; label: string }) => void;
-        transitionsDisabled?: boolean;
       } = {},
     ) => {
-      const { transitions = [], onTransition, transitionsDisabled } = options;
+      const { transitions = [], onTransition } = options;
       const actions = transitions.map((t) => ({
         key: `sales_opportunity.stage.${t.to_status_id}`,
         label: t.label,
-        disabled: transitionsDisabled,
         run: () => onTransition?.(t),
       }));
       return { actions, dialogs: null, pending: null };
@@ -402,6 +400,40 @@ describe('SalesOpportunityDetail', () => {
       ctrlKey: false,
     });
     expect((screen.getByLabelText('Expected amount') as HTMLInputElement).value).toBe('40.00');
+  });
+
+  it('fix round2 S1: removing the priced line brings Expected amount to 0.00, not the stale stored total', () => {
+    hooks.useSalesOpportunity.mockReturnValue({
+      data: detail({
+        expected_amount: '20.00',
+        lines: [
+          {
+            id: 'l1',
+            product_id: 'p1',
+            product_code: 'ZZT-001',
+            product_name: 'ZZT Basin',
+            qty: 2,
+            unit_price: '10.00',
+            line_amount: '20.00',
+          },
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<SalesOpportunityDetail id="opp-1" />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Products' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(screen.getByRole('button', { name: /remove/i }));
+
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Details' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    expect((screen.getByLabelText('Expected amount') as HTMLInputElement).value).toBe('0.00');
   });
 
   it('fix round2 F7: a customised Expected amount stays put even as a line changes', () => {

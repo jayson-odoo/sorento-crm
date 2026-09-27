@@ -78,12 +78,10 @@ export default function SalesOpportunityModal({
   const updateLine = (key: string, patch: Partial<LineDraft>) =>
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
+  // S1: untouched always means the lines' sum, 0.00 included - never a fallback to
+  // whatever `expectedAmount` still holds once the sum drops to zero.
   const linesSum = sumLineAmounts(lines);
-  const effectiveAmount = amountTouched
-    ? expectedAmount
-    : linesSum > 0
-      ? linesSum.toFixed(2)
-      : expectedAmount;
+  const effectiveAmount = amountTouched ? expectedAmount : linesSum.toFixed(2);
 
   const isProspect = customerOrProspect.startsWith(PROSPECT_PREFIX);
   // Customer-or-prospect validity (including the exact-name-match rules, S2-15) stays

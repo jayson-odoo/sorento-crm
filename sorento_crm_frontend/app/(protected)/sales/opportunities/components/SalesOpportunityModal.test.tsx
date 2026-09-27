@@ -266,6 +266,26 @@ describe('SalesOpportunityModal', () => {
     expect(amountInput.value).toBe('999');
   });
 
+  it('fix round2 S1: removing every priced line brings Expected amount back to 0.00, not a stale total', async () => {
+    service.getSalesOpportunityProductOptions.mockResolvedValue([
+      { value: 'p1', label: 'ZZT-001 - ZZT Basin', listPrice: '10.00' },
+    ]);
+    render(<SalesOpportunityModal open onOpenChange={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /add product/i }));
+    const rows = screen.getAllByTestId('opportunity-line-row');
+    const productSelect = within(rows[0]).getByRole('combobox', { name: /product/i }) as HTMLSelectElement;
+    await waitFor(() =>
+      expect(Array.from(productSelect.options).map((o) => o.value)).toContain('p1'),
+    );
+    fireEvent.change(productSelect, { target: { value: 'p1' } });
+
+    const amountInput = screen.getByLabelText('Expected amount') as HTMLInputElement;
+    await waitFor(() => expect(amountInput.value).toBe('10.00'));
+
+    fireEvent.click(within(rows[0]).getByRole('button', { name: /remove/i }));
+    expect(amountInput.value).toBe('0.00');
+  });
+
   it('fix round2 F7: sends the summed amount when Expected amount is left untouched', async () => {
     service.getSalesOpportunityCustomerOptions.mockResolvedValue({
       items: [{ customer_id: 'cust-1', customer_code: 'C1', customer_name: 'ZZT Customer' }],

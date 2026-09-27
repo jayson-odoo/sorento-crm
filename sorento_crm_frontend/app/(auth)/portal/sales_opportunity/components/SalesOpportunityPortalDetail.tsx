@@ -158,15 +158,20 @@ export default function SalesOpportunityPortalDetail({ id, slug }: { id: string;
       productId: line.product_id,
       productLabel: `${line.product_code ?? ''} - ${line.product_name ?? ''}`,
       qty: String(line.qty),
-      unitPrice: line.unit_price ?? '',
+      // B1: the portal routes send Decimals as JSON numbers (1000, not "1000.00") -
+      // normalize before comparing/displaying, or a number-vs-string comparison never
+      // matches and every edit looks "touched".
+      unitPrice: line.unit_price == null ? '' : Number(line.unit_price).toFixed(2),
     }));
     setLines(nextLines);
     // F7: touched only when the stored amount is not what the stored lines add up to -
     // otherwise a plain re-save would silently drop a hand-typed amount the moment any
     // line changes.
     const storedSum = sumLineDraftAmounts(nextLines).toFixed(2);
-    setAmountTouched(opportunity.expected_amount !== storedSum);
-    setExpectedAmount(String(opportunity.expected_amount ?? ''));
+    const storedAmount =
+      opportunity.expected_amount == null ? '' : Number(opportunity.expected_amount).toFixed(2);
+    setAmountTouched(storedAmount !== storedSum);
+    setExpectedAmount(storedAmount);
     setIsEditing(true);
   };
 

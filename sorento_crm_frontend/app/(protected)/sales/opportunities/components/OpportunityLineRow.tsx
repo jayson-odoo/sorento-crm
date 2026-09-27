@@ -36,13 +36,15 @@ export interface LineDraft {
   productLabel?: string;
 }
 
-/** `qty x unitPrice`, or null when the row has no usable price (fix round 2 F7). */
+/** `qty x unitPrice`, or null when the row has no usable price (fix round 2 F7).
+ *  Rounded to 2dp before it goes anywhere else - the server rounds each line the same
+ *  way, and summing un-rounded floats first is how the screen's total stops matching it. */
 export function lineAmount(line: Pick<LineDraft, 'qty' | 'unitPrice'>): number | null {
   if (line.unitPrice.trim() === '') return null;
   const price = Number(line.unitPrice);
   const qty = Number(line.qty);
   if (!Number.isFinite(price) || !Number.isFinite(qty)) return null;
-  return qty * price;
+  return Math.round(qty * price * 100) / 100;
 }
 
 /** The live total across every line - what Expected amount defaults to while untouched. */

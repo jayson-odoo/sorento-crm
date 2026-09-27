@@ -32,8 +32,6 @@ export interface UseSalesOpportunityActionsOptions {
   /** Runs a stage move. The caller decides by `transition.key`: Lost/Won open a dialog
    *  first, anything else (Qualify) fires straight away. */
   onTransition?: (transition: SalesOpportunityTransition) => void;
-  /** Disables the stage items while an edit session is open. */
-  transitionsDisabled?: boolean;
 }
 
 export function useSalesOpportunityActions(
@@ -43,7 +41,6 @@ export function useSalesOpportunityActions(
     surface = 'inline',
     transitions = [],
     onTransition,
-    transitionsDisabled,
   }: UseSalesOpportunityActionsOptions = {},
 ): RecordActionSet {
   const canDelete = useHasPermission('sales.opportunities.delete');
@@ -70,7 +67,6 @@ export function useSalesOpportunityActions(
       label: transition.label,
       icon: ArrowRight,
       kind: 'secondary',
-      disabled: transitionsDisabled,
       run: () => onTransition?.(transition),
     });
   });

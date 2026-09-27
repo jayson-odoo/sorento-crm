@@ -118,7 +118,6 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
     onDeleted: () => router.push('/sales/opportunities'),
     transitions,
     onTransition: handleTransition,
-    transitionsDisabled: isEditing,
   });
 
   const lostReasonOptions: SearchableSelectOption[] = (meta?.lost_reasons ?? []).map((r) => ({
@@ -193,12 +192,11 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
   const updateLine = (key: string, patch: Partial<LineDraft>) =>
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
+  // S1: untouched always means the lines' sum, 0.00 included - falling back to whatever
+  // `expectedAmount` still holds (the seeded stored value) once the sum drops to zero is
+  // exactly the stale-total bug this replaced.
   const linesSum = sumLineAmounts(lines);
-  const effectiveAmount = amountTouched
-    ? expectedAmount
-    : linesSum > 0
-      ? linesSum.toFixed(2)
-      : expectedAmount;
+  const effectiveAmount = amountTouched ? expectedAmount : linesSum.toFixed(2);
 
   const customerLabel = opportunity.customer_name ?? opportunity.prospect_name ?? 'No customer yet';
   const existingLines = opportunity.lines ?? [];

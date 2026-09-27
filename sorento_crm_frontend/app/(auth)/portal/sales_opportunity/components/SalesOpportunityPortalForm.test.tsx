@@ -22,6 +22,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
       q: string,
       page: number,
     ) => Promise<{ value: string; label: string; disabled?: boolean }[]>;
+    selectedOption?: { value: string; label: string; disabled?: boolean };
     placeholder?: string;
     emptyMessage?: string;
   }) => {
@@ -32,23 +33,29 @@ vi.mock('@/components/common/SearchableSelect', () => ({
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [query]);
     const label = props['aria-label'] ?? props.placeholder ?? props.id ?? 'select';
+    // Mirrors the real component's own fallback (S4): a `selectedOption` whose value
+    // isn't in the fetched page still shows as the current selection.
+    const merged =
+      props.selectedOption && !options.some((o) => o.value === props.selectedOption!.value)
+        ? [props.selectedOption, ...options]
+        : options;
     return (
       <div>
         {props.fetchOptions ? (
           <input aria-label={`${label} search`} value={query} onChange={(e) => setQuery(e.target.value)} />
         ) : null}
-        {options.length === 0 ? <p data-testid={`${label}-empty`}>{props.emptyMessage}</p> : null}
+        {merged.length === 0 ? <p data-testid={`${label}-empty`}>{props.emptyMessage}</p> : null}
         <select
           aria-label={label}
           value={props.value}
           onChange={(e) => {
             props.onChange(e.target.value);
-            const opt = options.find((o) => o.value === e.target.value) ?? null;
+            const opt = merged.find((o) => o.value === e.target.value) ?? null;
             props.onOptionChange?.(opt);
           }}
         >
           <option value="" />
-          {options.map((o) => (
+          {merged.map((o) => (
             <option key={o.value} value={o.value} disabled={o.disabled}>
               {o.label}
             </option>
@@ -121,6 +128,35 @@ describe('SalesOpportunityPortalForm', () => {
     const payload = service.createPortalSalesOpportunity.mock.calls[0][0];
     expect(payload.prospect_name).toBe('Seri Indah Renovation');
     expect(payload.customer_id).toBeUndefined();
+  });
+
+  it('S4: keeps the picked prospect option visible after the search list changes (e.g. reopening)', async () => {
+    service.getPortalCustomerOptions.mockImplementation(async (q: string) => {
+      if (q === 'Seri Indah Renovation') {
+        return { items: [], prospect: { name: 'Seri Indah Renovation' }, blocked: null };
+      }
+      return { items: [], prospect: null, blocked: null };
+    });
+    render(<SalesOpportunityPortalForm />);
+
+    fireEvent.change(screen.getByLabelText('Customer or prospect search'), {
+      target: { value: 'Seri Indah Renovation' },
+    });
+    const select = await screen.findByLabelText('Customer or prospect');
+    const prospectOption = await screen.findByRole('option', {
+      name: 'Add "Seri Indah Renovation" as a new prospect',
+    });
+    fireEvent.change(select, { target: { value: 'prospect:Seri Indah Renovation' } });
+
+    // Simulate reopening the field: a fresh search whose own result set no longer
+    // includes the option already picked.
+    fireEvent.change(screen.getByLabelText('Customer or prospect search'), { target: { value: '' } });
+    await waitFor(() => expect(service.getPortalCustomerOptions).toHaveBeenCalledWith(''));
+
+    expect(
+      screen.getByRole('option', { name: 'Add "Seri Indah Renovation" as a new prospect' }),
+    ).toBeTruthy();
+    expect(prospectOption).toBeTruthy();
   });
 
   it('shows a disabled option for a blocked exact match', async () => {

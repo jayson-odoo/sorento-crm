@@ -87,7 +87,10 @@ function detail(over: Partial<Record<string, unknown>> = {}) {
     stage_key: 'new',
     stage_label: 'New',
     outcome: 'open',
-    expected_amount: '1000.00',
+    // B1: the portal routes send Decimals as JSON numbers, not strings - the fixture
+    // reproduces that real shape rather than the "already formatted" strings a naive
+    // fixture would use.
+    expected_amount: 1000,
     expected_close_date: '2026-11-01',
     lost_reason: null,
     lost_reason_label: null,
@@ -101,8 +104,8 @@ function detail(over: Partial<Record<string, unknown>> = {}) {
         product_code: 'ZZT-001',
         product_name: 'ZZT Basin',
         qty: 2,
-        unit_price: '500.00',
-        line_amount: '1000.00',
+        unit_price: 500,
+        line_amount: 1000,
       },
     ],
     available_transitions: [
@@ -431,7 +434,7 @@ describe('SalesOpportunityPortalDetail', () => {
   });
 
   it('F7: a hand-typed stored amount that does not match the lines total is left alone on Edit', async () => {
-    service.getPortalSalesOpportunity.mockResolvedValue(detail({ expected_amount: '5000.00' }));
+    service.getPortalSalesOpportunity.mockResolvedValue(detail({ expected_amount: 5000 }));
     render(<SalesOpportunityPortalDetail id="opp-1" />);
     await screen.findByText('OPP-000001');
     fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
