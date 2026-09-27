@@ -21,6 +21,7 @@ vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
+import { toast } from '@/lib/toast';
 import { useSpecKeyRecord } from './useSpecKeyRecord';
 import type { SpecRegistryKey } from '../types/productSpec.types';
 
@@ -39,7 +40,6 @@ function finishWithASuppressedValue(): SpecRegistryKey {
     value_weights: {},
     derivation_rules: [],
     effective_rules: [],
-    rules_are_default: true,
     applies_when: {},
     read_from: 'rules',
     rank_weight: 1,
@@ -118,6 +118,32 @@ describe('useSpecKeyRecord', () => {
     expect(payload.is_active).toBe(false);
   });
 
+  it('AC-S1.16 - the toast reports how many products the save updated, never a re-read prompt', async () => {
+    const row = finishWithASuppressedValue();
+    updateSpecKey.mockResolvedValue({ ...row, products_updated: 14 });
+    const { result } = renderHook(() => useSpecKeyRecord(row), { wrapper });
+
+    act(() => result.current.edit());
+    await act(async () => {
+      await result.current.save();
+    });
+
+    expect(toast.success).toHaveBeenCalledWith('Saved. 14 products updated.');
+  });
+
+  it('fix round 3, D2 - a save that changed nothing derived still names the count, "Saved. 0 products updated."', async () => {
+    const row = finishWithASuppressedValue();
+    updateSpecKey.mockResolvedValue({ ...row, products_updated: 0 });
+    const { result } = renderHook(() => useSpecKeyRecord(row), { wrapper });
+
+    act(() => result.current.edit());
+    await act(async () => {
+      await result.current.save();
+    });
+
+    expect(toast.success).toHaveBeenCalledWith('Saved. 0 products updated.');
+  });
+
   it('drops back to view mode once the save resolves', async () => {
     const row = finishWithASuppressedValue();
     updateSpecKey.mockResolvedValue(row);
@@ -148,5 +174,31 @@ describe('useSpecKeyRecord', () => {
 
     expect(result.current.mode).toBe('edit');
     expect(result.current.draft?.label).toBe('Finish colour');
+  });
+
+  it('security review fix round (#1286, S1) - a 409 (another catalogue read running) toasts the exact server message and keeps the draft', async () => {
+    const BUSY = 'Products are still being updated from another change. Try again in a moment.';
+    const row = finishWithASuppressedValue();
+    // `updateSpecKey` itself is what turns the 409 body into this message, through
+    // `extractApiError` (`productSpecService.conflict.test.ts`) - mocked here with
+    // the SAME message so this proves what happens once it reaches the hook.
+    updateSpecKey.mockRejectedValue(new Error(BUSY));
+    const { result } = renderHook(() => useSpecKeyRecord(row), { wrapper });
+
+    act(() => result.current.edit());
+    act(() => {
+      result.current.setDraft((draft) => ({
+        ...draft,
+        rules: [...draft.rules, { builder: { kind: 'words', words: ['NEW'], value: 'chrome' } }],
+      }));
+    });
+    await act(async () => {
+      const ok = await result.current.save();
+      expect(ok).toBe(false);
+    });
+
+    expect(toast.error).toHaveBeenCalledWith(BUSY, { duration: 10_000 });
+    expect(result.current.mode).toBe('edit');
+    expect(result.current.draft?.rules).toHaveLength(1);
   });
 });

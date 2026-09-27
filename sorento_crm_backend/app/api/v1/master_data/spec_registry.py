@@ -17,7 +17,6 @@ So: add words and tune weights freely; renaming a shipped VALUE is deliberately 
 offered, because that is the one edit that breaks the two consumers apart.
 """
 import hashlib
-import re
 import json
 from typing import Any, Optional
 
@@ -34,6 +33,11 @@ from app.dependencies import (
 from app.models.product_spec import ProductSpecRegistry, ProductSpecSearchPolicy
 from app.services import product_spec_preview, product_spec_rederive
 from app.services.error_handler import AppException, handle_internal_error, handle_not_found
+from app.services.product_spec_rules import (
+    BRAND_IS_NOT_A_SPEC,
+    MAX_RULES_PER_TRY,
+    MAX_TRY_TEXT,
+)
 from app.services.product_spec_registry import (
     SEARCH_POLICY_SEED,
     active_registry,
@@ -52,19 +56,17 @@ router = APIRouter()
 def _effective_rules(row) -> list[dict]:
     """The rules this key is actually read with: its own, or the shipped fallback.
 
-    Derivation uses the shipped table whenever the stored column is empty (see
+    Derivation uses the shipped rules whenever the stored column is empty (see
     `configured_rules`), so reporting the empty column as "no rules" is not a harmless
     simplification - it is the screen contradicting the data next to it.
-    """
-    from app.services.product_spec_derivation import shipped_rules
 
-    stored = row.derivation_rules or []
-    if stored:
-        return stored
-    # Tagged on the way OUT, never stored: a shipped row shows a small `shipped` tag and
-    # is otherwise an ordinary row - draggable, editable, removable (AC-C.3) - and the
-    # moment anybody saves the list it becomes theirs, tag and all dropped.
-    return [dict(rule, shipped=True) for rule in shipped_rules().get(row.spec_key) or []]
+    Each rule is `{"builder": {...}}` and nothing else (contract section 4): a person
+    sees rules, not where they came from (D8), so the seed's own marker stays behind.
+    """
+    from app.services.product_spec_derivation import stored_or_shipped_rules
+
+    rules = stored_or_shipped_rules(row)
+    return [{"builder": rule["builder"]} for rule in rules if isinstance(rule.get("builder"), dict)]
 
 
 def _serialise(row) -> dict:
@@ -96,15 +98,11 @@ def _serialise(row) -> dict:
         # configuration screen and a decoration.
         "derivation_rules": row.derivation_rules or [],
         "effective_rules": _effective_rules(row),
-        "rules_are_default": not (row.derivation_rules or []),
         # Merged view: consumers see one vocabulary, not the seed/user split.
         "synonyms": merged_synonyms(row),
         "applies_when": row.applies_when or {},
-        # Rules, for every key without exception (#425). Brand used to be read off the
-        # product's own row and the dimensions out of a measurement block, both outside
-        # the rule list, so this said which keys the editor could not actually control.
-        # Both are rows now - "From the product's brand field", "From the product's
-        # `dimensions_length` column" - so there is nothing left for it to except.
+        # Rules, for every key without exception (#425): the dimensions used to be read
+        # out of a measurement block outside the rule list, and are rules now.
         "read_from": "rules",
         # The number above which a reading is a typo rather than a measurement. Blank
         # means no cap.
@@ -327,194 +325,21 @@ async def update_search_policy(
         raise handle_internal_error(str(e))
 
 
-_RULE_KINDS = {
-    "contains",
-    "ends_with",
-    "present",
-    "regex",
-    "code_suffix",
-    # Read the product CODE rather than its prose. Some facts are only written there:
-    # every seat cover carries SRTSC while the descriptions say "SEAT COVER", "SEAT &
-    # COVER" or nothing recognisable.
-    "code_contains",
-    "code_starts_with",
-    # Read the product ROW: its category, its brand field, or one of its own columns.
-    # These are the readers that used to run before any rule and appeared on no screen.
-    "from_field",
-    # What the product NAME says it is, once the code, the size, the parenthetical and
-    # everything it comes WITH are stripped off.
-    "name_head",
-}
-
-# Kinds that carry no value of their own: they read one off the product.
-_VALUELESS_KINDS = {"regex", "present", "from_field", "name_head"}
-
-
 def _validate_rules(
-    rules: list, *, allowed_values: list | None = None, data_type: str = ""
+    rules: list, *, allowed_values: list | None = None, data_type: str = "", spec_key: str = ""
 ) -> list[dict]:
-    """Reject a rule the engine could not run, at the point someone types it.
+    """Reject a rule the engine could not run, at the point someone builds it.
 
-    A bad regex is skipped silently at derivation time so one typo cannot stop the
-    catalog deriving - which is right at 3am and wrong here, where the person is
-    looking at the field and can fix it.
+    One validator (`product_spec_rules.validate_rules`, contract section 3): every
+    refusal names the missing part in plain words, and a rule the screen compiled to a
+    different pattern than the server is refused rather than saved. What is stored is
+    `{"builder": cleaned}` and nothing else.
     """
-    from app.services.product_spec_registry import compile_builder
+    from app.services.product_spec_rules import validate_rules
 
-    cleaned: list[dict] = []
-    for index, rule in enumerate(rules, start=1):
-        if not isinstance(rule, dict):
-            raise _reject(f"Rule {index} is not a rule.", "spec_registry_bad_rule")
-
-        # A row built from the sentence menu carries its `builder`, and the editor
-        # compiled it in the browser before sending. Compile it again here and hold the
-        # two to each other: the pattern the engine runs must be the one the sentence on
-        # screen says, or one of the two screens is lying about a live rule (AC-A.7).
-        builder = rule.get("builder")
-        if isinstance(builder, dict) and builder.get("kind"):
-            compiled = compile_builder(builder)
-            # Compared, and later STORED, only against the fields THIS compile
-            # produced (B2). Changing a rule's kind in the editor - Text contains to
-            # Number after a word, say - leaves the previous kind's `value` sitting
-            # on the row unless something clears it; comparing every one of the four
-            # fields regardless of what the new kind emits either 422s on a stale
-            # field nobody asked about, or (worse) lets it survive the merge below
-            # and get saved: a builder row that reads `\bL\s*(\d+...)` next to a
-            # `value` from the sentence it used to be.
-            compiled_fields = {"match", "pattern", "capture", "value"} & set(compiled)
-            sent = {
-                field: rule.get(field)
-                for field in compiled_fields
-                if rule.get(field) is not None
-            }
-            disagreed = [
-                field
-                for field, value in sent.items()
-                if str(compiled.get(field, "")) != str(value)
-            ]
-            if disagreed:
-                from app.services.error_handler import AppException
-
-                raise AppException(
-                    status_code=422,
-                    message=(
-                        f"Rule {index} does not match the sentence it was built from "
-                        f"({', '.join(disagreed)}). Re-open the rule and save it again."
-                    ),
-                    code="spec_rule_builder_mismatch",
-                )
-            # A full replacement of the four engine fields, not a patch: whatever the
-            # PREVIOUS kind left behind - a stale `value` or `capture` the new kind
-            # does not produce - is dropped here rather than carried through by the
-            # merge below.
-            rule = {
-                k: v
-                for k, v in rule.items()
-                if k not in {"match", "pattern", "capture", "value"}
-            }
-            rule = {**rule, **compiled}
-
-        kind = str(rule.get("match") or "contains").lower()
-        pattern = str(rule.get("pattern") or "").strip()
-        if kind not in _RULE_KINDS:
-            raise _reject(
-                f"Rule {index}: '{kind}' is not a way of matching. "
-                f"Use one of {', '.join(sorted(_RULE_KINDS))}.",
-                "spec_registry_bad_rule",
-            )
-        if not pattern:
-            raise _reject(f"Rule {index} has nothing to match on.", "spec_registry_bad_rule")
-        if kind in {"regex", "present"}:
-            try:
-                re.compile(pattern)
-            except re.error as exc:
-                raise _reject(
-                    f"Rule {index}: that pattern is not valid ({exc}).",
-                    "spec_registry_bad_rule",
-                )
-        if kind == "from_field":
-            # A `from_field column:<name>` naming a text column reads nothing today
-            # (the engine guards it), but it is a rule that can never fire and a typo
-            # that would go unnoticed forever (B3) - refused here, at the point
-            # someone can still fix it, rather than silently accepted and quietly
-            # useless.
-            from app.services.product_spec_registry import from_field_choices
-
-            allowed = from_field_choices()
-            if pattern not in allowed:
-                columns = ", ".join(
-                    sorted(c[len("column:"):] for c in allowed if c.startswith("column:"))
-                )
-                raise _reject(
-                    f"Rule {index}: '{pattern}' is not something a rule may read off "
-                    f"the product record. Use category, brand, or a numeric column "
-                    f"({columns}).",
-                    "spec_registry_bad_rule",
-                )
-        entry: dict = {"match": kind, "pattern": pattern}
-        # The sentence travels with the rule, so the row still reads as prose the next
-        # time the page opens. `shipped` and `shipped_backfill` deliberately do NOT: a
-        # saved list is the business's own, and a tag saying otherwise would be a claim
-        # the database cannot back.
-        if isinstance(rule.get("builder"), dict) and rule["builder"].get("kind"):
-            entry["builder"] = {
-                field: value
-                for field, value in rule["builder"].items()
-                if field in {"kind", "word", "from", "to", "value", "position", "field"}
-            }
-        if rule.get("value") is not None:
-            entry["value"] = rule["value"]
-        if rule.get("capture"):
-            entry["capture"] = int(rule["capture"])
-        # Carried through, or saving a key from the editor would silently drop it: the
-        # hose rule captures metres off the flyer and stores millimetres, and losing the
-        # conversion turns 1200 into 1.2 the next time anybody presses Save.
-        if rule.get("scale"):
-            entry["scale"] = float(rule["scale"])
-        if rule.get("unit"):
-            entry["unit"] = str(rule["unit"])
-        if rule.get("source") and str(rule["source"]).lower() != "any":
-            entry["source"] = str(rule["source"]).lower()
-        # The per-rule condition and its negative, carried through for the same reason
-        # `scale` is: dropping it on save would quietly delete the round/square gate off
-        # the shipped size rows, and 407 would go back to being a length on every round
-        # basin the first time somebody edited the Length screen.
-        for gate in ("applies_when", "unless"):
-            condition = rule.get(gate)
-            if isinstance(condition, dict) and condition:
-                entry[gate] = {
-                    str(key).strip(): [str(v).strip() for v in (values or []) if str(v).strip()]
-                    for key, values in condition.items()
-                    if str(key).strip() and [v for v in (values or []) if str(v).strip()]
-                }
-        if kind not in _VALUELESS_KINDS and "value" not in entry:
-            raise _reject(
-                f"Rule {index} needs the value it should produce.", "spec_registry_bad_rule"
-            )
-        cleaned.append(entry)
-
-    # A rule may only produce a value this key actually has. Someone pointed a mounting
-    # rule at `free_standing`, which is not one of the seven mounting values, so the
-    # re-read would have written a value the ranker can never match and the search would
-    # have silently got worse. Only for a CLOSED list - `brand` and `class` take their
-    # values from the catalogue and have no list to check against.
-    closed = [str(v) for v in (allowed_values or [])]
-    if closed and (data_type or "").lower() == "enum":
-        unknown = sorted(
-            {
-                str(entry["value"])
-                for entry in cleaned
-                if "value" in entry and str(entry["value"]) not in closed
-            }
-        )
-        if unknown:
-            raise _reject(
-                f"This specification does not have the value(s) {', '.join(unknown)}. "
-                f"It can be one of: {', '.join(closed)}. Point the rule at one of those, "
-                "or add the value to this specification first.",
-                "spec_registry_unknown_rule_value",
-            )
-    return cleaned
+    return validate_rules(
+        rules, spec_key=spec_key, data_type=data_type, allowed_values=allowed_values
+    )
 
 
 @router.get("/coverage")
@@ -522,7 +347,7 @@ async def get_spec_coverage(
     current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.view")),
     db: Session = Depends(get_db),
 ):
-    """How many products actually carry each key, right now.
+    """How many products actually carry each key, right now, and when it was last read.
 
     A separate call rather than a field on the registry payload: that payload is what
     the n8n parser reads to build its extraction prompt, it is ETag-cached, and a
@@ -532,6 +357,10 @@ async def get_spec_coverage(
     The registry's own `measured_coverage` is a figure recorded when the key was
     written, so it is a note about the past. Where the two disagree the screen should
     show this one - `bowl_count` says 106 and the catalogue holds 148.
+
+    `last_read` is the newest read among the products carrying a key: the row's
+    `updated_at`, else its `created_at` (the same stamp the product's own
+    Specifications tab calls `derived_at`). A key no product carries has neither.
     """
     from sqlalchemy import func, text as sql_text
 
@@ -542,13 +371,19 @@ async def get_spec_coverage(
         db.query(
             func.jsonb_object_keys(ProductSpecifications.values).label("spec_key"),
             func.count().label("n"),
+            func.max(
+                func.coalesce(ProductSpecifications.updated_at, ProductSpecifications.created_at)
+            ).label("last_read"),
         )
         .join(Product, Product.id == ProductSpecifications.product_id)
         .filter(Product.is_active.is_(True))
         .group_by(sql_text("1"))
         .all()
     )
-    return {"coverage": {key: n for key, n in rows}}
+    return {
+        "coverage": {key: n for key, n, _ in rows},
+        "last_read": {key: read.isoformat() for key, _, read in rows if read is not None},
+    }
 
 
 @router.get("/applicable-keys")
@@ -822,14 +657,15 @@ class SpecTryRequest(BaseModel):
     """
 
     productId: Optional[str] = None
-    text: Optional[str] = None
-    rules: list[dict] = Field(default_factory=list)
+    # Bounded (review B-3): the rules run on the request, so one paste must not hold it.
+    text: Optional[str] = Field(default=None, max_length=MAX_TRY_TEXT)
+    rules: list[dict] = Field(default_factory=list, max_length=MAX_RULES_PER_TRY)
 
 
 class SpecPreviewRequest(BaseModel):
     """The draft list a catalogue-wide preview runs against (AC-B.2)."""
 
-    rules: list[dict] = Field(default_factory=list)
+    rules: list[dict] = Field(default_factory=list, max_length=MAX_RULES_PER_TRY)
 
 
 def _rule_allowed_values(row) -> list[str]:
@@ -840,7 +676,7 @@ def _rule_allowed_values(row) -> list[str]:
 
 
 @router.post("/{spec_key}/try")
-async def try_spec_key(
+def try_spec_key(
     spec_key: str,
     payload: SpecTryRequest = Body(...),
     current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.view")),
@@ -878,6 +714,7 @@ async def try_spec_key(
             payload.rules or [],
             allowed_values=_rule_allowed_values(row),
             data_type=row.data_type,
+            spec_key=spec_key,
         )
 
         rules_by_key = configured_rules(db)
@@ -959,8 +796,9 @@ async def preview_spec_key(
             payload.rules or [],
             allowed_values=_rule_allowed_values(row),
             data_type=row.data_type,
+            spec_key=spec_key,
         )
-        job_id = product_spec_preview.start(spec_key, cleaned)
+        job_id = product_spec_preview.start(spec_key, cleaned, db)
         return {"jobId": job_id}
     except Exception as e:
         if type(e).__name__ in {"AppException", "HTTPException"}:
@@ -1005,6 +843,9 @@ async def create_spec_key(
                 f"data_type must be one of {sorted(_EDITABLE_DATA_TYPES)}.",
                 "spec_registry_bad_type",
             )
+        if payload.spec_key == "brand":
+            # The product's brand field is the only brand (#1286, D1).
+            raise _reject(BRAND_IS_NOT_A_SPEC, "spec_registry_brand")
         if db.query(ProductSpecRegistry).filter_by(spec_key=payload.spec_key).first():
             raise _reject(
                 f"A spec key named '{payload.spec_key}' already exists.",
@@ -1057,6 +898,14 @@ async def create_spec_key(
 # derivation rules is calibration against an eval baseline, and it is not. One route
 # serves both, so the grant has to turn on the FIELDS in the payload.
 _VOCABULARY_ONLY_FIELDS = {"user_values"}
+# The fields that decide which values a customer can say (`_validate_reachable`).
+_VOCABULARY_FIELDS = {
+    "allowed_values",
+    "user_values",
+    "suppressed_values",
+    "user_synonyms",
+    "suppressed_synonyms",
+}
 
 
 @router.patch("/{spec_key}")
@@ -1074,12 +923,26 @@ def update_spec_key(
     db: Session = Depends(get_db),
 ):
     """Edit calibration and extend vocabulary. Seed-owned vocabulary stays seed-owned."""
+    read_token = None
     try:
         row = db.query(ProductSpecRegistry).filter_by(spec_key=spec_key).first()
         if row is None:
             raise handle_not_found("Spec key", spec_key)
 
         fields = payload.model_dump(exclude_unset=True)
+        # A save that changes how this key is read re-reads its products before it
+        # answers, and only one catalogue read runs at a time (security review S1). The
+        # slot is taken here, before anything is changed, so a refused save stores
+        # nothing; it is given back in `finally`.
+        if _READING_FIELDS & set(fields):
+            read_token = product_spec_preview.begin_catalogue_read(db)
+        # A save that changes how this key is read re-reads the products it changes,
+        # straight away (D10, AC-S1.16). Judged against the row as it was, before any
+        # field below is applied (a suppressed value is applied early; review S-10).
+        reading_before = _reading(row)
+        fingerprint_before = (
+            product_spec_rederive.rules_fingerprint(db) if _READING_FIELDS & set(fields) else None
+        )
 
         # The stricter grant is required as soon as ANYTHING outside the vocabulary
         # fields is present - a mixed payload is held to the higher bar, or
@@ -1180,6 +1043,7 @@ def update_spec_key(
         if "derivation_rules" in fields:
             row.derivation_rules = _validate_rules(
                 fields["derivation_rules"] or [],
+                spec_key=row.spec_key,
                 # Merged, so a value staff just added is immediately usable in a rule -
                 # and INCLUDING the suppressed ones, so taking a value away does not
                 # invalidate the rules that read it. Those rules stay stored and stop
@@ -1238,6 +1102,8 @@ def update_spec_key(
             ]
 
         if "applies_when" in fields:
+            if "brand" in {str(k).strip().lower() for k in (fields["applies_when"] or {})}:
+                raise _reject(BRAND_IS_NOT_A_SPEC, "spec_registry_brand")
             row.applies_when = {
                 str(key).strip(): [str(v).strip() for v in (values or []) if str(v).strip()]
                 for key, values in (fields["applies_when"] or {}).items()
@@ -1265,15 +1131,59 @@ def update_spec_key(
                     words[value] = [str(value).replace("_", " ")]
             row.user_synonyms = words
 
-        _validate_reachable(row.data_type, merged_allowed_values(row), merged_synonyms(row))
+        # Judged only when this save touches the vocabulary. A rule, a scope or a cap
+        # does not change which values a customer can say, so a value that was already
+        # unreachable must not block saving a rule (that is fixed where it is broken).
+        if set(fields) & _VOCABULARY_FIELDS:
+            _validate_reachable(row.data_type, merged_allowed_values(row), merged_synonyms(row))
 
+        reading_after = _reading(row)
         db.commit()
         db.refresh(row)
-        return _serialise(row)
+
+        products_updated = 0
+        if fingerprint_before is not None and _reading_changed(reading_before, reading_after):
+            products_updated = product_spec_rederive.reread_after_save_logged(
+                db, row.spec_key, fingerprint_before=fingerprint_before
+            )
+            db.refresh(row)
+        return {**_serialise(row), "products_updated": products_updated}
     except Exception as e:
         if type(e).__name__ in {"AppException", "HTTPException"}:
             raise
         raise handle_internal_error(str(e))
+    finally:
+        product_spec_preview.end_catalogue_read(read_token)
+
+
+# The fields that change what a product reads: a rule, a scope, a cap, or a choice taken
+# away (a rule setting a suppressed value stops firing, `configured_rules`; review S-10).
+_READING_FIELDS = {"derivation_rules", "applies_when", "max_value", "suppressed_values"}
+
+
+def _reading(row) -> tuple:
+    from app.services.product_spec_derivation import stored_or_shipped_rules
+
+    return (
+        stored_or_shipped_rules(row),
+        dict(row.applies_when or {}),
+        row.max_value,
+        sorted(str(v) for v in (row.suppressed_values or [])),
+    )
+
+
+def _reading_changed(before: tuple, after: tuple) -> bool:
+    """Whether the rules, the scope or the cap moved, compared as data (a Decimal cap
+    and the float it was saved from are the same cap)."""
+    def canonical(reading: tuple) -> str:
+        rules, scope, cap, dropped = reading
+        return json.dumps(
+            [rules, scope, None if cap is None else float(cap), dropped],
+            sort_keys=True,
+            default=str,
+        )
+
+    return canonical(before) != canonical(after)
 
 
 class SpecValueAdd(BaseModel):

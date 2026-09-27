@@ -3,7 +3,11 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from app.database import get_db
-from app.dependencies import require_permission, require_permission_with_api_key
+from app.dependencies import (
+    require_any_permission_with_api_key,
+    require_permission,
+    require_permission_with_api_key,
+)
 from app.services.product_service import ProductCategoryService
 from app.schemas.product import ProductCategoryCreate, ProductCategoryUpdate, ProductCategoryResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
@@ -36,7 +40,13 @@ async def get_categories_tree(
 @router.get("/class-labels")
 async def get_class_labels(
     current_user: dict = Depends(
-        require_permission_with_api_key("user_management.settings.view")
+        require_any_permission_with_api_key(
+            [
+                "user_management.settings.view",
+                "master_data.spec_registry.view",
+                "master_data.products.view",
+            ]
+        )
     ),
     db: Session = Depends(get_db),
 ):
@@ -50,6 +60,11 @@ async def get_class_labels(
     can open that page but holds no category permission would otherwise see an
     empty picker with no way to tell it apart from "nothing is configured"
     (review round 2, S6).
+
+    Either grant since #1286: the Product Specifications list counts Product class's
+    choices from this list (its registry row has an open vocabulary), and a spec or
+    product reader who holds no settings grant must not see that count fail closed.
+    Same either-grant precedent as `GET /spec-registry/applicable-keys`.
 
     One column, sorted, no paging: the vocabulary is a handful of words and the
     picker shows all of them at once.
