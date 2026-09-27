@@ -271,7 +271,7 @@ class SalesTarget(CompanyScopedMixin, Base):
         CheckConstraint("metric IN ('amount', 'quantity')", name="ck_sales_targets_metric"),
         CheckConstraint("basis IN ('ordered', 'delivered')", name="ck_sales_targets_basis"),
         CheckConstraint(
-            "product_scope IN ('all', 'categories', 'products')",
+            "product_scope IN ('all', 'categories', 'products', 'brands')",
             name="ck_sales_targets_product_scope",
         ),
         CheckConstraint("end_date >= start_date", name="ck_sales_targets_dates"),
@@ -318,7 +318,8 @@ class SalesTargetPeriod(CompanyScopedMixin, Base):
 
 
 class SalesTargetScope(CompanyScopedMixin, Base):
-    """One category (sub-categories included) or one product a target counts (G4)."""
+    """One category (sub-categories included), one product or one brand a target counts (G4;
+    Brand added by the owner's hand test of 27 Sep, `sales_0004_target_brands`)."""
 
     __tablename__ = "target_scope"
 
@@ -337,10 +338,14 @@ class SalesTargetScope(CompanyScopedMixin, Base):
     product_id = Column(
         UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=True
     )
+    brand_id = Column(
+        UUID(as_uuid=False), ForeignKey("brands.id", ondelete="CASCADE"), nullable=True
+    )
 
     __table_args__ = (
         CheckConstraint(
-            "num_nonnulls(product_category_id, product_id) = 1", name="ck_sales_target_scope_one"
+            "num_nonnulls(product_category_id, product_id, brand_id) = 1",
+            name="ck_sales_target_scope_one",
         ),
         {"schema": SCHEMA},
     )
