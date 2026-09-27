@@ -92,4 +92,11 @@ def route(plan: Plan) -> str:
     if plan.fetch:
         return _domain_branch(plan.domains)
 
+    if plan.trace.task_question:
+        # Ported from PR #1118 (not merged) for chatbot-stock-ask-v2 S3: a task
+        # RESUMED with nothing new fetches nothing and asks no roster - the task's own
+        # question is the whole turn - but it is still a question about that task's
+        # domain, not a low-signal aside.
+        return _domain_branch(plan.domains)
+
     return "low_signal"

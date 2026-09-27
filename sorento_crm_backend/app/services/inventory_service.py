@@ -649,6 +649,7 @@ class StockService:
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
         requested_qty: Optional[int] = None,
+        requested_quantities: Optional[dict] = None,
     ):
         """List stock with product and warehouse info.
 
@@ -674,6 +675,13 @@ class StockService:
                 of a sentence by an LLM, so a 0 is a parse artefact rather than a
                 demand, and refusing the call would lose the question ("how many
                 units do you need?") along with the number.
+            requested_quantities: Ported from PR #1118 (feat/chatbot-dealer-stock-
+                verdict, not merged, owner ruling 24 Sep 2026): product UUID -> the
+                quantity asked for THAT product, one turn's whole ask rather than a
+                single scalar. Only read in `availability` mode. Per product the map
+                wins; `requested_qty` fills any product it does not name. A mapped
+                value below 1 is read as NOT PROVIDED, the same rule `requested_qty`
+                follows above and for the same reason.
         """
         from sqlalchemy import or_, func
         from app.services.stock_visibility import resolve_policy, warehouse_criterion
@@ -687,8 +695,17 @@ class StockService:
         # with NO `stock_visibility` block, which would otherwise claim a policy was
         # applied when none resolved (AC-A5).
         policy = None
+        resolved_contact_id = None
         if contact_id:
             policy = resolve_policy(self.db, contact_id, space_id)
+            # Chatbot stock ask v2 S3, R7: the SAME internal id `resolve_policy`
+            # itself resolves `contact_id`/`space_id` against - resolved again here
+            # (one cheap extra lookup) so `_apply_stock_visibility` can read that
+            # contact's own `packing_list_allowed` toggle without threading a bigger
+            # change through `resolve_policy`'s other callers.
+            from app.services.field_access import resolve_contact_id
+
+            resolved_contact_id = resolve_contact_id(self.db, contact_id, space_id)
             if policy is None:
                 return {
                     "data": [],
@@ -701,6 +718,49 @@ class StockService:
             EntityFilterBuckets,
             resolve_entities_to_filters,
         )
+
+        # D27, ported from PR #1118 (not merged), review round 8: in the DEALER mode a
+        # named product id stands for its CODE. The availability block answers one
+        # entry per code across the contact's companies, keyed on the first of the
+        # merged ids - so the task's slot carries that one id and the next turn's fetch
+        # names it alone. Measured on the live database (turn 38d74c62): MWT5727SS-CR's
+        # 177 open PO lines sit on the SORENTO row, the fetch carried only the MOCHA id,
+        # and the dealer was told "Not available" with no purchase disclaimer at all -
+        # the same call with both ids answered correctly. A code is one product to this
+        # reader, so it is one product to every read behind the answer too.
+        #
+        # `availability` only: `compact` and `detailed` name locations and quantities per
+        # product ROW, and the staff grid / n8n callers of those modes ask for the id
+        # they mean.
+        if policy is not None and policy.mode == "availability" and product_ids:
+            named_ids = [str(pid) for pid in product_ids if pid]
+            code_rows = (
+                self.db.query(Product.id, Product.product_code)
+                .filter(
+                    func.lower(Product.product_code).in_(
+                        self.db.query(func.lower(Product.product_code)).filter(
+                            Product.id.in_(named_ids)
+                        )
+                    )
+                )
+                .all()
+            )
+            siblings: dict[str, list[str]] = {}
+            code_by_id: dict[str, str] = {}
+            for row_id, row_code in code_rows:
+                key = (row_code or "").strip().lower()
+                siblings.setdefault(key, []).append(str(row_id))
+                code_by_id[str(row_id)] = key
+            expanded: list[str] = []
+            seen: set[str] = set()
+            for pid in named_ids:
+                # The named id first, so the asked order (review round 6) and the merged
+                # entry's own `product_id` (review round 5) are both unchanged.
+                for candidate in [pid] + siblings.get(code_by_id.get(pid, ""), []):
+                    if candidate not in seen:
+                        seen.add(candidate)
+                        expanded.append(candidate)
+            product_ids = expanded
 
         # Resolved input product id(s) - used on the data-miss (empty) path to find
         # data-bearing variant/neighbour alternatives (section 3.3), and by the
@@ -1019,9 +1079,25 @@ class StockService:
                 policy_q=policy_q,
                 last_import_at=last_import_at,
                 requested_qty=requested_qty,
+                requested_quantities=requested_quantities,
                 requested_product_ids=resolved_input_product_ids,
+                # Ported from PR #1118 (not merged), review round 6 (finding B): the
+                # caller's own list, in order - the set above is for membership tests
+                # and cannot carry one.
+                product_id_order=[str(pid) for pid in (product_ids or []) if pid],
                 page=page,
                 limit=limit,
+                # Ported from PR #1118 (not merged), SEC-S1: the SAME location
+                # narrowing the on-hand query above ran with ("stock at BRW"), so the
+                # supply reads cannot answer from a warehouse the question itself
+                # excluded. Merged with `resolved_wh_ids` (review round 2): the
+                # singular `warehouse_id` param narrows the on-hand read above but,
+                # unmerged, left the three supply reads unscoped - a question asking
+                # about ONE warehouse by its singular param still counted supply
+                # parked at every other one.
+                warehouse_ids=list({*(warehouse_ids or []), *(resolved_wh_ids or [])})
+                or None,
+                resolved_contact_id=resolved_contact_id,
             )
 
         # Data-miss (§3.3): the query resolved to a real product but returned 0 stock
@@ -1243,6 +1319,10 @@ class StockService:
         requested_product_ids: set[str],
         page: int,
         limit: int,
+        requested_quantities: Optional[dict] = None,
+        warehouse_ids: Optional[list[str]] = None,
+        product_id_order: Optional[list[str]] = None,
+        resolved_contact_id: Optional[str] = None,
     ) -> None:
         """Attach the visibility block(s) and, for the two summary modes, empty `data`.
 
@@ -1401,25 +1481,254 @@ class StockService:
             ]
             return
 
-        # availability: a yes/no judged against the allowed locations only. No
-        # quantity of any kind reaches the block - not the total, not the
-        # per-location split - because a number here is exactly what the dealer
-        # policy exists to withhold.
-        payload["stock_availability"] = [
-            {
-                "product_id": pid,
-                "product_code": getattr(products_by_id.get(pid), "product_code", None),
-                "product_name": getattr(products_by_id.get(pid), "product_name", None),
-                "needs_quantity": requested_qty is None,
-                "requested_qty": requested_qty,
-                "available": (
-                    None
-                    if requested_qty is None
-                    else sum(int(r.on_hand or 0) for r in per_product[pid]) >= requested_qty
+        # Ported from PR #1118 (not merged), review round 6, finding B: when the
+        # CALLER named the products, that list is the order the answer is read out in -
+        # the dealer hears their own question back. `ordered_ids` above is
+        # `product_code` asc, which is the right order for the catalogue case ("what
+        # stock do you have?", nothing named) and the wrong one here: the reply noted
+        # "MHS1028 x 60, MWT5727SS-CR x 5" for a dealer who had asked the other way
+        # round. Anything the caller did not name (a product with stock that the page
+        # picked up) keeps its page position, after the named ones.
+        # Chatbot stock ask v2 S3 fix round 1, Blocking 2 (R10/AC-SA315): this sort
+        # runs AFTER the `compact` return above, not before it - `compact`'s
+        # `stock_summary` order is product_code order (R10 "Compact mode ... unchanged
+        # by v2"), never the caller's asked order, which is availability-only.
+        asked_order = [str(pid) for pid in (product_id_order or []) if pid]
+        if asked_order:
+            rank = {pid: index for index, pid in enumerate(asked_order)}
+            unranked = len(rank)
+            ordered_ids = [
+                pid
+                for _, pid in sorted(
+                    ((rank.get(pid, unranked), pid) for pid in ordered_ids),
+                    key=lambda pair: pair[0],
+                )
+            ]
+
+        # Ported from PR #1118 (not merged), D35, review round 11: a DEALER question is
+        # always about a product, so a stock ask that names none is answered by asking
+        # for the code - never by returning the catalogue page as a question. The
+        # tool's own contract makes every filter optional ("call with none to span
+        # every product"), which is right for the staff grid and for n8n and wrong
+        # here: the block came back with one `needs_quantity` entry per catalogue row
+        # and the dealer was asked to quantify fifty products they had never mentioned.
+        #
+        # The empty block is also what keeps the engine honest: no entries, no slots,
+        # no task (`turn/task.py::tasks_after_reply`). `needs_product` is what the MCP
+        # presenter renders its one sentence from - the same division of labour D25
+        # already sets, the server deciding and the presenter saying.
+        #
+        # `compact` and `detailed` return above and are untouched: they answer with
+        # rows and locations, and a caller asking either of them for a page means it.
+        if not named_ids:
+            payload["stock_visibility"]["needs_product"] = True
+            payload["stock_availability"] = []
+            return
+
+        # availability: one of four fixed branches (chatbot stock ask v2 S3, R6/R14),
+        # judged against the allowed locations only. No quantity of OURS reaches the
+        # block - not the total, not the per-location split, not on hand/incoming
+        # themselves - because a number here is exactly what the dealer policy exists
+        # to withhold; only the dealer's own asked quantity (echoed back) and the ETA
+        # date ever appear. Replaces #1118's verdict()/spo_allocations/purchase-order/
+        # threshold read (ported as-is in an earlier step of this slice to reach
+        # #1118 parity; superseded here, `app/services/stock_verdict.py` deleted).
+        from datetime import timedelta
+
+        from app.models.access import RespondContact
+        from app.models.order import SalesOrderLine
+        from app.models.product import ProductCategory
+        from app.models.resources import Attachment
+        from app.services.incoming_stock_service import (
+            _attachment_payload,
+            earliest_packing_list_shipment,
+        )
+        from app.services.stock_ask_branch import branch as compute_branch
+        from app.services.stock_ask_limits import effective as effective_limits
+
+        # SEC-S1 (security review, round 1, kept from #1118): `warehouse_criterion` is only HALF of what
+        # the on-hand read filters by. That query also carries `Warehouse.is_active`
+        # (a retired location is not somewhere this contact can be supplied from) and
+        # the caller's own `warehouse_ids=` narrowing ("stock at BRW"), and a supply
+        # read that skipped both counted an allocation bound for a retired warehouse,
+        # or bound for MWH under a question that asked only about BRW, towards a
+        # verdict the dealer then read as a promise. Nit, review round 1: the
+        # incoming and purchase-order reads this scope also applied to under #1118
+        # are gone by R5 (this slice reads incoming stock a different way, ANY
+        # location, never scoped here) - only the open SO read below still uses it.
+        def _supply_scope(column):
+            scoped = [
+                column.isnot(None),
+                warehouse_criterion(policy, column),
+                column.in_(
+                    self.db.query(Warehouse.id).filter(Warehouse.is_active.is_(True))
                 ),
+            ]
+            if warehouse_ids:
+                scoped.append(column.in_(warehouse_ids))
+            return scoped
+
+        # D2: open SO subtracted from on-hand, per the SAME warehouse_criterion as
+        # `on hand` itself. A line with no destination is never subtracted - it
+        # cannot be placed at any warehouse the policy names, allowed or not.
+        so_rows = (
+            self.db.query(
+                SalesOrderLine.product_id,
+                func.sum(SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered).label(
+                    "open_qty"
+                ),
+            )
+            .filter(
+                SalesOrderLine.product_id.in_(page_ids),
+                *_supply_scope(SalesOrderLine.warehouse_id),
+                SalesOrderLine.line_status == "open",
+                SalesOrderLine.qty_ordered > SalesOrderLine.qty_delivered,
+            )
+            .group_by(SalesOrderLine.product_id)
+            .all()
+            if page_ids
+            else []
+        )
+        open_so_by_product = {str(r.product_id): float(r.open_qty or 0) for r in so_rows}
+
+        def _resolve_ask(pid: str) -> Optional[int]:
+            # D20 (kept from #1118): the per-product map wins; the scalar fills
+            # whatever it does not name. Either way, below 1 reads as NOT PROVIDED -
+            # the same rule the scalar alone has always followed (a 0 is a parse
+            # artefact, not a demand).
+            if requested_quantities and pid in requested_quantities:
+                ask = requested_quantities[pid]
+            else:
+                ask = requested_qty
+            if ask is not None and ask < 1:
+                ask = None
+            return ask
+
+        # R2: X and Y resolved per product against its OWN category - one query for
+        # every category referenced on this page, no parent walk (R12).
+        category_ids = {
+            getattr(products_by_id.get(pid), "category_id", None) for pid in page_ids
+        }
+        category_ids.discard(None)
+        categories_by_id = (
+            {
+                str(c.id): c
+                for c in self.db.query(ProductCategory).filter(
+                    ProductCategory.id.in_(category_ids)
+                )
             }
-            for pid in ordered_ids
-        ]
+            if category_ids
+            else {}
+        )
+
+        # R5: the earliest still-incoming shipment with a packing list, any
+        # location, per product on this page.
+        eta_by_product = earliest_packing_list_shipment(self.db, page_ids)
+
+        # R7: the asking contact's own "Packing list allowed" toggle, resolved once
+        # off `resolved_contact_id` - the SAME internal id this whole call's policy
+        # was resolved against (AC-SA311/AC-SA312: a raw GET never carries the file
+        # for a contact who may not have it, the same rule that already withholds
+        # every quantity of ours).
+        packing_list_allowed = False
+        if resolved_contact_id:
+            contact_row = (
+                self.db.query(RespondContact.packing_list_allowed)
+                .filter(RespondContact.id == resolved_contact_id)
+                .first()
+            )
+            packing_list_allowed = bool(contact_row and contact_row[0])
+
+        # Review round 5 (kept from #1118): ONE entry per product CODE. A dealer
+        # contact whose companies both carry the same code resolves it to two
+        # products, and the block answered for each - the rows collapse HERE, where
+        # the figures are, every number summed across the merged ids before
+        # `branch()` judges them.
+        #
+        # A row with no `product_code` merges with nothing (the sentinel key):
+        # "unnamed" is not an identity, and two of them are not the same product.
+        # `detailed` and `compact` return above and are untouched - they name
+        # locations and quantities per row, and a merged row has no one location to
+        # name.
+        merged_ids: dict[str, list[str]] = {}
+        for pid in ordered_ids:
+            code = getattr(products_by_id.get(pid), "product_code", None)
+            # A NUL cannot appear in a product code, so a codeless row's key is
+            # unique to that row and merges with nothing.
+            key = code.strip().lower() if code else "\x00" + pid
+            merged_ids.setdefault(key, []).append(pid)
+
+        entries = []
+        for group_ids in merged_ids.values():
+            # `ordered_ids` is already in page order, so the first id of a group is the
+            # first row of it on this page. That id is what the entry, the task's slot
+            # and the next fetch's `requested_quantities` key all carry - and, below,
+            # what X/Y/category are resolved against.
+            pid = group_ids[0]
+            # D20, across the merge: a quantity given for ANY of the merged ids is a
+            # quantity for the merged product. The scalar `requested_qty` fallback
+            # resolves the same for every id, so the first answer found is the answer.
+            ask = next(
+                (a for a in (_resolve_ask(gid) for gid in group_ids) if a is not None),
+                None,
+            )
+            product = products_by_id.get(pid)
+            category = categories_by_id.get(str(getattr(product, "category_id", None)))
+            entry = {
+                "product_id": pid,
+                "product_code": getattr(product, "product_code", None),
+                "product_name": getattr(product, "product_name", None),
+                "needs_quantity": ask is None,
+                "requested_qty": ask,
+                "branch": None,
+                "cap_unset": None,
+                "category_name": None,
+                "eta": None,
+                "packing_list": None,
+            }
+            if ask is not None and product is not None and category is not None:
+                x, y = effective_limits(product, category)
+                # R2: X unset (product AND its own category both NULL) is a fact the
+                # B1 agent-notification reason needs ("no cap set for <category>"),
+                # distinct from a category that explicitly opted in with X = 0.
+                cap_unset = (
+                    product.chatbot_max_qty is None
+                    and category.chatbot_max_qty is None
+                )
+                on_hand_total = sum(
+                    int(r.on_hand or 0) for gid in group_ids for r in per_product[gid]
+                )
+                net_available = on_hand_total - int(
+                    sum(open_so_by_product.get(gid, 0) for gid in group_ids)
+                )
+                shipment_candidates = [
+                    eta_by_product[gid] for gid in group_ids if gid in eta_by_product
+                ]
+                # D10-style, across the merge: the earliest of the merged ids' own
+                # shipments is the one that answers - the same "earliest wins" rule
+                # `earliest_packing_list_shipment` already applies per product id.
+                shipment = (
+                    min(shipment_candidates, key=lambda s: s[1])
+                    if shipment_candidates
+                    else None
+                )
+                shipment_date = shipment[1] if shipment else None
+                entry["branch"] = compute_branch(ask, x, net_available, shipment_date)
+                entry["cap_unset"] = cap_unset
+                entry["category_name"] = category.category_name
+                if entry["branch"] == "incoming" and shipment is not None:
+                    _shipment_id, eta_date, attachment_id = shipment
+                    entry["eta"] = (eta_date + timedelta(days=y)).strftime("%d/%m/%Y")
+                    if packing_list_allowed:
+                        attachment = (
+                            self.db.query(Attachment)
+                            .filter(Attachment.id == attachment_id)
+                            .first()
+                        )
+                        entry["packing_list"] = _attachment_payload(attachment)
+            entries.append(entry)
+
+        payload["stock_availability"] = entries
 
     def _stock_entity_alternatives(
         self,

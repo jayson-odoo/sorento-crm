@@ -1,6 +1,7 @@
 """Pydantic schemas for dynamic list query (filter DSL) and export."""
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -57,6 +58,9 @@ class ListSearchRequest(BaseModel):
     price_min: Optional[float] = None
     price_max: Optional[float] = None
     item_type: Optional[str] = None
+    # Products "Discontinued at" range (issue #1287), Malaysia-day inclusive.
+    discontinued_from: Optional[date] = None
+    discontinued_to: Optional[date] = None
     # Workflow forms (list-query + UI quick filters)
     workflow_definition_is_active: Optional[bool] = None
     workflow_form_definition_id: Optional[str] = None
@@ -94,6 +98,9 @@ class ListExportRequest(BaseModel):
     price_min: Optional[float] = None
     price_max: Optional[float] = None
     item_type: Optional[str] = None
+    # Products "Discontinued at" range (issue #1287), Malaysia-day inclusive.
+    discontinued_from: Optional[date] = None
+    discontinued_to: Optional[date] = None
     workflow_definition_is_active: Optional[bool] = None
     workflow_form_definition_id: Optional[str] = None
     workflow_submission_state_code: Optional[str] = None
