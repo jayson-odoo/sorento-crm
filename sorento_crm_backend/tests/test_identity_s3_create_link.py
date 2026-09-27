@@ -570,7 +570,13 @@ def test_ac44_static_no_disallowed_user_construction_outside_allowlist():
     site outside today's allowlist (by file, since `invite_user` is being deleted and
     is not allowlisted by name): `app/services/user_service.py` (create paths),
     `app/api/v1/auth.py` (self-signup), `app/services/integration_seed.py`
-    (integration machine principal)."""
+    (integration machine principal).
+
+    A tripwire, not a proof (fix round 2, N5): it allowlists whole files and matches
+    only `User(`/`UserRoleAssignment(` constructor calls, so a raw `INSERT`, an aliased
+    import, or a new creating function inside an allowlisted file all pass it. The
+    behavioural AC-44 tests above (and the Respond.io sync one in
+    test_identity_s3_unlink_holds.py) are what pin each source."""
     import re
     from pathlib import Path
 
@@ -1255,3 +1261,34 @@ def test_select_filter_unlinked_true_returns_only_users_with_no_contact(api_clie
     ids = {u["id"] for u in resp.json()}
     assert unlinked.id in ids
     assert linked.id not in ids
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 2, S3: the contact's linked_user says whether the WhatsApp code    #
+# can reach that user (its phone equals the contact's)                         #
+# --------------------------------------------------------------------------- #
+def test_s3_contact_detail_linked_user_flags_phone_differs_from_contact(api_client):
+    client, db, _admin = api_client
+    phone = _msisdn(_phone())
+
+    same = _seed_contact(db, phone=phone, name="Same Phone Contact")
+    same_user = _seed_user(db, name="Same Phone User", phone=phone)
+    same_user.respond_contact_id = same.id
+
+    other = _seed_contact(db, name="Other Phone Contact")
+    other_user = _seed_user(db, name="Other Phone User", phone=_msisdn(_phone()))
+    other_user.respond_contact_id = other.id
+
+    none = _seed_contact(db, name="No Phone Contact")
+    none_user = _seed_user(db, name="No Phone User", email=f"{unique_code('np')}@x.com".lower())
+    none_user.respond_contact_id = none.id
+    db.commit()
+
+    def _flag(contact_id: str):
+        resp = client.get(f"/api/v1/user-management/contacts/{contact_id}")
+        assert resp.status_code == 200, resp.text
+        return resp.json()["linked_user"].get("phone_differs_from_contact")
+
+    assert _flag(same.id) is False
+    assert _flag(other.id) is True
+    assert _flag(none.id) is True

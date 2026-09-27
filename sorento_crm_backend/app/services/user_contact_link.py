@@ -106,11 +106,16 @@ def linked_user_summary(db: Session, contact_id: str) -> Optional[dict]:
     None when nobody is linked, or (by the route not calling this at all) when
     the caller lacks `user_management.users.view`.
     """
+    from app.models.access import RespondContact
     from app.models.user import User, UserRole, UserRoleAssignment
+    from app.services.phone_utils import normalize_msisdn
 
     user = db.query(User).filter(User.respond_contact_id == contact_id).first()
     if user is None:
         return None
+    contact_phone = (
+        db.query(RespondContact.phone_number).filter(RespondContact.id == contact_id).scalar()
+    )
     roles = (
         db.query(UserRole)
         .join(UserRoleAssignment, UserRoleAssignment.role_id == UserRole.id)
@@ -124,6 +129,12 @@ def linked_user_summary(db: Session, contact_id: str) -> Optional[dict]:
         "status": user.status,
         "has_password": user.password is not None,
         "roles": [{"id": r.id, "name": r.name} for r in roles],
+        # Fix round 2, S3: the WhatsApp code goes to the user's own phone, so
+        # "Signs in by WhatsApp code" is true only while it equals the contact's.
+        # Same rule as `sign_in_summary`: no phone at all also differs.
+        "phone_differs_from_contact": normalize_msisdn(user.contact_number)
+        != normalize_msisdn(contact_phone)
+        or not normalize_msisdn(user.contact_number),
     }
 
 

@@ -244,6 +244,11 @@ def test_ac57_bulk_resend_invite_skips_no_email_user_and_reports_skipped():
         body = resp.json()
         assert body.get("skipped") == 1, body
         assert "1 skipped (no email)" in (body.get("message") or ""), body
+        # Fix round 2, N1: the skip itself is pinned, not only the count. Without the
+        # skip the no-email user also reaches the sender, is refused by S0's guard and
+        # is counted failed; the email user is the one success.
+        assert body.get("failed") == 0, body
+        assert body.get("success") == 1, body
 
 
 # --------------------------------------------------------------------------- #
