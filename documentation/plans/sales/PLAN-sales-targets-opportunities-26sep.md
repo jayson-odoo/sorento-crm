@@ -1,6 +1,6 @@
 # PLAN: sales targets, opportunities and the WhatsApp achievement broadcast (#1170)
 
-Status: **building, wave 2.** S1 built on PR #1297 (track: full; build contract section 16; reviewer and security-reviewer clean, awaiting the owner's hand test); S6 merged (#1260). Wave 1, S6, was on PR #1260 (wave 1: the `sales` module and schema, Sales Teams with dated
+Status: **building, wave 2.** S1 built on PR #1297 (track: full; build contract section 16; reviewer and security-reviewer clean); owner hand test 27 Sep returned F1 to F6, fixed in fix lane round 2 on the same PR (section 17), awaiting the owner's re-test; S6 merged (#1260). Wave 1, S6, was on PR #1260 (wave 1: the `sales` module and schema, Sales Teams with dated
 membership, the Sales menu with Sales Agents moved in; section 15). S6 accepted on the owner's
 hand test (26 Sep ~13:25Z); fix lane round 2 on the same PR adds the team leader (W1) and lists
 a returning agent once (W2), section 15. Track: full. Next: wave 2,
@@ -2117,3 +2117,54 @@ and `ck_sales_targets_subject` to `dealer` with `customer_id`; S4 adds `commissi
 the tiers table (the Commission section and Add tier are waiting); S3 adds the Pipeline cells
 and `pipeline_value`, `pipeline_count` on each row.
 
+
+## 17. S1 fix lane round 2 (27 Sep, the owner's hand test; UAC S1-30 to S1-35)
+
+Owner ruling 27 Sep 11:20 MYT (hand test on :3081, PR #1297 comment 5852245766), verbatim in
+that comment. How each point was applied:
+
+- **F1, Brand** ("this one need 1 more choice is 'Brand'"): `product_scope` gains `brands`;
+  `sales.target_scope.brand_id` (FK `brands` ON DELETE CASCADE, indexed; migration
+  `sales_0004_target_brands`, the one-of check now covers three columns). A brand counts every
+  product whose `brand_id` is one of the target's brands. Options list the active brands; the
+  list's measure chips read "2 brands". This is the second axis the 3.1 trigger named; it is
+  still one more scope kind on the same rows, not a dimension engine (no third axis asked).
+- **F2, the team record** ("needs to be in Tabs, refer to users", "Edit needs to be in gear
+  button dropdown"): header card (name, Active badge, agent count, Created, Updated; pager,
+  gear, Set target), then line tabs Details, Targets, Agents. Edit is the gear's first item;
+  editing is the same tabs in place with Cancel and Save in the header card. The leader is named
+  once, in Details; the status once, in the header card (no duplicated summary line).
+- **F3, the targets lists** ("why got Active on, supposed to have search bar, then columns,
+  export. it should show a list of team target, that's it"): the Active on date is gone.
+  `GET /sales/targets?all=true` returns one row per target of the kind, whatever its dates, with
+  the whole range's target and achievement (sum of its periods). Standard list page: shared
+  `DataGridListToolbar` (search, Columns, Export), standard header row, `DataGridPagination`; on
+  Agents the Team filter sits in the Filters popover (today's team, or No team). The No team and
+  Unassigned lines under the Teams list are dropped with the date ("that's it"); the Unassigned
+  amount stays on the API (`list_targets`, S1-14) for a later screen if the owner asks.
+- **F4, one target record** ("can we just unifiy the create and edit of target to use this Edit
+  view"): `targets/components/TargetRecord.tsx` serves `/sales/targets/new` and
+  `/sales/targets/{id}`. Header card, then tabs Details (Target, What counts, Dates, Figure),
+  Periods, Agents (team only), Commission. New opens empty in edit with the defaults Amount,
+  Ordered, All products, today to month end, split off; `?kind=` and `&subject=` preset it from
+  Set target on a list, a team or an agent's line. Edit, Duplicate and Delete sit in the gear.
+  The Set target modal and `SalesTargetDetail`/`SalesTargetPage` are removed.
+- **F5, UUID leak** ("UUID leak"): the Products picker in edit had no `selectedOptions`, so the
+  shared multi-select fell back to the raw id. Every scope item now carries `kind` and a
+  "CODE - Name" label; the record seeds each picker's names from them and remembers every
+  product the search returns.
+- **F6, dates and Split** ("the date I can't set null for both, or null for start or null for
+  end? and what does split mean ya"): dates stay a required start and end (N6). A one-line
+  helper under the fields says what Split does. A half-empty range cannot be saved: Save is
+  disabled with "Pick both a start date and an end date."; the API refuses a missing or cleared
+  date with "A target needs both a start date and an end date." (422 `DATES_REQUIRED`), and a
+  PATCH null names the field in plain words. **Open question for the owner, not built:** should
+  an empty end date mean an open-ended target?
+
+Main carried three alembic heads on 27 Sep (#1279, #1247, #1292); this lane ports #1308's merge
+revision `merge_27sep_three_heads` byte for byte and chains `sales_0003_targets` onto it. It
+no-ops once #1308 lands; re-run `./scripts/alembic-reparent.sh` at the pre-merge gate.
+
+Evidence: `evidence/s1/round2/` (agent-browser, seeded data on a private database, navigation
+by sidebar clicks from `/`, 1280 and 375, `scrollWidth` at or under the viewport at 375). See
+its `README.md` for the steps.

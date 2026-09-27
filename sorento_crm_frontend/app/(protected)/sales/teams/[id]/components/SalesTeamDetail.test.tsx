@@ -288,7 +288,7 @@ describe('SalesTeamDetail', () => {
     const targets = screen.getByRole('region', { name: 'Team targets' });
     expect(within(targets).getByText('TGT-000001')).toBeTruthy();
     expect(within(targets).getByText('North FY26 H2')).toBeTruthy();
-    expect(within(targets).getByText('1 Oct 2026 to 31 Dec 2026')).toBeTruthy();
+    expect(within(targets).getByText('1 Oct to 31 Dec 2026')).toBeTruthy();
     expect(within(targets).getByText('50%')).toBeTruthy();
     expect(within(targets).getByText('1 brand')).toBeTruthy();
   });

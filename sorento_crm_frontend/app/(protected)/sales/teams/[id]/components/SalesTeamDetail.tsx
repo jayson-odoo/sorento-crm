@@ -36,8 +36,8 @@ import {
   METRIC_LABEL,
   formatFigure,
   formatPct,
+  dateRange,
   scopeSummary,
-  shortDate,
 } from '../../../targets/lib/format';
 import type { SalesTargetRow } from '../../../targets/types/salesTarget.types';
 
@@ -433,7 +433,7 @@ export function SalesTeamDetail({ id }: { id: string }) {
                         />
                       </span>
                       <span className="hidden truncate text-xs text-muted-foreground sm:block">
-                        {`${shortDate(row.start_date)} to ${shortDate(row.end_date)}`}
+                        {dateRange(row.start_date, row.end_date)}
                       </span>
                       <span className="hidden text-end text-sm tabular-nums sm:block">{formatFigure(row.target_value)}</span>
                       <span className="hidden text-end text-sm tabular-nums sm:block">{formatFigure(row.achieved_value)}</span>

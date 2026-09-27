@@ -35,8 +35,8 @@ import {
   METRIC_LABEL,
   formatFigure,
   formatPct,
+  dateRange,
   scopeSummary,
-  shortDate,
 } from '../lib/format';
 import type { SalesTargetRow, TargetSubjectKind } from '../types/salesTarget.types';
 
@@ -208,7 +208,7 @@ function TargetsGrid({
               id: 'team',
               header: ({ column }) => <DataGridColumnHeader title="Team" column={column} />,
               cell: ({ row }) => <TextCell value={row.original.subject_label} />,
-              size: 140,
+              size: 110,
               meta: { headerTitle: 'Team', skeleton: <Skeleton className="h-4 w-24" /> },
             },
           ]
@@ -217,14 +217,14 @@ function TargetsGrid({
               id: 'agent',
               header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
               cell: ({ row }) => <TextCell value={row.original.subject_label} />,
-              size: 180,
+              size: 140,
               meta: { headerTitle: 'Agent', skeleton: <Skeleton className="h-4 w-28" /> },
             },
             {
               id: 'team',
               header: ({ column }) => <DataGridColumnHeader title="Team" column={column} />,
               cell: ({ row }) => <TextCell value={row.original.team_name} muted="No team" />,
-              size: 120,
+              size: 110,
               meta: { headerTitle: 'Team', skeleton: <Skeleton className="h-4 w-20" /> },
             },
           ];
@@ -232,10 +232,10 @@ function TargetsGrid({
       buildSelectColumn<SalesTargetRow>(),
       {
         id: 'target_no',
-        header: ({ column }) => <DataGridColumnHeader title="Target" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Number" column={column} />,
         cell: ({ row }) => <TextCell value={row.original.target_no} />,
-        size: 110,
-        meta: { headerTitle: 'Target', skeleton: <Skeleton className="h-4 w-20" /> },
+        size: 130,
+        meta: { headerTitle: 'Number', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         id: 'name',
@@ -245,7 +245,7 @@ function TargetsGrid({
             {row.original.name}
           </span>
         ),
-        size: 200,
+        size: 140,
         meta: { headerTitle: 'Name', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       ...subjectColumns,
@@ -253,26 +253,26 @@ function TargetsGrid({
         id: 'measures',
         header: ({ column }) => <DataGridColumnHeader title="Measures" column={column} />,
         cell: ({ row }) => <MeasuresCell row={row.original} />,
-        size: 200,
+        size: 125,
         meta: { headerTitle: 'Measures', skeleton: <Skeleton className="h-5 w-24" /> },
       },
       {
         id: 'dates',
         header: ({ column }) => <DataGridColumnHeader title="Dates" column={column} />,
         cell: ({ row }) => (
-          <TextCell value={`${shortDate(row.original.start_date)} to ${shortDate(row.original.end_date)}`} />
+          <TextCell value={dateRange(row.original.start_date, row.original.end_date)} />
         ),
-        size: 190,
+        size: 170,
         meta: { headerTitle: 'Dates', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         id: 'target_value',
-        header: ({ column }) => <DataGridColumnHeader title="Target value" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Target" column={column} />,
         cell: ({ row }) => (
           <span className="block truncate text-end tabular-nums">{formatFigure(row.original.target_value)}</span>
         ),
-        size: 110,
-        meta: { headerTitle: 'Target value', skeleton: <Skeleton className="h-4 w-16" /> },
+        size: 85,
+        meta: { headerTitle: 'Target', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
         id: 'achieved',
@@ -280,7 +280,7 @@ function TargetsGrid({
         cell: ({ row }) => (
           <span className="block truncate text-end tabular-nums">{formatFigure(row.original.achieved_value)}</span>
         ),
-        size: 110,
+        size: 85,
         meta: { headerTitle: 'Achieved', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
@@ -300,7 +300,7 @@ function TargetsGrid({
             </span>
           );
         },
-        size: 70,
+        size: 60,
         meta: { headerTitle: '%', skeleton: <Skeleton className="h-4 w-10" /> },
       },
     ];

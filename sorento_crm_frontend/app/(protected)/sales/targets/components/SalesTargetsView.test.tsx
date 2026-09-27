@@ -136,10 +136,10 @@ describe('SalesTargetsView', () => {
   it('shows one row per target with its number, name, team, measure chips, dates and figures (F3)', () => {
     render(<SalesTargetsView />);
     const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim()).filter(Boolean);
-    expect(headers).toEqual(['Target', 'Name', 'Team', 'Measures', 'Dates', 'Target value', 'Achieved', '%']);
+    expect(headers).toEqual(['Number', 'Name', 'Team', 'Measures', 'Dates', 'Target', 'Achieved', '%']);
     expect(screen.getByText('TGT-000001')).toBeTruthy();
     expect(screen.getByText('North FY26 H2')).toBeTruthy();
-    expect(screen.getByText('1 Oct 2026 to 31 Dec 2026')).toBeTruthy();
+    expect(screen.getByText('1 Oct to 31 Dec 2026')).toBeTruthy();
     expect(screen.getByText('3,000')).toBeTruthy();
     expect(screen.getByText('1,500')).toBeTruthy();
     expect(screen.getByText('50%')).toBeTruthy();
@@ -187,7 +187,7 @@ describe('SalesTargetsView', () => {
     openTab('Agents');
     expect(hooks.useSalesTargets).toHaveBeenCalledWith({ all: true, subject: 'agent' });
     const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim()).filter(Boolean);
-    expect(headers).toEqual(['Target', 'Name', 'Agent', 'Team', 'Measures', 'Dates', 'Target value', 'Achieved', '%']);
+    expect(headers).toEqual(['Number', 'Name', 'Agent', 'Team', 'Measures', 'Dates', 'Target', 'Achieved', '%']);
     expect(screen.getByText('ALI - Ali Hassan')).toBeTruthy();
 
     fireEvent.keyDown(screen.getByRole('button', { name: /filters/i }), { key: 'Enter' });

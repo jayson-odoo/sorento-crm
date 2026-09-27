@@ -43,6 +43,13 @@ export function shortDate(day: string | null | undefined): string {
   return `${date} ${MONTHS[month - 1]} ${year}`;
 }
 
+/** `1 Sep to 30 Nov 2026`, the year once when both ends share it; `''` without both ends. */
+export function dateRange(start: string | null | undefined, end: string | null | undefined): string {
+  if (!start || !end) return '';
+  if (start.slice(0, 4) !== end.slice(0, 4)) return `${shortDate(start)} to ${shortDate(end)}`;
+  return `${shortDate(start).slice(0, -5)} to ${shortDate(end)}`;
+}
+
 export const METRIC_LABEL: Record<TargetMetric, string> = {
   amount: 'Amount',
   quantity: 'Quantity',
