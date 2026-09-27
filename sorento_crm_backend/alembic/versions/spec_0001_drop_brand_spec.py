@@ -28,7 +28,7 @@ Downgrade drops the column only. The deleted rows and the stripped values are no
 they are in the WARNING log, and nothing reads them any more.
 
 Revision ID: spec_0001_drop_brand
-Revises: sales_0002_team_leader
+Revises: merge_27sep_three_heads
 Create Date: 2026-09-26
 """
 
@@ -44,7 +44,7 @@ from alembic import op
 from sqlalchemy import text
 
 revision = "spec_0001_drop_brand"
-down_revision = "sales_0002_team_leader"
+down_revision = "merge_27sep_three_heads"
 branch_labels = None
 depends_on = None
 
