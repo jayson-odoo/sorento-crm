@@ -169,8 +169,11 @@ set has none.
 ### 1.11 `GET /{id}/history` - `view`
 
 Newest first: `{"data": [{"action": "COST_SET_UPLOAD", "actor_name": "Mei Ling", "at": "...",
-"summary": "Uploaded 258 rows from ...xlsx"}]}` (AC-AU-04). Line maps and skips are listed as
-`COST_LINE_MAP` / `COST_LINE_SKIP` rows from the line audit trail.
+"summary": "Uploaded 258 rows from ...xlsx"}]}` (AC-AU-04). Line maps, skips and decisions are
+listed as `COST_LINE_MAP` / `COST_LINE_SKIP` / `COST_LINE_DECISION` rows written on the set
+(summary: the supplier code, the product it was mapped to, the skip reason, or accepted /
+rejected with the verifier's own reason). The FE labels them "Mapped a line", "Skipped a line"
+and "Decided a line"; an action it has no label for reads "Updated", never a raw code.
 
 ## 2. Cost lists
 
