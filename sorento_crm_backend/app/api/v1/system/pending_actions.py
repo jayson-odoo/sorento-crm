@@ -360,7 +360,12 @@ def _last_outcome(db: Session, entity_type: str, entity_id: str) -> Optional[dic
 
 
 def _commit_if_due(service: FormActionService, row: Optional[SlaFormAction]) -> None:
-    """Apply a parked action whose window has already closed."""
+    """Apply a parked action whose window has already closed.
+
+    A commit can wait on other work (a spec remove waits up to 30 s for a running
+    catalogue read), so every route calling this is a plain `def`: FastAPI runs it on
+    the threadpool, and the wait never stalls the event loop (review S-R1, #1286).
+    """
     if row is None or row.commit_at is None:
         return
     if row.commit_at > datetime.utcnow():
@@ -376,7 +381,7 @@ def _commit_if_due(service: FormActionService, row: Optional[SlaFormAction]) -> 
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
-async def create_pending_action(
+def create_pending_action(
     body: _CreateRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -446,7 +451,7 @@ async def create_pending_action(
 
 
 @router.post("/{action_id}/cancel", status_code=status.HTTP_200_OK)
-async def cancel_pending_action(
+def cancel_pending_action(
     action_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -473,7 +478,7 @@ async def cancel_pending_action(
 
 
 @router.get("/current")
-async def get_current_pending_action(
+def get_current_pending_action(
     entity_type: str = Query(...),
     entity_id: str = Query(...),
     current_user: dict = Depends(get_current_user),

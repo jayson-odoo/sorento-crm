@@ -79,6 +79,9 @@ export interface Product {
   // an order placeholder stays active and is still not a chat answer.
   is_searchable: boolean;
   is_discontinued: boolean;
+  // When the discontinue-notify scheduler last noticed this product (issue #1287).
+  // Null while available or before the first tick after discontinuing.
+  discontinued_at?: string | null;
   // S5 (reorder-feedback-9sep.md, 9 Sep 2026): never appears in a reorder run, even
   // when named directly at Start Plan. Optional - absent on a cached response
   // predating the field, and the reader treats that as false.
@@ -171,6 +174,10 @@ export interface Brand {
   // A brand marked false is bought locally by CS and never raises an Order
   // Inquiry - PLAN-brand-flows-to-purchasing.md.
   flows_to_purchasing: boolean;
+  // Default true; false for the placeholder brands OTHERS and NO LOGO (S0,
+  // PLAN-product-specs-non-technical-26sep.md D3). Search and the understanding
+  // prompt skip a brand where this is false - nobody ever names OTHERS.
+  is_searchable?: boolean;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;
@@ -408,6 +415,9 @@ export interface ProductListItem {
   is_active: boolean;
   // Discontinued flag (independent of is_active). Surfaced by ProductResponse.
   is_discontinued?: boolean;
+  // When the discontinue-notify scheduler last noticed this product (issue #1287).
+  // Null while available or before the first tick after discontinuing.
+  discontinued_at?: string | null;
   // Chat-search flag (independent of is_active). Surfaced by ProductResponse.
   is_searchable?: boolean;
   // S5: never appears in a reorder run, even when named directly. Optional -
