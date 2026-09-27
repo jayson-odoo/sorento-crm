@@ -14,7 +14,8 @@ of 27 Sep 01:04 MYT to build without further alignment); the orchestrator's revi
 (needs work) is addressed by fix lane round 2 on the same PR, which records rulings 4, 10, 12 and
 13 in the PR body. The plan rides in that PR. Main 52b0ac24 merged into it (27 Sep 2026):
 `identity_0001_s0_model` now chains on main's single head `sales_s1_reports_module` instead of
-merging 527 and spec_0003 itself. S1, S2 and S3 not started.
+merging 527 and spec_0003 itself. Main af86bcfd merged into it (27 Sep 2026, round 2): it now
+chains on main's single head `sales_0005_commission_tiers`. S1, S2 and S3 not started.
 UAC: `identity-unified-login-acceptance-criteria.md` (same folder; the Journey is there, and every
 AC traces to a step in it).
 Classification: CORE (auth and users are base-platform), tables stay in `public`.
