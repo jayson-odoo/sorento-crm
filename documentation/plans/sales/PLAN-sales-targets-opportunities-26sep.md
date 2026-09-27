@@ -1,6 +1,6 @@
 # PLAN: sales targets, opportunities and the WhatsApp achievement broadcast (#1170)
 
-Status: **building, wave 2.** S1 built on PR #1297 (track: full; build contract section 16; reviewer and security-reviewer clean); owner hand test 27 Sep returned F1 to F6, fixed in fix lane round 2 on the same PR (section 17), awaiting the owner's re-test; S6 merged (#1260). Wave 1, S6, was on PR #1260 (wave 1: the `sales` module and schema, Sales Teams with dated
+Status: **building, wave 2.** S1 built on PR #1297 (track: full; build contract section 16; reviewer and security-reviewer clean); owner hand test 27 Sep returned F1 to F6, fixed in fix lane round 2 on the same PR (section 17); the retest (27 Sep 14:25 MYT) returned F1 to F3, fixed in fix lane round 3 (section 18), awaiting the owner's re-test; S6 merged (#1260). Wave 1, S6, was on PR #1260 (wave 1: the `sales` module and schema, Sales Teams with dated
 membership, the Sales menu with Sales Agents moved in; section 15). S6 accepted on the owner's
 hand test (26 Sep ~13:25Z); fix lane round 2 on the same PR adds the team leader (W1) and lists
 a returning agent once (W2), section 15. Track: full. Next: wave 2,
@@ -2168,3 +2168,43 @@ no-ops once #1308 lands; re-run `./scripts/alembic-reparent.sh` at the pre-merge
 Evidence: `evidence/s1/round2/` (agent-browser, seeded data on a private database, navigation
 by sidebar clicks from `/`, 1280 and 375, `scrollWidth` at or under the viewport at 375). See
 its `README.md` for the steps.
+
+## 18. S1 fix lane round 3 (27 Sep, the owner's retest; UAC S1-36 to S1-38)
+
+Owner ruling 27 Sep 14:25 MYT (retest on :3081, PR #1297 comment 5852904488), verbatim in that
+comment. How each point was applied:
+
+- **F1, figures in Edit mode** ("should be editable in Edit mode ah", "shouldn't have the edit
+  icon line by line", "how do i set target for different period?"): the per-row pencil
+  (`InlineFigure`) and Add figure are removed. In Edit mode the Periods tab has one figure input
+  per period. A team target's Agents tab is one grid for read and edit: a row per agent, a
+  column per period, the Team target totals row at the bottom; in Edit mode every cell is an
+  input (a member with no figure yet too) and the totals follow what is typed. A team period is
+  still the sum (T3), so the team's own Periods tab shows the live sum, not an input. Save sends
+  the header, the figures and the tiers in one `PATCH /sales/targets/{id}`: `figures:
+  [{period_id, target_value}]` (the target's own periods, or a team target's agents' periods)
+  and `new_agents: [{sales_agent_id, figures: [{period_start, target_value}]}]`. Figures apply
+  before the header, so a date change in the same Save keeps them under the S1-5 keep rule. The
+  single-period `PATCH .../periods/{id}` and `POST .../children` routes stay for API callers.
+- **F2, commission** ("how do i add commission"): the S4 storage and computation land here
+  because the owner asked for the tab to work now: migration `sales_0005_commission_tiers`
+  (`sales.targets.commission_method`, `sales.target_commission_tiers` as 3.3 describes),
+  tiers on create and PATCH (S4-1's rules), Duplicate copies them, and
+  `commission_service.commission_for` gives `commission_earned` and `bonus_earned` per period
+  (S4-2 to S4-6). The Commission tab: read mode shows How tiers pay and the tiers as rows, or
+  "No commission" with Add tier (which opens Edit mode with a first row); Edit mode has the
+  method dropdown (S4-11), the tier inputs, Add tier and Remove tier. The Periods table gains a
+  Commission (RM) column once a target has tiers. Still S4: the breakdown popover (S4-9), the
+  team form's copied Agent tiers table (T4) and the Team pool on the team row (S4-10); each
+  target (a child included) holds and edits its own tiers.
+- **F3, the agent target record** ("if I am viewing an agent target instead of team target, we
+  need to have a tab to show the team target for me to redirect, otherwise team target and
+  agent target the UI looks too alike already"): the header meta reads "Agent target, part of
+  <team target>" with a link; a Team target tab shows the parent's number, name, who it is for,
+  Measure, Counts, Applies to, dates, Split, its periods with figures, and Open team target.
+  What counts and Dates stay read-only in both modes with one line "Set on the team target";
+  the struck-out "Set on 2026 Q4 Target" link is gone. The agent's own figures per period edit
+  in Edit mode on its record and re-sum the team target in the same request.
+
+Evidence: `evidence/s1/round3/` (agent-browser, seeded data on a private database, navigation
+by sidebar clicks from `/`, 1280 and 375). See its `README.md` for the steps.
