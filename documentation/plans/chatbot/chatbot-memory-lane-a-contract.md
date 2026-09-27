@@ -6,7 +6,7 @@ text. The round 3 mockups (`chatbot-memory-27sep-mockup-*.html`,
 `chatbot-memory-27sep-illustrations.html`) are the screens; where the round 2 plan text and a
 round 3 mockup disagree, the mockup wins (owner ruling 27 Sep 00:50 MYT: "final mockup to align").
 
-Status: lane A build, 27 Sep 2026. Track: full.
+Status: lane A built, 27 Sep 2026, PR #1304 ready for the orchestrator review. Track: full.
 
 **Round 3 text supersedes parts of this file (merged 27 Sep).** As built after round 3: the level
 values are `off | conversation | episodes | full` (`past` renamed `episodes`, label unchanged);
