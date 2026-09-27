@@ -36,7 +36,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.base import set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
-from app.services.chatbot import dispatch, jsc, media_intake, trace as trace_mod
+from app.services.chatbot import dispatch, jsc, llm_call, media_intake, trace as trace_mod
 from app.services.chatbot.contracts import (
     BUSINESS_BRANCH_KINDS,
     CRM_COMPLETED_BRANCH_KINDS,
@@ -58,11 +58,13 @@ from app.services.chatbot.usage import record_parser_usage
 # is everything that has to touch a database or a tool on its behalf.
 from app.services.chatbot import session_state, turn_runtime
 from app.services.chatbot.turn import pending as turn_pending
+from app.services.chatbot.turn import question as turn_question
 from app.services.chatbot.turn import state as turn_state
 from app.services.chatbot.turn import compose as turn_compose
 from app.services.chatbot.turn import fetch as run_fetch_mod
 from app.services.chatbot.turn import memory as memory_mod
 from app.services.chatbot.turn import tail as turn_tail
+from app.services.chatbot.turn import task as turn_task
 from app.services.chatbot.turn.apply import apply as turn_apply
 from app.services.chatbot.turn.apply import is_product_shaped_entity
 from app.services.chatbot.turn.policy import load_policy
@@ -1258,6 +1260,14 @@ def _run_stages(  # noqa: PLR0915
             ingress=envelope.ingress,
             is_test=bool(dry_run),
         )
+        # PR #1247 round 8: the last three exchanges, so a short reply is read against
+        # what was asked. Same rows, same scopes, same session as the line above.
+        recent = turn_runtime.recent_exchanges(
+            db,
+            contact_respond_id=contact_respond_id,
+            ingress=envelope.ingress,
+            is_test=bool(dry_run),
+        )
         # `parser_config` is resolved AFTER media intake, not here: AC-1810's "no
         # parser call" means no parser SETUP either - a media-denied turn (no API
         # key required to check a gate/quota/burst decision) must not fail because
@@ -1420,6 +1430,10 @@ def _run_stages(  # noqa: PLR0915
     stage[0] = "understood"
     profile_words = memory_mod.profile_block(state_in.profile)
     pending_options = _pending_option_labels(state_in.pending)
+    # PR #1247 rounds 8 and 9: the ONE question on the table, as a structured object the
+    # parser answers in `open_question_answer` - the open pick or offer when there is
+    # one (it is what the message answers), else the stock question (issue #1293).
+    open_question = turn_question.open_question(state_in.pending, state_in.focus.tasks)
     user_block = parser.build_user_block(
         previous_response=previous_reply,
         latest_user_message=latest_user_message,
@@ -1427,6 +1441,8 @@ def _run_stages(  # noqa: PLR0915
         pending_options=pending_options,
         profile_block=profile_words,
         focus=state_in.focus,
+        open_question=open_question,
+        recent_exchanges=recent,
     )
     # G6: a dry run may supply the emission instead of paying for it.
     parser_bypassed = dry_run and "mock_reformulator_output" in harness_present
@@ -1481,7 +1497,18 @@ def _run_stages(  # noqa: PLR0915
                 error=message,
                 records=turn_trace.persisted(),
             )
-        return _failed_result(turn_id, "understood", message, actions, dry_run)
+        return _failed_result(
+            turn_id,
+            "understood",
+            message,
+            actions,
+            dry_run,
+            reply_text=(
+                llm_call.RATE_LIMITED_REPLY
+                if getattr(exc, "rate_limited", False)
+                else GENERIC_ERROR_REPLY
+            ),
+        )
 
     # -- recall: ONE re-parse, behind two flags (AC-1547) ------------------- #
     # `anaphora.backward_reference` is the parser's own signal that the message points at
@@ -1501,6 +1528,8 @@ def _run_stages(  # noqa: PLR0915
                 profile_block=profile_words,
                 episodes_block=memory_mod.episodes_block(recalled),
                 focus=state_in.focus,
+                open_question=open_question,
+                recent_exchanges=recent,
             )
             try:
                 parser_raw = parser.parse(parser_config, user_block)
@@ -2006,8 +2035,22 @@ def _run_stages(  # noqa: PLR0915
         # the time the ASK section runs.
         bridge_answered = False
         lane_error_text: str | None = None
+
+        # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+        # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3. -- the OPEN TASK's own
+        # re-ask: nothing to fetch, nothing to roster -- #
+        # A task RESUMED with nothing new ("back to the stock check") asks only what is
+        # still owed and calls no tool at all; so does a bare number the task could not
+        # attribute to one of its slots. Composed the same way the stock refusal below
+        # is - a text Answer, the whole reply, taking the same tail every composed
+        # answer takes.
+        if plan.trace.task_question and completes_here:
+            stage[0] = "replied"
+            answer = turn_compose.Answer(text=plan.trace.task_question)
+
         if (
-            branch_kind in ("business_query", "check_promotion")
+            answer is None
+            and branch_kind in ("business_query", "check_promotion")
             and completes_here
             and not sales_report_grant_refused
             # AC-1708 (captain's ruling, 20 Sep 2026): an `offer` / `access_ask` exit is
@@ -2316,6 +2359,7 @@ def _run_stages(  # noqa: PLR0915
                         # than replacing it - the same rule `turn_compose.compose`
                         # already applies on its own miss arm below.
                         carried_pending=state_out.pending,
+                        dealer_stock_ask=_dealer_stock_ask(state_out, plan),
                     )
                     if answer is not None:
                         bridge_answered = True
@@ -2487,6 +2531,29 @@ def _run_stages(  # noqa: PLR0915
                     # An answer that is not a counted set closes the page: the customer
                     # has moved on, and "more" must not resume a set they left.
                     state_out.focus.set_page = None
+                # Ported from PR #1118 (not merged), D25: the open stock task is
+                # whatever the REPLY says is still owed - opened, updated and closed
+                # by one rule, read off the backend's own `needs_quantity` per
+                # product. The engine never decides who must state a quantity; it
+                # reads what the reply stated about it. Owner hand test 26 Sep, slice
+                # 2: the same read narrows to an exact code and turns a family into a
+                # which-one pick (`_stock_ask_reply`).
+                answer = _stock_ask_reply(
+                    answer,
+                    state_out,
+                    envelopes,
+                    fetch_plan,
+                    verdict,
+                    turn_no=turn_no,
+                )
+                # Chatbot stock ask v2 S3, AC-SA314: an `incoming` entry answered
+                # with its own packing list attaches it to THIS reply. `answer.files`
+                # is the same seam every other domain's attachment already flows
+                # through (`turn_runtime.envelope_of`'s own "files" -> here -> the
+                # existing `send_attachments` action, `_send_actions`) - reused
+                # rather than a new action kind, so B3 needs nothing new from the
+                # executor.
+                answer.files.extend(_stock_ask_packing_list_files(envelopes))
                 turn_trace.record(
                     "looked_up",
                     summary="Looked the answer up.",
@@ -2574,6 +2641,10 @@ def _run_stages(  # noqa: PLR0915
             answer = turn_compose.Answer(text=SALES_REPORT_NOT_ENABLED_MESSAGE)
 
     if answer is not None and lane_error_text is None:
+        if _dealer_stock_ask(state_out, plan):
+            # Owner ruling 26 Sep 2026 (hand test F1): whatever composed this stock
+            # reply, a dealer is referred to their salesman, never offered a team.
+            answer = _dealer_refers_to_salesman(answer)
         return _run_answer(
             turn_id=turn_id,
             ctx=ctx,
@@ -2786,6 +2857,85 @@ def _contact_block(envelope: Envelope, known_phone: str | None) -> dict[str, Any
     if not jsc.truthy(contact.get("phone")) and known_phone:
         contact["phone"] = known_phone
     return contact
+
+
+def _dealer_stock_ask(state_out: Any, plan: Any) -> bool:
+    """Is this turn a stock ask by a dealer (an availability-only contact, hand test F1)?"""
+    profile = getattr(state_out, "profile", None)
+    if not getattr(profile, "stock_availability_only", False):
+        return False
+    domains = list(getattr(plan, "domains", None) or []) or list(
+        getattr(state_out.focus, "domains", None) or []
+    )
+    return "inventory" in domains
+
+
+def _dealer_refers_to_salesman(answer: Any) -> Any:
+    from app.services.chatbot import dealer_stock as dealer_mod
+
+    if getattr(answer, "question", None) is not None and (
+        (answer.question.payload or {}).get("stock_pick") is True
+    ):
+        return answer
+    text, question = dealer_mod.without_escalation(
+        getattr(answer, "text", "") or "", getattr(answer, "question", None)
+    )
+    if text == (getattr(answer, "text", "") or "") and question is getattr(answer, "question", None):
+        return answer
+    return dataclasses_replace(answer, text=text, question=question)
+
+
+def _stock_ask_reply(
+    answer: Any,
+    state_out: Any,
+    envelopes: list[dict[str, Any]],
+    fetch_plan: Any,
+    verdict: dict[str, Any],
+    *,
+    turn_no: int,
+) -> Any:
+    """The stock task after the tool's reply, and the reply itself when it is a
+    question (owner hand test 26 Sep, slice 2).
+
+    `turn/task.py::after_reply` owns the rule; this writes its tasks onto the focus and,
+    for a single-domain stock turn whose reply still needs a quantity, says the task's
+    own named question (or the family pick) instead of the presenter's bare "How many
+    units do you need?". The pick is minted as the turn's open question, so the tail
+    persists it and the next turn's `decide()` reads a typed code against its options.
+    """
+    reply = turn_task.after_reply(
+        tuple(state_out.focus.tasks or ()),
+        envelopes,
+        turn_no=turn_no,
+        # SEC-S2: did this ask name a product at all? A bare "what stock do you have?"
+        # fetches a page of the catalogue, and a task must not be opened to collect a
+        # quantity for every row of it. Scoped to the INVENTORY spec only (review
+        # round 2): a multi-domain ask like "promo for X, and what stock do we have?"
+        # names X on the promotion spec, not on the inventory one.
+        named_products=any(
+            spec.entities for spec in fetch_plan.fetch if spec.domain == "inventory"
+        ),
+        asked=[
+            e
+            for e in (verdict.get("entities") or [])
+            if isinstance(e, dict) and e.get("current_message") is True
+        ],
+        demand_qty=verdict.get("demand_qty"),
+    )
+    state_out.focus.tasks = reply.tasks
+    if not reply.text or [spec.domain for spec in fetch_plan.fetch] != ["inventory"]:
+        return answer
+    question = (
+        turn_pending.ask(
+            "product_pick",
+            reply.pick["options"],
+            asked_at_turn=turn_no,
+            payload=reply.pick["payload"],
+        )
+        if reply.pick
+        else None
+    )
+    return turn_compose.Answer(text=reply.text, question=question)
 
 
 def _run_answer(
@@ -3427,6 +3577,11 @@ def _run_casual_lane(
         try:
             raw = casual.call_clarifier(clarifier_config, user_message)
             text = casual.reply_text(casual.central_exchange({"text": raw}))
+        except casual.ClarifierRateLimited as exc:
+            # PR #1247 round 6, ruling 3: a rate limit that never cleared is one plain
+            # sentence, never the provider's text. The row keeps the real reason.
+            failed = f"{type(exc).__name__}: {exc}"
+            text = llm_call.RATE_LIMITED_REPLY
         except casual.ClarifierError as exc:
             failed = f"{type(exc).__name__}: {exc}"
             # The CALL arm keeps today's `sub-error-logger` text, which interpolates the
@@ -3815,8 +3970,12 @@ def _failed_result(
     ctx: dict[str, Any] | None = None,
     item: dict[str, Any] | None = None,
     branch_kind: str | None = None,
+    reply_text: str = GENERIC_ERROR_REPLY,
 ) -> TurnResult:
     """A failed turn still hands the caller today's error reply to send (AC-105, AC-107).
+
+    `reply_text` is that reply unless the caller knows better: a parser call refused by
+    a rate limit on every attempt says `llm_call.RATE_LIMITED_REPLY` (PR #1247 round 6).
 
     `quick_replies` is null, never `[]`: AC-507's contract is `quick_reply` is n8n's
     comma-joined string or null, and a failed turn offered none.
@@ -3833,12 +3992,12 @@ def _failed_result(
         item=item,
         branch_kind=branch_kind,
         delegate=None,
-        reply={"text": GENERIC_ERROR_REPLY, "quick_replies": None},
+        reply={"text": reply_text, "quick_replies": None},
         actions=[
             *actions,
             {
                 "kind": "send_message",
-                "text": GENERIC_ERROR_REPLY,
+                "text": reply_text,
                 "quick_replies": None,
                 "dry_run": dry_run,
             },
@@ -4117,6 +4276,38 @@ class CompleteResult:
 
 def _load_turn(db: Session, turn_id: str) -> ChatbotTurn | None:
     return db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+
+
+def _stock_ask_packing_list_files(envelopes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Chatbot stock ask v2 S3, AC-SA314: one file per `incoming` entry that carries
+    a `packing_list` (gated server-side, `StockService._apply_stock_visibility` only
+    ever sets it for a contact whose `packing_list_allowed` is on - this reads that
+    decision, it does not re-make it). The canonical file shape every other domain's
+    attachment already carries into `answer.files` (`url`/`filename`/`mimeType`,
+    `sorento_crm_mcp.presenters._Builder.attach`'s own normalisation, unreachable
+    from this package so re-stated here rather than imported across the process
+    boundary)."""
+    files: list[dict[str, Any]] = []
+    for envelope in envelopes or []:
+        if not isinstance(envelope, dict):
+            continue
+        for entry in envelope.get("stock_availability") or []:
+            if not isinstance(entry, dict) or entry.get("branch") != "incoming":
+                continue
+            packing_list = entry.get("packing_list")
+            if not isinstance(packing_list, dict):
+                continue
+            url = packing_list.get("file_path")
+            if not url:
+                continue
+            files.append(
+                {
+                    "url": url,
+                    "filename": packing_list.get("filename"),
+                    "mimeType": packing_list.get("mime_type"),
+                }
+            )
+    return files
 
 
 def _attachments_src(answer: Any) -> Any:

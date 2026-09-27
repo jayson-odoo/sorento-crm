@@ -341,6 +341,16 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                 for r in rungs_tried
             ]
             block = block + "\n" + f"Nothing on {_join_words(names)} either."
+        # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+        # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3, D15: "just proceed"
+        # answered the products that had a quantity and dropped the rest, so the
+        # reply names the ones it did not check - a dealer must never have to work
+        # out which of the products they asked about are missing from the answer.
+        # LAST, under the rungs line: it is the closing note on this section, and it
+        # read as part of the ladder sentence when it sat above one.
+        not_checked = [n for n in (env.get("not_checked") or []) if isinstance(n, str)]
+        if not_checked:
+            block = block + "\n" + f"Not checked: {', '.join(not_checked)}."
         text_parts.append(block)
 
         for f in env_files:
