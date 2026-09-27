@@ -32,7 +32,10 @@ CAPS: dict[str, int] = {"L1": 600, "L2": 350, "L3": 450, "L4": 250, "L5": 150}
 TOTAL_CAP = 1800
 
 _PREV_RESPONSE_CUT_BYTES = 600
-_EARLIER_MESSAGE_CUT_BYTES = 200
+#: 128, not 200 (reviewer pass at d89110c0, S2): three earlier messages at 200 bytes
+#: each put the conversation level at +270 est. tokens over Off, against AC-MEM053's
+#: +200. At 128 the worst case is +198 (conversation), +446 (episodes), +596 (full).
+_EARLIER_MESSAGE_CUT_BYTES = 128
 _SUMMARY_CUT_BYTES = 720
 _CURRENT_MESSAGE_CUT_BYTES = 1500
 _MAX_EARLIER_MESSAGES = 3
@@ -171,7 +174,9 @@ def _l5_segment(fact: dict[str, Any]) -> str:
             value = [_collapse_whitespace(str(v)) for v in value]
         else:
             value = _collapse_whitespace(str(value))
-        return f"{label} {json.dumps(value)}"
+        # `ensure_ascii=False`: a Chinese `about` stays readable, never `\u....`
+        # (reviewer pass at d89110c0, N2).
+        return f"{label} {json.dumps(value, ensure_ascii=False)}"
     return f"{label} {_collapse_whitespace(str(value))}"
 
 

@@ -83,7 +83,12 @@ def _turn(
         }
     ]
     if rows_found is not None:
-        trace.append({"stage": "looked_up", "status": "done", "facts": {"rows_found": rows_found}})
+        # The looked_up stage as the engine writes it (reviewer pass at d89110c0, S5):
+        # a miss is a `missed` domain, never a `rows_found` count nothing writes.
+        trace.append({
+            "stage": "looked_up", "status": "ok",
+            "facts": {"domains": [domain], "sections": 1, "missed": [domain] if rows_found == 0 else []},
+        })
     if tools_used:
         trace.append({"kind": "tool", "name": tools_used[0], "args": {}})
     if team:

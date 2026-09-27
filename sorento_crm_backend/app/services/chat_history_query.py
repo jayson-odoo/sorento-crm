@@ -127,20 +127,27 @@ def _turn_tickets(db: Session, rows: list[ChatHistory]) -> dict[str, int]:
     under `facts`) - either shape names a ticket, and a turn that never queued (S7
     ordering off, or unordered) carries neither.
     """
-    from sqlalchemy import String, cast
+    import uuid
+
     from app.models.chatbot_turn import ChatbotTurn
 
-    turn_ids = {r.turn_id for r in rows if r.turn_id}
+    def _is_uuid(value: str) -> bool:
+        try:
+            uuid.UUID(str(value))
+        except ValueError:
+            return False
+        return True
+
+    # `ChatHistory.turn_id` is a plain `String` that predates `chatbot.turns` and, on
+    # older and synthetic rows, is not a UUID at all. Those ids cannot name a turn, so
+    # they are dropped here rather than casting `chatbot.turns.id` to text for the
+    # whole page, which defeats its primary key (reviewer pass at d89110c0, N10).
+    turn_ids = {r.turn_id for r in rows if r.turn_id and _is_uuid(r.turn_id)}
     if not turn_ids:
         return {}
-    # Cast rather than filter `ChatHistory.turn_id` client-side: it is a plain
-    # `String` column that predates `chatbot.turns` and, in several older/synthetic
-    # rows, is not a UUID at all - a bare `ChatbotTurn.id.in_(...)` fails the whole
-    # query with an `invalid input syntax for type uuid` the moment one such id is
-    # in the page (measured directly against this file's own pre-existing fixtures).
     turns = (
         db.query(ChatbotTurn.id, ChatbotTurn.trace)
-        .filter(cast(ChatbotTurn.id, String).in_(turn_ids))
+        .filter(ChatbotTurn.id.in_(turn_ids))
         .all()
     )
     tickets: dict[str, int] = {}

@@ -196,6 +196,35 @@ class TestQueueTicketOnChatHistoryRows:
         assert row.queue_ticket is None
 
 
+    def test_the_ticket_lookup_uses_the_turn_primary_key(self, db) -> None:
+        """Reviewer pass at d89110c0 (N10): `CAST(chatbot.turns.id AS VARCHAR) IN (...)`
+        defeats the primary key on every grid page. A non-UUID `turn_id` on the page
+        (older and synthetic rows carry them) is skipped instead, never cast for."""
+        from sqlalchemy import event
+
+        turn = _turn(db, contact_respond_id="ZZT-qt-3", queue_event={"ticket": 7, "waited_ms": 10})
+        _msg(db, sent_at=NOW, contact_id="ZZT-qt-3", message="uuid id", turn_id=str(turn.id))
+        _msg(db, sent_at=NOW, contact_id="ZZT-qt-3", message="legacy id", turn_id="not-a-uuid")
+
+        statements: list[str] = []
+
+        def _capture(conn, cursor, statement, params, context, executemany):
+            statements.append(statement)
+
+        engine = db.get_bind().engine
+        event.listen(engine, "before_cursor_execute", _capture)
+        try:
+            rows, _ = _list(db, date_from=NOW - timedelta(hours=1), date_to=NOW + timedelta(hours=1))
+        finally:
+            event.remove(engine, "before_cursor_execute", _capture)
+
+        assert next(r for r in rows if r.message == "uuid id").queue_ticket == 7
+        assert next(r for r in rows if r.message == "legacy id").queue_ticket is None
+        turn_reads = [st for st in statements if "turns" in st and "trace" in st]
+        assert turn_reads, statements
+        assert not any("CAST(" in st.upper() for st in turn_reads), turn_reads
+
+
 # --------------------------------------------------------------------------- #
 # Ordering + keyset pagination                                                #
 # --------------------------------------------------------------------------- #

@@ -10,19 +10,24 @@ turns, and get the identical answer (AC-MEM029).
 
 **No figures.** A stock count, a price or an ETA is stale by the next day - the summary
 says WHAT was asked and HOW it ended, never the number. Outcome is read from structural
-signals only (`branch_kind`, the `apply` record's `plan.ask`, a `looked_up` stage's
-`facts.rows_found`) - never from a rendered reply, which can say anything.
+signals the engine really writes (reviewer pass at d89110c0, S5): `branch_kind`, the
+`apply` record's `plan.ask` and `plan.denied`, the `looked_up` stage's status and its
+`facts.missed` / `facts.sections`, and the `memory` record's open question - never from
+a rendered reply, which can say anything.
 
 Input: a list of turn dicts, oldest first, each shaped
 `{id, created_at, branch_kind, status, message, trace, result_refs}` - the same shape
 `chatbot.turns` rows project to (`created_at` a datetime, `trace` the same list of stage/
 kind records the trace writer already produces: an `apply` kind record with
-`verdict`/`plan`, a `looked_up` stage with `facts.rows_found`, a `tool` kind record, an
-`offer` kind record, a `replied` stage whose rendered facts are never read here).
+`verdict`/`plan`, a `looked_up` stage with `facts.missed`/`facts.sections`, a `tool`
+kind record, a `memory` kind record whose `open_question.after` is the question the
+reply left open, a `replied` stage whose rendered facts are never read here).
 """
 from __future__ import annotations
 
+from datetime import timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 #: One clause per outcome (AC-MEM022), read from structural data only.
 _OUTCOME_WORDS: dict[str, str] = {
@@ -60,6 +65,21 @@ _MONTH_ABBR = (
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 )
 _WEEKDAY_ABBR = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+#: The dealers' clock (reviewer pass at d89110c0, S14): a message sent Fri 07:10 in
+#: Kuala Lumpur is Thu 23:10 UTC, and must read "Fri".
+_LOCAL_TZ = ZoneInfo("Asia/Kuala_Lumpur")
+
+#: Open-question kinds that offer a team (`turn/pending.py::ESCALATION_OFFER_KINDS`).
+_OFFER_KINDS = frozenset({"team_pick", "member_offer", "company_pick"})
+
+
+def local_time(when: Any) -> Any:
+    """`when` on the dealers' clock. A naive datetime is UTC (how `chatbot.turns`
+    stores it)."""
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when.astimezone(_LOCAL_TZ)
 
 
 def _trace(turn: dict[str, Any]) -> list[dict[str, Any]]:
@@ -153,18 +173,30 @@ def _merge_entities(target: dict[str, list[str]], source: dict[str, list[str]]) 
                 bucket.append(v)
 
 
+def _open_question(turn: dict[str, Any]) -> dict[str, Any] | None:
+    """The question this turn's reply left open, off its `memory` record."""
+    entries = _kind_records(turn, "memory")
+    after = (entries[-1].get("open_question") or {}).get("after") if entries else None
+    return after if isinstance(after, dict) else None
+
+
 def _outcome(turn: dict[str, Any]) -> str:
     branch_kind = turn.get("branch_kind")
     if branch_kind in _BRANCH_OUTCOME:
         return _BRANCH_OUTCOME[branch_kind]
-    if _plan(turn).get("ask"):
+    plan = _plan(turn)
+    if plan.get("denied") and not plan.get("fetch"):
+        return "denied"
+    if plan.get("ask"):
         return "asked_back"
     looked_up = _stage_record(turn, "looked_up")
     if looked_up is not None:
-        rows_found = (looked_up.get("facts") or {}).get("rows_found")
-        if rows_found == 0:
+        facts = looked_up.get("facts") or {}
+        if looked_up.get("status") == "failed" or facts.get("missed") or facts.get("sections") == 0:
             return "not_found"
-        return "answered"
+    question = _open_question(turn)
+    if question is not None and question.get("kind") not in _OFFER_KINDS:
+        return "asked_back"
     return "answered"
 
 
@@ -179,10 +211,22 @@ def _tools_used(turns: list[dict[str, Any]]) -> list[str]:
 
 
 def _offers(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A team offered in a reply, and what the next turn in the episode did with it:
+    accepted (the escalation ran), declined, or no answer."""
     out: list[dict[str, Any]] = []
-    for turn in turns:
-        for entry in _kind_records(turn, "offer"):
-            out.append({"team": entry.get("team"), "answer": entry.get("answer")})
+    for index, turn in enumerate(turns):
+        question = _open_question(turn)
+        if question is None or question.get("kind") not in _OFFER_KINDS or not question.get("team"):
+            continue
+        following = turns[index + 1].get("branch_kind") if index + 1 < len(turns) else None
+        answer = (
+            "accepted"
+            if following == "out_of_scope"
+            else "declined"
+            if following == "escalation_declined"
+            else None
+        )
+        out.append({"team": question.get("team"), "answer": answer})
     return out
 
 
@@ -207,6 +251,7 @@ def _date_prefix(when: Any) -> str:
     """`Thu 25 Sep` - the weekday tells the parser (and the staff screen) a line is
     old with no clock math at all (PLAN 5.1: "the day tells the parser a line is
     old")."""
+    when = local_time(when)
     weekday = _WEEKDAY_ABBR[when.weekday()]
     month = _MONTH_ABBR[when.month - 1]
     return f"{weekday} {when.day} {month}"

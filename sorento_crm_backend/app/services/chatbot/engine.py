@@ -62,6 +62,7 @@ from app.services.chatbot.turn import question as turn_question
 from app.services.chatbot.turn import state as turn_state
 from app.services.chatbot.turn import compose as turn_compose
 from app.services.chatbot.turn import context as context_mod
+from app.services.chatbot.turn import episode_digest as episode_digest_mod
 from app.services.chatbot.turn import fetch as run_fetch_mod
 from app.services.chatbot.turn import memory as memory_mod
 from app.services.chatbot.turn import profile_facts as profile_facts_mod
@@ -273,11 +274,7 @@ def _contact_respond_id(envelope: Envelope) -> str:
 
 def _is_human_intervened(envelope: Envelope) -> bool:
     """`is-human-intervened`: `custom_fields.find(...)?.value?.toBoolean() == true`."""
-    row = jsc.find(
-        jsc.get(envelope.contact, "custom_fields"),
-        lambda x: jsc.get(x, "name") == "is_human_intervened",
-    )
-    return jsc.to_boolean(jsc.get(row, "value")) is True
+    return memory_mod.contact_is_human_intervened(envelope.contact)
 
 
 def _attachment_type(envelope: Envelope) -> Any:
@@ -1210,6 +1207,8 @@ _WEEKDAY_ABBR = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 def _short_day_time(when: Any) -> str:
     if when is None:
         return ""
+    # The dealers' clock, as the episode summaries read (reviewer pass at d89110c0, S14).
+    when = episode_digest_mod.local_time(when)
     return f"{_WEEKDAY_ABBR[when.weekday()]} {when.strftime('%H:%M')}"
 
 
@@ -1269,6 +1268,19 @@ def _memory_intake(
     if resolved is None:
         return _degraded("ambiguous_or_missing_contact")
     contact_pk, own_level = resolved
+    # Frames and the tally are keyed by `respond_io_id` alone, so an id another
+    # workspace's contact also carries would mix two people's memory. Refused here the
+    # same way the staff GET refuses it (reviewer pass at d89110c0, N11).
+    from app.models.access import RespondContact
+
+    shared = (
+        db.query(RespondContact.id)
+        .filter(RespondContact.respond_io_id == contact_respond_id)
+        .limit(2)
+        .count()
+    )
+    if shared > 1:
+        return _degraded("respond_id_shared")
 
     try:
         return _memory_intake_resolved(

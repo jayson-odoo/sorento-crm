@@ -111,7 +111,9 @@ class TestEveryMemoryLevelKeepsRound9Context:
 
 class TestL3BudgetDropsTheOlderLayerFirst:
     def test_earlier_messages_go_before_any_exchange_and_the_newest_exchange_stays(self) -> None:
-        long_reply = "x" * 480
+        # 520, not 480, since the earlier-message cut went from 200 to 128 bytes (reviewer
+        # pass at d89110c0, S2): the earlier messages must still overflow L3 here.
+        long_reply = "x" * 520
         recent = [
             ("first ask", long_reply),
             ("second ask", long_reply),

@@ -168,21 +168,31 @@ class TestAC_MEM053PerLevelMemoryBudget:  # noqa: N801
     `off`'s own total (off already carries `previous_response`/`current_message`/
     `current_subject`/pending - none of which are a memory layer) - `off +0`,
     `conversation +200`, `episodes (was "past") +450`, `full +600`.
+
+    Reviewer pass at d89110c0 (S2): the MEMORY inputs are the worst case, but every
+    non-memory input is already under its cut, so Off and the level render it the same
+    and the delta is memory alone. (An uncut 4 KB previous reply in the Off baseline,
+    which every other level cuts, used to hide the memory growth.)
     """
 
     def _oversized_layers(self, context, *, level: str):
         return context.ContextLayers(
             level=level,
-            profile_facts=[{"key": "note", "value": "x" * (context.CAPS["L5"] * 3 * 3)}],
-            summaries=[f"summary {i} " + "y" * 300 for i in range(9)],
-            earlier_messages=[{"created_at": f"day{i}", "text": "z" * 300} for i in range(9)],
-            previous_response="p" * (context.CAPS["L3"] * 3 * 3),
-            current_subject="s" * (context.CAPS["L2"] * 3 * 3),
+            profile_facts=[
+                {"key": "project", "value": "y" * 60},
+                {"key": "about", "value": ["a" * 120, "b" * 120, "c" * 120]},
+                {"key": "note", "value": "x" * 200},
+                {"key": "usual_products", "value": ["SRTWB1455", "M483-BL", "M486-75-BL"]},
+            ],
+            summaries=[f"summary {i} " + "y" * 900 for i in range(9)],
+            earlier_messages=[{"created_at": f"Thu 23:{i}0", "text": "z" * 900} for i in range(9)],
+            previous_response="p" * 200,
+            current_subject="s" * 100,
             pending_kind="product_pick",
-            pending_options=[f"option {i}" for i in range(30)],
+            pending_options=[f"option {i}" for i in range(3)],
             settings_profile_line=None,
-            current_message="m" * (context.CAPS["L1"] * 3 * 3),
-            reply_to="q" * (context.CAPS["L1"] * 3 * 3),
+            current_message="m" * 100,
+            reply_to="q" * 100,
             media_line=None,
         )
 

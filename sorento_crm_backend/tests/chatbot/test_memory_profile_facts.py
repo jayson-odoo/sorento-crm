@@ -607,6 +607,24 @@ class TestNoExpiry:
 # --------------------------------------------------------------------------- #
 
 
+def _access_resolution(session_factory, cid: str) -> dict:
+    """What a turn resolves for this contact's access: the agent grant
+    (`head/access.check_access`) and the profile flags `load_profile` hands the
+    engine (stock, packing list, availability-only, tier)."""
+    from app.services.chatbot import turn_runtime
+    from app.services.chatbot.head.access import check_access
+
+    db = session_factory()
+    profile, _ = turn_runtime.load_profile(db, cid)
+    return {
+        "access": check_access(db, agent_code="general_enquiries", contact_id=cid, space_id=None),
+        "profile": (
+            profile.tier, profile.stock_allowed, profile.packing_list_allowed,
+            profile.notify_salesman, profile.stock_availability_only, profile.grants,
+        ),
+    }
+
+
 class TestFactsNeverGrant:
     def test_stated_role_owner_leaves_access_and_customer_links_untouched(self, session_factory) -> None:
         profile_facts = _load_profile_facts()
@@ -621,10 +639,9 @@ class TestFactsNeverGrant:
             ),
             {"c": contact_pk},
         ).fetchall()
-        before_agent = session_factory().execute(
-            text("SELECT id FROM sales_agents LIMIT 0")
-        ).fetchall()  # no agents seeded; the point is nothing here changes either
-
+        # Reviewer pass at d89110c0 (N6): the real access resolution a turn makes for
+        # this contact, before and after, not an always-empty `sales_agents LIMIT 0`.
+        before_access = _access_resolution(session_factory, cid)
         db = session_factory()
         profile_facts.apply_statement(db, cid, "role", "owner", turn_id="ZZT-pf-grant-1")
 
@@ -636,7 +653,7 @@ class TestFactsNeverGrant:
             {"c": contact_pk},
         ).fetchall()
         assert before_links == after_links, (before_links, after_links)
-        assert before_agent == []
+        assert _access_resolution(session_factory, cid) == before_access
 
         # No `access_levels` column exists on `respond_contacts` today in this codebase's
         # RBAC model (grants live on `users`, not on a chat contact) - the strongest

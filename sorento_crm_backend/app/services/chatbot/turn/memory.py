@@ -139,6 +139,19 @@ def _naive_utc(when: datetime) -> datetime:
     return when
 
 
+def contact_is_human_intervened(contact: Any) -> bool:
+    """`is-human-intervened` off an envelope's `contact`: a staff member has taken the
+    chat over, so its topic reset closes no episode. One reading for the live engine and
+    the backfill (reviewer pass at d89110c0, S16)."""
+    from app.services.chatbot import jsc
+
+    row = jsc.find(
+        jsc.get(contact, "custom_fields"),
+        lambda x: jsc.get(x, "name") == "is_human_intervened",
+    )
+    return jsc.to_boolean(jsc.get(row, "value")) is True
+
+
 def _turn_message_text(row: ChatbotTurn) -> str:
     """The customer's own text for this turn, read off the stored envelope - never the
     reply, never the parser's derived verdict (AC-MEM022: outcome reads structured
