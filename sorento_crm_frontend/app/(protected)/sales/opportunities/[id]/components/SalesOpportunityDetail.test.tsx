@@ -238,11 +238,10 @@ describe('SalesOpportunityDetail', () => {
     expect(screen.queryByLabelText(/lost reason/i)).toBeNull();
   });
 
-  it('fix round2 F6: the stage items disable while an edit session is open', () => {
+  it('fix round2 F6: no stage items are reachable while an edit session is open (the header states one intent: Save or Cancel)', () => {
     render(<SalesOpportunityDetail id="opp-1" />);
     fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
-    const gear = within(screen.getByTestId('gear'));
-    expect(gear.getByRole('button', { name: 'Qualified' })).toBeDisabled();
+    expect(screen.queryByTestId('gear')).toBeNull();
   });
 
   it('choosing Lost opens a dialog with a required reason select and blocks Confirm without it', async () => {
@@ -278,7 +277,10 @@ describe('SalesOpportunityDetail', () => {
     expect(screen.getByRole('tab', { name: 'Products' })).toBeTruthy();
     expect(screen.getByText('Opportunity')).toBeTruthy();
 
-    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Products' }), { button: 0 });
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Products' }), {
+      button: 0,
+      ctrlKey: false,
+    });
     expect(screen.getByText(/no products yet/i)).toBeTruthy();
   });
 
@@ -327,6 +329,113 @@ describe('SalesOpportunityDetail', () => {
     });
     render(<SalesOpportunityDetail id="opp-1" />);
     expect(screen.getByText('Price')).toBeTruthy();
+  });
+
+  it('fix round2 F7: the Products tab (view mode) shows unit price, amount and a total row', () => {
+    hooks.useSalesOpportunity.mockReturnValue({
+      data: detail({
+        lines: [
+          {
+            id: 'l1',
+            product_id: 'p1',
+            product_code: 'ZZT-001',
+            product_name: 'ZZT Basin',
+            qty: 2,
+            unit_price: '10.00',
+            line_amount: '20.00',
+          },
+          {
+            id: 'l2',
+            product_id: 'p2',
+            product_code: 'ZZT-002',
+            product_name: 'ZZT Faucet',
+            qty: 1,
+            unit_price: null,
+            line_amount: null,
+          },
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<SalesOpportunityDetail id="opp-1" />);
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Products' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    // The priced line's amount and the total (one priced line, so they match).
+    expect(screen.getAllByText('RM 20.00').length).toBe(2);
+    expect(screen.getByText('RM 10.00')).toBeTruthy();
+    expect(screen.getByText('Total')).toBeTruthy();
+  });
+
+  it('fix round2 F7: editing seeds the stored Unit price, and Expected amount stays live once it matched the stored sum', () => {
+    hooks.useSalesOpportunity.mockReturnValue({
+      data: detail({
+        expected_amount: '20.00',
+        lines: [
+          {
+            id: 'l1',
+            product_id: 'p1',
+            product_code: 'ZZT-001',
+            product_name: 'ZZT Basin',
+            qty: 2,
+            unit_price: '10.00',
+            line_amount: '20.00',
+          },
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<SalesOpportunityDetail id="opp-1" />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Products' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    expect((screen.getByLabelText(/unit price/i) as HTMLInputElement).value).toBe('10.00');
+    fireEvent.change(screen.getByLabelText(/qty/i), { target: { value: '4' } });
+
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Details' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    expect((screen.getByLabelText('Expected amount') as HTMLInputElement).value).toBe('40.00');
+  });
+
+  it('fix round2 F7: a customised Expected amount stays put even as a line changes', () => {
+    hooks.useSalesOpportunity.mockReturnValue({
+      data: detail({
+        expected_amount: '999.00',
+        lines: [
+          {
+            id: 'l1',
+            product_id: 'p1',
+            product_code: 'ZZT-001',
+            product_name: 'ZZT Basin',
+            qty: 2,
+            unit_price: '10.00',
+            line_amount: '20.00',
+          },
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<SalesOpportunityDetail id="opp-1" />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Products' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.change(screen.getByLabelText(/qty/i), { target: { value: '4' } });
+
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Details' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    expect((screen.getByLabelText('Expected amount') as HTMLInputElement).value).toBe('999.00');
   });
 
   it('fix B2: Edit swaps the title, amount and close date for inputs in place', () => {
