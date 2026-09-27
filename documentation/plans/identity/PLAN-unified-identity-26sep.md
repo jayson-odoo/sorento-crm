@@ -681,6 +681,11 @@ and routes to `/invite`, which creates and emails in one request). After S3:
   migration (AC-04). That is not creation and not new behaviour: `respond_link_service.py:25-48`
   already caches exactly this link at runtime today. The S0 PR lists every link it wrote so the
   owner can see them; any the owner rejects are unlinked with the S3 Unlink.
+- It never links at runtime (S3 fix round 2, reviewer B1 at 6a7f0bcd): the runtime phone-match
+  cache in `respond_link_service.py` re-linked a contact the owner had just unlinked on the next
+  notification, SLA summary, banner or WhatsApp task. It is removed, and the phone fallback with
+  it: every sender reaches a user only through `users.respond_contact_id`, so an unlinked user
+  gets no WhatsApp until the owner links one (`tests/test_identity_s3_unlink_holds.py`).
 
 ### 6.6 Dealer contacts and every other portal contact (Q3, Q4)
 

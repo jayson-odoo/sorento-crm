@@ -145,7 +145,9 @@ def test_ac01_resolve_user_respond_contact_never_caches_onto_a_contact_another_u
 
         result = resolve_user_respond_contact(db, seeker)  # must not raise
 
-        assert result is not None and result.id == contact.id
+        # S3 fix round 2 (B1): no link, no contact - the phone-match fallback that
+        # returned the holder's contact here is gone (respond_link_service docstring).
+        assert result is None
         db.refresh(seeker)
         assert seeker.respond_contact_id is None, "seeker must not have cached a contact another user already holds"
 
