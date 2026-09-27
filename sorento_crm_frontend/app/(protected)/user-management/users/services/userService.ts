@@ -104,12 +104,6 @@ export async function setDailySlaSummarySubscription(
   }
 }
 
-export interface UserSelectOption {
-  id: string;
-  name: string | null;
-  email: string | null;
-}
-
 export interface CreateUserInput {
   name: string;
   email?: string | null;
@@ -165,44 +159,4 @@ export async function useNewNumber(userId: string, phoneNumber: string): Promise
     throw await codedError(response, 'Failed to update the phone number');
   }
   return (await response.json()) as User;
-}
-
-/**
- * Resolve the user already holding a phone number, for "Link this contact to
- * <name> instead" / "Open user" (AC-42). Null when it cannot be resolved -
- * the caller falls back to the plain error message, which already names them.
- */
-export async function findUserByPhone(phone: string): Promise<UserSelectOption | null> {
-  const params = new URLSearchParams({ phone });
-  const response = await apiFetch(`/api/user-management/users/select?${params.toString()}`);
-  if (!response.ok) return null;
-  const rows = (await response.json()) as UserSelectOption[];
-  return rows[0] ?? null;
-}
-
-/** Resolve the user already holding a WhatsApp contact ("Open user", AC-43). */
-export async function findUserByContact(
-  respondContactId: string,
-): Promise<UserSelectOption | null> {
-  const params = new URLSearchParams({ respond_contact_id: respondContactId });
-  const response = await apiFetch(`/api/user-management/users/select?${params.toString()}`);
-  if (!response.ok) return null;
-  const rows = (await response.json()) as UserSelectOption[];
-  return rows[0] ?? null;
-}
-
-/**
- * Users with no linked contact, for "Link existing user" on a contact's User
- * account section (S3 1.7's `unlinked=true` filter).
- */
-export async function listUnlinkedUsers(query?: string): Promise<UserSelectOption[]> {
-  const params = new URLSearchParams({ status: 'ACTIVE', unlinked: 'true' });
-  if (query?.trim()) params.set('query', query.trim());
-  const response = await apiFetch(`/api/user-management/users/select?${params.toString()}`);
-  // Thrown, not an empty list: an empty answer is cached and would read
-  // "No unlinked user found" until a reload.
-  if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to load users'));
-  }
-  return (await response.json()) as UserSelectOption[];
 }

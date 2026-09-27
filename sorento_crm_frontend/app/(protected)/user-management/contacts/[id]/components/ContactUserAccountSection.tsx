@@ -6,8 +6,10 @@
  * user / Link existing user, or the linked user's name, roles and sign-in
  * methods with Unlink as a 5-second deferred action (D7, no dialog).
  *
- * Without `users.view` the section shows only "No user yet", every action
- * hidden - the caller has nothing to open or link either way.
+ * Without `users.view` the section is not rendered at all (fix round 2, S5):
+ * the API then sends no linked user, so "No user yet" would be a false
+ * statement for a contact that has one. The list hides its User column the
+ * same way.
  */
 
 import { useState } from 'react';
@@ -23,7 +25,8 @@ import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { toast } from '@/lib/toast';
 import type { CodedError } from '@/lib/api-client';
 import type { RespondContact } from '../../types/contact.types';
-import { listUnlinkedUsers, updateUserContactLink } from '../../../users/services/userService';
+import { getUsersSelect } from '@/services/userSelectService';
+import { updateUserContactLink } from '../../../users/services/userService';
 import UserAddDialog from '../../../users/components/user-add-dialog';
 
 type LinkedUser = NonNullable<RespondContact['linked_user']>;
@@ -31,7 +34,9 @@ type LinkedUser = NonNullable<RespondContact['linked_user']>;
 function signInMethods(user: LinkedUser): string[] {
   const methods: string[] = [];
   if (user.has_password) methods.push('Email and password');
-  methods.push('WhatsApp code');
+  // The code goes to the USER's phone, so it is a way in only while that phone
+  // is the contact's (fix round 2, S3). Unknown reads as "differs".
+  if (user.phone_differs_from_contact === false) methods.push('WhatsApp code');
   methods.push('Portal link');
   return methods;
 }
@@ -50,7 +55,7 @@ export default function ContactUserAccountSection({ contact }: { contact: Respon
 
   const { data: unlinkedUsers } = useQuery({
     queryKey: ['unlinked-users'],
-    queryFn: () => listUnlinkedUsers(),
+    queryFn: () => getUsersSelect({ status: 'ACTIVE', unlinked: true }),
     enabled: linkPickerOpen,
     staleTime: 1000 * 60,
   });
@@ -84,6 +89,10 @@ export default function ContactUserAccountSection({ contact }: { contact: Respon
       toast.success('User linked');
       queryClient.invalidateQueries({ queryKey: ['respond-contact', contact.id] });
       queryClient.invalidateQueries({ queryKey: ['respond-contacts'] });
+      // The picked user is no longer unlinked, and its own page now has a
+      // contact (fix round 2, N2).
+      queryClient.invalidateQueries({ queryKey: ['unlinked-users'] });
+      queryClient.invalidateQueries({ queryKey: ['user-user', pickedUserId] });
       setLinkPickerOpen(false);
       setPickedUserId('');
     } catch (error) {
@@ -93,20 +102,7 @@ export default function ContactUserAccountSection({ contact }: { contact: Respon
     }
   };
 
-  if (!canViewUsers) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardHeading>
-            <CardTitle>User account</CardTitle>
-          </CardHeading>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">No user yet</p>
-        </CardContent>
-      </Card>
-    );
-  }
+  if (!canViewUsers) return null;
 
   return (
     <Card>

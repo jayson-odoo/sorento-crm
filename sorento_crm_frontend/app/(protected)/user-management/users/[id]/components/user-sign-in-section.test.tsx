@@ -168,12 +168,24 @@ describe('UserSignInSection - Last sign-in row', () => {
     expect(screen.getByText('Never')).toBeInTheDocument();
   });
 
-  it('shows the date and the method in words', () => {
+  // Fix round 2, S1: the fixtures are the backend's real `AUTH_METHODS`
+  // (`user_session_service.py`): password, phone_otp, portal_link, impersonation.
+  // The old fixture used 'email', a value the backend never writes.
+  it('reads a password session as "email"', () => {
     renderSection(
-      baseUser({ lastSignInAt: '2026-02-01T03:00:00Z' as unknown as Date, lastSignInMethod: 'email' }),
+      baseUser({ lastSignInAt: '2026-02-01T03:00:00Z' as unknown as Date, lastSignInMethod: 'password' }),
     );
     expect(screen.getByText(/2026/)).toBeInTheDocument();
-    expect(screen.getByText(/, email/)).toBeInTheDocument();
+    expect(screen.getByText(/, email$/)).toBeInTheDocument();
+    expect(screen.queryByText(/password/)).not.toBeInTheDocument();
+  });
+
+  it('reads a phone code session as "phone"', () => {
+    renderSection(
+      baseUser({ lastSignInAt: '2026-02-01T03:00:00Z' as unknown as Date, lastSignInMethod: 'phone_otp' }),
+    );
+    expect(screen.getByText(/, phone$/)).toBeInTheDocument();
+    expect(screen.queryByText(/phone_otp/)).not.toBeInTheDocument();
   });
 
   it('reads a portal session as "portal link"', () => {
@@ -183,7 +195,18 @@ describe('UserSignInSection - Last sign-in row', () => {
         lastSignInMethod: 'portal_link',
       }),
     );
-    expect(screen.getByText(/, portal link/)).toBeInTheDocument();
+    expect(screen.getByText(/, portal link$/)).toBeInTheDocument();
+  });
+
+  it('names no method for an impersonated session, and never shows a raw code', () => {
+    const { container } = renderSection(
+      baseUser({
+        lastSignInAt: '2026-02-01T03:00:00Z' as unknown as Date,
+        lastSignInMethod: 'impersonation',
+      }),
+    );
+    expect(screen.getByText(/2026/)).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/impersonat/);
   });
 });
 

@@ -5,7 +5,6 @@ import { useSession } from 'next-auth/react';
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
 import { isSuperadminUser } from '@/lib/is-superadmin';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Badge, BadgeDot, BadgeProps } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -210,12 +209,6 @@ const UserProfile = ({
                     </Badge>
                   )}
                 </div>
-              </dd>
-            </div>
-            <div className="grid grid-cols-subgrid col-span-2 items-baseline">
-              <dt>Last Sign In:</dt>
-              <dd>
-                {user.lastSignInAt ? formatDateTimeInMalaysia(user.lastSignInAt) : 'Never'}
               </dd>
             </div>
             <div className="grid grid-cols-subgrid col-span-2 items-baseline">

@@ -37,13 +37,18 @@ function maskPhone(phone: string): string {
   return `+${digits.slice(0, 2)} ${digits.slice(2, 4)}-*** ${digits.slice(-4)}`;
 }
 
+/** The backend's `AUTH_METHODS` (`user_session_service.py`) in the words plan
+ *  6.3 uses. An impersonated session, or any value not listed, names no
+ *  method: the row never shows a raw code. */
+const SIGN_IN_METHOD_WORDS: Record<string, string> = {
+  password: 'email',
+  phone_otp: 'phone',
+  portal_link: 'portal link',
+};
+
 function formatSignInMethod(method: string | null | undefined): string | null {
   if (!method) return null;
-  const normalized = method.toLowerCase();
-  if (normalized === 'email') return 'email';
-  if (normalized === 'phone') return 'phone';
-  if (normalized.startsWith('portal')) return 'portal link';
-  return normalized;
+  return SIGN_IN_METHOD_WORDS[method] ?? null;
 }
 
 const UserSignInSection = ({ user }: { user: User }) => {

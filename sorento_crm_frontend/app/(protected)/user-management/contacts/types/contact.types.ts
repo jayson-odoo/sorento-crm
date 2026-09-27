@@ -49,6 +49,9 @@ export interface RespondContact {
     status: string;
     has_password: boolean;
     roles: { id: string; name: string }[];
+    /** True when the user's phone is not the contact's (or is empty), so the
+     *  WhatsApp code cannot reach that user (fix round 2, S3). */
+    phone_differs_from_contact?: boolean;
   } | null;
   created_at: Date;
   updated_at: Date;

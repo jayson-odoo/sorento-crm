@@ -8,7 +8,7 @@
  * own contract is `user-add-dialog.s3.test.tsx`'s job.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { RespondContact } from '../../types/contact.types';
 
@@ -45,10 +45,14 @@ vi.mock('@/hooks/useDeferredAction', () => ({
   },
 }));
 
-const listUnlinkedUsersMock = vi.fn();
+// Fix round 2, S2: user selects go through the shared `userSelectService`
+// (CLAUDE.md hard rule), not a per-feature `/users/select` fetcher.
+const getUsersSelectMock = vi.fn();
+vi.mock('@/services/userSelectService', () => ({
+  getUsersSelect: (...a: unknown[]) => getUsersSelectMock(...a),
+}));
 const updateUserContactLinkMock = vi.fn();
 vi.mock('../../../users/services/userService', () => ({
-  listUnlinkedUsers: (...a: unknown[]) => listUnlinkedUsersMock(...a),
   updateUserContactLink: (...a: unknown[]) => updateUserContactLinkMock(...a),
 }));
 
@@ -81,8 +85,10 @@ function contact(over: Partial<RespondContact> = {}): RespondContact {
   } as RespondContact;
 }
 
+let lastClient: QueryClient;
 function renderSection(c: RespondContact) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  lastClient = client;
   return render(
     <QueryClientProvider client={client}>
       <ContactUserAccountSection contact={c} />
@@ -96,7 +102,7 @@ beforeEach(() => {
   permsRef.add = true;
   permsRef.edit = true;
   unlinkPending = null;
-  listUnlinkedUsersMock.mockResolvedValue([]);
+  getUsersSelectMock.mockResolvedValue([]);
   updateUserContactLinkMock.mockResolvedValue({});
 });
 
@@ -130,12 +136,42 @@ describe('ContactUserAccountSection - no user yet', () => {
     expect(screen.queryByRole('button', { name: 'Link existing user' })).not.toBeInTheDocument();
   });
 
-  it('without users.view shows only "No user yet", no actions', () => {
+  // Fix round 2, S5: without users.view the API sends no linked user, so "No
+  // user yet" would be a false statement for a contact that has one. The
+  // section is hidden instead, as the list hides its User column.
+  it('without users.view renders no section at all, even for a linked contact', () => {
     permsRef.view = false;
+    const { container } = renderSection(contact({ linked_user_id: null, linked_user: null }));
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText('User account')).not.toBeInTheDocument();
+    expect(screen.queryByText('No user yet')).not.toBeInTheDocument();
+  });
+
+  it('Link existing user lists unlinked active users through getUsersSelect', async () => {
     renderSection(contact());
-    expect(screen.getByText('No user yet')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Create user' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Link existing user' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Link existing user' }));
+    await waitFor(() =>
+      expect(getUsersSelectMock).toHaveBeenCalledWith({ status: 'ACTIVE', unlinked: true }),
+    );
+  });
+
+  // Fix round 2, N2: after a link, the picker's unlinked-user list and the
+  // linked user's own page are both stale; both are invalidated.
+  it('a successful link invalidates the unlinked-user list and that user', async () => {
+    getUsersSelectMock.mockResolvedValue([{ id: 'user-bob', name: 'Bob Lee', email: null }]);
+    renderSection(contact());
+    const invalidate = vi.spyOn(lastClient, 'invalidateQueries');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Link existing user' }));
+    fireEvent.click(await screen.findByRole('combobox'));
+    fireEvent.click(await screen.findByText('Bob Lee'));
+    fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+
+    await waitFor(() => expect(updateUserContactLinkMock).toHaveBeenCalledWith('user-bob', CONTACT_ID));
+    await waitFor(() =>
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['unlinked-users'] }),
+    );
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['user-user', 'user-bob'] });
   });
 });
 
@@ -148,6 +184,7 @@ describe('ContactUserAccountSection - linked', () => {
       status: 'ACTIVE',
       has_password: true,
       roles: [{ id: 'role-1', name: 'Staff' }],
+      phone_differs_from_contact: false,
     },
   });
 
@@ -183,10 +220,29 @@ describe('ContactUserAccountSection - linked', () => {
             status: 'ACTIVE',
             has_password: false,
             roles: [],
+            phone_differs_from_contact: false,
           },
         }));
     expect(screen.getByText('No roles assigned')).toBeInTheDocument();
     expect(screen.getByText('WhatsApp code, Portal link')).toBeInTheDocument();
+  });
+
+  // Fix round 2, S3: the WhatsApp code goes to the USER's phone, so it is a
+  // way in only while that phone equals the contact's.
+  it('leaves out "WhatsApp code" when the user phone differs from the contact (or is empty)', () => {
+    renderSection(contact({
+          linked_user: {
+            id: USER_ID,
+            name: 'Kia Yee',
+            email: 'kia@zzt.test',
+            status: 'ACTIVE',
+            has_password: true,
+            roles: [],
+            phone_differs_from_contact: true,
+          },
+        }));
+    expect(screen.getByText('Email and password, Portal link')).toBeInTheDocument();
+    expect(screen.queryByText(/WhatsApp code/)).not.toBeInTheDocument();
   });
 
   it('never renders the user or contact id as text', () => {
