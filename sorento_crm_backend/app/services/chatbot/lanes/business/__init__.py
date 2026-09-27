@@ -822,6 +822,14 @@ def _fetch_semantic_input(
         # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 8: the top selling ask's own
         # axes (`turn_runtime.lane_parse_output` projects them off the focus).
         "top_selling": parse_output.get("top_selling"),
+        # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+        # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3, D13/D20:
+        # `{product uuid: quantity}`, built by `turn_runtime._spec_quantities` from
+        # the open task's slots or from this message's own per-entity quantities.
+        # Named explicitly for the same reason `group_by`/`top_n` are:
+        # `entity_ids_transformer` reads it off THIS object, so without a field here
+        # the map could never reach the tool.
+        "requested_quantities": parse_output.get("requested_quantities"),
     }
 
 

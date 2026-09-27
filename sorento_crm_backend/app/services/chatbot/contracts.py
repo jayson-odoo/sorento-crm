@@ -558,6 +558,13 @@ class Focus(BaseModel):
     # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 8: the top selling
     # ask's own axes while `status == "top_selling"` (`turn/state.py::Focus.top_selling`).
     top_selling: dict[str, Any] | None = None
+    # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner ruling
+    # 24 Sep 2026) for chatbot-stock-ask-v2 S3: the open tasks, carried INSIDE the
+    # focus rather than on a session key of their own. Declared here because this
+    # model is `extra="forbid"` and `turn/state.py::focus_to_wire` writes the key on
+    # every turn - a shape the session validator did not know would fail the write
+    # itself.
+    tasks: list[dict[str, Any]] = Field(default_factory=list)
     # Any entity kind without a named axis above, keyed by kind. A kind this turn's
     # policy narrows on but the Focus never declared still has somewhere safe to sit
     # rather than being dropped on the way to the session.

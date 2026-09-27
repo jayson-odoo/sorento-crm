@@ -92,14 +92,25 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     # sales_channel` when a filter answer names a channel and to settle a fresh channel
     # word onto the focus directly. 35 declared keys -> 36.
     "sales_channel": "app/services/chatbot/turn/apply.py",
+    # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+    # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3, D13: "go ahead without
+    # answering the open question", read by `turn/task.py::StockQtyTask.claims`/
+    # `fill`, which `apply.py` runs before decide's four outcomes. 36 declared keys ->
+    # 37. The per-entity `entities[].quantity` is NOT a row here: this table is
+    # top-level verdict keys, and that one is a nested field of the `entities` row
+    # above.
+    "proceed_anyway": "app/services/chatbot/turn/task.py",
+    # PR #1247 round 8: the parser's declared answer to the "Open question:" object,
+    # read by `turn/apply.py::_open_question_answer` before any shape rule. 37 -> 38.
+    "open_question_answer": "app/services/chatbot/turn/apply.py",
     # 26 Sep 2026 (PLAN-chatbot-top-x-hot-selling-24sep.md S4): the top selling ask's
     # three axes, read by `turn/apply.py::_top_selling_rules` onto `Focus.top_selling`.
-    # 36 declared keys -> 39.
+    # 38 declared keys -> 41.
     "rank_by": "app/services/chatbot/turn/apply.py",
     "basis": "app/services/chatbot/turn/apply.py",
     "rank_group": "app/services/chatbot/turn/apply.py",
     # Fix lane round 4 (owner retest, 27 Sep 2026): "cold selling", "least sold".
-    # 39 declared keys -> 40.
+    # 41 declared keys -> 42.
     "rank_direction": "app/services/chatbot/turn/apply.py",
 }
 

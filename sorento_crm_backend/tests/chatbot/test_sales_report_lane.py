@@ -1177,12 +1177,18 @@ class TestParserPromptAndContractsTeachSalesReport:
         from app.services.chatbot_parser_prompt import (
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
+            STOCK_TASK_ADDENDUM,
             TOP_SELLING_ADDENDUM,
         )
 
-        assert SEMANTIC_PARSER_PROMPT.removesuffix(TOP_SELLING_ADDENDUM).endswith(SALES_REPORT_ADDENDUM), (
+        # `STOCK_TASK_ADDENDUM` (ported from PR #1118, not merged, chatbot-stock-ask-v2
+        # S3) and then `TOP_SELLING_ADDENDUM` stacked after this one, newest outermost,
+        # so they come off first.
+        assert SEMANTIC_PARSER_PROMPT.removesuffix(TOP_SELLING_ADDENDUM).removesuffix(
+            STOCK_TASK_ADDENDUM
+        ).endswith(SALES_REPORT_ADDENDUM), (
             "SEMANTIC_PARSER_PROMPT does not end with SALES_REPORT_ADDENDUM once the "
-            "newer TOP_SELLING_ADDENDUM is peeled"
+            "newer TOP_SELLING_ADDENDUM and STOCK_TASK_ADDENDUM are stripped"
         )
 
     def test_the_addendum_stacks_after_low_stock(self) -> None:
@@ -1196,11 +1202,15 @@ class TestParserPromptAndContractsTeachSalesReport:
             LOW_STOCK_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
+            STOCK_TASK_ADDENDUM,
             TOP_SELLING_ADDENDUM,
         )
 
-        assert SEMANTIC_PARSER_PROMPT.removesuffix(TOP_SELLING_ADDENDUM).removesuffix(SALES_REPORT_ADDENDUM).endswith(
-            LOW_STOCK_ADDENDUM
+        assert (
+            SEMANTIC_PARSER_PROMPT.removesuffix(TOP_SELLING_ADDENDUM)
+            .removesuffix(STOCK_TASK_ADDENDUM)
+            .removesuffix(SALES_REPORT_ADDENDUM)
+            .endswith(LOW_STOCK_ADDENDUM)
         ), "SALES_REPORT_ADDENDUM must stack AFTER LOW_STOCK_ADDENDUM"
 
 
