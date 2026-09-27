@@ -29,6 +29,7 @@ from app.services.chatbot_parser_prompt import (
     LAST_COST_ADDENDUM,
     LIVE_SYSTEM_MESSAGE_SHA256,
     LOW_STOCK_ADDENDUM,
+    SALES_ANALYSIS_ADDENDUM,
     SALES_REPORT_ADDENDUM,
     SPECIFICATION_ADDENDUM,
     STOCK_TASK_ADDENDUM,
@@ -176,12 +177,13 @@ def _without_growth_r1_addendum(text: str) -> str:
     tail once `LAST_COST_ADDENDUM` is off lives in
     `test_parser_growth_r1_reachability.py::test_the_addendum_is_appended_to_both_bodies`.
     """
-    # STOCK_TASK_ADDENDUM (ported from PR #1118, not merged, chatbot-stock-ask-v2 S3)
-    # is the newest addendum, so it comes off FIRST.
-    # SPECIFICATION_ADDENDUM (fix round 8 on PR #833) is newer still, so it comes off
-    # before it.
+    # SPECIFICATION_ADDENDUM (fix round 8 on PR #833) is the newest addendum, so it comes
+    # off FIRST, then SALES_ANALYSIS_ADDENDUM (#1267 S1), then STOCK_TASK_ADDENDUM (ported
+    # from PR #1118, not merged, chatbot-stock-ask-v2 S3).
     if text.endswith(SPECIFICATION_ADDENDUM):
         text = text[: -len(SPECIFICATION_ADDENDUM)]
+    if text.endswith(SALES_ANALYSIS_ADDENDUM):
+        text = text[: -len(SALES_ANALYSIS_ADDENDUM)]
     if text.endswith(STOCK_TASK_ADDENDUM):
         text = text[: -len(STOCK_TASK_ADDENDUM)]
     if text.endswith(SALES_REPORT_ADDENDUM):

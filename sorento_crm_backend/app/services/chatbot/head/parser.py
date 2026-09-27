@@ -220,6 +220,9 @@ def _build_json_schema() -> dict[str, Any]:
                     "product",
                     "warehouse",
                     "supplier",
+                    # PLAN-retail-sales-reports-26sep S1: the sales analysis's axes.
+                    "month",
+                    "year",
                     None,
                 ],
             },
@@ -235,6 +238,11 @@ def _build_json_schema() -> dict[str, Any]:
             # reading as null; the field is genuinely conditional (emitted only on a
             # sales report ask) either way.
             "sales_channel": {"type": ["string", "null"], "enum": ["dealer", "project", None]},
+            # PLAN-retail-sales-reports-26sep S1: the sales analysis's basis and the
+            # company named. Required for strict mode and tolerated absent, exactly as
+            # `sales_channel` above (no recorded emission carries them).
+            "sales_basis": {"type": ["string", "null"], "enum": ["ordered", "delivered", None]},
+            "sales_company": string_or_null,
             "correction": {"type": ["boolean", "null"]},
             "routing": {
                 "type": "object",
@@ -420,6 +428,8 @@ def _build_json_schema() -> dict[str, Any]:
             "group_by",
             "top_n",
             "sales_channel",
+            "sales_basis",
+            "sales_company",
             "correction",
             "routing",
             "escalation",
@@ -467,6 +477,8 @@ TOLERATED_ABSENT: frozenset[str] = frozenset(
         "broaden_to",
         "domain_in_message",
         "sales_channel",
+        "sales_basis",
+        "sales_company",
         "proceed_anyway",
         "open_question_answer",
     }

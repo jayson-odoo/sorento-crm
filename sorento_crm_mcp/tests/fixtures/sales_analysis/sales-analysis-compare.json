@@ -1,0 +1,144 @@
+{
+  "status": "ready",
+  "report": "Sales",
+  "company": "Sorento",
+  "channel": "Dealer",
+  "basis": "Delivered (transferred to DO)",
+  "period": "01/01/2025 to 26/09/2026",
+  "rows_label": "Month",
+  "cols_label": "Year",
+  "count_label": "Months",
+  "columns": [
+    "2025",
+    "2026",
+    "Difference"
+  ],
+  "rows": [
+    {
+      "label": "JAN",
+      "values": [
+        "412500.00",
+        "430100.00",
+        "17600.00"
+      ],
+      "total": "842600.00"
+    },
+    {
+      "label": "FEB",
+      "values": [
+        "388210.40",
+        "371000.20",
+        "-17210.20"
+      ],
+      "total": "759210.60"
+    },
+    {
+      "label": "MAR",
+      "values": [
+        "455000.00",
+        "470250.00",
+        "15250.00"
+      ],
+      "total": "925250.00"
+    },
+    {
+      "label": "APR",
+      "values": [
+        "401120.55",
+        "409999.95",
+        "8879.40"
+      ],
+      "total": "811120.50"
+    },
+    {
+      "label": "MAY",
+      "values": [
+        "398765.00",
+        "415000.00",
+        "16235.00"
+      ],
+      "total": "813765.00"
+    },
+    {
+      "label": "JUN",
+      "values": [
+        "420000.00",
+        "398000.00",
+        "-22000.00"
+      ],
+      "total": "818000.00"
+    },
+    {
+      "label": "JUL",
+      "values": [
+        "433210.10",
+        "447100.00",
+        "13889.90"
+      ],
+      "total": "880310.10"
+    },
+    {
+      "label": "AUG",
+      "values": [
+        "441000.00",
+        "460500.50",
+        "19500.50"
+      ],
+      "total": "901500.50"
+    },
+    {
+      "label": "SEP",
+      "values": [
+        "415500.00",
+        "122000.00",
+        "-293500.00"
+      ],
+      "total": "537500.00"
+    },
+    {
+      "label": "OCT",
+      "values": [
+        "452300.00",
+        null,
+        null
+      ],
+      "total": "452300.00"
+    },
+    {
+      "label": "NOV",
+      "values": [
+        "468900.00",
+        null,
+        null
+      ],
+      "total": "468900.00"
+    },
+    {
+      "label": "DEC",
+      "values": [
+        "501234.75",
+        null,
+        null
+      ],
+      "total": "501234.75"
+    }
+  ],
+  "totals": {
+    "values": [
+      "5187740.80",
+      "3523950.65",
+      "-241355.40"
+    ],
+    "total": "8711691.45"
+  },
+  "total_count": 12,
+  "attachments": [
+    {
+      "url": "https://cdn.example.com/exports/report-xlsx/x/Yearly comparison-01-01-2025 TO 26-09-2026.xlsx",
+      "filename": "Yearly comparison-01-01-2025 TO 26-09-2026.xlsx",
+      "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "attachmentType": "file"
+    }
+  ],
+  "download_id": "9a7c5e11-2b3d-4f56-8899-aabbccddeeff"
+}
