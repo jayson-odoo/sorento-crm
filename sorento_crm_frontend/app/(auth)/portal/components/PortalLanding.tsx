@@ -42,6 +42,7 @@ import type { ListBoardViewMode } from '@/hooks/useListBoardViewPreference';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/lib/toast';
+import { formatCurrency } from '@/lib/helpers';
 import {
   LANDING_KINDS,
   LANDING_LABELS,
@@ -59,7 +60,8 @@ import {
   statusLabel,
 } from '../lib/portal-client';
 import { listRequestsAsSummaries } from '../lib/price-tag-request-service';
-import { SALES_OPPORTUNITY_KIND } from '@/lib/portal-form-kinds';
+import { listOpportunitiesAsSummaries } from '../lib/sales-opportunity-landing';
+import { MyTargetPanel } from './MyTargetPanel';
 import {
   complaintStatusLabel,
   complaintStatusPillClass,
@@ -120,6 +122,7 @@ const EMPTY_LISTS: Record<PortalLandingKind, PortalSubmissionSummary[]> = {
   purchase_request: [],
   sponsorship_form: [],
   price_tag_request: [],
+  sales_opportunity: [],
 };
 
 type BadgeVariant =
@@ -136,8 +139,9 @@ type BadgeVariant =
 function statusVariant(row: PortalSubmissionSummary): BadgeVariant {
   if (row.is_draft) return 'secondary';
   const s = (row.status || '').toLowerCase();
-  if (s === 'rejected' || s === 'cancelled') return 'destructive';
+  if (s === 'rejected' || s === 'cancelled' || s === 'lost') return 'destructive';
   if (
+    s === 'won' ||
     s === 'approved' ||
     s === 'completed' ||
     s === 'fulfilled' ||
@@ -157,10 +161,11 @@ function statusCardClass(row: PortalSubmissionSummary): string {
     return 'bg-card border-border';
   }
   const s = (row.status || '').toLowerCase();
-  if (s === 'rejected' || s === 'cancelled') {
+  if (s === 'rejected' || s === 'cancelled' || s === 'lost') {
     return 'bg-destructive/5 border-destructive/40';
   }
   if (
+    s === 'won' ||
     s === 'approved' ||
     s === 'completed' ||
     s === 'fulfilled' ||
@@ -195,7 +200,7 @@ function pickCardMeta(row: PortalSubmissionSummary): {
       customer: row.project_customer ?? undefined,
     };
   }
-  if (row.kind === 'price_tag_request') {
+  if (row.kind === 'price_tag_request' || row.kind === 'sales_opportunity') {
     return { customer: row.customer_name ?? undefined };
   }
   return {
@@ -367,7 +372,9 @@ export function PortalLanding({ slug }: { slug?: string }) {
           kinds.map((k) =>
             k === 'price_tag_request'
               ? listRequestsAsSummaries(q)
-              : fetchSubmissions(k, q),
+              : k === 'sales_opportunity'
+                ? listOpportunitiesAsSummaries(q)
+                : fetchSubmissions(k, q),
           ),
         );
 
@@ -446,6 +453,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
       purchase_request: 0,
       sponsorship_form: 0,
       price_tag_request: 0,
+      sales_opportunity: 0,
     };
     for (const t of landingKinds) out[t] = submissions[t]?.length ?? 0;
     return out;
@@ -522,25 +530,6 @@ export function PortalLanding({ slug }: { slug?: string }) {
           <LogOut className="h-4 w-4" />
         </Button>
       </div>
-
-      {/* Sales Opportunities (UAC S2-10, plan section 16): its own bespoke pages, not a
-          LANDING_KINDS tab - shown only when the contact's own grant includes it. */}
-      {contact?.visible_form_types?.includes(SALES_OPPORTUNITY_KIND) ? (
-        <Card>
-          <CardContent className="p-0">
-            <Link
-              href="/portal/sales_opportunity"
-              className="flex items-center justify-between gap-3 px-5 py-3 text-sm font-medium"
-            >
-              <span className="flex items-center gap-2">
-                <FileText className="h-4 w-4 text-muted-foreground" />
-                Sales Opportunities
-              </span>
-              <span className="text-xs text-muted-foreground">Open</span>
-            </Link>
-          </CardContent>
-        </Card>
-      ) : null}
 
       {landingKinds.length === 0 ? (
         // AC-L3/AC-L5: no picker, toolbar, list or search box - just the one
@@ -657,6 +646,9 @@ export function PortalLanding({ slug }: { slug?: string }) {
               />
             </Button>
           </div>
+
+          {/* F2: the logging agent's own target progress, at the top of the kind. */}
+          {currentTab === 'sales_opportunity' ? <MyTargetPanel slug={slug} /> : null}
 
           <SubmissionList
             kind={currentTab}
@@ -1119,11 +1111,7 @@ function SubmissionCard({
   // Complaints use the shared status map so portal labels + colours tally with
   // the internal system view; other kinds keep the generic badge variant.
   const isComplaint = row.kind === 'complaint';
-  const statusText = row.is_draft
-    ? 'Draft'
-    : isComplaint
-      ? complaintStatusLabel(row.status)
-      : statusLabel(row.status);
+  const statusText = submissionStatusLabel(row);
 
   return (
     <div
@@ -1189,6 +1177,20 @@ function SubmissionCard({
           >
             <span className="text-muted-foreground">Customer: </span>
             {meta.customer}
+          </p>
+        )}
+        {row.expected_amount != null && (
+          <p className="text-sm text-foreground/80">
+            <span className="text-muted-foreground">Amount: </span>
+            {formatCurrency(row.expected_amount)}
+          </p>
+        )}
+        {row.expected_close_date && (
+          <p className="text-sm text-foreground/80">
+            <span className="text-muted-foreground">Expected close: </span>
+            {new Date(`${row.expected_close_date.slice(0, 10)}T00:00:00`).toLocaleDateString('en-GB', {
+              dateStyle: 'medium',
+            })}
           </p>
         )}
         {row.needed_by_date && (
@@ -1295,7 +1297,7 @@ function SubmissionPreviewDialog({
                 </span>
               ) : (
                 <Badge variant={statusVariant(row)}>
-                  {row.is_draft ? 'Draft' : statusLabel(row.status)}
+                  {submissionStatusLabel(row)}
                 </Badge>
               ))}
           </DialogTitle>
@@ -1328,17 +1330,20 @@ function SubmissionPreviewDialog({
           >
             Close
           </Button>
-          <Button
-            variant="outline"
-            onClick={() => {
-              if (row) router.push(portalDuplicatePath(kind, row.id, slug));
-              onOpenChange(false);
-            }}
-            className="h-10"
-          >
-            <Copy className="h-4 w-4 mr-2" />
-            Duplicate
-          </Button>
+          {/* An opportunity's New form takes no source to copy from. */}
+          {kind !== 'sales_opportunity' ? (
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (row) router.push(portalDuplicatePath(kind, row.id, slug));
+                onOpenChange(false);
+              }}
+              className="h-10"
+            >
+              <Copy className="h-4 w-4 mr-2" />
+              Duplicate
+            </Button>
+          ) : null}
           <Button
             onClick={() => {
               if (row) router.push(portalDetailPath(kind, row.id, slug));

@@ -45,41 +45,39 @@ export function isSubmissionKind(
  */
 export const GATED_FORM_TYPE = 'price_tag_request' as const;
 
-export type PortalLandingKind = PortalSubmissionKind | typeof GATED_FORM_TYPE;
+/**
+ * Sales Opportunity (plan S2, section 16) is grantable the same way `price_tag_request` is,
+ * and since fix lane round 2 (owner ruling 27 Sep, F1) it is one kind in the landing's kind
+ * selector exactly like Price Tag Request: same selector, count, search, filter, sort, list
+ * and grid, and New button. Its pages stay its own (`app/(auth)/portal/sales_opportunity/`),
+ * as Price Tag Request's do; neither is a `SUBMISSION_KINDS` entry, so the generic `[type]`
+ * submission pages never render either.
+ */
+export const SALES_OPPORTUNITY_KIND = 'sales_opportunity' as const;
+
+export type PortalLandingKind =
+  | PortalSubmissionKind
+  | typeof GATED_FORM_TYPE
+  | typeof SALES_OPPORTUNITY_KIND;
 
 /** Every kind an access type may be granted, in the order the admin sees them. */
 export const LANDING_KINDS: readonly PortalLandingKind[] = [
   ...SUBMISSION_KINDS,
   GATED_FORM_TYPE,
+  SALES_OPPORTUNITY_KIND,
 ] as const;
 
 /**
  * Every contact already gets `SUBMISSION_KINDS` (the base default,
  * PLAN-portal-forms-market-segment D3) - a market segment can only grant more
  * on top of that base, never take a base kind away. This is what the Market
- * Segments admin's "Additional portal forms" field offers (AC-M2); today that
- * is `price_tag_request` alone, and the next opt-in kind joins `LANDING_KINDS`
- * above and appears here automatically.
+ * Segments admin's "Additional portal forms" field offers (AC-M2); the next
+ * opt-in kind joins `LANDING_KINDS` above and appears here automatically.
  */
-/**
- * sales_opportunity (plan S2, section 16) is grantable the same way
- * `price_tag_request` is, but it has its own bespoke portal pages
- * (`app/(auth)/portal/sales_opportunity/`) rather than the generic `[type]`
- * submission-table machinery `LANDING_KINDS` backs (the tab list, `EMPTY_LISTS`,
- * the shared submissions fetch) - so it stays OUT of `LANDING_KINDS` itself, and
- * gets its own card on the landing (`PortalLanding.tsx`) instead of a tab.
- */
-export const SALES_OPPORTUNITY_KIND = 'sales_opportunity' as const;
+export const ADDITIONAL_LANDING_KINDS: readonly PortalLandingKind[] = LANDING_KINDS.filter(
+  (k) => !isSubmissionKind(k),
+);
 
-export const ADDITIONAL_LANDING_KINDS: readonly (PortalLandingKind | typeof SALES_OPPORTUNITY_KIND)[] =
-  [...LANDING_KINDS.filter((k) => !isSubmissionKind(k)), SALES_OPPORTUNITY_KIND];
-
-/**
- * `sales_opportunity` is deliberately NOT a match here (reviewer should-fix 9): it has no
- * tab, no entry in `LANDING_LABELS`/`EMPTY_LISTS`, none of what this predicate exists to
- * gate - a caller that means "does this route to a bespoke portal page" should ask that
- * directly, not read it off the generic-submission-tab predicate.
- */
 export function isLandingKind(
   value: string | null | undefined,
 ): value is PortalLandingKind {
@@ -97,18 +95,10 @@ export const SUBMISSION_LABELS: Record<PortalSubmissionKind, string> = {
 export const LANDING_LABELS: Record<PortalLandingKind, string> = {
   ...SUBMISSION_LABELS,
   price_tag_request: 'Price Tag Request',
-};
-
-/** Kinds with their own bespoke page rather than a LANDING_KINDS tab (see above). */
-const EXTRA_LABELS: Record<typeof SALES_OPPORTUNITY_KIND, string> = {
-  sales_opportunity: 'Sales Opportunities',
+  sales_opportunity: 'Sales Opportunity',
 };
 
 /** The label for any kind, falling back to the raw code for one we do not know. */
 export function portalFormKindLabel(kind: string): string {
-  return (
-    LANDING_LABELS[kind as PortalLandingKind] ??
-    EXTRA_LABELS[kind as typeof SALES_OPPORTUNITY_KIND] ??
-    kind
-  );
+  return LANDING_LABELS[kind as PortalLandingKind] ?? kind;
 }

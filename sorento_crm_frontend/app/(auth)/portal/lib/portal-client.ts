@@ -111,6 +111,11 @@ export interface PortalSubmissionSummary {
   /** Price tag request: the date the tags are wanted for. The card shows it,
    *  because a deadline is the one thing a salesperson scans this list for. */
   needed_by_date?: string | null;
+  /** Sales opportunity (fix lane round 2, F1): the stage's own label, so a card never shows
+   *  a stage key, and the figures the card carries. */
+  status_label?: string | null;
+  expected_amount?: string | null;
+  expected_close_date?: string | null;
 }
 
 export type PortalAttachmentUploaderKind = 'user' | 'contact' | 'system' | null;
@@ -1112,6 +1117,9 @@ export const AI_EXTRACT_FORM_KEYS: Record<PortalLandingKind, string> = {
   // prefix as every other portal form key (Phase 1 briefly had this as a
   // bare `price_tag_request` - wrong; fixed to match convention).
   price_tag_request: 'portal.price_tag_request',
+  // Never read: the opportunity form offers no AI extract. Present because the map is keyed
+  // by every landing kind.
+  sales_opportunity: 'portal.sales_opportunity',
 };
 
 export async function aiExtractFromFiles(

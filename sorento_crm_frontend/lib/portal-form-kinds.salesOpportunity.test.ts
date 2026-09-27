@@ -15,14 +15,13 @@ import {
 } from './portal-form-kinds';
 
 describe('sales_opportunity portal form kind', () => {
-  it('labels sales_opportunity as "Sales Opportunities"', () => {
-    expect(portalFormKindLabel('sales_opportunity')).toBe('Sales Opportunities');
+  it('labels sales_opportunity as "Sales Opportunity" (singular, like every kind)', () => {
+    expect(portalFormKindLabel('sales_opportunity')).toBe('Sales Opportunity');
   });
 
-  // Not a landing kind: `isLandingKind` gates the generic submission-tab machinery, which
-  // this kind does not use (it has its own pages). It is granted and labelled, nothing more.
-  it('is not a generic landing kind', () => {
-    expect(isLandingKind('sales_opportunity')).toBe(false);
+  // Fix lane round 2, F1: a kind in the landing selector like price_tag_request.
+  it('is a landing kind', () => {
+    expect(isLandingKind('sales_opportunity')).toBe(true);
   });
 
   it('joins the Market Segments grantable-additional-kinds list', () => {
