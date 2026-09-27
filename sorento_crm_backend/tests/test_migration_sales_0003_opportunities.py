@@ -39,11 +39,11 @@ def _run(conn, fn):
         fn()
 
 
-def test_revision_fits_alembic_version_and_sits_on_sales_0004_target_brands():
-    # Fix lane round 2 merged S1 in; S2 now chains after S1's targets migration.
+def test_revision_fits_alembic_version_and_sits_on_identity_0001_s0_model():
+    # Merge round 2 re-parents S2 onto main's head after #1297 (targets) and #1303 (identity S0).
     module = _load("sales_0003_opportunities")
     assert len(module.revision) <= 32
-    assert module.down_revision == "sales_0004_target_brands"
+    assert module.down_revision == "identity_0001_s0_model"
 
 
 def test_permission_slugs_are_registered_in_the_python_registry():
