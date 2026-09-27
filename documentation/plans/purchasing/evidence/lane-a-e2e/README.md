@@ -86,6 +86,62 @@ No other defects found. The separator-only code match, the duplicate-code and ne
 buckets, the "Always" vs "Scheduled" cost-row status labelling, and the four-eyes verification
 gate (submitter cannot self-apply) all matched the UAC and the service-layer source.
 
+## Fix check: line decisions after Apply (PR #1305, re-run 27 Sep 2026)
+
+Re-ran the S2 four-eyes flow end to end against a fresh dev stack (separate `sorento_dev`
+database, not the CI database or the original evidence-run database) to confirm Notes item 1
+above is fixed. Seed: supplier `ZZ Lane A Evidence Supplier`, three products
+(`ZZLANEA-P1/P2/P3`) each linked at 100.00 CNY, a 3-row xlsx price list (P1 to 114.30, P2 to
+120.00, P3 unchanged at 100.00), users `meiling@sorento-dev.com` / `kelvin@sorento-dev.com`
+(purchasing role), verification setting on. As Mei Ling: uploaded, reviewed (2 changed, 1
+unchanged), submitted for verification. As Kelvin: rejected `ZZLANEA-P1` (reason "Not agreed",
+the desktop grid's Reject action - see note below), accepted `ZZLANEA-P2`, applied.
+
+| Step | Screenshot | What it showed |
+| --- | --- | --- |
+| Applied, Lines tab, 1280 | `23-applied-decisions-1280.png` | New read-only "Decision" column: `ZZLANEA-P1` shows a red "Rejected" badge with "Not agreed" underneath, `ZZLANEA-P2` shows a green "Accepted" badge. Column survives past Apply - this is exactly the gap Notes item 1 flagged. |
+| Applied, Lines tab, 375 | `24-applied-decisions-375.png` | Same two badges render on the mobile LineCard (badge + reason text under it), no clipping. |
+| History tab, 1280 | `25-history-decisions-1280.png` | Two "Decided a line" rows: "ZZLANEA-P2: accepted" and "ZZLANEA-P1: rejected - Not agreed", each attributed to Kelvin with a timestamp. Set-level rows (Applied, Submitted for verification, Uploaded) still show; two unrelated field-update events read "Updated" rather than a raw code, matching the fix's fallback rule. |
+| History tab, 375 | `26-history-decisions-375.png` | Same list, legible at 375px, no clipping. |
+
+No "Mapped a line" / "Skipped a line" rows appear in this run because every line in the 3-row
+fixture matched its product on the exact code (no mapping or skip was needed) - not a gap, just
+not exercised by this repro.
+
+Console checked after every step (`agent-browser console` / `errors`): no errors. The Next.js dev
+overlay's floating "N" button was hidden via `document.querySelector('nextjs-portal').style.
+display='none'` before the two 375px shots only so it would not sit on top of the reason text;
+it is dev-mode chrome, not part of the app.
+
+**Notes item 1 is fixed**, across three commits:
+- `e8031523f` - History tab labels `COST_LINE_DECISION` rows as "Decided a line" with the code,
+  accept/reject and reason, and falls back to "Updated" for any unlabelled action instead of a
+  raw code.
+- `1b52d7ef7` - `CostPriceLinesTab`'s Decision column renders read-only (Accepted/Rejected Badge
+  + visible reject reason) once a set leaves Pending, on both the desktop grid and the mobile
+  LineCard, instead of disappearing after Apply.
+- `a1308f785` - `cost_price_change_service.decide`/`decide_all`/`patch_line` now write
+  `COST_LINE_DECISION`/`COST_LINE_MAP`/`COST_LINE_SKIP` audit rows so the History tab has line-
+  level events to render in the first place.
+
+One thing noticed in passing: the desktop grid's Reject button sent a hardcoded reason
+("Not agreed") instead of asking the verifier, and the phone card sent no reason at all, so the
+"Not agreed" in the two screenshots above is that made-up string, not a typed reason. **Fixed on
+this PR, test first**: `CostPriceLinesTab.rejectReason.test.tsx` (red, then green), after which
+Reject opens a small dialog with an optional Reason on both layouts and sends exactly what was
+typed, or no reason when it is left empty (AC-S2-01). See "Fix check: the Reject reason" below.
+
+### Housekeeping for this re-run
+- Dev stack: separate Postgres database `sorento_dev` (role `sorento`), Redis db 5, backend on
+  `.env.dev-lane`, frontend `npm run dev` with a fresh `.env.local` - none of it touching the
+  `sorento_ci` database a parallel pytest run was using.
+- Seed data was created via a scratch script and direct SQL touch-ups (`company_id` backfill,
+  `user_companies` grant, `procurement.suppliers.view` grant, `full_suite` module install) - all
+  dev-environment bootstrap gaps (a from-zero `sorento_dev` has no company/module/grant rows the
+  way the existing shared dev database already did), not application code changes.
+- Browser session `lane-a-evidence` (isolated, not the shared default daemon session) closed at
+  the end of the run, not `close --all`. Backend and frontend dev servers stopped after capture.
+
 ## Housekeeping
 
 - Backend suite: 124/124 passing at the start of this run (see prior commit
