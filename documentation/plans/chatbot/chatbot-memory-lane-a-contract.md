@@ -236,4 +236,15 @@ chatbot parser row.
    (`ideation_confirm_prompts`, `prod_discontinued_at_flt`, `sa2_r9_open_question`). The
    no-op `mem_0000_merge_main` joins them and `mem_0001_frames_level` ->
    `mem_0002_parser_memory` hang off it, so `alembic heads` prints one head,
-   `mem_0002_parser_memory`. No main migration is edited.
+   `mem_0002_parser_memory`. No main migration is edited. The prod-copy up/down/up step now
+   downgrades to `mem_0000_merge_main` (not `sales_0002_team_leader`, which would also
+   revert main's three revisions).
+   Merge round test run (cloud VM, `scripts/cloud-env-setup.sh`, `.env.ci-tests`, CI's
+   commands): backend xdist loadfile 18,227 passed; SCM 4,109 passed; migration tests
+   serial 400 passed; serial_ddl 2 passed; chatbot set (memory fixtures and the round 9
+   stock ask fixtures included) 3,212 passed, 0 failed, after the two merge-broken pins were
+   fixed.
+   Not merge-related: 9 `test_dealer_kit_pdf_render.py` tests need a frontend print server
+   on :3040 that this VM does not run, and `test_stock_debt_routes.py::test_row_carries_
+   supplier_category_total` read rows leaked by the same run (52 of 52 pass on a fresh
+   database).
