@@ -451,8 +451,12 @@ def render_prompt_blocks(db: "Session") -> str:
             f'Default narrowing {row["default_narrowing"]}.'
         )
 
-    lines.append("")
-    lines.extend(specification_lines(db))
+    # No separator when the registry renders nothing (an empty registry, since #1286
+    # dropped the Brand specification row): the blocks then end on the kinds.
+    spec = specification_lines(db)
+    if spec:
+        lines.append("")
+        lines.extend(spec)
 
     return "\n".join(lines) + "\n"
 

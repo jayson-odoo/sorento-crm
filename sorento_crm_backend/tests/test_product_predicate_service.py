@@ -716,8 +716,18 @@ def test_filter_specs_membership_accepts_product_type_and_brand(db):
             row.values = values
         db.flush()
 
-    _set_values(bidet, product_type="bidet", brand="SORENTO")
-    _set_values(shower, product_type="shower_set", brand="SORENTO")
+    # The brand is the product's own field since #1286 (D2), never a stored spec value.
+    from app.models.product import Brand
+
+    sorento = Brand(id=str(uuid.uuid4()), brand_code="ZZT-PT-SRT", brand_name="SORENTO")
+    db.add(sorento)
+    db.flush()
+    bidet.brand_id = sorento.id
+    shower.brand_id = sorento.id
+    db.flush()
+
+    _set_values(bidet, product_type="bidet")
+    _set_values(shower, product_type="shower_set")
 
     def _count(clause):
         return (
