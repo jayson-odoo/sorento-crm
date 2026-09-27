@@ -2296,6 +2296,9 @@ and its addendum). Track: full (a migration, `sales_0005_opp_line_price`). Branc
   `sales_0005_opp_line_price`. Before the final push origin/main (9751e55d) was merged again; it
   carried two heads of its own (`527_audit_logs_scrub_secrets`, `spec_0003_rules_null_brand_pol`),
   so `sales_0005m_merge_main_heads` (no schema change) joins them with the sales chain: one head.
+  Merge round (27 Sep, origin/main 52b0ac24): main's `sales_s1_reports_module` now joins those
+  two heads itself, so `sales_0005m_merge_main_heads` is deleted and `sales_0003_targets` sits on
+  `sales_s1_reports_module`: one head, `sales_0005_opp_line_price`.
 - **Browser pass** (`evidence/s2-r2/01` to `43`, portal at 375 and 1280, CRM at 1280 and 375,
   seeded private DB): it caught the slug-tree New 404 (pages added) and a picked prospect
   showing its option text (`customerTriggerLabel`). Two findings stand as ruled: a partial

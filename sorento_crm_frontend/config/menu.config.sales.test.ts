@@ -33,9 +33,9 @@ describe.each([
     const group = salesGroup(menu);
     expect(group).toBeDefined();
     expect(group!.moduleKey).toBeUndefined();
-    // The retail sales reports (#1267) append their own items after these two, in
+    // The retail sales reports (#1267) append their own items after these four, in
     // MENU_SIDEBAR only; config/menu.sales.test.ts pins them.
-    expect(group!.children!.slice(0, 2)).toEqual([
+    expect(group!.children!.slice(0, 4)).toEqual([
       {
         title: 'Targets',
         path: '/sales/targets',
