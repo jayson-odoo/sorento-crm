@@ -50,10 +50,23 @@ def _current_other_heads() -> set[str]:
     """Every alembic head of the graph WITHOUT this migration (computed, never
     hard-coded). Once this migration exists it IS the head, so `get_heads()` minus
     itself is empty; the heads it must sit on are the ones left when it is removed.
-    More than one means this migration doubles as their merge revision."""
+    More than one means this migration doubles as their merge revision.
+    Revisions stacked on top of this one (a later lane's chain) are dropped with it,
+    or their tip would count as an "other head"."""
     cfg = Config(str(Path(__file__).resolve().parent / ".." / "alembic.ini"))
     script = ScriptDirectory.from_config(cfg)
-    others = [r for r in script.walk_revisions() if r.revision != MODULE_NAME]
+    revs = list(script.walk_revisions())
+    above = {MODULE_NAME}
+    grew = True
+    while grew:
+        grew = False
+        for rev in revs:
+            down = rev.down_revision
+            downs = down if isinstance(down, (tuple, list)) else (down,)
+            if rev.revision not in above and above.intersection(downs):
+                above.add(rev.revision)
+                grew = True
+    others = [r for r in revs if r.revision not in above]
     pointed_at: set[str] = set()
     for rev in others:
         down = rev.down_revision
