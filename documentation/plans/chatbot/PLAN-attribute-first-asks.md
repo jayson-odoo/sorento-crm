@@ -511,7 +511,8 @@ Each item was replayed with her exact message against seeded data, red first.
 
 - F1, item 1 (AC-1378): every word that names the leg or selected its domain (the policy row's
   own `switch_words`: "eta", "arriving", "shipment", "container" for incoming) is a predicate
-  word, so "65502 eta" never says it did not understand "eta"; the ask's own word is never
+  word, so "65502 eta" never says it did not understand "eta" (a message made only of the
+  ask's own words, a bare "promo", is left as before: it names no set); the ask's own word is never
   projected as a missing field ("*Incoming:* not recorded yet"). An incoming set renders each
   row in the normal ETA reply's field structure, with the packing lists (AC-1373 amended).
 - F2 and F3, items 2 to 4 (AC-1379, AC-1380): `app/services/product_code_family.py`, called by
@@ -539,6 +540,10 @@ Each item was replayed with her exact message against seeded data, red first.
   form already did, so the attachments call narrows to certificate files; a certificate or
   attachment set renders each row in the normal attachment structure (AC-1373 amended).
 - F7 (AC-1384): no reply carries internal phrasing; pinned over every reply of the replay.
+- Superseded tests amended to these rulings (a note in each): round 3 W1 and W5 and round 4
+  R3 (two-line certificate and incoming rows), `test_lane_require` (two certificate set
+  tests, and the bare leg's "no certificate ids" control, now its own ids), and
+  `test_resolve_predicate` (the predicate block's keys; the bare leg's certificate ids).
 
 Parser prompt: not changed. No migration.
 

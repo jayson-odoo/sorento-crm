@@ -324,6 +324,8 @@ def test_predicate_matches_carry_the_shape_the_fetch_reads(client, db):
         "brand",
         "row_labels",
         "set_key",
+        # Round 7 on PR #833 (item 7): the bare certificate leg's own certificate ids.
+        "certificate_ids",
     }
 
 
@@ -1314,7 +1316,9 @@ def test_scheme_narrowed_certificate_predicate_carries_only_that_schemes_ids(cli
     )
     assert bare_response.status_code == 200
     bare_predicate = bare_response.json()["predicate"]
-    assert "certificate_ids" not in bare_predicate, bare_predicate
+    # AMENDED by round 7 on PR #833 (owner hand test, item 7): the bare leg carries every
+    # certificate of the qualifying products, so the fetch lists certificates only.
+    assert sorted(bare_predicate.get("certificate_ids") or []) == sorted([pps_cert.id, wcm_cert.id]), bare_predicate
 
 
 # --------------------------------------------------------------------------- #

@@ -70,3 +70,14 @@ SNAKE_RE = re.compile(r"(?<![\w./@-])[a-z][a-z0-9]*(?:_[a-z0-9]+)+(?![\w./@-])")
 
 def snake_tokens(text: str) -> list[str]:
     return SNAKE_RE.findall(text or "")
+
+
+_PRODUCT_CODE_RE = re.compile(r"^(?:\d+\. )?\*Product Code:\* (\S+)")
+
+
+def full_row_codes(text: str) -> list[str]:
+    """The product codes of a set answer in the normal (full field) structure, one per
+    row: the "*Product Code:*" line each row opens with. Round 7 on PR #833 (owner hand
+    test of rounds 4 to 6, items 1 and 7): an incoming, certificate or attachment set
+    renders its rows the way the normal ETA or attachment ask does."""
+    return [m.group(1) for m in (_PRODUCT_CODE_RE.match(line) for line in (text or "").splitlines()) if m]

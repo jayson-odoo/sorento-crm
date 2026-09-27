@@ -276,15 +276,18 @@ def derive_predicate_words(
     # understand "eta""): every word of the message that names the leg, or that selected
     # the leg's domain in the first place, is the predicate's word too - never a word the
     # described set has to bind.
+    # A message that is nothing BUT the ask's own words ("promo", "stock") names no set,
+    # and is left exactly as before.
     leg_words = _leg_words(require)
-    for match in _MESSAGE_WORD_RE.finditer(message_text or ""):
-        word = match.group()
-        if word.lower() in leg_words and word not in words:
-            words.append(word)
+    message_words = _MESSAGE_WORD_RE.findall(message_text or "")
+    if any(w.lower() not in leg_words for w in message_words):
+        for word in message_words:
+            if word.lower() in leg_words and word not in words:
+                words.append(word)
     return words
 
 
-_MESSAGE_WORD_RE = re.compile(r"[A-Za-z]+")
+_MESSAGE_WORD_RE = re.compile(r"[A-Za-z0-9]+")
 
 #: The routing domain each leg answers in (`turn.policy_rows`), whose `switch_words` are
 #: the customer's own words for it.

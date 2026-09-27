@@ -344,15 +344,14 @@ def test_w1_a_certificate_row_is_a_vertical_block_too(chat, world):
     text = chat.say("which wash basin has cert", _ask("cert", "wash basin", "which wash basin has cert"))
 
     assert "|" not in text, text
-    blocks = _blocks(text)
-    names = {p.product_code: p.product_name for p in world["srt_basins"]}
-    assert {_block_code(b) for b in blocks} == set(names), text
-    for block in blocks:
-        code = _block_code(block)
-        assert block[0].split(". ", 1)[1] == f"{names[code]} ({code})", block
-        # The code is said once, on line 1.
-        assert sum(ln.count(code) for ln in block) == 1, block
-        assert block[1].startswith("*Certificate Number:* "), block
+    # Round 7 on PR #833 (owner hand test of rounds 4 to 6, item 7): a certificate row is
+    # the normal attachment row, one field per line, led by its Product Code.
+    from tests.chatbot.set_reply import full_row_codes
+
+    assert set(full_row_codes(text)) == {p.product_code for p in world["srt_basins"]}, text
+    for block in [b for b in text.split("\n\n") if re.match(r"^\d+\. \*Product Code:\*", b)]:
+        assert all(ln.startswith("*") or re.match(r"^\d+\. \*", ln) or "EXPIRED" in ln for ln in block.splitlines()), block
+        assert "*Certificate Number:* " in block, block
 
 
 def test_w1_an_incoming_row_is_a_vertical_block_too(chat, world):
@@ -360,13 +359,10 @@ def test_w1_an_incoming_row_is_a_vertical_block_too(chat, world):
     text = chat.say("which bathtub has incoming", _ask("incoming", "bathtub", "which bathtub has incoming"))
 
     assert "|" not in text, text
-    blocks = _blocks(text)
-    assert {_block_code(b) for b in blocks} == _codes(world["srt_tubs"]), text
-    names = {p.product_code: p.product_name for p in world["srt_tubs"]}
-    for block in blocks:
-        code = _block_code(block)
-        assert block[0].split(". ", 1)[1] == f"{names[code]} ({code})", block
-        assert len(block) <= 2, block
+    # Round 7 on PR #833 (item 1): an incoming row is the normal ETA row, one field a line.
+    from tests.chatbot.set_reply import full_row_codes
+
+    assert set(full_row_codes(text)) == _codes(world["srt_tubs"]), text
 
 
 # --------------------------------------------------------------------------- #
@@ -567,7 +563,10 @@ def test_w5_every_listed_product_belongs_to_the_header_brand(chat, world, kind):
     text = chat.say("which wash basin has x", _ask(kind, "wash basin", f"which wash basin has {kind}"))
     brand = world["sorento"].brand_name
     assert one_line_header(text).startswith(f"Brand: {_display(brand)},"), text
-    listed = _listed(text)
+    # Round 7 on PR #833: a certificate set lists rows in the attachment structure.
+    from tests.chatbot.set_reply import full_row_codes
+
+    listed = _listed(text) or full_row_codes(text)
     assert listed and {_brand_of(world["db"], c) for c in listed} == {brand}, (listed, text)
     assert world["srt_basins"][2].product_code in listed, text
     assert world["mch_basins"][0].product_code not in text, text

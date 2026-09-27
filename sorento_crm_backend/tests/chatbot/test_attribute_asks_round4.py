@@ -280,23 +280,24 @@ def test_r3_a_stock_row_is_two_lines_name_with_code_then_the_stock(chat, world, 
     assert world["warehouse"].warehouse_code not in text, text
 
 
-def test_r3_a_certificate_row_is_two_lines_too(chat, world):
+def test_r3_a_certificate_row_keeps_the_attachment_structure(chat, world):
+    """AMENDED by round 7 (owner hand test of rounds 4 to 6, item 7: "I need the output to
+    behave like normal product attachment ask, the structure"): a certificate set row is
+    the normal attachment row, not two lines."""
+    from tests.chatbot.set_reply import full_row_codes
+
     text = chat.say("which wash basin has cert", _ask("cert", "wash basin", "which wash basin has cert"))
-    rows = _rows(text)
-    assert {r["code"] for r in rows} == _codes(world["srt_basins"]), text
-    for row in rows:
-        assert len(row["lines"]) == 2, row
-        assert row["lines"][1].startswith("*Certificate Number:* "), row
-        assert "*Valid Until:* " in row["lines"][1], row
-        assert "*File Name:*" not in row["lines"][1], row
+    assert set(full_row_codes(text)) == _codes(world["srt_basins"]), text
+    for block in [b for b in text.split("\n\n") if re.match(r"^\d+\. \*Product Code:\*", b)]:
+        assert "*Certificate Number:* " in block and "*Valid Until:* " in block and "*File Name:*" in block, block
 
 
-def test_r3_an_incoming_row_is_two_lines_too(chat, world):
+def test_r3_an_incoming_row_keeps_the_eta_structure(chat, world):
+    """AMENDED by round 7 (item 1: "follows the structure of normlaly how we ask eta")."""
+    from tests.chatbot.set_reply import full_row_codes
+
     text = chat.say("which bathtub has incoming", _ask("incoming", "bathtub", "which bathtub has incoming"))
-    rows = _rows(text)
-    assert {r["code"] for r in rows} == _codes(world["srt_tubs"]), text
-    for row in rows:
-        assert len(row["lines"]) <= 2, row
+    assert set(full_row_codes(text)) == _codes(world["srt_tubs"]), text
 
 
 def test_r3_a_set_reply_of_fifty_rows_fits_one_whatsapp_message(chat, world, monkeypatch):

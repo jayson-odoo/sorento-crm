@@ -296,6 +296,47 @@ skipped, 33 xfailed, 0 failed. Brands vitest 31 passed. py3.12 compile ok, dash 
 1 alembic head (`bcw_0001_brand_chatbot_weight`). Live parser: not run (no parser key on this
 VM); the console yaml now sends all six reviewer phrases.
 
+## Round 7: owner hand test of rounds 4 to 6 (27 Sep 2026 10:37 MYT), items 1 to 7
+
+New tests: `tests/chatbot/test_attribute_asks_round7.py` (29), every one on Leena's exact
+messages against seeded data (the 65502 sinks, the 8840 and 7604 families with their X bowls,
+close coupled P trap water closets in three brands, kitchen taps with a certificate and a
+product photo each). The MCP tools are stubbed in their real presenter shapes; the attachments
+stub returns photos AND certificates unless the call narrows. Red commit `4cb25f978`: 22 of 28
+red on 898833d62 (item 1 fails on the owner's own line `I did not understand "eta", so it is
+not part of this search.`), 6 guards green on both sides; the 29th
+(`test_f3_words_every_variant_carries_leave_the_code_alone`) guards the family pick itself.
+
+Kill tests (one mutation each, restored after): 13 of 13 RED.
+
+| Kill | Mutation | Result |
+|---|---|---|
+| K1 | leg words not stripped from the query | RED, 4 |
+| K2 | incoming set keeps two-line rows | RED, 2 |
+| K3 | certificate set keeps two-line rows | RED, 4 |
+| K4 | the ask's own word projected as a missing field | RED, 2 |
+| K5 | no code family narrowing in the resolver | RED, 8 |
+| K6 | family without the X sibling | RED, 8 |
+| K7 | the descriptor's category token kept | RED, 3 |
+| K8 | two product type lines in the header | RED, 4 |
+| K9 | a placed scope term still reported missing | RED, 6 |
+| K10 | brand pick not read | RED, 4 |
+| K11 | no carry for the "Other brands" offer | RED, 4 |
+| K12 | the last answer's rows feed a page's zero stock ladder | RED, 4 |
+| K13 | the bare certificate leg sends no certificate ids | RED, 3 |
+
+Regression found and fixed in the lane: a bare "promo" ask lost the tier question once "promo"
+was stripped as a leg word; a message made only of the ask's own words is now left as before
+(`test_rearch_r6_review_round.py` green). Ten tests encoding the replaced rulings (two-line
+certificate and incoming rows, no certificate ids on a bare leg) were amended with a note each.
+
+Gates (`scripts/cloud-env-setup.sh`, `SORENTO_ENV_FILE=.env.ci-tests`, CI flags `-n 4 --dist
+loadfile -m "not serial_ddl"`, `ci_excluded.txt` ignores, migration glob ignored):
+`tests/chatbot` plus the resolver, predicate, spec search and certificate resolver files, 3481
+passed, 214 skipped, 33 xfailed, 0 failed. py3.12 compile ok, dash guard 0 hits, 1 alembic head
+on the branch (`bcw_0001_brand_chatbot_weight`, no migration this round). Parser prompt: not
+changed. Live parser: not run (no parser key on this VM).
+
 ## Deviations
 
 - Phase 1 skipped by design: no UI surface. The lavish review page stands in for the mock.

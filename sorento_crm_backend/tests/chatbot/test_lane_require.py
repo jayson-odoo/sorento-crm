@@ -1372,7 +1372,11 @@ def test_set_answer_carries_the_header_and_lists_every_product():
 
     lines = legacy_lines(reply)
     assert lines and lines[0] == "Product type: Tap. 7 taps have certificates.", reply
-    assert len(row_codes(reply)) == 7, reply
+    # Round 7 on PR #833 (owner hand test, item 7): certificate rows keep the normal
+    # attachment structure, led by "*Product Code:*".
+    from tests.chatbot.set_reply import full_row_codes
+
+    assert len(full_row_codes(reply)) == 7, reply
 
 
 def test_set_answer_is_scoped_to_the_class_word():
@@ -1472,8 +1476,8 @@ def test_expired_only_certificate_still_counts_and_is_flagged():
 
     lines = legacy_lines(reply)
     assert lines and lines[0] == "Product type: Tap. 1 tap has certificates.", reply
-    # Round 4 R3: the compact row flags it inline.
-    assert "*(Expired)*" in reply, reply
+    # Round 7 on PR #833: the normal attachment row, with its own expiry flag.
+    assert "*Validity:* Expired" in reply and "*(EXPIRED)*" in reply, reply
 
 
 def test_unknown_term_clarifies_with_nearest_names():
@@ -2576,16 +2580,13 @@ def test_scheme_narrowed_certificate_predicate_passes_certificate_ids_to_the_too
     assert turn1_args.get("product_ids"), turn1_args
 
 
-def test_bare_certificate_predicate_passes_no_certificate_ids(
+def test_bare_certificate_predicate_passes_its_own_certificate_ids(
     session_factory, stub_parser, stub_access, monkeypatch
 ):
-    """AC-1354/R29 control: a BARE certificate leg (no scheme) must pass
-    nothing extra - the tool renders every certificate file the qualifying
-    products hold, exactly as it does today. Guards the fix against adding
-    `certificate_ids` unconditionally.
-
-    Green today (nothing computes this key either way, scheme or bare) -
-    kept as the regression guard alongside the scheme-narrowed red case.
+    """AC-1354/R29, AMENDED by round 7 on PR #833 (owner hand test of rounds 4 to 6,
+    item 7: "when i ask about cert, you give me photos"): a BARE certificate leg passes
+    the qualifying products' own certificate ids too, every scheme, so the attachments
+    call lists certificate files and never a product's photos.
     """
     from app.models.certificate import Certificate, CertificateProduct
 
@@ -2627,7 +2628,14 @@ def test_bare_certificate_predicate_passes_no_certificate_ids(
     )
     assert turn1.status == "done", turn1.error
     assert len(calls) == 1, calls
-    assert "certificate_ids" not in calls[0]["args"], calls[0]["args"]
+    certified = {
+        row[0]
+        for row in db.query(CertificateProduct.certificate_id)
+        .join(Certificate, Certificate.id == CertificateProduct.certificate_id)
+        .filter(Certificate.scheme == "ZZT-SIRIM")
+        .all()
+    }
+    assert set(calls[0]["args"].get("certificate_ids") or []) == certified, calls[0]["args"]
 
 
 # --------------------------------------------------------------------------- #
