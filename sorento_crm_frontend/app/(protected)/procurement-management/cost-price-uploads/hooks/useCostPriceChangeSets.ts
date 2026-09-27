@@ -8,6 +8,7 @@
 
 import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import * as costPriceService from '../services/costPriceService';
 import type { LineDecision } from '../types/costPrice.types';
@@ -48,7 +49,7 @@ export function useCostPriceChangeSets(params: CostPriceListParams) {
   return useQuery({
     queryKey: costPriceChangeSetsListQueryKey(params),
     queryFn: () => costPriceService.getCostPriceChangeSets(params),
-    placeholderData: (previous) => previous,
+    ...LIST_QUERY_OPTIONS,
   });
 }
 
