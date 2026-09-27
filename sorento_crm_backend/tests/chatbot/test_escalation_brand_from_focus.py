@@ -772,3 +772,370 @@ class TestFocusProductBrandRead:
             assert focus_product_brand(db, no_code) == "sorento"
         finally:
             db.close()
+
+
+# --------------------------------------------------------------------------- #
+# 7. Fix round 3: the owner's console retest of 27 Sep (about 14:39 MYT).
+#
+# The owner's two console messages, replayed the way the console runs them: both turns
+# through `console_service.run_console_turn` (a dry run, `is_test`, `ingress=console`),
+# the same contact, the second turn sent the `session_vars` the first one returned (what
+# `useChatbotConsole` does between turns). The parser is stubbed to the verdicts the
+# owner's trace recorded; everything after it is real.
+#
+# Diagnosis: the console DOES carry the focus between dry runs (turn 2 `remembered_keys:
+# 1` is the focus), so hypothesis 1 does not hold. Hypothesis 2 does, one layer down:
+# "check spec srtwc286" leaves the focus entry UNSETTLED (`raw`/`canonical_code`
+# "srtwc286", no `uuid`: master_products does not narrow on product, so
+# `turn/apply.py`'s `focus_settles_product` never runs), and the brand read matched an
+# unsettled code by EXACT `product_code` only, so "SRTWC286" never found "SRTWC286-SH".
+# --------------------------------------------------------------------------- #
+
+
+def _seed_branded(session_factory, *, code: str, brand_code: str) -> None:
+    """`_seed_product_with_brand`, reusing a brand row an earlier call already seeded
+    (brand codes are unique per company)."""
+    import uuid as uuid_mod
+
+    from app.models.product import Brand, Product
+
+    db = _db(session_factory)
+    try:
+        brand_id = db.query(Brand.id).filter(Brand.brand_code == brand_code).scalar()
+        if brand_id is None:
+            db.close()
+            _seed_product_with_brand(session_factory, code=code, brand_code=brand_code)
+            return
+        template = db.query(Product).filter(Product.brand_id == brand_id).first()
+        db.add(
+            Product(
+                id=str(uuid_mod.uuid4()),
+                product_code=code,
+                product_name=f"ZZT {code}",
+                category_id=template.category_id,
+                base_uom_id=template.base_uom_id,
+                brand_id=brand_id,
+                list_price=1,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+def _seed_borrowable_envelope(session_factory) -> None:
+    """The contact's last REAL inbound envelope, the one `console_service._borrow_envelope`
+    reads (a console turn cannot run without one)."""
+    from app.models.chatbot_turn import ChatbotTurn
+
+    db = session_factory()
+    try:
+        db.add(
+            ChatbotTurn(
+                contact_respond_id=str(CONTACT_ID),
+                message_id="ZZT-865-r3-seed",
+                ingress="webhook",
+                envelope=json.loads(_envelope().model_dump_json()),
+                is_test=False,
+                status="done",
+                stage="sent",
+                branch_kind="business_query",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+def _stub_any_product_tool(monkeypatch) -> None:
+    """The product and stock tools answer with a card for whatever they were asked about
+    (a clean HIT, as the owner's turn 1 was); every other probe answers nothing."""
+    from app.services.ai_assistant_service import MCPRuntimeClient
+
+    def fake_call_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        if name in (MASTER_PRODUCTS_TOOL, "crm_inventory_stock_balance_list"):
+            return json.dumps(
+                {
+                    "items": [
+                        {
+                            "title": "ZZT SORENTO PRODUCT",
+                            "fields": [{"key": "product_code", "label": "Product Code", "value": "ZZT"}],
+                        }
+                    ],
+                    "has_result": True,
+                    "attachments": [],
+                    "action_links": [],
+                }
+            )
+        return json.dumps({"answers": [], "items": [], "has_result": False})
+
+    monkeypatch.setattr(MCPRuntimeClient, "call_tool", fake_call_tool)
+
+
+def _product_verdict(domain: str, intent: str, token: str, **extra: Any) -> dict[str, Any]:
+    return verdict(
+        message_type="business_query",
+        domain_hint=domain,
+        intent_hint=intent,
+        entities=[entity(token, hint="product", confident=True)],
+        routing={"suggested_team": "purchasing", "suggested_agent": "purchasing"},
+        **extra,
+    )
+
+
+def _owners_escalation_verdict() -> dict[str, Any]:
+    """Turn 2 as the owner's trace recorded it: "please escalate to marketing team",
+    `request_for_help`, the domain and intent carried from turn 1, no entities."""
+    return verdict(
+        message_type="request_for_help",
+        domain_hint="master_products",
+        intent_hint="check_product",
+        entities=[],
+        routing={"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+    )
+
+
+def _console_two_turns(
+    session_factory, monkeypatch, stub_parser, stub_access, *, first_text: str, first_verdict: dict[str, Any]
+):
+    from app.services.chatbot import console_service
+
+    _seed_contact(session_factory, phone="+60000865300")
+    _seed_borrowable_envelope(session_factory)
+    _seed_marketing_product_team(session_factory)
+    monkeypatch.setattr(console_service, "SessionLocal", session_factory)
+    stub_access()
+    _stub_any_product_tool(monkeypatch)
+
+    db = session_factory()
+    try:
+        stub_parser(first_verdict)
+        # `{}` is what the console page sends on its first turn (`useChatbotConsole`).
+        turn1 = console_service.run_console_turn(
+            db, contact_respond_id=str(CONTACT_ID), text=first_text, session_vars={}, run_id="zzt-865-r3"
+        )
+        assert turn1.branch_kind == "business_query", turn1.branch_kind
+
+        stub_parser(_owners_escalation_verdict())
+        calls = _capture_real_next_assignee(monkeypatch)
+        sla = _capture_sla(monkeypatch)
+        turn2 = console_service.run_console_turn(
+            db,
+            contact_respond_id=str(CONTACT_ID),
+            text="please escalate to marketing team",
+            session_vars=turn1.session_vars,
+            run_id="zzt-865-r3",
+        )
+    finally:
+        db.close()
+    assert turn2.branch_kind == "out_of_scope", turn2.branch_kind
+    assert sla == [], "a console turn is a dry run: no SLA row"
+    return turn1, turn2, calls
+
+
+def _assert_sorento_draw(session_factory, turn2, calls) -> None:
+    assert len(calls) == 1, calls
+    body, response = calls[0]["body"], calls[0]["response"]
+    assert body.get("preview") is True, body
+    assert body["brand_code"] == "sorento", body
+    assert response.get("assignee_name") == "ZZT Tay Zhi Yang", response
+    assert response.get("brand_matched") is True, response
+    routing = _looked_up_routing(session_factory, turn2.turn_id)
+    assert routing["brand_code"] == "sorento", routing
+    assert routing["routing_source"] == "focus_product", routing
+    assert str(routing["cursor_key"]).endswith("~b:sorento"), routing
+    assert routing["assignee_name"] == "ZZT Tay Zhi Yang", routing
+
+
+class TestTheOwnersConsoleRetest27Sep:
+    def test_check_spec_srtwc286_then_escalate_to_marketing_draws_the_sorento_member(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        """R1, the owner's exact two messages. On 4517e6edd: `brand_code: null`,
+        `routing_source: none`, the mocha-only member (Kia Yee)."""
+        _seed_branded(session_factory, code="SRTWC286-SH", brand_code="SORENTO")
+        turn1, turn2, calls = _console_two_turns(
+            session_factory,
+            monkeypatch,
+            stub_parser,
+            stub_access,
+            first_text="check spec srtwc286",
+            first_verdict=_product_verdict("master_products", "check_product", "srtwc286"),
+        )
+        _assert_sorento_draw(session_factory, turn2, calls)
+
+    @pytest.mark.parametrize(
+        ("text_", "domain", "intent", "extra"),
+        [
+            ("check spec {code}", "master_products", "check_product", {}),
+            ("what is the price of {code}", "master_products", "check_product", {"requested_attributes": ["price"]}),
+            ("stock for {code}", "inventory", "check_stock", {}),
+            ("What is the stainless steel grade of {code}?", "master_products", "check_product", {}),
+        ],
+        ids=["spec", "price", "stock", "script-grade"],
+    )
+    @pytest.mark.parametrize("token", ["SRTKS8650A", "srtks8650"], ids=["exact", "partial"])
+    def test_any_single_code_answer_then_escalate_draws_the_sorento_member(
+        self, session_factory, stub_parser, stub_access, monkeypatch, text_, domain, intent, extra, token
+    ) -> None:
+        """R1: every phrasing that shows exactly one product, the full code or the part
+        of it a customer types, then the owner's escalation."""
+        _seed_branded(session_factory, code="SRTKS8650A", brand_code="SORENTO")
+        turn1, turn2, calls = _console_two_turns(
+            session_factory,
+            monkeypatch,
+            stub_parser,
+            stub_access,
+            first_text=text_.format(code=token),
+            first_verdict=_product_verdict(domain, intent, token, **extra),
+        )
+        _assert_sorento_draw(session_factory, turn2, calls)
+
+    def test_a_spec_answer_listing_several_products_of_one_brand_keeps_that_brand(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        _seed_branded(session_factory, code="SRTWC286-SH", brand_code="SORENTO")
+        _seed_branded(session_factory, code="SRTWC286-PT", brand_code="SORENTO")
+        turn1, turn2, calls = _console_two_turns(
+            session_factory,
+            monkeypatch,
+            stub_parser,
+            stub_access,
+            first_text="check spec srtwc286",
+            first_verdict=_product_verdict("master_products", "check_product", "srtwc286"),
+        )
+        _assert_sorento_draw(session_factory, turn2, calls)
+
+    def test_a_spec_answer_listing_products_of_several_brands_names_none(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        _seed_branded(session_factory, code="SRTWC286-SH", brand_code="SORENTO")
+        _seed_branded(session_factory, code="SRTWC286-MC", brand_code="MOCHA")
+        turn1, turn2, calls = _console_two_turns(
+            session_factory,
+            monkeypatch,
+            stub_parser,
+            stub_access,
+            first_text="check spec srtwc286",
+            first_verdict=_product_verdict("master_products", "check_product", "srtwc286"),
+        )
+        assert calls[0]["body"]["brand_code"] is None, calls[0]["body"]
+        routing = _looked_up_routing(session_factory, turn2.turn_id)
+        assert routing["routing_source"] == "none", routing
+
+
+class TestTheConsoleCarriesWhatTheLivePathWrites:
+    def test_the_console_hands_the_next_turn_the_same_focus_the_live_turn_writes(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        """R2: a dry run writes no session, so the console carries its own: the
+        `session_vars` a console turn returns (the turn's `session_patch`) is what the page
+        sends back on the next turn. It must be the memory the live turn would have
+        written, focus product and all, or the hand test cannot reproduce live routing."""
+        from app.services.chatbot import console_service
+
+        _seed_branded(session_factory, code="SRTWC286-SH", brand_code="SORENTO")
+        _seed_contact(session_factory, phone="+60000865310")
+        _seed_borrowable_envelope(session_factory)
+        monkeypatch.setattr(console_service, "SessionLocal", session_factory)
+        stub_access()
+        _stub_any_product_tool(monkeypatch)
+        stub_parser(_product_verdict("master_products", "check_product", "srtwc286"))
+
+        db = session_factory()
+        try:
+            dry = console_service.run_console_turn(
+                db, contact_respond_id=str(CONTACT_ID), text="check spec srtwc286", session_vars={}, run_id="zzt-r2"
+            )
+        finally:
+            db.close()
+        assert _session_vars(session_factory) == {}, "the dry run wrote the contact's session"
+
+        live = engine_mod.run_turn(_envelope_for("ZZT-865-r3-live", "check spec srtwc286"), session_factory=session_factory)
+        assert live.branch_kind == "business_query", live.branch_kind
+        written = _session_vars(session_factory)
+
+        assert dry.session_vars is not None
+        assert dry.session_vars.get("focus") == written.get("focus"), (dry.session_vars, written)
+        assert (written.get("focus") or {}).get("products"), written
+
+
+class TestTheConsoleShowsWhereTheEscalationWent:
+    def test_the_console_turn_carries_one_readable_routing_line(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        """R3: the reply the customer sees is unchanged, and the console turn itself
+        carries team, brand, source and assignee in one line, so the owner can see where
+        it went without opening the trace."""
+        _seed_branded(session_factory, code="SRTWC286-SH", brand_code="SORENTO")
+        turn1, turn2, calls = _console_two_turns(
+            session_factory,
+            monkeypatch,
+            stub_parser,
+            stub_access,
+            first_text="check spec srtwc286",
+            first_verdict=_product_verdict("master_products", "check_product", "srtwc286"),
+        )
+        assert turn2.send_messages == [
+            "Your request is out of the scope of my ability and require human assistance. "
+            "We are directing your enquiry to the correct person. Please wait for a moment.",
+            "This inquiry has been routed to the respective person-in-charge (PIC) from "
+            "marketing product team. We will get back to you soon. Thanks for your patience.",
+        ], turn2.send_messages
+        assert turn2.trace_summary["routing_line"] == (
+            "Routing: team marketing_product, brand sorento, source focus_product, "
+            "assignee ZZT Tay Zhi Yang"
+        ), turn2.trace_summary
+        assert turn1.trace_summary["routing_line"] is None, turn1.trace_summary
+
+    def test_the_looked_up_stage_summary_names_the_routing(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        """R3, the trace screen: the escalation's `looked_up` stage reads as one line."""
+        from app.models.chatbot_turn import ChatbotTurn
+
+        _seed_branded(session_factory, code="SRTWC286-SH", brand_code="SORENTO")
+        _turn1, turn2, _calls = _console_two_turns(
+            session_factory,
+            monkeypatch,
+            stub_parser,
+            stub_access,
+            first_text="check spec srtwc286",
+            first_verdict=_product_verdict("master_products", "check_product", "srtwc286"),
+        )
+        db = session_factory()
+        try:
+            row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn2.turn_id).first()
+            records = [r for r in (row.trace or []) if r.get("stage") == "looked_up"]
+        finally:
+            db.close()
+        assert records[-1]["summary"] == (
+            "Handed the conversation to a person. Routing: team marketing_product, brand "
+            "sorento, source focus_product, assignee ZZT Tay Zhi Yang"
+        ), records[-1]
+
+
+class TestFocusProductBrandReadForAnUnsettledCode:
+    def test_an_unsettled_code_is_read_the_way_the_resolver_reads_it(self, session_factory) -> None:
+        """Round 3: an unsettled focus entry carries the token the customer typed. The
+        brand read finds its rows by the resolver's own code tiers (exact, then prefix,
+        then substring), so "srtwc286" is SRTWC286-SH, as it was in the answer."""
+        from app.services.chatbot.lanes.escalation_services import focus_product_brand
+
+        _seed_branded(session_factory, code="ZZT866-SH", brand_code="SORENTO")
+        _seed_branded(session_factory, code="ZZT866-PT", brand_code="SORENTO")
+        _seed_branded(session_factory, code="ZZT867-SH", brand_code="SORENTO")
+        _seed_branded(session_factory, code="ZZT867-MC", brand_code="MOCHA")
+        _seed_branded(session_factory, code="ZZT868", brand_code="MOCHA")
+        _seed_branded(session_factory, code="ZZT868-X", brand_code="SORENTO")
+        db = _db(session_factory)
+        try:
+            unsettled = lambda raw: [{"raw": raw, "hint": "product", "canonical_code": raw}]  # noqa: E731
+            assert focus_product_brand(db, unsettled("zzt866")) == "sorento", "prefix, one brand"
+            assert focus_product_brand(db, unsettled("zzt867")) is None, "prefix, two brands"
+            assert focus_product_brand(db, unsettled("t866-s")) == "sorento", "substring"
+            assert focus_product_brand(db, unsettled("zzt868")) == "mocha", "an exact code wins over its prefix"
+            assert focus_product_brand(db, unsettled("nothing-like-it")) is None
+        finally:
+            db.close()

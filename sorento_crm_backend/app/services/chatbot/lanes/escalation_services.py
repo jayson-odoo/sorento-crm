@@ -241,23 +241,29 @@ def focus_product_brand(db: Any, products: Any) -> str | None:
     uuids, codes = _product_refs(products)
     if not uuids and not codes:
         return None
-    from sqlalchemy import func, or_
+    from sqlalchemy import func
 
     from app.models.product import Brand, Product
+    from app.services.entity_resolver import _prefix_probe_product, _probe_product
 
-    clauses = []
-    if uuids:
-        clauses.append(Product.id.in_(sorted(uuids)))
-    if codes:
-        clauses.append(func.upper(Product.product_code).in_(sorted(codes)))
     # A savepoint, so a read that fails aborts only itself and never the caller's unit of
     # work (the turn's, or the lane's own before it draws an assignee).
     with db.begin_nested():
+        # An unsettled entry holds the token the customer typed ("srtwc286"), not the
+        # row's code (SRTWC286-SH): a domain that does not narrow on product never
+        # settles it (fix round 3, the owner's 27 Sep console retest). Its rows are the
+        # ones the resolver matched for the answer, so they are found by the resolver's
+        # own code tiers: exact, else prefix, else substring.
+        for code in sorted(codes):
+            hits = _probe_product(db, [code]).get(code) or _prefix_probe_product(db, code)
+            uuids.update(str(hit.uuid) for hit in hits if hit.uuid)
+        if not uuids:
+            return None
         rows = (
             db.query(func.lower(Brand.brand_code))
             .select_from(Product)
             .join(Brand, Brand.id == Product.brand_id)
-            .filter(or_(*clauses))
+            .filter(Product.id.in_(sorted(uuids)))
             .distinct()
             .all()
         )

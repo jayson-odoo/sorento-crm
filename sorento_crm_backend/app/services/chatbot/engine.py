@@ -50,7 +50,7 @@ from app.services.chatbot.head import parser
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
-from app.services.chatbot.lanes.escalation import run as run_escalation_lane
+from app.services.chatbot.lanes.escalation import run as run_escalation_lane, routing_line as escalation_routing_line
 from app.services.chatbot.lanes.business import resolve_gate, services as business_services
 from app.services.chatbot.usage import record_parser_usage
 # Stages C to G (PLAN-chatbot-turn-rearch.md "Turn order"). `turn/` is the pure core -
@@ -3658,12 +3658,13 @@ def _run_escalation_arm(
 
     # Only `looked_up` is recorded here. `replied` and `remembered` are the TAIL's, and
     # recording a `replied` of our own would put two of them on the trace.
+    routed_to = escalation_routing_line(fragment.get("routing"))
     turn_trace.record(
         "looked_up",
         summary=(
             "Asked which company should take it."
             if arm == "clarify"
-            else "Handed the conversation to a person."
+            else " ".join(filter(None, ("Handed the conversation to a person.", routed_to)))
         ),
         why=(
             "More than one company was offered and nobody picked one, so assigning would "

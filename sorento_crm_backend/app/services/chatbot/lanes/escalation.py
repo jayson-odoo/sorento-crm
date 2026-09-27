@@ -781,6 +781,25 @@ def _routing_record(
     }
 
 
+def routing_line(routing: Any) -> str | None:
+    """The draw `_routing_record` recorded, as one readable line, or None without one.
+
+    Fix round 3 (the owner's 27 Sep retest): the reply the customer sees names only the
+    team, so the console and the trace screen show this line to say where it went.
+    """
+    if not isinstance(routing, dict):
+        return None
+
+    def part(key: str) -> str:
+        value = jsc.get(routing, key)
+        return jsc.js_string(value) if jsc.truthy(value) else "none"
+
+    return (
+        f"Routing: team {part('team_code')}, brand {part('brand_code')}, "
+        f"source {part('routing_source')}, assignee {part('assignee_name')}"
+    )
+
+
 def _parser_team(ctx: dict[str, Any], team: Any) -> Any:
     """The team the PARSER itself resolved, not the one the turn inherited.
 
