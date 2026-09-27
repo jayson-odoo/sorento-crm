@@ -9,7 +9,13 @@ TEST-FIRST: nothing under test exists yet - see the module docstring of
 from __future__ import annotations
 
 from tests.fixtures.cost_price.taiyang_shapes import LETTERHEAD_TEXT, simple_price_list_workbook
-from tests.support.cost_price_env import PS_EDIT_PERM, UPLOAD_PERM, VIEW_PERM, cost_price_env
+from tests.support.cost_price_env import (
+    PS_EDIT_PERM,
+    UPLOAD_PERM,
+    VERIFY_PERM,
+    VIEW_PERM,
+    cost_price_env,
+)
 
 
 # --------------------------------------------------------------------------------- AC-AU-01
@@ -129,3 +135,98 @@ def test_apply_audit_rows_share_one_trace_id(cost_price_env):
         AuditLog.trace_id == trace_id,
     ).all()
     assert touched, "expected at least one product_suppliers/product_supplier_costs row on this trace"
+
+
+# --------------------------------------------------------------------------------- AC-AU-04 / J14
+
+
+def test_history_lists_line_decisions_and_maps(cost_price_env):
+    """J14 ("... sees who uploaded, mapped, skipped, submitted, decided, returned and
+    applied") + AC-AU-04 + contract 1.11: `GET /{id}/history` must carry one row per
+    line map, per line skip, and per verifier decision (with the reason, for a reject) -
+    not just the four SET-level events AC-AU-02 already covers. Today `patch_line()`
+    writes no audit row for a manual map or a skip, and `decide()` writes no audit row
+    at all, so none of `COST_LINE_MAP`, `COST_LINE_SKIP` or `COST_LINE_DECISION` ever
+    appear in the history this endpoint returns - a reviewer who opens an applied set's
+    History tab afterwards cannot see which line was rejected, by whom, or why (tester
+    finding 1, browser evidence run)."""
+    e = cost_price_env
+    e.seed_settings(cost_price_verification_enabled=True)
+    uploader = e.user(UPLOAD_PERM, VIEW_PERM, name="Uploader U")
+    e.as_user(uploader)
+    supplier = e.supplier(name=LETTERHEAD_TEXT)
+
+    accepted_product = e.product(code="ZZCPC-HIST-ACC")
+    e.link(accepted_product, supplier, unit_cost=100, currency="CNY")
+    rejected_product = e.product(code="ZZCPC-HIST-REJ")
+    e.link(rejected_product, supplier, unit_cost=200, currency="CNY")
+    mapped_product = e.product(code="ZZCPC-HIST-MAP")
+
+    data = simple_price_list_workbook(
+        [
+            ("ZZCPC-HIST-ACC", "cfg", 110),
+            ("ZZCPC-HIST-REJ", "cfg", 210),
+            ("ZZCPC-HIST-UNMATCHED", "cfg", 50),
+            ("ZZCPC-HIST-SKIP", "cfg", 60),
+        ],
+        letterhead=LETTERHEAD_TEXT,
+    )
+    upload = e.upload(data, supplier_id=str(supplier.id), currency="CNY")
+    assert upload.status_code == 201, upload.text
+    set_id = upload.json()["id"]
+
+    rows = e.lines(set_id).json()["data"]
+    by_code = {r["supplier_code_raw"]: r for r in rows}
+    accept_line = by_code["ZZCPC-HIST-ACC"]
+    reject_line = by_code["ZZCPC-HIST-REJ"]
+    unmatched_line = by_code["ZZCPC-HIST-UNMATCHED"]
+    skip_line = by_code["ZZCPC-HIST-SKIP"]
+
+    mapped = e.patch_line(set_id, unmatched_line["id"], {"product_id": str(mapped_product.id)})
+    assert mapped.status_code == 200, mapped.text
+    skipped = e.patch_line(set_id, skip_line["id"], {"skipped": True, "skip_reason": "duplicate row"})
+    assert skipped.status_code == 200, skipped.text
+
+    submitted = e.submit(set_id)
+    assert submitted.status_code == 200, submitted.text
+
+    verifier = e.user(VERIFY_PERM, VIEW_PERM, name="Verifier V")
+    e.as_user(verifier)
+    accept_decision = e.decide(set_id, accept_line["id"], {"decision": "accepted"})
+    assert accept_decision.status_code == 200, accept_decision.text
+    reject_decision = e.decide(
+        set_id, reject_line["id"], {"decision": "rejected", "reason": "price looks wrong"},
+    )
+    assert reject_decision.status_code == 200, reject_decision.text
+    map_decision = e.decide(set_id, unmatched_line["id"], {"decision": "accepted"})
+    assert map_decision.status_code == 200, map_decision.text
+
+    applied = e.apply(set_id)
+    assert applied.status_code == 200, applied.text
+
+    history = e.history(set_id)
+    assert history.status_code == 200, history.text
+    entries = history.json()["data"]
+    actions = [row["action"] for row in entries]
+
+    map_rows = [row for row in entries if row["action"] == "COST_LINE_MAP"]
+    assert map_rows, f"expected a COST_LINE_MAP row, got actions {actions}"
+    assert any("ZZCPC-HIST-UNMATCHED" in (row["summary"] or "") for row in map_rows), map_rows
+
+    skip_rows = [row for row in entries if row["action"] == "COST_LINE_SKIP"]
+    assert skip_rows, f"expected a COST_LINE_SKIP row, got actions {actions}"
+    assert any("ZZCPC-HIST-SKIP" in (row["summary"] or "") for row in skip_rows), skip_rows
+
+    decision_rows = [row for row in entries if row["action"] == "COST_LINE_DECISION"]
+    assert len(decision_rows) >= 3, f"expected 3 COST_LINE_DECISION rows, got {decision_rows}"
+    assert all(row["actor_name"] == "Verifier V" for row in decision_rows), decision_rows
+
+    reject_rows = [row for row in decision_rows if "ZZCPC-HIST-REJ" in (row["summary"] or "")]
+    assert reject_rows, f"expected a decision row naming ZZCPC-HIST-REJ, got {decision_rows}"
+    reject_summary = reject_rows[0]["summary"] or ""
+    assert "reject" in reject_summary.lower(), reject_summary
+    assert "price looks wrong" in reject_summary, reject_summary
+
+    accept_rows = [row for row in decision_rows if "ZZCPC-HIST-ACC" in (row["summary"] or "")]
+    assert accept_rows, f"expected a decision row naming ZZCPC-HIST-ACC, got {decision_rows}"
+    assert "accept" in (accept_rows[0]["summary"] or "").lower(), accept_rows
