@@ -155,3 +155,25 @@ read), and "6086 BOWL ONLY" (bowl count capped at 9, so it is flagged, not store
 Save-time cost of the re-read on save, derive loop only over 23,000 in-memory rows: 1.0 s
 (Length), 1.3 s (Finish or colour), 1.6 s (Product class), 3.0 s (Type), against 14.2 s for
 every key. The paged database read comes on top.
+
+## 7. Fix round 4, the owner's hand test (27 Sep)
+
+Browser pass on the cloud lane's CI database (empty schema plus a seven-product seed, no
+prod-copy data), frontend dev server, agent-browser at 1280 and 375. The empty tenant has no
+module rows, so the catalogue's modules were installed for the default tenant first; after that
+the page was reached by sidebar clicks from `/` (Products, Specifications, Product
+Specifications, Finish or colour, How it is read, Edit, Add a rule).
+
+Seed: Finish or colour has two live rules (WHITE to White, SATIN CHROME to Satin chrome);
+Chopping board is a yes-or-no spec read from CHOPPING BOARD. Two products carry a stored finish
+that today's rules no longer read (M3049-S has nothing stored while WHITE reads White; M4808SS
+stores Gunmetal, which no rule reads): the drift that used to show up as "added" and "removed".
+
+The owner's rule: Words BLACK, value Black, Only when Chopping board is Yes.
+
+| Step | Evidence | Seen |
+| --- | --- | --- |
+| Its values for Chopping board | `evidence/r4-f1-only-when-yes-no-1280.png`, `-375.png` | Yes and No, never "No results found." |
+| Its values for a spec with no choices | `evidence/r4-f1-no-choices-yet-1280.png` | "Basin style has no choices yet." |
+| The rule in one sentence | `evidence/r4-f3-rule-sentence-1280.png`, `-375.png` | "When the description or flyer contains the word BLACK and Chopping board is Yes, set Finish or colour to Black." |
+| See what would change | `evidence/r4-f2-preview-black-only-when-board-1280.png`, `-375.png` | 0 changed, 1 now set, 0 no longer set, 6 unchanged; "2 products have a stored value that differs from today's rules; saving this rule refreshes them too."; one row, SK-BLK-CB, Black sink with board, - to Black. TP-BLK (black, no board), M3049-S and M4808SS are not listed. |

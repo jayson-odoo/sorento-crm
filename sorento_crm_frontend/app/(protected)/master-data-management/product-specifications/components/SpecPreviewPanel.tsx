@@ -73,7 +73,7 @@ export default function SpecPreviewPanel({
             {row.original.code}
           </span>
         ),
-        size: 130,
+        size: 120,
       },
       {
         accessorKey: 'name',
@@ -86,7 +86,7 @@ export default function SpecPreviewPanel({
             </span>
           );
         },
-        size: 220,
+        size: 190,
       },
       {
         accessorKey: 'before',

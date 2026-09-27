@@ -13,7 +13,9 @@ plan's recommendation and are listed under "Rulings assumed" in the PR body. Fix
 (reviewer pass at ea0b804b) added migration `spec_0003_rules_null_brand_pol`: a stored empty rule
 list now means "no rules" (NULL alone means "the shipped rules"), and `brand` is taken out of
 every stored visibility policy (ruling assumed: the brand stays out of the registry and is always
-shown). Planning history:
+shown). Fix round 4 (owner hand test, 27 Sep): Only when on a yes-or-no specification offers Yes
+and No, See what would change compares the draft with the LIVE rules (stored drift is one line of
+its own), and the rule modal says the rule in one sentence. Planning history:
 DRAFT round 4, 27 Sep 2026; round 1 owner rulings, the round 3 Lavish mockup rulings and the
 round 4 Lavish notes applied (the three rulings sections below, and section 8).
 **Alignment page:** `alignment-product-specs-27sep.html` (owner review surface in Lavish; it
