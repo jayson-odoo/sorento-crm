@@ -22,7 +22,8 @@ behaviour production has never run, so:
 * **H27 stays open.** There is no team clarify. A null team is not reachable through the
   real pipeline anyway - `head/output_exchange.derive_routing`'s nullish chain hard-defaults
   `suggested_team` to `customer_service` long before this lane sees it - so the hazard is
-  live in the PARSER, not here, and this lane simply carries whatever arrives.
+  live in the PARSER, not here, and this lane carries whatever arrives, except that a team
+  the customer NAMED beats it (fix round 4, `_named_teams`).
 
 Both are marked `xfail(strict=True)` in the tester's suite, so the promotion makes itself
 noticed rather than needing to be remembered.

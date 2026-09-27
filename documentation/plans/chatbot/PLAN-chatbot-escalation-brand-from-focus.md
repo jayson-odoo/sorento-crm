@@ -1,6 +1,6 @@
 # PLAN: escalation resolves the brand from the focus product (#865)
 
-Status: IN REVIEW (fix round 3 folded in: the owner's console retest of 27 Sep; round 2's S1, S2, N1, N2, N3 before it), small fix track (backend only, under ~300 changed app lines, no migration, no auth/RBAC change, no new ingest surface). PR #1300, branch `fix/chatbot-escalation-brand-from-focus`.
+Status: IN REVIEW (fix round 4 folded in: the owner's retest of round 3, 27 Sep 21:19 MYT; round 3 the owner's console retest of 27 Sep; round 2's S1, S2, N1, N2, N3 before it), small fix track (backend only, under ~300 changed app lines, no migration, no auth/RBAC change, no new ingest surface). PR #1300, branch `fix/chatbot-escalation-brand-from-focus`.
 
 Source: the root-cause report on #865 ("Root cause: null brand on escalation after a spec answer (backup of 25 Sep)") and the owner ruling of 27 Sep 00:20 MYT authorising its fix option 1. UAC: `chatbot-escalation-brand-from-focus-acceptance-criteria.md`.
 
@@ -26,6 +26,15 @@ The owner sent "check spec srtwc286", then "please escalate to marketing team", 
 - **Fix.** `focus_product_brand` finds an unsettled code's rows by the resolver's own code tiers, `entity_resolver._probe_product` (exact) and then `_prefix_probe_product` (prefix, then substring). These are the rows the answer showed. One brand among them is the brand, and several brands name none, as before.
 - **R2, the console carry.** No change was needed; it is the console's own per-session carry (the `session_patch` round trip above), not a dry-run memory write. It is now pinned: the `session_vars` a console turn returns carry the same focus the live turn writes.
 - **R3, where it went.** `lanes/escalation.routing_line` renders the draw as one line: `Routing: team <code>, brand <code|none>, source <rung>, assignee <name|none>`. The escalation's `looked_up` stage summary carries it (trace screen), `ConsoleTurnResponse.trace_summary.routing_line` carries it, and the console shows it under the turn's first bubble. The reply the customer sees is unchanged.
+
+## Fix round 4: the owner's retest of round 3 (27 Sep 21:19 MYT)
+
+Three escalations in one console conversation. 1 ("check spec srtwc286", then "pelase esclate to marekting team") and 3 ("please esclate to marketin team MWCY8610") drew right. 2 ("pelase escalate to marketing team MWC-SC8609-PP") went to purchasing with no brand. Owner's rule: every Mocha company item, and every Mocha-brand product in Sorento, goes to the Mocha brand member of Marketing Product, whichever company the customer is talking to.
+
+- **Diagnosis.** The parser returned `suggested_team: purchasing` for 2: the prompt's routing table fills the team from the domain, and a product code reads as master_products (team purchasing). `lanes/escalation._person_routing` took the parser's team whenever it named a single catalogue team, so the customer's "marketing team" lost. Separately, the brand read ran on the turn's session, scoped to the contact's Sorento company, and MWC-SC8609-PP exists only in the Mocha company, so no row and no brand.
+- **R1.** `_named_teams` reads the team the customer named off the parser's `user_goal` (its reading of the message, spelling fixed; never the raw text, D11), and it beats the parser's team. "marketing" about a product in focus is Marketing Product; without one it asks over the three. The draw is made from that team, live and in the dry-run preview. No prompt change (that would be a published prompt version).
+- **R2.** `escalation_services.focus_product_origin`: a code the contact's own company does not hold is looked for across companies, for the brand read only. A row's brand is its brand row, else the brand its company stands for (Mocha company: mocha; the multi-brand Sorento company: none). A code in no company names no brand and the escalation still goes out. The session's scope is restored after the read.
+- **R3.** `routing_line` adds `found in <company>`, or `product <code> not found in any company`.
 
 ## From #866's plan
 

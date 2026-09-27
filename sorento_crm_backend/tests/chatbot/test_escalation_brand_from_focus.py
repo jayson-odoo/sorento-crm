@@ -1506,3 +1506,30 @@ class TestFocusProductOriginAcrossCompanies:
         finally:
             db.close()
         assert origin == {"brand": None, "company": "Sorento", "not_found": []}, origin
+
+
+class TestTheLiveTurnDrawsFromTheNamedTeam:
+    def test_escalation_2_live_draws_the_mocha_member_of_marketing_product(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        """R1 + R2 on the LIVE path (not the console preview): the next-assignee body is
+        made from the named team, and the SLA row describes the same draw."""
+        _seed_owners_catalogue(session_factory)
+        _seed_contact(session_factory, phone="+60000865410")
+        _seed_marketing_product_team(session_factory)
+        stub_access()
+        _stub_any_product_tool(monkeypatch)
+        calls = _capture_real_next_assignee(monkeypatch)
+        sla = _capture_sla(monkeypatch)
+        text_, parsed = OWNERS_27SEP_ROUND4[2]
+        stub_parser(parsed)
+        turn = engine_mod.run_turn(_envelope_for("ZZT-865-r4-live", text_), session_factory=session_factory)
+        assert turn.branch_kind == "out_of_scope", turn.branch_kind
+        assert len(calls) == 1, calls
+        body, response = calls[0]["body"], calls[0]["response"]
+        assert body.get("preview") is not True, body
+        assert (body["team_code"], body["brand_code"]) == ("marketing_product", "mocha"), body
+        assert response.get("assignee_name") == "ZZT Kia Yee", response
+        assert len(sla) == 1 and sla[0].team_set_code == "marketing_product", sla
+        routing = _looked_up_routing(session_factory, turn.turn_id)
+        assert routing["product_company"] == "Mocha", routing
