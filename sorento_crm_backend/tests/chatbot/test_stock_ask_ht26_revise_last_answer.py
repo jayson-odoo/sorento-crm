@@ -196,9 +196,15 @@ def test_the_guard_keeps_a_confident_digit_code():
 
 
 def test_the_stock_task_addendum_teaches_the_last_answered_line():
-    from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT, STOCK_TASK_ADDENDUM
+    from app.services.chatbot_parser_prompt import (
+        MEMORY_ADDENDUM,
+        SEMANTIC_PARSER_PROMPT,
+        STOCK_TASK_ADDENDUM,
+    )
 
     assert '"Last answered:"' in STOCK_TASK_ADDENDUM
     assert '"how about 100?"' in STOCK_TASK_ADDENDUM
     assert "correction true" in STOCK_TASK_ADDENDUM
-    assert SEMANTIC_PARSER_PROMPT.endswith(STOCK_TASK_ADDENDUM)
+    # Chatbot memory lane A's MEMORY_ADDENDUM (which ends with the CURRENT DATE
+    # section) stacks after this one, newest outermost, so it comes off first.
+    assert SEMANTIC_PARSER_PROMPT.removesuffix(MEMORY_ADDENDUM).endswith(STOCK_TASK_ADDENDUM)

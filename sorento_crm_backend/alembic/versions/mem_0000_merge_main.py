@@ -5,7 +5,7 @@ No DDL. This exists solely so `alembic upgrade head` has ONE head to aim at.
 When the memory lane merged main (d8395cb8, 27 Sep 2026), main itself carried three
 heads, each branched off `sales_0002_team_leader` by a separate PR:
 
-    ideation_confirm_prompts  (#1279, over ideation_reply_fmt_prompts)
+    ideation_confirm_prompts  (#1279, over its own reply-format revision)
     sa2_r9_open_question      (#1247)
     prod_discontinued_at_flt  (#1292)
 
