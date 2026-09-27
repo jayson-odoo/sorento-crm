@@ -53,7 +53,10 @@ def _current_other_heads() -> set[str]:
     More than one means this migration doubles as their merge revision."""
     cfg = Config(str(Path(__file__).resolve().parent / ".." / "alembic.ini"))
     script = ScriptDirectory.from_config(cfg)
-    others = [r for r in script.walk_revisions() if r.revision != MODULE_NAME]
+    # A lane re-parented on top of this migration is not one of the heads it sits on:
+    # leave out this migration AND everything stacked above it.
+    above = {MODULE_NAME} | {r.revision for r in script.iterate_revisions(script.get_heads(), MODULE_NAME)}
+    others = [r for r in script.walk_revisions() if r.revision not in above]
     pointed_at: set[str] = set()
     for rev in others:
         down = rev.down_revision
