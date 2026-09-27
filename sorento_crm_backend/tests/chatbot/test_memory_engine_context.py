@@ -617,7 +617,7 @@ class TestMemoryNeverOverridesCurrentMessage:
 
 
 class TestNewContactDefaults:
-    def test_new_contact_has_null_memory_level_and_false_recall_enabled(self, session_factory) -> None:
+    def test_new_contact_has_null_memory_level_and_resolves_to_off(self, session_factory) -> None:
         cid = _cid()
         db = session_factory()
         db.execute(
@@ -630,10 +630,15 @@ class TestNewContactDefaults:
         db.commit()
         row = db.execute(
             text(
-                "SELECT chatbot_memory_level, chatbot_recall_enabled FROM respond_contacts "
+                "SELECT chatbot_memory_level FROM respond_contacts "
                 "WHERE respond_io_id = :cid"
             ),
             {"cid": cid},
         ).one()
         assert row[0] is None, row
-        assert row[1] is False, row
+        # AC-MEM054 / AC-MEM073 (round 3): chatbot_recall_enabled is dropped; a new contact
+        # follows the system default, which ships off.
+        from app.modules.chatbot.lane_vocabulary import default_chatbot_memory
+        from app.services.chatbot.turn.memory import resolve_level
+
+        assert resolve_level(row[0], default_chatbot_memory()) == "off"
