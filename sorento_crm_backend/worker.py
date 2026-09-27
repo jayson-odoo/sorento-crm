@@ -59,6 +59,10 @@ class ForkSafeWorker(Worker):
 
     ``perform_job`` runs in the child, so disposing here gives the work-horse a
     fresh pool; ``close=False`` leaves the parent's sockets untouched.
+
+    The job runs as the `worker` audit actor, on behalf of whoever enqueued it
+    (``job.meta["actor"]``, identity S0 AC-10), through the same helper the
+    in-process drain uses.
     """
 
     def perform_job(self, job, queue):  # noqa: ANN001
@@ -68,7 +72,10 @@ class ForkSafeWorker(Worker):
             engine.dispose(close=False)
         except Exception:
             logger.exception("ForkSafeWorker: engine.dispose(close=False) failed")
-        return super().perform_job(job, queue)
+        from app.services.queue_service import job_actor_scope
+
+        with job_actor_scope(job):
+            return super().perform_job(job, queue)
 
 
 def _maybe_start_scheduler():
@@ -210,7 +217,9 @@ def _warn_if_vapid_missing():
         )
 
 
-if __name__ == '__main__':
+def register_worker_listeners():
+    """Session-class listeners the API registers in its startup_event, which the worker
+    never runs. RQ forks a work-horse per job that inherits them from this parent."""
     # Multi-company isolation: register the fail-closed SELECT filter + insert
     # auto-stamp here too. The worker never runs the API's startup_event, and
     # RQ forks a work-horse per job that inherits these Session-class listeners
@@ -229,6 +238,15 @@ if __name__ == '__main__':
     register_product_spec_listeners()
     register_spec_write_backstop()
 
+    # Audit: a job's ORM writes to tracked models are flush-audited as the `worker`
+    # actor (identity S0, AC-10), the same as when the API drains a job in-process.
+    # Bulk imports keep suppressing per-row rows via `skip_audit_entity_types`.
+    from app.services.audit_service import register_audit_listeners
+    register_audit_listeners()
+
+
+if __name__ == '__main__':
+    register_worker_listeners()
     _maybe_start_scheduler()
     _warn_if_vapid_missing()
     queues = resolve_queue_names()
