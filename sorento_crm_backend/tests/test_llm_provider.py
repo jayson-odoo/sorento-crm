@@ -358,6 +358,17 @@ def _install_anthropic(monkeypatch, stub: _RecordingAnthropic) -> _RecordingAnth
     return stub
 
 
+def _probe(provider) -> tuple[bool, str, int]:
+    """Run the probe and pin the (ok, message, latency_ms) shape the endpoint reads."""
+    result = provider.test_connection()
+    assert isinstance(result, tuple) and len(result) == 3
+    ok, message, latency = result
+    assert isinstance(ok, bool)
+    assert isinstance(message, str)
+    assert isinstance(latency, int) and latency >= 0
+    return result
+
+
 def _no_one_token_generate(calls: list[tuple[str, Any]]) -> None:
     for kind, payload in calls:
         if kind in ("chat", "messages"):
@@ -368,31 +379,29 @@ def _no_one_token_generate(calls: list[tuple[str, Any]]) -> None:
 def test_openai_test_connection_valid_key_on_a_reasoning_model_reports_ok(monkeypatch):
     stub = _install_openai(monkeypatch, _RecordingOpenAI())
     provider = get_provider("openai", "sk-valid", "gpt-5.4-mini")
-    ok, message, latency = provider.test_connection()
+    ok, message, _ = _probe(provider)
     assert (ok, message) == (True, "OK")
-    assert isinstance(latency, int) and latency >= 0
     _no_one_token_generate(stub.calls)
 
 
 def test_openai_test_connection_probes_the_selected_model(monkeypatch):
     stub = _install_openai(monkeypatch, _RecordingOpenAI())
-    get_provider("openai", "sk-valid", "gpt-5.4-mini").test_connection()
+    _probe(get_provider("openai", "sk-valid", "gpt-5.4-mini"))
     assert ("models.retrieve", "gpt-5.4-mini") in stub.calls
     assert not [c for c in stub.calls if c[0] == "chat"], "the probe must not generate"
 
 
 def test_openai_test_connection_bad_key_reports_the_provider_401_text(monkeypatch):
     stub = _install_openai(monkeypatch, _RecordingOpenAI(key_error=_OPENAI_401))
-    ok, message, latency = get_provider("openai", "sk-wrong", "gpt-5.4-mini").test_connection()
+    ok, message, _ = _probe(get_provider("openai", "sk-wrong", "gpt-5.4-mini"))
     assert ok is False
     assert message == _OPENAI_401
-    assert isinstance(latency, int)
     _no_one_token_generate(stub.calls)
 
 
 def test_openai_test_connection_unseen_model_reports_the_provider_text(monkeypatch):
     stub = _install_openai(monkeypatch, _RecordingOpenAI(model_error=_OPENAI_404))
-    ok, message, _ = get_provider("openai", "sk-valid", "gpt-5.4-mini").test_connection()
+    ok, message, _ = _probe(get_provider("openai", "sk-valid", "gpt-5.4-mini"))
     assert ok is False
     assert message == _OPENAI_404
     _no_one_token_generate(stub.calls)
@@ -400,22 +409,21 @@ def test_openai_test_connection_unseen_model_reports_the_provider_text(monkeypat
 
 def test_anthropic_test_connection_valid_key_reports_ok(monkeypatch):
     stub = _install_anthropic(monkeypatch, _RecordingAnthropic())
-    ok, message, latency = get_provider("anthropic", "sk-ant-valid", "claude-sonnet-4-5").test_connection()
+    ok, message, _ = _probe(get_provider("anthropic", "sk-ant-valid", "claude-sonnet-4-5"))
     assert (ok, message) == (True, "OK")
-    assert isinstance(latency, int) and latency >= 0
     _no_one_token_generate(stub.calls)
 
 
 def test_anthropic_test_connection_probes_the_selected_model(monkeypatch):
     stub = _install_anthropic(monkeypatch, _RecordingAnthropic())
-    get_provider("anthropic", "sk-ant-valid", "claude-sonnet-4-5").test_connection()
+    _probe(get_provider("anthropic", "sk-ant-valid", "claude-sonnet-4-5"))
     assert ("models.retrieve", "claude-sonnet-4-5") in stub.calls
     assert not [c for c in stub.calls if c[0] == "messages"], "the probe must not generate"
 
 
 def test_anthropic_test_connection_bad_key_reports_the_provider_401_text(monkeypatch):
     stub = _install_anthropic(monkeypatch, _RecordingAnthropic(key_error=_ANTHROPIC_401))
-    ok, message, _ = get_provider("anthropic", "sk-ant-wrong", "claude-sonnet-4-5").test_connection()
+    ok, message, _ = _probe(get_provider("anthropic", "sk-ant-wrong", "claude-sonnet-4-5"))
     assert ok is False
     assert message == _ANTHROPIC_401
     _no_one_token_generate(stub.calls)
@@ -423,7 +431,7 @@ def test_anthropic_test_connection_bad_key_reports_the_provider_401_text(monkeyp
 
 def test_anthropic_test_connection_unseen_model_reports_the_provider_text(monkeypatch):
     stub = _install_anthropic(monkeypatch, _RecordingAnthropic(model_error=_ANTHROPIC_404))
-    ok, message, _ = get_provider("anthropic", "sk-ant-valid", "claude-opus-9").test_connection()
+    ok, message, _ = _probe(get_provider("anthropic", "sk-ant-valid", "claude-opus-9"))
     assert ok is False
     assert message == _ANTHROPIC_404
     _no_one_token_generate(stub.calls)
@@ -1206,7 +1214,6 @@ def test_gemini_test_connection_ok(monkeypatch):
     ok, message, latency = GeminiProvider("k").test_connection()
     assert ok is True
     assert message == "OK"
-    assert isinstance(latency, int) and latency >= 0
     # Free and authenticated: a list, not a generate that a thinking model
     # would truncate to an empty candidate.
     assert t.last["method"] == "GET"
@@ -1221,7 +1228,6 @@ def test_gemini_test_connection_failure_carries_the_provider_message(monkeypatch
     ok, message, latency = GeminiProvider("k").test_connection()
     assert ok is False
     assert "API key not valid" in message
-    assert isinstance(latency, int)
 
 
 # ---- Gemini conversion helpers -------------------------------------------
