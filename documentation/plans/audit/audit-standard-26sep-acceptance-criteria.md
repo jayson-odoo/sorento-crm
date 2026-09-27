@@ -21,7 +21,7 @@ why" about any record, days or months after the fact.
    including the job it queued, because they share a request id and a correlation id.
 5. The admin ends holding a trail they can trust: the application, and the application's own
    database login, cannot edit or delete it outside the retention job. The table's owner and a
-   DBA still can (plan 7.1 names the three bypasses); closing those needs a second role.
+   DBA still can (plan 7.1 names the four bypasses); closing those needs a second role.
 
 ## S0 acceptance criteria
 
@@ -117,6 +117,30 @@ ACs pin that S0's rows carry them on every write path (fix round 2, review B2).
   rows. (2, 3)
 - **AC-S0-29 [BE]** A scheduled task's Run now names the user who pressed it;
   `/api/v1/external/chat-history` is not tagged `chatbot`. (3)
+
+### Review round 3 (reviewer pass at cba2b754)
+
+- **AC-S0-30 [BE]** (B3, the volume gate) Given a write inside a sync writer context (an
+  `imports`-queue job; a request by the `autocount_esb` integration key; any caller of
+  `/api/v1/external/ingest/*`; any `scheduler` actor, so every tick, heartbeat handler and Run
+  now; a block under `sync_writer_scope(name)`), then the flush, after-flush and bulk hooks
+  write audit rows only for the classes opted in before default-on (`__audit_track__`); an
+  explicit `log_audit` / `record()` row is still written. A staff request, an n8n or MCP key
+  and a job on any other queue stay default-on. One test per path fails when its mark is
+  removed. (2)
+- **AC-S0-31 [BE]** (B3) The 19 line, link and sync-mirror tables in the plan's "Measurement"
+  exclusion list carry `__audit_skip__` naming their measured rows a day, none of them was
+  audited before S0, and the projection over the measured volume stays at 3,136 rows a day
+  (ceiling) and 2,015 (expected), under the plan's 10x gate. (2)
+- **AC-S0-32 [BE]** (S1-r2) Given a NOSUPERUSER login with CREATEROLE, then the maintenance flag
+  is refused for it, whether it runs the migration DDL itself (PG16's implicit grant to the
+  role's creator), is granted the role (PG15 lets it grant itself), or `SET ROLE`s to the
+  maintainer role after `SET SESSION AUTHORIZATION`; only a superuser creates the role; a plain
+  member without CREATEROLE still passes; the migration's frozen DDL equals the model's. (5)
+- **AC-S0-33 [BE]** (N-a) A combo part's company and root follow its combo (`__audit_parent__ =
+  "combo_id"`), and a declared owner's chain wins over any other key's direct hop. (5)
+- **AC-S0-34 [BE]** (N-b) A bulk summary row on a class whose company comes through a parent
+  chain carries a company only when every matched row resolves to that one company. (5)
 
 ### Business verbs and reason
 

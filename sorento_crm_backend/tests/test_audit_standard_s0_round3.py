@@ -135,6 +135,18 @@ class TestS1CreateroleLogin:
             switch = (f'SET LOCAL SESSION AUTHORIZATION "{app_login}"', f'SET LOCAL ROLE "{maint}"')
         assert not self._delete_with_flag(db, schema, table, *switch)
 
+    def test_s1r2_the_migration_carries_the_same_ddl(self):
+        """The migration keeps its own frozen copy; both paths must refuse the same logins."""
+        import importlib.util
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "aud_0001_audit_standard_s0.py"
+        spec = importlib.util.spec_from_file_location("m_aud_0001_round3", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        assert module.ENSURE_MAINTAINER_ROLE_SQL == ENSURE_MAINTAINER_ROLE_SQL
+        assert module.APPEND_ONLY_FUNCTION_SQL == APPEND_ONLY_FUNCTION_SQL.format(schema="")
+
     def test_s1r2_a_plain_member_without_createrole_still_can(self, db):
         """The retention job's login: granted the role by a DBA, no CREATEROLE."""
         schema, maint, table = self._setup(db)

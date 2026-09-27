@@ -1,12 +1,12 @@
 # PLAN: one append-only audit backbone for every function (issue #1281)
 
-Status: S0 built, PR #1299, fix lane round 2 done on the reviewer pass at 7a56073f (Track: full,
+Status: S0 built, PR #1299, fix lane round 3 done on the reviewer pass at cba2b754 (Track: full,
 a migration and an auth-surface change). #1298 (S-1) and #1303 (identity S0) are merged into the
 lane; merge order is #1298, then #1303, then #1299. The actor on every audit row is #1303's
-(identity plan section 8); S0 adds no actor column. Measurement gate: `measure-s0.sql`, to run on
-the production copy before merge. Round 2 runs: backend main set 17650 passed, 10 failed, all 10
-also red on main in this environment (9 PDF renders need a frontend on :3040; one order-dependent
-leak from `test_hide_retired_everywhere_embedding.py`). S1, S2, S3 not started.
+(identity plan section 8); S0 adds no actor column. Measurement gate: run on the 25 Sep
+production copy (27 Sep 06:42 MYT), failed as built; round 3 implements the B3 exclusion ruling
+(assumed, owner to confirm): projected 3,136 rows a day at most, 2,015 expected, against 480
+today (section "Measurement"). S1, S2, S3 not started.
 Plan created: 2026-09-26 (from the investigation report on #1281, comment 5846914028, sections 7
 to 10, investigated at `51d30ccc5`).
 Domain: audit (CORE, not a module: every install needs a trail; the `audit` App Store key keeps
@@ -21,6 +21,12 @@ UAC: `audit-standard-26sep-acceptance-criteria.md` alongside.
   recommended standard should be applied now, we must do the right thing now". Evolve
   `audit_logs` in place; no second table. The orchestrator reads this ruling as authorising the
   whole recommended standard (section 7 below) as a sliced build, S0 first.
+
+- **27 Sep 2026 06:42 MYT, B3 volume gate (ASSUMED by the orchestrator, owner to confirm):**
+  rows written by the integration sync and import paths (AutoCount sync, supplier syncs,
+  product and master ingest, scheduled feed jobs) and pure line and link child tables are
+  EXCLUDED from default-on; staff-driven business writes stay on. Built in fix round 3 as the
+  sync writer context (7.2 item 1) plus the model opt-out list in "Measurement".
 
 Every other decision in the report is still open and is listed as a grill question at the end.
 Where S0 has to pick a side to be buildable at all (decisions 3 and 11), it builds the report's
@@ -53,8 +59,9 @@ recommendation under ruling 2 and says so; the grill question asks the owner to 
   integration; nothing carries the end user yet.
 - `module_purge_service.purge_audit` deletes every audit row when the `audit` module is
   uninstalled with purge.
-- Row volume per day on the production copy: **not measurable in this cloud lane** (no prod
-  copy). The query to run before merge is in "Measurement" below.
+- Row volume per day on the production copy: 480 (30-day average, 25 Sep copy, measured by the
+  orchestrator on 27 Sep). Default-on as first built projected 87,788 to 675,992; see
+  "Measurement" for the exclusion that brings it to 2,015 to 3,136.
 
 ## The standard (report section 7)
 
@@ -78,10 +85,14 @@ one new value, `EVENT`, for a side effect that changed no row (a download, a sen
 **Append-only is enforced by Postgres.** A `BEFORE UPDATE OR DELETE` row trigger and a
 `BEFORE TRUNCATE` statement trigger raise, with one way through: the transaction has run
 `SET LOCAL sorento.audit_maintenance = 'on'` AND the current role is a member of the NOLOGIN role
-`sorento_audit_maintainer` (with no such role, only a superuser). Any login can SET a custom
+`sorento_audit_maintainer` (with no such role, only a superuser) AND neither the current nor the
+session role holds CREATEROLE without being a superuser (review S1-r2: such a login can make
+itself a member). Any login can SET a custom
 setting, so at 7a56073f the app role could set the flag itself and rewrite history (review S1,
 probed as a NOSUPERUSER owner); the role check is what the app login does not have. The migration
-creates the role when its login may (else it notes that only a superuser can maintain the table)
+creates the role only when it runs as a superuser (else it notes that only a superuser can
+maintain the table: a CREATEROLE login that created the role would be a member of it through
+PG16's implicit grant, probe P1 at cba2b754)
 and the trigger for existing databases; an `after_create` DDL hook on the model creates both
 wherever `create_all` builds the table (CI bootstrap, the blank test schema), so the two cannot
 drift (lesson 90). The retention job (S3) and any scrub migration run as a maintainer with the
@@ -95,6 +106,11 @@ remain, named so nobody reads the trigger as more than it is:
    single-role deployment the app login is the owner.
 2. A superuser can `SET session_replication_role = replica`, which skips triggers.
 3. A superuser is a member of every role, so it passes the maintainer check.
+4. An app login with CREATEROLE (review S1-r2). The trigger refuses it and it cannot create the
+   role, but on PG15 (the shipped compose image) a CREATEROLE login may grant any non-superuser
+   role, so it can create a second login without CREATEROLE and grant that the role. PG16 closes
+   this (granting needs ADMIN on the role, which a superuser-created role gives nobody). Run the
+   app login without CREATEROLE.
 
 Closing 1 needs the table owned by a migration role and `REVOKE UPDATE, DELETE, TRUNCATE ON
 audit_logs` from the app login: a second role, which this deployment does not run today. Trigger to
@@ -103,9 +119,16 @@ login (grill question 14).
 
 ### 7.2 Emission: one hook, one decorator, no per-endpoint code
 
-1. **Default-on.** The `before_flush` listener audits every mapped class unless it declares
-   `__audit_skip__ = "<reason>"`. `__audit_columns__` still narrows a table. `__audit_track__`
-   stays on the 42 classes as a no-op marker (removing it is churn with no behaviour change).
+1. **Default-on, for staff-driven writes.** The `before_flush` listener audits every mapped class
+   unless it declares `__audit_skip__ = "<reason>"`. `__audit_columns__` still narrows a table.
+   Inside a **sync writer context** (review B3; `AuditContext.sync_writer`, read by
+   `sync_writer_for`) the flush, after-flush and bulk hooks audit only the 42 classes opted in
+   before default-on (`__audit_track__`), so `__audit_track__` is no longer a no-op marker. The
+   context is set centrally: `job_actor_scope` for every `imports`-queue job,
+   `mark_integration_request` for the `autocount_esb` key and for `/api/v1/external/ingest/*`,
+   every `scheduler` actor (ticks, heartbeat handlers, Run now), and `sync_writer_scope(name)`
+   for a sync path anywhere else. Explicit `log_audit` / `record()` / `@audit_event` rows are
+   written either way.
 2. **Changed keys only on UPDATE.** CREATE and DELETE stay full snapshots. An UPDATE whose only
    changed keys are touch columns (`updated_at`, `last_used_at`, `last_sign_in_at`,
    `last_seen_at`, `last_activity_at`, `last_synced_at`, `synced_at`, `last_run_at`,
@@ -245,6 +268,47 @@ Dependencies: S-1 first; S0 blocks S1, S2 and #1280's auth slice; S1 and S2 in p
 
 ## Measurement (before the default-on flip merges)
 
+**Result (fix round 3, B3).** Excluded from default-on, by model (`__audit_skip__` names the
+measured rows a day; lower bound from `created_at` / `updated_at` over 30 days, upper bound
+from `pg_stat_user_tables`):
+
+| Table | Rows a day, lower | Upper | Why |
+|---|---|---|---|
+| `sales_order_lines` | 47,507 | 286,917 | AutoCount sync line table |
+| `integration_references` | 13,315 | 79,431 | sync bookkeeping (external id map) |
+| `sales_orders` | 10,829 | 68,710 | AutoCount SO mirror; S1 records the ingest verdict as an event |
+| `purchase_order_lines` | 5,224 | 51,107 | sync line table |
+| `spo_allocations` | 2,602 | 29,343 | shipping order allocation lines from the sync |
+| `scm.order_link_claim` | 907 | 21,551 | sync link table |
+| `order_lines` | 699 | 32,458 | line table |
+| `projects.sales_order_lines` | 679 | 7,502 | ingested line table |
+| `stock` | 526 | 6,879 | balance mirror; movements are `stock_ledger` |
+| `product_specifications` | 513 | 5,220 | derived from products |
+| `projects.order_inquiry_rows` | 451 | 4,601 | line table (services log explicitly) |
+| `picking_lines` | 268 | 4,047 | line table |
+| `product_suppliers` | 264 | 4,865 | link from the master sync |
+| `product_attachments` | 259 | 4,399 | link table |
+| `certificate_products` | 256 | 3,420 | link table |
+| `projects.order_inquiry_links` | 230 | 2,351 | link table |
+| `projects.planning_change_rows` | 67 | not in the top 25 | line table |
+| `attachment_field_links` | 55 | 5,278 | link table |
+| `promotion_products` | not in the top 25 | 4,705 | link table |
+
+Excluded by writer, whatever the table: the sync writer context (7.2 item 1), where only the 42
+`__audit_track__` classes are recorded.
+
+**Projected: 3,136 audit rows a day at most (6.5x today's 480), 2,015 expected (4.2x).** The
+ceiling is the lower-bound estimator's 87,788 minus the excluded tables, with every remaining
+default-on table counted in full whoever wrote it (the measurement cannot split a table by
+writer, so the sync writer context gets no credit). Expected replaces the 42 tracked classes'
+raw write volume (1,602) with today's actual audit volume (480), since they were audited
+before S0 and still are. Both are computed by `projected_rows_per_day()` in
+`tests/test_audit_standard_s0_round3.py`, which pins them and fails if a table is put back.
+The upper-bound estimator is not used for the gate: its counters show inserts only (0 updates
+and 0 deletes on every table, and `sales_order_lines`' 843,494 is its whole row count), which
+reads as the dump restore 2.94 days before the run, so it measures table size, not a daily rate.
+After deploy, the 10x rule below still applies to the real count.
+
 The full gate is `documentation/plans/audit/measure-s0.sql` (review B3 at 7a56073f): today's
 volume, then the projected volume under default-on from two estimators (write counters since the
 stats reset, an upper bound; `created_at` / `updated_at` over 30 days, a lower bound), and a
@@ -270,7 +334,8 @@ default.
 
 See the UAC for the per-AC list. Files: `tests/test_audit_standard_s0.py` (listener, context,
 bulk, decorator, redaction, trigger, worker carry), `tests/test_audit_api_key_attribution.py`
-(the sync-dependency attribution red test), `tests/test_migration_aud_0001_audit_standard.py`.
+(the sync-dependency attribution red test), `tests/test_migration_aud_0001_audit_standard.py`,
+and one file per review round (`tests/test_audit_standard_s0_round2.py`, `_round3.py`).
 
 ## Out of scope for S0
 
@@ -280,11 +345,13 @@ history (decision 10).
 
 ## Grill questions for the owner
 
-1. **Default-on auditing (decision 3).** S0 flips to default-on with the reasoned skip-list above
-   (built under ruling 2). Confirm, or keep opt-in? Recommendation: default-on.
-2. **Measurement gate.** The daily row count on the prod copy could not be taken in the cloud
-   lane. Run the three queries above before merge, or accept measuring after deploy with the 10x
-   narrowing rule? Recommendation: run them before merge.
+1. **Default-on auditing (decision 3).** S0 flips to default-on for staff-driven writes with the
+   reasoned skip-list above (built under ruling 2), and off for the sync writer context. Confirm,
+   or keep opt-in? Recommendation: default-on.
+2. **Measurement gate.** Measured on 27 Sep; the B3 exclusion (ruling assumed, "Owner rulings")
+   brings the projection to 2,015 to 3,136 rows a day. Confirm the ruling and the exclusion
+   list in "Measurement", in particular `sales_orders` and `stock` (not line tables, but sync
+   mirrors) and `product_specifications` (staff spec edits are no longer rows of their own).
 3. **Retention (decision 4).** 24 months hot then R2; delete business events after 7 years and
    security / access events after 2; `chatbot.turns` envelopes after 12 months. Confirm 7 years
    with the accountant (Companies Act 2016).
