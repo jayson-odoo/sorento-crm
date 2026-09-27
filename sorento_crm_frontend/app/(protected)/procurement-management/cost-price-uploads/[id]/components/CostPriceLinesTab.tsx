@@ -68,6 +68,19 @@ function money(value: number | null, currency: string | null): string {
   return `${value.toFixed(2)} ${currency ?? ''}`.trim();
 }
 
+/** AC-S2-06: recorded vs live, terse - no prose on why the two differ. */
+function StaleCell({ line }: { line: CostPriceChangeLine }) {
+  const stale = line.stale;
+  if (!stale) return null;
+  const recorded = line.current_unit_cost != null ? line.current_unit_cost.toFixed(2) : 'none';
+  const live = stale.live_unit_cost != null ? stale.live_unit_cost.toFixed(2) : 'none';
+  return (
+    <span className="block truncate text-xs text-amber-700" title={`Recorded ${recorded}, now ${live}`}>
+      Recorded {recorded}, now {live}
+    </span>
+  );
+}
+
 /**
  * Mockup: Price now / New price show bare amounts, the set's currency being in the header.
  * A price in another currency keeps its code, since the difference is what matters; the
@@ -150,6 +163,11 @@ function LineCard({
               {money(line.new_unit_cost, line.current_currency)}
             </span>
           </div>
+          {line.stale ? (
+            <div className="mt-1 text-end">
+              <StaleCell line={line} />
+            </div>
+          ) : null}
           {line.flags.includes('duplicate_code') ? (
             <Button type="button" size="sm" variant="ghost" className="mt-1 text-muted-foreground" onClick={() => onPatch({ skipped: true, skip_reason: 'Duplicate code' })}>
               Skip this one
@@ -505,9 +523,12 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
         // the bare amount (PriceCell), so the code only takes room when it differs.
         size: 110,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
-        cell: ({ row }) => (
-          <PriceCell value={row.original.current_unit_cost} currency={row.original.current_currency} setCurrency={changeSet.currency} />
-        ),
+        cell: ({ row }) =>
+          row.original.stale ? (
+            <StaleCell line={row.original} />
+          ) : (
+            <PriceCell value={row.original.current_unit_cost} currency={row.original.current_currency} setCurrency={changeSet.currency} />
+          ),
       },
       {
         id: 'new',

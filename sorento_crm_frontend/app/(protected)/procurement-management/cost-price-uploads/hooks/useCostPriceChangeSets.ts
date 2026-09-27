@@ -164,6 +164,19 @@ export function useReturnCostPriceChangeSet(setId: string) {
   });
 }
 
+export function useRefreshCostPricePrices(setId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => costPriceService.refreshCostPricePrices(setId),
+    onSuccess: () => {
+      toast.success('Prices refreshed.');
+      queryClient.invalidateQueries({ queryKey: ['cost-price-change-set', setId, 'lines'] });
+      invalidateSet(queryClient, setId);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
 export function useApplyCostPriceChangeSet(setId: string) {
   const queryClient = useQueryClient();
   return useMutation({

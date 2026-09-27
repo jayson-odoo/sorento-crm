@@ -112,11 +112,9 @@ export function UploadPriceListDialog({
       onOpenChange(false);
       router.push(`/procurement-management/cost-price-uploads/${detail.id}`);
     } catch (error) {
-      if (error instanceof OpenSetExistsError) {
-        setOpenSet(error.open_set);
-      } else {
-        toast.error(error instanceof Error ? error.message : 'Failed to upload the price list');
-      }
+      // Anything other than the open-set case already toasted once, from
+      // `useUploadCostPriceFile`'s own `onError` - toasting again here doubled it.
+      if (error instanceof OpenSetExistsError) setOpenSet(error.open_set);
     }
   };
 
@@ -128,7 +126,7 @@ export function UploadPriceListDialog({
         </DialogHeader>
         <DialogBody className="space-y-4">
           <FileDropzone
-            accept=".xlsx,.xls"
+            accept=".xlsx"
             maxSizeMb={25}
             files={files}
             onFilesChange={onFilesChange}
@@ -156,6 +154,12 @@ export function UploadPriceListDialog({
           {probe.isPending ? (
             <p className="flex items-center gap-2 text-sm text-muted-foreground">
               <LoaderCircle className="size-4 animate-spin" /> Reading the file...
+            </p>
+          ) : null}
+
+          {probe.error ? (
+            <p className="text-sm text-destructive">
+              {probe.error instanceof Error ? probe.error.message : 'Failed to read the file'}
             </p>
           ) : null}
 
@@ -211,10 +215,9 @@ export function UploadPriceListDialog({
             </div>
           </div>
 
-          <p className="text-xs text-muted-foreground">
-            {probeResult?.file_date ? `File date: ${formatPlainDate(probeResult.file_date)}. ` : ''}
-            Leave both dates empty for a price that always applies.
-          </p>
+          {probeResult?.file_date ? (
+            <p className="text-xs text-muted-foreground">File date: {formatPlainDate(probeResult.file_date)}</p>
+          ) : null}
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>

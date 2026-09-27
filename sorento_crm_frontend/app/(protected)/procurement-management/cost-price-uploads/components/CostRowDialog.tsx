@@ -149,7 +149,6 @@ export function CostRowDialog({
             </div>
           </div>
           {endBeforeStart ? <p className="text-xs text-destructive">Valid to cannot be before Valid from.</p> : null}
-          <p className="text-xs text-muted-foreground">Both empty: always. Start only: from that day on.</p>
         </DialogBody>
         <DialogFooter className="sm:justify-between">
           {cost ? (

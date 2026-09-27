@@ -13,6 +13,7 @@ import { formatStatusLabel } from '@/lib/status-badge';
 import {
   costPriceChangeSetsPagerQuery,
   useCostPriceChangeSet,
+  useRefreshCostPricePrices,
 } from '../../hooks/useCostPriceChangeSets';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { downloadCostPriceSourceFile } from '../../services/costPriceService';
@@ -60,6 +61,8 @@ export function CostPriceChangeSetDetail({ changeSetId }: { changeSetId: string 
     onCommitted: () => router.push('/procurement-management/cost-price-uploads'),
   });
 
+  const refreshPrices = useRefreshCostPricePrices(changeSetId);
+
   if (isLoading || !changeSet) {
     return (
       <div className="space-y-4">
@@ -84,6 +87,11 @@ export function CostPriceChangeSetDetail({ changeSetId }: { changeSetId: string 
             <Button variant="outline" onClick={() => void downloadCostPriceSourceFile(changeSetId)} disabled={!changeSet.has_source_file}>
               Download file
             </Button>
+            {changeSet.actions.can_refresh_prices ? (
+              <Button variant="outline" onClick={() => void refreshPrices.mutateAsync()} disabled={refreshPrices.isPending}>
+                Refresh prices
+              </Button>
+            ) : null}
             {changeSet.actions.can_discard ? (
               discard.countdown ?? (
                 <Button variant="ghost" className="text-destructive" onClick={() => discard.start()}>
@@ -104,6 +112,19 @@ export function CostPriceChangeSetDetail({ changeSetId }: { changeSetId: string 
           {changeSet.supplier.supplier_name} &middot; {changeSet.currency} &middot; {validityLabel(changeSet.start_date, changeSet.end_date)}
           {changeSet.uploaded_by_name ? <> &middot; uploaded by {changeSet.uploaded_by_name} {formatDateTimeInMalaysia(changeSet.created_at)}</> : null}
           {changeSet.total_rows ? <> &middot; {sheetsAndRowsLabel(changeSet.sheets.length, changeSet.total_rows)}</> : null}
+          {changeSet.status === 'applied' ? (
+            <>
+              {' '}
+              &middot; applied by {changeSet.applied_by_name ?? 'a Sorento user'}
+              {changeSet.applied_at ? <> {formatDateTimeInMalaysia(changeSet.applied_at)}</> : null}
+              {changeSet.verified != null ? (
+                <>
+                  {' '}
+                  &middot; {changeSet.verified ? `Verified by ${changeSet.applied_by_name ?? 'a Sorento user'}` : 'Not verified'}
+                </>
+              ) : null}
+            </>
+          ) : null}
         </p>
       </PageHeader>
 
@@ -113,7 +134,6 @@ export function CostPriceChangeSetDetail({ changeSetId }: { changeSetId: string 
             Submitted by {changeSet.submitted_by_name ?? 'a Sorento user'}
             {changeSet.submitted_at ? `, ${formatDateTimeInMalaysia(changeSet.submitted_at)}` : ''}.
           </p>
-          <p>A second Sorento person decides each line before anything changes.</p>
         </div>
       ) : null}
 

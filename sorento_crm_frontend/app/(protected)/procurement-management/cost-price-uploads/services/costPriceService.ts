@@ -215,6 +215,16 @@ export async function applyCostPriceChangeSet(id: string): Promise<CostPriceChan
 }
 
 // ---------------------------------------------------------------------------
+// S6: re-capture current prices on a Draft set whose lines went stale.
+// ---------------------------------------------------------------------------
+
+export async function refreshCostPricePrices(id: string): Promise<CostPriceChangeSetDetail> {
+  const res = await apiFetch(`${BASE}/${id}/refresh-prices`, { method: 'POST' });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to refresh prices'));
+  return (await res.json()) as CostPriceChangeSetDetail;
+}
+
+// ---------------------------------------------------------------------------
 // 1.10 source file, 1.11 history
 // ---------------------------------------------------------------------------
 

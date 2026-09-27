@@ -51,7 +51,7 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
   const [statuses, setStatuses] = React.useState<CostRowStatus[]>([]);
   const [dialog, setDialog] = React.useState<{ entry: SupplierCostListEntry; cost: ProductSupplierCostRow | null } | null>(null);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['supplier-cost-lists', supplierId, search, statuses],
     queryFn: () => getSupplierCostLists(supplierId, { query: search || undefined, status: statuses.length ? statuses : undefined }),
     enabled: !!supplierId,
@@ -171,7 +171,13 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
         <SearchableMultiSelect value={statuses} onChange={(v) => setStatuses(v as CostRowStatus[])} options={STATUS_OPTIONS} placeholder="Status" triggerClassName="w-56" />
       </div>
 
-      {!isLoading && entries.length === 0 ? (
+      {isError ? (
+        <Card>
+          <div className="flex flex-col items-center gap-3 p-10 text-center">
+            <p className="text-sm font-medium">{error instanceof Error ? error.message : 'Failed to load this supplier’s prices'}</p>
+          </div>
+        </Card>
+      ) : !isLoading && entries.length === 0 ? (
         <Card>
           <div className="flex flex-col items-center gap-3 p-10 text-center">
             <p className="text-sm font-medium">No prices recorded for this supplier yet</p>

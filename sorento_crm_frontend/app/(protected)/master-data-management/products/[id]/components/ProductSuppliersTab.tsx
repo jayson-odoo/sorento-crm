@@ -50,7 +50,7 @@ function Term({ label, value }: { label: string; value: string }) {
 
 export default function ProductSuppliersTab({ productId }: ProductSuppliersTabProps) {
   const [search, setSearch] = useState('');
-  const { data: productSuppliers, isLoading } = useQuery({
+  const { data: productSuppliers, isLoading, isError, error } = useQuery({
     queryKey: ['product-suppliers', productId],
     queryFn: () => getProductSuppliersByProductId(productId),
     enabled: !!productId,
@@ -62,7 +62,12 @@ export default function ProductSuppliersTab({ productId }: ProductSuppliersTabPr
   const visible = useMemo(() => {
     if (!tokens.length) return suppliers;
     return suppliers.filter((ps) => {
-      const haystack = [ps.supplier?.supplier_name, ps.supplier?.supplier_code, ps.supplier_item_code]
+      const haystack = [
+        ps.supplier?.supplier_name,
+        ps.supplier?.supplier_code,
+        ps.supplier_item_code,
+        ...(ps.costs ?? []).map((c) => c.source?.code),
+      ]
         .filter(Boolean)
         .map((s) => (s as string).toLowerCase());
       return tokens.every((t) => haystack.some((h) => h.includes(t)));
@@ -98,7 +103,11 @@ export default function ProductSuppliersTab({ productId }: ProductSuppliersTabPr
             ) : null}
           </CardHeader>
           <CardContent>
-            {suppliers.length === 0 ? (
+            {isError ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <p>{error instanceof Error ? error.message : 'Failed to load suppliers for this product.'}</p>
+              </div>
+            ) : suppliers.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <p>No suppliers configured for this product.</p>
                 <p className="text-sm mt-2">Edit the product to add suppliers and their terms.</p>

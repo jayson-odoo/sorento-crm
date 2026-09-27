@@ -76,6 +76,11 @@ export interface CostPriceChangeSetActions {
   can_return: boolean;
   can_discard: boolean;
   decide_blocked_reason: string | null;
+  /** True on a Draft set, when the caller holds upload and at least one line is stale
+   *  (S6): the set can re-capture current prices via `refresh-prices` before it goes on.
+   *  Optional so existing fixtures that predate this field still type-check - the
+   *  backend always sends it, an absent value reads the same as `false`. */
+  can_refresh_prices?: boolean;
 }
 
 export interface CostPriceChangeSetDetail {
@@ -131,7 +136,10 @@ export interface CostPriceChangeLine {
   decision: LineDecision;
   decision_reason: string | null;
   decided_by_name: string | null;
-  stale: { live_unit_cost: number; live_currency: string } | null;
+  /** Set when the current price on file moved after this line was captured (S6): the
+   *  recorded `current_unit_cost`/`current_currency` is what the line was built against,
+   *  this is what the product-supplier link holds right now. */
+  stale: { live_unit_cost: number | null; live_currency: string | null } | null;
 }
 
 export interface CostPriceHistoryEvent {

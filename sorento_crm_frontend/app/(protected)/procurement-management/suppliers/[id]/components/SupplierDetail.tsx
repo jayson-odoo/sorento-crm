@@ -13,6 +13,7 @@ import { useSupplier, suppliersPagerQuery } from '../../hooks/useSuppliers';
 import { formatDate } from '@/lib/helpers';
 import DetailActions from '@/components/common/DetailActions';
 import { useSupplierActions } from '../../actions';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { SupplierPricesTab } from './SupplierPricesTab';
 
 interface SupplierDetailProps {
@@ -32,6 +33,7 @@ export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
   const { actions, dialogs } = useSupplierActions(supplier, {
     onDeleted: () => router.push(backHref),
   });
+  const canViewPrices = useHasPermission('procurement.product_suppliers.view');
 
   // Same URL-held tab as the product record (ProductDetail.tsx): a tab survives
   // stepping to the next supplier with the pager above.
@@ -109,7 +111,7 @@ export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList variant="line" className="w-full justify-start">
           <TabsTrigger value="details">Details</TabsTrigger>
-          <TabsTrigger value="prices">Prices</TabsTrigger>
+          {canViewPrices ? <TabsTrigger value="prices">Prices</TabsTrigger> : null}
         </TabsList>
 
         <TabsContent value="details">
@@ -184,9 +186,11 @@ export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
           {/* TODO: Linked products grid, performance rating, recent orders, attachments */}
         </TabsContent>
 
-        <TabsContent value="prices">
-          <SupplierPricesTab supplierId={supplierId} />
-        </TabsContent>
+        {canViewPrices ? (
+          <TabsContent value="prices">
+            <SupplierPricesTab supplierId={supplierId} />
+          </TabsContent>
+        ) : null}
       </Tabs>
     </div>
   );
