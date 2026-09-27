@@ -216,7 +216,8 @@ def _fetch_row(db, entity_id: str, action: str | None = None) -> dict:
     real_app.dependency_overrides[get_current_user_or_api_key] = _override_user
     try:
         params = {"entity_id": entity_id, **({"action": action} if action else {})}
-        # The read gate is S-1's (#1298); these tests are about the words, not the gate.
+        # The full audit list is superadmin/admin only since #1298; these tests are about
+        # the row's words, so the caller reads as an audit admin.
         with patch("app.api.v1.audit.audit_logs._is_audit_admin", return_value=True):
             resp = TestClient(real_app).get("/api/v1/audit/logs/", params=params)
     finally:

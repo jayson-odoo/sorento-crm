@@ -11,6 +11,8 @@ import {
 } from '../lib/vocabularyEdit';
 import { useSpecRegistryMutations } from './useSpecRegistryMutations';
 import { SPEC_REGISTRY_QUERY_KEY } from './useSpecRegistryQuery';
+import { SPEC_COVERAGE_QUERY_KEY } from './useSpecCoverageQuery';
+import { specKeyProductsKey } from './useSpecKeyProductsQuery';
 import type { SpecDerivationRule, SpecRegistryKey } from '../types/productSpec.types';
 
 export const dedupe = (list: string[]) => Array.from(new Set(list));
@@ -123,7 +125,7 @@ function trimmedValueLabels(labels: Record<string, string>): Record<string, stri
   return next;
 }
 
-function buildPatchBody(row: SpecRegistryKey, draft: SpecKeyDraft) {
+export function buildPatchBody(row: SpecRegistryKey, draft: SpecKeyDraft) {
   const { user_synonyms, suppressed_synonyms } = wordPayload(row, {
     words: draft.words,
     dropped: draft.droppedWords,
@@ -203,12 +205,20 @@ export function useSpecKeyRecord(row: SpecRegistryKey | undefined): UseSpecKeyRe
               }
             : old,
       );
-      toast.success(`${updated.label} saved`, {
-        description:
-          draft.rules.length > 0
-            ? 'Read the catalogue again to apply it to products.'
-            : undefined,
-      });
+      // S-12: the products it re-read now hold other values, so the Products tab
+      // and the Choices counts (one query key) are fetched again, and so are the
+      // header's products count and last read time.
+      if (updated.products_updated > 0) {
+        queryClient.invalidateQueries({ queryKey: specKeyProductsKey(row.spec_key) });
+        queryClient.invalidateQueries({ queryKey: SPEC_COVERAGE_QUERY_KEY });
+      }
+      // AC-S1.16, D10 (fix round 3, D2): the save already re-read exactly the
+      // products it changed; there is nothing left to press, so the toast reports
+      // the count and stops - every time, "Saved. 0 products updated." included,
+      // never a bare "Saved." that leaves the reader guessing whether it re-read.
+      toast.success(
+        `Saved. ${updated.products_updated} product${updated.products_updated === 1 ? '' : 's'} updated.`,
+      );
       setDraftState(null);
       setMode('view');
       return true;

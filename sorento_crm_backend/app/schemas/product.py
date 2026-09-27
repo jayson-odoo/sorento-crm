@@ -63,6 +63,9 @@ class BrandBase(BaseModel):
     # is bought locally by CS and never raises an Order Inquiry. Default true so
     # nothing changes until an admin flips it.
     flows_to_purchasing: bool = True
+    # "Customers can ask for this brand" (#1286, D3). False keeps a placeholder brand
+    # (OTHERS, NO LOGO) out of what the chatbot offers and binds on a single word.
+    is_searchable: bool = True
 
 
 class BrandCreate(BrandBase):
@@ -78,6 +81,7 @@ class BrandUpdate(BaseModel):
     is_active: Optional[bool] = None
     access_levels: Optional[list[str]] = None
     flows_to_purchasing: Optional[bool] = None
+    is_searchable: Optional[bool] = None
 
 
 class BrandResponse(BrandBase):
@@ -365,6 +369,9 @@ class ProductVariantRef(BaseModel):
 class ProductResponse(ProductBase):
     id: str
     is_discontinued: bool = False
+    # When the discontinue-notify scheduler last noticed this product (issue #1287).
+    # Null while available or before the first tick after discontinuing.
+    discontinued_at: Optional[datetime] = Field(default=None, validation_alias="discontinued_notified_at")
     # --- Variant graph (see PLAN-suggest-on-miss-variant-graph.md §1) ---
     # `is_variant` is derived from the (always-loaded) `variant_of_id` column, so
     # it is cheap on LIST rows too (no extra query). `variant_of` / `variants`

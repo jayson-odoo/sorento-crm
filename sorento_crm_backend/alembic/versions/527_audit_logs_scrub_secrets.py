@@ -16,13 +16,16 @@ row locks on the matching rows until the transaction commits.
 
 Downgrade is a no-op on purpose: a stripped hash cannot, and must not, come back.
 
+Parent: written on `sales_0002_team_leader`; re-parented onto `merge_27sep_three_heads`
+when main (11bf373ec) was merged, so the graph keeps a single head. Schema-free parent.
+
 Revision ID: 527_audit_logs_scrub_secrets
-Revises: sales_0002_team_leader
+Revises: merge_27sep_three_heads
 """
 from alembic import op
 
 revision = "527_audit_logs_scrub_secrets"
-down_revision = "sales_0002_team_leader"
+down_revision = "merge_27sep_three_heads"
 branch_labels = None
 depends_on = None
 
@@ -44,9 +47,6 @@ SECRET_KEYS = (
 
 
 def upgrade() -> None:
-    # A no-op before aud_0001 exists; once its append-only trigger is in place (a create_all
-    # schema builds it with the table), this scrub is exactly the maintenance it allows.
-    op.execute("SET LOCAL sorento.audit_maintenance = 'on'")
     keys = "ARRAY[" + ", ".join(f"'{k}'" for k in SECRET_KEYS) + "]::text[]"
     for column in ("old_values", "new_values"):
         op.execute(

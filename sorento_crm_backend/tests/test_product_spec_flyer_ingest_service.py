@@ -214,7 +214,7 @@ def test_run_propose_stores_an_unchanged_row_rather_than_dropping_it(db):
     _product(db, "ZZT-FLYJOB-UNCH1", "SORENTO ONE PIECE WC (700X400X800MM) ZZT-FLYJOB-UNCH1")
     db.commit()
     derive_for_code(db, "ZZT-FLYJOB-UNCH1", commit=True)
-    reading = _reading(db, cards=[_card("ZZT-FLYJOB-UNCH1", "Washdown. H800mm")])
+    reading = _reading(db, cards=[_card("ZZT-FLYJOB-UNCH1", "Washdown. L700 x W400 x H800mm")])
     batch = _batch_row(db, reading)
     db.commit()
 

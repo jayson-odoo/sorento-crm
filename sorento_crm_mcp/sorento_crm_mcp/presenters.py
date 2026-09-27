@@ -57,6 +57,7 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_outstanding_report",
         "crm_low_stock_report",
         "crm_sales_report",
+        "crm_sales_analysis",
     }
 )
 
@@ -115,9 +116,6 @@ _STOCK_COMPACT_INTRO = "Stock summary for the requested products."
 # The dealer answer, verbatim. This IS the outbound WhatsApp text (n8n prints the
 # intro and nothing else for this mode), so the wording is the contract.
 _AVAILABILITY_ASK = "How many units do you need?"
-_AVAILABILITY_YES = "Yes, we have stock."
-_AVAILABILITY_NO = "Sorry, we do not have enough stock for that quantity."
-_AVAILABILITY_MIXED = "Here is the stock availability for the requested products."
 
 # Passthrough keys preserved from the raw response into the envelope (e.g. the
 # escalation hint attached after sanitize). Kept so render mode loses nothing.
@@ -128,6 +126,13 @@ _PASSTHROUGH_KEYS = (
     "fallback_used",
     "alternatives",
     "relaxed_axis",
+    # Chatbot stock ask v2 S3 (AC-SA314): the per-product `needs_quantity` / `branch`
+    # block. The PRESENTER reads it to build the dealer's per-product sentence, and
+    # the ENGINE reads it AGAIN, off this same envelope - to open/update/close the
+    # stock task (`turn/task.py::tasks_after_reply`) and to decide whether to attach
+    # an `incoming` entry's packing list. Dropping it here means the raw fetch never
+    # reaches either reader, even though the rendered TEXT still looks right.
+    "stock_availability",
     # Every company the backend actually searched, present only when the lookup
     # spanned more than one (see `stamp_lookup_companies` backend-side). A
     # single-company reply never carries it, so it stays byte-identical.
@@ -1384,44 +1389,100 @@ def _stock_compact(payload: dict, b: _Builder) -> None:
                 fields.append({"label": str(code), "value": qty})
         b.raw_item(entry.get("product_code"), fields, dict(entry.get("flags") or {}))
 
-def _stock_availability(payload: dict, b: _Builder) -> None:
-    """`availability`: yes / no / ask, and nothing else.
+def _availability_entries(payload: dict) -> list[dict]:
+    return [e for e in (payload.get("stock_availability") or []) if isinstance(e, dict)]
 
-    `fields` stays empty on purpose. This mode exists so a dealer is never told a
-    quantity, and an empty field list is the only shape that cannot carry one.
+
+def _availability_label(entry: dict) -> Optional[str]:
+    """A row with no `product_code` (matched only by name) falls back to
+    `product_name`; a row with neither cannot be named to a person at all and is
+    skipped by every caller rather than rendered as `None` (no UUIDs in the UI,
+    plan point 7: "<P> is product_code, fallback product_name, never the id")."""
+    return entry.get("product_code") or entry.get("product_name")
+
+
+#: R6/R14 (lavish review), AC-SA313: the three branches whose wording never varies.
+#: `incoming` is handled separately in `_availability_line` - it is the only branch
+#: whose sentence carries a date.
+_AVAILABILITY_TAILS = {
+    "too_big": (
+        "the quantity is more than what I can confirm here, please refer to your "
+        "salesman."
+    ),
+    "in_stock": "yes, we have stock, please refer to your salesman to proceed.",
+    "no_incoming": (
+        "no stock and no incoming at the moment, please refer to your salesman."
+    ),
+}
+
+
+def _availability_line(entry: dict) -> str:
+    """Chatbot stock ask v2 S3, R14/AC-SA313: one line per entry, every line
+    starting "<code> x <Q>:" so a multi-product reply reads line by line. The four
+    fixed sentences (R6) are the ONLY wording; AC-SA312: no digit of ours besides
+    the dealer's own asked quantity and the ETA date (already dd/mm/yyyy on the
+    entry, `StockService._apply_stock_visibility`) ever appears."""
+    code = _availability_label(entry)
+    qty = entry.get("requested_qty")
+    branch = entry.get("branch")
+    if branch == "incoming":
+        tail = f"no stock at the moment, ETA {entry.get('eta')}."
+    else:
+        # Nit, review round 1: an unknown or missing branch is unreachable today
+        # (`products.category_id` is NOT NULL, so `inventory_service.py` never
+        # leaves `branch` unset) - but if a fallback is kept, `too_big` is the one
+        # of the four sentences that claims nothing about our stock either way.
+        tail = _AVAILABILITY_TAILS.get(branch, _AVAILABILITY_TAILS["too_big"])
+    return f"{code} x {qty}: {tail}"
+
+
+def _stock_availability(payload: dict, b: _Builder) -> None:
+    """`availability`: one R6 sentence per product, and nothing else.
+
+    `fields` stays empty on purpose - this mode exists so a dealer is never told a
+    quantity or a location of ours, and an empty field list is the only shape that
+    cannot carry one. The item TITLE carries the whole answer (`_availability_line`)
+    once every entry has a branch; while any entry is still missing its quantity, the
+    title stays the bare product code and `_availability_intro` asks instead
+    (unchanged from before S3 - the "how many units" question is #1118's
+    `turn/task.py::StockQtyTask.question()` territory once a task is open, not this
+    slice's scope, R1/AC-SA310).
     """
-    for entry in payload.get("stock_availability") or []:
-        if not isinstance(entry, dict):
+    entries = _availability_entries(payload)
+    show_answer = bool(entries) and not any(e.get("needs_quantity") for e in entries)
+    for entry in entries:
+        label = _availability_label(entry)
+        if not label:
             continue
+        title = _availability_line(entry) if show_answer else label
         b.raw_item(
-            entry.get("product_code"),
+            title,
             [],
             {
                 "needs_quantity": bool(entry.get("needs_quantity")),
-                "available": entry.get("available"),
+                "branch": entry.get("branch"),
             },
         )
 
 
 def _availability_intro(payload: dict) -> str:
-    """The whole reply, in one line.
+    """The whole reply, in one line - or none.
 
-    Several products can disagree. Any product still missing its quantity makes
-    the turn a question, not an answer - so ask, and say nothing about the rest.
-    Otherwise a shared yes or no speaks for all of them; a split verdict cannot,
-    so the intro steps back and the per-item flags carry it.
+    Any product still missing its quantity makes the turn a question, not an
+    answer - so ask, and say nothing about the rest. Once every entry has a
+    branch (chatbot stock ask v2 S3 fix round 1, Blocking 1), the per-item
+    titles (`_availability_line`) already carry the whole R14 sentence, product
+    and quantity included - a shared intro on top of them cannot be true for
+    every entry at once: a too_big/no_incoming pairing spoke of "not enough
+    stock" even when one of the two entries had plenty, which is false and,
+    for `too_big`, a statement about our stock that R6 B1 forbids. So an
+    answered reply gets no intro at all; the plan's sample (g) shows the same
+    shape, one line per product and nothing before them.
     """
-    entries = [
-        e for e in (payload.get("stock_availability") or []) if isinstance(e, dict)
-    ]
+    entries = _availability_entries(payload)
     if any(e.get("needs_quantity") for e in entries):
         return _AVAILABILITY_ASK
-    verdicts = {e.get("available") for e in entries}
-    if verdicts == {True}:
-        return _AVAILABILITY_YES
-    if verdicts == {False}:
-        return _AVAILABILITY_NO
-    return _AVAILABILITY_MIXED
+    return ""
 
 
 def _forms(rows: list[dict], b: _Builder) -> None:
@@ -1585,6 +1646,11 @@ def present_response(tool_name: str, raw: str) -> str:
     # here would be a second copy of that contract.
     if tool_name == "crm_low_stock_report":
         return json.dumps(_low_stock_envelope(data))
+
+    # The same bypass again: the sales analysis answers a table AND a file (or a question,
+    # or a refusal), never a row collection (PLAN-retail-sales-reports-26sep R4.2).
+    if tool_name == "crm_sales_analysis":
+        return json.dumps(_sales_analysis_envelope(data))
 
     rows = data.get("data")
     if not isinstance(rows, list):
@@ -2426,4 +2492,86 @@ def _sales_report_envelope(report: dict) -> dict:
         "result_type": "sales_report",
         "response": _sales_report(report),
         "has_result": isinstance(months, list) and len(months) > 0,
+    }
+
+
+
+# --------------------------------------------------------------------------------------
+# crm_sales_analysis (PLAN-retail-sales-reports-26sep S1; Owner ruling 26 Sep 07:16 Q2,
+# "always text + file, no cutoff").
+#
+# The text IS the answer: a header (report and company, channel, basis, period, the row
+# count), one line per row, then the totals line - every row, whatever the count (n8n
+# chunks a long message). One value column reads `label: RM a`; two or more read
+# `label: a | b | c` under a line naming the columns (Q9 (a): every column on every line).
+# A negative prints in brackets, an empty cell "-". The Excel of the same query rides in
+# `attachments`; when it is still being built the text ends "The Excel follows here." and
+# the worker pushes it. A question or a refusal is one line and no file (AC-R4-3).
+# --------------------------------------------------------------------------------------
+
+_SALES_ANALYSIS_PENDING = "The Excel follows here."
+_SALES_ANALYSIS_FILE_FAILED = "Could not build the sales report Excel right now."
+_SALES_ANALYSIS_ERROR = "Could not run the sales report right now."
+
+
+def _sales_figure(value: Any) -> str:
+    if value is None or value == "":
+        return "-"
+    try:
+        amount = Decimal(str(value))
+    except Exception:  # noqa: BLE001 - a value the route never sends; print it as is
+        return str(value)
+    text = f"{abs(amount):,.2f}"
+    return f"({text})" if amount < 0 else text
+
+
+def _sales_analysis_text(payload: dict) -> str:
+    lines = [
+        f"*{payload.get('report') or 'Sales'}, {payload.get('company') or ''}*".replace(", *", "*"),
+        f"Channel: {payload.get('channel') or 'All channels'}",
+        f"Basis: {payload.get('basis') or ''}",
+        f"Period: {payload.get('period') or ''}",
+        f"{payload.get('count_label') or 'Rows'}: {payload.get('total_count', 0)}",
+        "",
+    ]
+    columns = payload.get("columns") or []
+    rows = payload.get("rows") or []
+    totals = (payload.get("totals") or {}).get("values") or []
+    if len(columns) == 1:
+        def _rm(value: Any) -> str:
+            # A month with no sales is "-", never "RM -".
+            text = _sales_figure(value)
+            return text if text == "-" else f"RM {text}"
+
+        for row in rows:
+            values = row.get("values") or [None]
+            lines.append(f"{row.get('label')}: {_rm(values[0])}")
+        lines.append(f"Total: {_rm(totals[0] if totals else None)}")
+    else:
+        lines.append(f"{payload.get('rows_label') or 'Row'}: " + " | ".join(str(c) for c in columns))
+        for row in rows:
+            lines.append(
+                f"{row.get('label')}: " + " | ".join(_sales_figure(v) for v in row.get("values") or [])
+            )
+        lines.append("Total: " + " | ".join(_sales_figure(v) for v in totals))
+    return "\n".join(lines)
+
+
+def _sales_analysis_envelope(payload: dict) -> dict:
+    status = payload.get("status")
+    envelope = {"result_type": "sales_analysis", "attachments": [], "has_result": True}
+    if status in ("clarify", "refused", "busy"):
+        return {**envelope, "response": str(payload.get("message") or _SALES_ANALYSIS_ERROR)}
+    if status not in ("ready", "pending", "error") or not isinstance(payload.get("rows"), list):
+        return {**envelope, "response": _SALES_ANALYSIS_ERROR}
+    text = _sales_analysis_text(payload)
+    if status == "pending":
+        return {**envelope, "response": f"{text}\n\n{_SALES_ANALYSIS_PENDING}"}
+    if status == "error":
+        return {**envelope, "response": f"{text}\n\n{_SALES_ANALYSIS_FILE_FAILED}"}
+    attachments = payload.get("attachments")
+    return {
+        **envelope,
+        "response": text,
+        "attachments": attachments if isinstance(attachments, list) else [],
     }

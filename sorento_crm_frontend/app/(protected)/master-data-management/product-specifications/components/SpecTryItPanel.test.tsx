@@ -1,8 +1,8 @@
 /**
- * "Try it on" (AC-B.3): a product search over the whole master, in `fetchOptions`
+ * "Try it on" (AC-S1.8): a product search over the whole master, in `fetchOptions`
  * mode - never a capped static dropdown - or a paste box as the alternative. This
  * component only owns the source and the description it reads from; the per-row
- * reads render INTO `SpecRuleEditor`'s rows, not here.
+ * reads render INTO `SpecRulesGrid`'s rows, not here.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
@@ -149,7 +149,23 @@ describe('the paste box', () => {
 });
 
 describe('states', () => {
-  it('shows nothing picked yet', () => {
+  // Review round 2, N-8: nothing picked yet shows the two inputs and no sentence
+  // explaining them (cursor rule: no feature explanations inside the UI).
+  it('shows nothing picked yet with no explanatory sentence', () => {
+    render(
+      <SpecTryItPanel
+        source={null}
+        onSourceChange={vi.fn()}
+        description={null}
+        loading={false}
+        error={null}
+      />,
+    );
+    expect(screen.getByPlaceholderText('Paste a product description to try instead')).toBeInTheDocument();
+    expect(screen.queryByText(/Pick a product or paste text/)).not.toBeInTheDocument();
+  });
+
+  it('caps pasted text at the 4000 characters the server reads', () => {
     render(
       <SpecTryItPanel
         source={null}
@@ -160,10 +176,8 @@ describe('states', () => {
       />,
     );
     expect(
-      screen.getByText(
-        'Pick a product or paste text to see what each rule below reads from it.',
-      ),
-    ).toBeInTheDocument();
+      screen.getByPlaceholderText('Paste a product description to try instead'),
+    ).toHaveAttribute('maxLength', '4000');
   });
 
   it('shows a loading state while try-it is in flight', () => {

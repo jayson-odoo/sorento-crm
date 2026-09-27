@@ -46,10 +46,11 @@ def _load():
     return module
 
 
-def _current_other_head() -> str:
-    """The single alembic head of the graph WITHOUT this migration (computed, never
+def _current_other_heads() -> set[str]:
+    """Every alembic head of the graph WITHOUT this migration (computed, never
     hard-coded). Once this migration exists it IS the head, so `get_heads()` minus
-    itself is empty; the head it must sit on is the one left when it is removed."""
+    itself is empty; the heads it must sit on are the ones left when it is removed.
+    More than one means this migration doubles as their merge revision."""
     cfg = Config(str(Path(__file__).resolve().parent / ".." / "alembic.ini"))
     script = ScriptDirectory.from_config(cfg)
     # Merged into the audit S0 lane (#1281): aud_0001 builds on this migration, so the graph
@@ -62,9 +63,9 @@ def _current_other_head() -> str:
         if down is None:
             continue
         pointed_at.update(down if isinstance(down, (tuple, list)) else (down,))
-    heads = [r.revision for r in others if r.revision not in pointed_at]
-    assert len(heads) == 1, f"expected exactly one other head, found {heads}"
-    return heads[0]
+    heads = {r.revision for r in others if r.revision not in pointed_at}
+    assert heads, "expected at least one other head"
+    return heads
 
 
 def _run(conn, fn):
@@ -80,7 +81,8 @@ def _mk_id() -> str:
 def test_revision_id_fits_alembic_version_and_sits_on_the_current_head():
     module = _load()
     assert len(module.revision) <= 32
-    assert module.down_revision == _current_other_head()
+    down = module.down_revision
+    assert set(down if isinstance(down, (tuple, list)) else (down,)) == _current_other_heads()
 
 
 def test_preflight_blocks_on_case_duplicate_emails_names_users_no_ids():
