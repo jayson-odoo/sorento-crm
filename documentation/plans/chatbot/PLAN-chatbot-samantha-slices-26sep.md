@@ -1,6 +1,6 @@
 # PLAN: the Samantha case, slices 1 to 11 (issue #1262)
 
-Status: fix lane round 4 done (reviewer pass round 3 at 21d77994: S6 and N11), fix lane round 3 done before it (reviewer pass round 2 at b219a730: B1-r2, B2, S5, N7 to N9 and the S2 mock console run addressed; round 2 at 4719a829 before it), PR open. Track: full (migration for the prompt versions, MCP tool
+Status: fix lane round 5 done (owner hand test 27 Sep: R1 to R4, rulings 16 and 17, main merged at 52b0ac24, single head), fix lane round 4 done (reviewer pass round 3 at 21d77994: S6 and N11), fix lane round 3 done before it (reviewer pass round 2 at b219a730: B1-r2, B2, S5, N7 to N9 and the S2 mock console run addressed; round 2 at 4719a829 before it), PR open. Track: full (migration for the prompt versions, MCP tool
 argument, more than 300 lines). UAC: `chatbot-samantha-slices-26sep-acceptance-criteria.md`.
 
 Owner ruling 26 Sep ~11:05Z: "samantha one all also need to fix bro" - every slice of the
@@ -62,7 +62,8 @@ Code anchors are the scout's (issue #1262); lines may have drifted a little on m
 11. **Kind-pick order (round 2, N1):** options are ordered by the resolver's hit count per
     kind, most first, ties alphabetical.
 12. **Quantity lifetime (round 2, S1 nit):** the parser's quantity belongs to the message that
-    typed it; a carried product row drops it (`turn/state.py::focus_from_wire`).
+    typed it; a carried product row never prints it (`turn/state.py::focus_row_label`). Round
+    5 (main merge): the carried row keeps the value for main's stock task loop.
 13. **Brand carry (round 3, B1-r2):** the order brand is a carried axis like the customer. The
     tool runner resolves it once per order fetch (typed brand words first, else the carried
     `focus.outstanding_brand_ids`, kept only while still a live brand in scope), sends those
@@ -75,6 +76,17 @@ Code anchors are the scout's (issue #1262); lines may have drifted a little on m
     window and sales channel. A NEW ask naming its own entity still drops the old subject (R17).
 15. **Unlisted brand beside a live one (round 3, S5):** said back through the same "Couldn't
     find" line as any unplaced token; the live brand still narrows the fetch.
+16. **Status and document come from the current message (round 5, R2, owner hand test 27
+    Sep):** a message with a domain or status word of its own (`domain_in_message: true`)
+    states its own document and status, or none; a bare continuation ("1", "and hanlim?",
+    "same for sorento brand") keeps them; an answer to an open outstanding question is
+    unchanged (`turn/apply.py::_focus_rules`). Supersedes hand pass 12's round trip (a
+    status carried across a domain detour and reused on the return).
+17. **The delivery order list (round 5, R1):** "list of DO for ...", "DO for ...", "delivery
+    for ...", "delivery status for ...", "show me the DO" without outstanding, pending or not
+    yet delivered run `crm_order_management_orders_list` with the brand and customer filters.
+    A bare document word typed under the outstanding report's own open offer still re-runs
+    the report for that document (hand pass 3 row 5).
 
 ## Tests
 
