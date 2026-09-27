@@ -54,12 +54,13 @@ def _load_case(path: Path) -> dict[str, Any]:
 
 
 def _seed_contact(session_factory, cid: str, *, memory_level: str | None) -> None:
+    # `chatbot_recall_enabled` is retired (round 3, AC-MEM054, merged 5b110df8) -
+    # dropped from the table outright, so this seed no longer names it.
     db = session_factory()
     db.execute(
         text(
-            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars, "
-            "chatbot_recall_enabled) "
-            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb), true)"
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
         ),
         {"cid": cid, "phone": f"+6011{uuid.uuid4().hex[:8]}", "sv": json.dumps({"variables": {}})},
     )

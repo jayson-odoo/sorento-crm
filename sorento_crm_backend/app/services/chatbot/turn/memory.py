@@ -20,21 +20,21 @@ from app.services.chatbot.turn.state import Profile
 
 SOURCE_TYPE_CONVERSATION_FRAME = "conversation_frame"
 
-#: Contract section 2: the four values a context level is ever stored as. "off" is a
+#: Contract section 2 / PLAN 6.0 (round 3, AC-MEM051): the four values a context level
+#: is ever stored as. "past" was RENAMED "episodes" in round 3 - the stored value
+#: only, the FE label stays "Past conversations" (6.0's own table header). "off" is a
 #: legitimate OWN level (a contact explicitly opted out even while the system default
 #: is on), so it wins over the system default exactly like the other three.
-VALID_MEMORY_LEVELS: tuple[str, ...] = ("off", "conversation", "past", "full")
-
-#: Contract section 3 / PLAN 5.5 (Q7 ruling): retention is a COUNT, never a date.
-#: Trimmed on write, never by a scheduled sweep.
-KEEP_EPISODES = 20
+VALID_MEMORY_LEVELS: tuple[str, ...] = ("off", "conversation", "episodes", "full")
 
 
-def effective_level(contact_level: str | None, system_memory: dict[str, Any] | None) -> str:
-    """The level a turn actually reads (contract section 2): the contact's own level
-    when it is one of the four valid values (INCLUDING "off" - an explicit opt-out
-    beats the system default); otherwise the system default when memory is switched
-    on; otherwise "off"."""
+def resolve_level(contact_level: str | None, system_memory: dict[str, Any] | None) -> str:
+    """The level a turn actually reads (contract section 2, AC-MEM051 - renamed from
+    `effective_level` in round 3, same truth table): the contact's own level when it
+    is one of the four valid values (INCLUDING "off" - an explicit opt-out beats the
+    system default); otherwise the system default when memory is switched on;
+    otherwise "off". A RETIRED value name (e.g. the old "past") is not a recognised
+    level and falls through exactly like any other unknown string."""
     if contact_level in VALID_MEMORY_LEVELS:
         return contact_level
     memory = system_memory or {}
@@ -43,6 +43,26 @@ def effective_level(contact_level: str | None, system_memory: dict[str, Any] | N
         if default_level in VALID_MEMORY_LEVELS:
             return default_level
     return "off"
+
+
+def resolve_level_source(contact_level: str | None, system_memory: dict[str, Any] | None) -> str:
+    """Where `resolve_level`'s answer came from (AC-MEM052/056), for the `context`
+    trace event: "own" (the contact's own level decided it, off included), "default"
+    (the system default, because the contact has none and the switch is on), or
+    "off" (neither - the two-argument function's own final fallback). Kept as a
+    SEPARATE function rather than changing `resolve_level`'s return shape: the
+    pre-round-3 truth-table test already pins it as a bare string."""
+    if contact_level in VALID_MEMORY_LEVELS:
+        return "own"
+    memory = system_memory or {}
+    if memory.get("enabled") is True and memory.get("default_level") in VALID_MEMORY_LEVELS:
+        return "default"
+    return "off"
+
+
+#: Contract section 3 / PLAN 5.5 (Q7 ruling): retention is a COUNT, never a date.
+#: Trimmed on write, never by a scheduled sweep.
+KEEP_EPISODES = 20
 
 
 def write_episode(

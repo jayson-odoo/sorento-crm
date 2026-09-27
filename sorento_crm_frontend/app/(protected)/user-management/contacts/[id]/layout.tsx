@@ -2,7 +2,7 @@
 
 import React, { use, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { KeyRound, MessageSquare, Route, UserPen } from 'lucide-react';
+import { Bot, KeyRound, MessageSquare, Route, UserPen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
@@ -100,6 +100,14 @@ export default function ContactLayout({
         icon: MessageSquare,
         segment: '/chat',
         path: `/user-management/contacts/${id}/chat`,
+      },
+      // Chatbot memory lane A round 3 (plan 4.5 / mockup): the memory cards move off
+      // the Access tab onto their own, matching the mockup's dedicated "Chatbot" tab.
+      chatbot: {
+        title: 'Chatbot',
+        icon: Bot,
+        segment: '/chatbot',
+        path: `/user-management/contacts/${id}/chatbot`,
       },
     }),
     [id],

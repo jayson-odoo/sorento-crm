@@ -309,11 +309,13 @@ def _context(records: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def _order(row: ChatbotTurn, db: Session | None = None) -> dict[str, Any] | None:
-    """The per-contact ordering ticket (chatbot memory lane A, contract section 6) -
-    read-only, nothing to set. `ticket`/`waited_ms` come from the turn's own `queue`
-    trace event (S7 mode only - absent on an unordered or dry-run turn, which is the
-    common case in every environment without Redis ordering switched on, and this
-    build has not yet wired that event's write - see `engine.py`'s own TODO).
+    """The per-contact ordering ticket (chatbot memory lane A round 3, AC-MEM014) -
+    read-only, nothing to set. `ticket`/`wait_ms` come off the turn's own "queued"
+    STAGE record (`trace.py::record`, not a separate `add(kind, ...)` event) - S7
+    mode only, absent on an unordered or dry-run turn, which is the common case in
+    every environment without Redis ordering switched on. A queue TIMEOUT fails the
+    turn AT that same stage and carries `ticket` there too (no `wait_ms`, since it
+    never finished waiting), so a caller reads one shape either way.
     `previous`/`next` are this contact's neighbouring turns on the SAME `is_test`
     side, by `created_at` - never another contact's, never across worlds - and need a
     live session, which `compose_trace_detail` does not always have one to hand; a
@@ -322,14 +324,15 @@ def _order(row: ChatbotTurn, db: Session | None = None) -> dict[str, Any] | None
     single already-loaded row, contract with no DB dependency).
     """
     records = _records(row)
-    queue_entries = _kind_records(records, "queue")
-    queue = queue_entries[-1] if queue_entries else {}
-    ticket = queue.get("ticket")
-    waited_ms = queue.get("waited_ms")
-    if ticket is None and waited_ms is None:
+    queued_records = [r for r in _stage_records(records) if r.get("stage") == "queued"]
+    queued = queued_records[-1] if queued_records else {}
+    facts = queued.get("facts") or {}
+    ticket = facts.get("ticket")
+    wait_ms = facts.get("wait_ms")
+    if ticket is None and wait_ms is None:
         return None
     if db is None:
-        return {"ticket": ticket, "waited_ms": waited_ms, "previous": None, "next": None}
+        return {"ticket": ticket, "wait_ms": wait_ms, "previous": None, "next": None}
 
     earlier = (
         db.query(ChatbotTurn)
@@ -353,7 +356,7 @@ def _order(row: ChatbotTurn, db: Session | None = None) -> dict[str, Any] | None
     )
     return {
         "ticket": ticket,
-        "waited_ms": waited_ms,
+        "wait_ms": wait_ms,
         "previous": _order_neighbor(earlier),
         "next": _order_neighbor(later),
     }
@@ -365,10 +368,16 @@ def _order_neighbor(row: ChatbotTurn | None) -> dict[str, Any] | None:
     envelope = row.envelope if isinstance(row.envelope, dict) else {}
     inner = (envelope.get("message") or {}).get("message") or {}
     text_value = (inner.get("message") or {}).get("text") or ""
+    # AC-MEM015: the neighbour's OWN ticket, off its OWN "queued" stage - so the
+    # drawer's "ran after"/"next" can show "#N" without a second round trip. `None`
+    # for a neighbour that never queued (ordering off, or a dry run).
+    neighbor_records = [r for r in _stage_records(_records(row)) if r.get("stage") == "queued"]
+    neighbor_ticket = ((neighbor_records[-1].get("facts") or {}) if neighbor_records else {}).get("ticket")
     return {
         "turn_id": row.id,
         "created_at": row.created_at,
         "message": str(text_value)[:120],
+        "ticket": neighbor_ticket,
     }
 
 

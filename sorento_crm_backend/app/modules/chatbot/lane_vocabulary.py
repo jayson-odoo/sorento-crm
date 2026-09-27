@@ -103,7 +103,7 @@ CHATBOT_MEMORY_KEYS: tuple[str, ...] = (
 #: `default_level` may never be "off" (contract section 2: the select has no clear) -
 #: shared by the settings PUT's value-range check and anything else that needs the
 #: vocabulary without hardcoding it a second time.
-CHATBOT_MEMORY_DEFAULT_LEVELS: tuple[str, ...] = ("conversation", "past", "full")
+CHATBOT_MEMORY_DEFAULT_LEVELS: tuple[str, ...] = ("conversation", "episodes", "full")
 
 
 def default_chatbot_memory() -> dict:

@@ -95,7 +95,9 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     # 26 Sep 2026 (chatbot memory lane A S3, migration `mem_0002_parser_memory`):
     # `profile_statement` joins the schema - `engine.py`'s tail reads it and applies it
     # as a `stated` fact through `profile_facts.apply_statement`. 36 declared keys -> 37.
-    "profile_statement": "app/services/chatbot/engine.py",
+    # Round 3 (AC-MEM033/069, merged 5b110df8) RENAMES it `profile_statements` (a LIST,
+    # up to 3) - same reader, same count.
+    "profile_statements": "app/services/chatbot/engine.py",
 }
 
 

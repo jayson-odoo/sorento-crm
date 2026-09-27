@@ -104,7 +104,7 @@ export async function saveChatbotSettings(input: ChatbotSettings): Promise<Chatb
 export interface ChatbotMemorySettings {
   enabled: boolean;
   /** Never `off`, never null - the select has no clear (contract section 2). */
-  default_level: 'conversation' | 'past' | 'full';
+  default_level: 'conversation' | 'episodes' | 'full';
   /** Read-only: contacts with their own level (contract section 2's per-contact override). */
   own_level_count: number;
 }
@@ -122,7 +122,7 @@ function pickChatbotMemory(row: Record<string, unknown> | null | undefined): Cha
     enabled: Boolean(memory.enabled),
     default_level:
       memory.default_level === 'conversation' ||
-      memory.default_level === 'past' ||
+      memory.default_level === 'episodes' ||
       memory.default_level === 'full'
         ? memory.default_level
         : MEMORY_FALLBACK.default_level,

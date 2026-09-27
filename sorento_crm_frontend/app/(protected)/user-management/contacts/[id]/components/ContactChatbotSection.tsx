@@ -76,7 +76,7 @@ export default function ContactChatbotSection({ contactId }: { contactId: string
 const LEVEL_OPTIONS: { value: ChatbotMemoryLevel; label: string }[] = [
   { value: 'off', label: 'Off' },
   { value: 'conversation', label: 'This conversation' },
-  { value: 'past', label: 'Past conversations' },
+  { value: 'episodes', label: 'Past conversations' },
   { value: 'full', label: 'Full memory' },
 ];
 

@@ -8,7 +8,11 @@ One migration for the lane, per contract section 8 ruling 6:
   `write_episode_for_reset`'s `ON CONFLICT DO NOTHING` insert is idempotent under a
   concurrent close.
 * `respond_contacts.chatbot_memory_level` - the contact's own context level, NULL =
-  follow the system default.
+  follow the system default. Round 3 (AC-MEM054, merged 5b110df8, this migration not yet
+  on any shared DB) adds a CHECK constraint (off/conversation/episodes/full or NULL) and
+  DROPS `chatbot_recall_enabled` (`chatbot_rearch_s0`) outright - the recall re-parse it
+  gated is deleted; downgrade re-adds it as a boolean, NOT NULL, default false, exactly
+  as `chatbot_rearch_s0` first declared it.
 * `ai_assistant_usage_logs.chatbot_turn_id` - which `chatbot.turns` row a parser-usage
   row bills.
 * `system_settings.chatbot_memory` reset to the new two-key shape (`enabled`,
@@ -67,6 +71,18 @@ def upgrade() -> None:
         "respond_contacts",
         sa.Column("chatbot_memory_level", sa.String(length=16), nullable=True),
     )
+    # Round 3 (AC-MEM054): the level lives in the DATABASE, not only in the route's
+    # Pydantic Literal - matches `RespondContact.__table_args__`.
+    op.create_check_constraint(
+        "ck_respond_contacts_chatbot_memory_level",
+        "respond_contacts",
+        "chatbot_memory_level IS NULL OR chatbot_memory_level IN "
+        "('off', 'conversation', 'episodes', 'full')",
+    )
+    # Round 3 (AC-MEM054): `chatbot_recall_enabled` (`chatbot_rearch_s0`) is DROPPED
+    # outright - the recall re-parse it gated is deleted, and `chatbot_memory_level`
+    # above is its full replacement.
+    op.drop_column("respond_contacts", "chatbot_recall_enabled")
 
     op.add_column(
         "ai_assistant_usage_logs",
@@ -90,6 +106,18 @@ def downgrade() -> None:
         )
     )
     op.drop_column("ai_assistant_usage_logs", "chatbot_turn_id")
+    op.add_column(
+        "respond_contacts",
+        sa.Column(
+            "chatbot_recall_enabled",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.text("false"),
+        ),
+    )
+    op.drop_constraint(
+        "ck_respond_contacts_chatbot_memory_level", "respond_contacts", type_="check"
+    )
     op.drop_column("respond_contacts", "chatbot_memory_level")
     op.drop_index("uq_conversation_frames_contact_test_first_turn", table_name="conversation_frames")
     op.drop_index("ix_conversation_frames_contact_test_last", table_name="conversation_frames")

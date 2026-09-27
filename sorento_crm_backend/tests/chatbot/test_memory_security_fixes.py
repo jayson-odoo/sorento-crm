@@ -577,7 +577,8 @@ class TestContextWhitespaceCollapsed:
 
         text_out, _ = context.assemble(
             context.ContextLayers(
-                level="past", profile_facts=None,
+                # Round 3 (AC-MEM051) renames the stored level "past" -> "episodes".
+                level="episodes", profile_facts=None,
                 summaries=["first line\nsecond line"], earlier_messages=None,
                 previous_response=None, current_subject=None, pending_kind=None,
                 pending_options=None, settings_profile_line=None, current_message="hi",

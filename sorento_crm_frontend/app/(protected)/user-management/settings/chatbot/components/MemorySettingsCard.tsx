@@ -10,7 +10,7 @@ import type { ChatbotMemorySettings } from '../services/chatbotSettingsService';
 
 const LEVEL_OPTIONS = [
   { value: 'conversation', label: 'This conversation' },
-  { value: 'past', label: 'Past conversations' },
+  { value: 'episodes', label: 'Past conversations' },
   { value: 'full', label: 'Full memory' },
 ];
 

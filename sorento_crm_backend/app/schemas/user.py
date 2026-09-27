@@ -36,10 +36,10 @@ class RespondContactUpdate(BaseModel):
     workspace_id: Optional[str] = None
     requires_registered_project: Optional[bool] = None
     access_type_codes: Optional[List[str]] = None  # When set, replaces the contact's M2M assignment
-    # Chatbot turn re-architecture (AC-1503): the Profile shelf and the recall toggle,
-    # written by the Contact > Access "Chatbot" card (AC-1515).
+    # Chatbot turn re-architecture (AC-1503): the Profile shelf, written by the
+    # Contact > Access "Chatbot" card (AC-1515). `chatbot_recall_enabled` (the recall
+    # toggle) is DROPPED, model and DB both (round 3, AC-MEM054).
     chatbot_profile: Optional[dict] = None
-    chatbot_recall_enabled: Optional[bool] = None
 
 
 class RespondContactResponse(RespondContactBase):
@@ -57,9 +57,9 @@ class RespondContactResponse(RespondContactBase):
     # POST /api/v1/system/respond-contacts/{id}/outbound, never through a contact
     # update, so this is deliberately absent from RespondContactUpdate.
     outbound_enabled: bool = True
-    # Chatbot turn re-architecture (AC-1503).
+    # Chatbot turn re-architecture (AC-1503). `chatbot_recall_enabled` is DROPPED
+    # (round 3, AC-MEM054) - no longer part of this response.
     chatbot_profile: dict = {}
-    chatbot_recall_enabled: bool = False
     # Chatbot memory lane A (contract section 5): the contact's own context level,
     # null = follow the system default.
     chatbot_memory_level: Optional[str] = None

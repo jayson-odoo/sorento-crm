@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, Query, status, HTTPException, Body, Request
 from sqlalchemy.orm import Session
 from typing import Literal, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 import logging
 import httpx
 from app.database import get_db
@@ -226,14 +226,19 @@ class ContactChatbotUpdate(BaseModel):
     decision with its own audience. Keeping it separate is what lets the card be
     granted, audited and reasoned about on its own.
 
-    `chatbot_memory_level` replaces `chatbot_recall_enabled` (dropped from this body -
-    the S3 build stops reading the old column; it stays, untouched, per Q1): present
-    and null means "follow the system default", absent means "leave it alone", same
-    rule every other field on this card already follows.
+    `memory_level` (round 3 renames the body key off `chatbot_memory_level` - the
+    RESPONSE / dict-builder field keeps that name, unchanged) replaces
+    `chatbot_recall_enabled` (DROPPED, model and column both, round 3 AC-MEM054):
+    present and null means "follow the system default", absent means "leave it
+    alone", same rule every other field on this card already follows. `extra="forbid"`
+    is what turns a body still naming the retired `chatbot_recall_enabled` into a 422
+    instead of a silently-ignored no-op.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     chatbot_profile: dict | None = None
-    chatbot_memory_level: Literal["off", "conversation", "past", "full"] | None = None
+    memory_level: Literal["off", "conversation", "episodes", "full"] | None = None
     # S6: absent = leave alone, same rule as every field on this card.
     chatbot_stock_allowed: bool | None = None
     # Chatbot stock ask v2 S2 (PLAN-chatbot-stock-ask-v2-24sep.md, R7): absent = leave
@@ -280,8 +285,8 @@ async def update_contact_chatbot(
         # Present (including explicit null) sets it; absent leaves it alone - the same
         # rule every other field on this card follows. `model_fields_set` is the only
         # way to tell "sent as null" from "not sent at all" once both read as `None`.
-        if "chatbot_memory_level" in body.model_fields_set:
-            contact.chatbot_memory_level = body.chatbot_memory_level
+        if "memory_level" in body.model_fields_set:
+            contact.chatbot_memory_level = body.memory_level
         if body.chatbot_stock_allowed is not None:
             contact.chatbot_stock_allowed = body.chatbot_stock_allowed
         if body.notify_salesman is not None:

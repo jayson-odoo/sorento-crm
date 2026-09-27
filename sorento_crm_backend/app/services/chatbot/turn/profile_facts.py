@@ -118,7 +118,7 @@ VOCABULARY: dict[str, FactSpec] = {
         max_items=TALLY_TOP_N,
     ),
     "project": FactSpec(label="Project", kind="text", allow_staff=True, allow_stated=True, max_length=60),
-    "about": FactSpec(label="About", kind="text", allow_staff=True, allow_stated=True, max_length=200, max_items=3),
+    "about": FactSpec(label="About", kind="text", allow_staff=True, allow_stated=True, max_length=120, max_items=3),
     "note": FactSpec(label="Note", kind="text", allow_staff=True, allow_stated=False, max_length=200),
 }
 
@@ -434,10 +434,11 @@ def _normalize_for_stated(key: str, spec: FactSpec, value: Any, db: Session) -> 
         cleaned = _collapse_whitespace(value)
         return cleaned[: spec.max_length] if spec.max_length else cleaned
     if key == "about":
+        # Round 3 (AC-MEM033): CUT, not rejected - matching `project`'s own
+        # cut-not-reject rule, since a parser's free-text "about" is just as
+        # imprecise as its "project" extraction.
         cleaned = _collapse_whitespace(value)
-        if spec.max_length and len(cleaned) > spec.max_length:
-            return None
-        return cleaned
+        return cleaned[: spec.max_length] if spec.max_length else cleaned
     return None
 
 

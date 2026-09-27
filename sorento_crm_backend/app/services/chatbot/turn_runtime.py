@@ -144,7 +144,7 @@ def contact_phone(db: Session, contact_respond_id: str) -> str | None:
 
 
 _PROFILE_COLUMNS = (
-    "c.chatbot_profile, c.chatbot_recall_enabled, c.chatbot_stock_allowed, "
+    "c.chatbot_profile, c.chatbot_stock_allowed, "
     "c.notify_salesman, c.packing_list_allowed "
     "FROM respond_contacts c"
 )
@@ -315,9 +315,15 @@ def previous_reply_text(
 def load_profile(
     db: Session, contact_respond_id: str, *, space_id: str | None = None
 ) -> tuple[Profile, bool]:
-    """`respond_contacts.chatbot_profile` + `chatbot_recall_enabled` (AC-1503, AC-1548),
-    and `chatbot_stock_allowed` onto `Profile.stock_allowed` (S6) - the contact facts the
-    engine reads before it routes.
+    """`respond_contacts.chatbot_profile` (AC-1503, AC-1548) and `chatbot_stock_allowed`
+    onto `Profile.stock_allowed` (S6) - the contact facts the engine reads before it
+    routes.
+
+    The second tuple member is a RETIRED recall flag (round 3, AC-MEM054: the
+    `chatbot_recall_enabled` column it read is dropped outright, model and DB both -
+    the recall re-parse it gated is deleted) - always `False` now, kept only so the
+    handful of callers unpacking a 2-tuple do not need their own signature change for
+    a value nothing reads any more.
 
     Resolved inside the workspace, not by `respond_io_id` alone: a respond.io id is only
     unique WITHIN a workspace, so the old single-row SELECT could have handed one
@@ -363,14 +369,14 @@ def load_profile(
             default_ledgers=list(ledgers) if isinstance(ledgers, list) else None,
             # NULL cannot happen (NOT NULL, default true); `is not False` keeps the
             # fail-open reading if it ever did.
-            stock_allowed=row[2] is not False,
+            stock_allowed=row[1] is not False,
             # S2 (PLAN-chatbot-stock-ask-v2-24sep.md, R7): NULL cannot happen either
             # (NOT NULL, default false) - `is True` keeps the fail-closed reading if it
             # somehow did, matching these two columns' default-OFF rule.
-            notify_salesman=row[3] is True,
-            packing_list_allowed=row[4] is True,
+            notify_salesman=row[2] is True,
+            packing_list_allowed=row[3] is True,
         ),
-        bool(row[1]),
+        False,
     )
 
 

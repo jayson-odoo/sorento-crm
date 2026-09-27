@@ -6,7 +6,6 @@ import { useContact } from '../components/contact-context';
 import ContactMediaAccessSection from '../components/ContactMediaAccessSection';
 import ContactAccessAgentsTable from '../components/ContactAccessAgentsTable';
 import ContactFieldRevealsSection from '../components/ContactFieldRevealsSection';
-import ContactChatbotSection from '../components/ContactChatbotSection';
 
 export default function ContactAccessPage() {
   const { isLoading, contactId } = useContact();
@@ -41,12 +40,6 @@ export default function ContactAccessPage() {
           <ContactFieldRevealsSection contactId={contactId} />
         </CardContent>
       </Card>
-
-      {/* Chatbot memory lane A (round 3 mockup): ContactChatbotSection now renders its
-          OWN cards (Chatbot settings / What the bot knows / Conversations / Open
-          orders), matching the mockup's flat card list - no longer nested inside one
-          outer "Chatbot" card. */}
-      <ContactChatbotSection contactId={contactId} />
     </div>
   );
 }

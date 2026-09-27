@@ -14,10 +14,13 @@
  *
  * GET  /api/v1/user-management/contacts/{id}                       -> RespondContact
  * PUT  /api/v1/user-management/contacts/{id}/chatbot
- *   { chatbot_profile?: { tier, default_ledgers }, chatbot_memory_level?: ChatbotMemoryLevel
+ *   { chatbot_profile?: { tier, default_ledgers }, memory_level?: ChatbotMemoryLevel
  *     | null, chatbot_stock_allowed?, notify_salesman?, packing_list_allowed? }
- *   Both gain `chatbot_memory_level` and drop `chatbot_recall_enabled`; `chatbot_profile`
- *   in the body never touches `facts`. Absent means "leave it alone", never "clear it".
+ *   Round 3 (AC-MEM055) renames the body key `chatbot_memory_level` -> `memory_level`
+ *   (the GET/response side keeps `chatbot_memory_level`); `chatbot_recall_enabled` is
+ *   dropped outright, body and column both, and a body still naming it 422s.
+ *   `chatbot_profile` in the body never touches `facts`. Absent means "leave it
+ *   alone", never "clear it".
  *
  * GET    /api/v1/user-management/contacts/{id}/chatbot/memory  (`...contacts.view`)
  *   -> ContactChatbotMemory (below), the exact shape contract section 5 documents.
@@ -36,7 +39,7 @@ import { getWarehouses } from '@/app/(protected)/inventory-management/warehouses
 import type { SearchableMultiSelectOption } from '@/components/common/SearchableMultiSelect';
 import { getContact } from './contactService';
 
-export type ChatbotMemoryLevel = 'off' | 'conversation' | 'past' | 'full';
+export type ChatbotMemoryLevel = 'off' | 'conversation' | 'episodes' | 'full';
 
 export interface ContactChatbotProfile {
   /** null = follow the system default (contract section 2). */
@@ -167,7 +170,10 @@ export async function saveContactChatbotProfile(
       // The route replaces the whole `chatbot_profile` dict (never a merge), so every
       // field the contact already had is sent back, not just the one edited here.
       chatbot_profile: { tier: input.tier, default_ledgers: input.default_ledgers },
-      chatbot_memory_level: input.chatbot_memory_level,
+      // Round 3 (AC-MEM055) renames the BODY key off `chatbot_memory_level` -
+      // `ContactChatbotProfile`/`ContactChatbotSaveInput` keep that name (it is what
+      // the GET/response side still calls it), only the outgoing PUT key changes.
+      memory_level: input.chatbot_memory_level,
       chatbot_stock_allowed: input.stock_allowed,
       notify_salesman: input.notify_salesman,
       packing_list_allowed: input.packing_list_allowed,

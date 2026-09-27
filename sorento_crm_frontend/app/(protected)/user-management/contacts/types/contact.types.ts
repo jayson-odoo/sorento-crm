@@ -32,11 +32,10 @@ export interface RespondContact {
   } | null;
   /**
    * Per-contact context level (chatbot memory lane A, contract section 2): `off` |
-   * `conversation` | `past` | `full`, or null to follow the system default. Replaces
-   * `chatbot_recall_enabled`, which the S3 build stops reading and this contract stops
-   * sending (the column itself stays, untouched, per Q1).
+   * `conversation` | `episodes` | `full`, or null to follow the system default.
+   * `chatbot_recall_enabled` is DROPPED (round 3, AC-MEM054) - column and field both.
    */
-  chatbot_memory_level?: 'off' | 'conversation' | 'past' | 'full' | null;
+  chatbot_memory_level?: 'off' | 'conversation' | 'episodes' | 'full' | null;
   /** S6: may this contact ask the chatbot for stock. A CRM fact, default on. */
   chatbot_stock_allowed?: boolean;
   created_at: Date;

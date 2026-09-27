@@ -378,7 +378,7 @@ class ContactService:
         system_setting = self.db.query(SystemSetting).first()
         system_memory = (getattr(system_setting, "chatbot_memory", None) or {}) if system_setting else {}
         own_level = getattr(contact, "chatbot_memory_level", None)
-        effective = memory_mod.effective_level(own_level, system_memory)
+        effective = memory_mod.resolve_level(own_level, system_memory)
 
         merged = profile_facts.merged_facts_for_display(self.db, contact)
         facts_out = [
@@ -585,7 +585,6 @@ class ContactService:
             "outbound_enabled": bool(getattr(contact, "outbound_enabled", True)),
             # Chatbot turn re-architecture (AC-1503) - same rule as every field above.
             "chatbot_profile": chatbot_profile,
-            "chatbot_recall_enabled": bool(getattr(contact, "chatbot_recall_enabled", False)),
             # Chatbot memory lane A (contract section 5): null = follow the system
             # default. Must be listed explicitly, same rule as every field above.
             "chatbot_memory_level": getattr(contact, "chatbot_memory_level", None),

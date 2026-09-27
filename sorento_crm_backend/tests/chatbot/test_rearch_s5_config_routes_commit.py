@@ -224,11 +224,14 @@ class TestChatbotEntityKindsRoutesCommit:
 
 class TestContactChatbotRouteCommit:
     def test_put_contact_chatbot_commits_exactly_once(self, client, pg_db, commit_spy) -> None:
+        """`chatbot_recall_enabled` is retired (round 3, AC-MEM054, merged 5b110df8)
+        - `memory_level` is its replacement body key, used here purely to keep this
+        commit-count test's happy path exercising the route at all."""
         contact_id = _seed_contact(pg_db)
         commit_spy["n"] = 0
         resp = client.put(
             f"{CONTACT_CHATBOT_BASE}/{contact_id}/chatbot",
-            json={"chatbot_recall_enabled": True},
+            json={"memory_level": "full"},
         )
         assert resp.status_code == 200, resp.text
         assert commit_spy["n"] == 1, (

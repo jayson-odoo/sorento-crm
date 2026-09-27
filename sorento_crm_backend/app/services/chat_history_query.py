@@ -50,6 +50,11 @@ class ChatMessageRow:
     # 3 KB document per row would bloat every page for a scan/filter view that never
     # reads it. See get_thread vs list_messages_page.
     state_trace: Optional[dict] = None
+    # AC-MEM015 (chatbot memory lane A round 3): the per-contact ordering ticket the
+    # turn recorded, off `chatbot.turns.trace` - `None` for a turn that never queued
+    # (S7 ordering off, or unordered), which is the common case everywhere without
+    # Redis ordering switched on.
+    queue_ticket: Optional[int] = None
 
 
 def _contact_display(row: ChatHistory) -> str:
@@ -114,9 +119,52 @@ def _turn_latencies(db: Session, rows: list[ChatHistory]) -> dict[str, float]:
     return _latencies_from_rows(related)
 
 
+def _turn_tickets(db: Session, rows: list[ChatHistory]) -> dict[str, int]:
+    """Queue ticket per turn id (AC-MEM015), off `chatbot.turns.trace` - the "queued"
+    STAGE record's `facts.ticket` (`engine.py`/`trace.py::record`, round 3), or, for a
+    turn an older engine build recorded, the separate `queue`-KIND event
+    `TurnTrace.add` used to write (`ticket` sits directly on that entry instead of
+    under `facts`) - either shape names a ticket, and a turn that never queued (S7
+    ordering off, or unordered) carries neither.
+    """
+    from sqlalchemy import String, cast
+    from app.models.chatbot_turn import ChatbotTurn
+
+    turn_ids = {r.turn_id for r in rows if r.turn_id}
+    if not turn_ids:
+        return {}
+    # Cast rather than filter `ChatHistory.turn_id` client-side: it is a plain
+    # `String` column that predates `chatbot.turns` and, in several older/synthetic
+    # rows, is not a UUID at all - a bare `ChatbotTurn.id.in_(...)` fails the whole
+    # query with an `invalid input syntax for type uuid` the moment one such id is
+    # in the page (measured directly against this file's own pre-existing fixtures).
+    turns = (
+        db.query(ChatbotTurn.id, ChatbotTurn.trace)
+        .filter(cast(ChatbotTurn.id, String).in_(turn_ids))
+        .all()
+    )
+    tickets: dict[str, int] = {}
+    for turn_id, trace in turns:
+        if not isinstance(trace, list):
+            continue
+        for entry in trace:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("kind") == "queue":
+                ticket = entry.get("ticket")
+            elif entry.get("kind") is None and entry.get("stage") == "queued":
+                ticket = (entry.get("facts") or {}).get("ticket")
+            else:
+                continue
+            if ticket is not None:
+                tickets[str(turn_id)] = ticket
+    return tickets
+
+
 def _to_row(
     row: ChatHistory,
     latencies: dict[str, float],
+    tickets: dict[str, int] | None = None,
     *,
     include_state_trace: bool = False,
 ) -> ChatMessageRow:
@@ -147,6 +195,10 @@ def _to_row(
         # Only the incoming row of a turn carries a trace; outgoing is always NULL.
         # Guarded by include_state_trace so the grid list path never fetches it.
         state_trace=(row.state_trace if include_state_trace else None),
+        # AC-MEM015: the ticket belongs to the turn, so both the incoming and the
+        # outgoing row of that turn carry it - unlike latency, which is the reply's
+        # own number.
+        queue_ticket=(tickets or {}).get(key) if key else None,
     )
 
 
@@ -305,7 +357,8 @@ def list_messages_page(
         )
 
     latencies = _turn_latencies(db, page_rows)
-    return [_to_row(r, latencies) for r in page_rows], total
+    tickets = _turn_tickets(db, page_rows)
+    return [_to_row(r, latencies, tickets) for r in page_rows], total
 
 
 def list_messages(
@@ -359,7 +412,8 @@ def list_messages(
     page = fetched[:limit]
 
     latencies = _turn_latencies(db, page)
-    rows = [_to_row(row, latencies) for row in page]
+    tickets = _turn_tickets(db, page)
+    rows = [_to_row(row, latencies, tickets) for row in page]
 
     if breached_only:
         breached_turns = {k for k, v in latencies.items() if v > target_seconds}
@@ -425,5 +479,6 @@ def get_thread(
         rows = list(reversed(older)) + [anchor] + newer
 
     latencies = _turn_latencies(db, rows)
+    tickets = _turn_tickets(db, rows)
     # Transcript is the diagnosis surface - carry the state trace here (and only here).
-    return [_to_row(row, latencies, include_state_trace=True) for row in rows]
+    return [_to_row(row, latencies, tickets, include_state_trace=True) for row in rows]

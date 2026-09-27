@@ -532,7 +532,8 @@ function ContextSection({ context }: { context: TurnDetail['context'] }) {
  * trace event) - read-only, nothing to set.
  */
 function orderNeighborText(neighbor: TurnDetailOrderNeighbor): string {
-  return `${formatDateTimeInMalaysia(neighbor.created_at)} "${neighbor.message}"`;
+  const ticket = neighbor.ticket != null ? `#${neighbor.ticket} ` : '';
+  return `${ticket}${formatDateTimeInMalaysia(neighbor.created_at)} "${neighbor.message}"`;
 }
 
 function OrderSection({ order }: { order: TurnDetail['order'] }) {
@@ -542,7 +543,7 @@ function OrderSection({ order }: { order: TurnDetail['order'] }) {
       <dt className="text-muted-foreground">Place in line</dt>
       <dd>#{order.ticket} for this contact</dd>
       <dt className="text-muted-foreground">Waited</dt>
-      <dd>{(order.waited_ms / 1000).toFixed(1)} s</dd>
+      <dd>{(order.wait_ms / 1000).toFixed(1)} s</dd>
       <dt className="text-muted-foreground">Ran after</dt>
       <dd className="text-muted-foreground">
         {order.previous ? orderNeighborText(order.previous) : 'Not recorded on this turn.'}

@@ -197,7 +197,7 @@ def _render_l3(level: str, earlier_messages: list[dict[str, Any]] | None, previo
     # `earlier_messages` arrives oldest first (the header names it so) - dropping
     # the oldest one under budget pressure pops from the FRONT of this list.
     messages: list[dict[str, Any]] = []
-    if level in ("conversation", "past", "full"):
+    if level in ("conversation", "episodes", "full"):
         messages = list((earlier_messages or [])[:_MAX_EARLIER_MESSAGES])
         if earlier_messages and len(earlier_messages) > _MAX_EARLIER_MESSAGES:
             dropped = True
@@ -332,7 +332,7 @@ def assemble(layers: ContextLayers) -> tuple[str, dict[str, Any]]:
         l5_text, l5_dropped = _render_l5(layers.profile_facts)
 
     l4_text, l4_dropped = ("", False)
-    if layers.level in ("past", "full"):
+    if layers.level in ("episodes", "full"):
         l4_text, l4_dropped = _render_l4(layers.summaries)
 
     l3_text, l3_dropped = _render_l3(layers.level, layers.earlier_messages, layers.previous_response)

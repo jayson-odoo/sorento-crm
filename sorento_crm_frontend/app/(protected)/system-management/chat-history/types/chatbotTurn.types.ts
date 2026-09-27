@@ -449,11 +449,13 @@ export interface TurnDetailOrderNeighbor {
   turn_id: string;
   created_at: string;
   message: string;
+  /** This neighbour's own ticket (AC-MEM015) - null when it never queued. */
+  ticket: number | null;
 }
 
 export interface TurnDetailOrder {
   ticket: number;
-  waited_ms: number;
+  wait_ms: number;
   previous: TurnDetailOrderNeighbor | null;
   next: TurnDetailOrderNeighbor | null;
 }
