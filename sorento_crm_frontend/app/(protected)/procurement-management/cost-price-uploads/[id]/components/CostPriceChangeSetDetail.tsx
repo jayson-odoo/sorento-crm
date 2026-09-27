@@ -27,6 +27,10 @@ function validityLabel(startDate: string | null, endDate: string | null): string
   return `Valid from ${formatPlainDate(startDate)} to ${formatPlainDate(endDate)}`;
 }
 
+export function sheetsAndRowsLabel(sheets: number, rows: number): string {
+  return `${sheets} ${sheets === 1 ? 'sheet' : 'sheets'}, ${rows} ${rows === 1 ? 'row' : 'rows'}`;
+}
+
 export function CostPriceChangeSetDetail({ changeSetId }: { changeSetId: string }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -99,7 +103,7 @@ export function CostPriceChangeSetDetail({ changeSetId }: { changeSetId: string 
         <p className="text-sm text-muted-foreground">
           {changeSet.supplier.supplier_name} &middot; {changeSet.currency} &middot; {validityLabel(changeSet.start_date, changeSet.end_date)}
           {changeSet.uploaded_by_name ? <> &middot; uploaded by {changeSet.uploaded_by_name} {formatDateTimeInMalaysia(changeSet.created_at)}</> : null}
-          {changeSet.total_rows ? <> &middot; {changeSet.sheets.length} sheets, {changeSet.total_rows} rows</> : null}
+          {changeSet.total_rows ? <> &middot; {sheetsAndRowsLabel(changeSet.sheets.length, changeSet.total_rows)}</> : null}
         </p>
       </PageHeader>
 

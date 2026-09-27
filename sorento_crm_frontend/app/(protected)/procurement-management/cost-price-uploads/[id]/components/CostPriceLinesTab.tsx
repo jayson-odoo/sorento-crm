@@ -69,6 +69,21 @@ function money(value: number | null, currency: string | null): string {
 }
 
 /**
+ * Mockup: Price now / New price show bare amounts, the set's currency being in the header.
+ * A price in another currency keeps its code, since the difference is what matters; the
+ * full value is always the title.
+ */
+function PriceCell({ value, currency, setCurrency }: { value: number | null; currency: string | null; setCurrency: string }) {
+  const full = money(value, currency);
+  const shown = value != null && (currency == null || currency === setCurrency) ? value.toFixed(2) : full;
+  return (
+    <span className="block truncate tabular-nums" title={full}>
+      {shown}
+    </span>
+  );
+}
+
+/**
  * One line, as a card (mockup `cost-price-review.html`, "At 375 wide"): the DataGrid's
  * horizontal-scroll table does not fit a phone, so mobile gets its own layout rather than
  * a narrower cut of the same columns - same fields (code, sheet/row, configuration, our
@@ -486,18 +501,22 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
         id: 'current',
         header: 'Price now',
         // 110, not 90: "498.00 CNY" truncated to "498.0..." at 90px (Phase 1 evidence,
-        // review-verification-off-1280.png) - wide enough for a 3-digit amount plus
-        // its currency code with room to spare.
+        // review-verification-off-1280.png). A price in the set's own currency now shows
+        // the bare amount (PriceCell), so the code only takes room when it differs.
         size: 110,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
-        cell: ({ row }) => <span className="tabular-nums">{money(row.original.current_unit_cost, row.original.current_currency)}</span>,
+        cell: ({ row }) => (
+          <PriceCell value={row.original.current_unit_cost} currency={row.original.current_currency} setCurrency={changeSet.currency} />
+        ),
       },
       {
         id: 'new',
         header: 'New price',
         size: 110,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
-        cell: ({ row }) => <span className="tabular-nums">{money(row.original.new_unit_cost, changeSet.currency)}</span>,
+        cell: ({ row }) => (
+          <PriceCell value={row.original.new_unit_cost} currency={changeSet.currency} setCurrency={changeSet.currency} />
+        ),
       },
       {
         id: 'change',
