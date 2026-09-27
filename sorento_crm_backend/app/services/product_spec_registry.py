@@ -1399,6 +1399,19 @@ def _remove_value(db: Session, spec_key: str, value: str) -> dict:
         row.user_values = [v for v in added if v != value]
         row.user_synonyms = {k: w for k, w in (row.user_synonyms or {}).items() if k != value}
         row.value_labels = {k: w for k, w in (row.value_labels or {}).items() if k != value}
+        # A rule setting a choice that is gone would keep writing it, and the next
+        # rules save would refuse it (review N-R4). Only a stored list can hold one:
+        # the shipped rules set shipped choices only.
+        rules = list(row.derivation_rules or [])
+        kept = [r for r in rules if str(builder_of(r).get("value", "")).strip() != value]
+        if len(kept) != len(rules):
+            fingerprint_before = product_spec_rederive.rules_fingerprint(db)
+            row.derivation_rules = kept
+            db.commit()
+            updated = product_spec_rederive.reread_after_save_logged(
+                db, spec_key, fingerprint_before=fingerprint_before
+            )
+            return {"spec_key": spec_key, "value": value, "products_updated": updated}
     elif value in shipped:
         suppressed = [str(v) for v in (row.suppressed_values or [])]
         if value not in suppressed:

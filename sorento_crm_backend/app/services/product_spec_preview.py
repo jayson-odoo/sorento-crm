@@ -284,8 +284,15 @@ def _release_database_lock(token: str | None) -> None:
     try:
         connection.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": key})
         connection.commit()
-    except Exception:  # noqa: BLE001 - closing the connection releases it anyway
+    except Exception:  # noqa: BLE001
         logger.warning("spec catalogue-read lock release failed", exc_info=True)
+        # `close()` alone hands a pooled connection back with the session lock still
+        # held; invalidating it closes the database session, which releases the lock
+        # (review N-R5).
+        try:
+            connection.invalidate()
+        except Exception:  # noqa: BLE001
+            logger.warning("spec catalogue-read connection invalidate failed", exc_info=True)
     finally:
         connection.close()
 

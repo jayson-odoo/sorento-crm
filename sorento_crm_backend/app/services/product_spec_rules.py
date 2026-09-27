@@ -55,6 +55,8 @@ MAX_RULES_PER_TRY = 60
 # (1.7 s over 4,900 characters) and a gapped Skip after cubic (review B-3).
 MAX_GAP = 120
 _SKIP_WINDOW = MAX_GAP + 2 * MAX_WORD_LENGTH + 8
+# What may sit between a Skip after phrase and the match (`_skip_pattern`'s tail).
+_SKIP_SEPARATORS = re.compile(r"[\s\-:,(]")
 _WORD_LISTS = ("words", "skip_after", "before", "after", "texts")
 _PHRASE_LISTS = ("words", "skip_after", "before", "after")
 LOOK_INS = ("any", "description", "flyer", "name")
@@ -250,7 +252,13 @@ def _skipped(skip: str | None, haystack: str, start: int) -> bool:
     nothing further back can decide it (`pos` keeps the lookbehind seeing real text)."""
     if not skip:
         return False
-    return _regex(skip).search(haystack, max(0, start - _SKIP_WINDOW), start) is not None
+    # The separators between the phrase and the match are unbounded in the pattern, so
+    # the window is measured from where they begin (review N-R2). Each run is walked once
+    # per match that follows it, which keeps reading linear.
+    phrase_end = start
+    while phrase_end > 0 and _SKIP_SEPARATORS.match(haystack, phrase_end - 1):
+        phrase_end -= 1
+    return _regex(skip).search(haystack, max(0, phrase_end - _SKIP_WINDOW), start) is not None
 
 
 def _size_read(compiled: dict, haystack: str):
@@ -307,9 +315,22 @@ def _says_something(word) -> bool:
     )
 
 
+# The lists a rule FINDS by: a words rule's words and a code rule's texts. Each entry
+# needs a letter or a number, because a lone "&" or "+" sits between spaces in many
+# descriptions and would write the value onto all of them (review S-R2). Punctuation
+# stays allowed next to a number (before, after) and in Skip after, where it can only
+# narrow what a rule reads.
+_FINDING_LISTS = {"words": "words", "code": "texts"}
+
+
+def _has_letter_or_number(word) -> bool:
+    return any(ch.isalnum() for ch in str(word or ""))
+
+
 def _empty_word(builder: dict) -> bool:
+    finding = _FINDING_LISTS.get(builder.get("kind"))
     return any(
-        not _says_something(word)
+        not _says_something(word) or (part == finding and not _has_letter_or_number(word))
         for part in _WORD_LISTS
         if isinstance(builder.get(part), list)
         for word in builder.get(part) or []
@@ -340,9 +361,10 @@ def read_text(builder: dict, texts: dict[str, str], code: str, spec_key: str | N
     kind = builder.get("kind")
     try:
         if _empty_word(builder):
-            # Stored before save refused it: a word of dots or dashes would match
-            # every text and write this value onto the whole catalogue (review B-2).
-            _warn_once("a word is only dots or dashes", builder)
+            # Stored before save refused it: a word of dots or dashes, or a word to find
+            # with no letter or number, would match nearly every text and write this
+            # value onto the whole catalogue (review B-2, S-R2).
+            _warn_once("a word is only punctuation", builder)
             return None
         if kind == "code":
             texts_to_find = [str(t).upper() for t in builder.get("texts") or [] if str(t).strip()]
@@ -558,6 +580,7 @@ def _value_for(raw, *, data_type: str, allowed: list[str], n: int):
 
 def _check_limits(builder: dict, n: int) -> None:
     """The size limits a phrase list is held to, in plain words (security review, B1)."""
+    finding = _FINDING_LISTS.get(builder.get("kind"))
     for part in _WORD_LISTS:
         raw = builder.get(part)
         words = [raw] if isinstance(raw, str) else list(raw or []) if isinstance(raw, list) else []
@@ -567,6 +590,8 @@ def _check_limits(builder: dict, n: int) -> None:
             text_ = str(word or "")
             if text_.strip() and not _says_something(text_):
                 raise _refuse(f"Rule {n}: each word needs more than dots and dashes.")
+            if part == finding and text_.strip() and not _has_letter_or_number(text_):
+                raise _refuse(f"Rule {n}: each word needs a letter or a number.")
             if len(text_.strip()) > MAX_WORD_LENGTH:
                 raise _refuse(
                     f"Rule {n}: keep each word to {MAX_WORD_LENGTH} characters or fewer."
