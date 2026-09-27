@@ -313,11 +313,20 @@ def create_opportunity(
     return opportunity
 
 
+#: The largest figure `expected_amount` (numeric(15,2)) holds.
+_MAX_AMOUNT = Decimal("9999999999999.99")
+
+
 def _lines_sum(opportunity: SalesOpportunity) -> Decimal:
-    return sum(
+    total = sum(
         (amount for amount in map(_line_amount, opportunity.lines) if amount is not None),
         Decimal("0"),
     )
+    if total > _MAX_AMOUNT:
+        raise _unprocessable(
+            "The lines add up to more than an opportunity can hold.", "AMOUNT_TOO_LARGE"
+        )
+    return total
 
 
 def _validate_lost_reason(db: Session, lost_reason: Optional[str]) -> str:

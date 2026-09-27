@@ -243,3 +243,19 @@ def test_f7_patch_with_a_null_amount_takes_the_lines_sum_not_a_500(api):
     )
     assert res.status_code == 200, res.text
     assert Decimal(res.json()["expected_amount"]) == Decimal("200.00")
+
+
+def test_f7_lines_adding_up_past_what_an_amount_holds_is_422_not_500(api):
+    # Security review of fix round 2: qty and price each pass their bounds, but their summed
+    # estimate can overflow expected_amount's numeric(15,2).
+    client, db, company_id = api
+    customer = _customer(db, company_id)
+    product = _product(db)
+    res = _post(
+        client,
+        BASE,
+        customer.id,
+        lines=[{"product_id": product.id, "qty": "9999999999", "unit_price": "9999"}],
+    )
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "AMOUNT_TOO_LARGE"
