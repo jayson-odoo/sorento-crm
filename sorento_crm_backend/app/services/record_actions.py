@@ -1769,6 +1769,33 @@ register(
 )
 
 
+def _delete_sales_order_line_attachment(db: Session, payload: dict):
+    from app.services import so_line_attachments
+
+    # `line_id` scopes the delete (mirrors `shipment_line_photo.delete`'s own rule) -
+    # without it a link id under another line would be reachable off a guess.
+    return so_line_attachments.delete(
+        db,
+        str(payload.get("line_id") or ""),
+        _entity_id(payload),
+        payload.get("requested_by_id"),
+    )
+
+
+register(
+    FormAction(
+        key="sales_order_line_attachment.delete",
+        entity_types=("sales_order_line_attachment",),
+        execute=_delete_sales_order_line_attachment,
+        # Destructive: the file itself is removed (link, attachment row and object) -
+        # re-adding it means uploading it again, not undoing a link (Q8).
+        window=WINDOW_DESTRUCTIVE,
+        permission="projects.projects.edit",
+        label="Delete attachment",
+    )
+)
+
+
 def _delete_notification(db: Session, payload: dict):
     from app.services.error_handler import handle_not_found
     from app.services.notification_service import NotificationService

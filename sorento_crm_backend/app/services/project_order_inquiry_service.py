@@ -177,6 +177,13 @@ _HANDOVER_COMMITTED_TX_KEY = "oi_handover_committed_tx"
 _UNDO_PENDING_KEY = "oi_undo_pending"
 _UNDO_COMMITTED_TX_KEY = "oi_undo_committed_tx"
 
+#: #1312 (Q4, grill recommended answer): the handover email's own attachment budget -
+#: Google Workspace allows 25 MB per message including ~33% base64 overhead, so 15 MB
+#: of raw file bytes leaves headroom. `_build_handover_context` attaches lines-then-
+#: files in queue order while the running total stays at or under this; anything past
+#: it is linked in the row instead (AC-E4).
+HANDOVER_ATTACHMENT_CAP_BYTES = 15 * 1024 * 1024
+
 
 def _transaction_chain(session) -> List[Any]:
     """The transaction a queued item was written under, and every one above it.
@@ -755,7 +762,10 @@ class ProjectOrderInquiryService:
         # preloads this in ONE query for every row it is about to queue - a re-confirm
         # carrying thirty still-raised amendment rows would otherwise cost thirty PK
         # round trips, one per `_record_handover` call, inside the same transaction.
-        self._handover_line_no_cache: Dict[str, Optional[int]] = {}
+        # #1312: widened to also carry `core_sales_order_line_id` - the id the line's
+        # attachments key on - off the SAME `ProjectSalesOrderLine` read, so this stays
+        # one round trip rather than two.
+        self._handover_line_no_cache: Dict[str, tuple[Optional[int], Optional[str]]] = {}
         # R7's own-arrival credit, asked once per ROW by the path picker
         # (`_own_arrival_credit_for_row`). A replan settles every row of an order in one
         # call, and each row used to build a fresh `ProjectSupplyService` (throwing away
@@ -3268,12 +3278,14 @@ class ProjectOrderInquiryService:
         # rows` preloads it in one query before this method's own loop.
         if not row.so_line_id:
             line_no = None
+            core_line_id = None
         elif row.so_line_id in self._handover_line_no_cache:
-            line_no = self._handover_line_no_cache[row.so_line_id]
+            line_no, core_line_id = self._handover_line_no_cache[row.so_line_id]
         else:
             so_line = self.db.get(ProjectSalesOrderLine, row.so_line_id)
             line_no = so_line.line_no if so_line is not None else None
-            self._handover_line_no_cache[row.so_line_id] = line_no
+            core_line_id = so_line.core_sales_order_line_id if so_line is not None else None
+            self._handover_line_no_cache[row.so_line_id] = (line_no, core_line_id)
         line = {
             "so_date": _handover_fmt_date(facts.get("so_date")),
             "so_number": so_number,
@@ -3304,6 +3316,12 @@ class ProjectOrderInquiryService:
                 #: AC-2/AC-3: what `_build_handover_context` sorts the whole queue by -
                 #: `so_number` above, then these two.
                 "line_no": line_no,
+                #: #1312: the core sales-order line this row's own line carries -
+                #: `_fire_pending_handover` keys its `handover_attachments` read on
+                #: this, and `_build_handover_context` reads it back to print/attach
+                #: what that returns. `None` for a row with no `so_line_id`, same as
+                #: `line_no` above.
+                "core_line_id": core_line_id,
                 "item_code": row.item_code,
                 "verb_keys": _handover_verb_keys(kind, row, was),
                 "line": line,
@@ -3387,10 +3405,12 @@ class ProjectOrderInquiryService:
             if row.so_line_id and row.so_line_id not in self._handover_line_no_cache
         }
         if uncached_line_ids:
-            for line_id, line_no in self.db.query(
-                ProjectSalesOrderLine.id, ProjectSalesOrderLine.line_no
+            for line_id, line_no, core_line_id in self.db.query(
+                ProjectSalesOrderLine.id,
+                ProjectSalesOrderLine.line_no,
+                ProjectSalesOrderLine.core_sales_order_line_id,
             ).filter(ProjectSalesOrderLine.id.in_(uncached_line_ids)):
-                self._handover_line_no_cache[line_id] = line_no
+                self._handover_line_no_cache[line_id] = (line_no, core_line_id)
         for row in rows:
             if str(row.id) in already_queued:
                 continue
@@ -10445,7 +10465,8 @@ def _handover_sort_key(item: Dict[str, Any]) -> Tuple[str, bool, int, str]:
 
 
 def _build_handover_context(
-    pending: Sequence[Dict[str, Any]]
+    pending: Sequence[Dict[str, Any]],
+    attachments_by_line: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> Optional[Tuple[Dict[str, Any], str]]:
     """The `order_inquiry_handover` dispatch context (AC-H17) plus the `source_id` to
     dispatch it under - PURE aggregation over what `_record_handover` already resolved
@@ -10460,13 +10481,58 @@ def _build_handover_context(
     below (`so_numbers`/location aggregation for the subject, `first_inquiry_id`)
     stays over `pending` in QUEUE order, unchanged by this lane: AC-4 pins the subject
     rule as-is.
+
+    #1312: `attachments_by_line` (`so_line_attachments.handover_attachments`'s own
+    shape, keyed by `core_line_id`) is optional and defaults to `None` so the several
+    existing one-arg callers keep working unchanged. Each queued line dict is COPIED
+    before anything is added to it - the caller's own queued item must never be
+    mutated, since a later drain of the SAME session's queue (a second commit within
+    one request) could otherwise see files printed twice. Files are walked in the
+    SAME sorted (email) order the line table itself uses, then in upload order within
+    a line, with a running total against `HANDOVER_ATTACHMENT_CAP_BYTES` (AC-E4): a
+    file that would push the total over the cap is not attached, only named in its
+    row as a link to the order inquiry line.
     """
     if not pending:
         return None
 
-    lines: List[Dict[str, Any]] = [
-        item["line"] for item in sorted(pending, key=_handover_sort_key)
-    ]
+    from app.services.automation_triggers import build_order_inquiry_link
+
+    attachments_by_line = attachments_by_line or {}
+    email_attachments: List[Dict[str, Any]] = []
+    running_total = 0
+
+    lines: List[Dict[str, Any]] = []
+    for item in sorted(pending, key=_handover_sort_key):
+        line = dict(item["line"])
+        core_line_id = item.get("core_line_id")
+        files = attachments_by_line.get(core_line_id) if core_line_id else None
+        if files:
+            so_number = item.get("so_number") or ""
+            line_no = item.get("line_no")
+            printed: List[Dict[str, Any]] = []
+            for entry in files:
+                name = f"{so_number}-L{line_no}-{entry['filename']}"
+                running_total += entry.get("size_bytes") or 0
+                if running_total <= HANDOVER_ATTACHMENT_CAP_BYTES:
+                    printed.append({"name": name, "attached": True, "url": None})
+                    email_attachments.append(
+                        {
+                            "filename": name,
+                            "storage_provider": entry["storage_provider"],
+                            "storage_key": entry["storage_key"],
+                            "optional": True,
+                        }
+                    )
+                else:
+                    url = (
+                        f"{build_order_inquiry_link(item.get('order_inquiry_id'))}"
+                        f"?row={item.get('row_id')}"
+                    )
+                    printed.append({"name": name, "attached": False, "url": url})
+            line["attachments"] = printed
+        lines.append(line)
+
     orders: List[Dict[str, Any]] = []
     seen_pso: set = set()
     so_numbers: List[str] = []
@@ -10527,7 +10593,6 @@ def _build_handover_context(
         _HANDOVER_VERB_LABEL[key] for key in _HANDOVER_VERB_ORDER if key in verb_keys
     ]
 
-    from app.services.automation_triggers import build_order_inquiry_link
     from app.services.certificate_service import today_malaysia
 
     context = {
@@ -10549,6 +10614,11 @@ def _build_handover_context(
         # this email reverts to ISO.
         "today": today_malaysia().strftime("%d/%m/%Y"),
     }
+    if email_attachments:
+        # AC-E5: a write whose lines hold no files sends exactly today's email - no
+        # key at all, not an empty list, so a template/automation hop that merely
+        # checks presence never treats this write as attachment-bearing.
+        context["email_attachments"] = email_attachments
     return context, pending[0]["order_inquiry_id"]
 
 
@@ -10795,7 +10865,29 @@ def register_order_inquiry_post_commit_dispatch() -> None:
 
         fresh = SessionLocal()
         try:
-            built = _build_handover_context(concluded)
+            # #1312: whatever files this write's lines hold, read on the FRESH session
+            # (the root has committed, so the uploads a concurrent upload wrote are
+            # visible here) - a failure here must never stop the email itself, so it
+            # is caught and logged INSIDE this try, separately from the dispatch below:
+            # on any error the handover still sends, just without attachments.
+            attachments_by_line: Dict[str, List[Dict[str, Any]]] = {}
+            core_line_ids = [
+                item["core_line_id"] for item in concluded if item.get("core_line_id")
+            ]
+            if core_line_ids:
+                try:
+                    from app.services import so_line_attachments
+
+                    attachments_by_line = so_line_attachments.handover_attachments(
+                        fresh, core_line_ids
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "order_inquiry_handover: could not load line attachments; "
+                        "sending without files"
+                    )
+
+            built = _build_handover_context(concluded, attachments_by_line)
             if built is None:
                 return
             context, source_id = built

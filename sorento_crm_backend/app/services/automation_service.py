@@ -671,6 +671,15 @@ class AutomationService:
                         "source_kind": match.source_kind,
                         "source_id": match.source_id,
                         "trigger_type": str(automation.trigger_type),
+                        # #1312: the OI handover's own per-line files, forwarded only
+                        # when the dispatch context actually carries them (AC-E1/AC-E5)
+                        # - `notification_tasks._enqueue_email_for_delivery` reads this
+                        # back off `Notification.data` into the outbox row.
+                        **(
+                            {"extra_attachments": match.context["email_attachments"]}
+                            if match.context.get("email_attachments")
+                            else {}
+                        ),
                     },
                     recipient_emails=[r["email"] for r in ordered],
                 )
