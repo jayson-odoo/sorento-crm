@@ -101,7 +101,7 @@ class UserRoleSimple(BaseModel):
 class UserSelectResponse(BaseModel):
     id: str
     name: Optional[str] = None
-    email: str
+    email: Optional[str] = None  # a phone-only user has none (identity S0)
     respond_user_id: Optional[str] = None
     respond_synced: Optional[str] = None
 
@@ -285,6 +285,9 @@ class UserUpdate(BaseModel):
 
 class UserResponse(UserBase):
     id: str
+    # Optional on the way out (identity S0): one phone-only user must not break the
+    # Users list. Create input still requires an email until S3.
+    email: Optional[str] = None
     avatar: Optional[str] = None
     created_at: datetime
     updated_at: datetime

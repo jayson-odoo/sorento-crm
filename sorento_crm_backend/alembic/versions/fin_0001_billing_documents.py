@@ -24,7 +24,7 @@ dropped, ADR-0011) and the permission rows (`sync_permissions` recreates them fr
 registry on boot anyway, and a grant an admin made by hand must not vanish with a rollback).
 
 Revision ID: fin_0001_billing_documents
-Revises: sales_s1_reports_module
+Revises: identity_0001_s0_model
 Create Date: 2026-09-27
 """
 import uuid
@@ -34,7 +34,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "fin_0001_billing_documents"
-down_revision = "sales_s1_reports_module"
+down_revision = "identity_0001_s0_model"
 branch_labels = None
 depends_on = None
 

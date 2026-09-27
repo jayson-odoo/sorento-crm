@@ -819,6 +819,9 @@ PERMISSION_REGISTRY.extend([
 # them to admin and superadmin; declared here as well so a database built with create_all +
 # sync_permissions (CI, `scripts/bootstrap_env`) has them.
 PERMISSION_REGISTRY.extend(_crud("sales", "teams", "Sales Teams"))
+# Slice S1: `sales_0003_targets` creates and grants these the same way. `.edit` also gates a
+# period's figure, Duplicate and Add figure (plan 3.7).
+PERMISSION_REGISTRY.extend(_crud("sales", "targets", "Sales Targets"))
 
 
 # Finance module (plan 3.5, slice S0, #1309; ruling Q9). Migration `fin_0001_billing_documents`
