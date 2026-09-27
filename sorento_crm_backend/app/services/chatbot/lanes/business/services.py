@@ -24,6 +24,7 @@ paying for an embedding call per turn to answer a question with one answer.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -635,11 +636,33 @@ def resolve_sales_agent_token(db: Session, token: str) -> list[tuple[str, str]]:
     word = _norm(token)
     if not word:
         return []
-    rows = db.query(SalesAgent.id, SalesAgent.sales_agent, SalesAgent.person_label).order_by(SalesAgent.sales_agent).all()
+    rows = (
+        db.query(SalesAgent.id, SalesAgent.sales_agent, SalesAgent.person_label, SalesAgent.aliases)
+        .order_by(SalesAgent.sales_agent)
+        .all()
+    )
     exact = [(str(r[0]), r[1]) for r in rows if word in (_norm(r[1]), _norm(r[2]))]
     if exact:
         return exact
-    return [(str(r[0]), r[1]) for r in rows if _whole_word_run(word, r[1] or "") or _whole_word_run(word, r[2] or "")]
+    named = [(str(r[0]), r[1]) for r in rows if _whole_word_run(word, r[1] or "") or _whole_word_run(word, r[2] or "")]
+    if named:
+        return named
+    # "Also known as" (PR #1273 round 7: "WT is william"). A name belongs to the PERSON,
+    # so it covers every account of theirs, whichever one the owner typed it on.
+    hits = [r for r in rows if any(_whole_word_run(word, alias) for alias in (r[3] or "").split(","))]
+    stems = {_code_stem(r[1]) for r in hits}
+    labels = {_norm(r[2]) for r in hits if _norm(r[2])}
+    return [(str(r[0]), r[1]) for r in rows if _code_stem(r[1]) in stems or (_norm(r[2]) and _norm(r[2]) in labels)]
+
+
+#: The account numeral a person's codes end in ("WT I", "WT III", "SEAN IV").
+_ACCOUNT_NUMERAL = re.compile(r"\s+(?:I|II|III|IV|V|VI|VII|VIII|IX|X)$", re.IGNORECASE)
+
+
+def _code_stem(code: str | None) -> str:
+    """An agent code without its account numeral ("WT III" -> "wt"): the person the
+    master's own `(name, I|III|IV)` split names."""
+    return _norm(_ACCOUNT_NUMERAL.sub("", code or ""))
 
 
 def customers_named(db: Session, token: str, *, limit: int = 50) -> list[tuple[str, str]]:

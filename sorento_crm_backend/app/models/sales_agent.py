@@ -58,6 +58,11 @@ class SalesAgent(Base):
     # 16 people via a `(name, I|III|IV)` split, and grouping them is a reporting convenience.
     # Making it the key would merge three agents whose demand can differ.
     person_label = Column(String(100), nullable=True)
+    # "Also known as": the other names the person behind this code goes by, comma separated
+    # ("William, Will" on WT I). The chatbot matches an agent word against the code, the
+    # person label and these, whole words, and a name covers every account of the person
+    # (PR #1273 round 7). Free text the owner types; nothing is seeded.
+    aliases = Column(String(255), nullable=True)
     # What this agent's orders are for, when nothing else on the document says. NULL means
     # nobody has decided yet, which is the state all 38 codes ship in: the suffix's meaning
     # maps to neither company nor market segment in this database, so it is the captain's to

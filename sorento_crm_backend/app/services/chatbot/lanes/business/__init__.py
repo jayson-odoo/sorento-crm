@@ -1533,7 +1533,15 @@ def run_fetch(
             axis, line = question
             if trace is not None:
                 trace.add("top_selling", {"asked": line})
-            return _fixed_reply(line, top_selling_asked=axis)
+            # A word this message named that the ranking cannot narrow by is said above
+            # the question too, once (PR #1273 round 7: "by william" asked the metric and
+            # the unknown agent was never said).
+            unknown = [
+                f"I don't know '{word}' as a {kind}." if kind else f"I don't know '{word}'."
+                for kind, word in (slot.get("unknown") or [])
+                if jsc.truthy(word)
+            ]
+            return _fixed_reply("\n\n".join([" ".join(unknown), line]) if unknown else line, top_selling_asked=axis)
         category_ids, _category_named, ambiguous, unknown = _top_selling_category_ids(slot, db=db)
         if ambiguous:
             if trace is not None:

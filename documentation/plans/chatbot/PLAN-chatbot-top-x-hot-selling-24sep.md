@@ -23,7 +23,11 @@ pick, the parser words republished unlabelled by `chatbot_top_selling_vocab_r5`.
 round 6 (27 Sep, owner retest of round 5 at d59e1dcf, parser v39): the answer to the
 ranking's own question binds in code, the "sold" words taught and republished unlabelled
 by `chatbot_top_selling_vocab_r6` ("As built (fix lane round 6)"), main (52b0ac24) merged
-and the lane's first migration re-parented onto `sales_s1_reports_module`. S5 (sales
+and the lane's first migration re-parented onto `sales_s1_reports_module`. Fix lane round
+7 (27 Sep, owner retest of round 5 part 2, parser v39): carried entities across report
+kinds, period and basis words over a ranking, no offer inside a ranking conversation, and
+sales agent "Also known as" names (`sales_agent_aliases_r7`); no parser words change ("As
+built (fix lane round 7)"). S5 (sales
 agent) is built by round 4 as a lane-side resolver; S6 (review + live console) and S7 (per-month breakdown) open. Track: full track (new route + MCP tool = a new external
 ingest surface, one policy-row migration, one prompt migration, one entity-kind migration;
 the diff will pass 300 lines).
@@ -709,6 +713,54 @@ run_console_turn`, dry run, the second turn sent the `session_vars` the first re
   answer to the ranking's own question as `domain_in_message false`, never an order list.
   Republished unlabelled by `chatbot_top_selling_vocab_r6` as the next version after
   whatever the database holds (v40 on a database whose newest is v39).
+
+### As built (fix lane round 7, owner retest of round 5 part 2, 27 Sep 2026)
+
+Source: the owner's PR #1273 comment "Owner retest of top selling round 5, part 2 (27 Sep
+21:05 to 21:10 MYT, console :3083, parser v39)". Pinned by
+`tests/chatbot/test_top_selling_round7.py`, which replays the owner's messages in order
+through `console_service.run_console_turn` with the REAL resolver on seeded rows named like
+the owner's (HANLIM TRADING, SAMPLE JAYDEN, SHOPEE - 260818MRNUPWTS (MCH), NEWTON BUILDMATE
+SDN BHD (PROJECT) (SRT); FANNY, JAYDEN and WT accounts).
+
+- R1 diagnosis. The ranking turn leaves the raw agent word ("Jayden", "wt") in
+  `focus.extra["sales_agent"]`, and the parser may echo it as a carried entity. On the
+  report turn the ranking's own narrowing no longer ran (it ran only while
+  `focus.status == "top_selling"`), so `turn_runtime.with_carried_entities` or the echo
+  handed the word to the generic resolver, which has no agent probe and typed it a
+  customer: SAMPLE JAYDEN by whole word, and the two "wt" customers by substring
+  (`entity_resolver._probe_customer`'s name ILIKE). A reading carrying only the v3
+  `status: "outstanding"` skipped the hop entirely, because `apply._focus_rules` wrote
+  `focus.status` from it before `_top_selling_rules` read it.
+- R1 fix. On a report a ranking handed over to (`focus.top_selling.hop`) the resolver gets
+  no agent, category or brand word and no carried word without an id
+  (`engine._without_carried_words`); an echoed word is dropped from the verdict too
+  (`engine._top_selling_verdict`). The hop keeps carrying what the ranking resolved (the
+  customer ids and labels, the period) and drops what the report cannot filter by with
+  round 5's one line. `_top_selling_rules` reads whether a ranking was open before the v3
+  `status` overwrote it, and `_is_report_hop` reads that key too. A fresh ranking ask
+  drops a document picked for an earlier report. The generic resolver's customer name
+  tier keeps whole words only (a spaceless spelling of the words still matches).
+- R2. Over an open ranking, a message that is only a period ("2025?", "july", "q1 2026")
+  re-runs the ranking for it, list open or not (`_period_only`). Ranking words ("top 10
+  hot selling", "worst 20 selling", "best sellers", "most sold") make the message the
+  ranking ask whatever the parser's status (`_ranking_words_claim`), with the count and a
+  bottom direction read off the words only when the parser gave none; an unknown agent is
+  said above the metric question as well as above the ranking. Inside a ranking or the
+  report it handed over to, the answer and the tail drop the escalate offer and the
+  routing picker (`engine._without_escalation_offer`, `ctx.top_selling_no_offer`) unless
+  the message asks for a person (`request_for_help` or an escalation confirmation).
+- R3. Over an open ranking, "sales order?", "based on sales order", "by SO", "SO basis",
+  "ordered" set Basis: Ordered and "delivered", "by DO", "DO basis" set Delivered
+  (`TOP_SELLING_BASIS_WORDS`), before any rank pick; "can show me the DO" stays round 5's
+  delivery order report. Over a ranked list the parser's `open_question_answer` pick is
+  held to round 5's rule too (only a bare 1 to N picks).
+- R4. `sales_agents.aliases` (String 255, "Also known as", comma separated, tidied by
+  `sales_agent_service.normalize_aliases`), edited on Master data > Sales agents > record >
+  General. `lanes/business/services.resolve_sales_agent_token` matches the code, the person
+  label, then the aliases, whole words; an alias hit widens to every account of the person
+  (same code stem, or the same person label). Nothing is seeded.
+- Parser words: unchanged, so no prompt migration and no new parser version this round.
 
 ## Filters combination matrix (rewritten for the 26 Sep rulings)
 

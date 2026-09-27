@@ -878,6 +878,9 @@ def _focus_rules(
 
     document = verdict.get("document")
     status = verdict.get("status")
+    # Read before the v3 `status` overwrites it: "outstanding" in that key alone left a
+    # ranking with no hop and no carried filters (PR #1273 round 7).
+    was_ranking = focus.status == TOP_SELLING_STATUS
     if document:
         focus.document = list(document)
     if status:
@@ -896,7 +899,7 @@ def _focus_rules(
         }
         trace.rules_fired.append("date_restated_only")
 
-    _top_selling_rules(focus, verdict, decision, trace)
+    _top_selling_rules(focus, verdict, decision, trace, was_ranking=was_ranking)
     return focus
 
 
@@ -996,7 +999,7 @@ def record_top_selling_asked(focus: Focus, envelopes: list[dict[str, Any]]) -> N
 
 
 def _top_selling_rules(
-    focus: Focus, verdict: dict[str, Any], decision: Decision, trace: Trace
+    focus: Focus, verdict: dict[str, Any], decision: Decision, trace: Trace, *, was_ranking: bool = False
 ) -> None:
     """PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 8: the top
     selling ask's axes live on `focus.top_selling` while `focus.status` says so.
@@ -1022,13 +1025,15 @@ def _top_selling_rules(
     asked = isinstance(order_status, str) and order_status.strip() == TOP_SELLING_STATUS
     names_its_ask = decision.starts_fresh or domain_in_message(verdict) is True
     hopped = isinstance(focus.top_selling, dict) and bool(focus.top_selling.get("hop"))
+    if was_ranking and not asked and verdict.get("status"):
+        focus.status = TOP_SELLING_STATUS
     if asked:
         focus.status = TOP_SELLING_STATUS
     elif (focus.status == TOP_SELLING_STATUS or hopped) and _is_report_hop(verdict):
         _hop_to_report(focus, verdict, trace)
         return
     elif focus.status == TOP_SELLING_STATUS and names_its_ask and not _narrows_the_ranking(verdict):
-        focus.status = None
+        focus.status = verdict.get("status") or None
         focus.top_selling = None
         trace.rules_fired.append("new_ask_leaves_top_selling")
         return
@@ -1163,7 +1168,7 @@ def _is_report_hop(verdict: dict[str, Any]) -> bool:
     "can show me the DO", "show me the orders")?"""
     if verdict.get("domain_hint") != "order":
         return False
-    status = verdict.get("order_status")
+    status = verdict.get("order_status") or verdict.get("status")
     if status not in TOP_SELLING_REPORT_HOPS:
         return False
     if any(verdict.get(k) is not None for k in TOP_SELLING_KEYS) or _narrows_the_ranking(verdict):
@@ -1172,7 +1177,7 @@ def _is_report_hop(verdict: dict[str, Any]) -> bool:
 
 
 def _report_name(verdict: dict[str, Any]) -> str:
-    status = verdict.get("order_status")
+    status = verdict.get("order_status") or verdict.get("status")
     documents = [str(d).upper() for d in (verdict.get("document") or [])]
     if status == "so_outstanding" or documents == ["SO"]:
         return "sales orders"
@@ -1238,6 +1243,10 @@ def _drop_unnamed_filters(focus: Focus, verdict: dict[str, Any]) -> None:
         focus.customers = []
     if not verdict.get("sales_channel"):
         focus.sales_channel = None
+    if not verdict.get("document"):
+        # A document picked for an earlier report ("1" to "Outstanding for which
+        # document?") is not this ranking's, nor the next report's (round 7).
+        focus.document = []
     if not (verdict.get("date_mode") or verdict.get("date_filter_start") or verdict.get("date_filter_end")):
         focus.date_window = None
 

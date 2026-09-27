@@ -191,12 +191,25 @@ def normalize_location_group(value: Optional[str]) -> Optional[str]:
     return cleaned or None
 
 
+def normalize_aliases(value: Optional[str]) -> Optional[str]:
+    """ "William ,  Will,, " -> "William, Will": each name trimmed, blanks and repeats
+    (case-insensitive) dropped, joined with ", ". Nothing left is None."""
+    names: list[str] = []
+    for part in (value or "").split(","):
+        name = " ".join(part.split())
+        if name and name.lower() not in {n.lower() for n in names}:
+            names.append(name)
+    return ", ".join(names) or None
+
+
 def annotate(
     db: Session,
     agent: SalesAgent,
     *,
     person_label: Optional[str] = None,
     write_person_label: bool = False,
+    aliases: Optional[str] = None,
+    write_aliases: bool = False,
     demand_class: Optional[str] = None,
     write_demand_class: bool = False,
     location_group: Optional[str] = None,
@@ -232,6 +245,8 @@ def annotate(
     if write_person_label:
         cleaned = (person_label or "").strip()
         agent.person_label = cleaned or None
+    if write_aliases:
+        agent.aliases = normalize_aliases(aliases)
     if write_location_group:
         agent.location_group = normalize_location_group(location_group)
     if write_contact_id:

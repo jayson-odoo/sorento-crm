@@ -893,6 +893,25 @@ def _top_selling_narrowing(
     return {**parse_output, "entities": kept}, updates
 
 
+def _without_carried_words(parse_output: dict[str, Any]) -> dict[str, Any]:
+    """The resolver's input on a report a ranking handed over to (`focus.top_selling.
+    hop`, PR #1273 round 7). What the ranking resolved is carried as resolved entities
+    (the customer ids and labels on the focus); a word is never looked up again, least of
+    all under another kind: "Jayden", the ranking's sales agent, came back from the
+    customer resolver as SAMPLE JAYDEN, and "wt" as two customers whose names hold the
+    letters. So a sales agent, category or brand word (the report cannot filter by them;
+    `apply._hop_to_report` says so in one line) and any carried word with no id are
+    dropped here."""
+    kept = [
+        e
+        for e in (parse_output.get("entities") or [])
+        if isinstance(e, dict)
+        and jsc.js_string(e.get("hint") or e.get("entity_type") or "") not in ("sales_agent", "category", "brand")
+        and (e.get("current_message") is not False or e.get("uuid"))
+    ]
+    return {**parse_output, "entities": kept}
+
+
 def _apply_top_selling_updates(focus: Any, updates: dict[str, Any]) -> None:
     """Write `_top_selling_narrowing`'s updates onto the ranking's slot. A new agent,
     brand or customer word replaces that axis (the ranking is narrowed by what the
@@ -1028,9 +1047,126 @@ def _as_ranking_answer(verdict: dict[str, Any], **keys: Any) -> dict[str, Any]:
         "reference_positions": [],
         "entities": kept,
         "asks": None,
+        # Never a document, a report status or a pick of the list on screen (PR #1273
+        # round 7: "sales order?" arrived as `open_question_answer` picking row 1).
+        "status": None,
+        "document": None,
+        "is_affirmative": None,
+        "open_question_answer": dict(_NO_OPEN_QUESTION_ANSWER),
     }
     out.update(keys)
     return out
+
+
+_NO_OPEN_QUESTION_ANSWER = {"mode": None, "picked": [], "items": [], "qty_for_all": None}
+
+#: Ranking words (PR #1273 round 7: "top 10 hot selling item by william in q1 2026" was
+#: read as an order ask and fell into "Could not find order"). A rank word, an optional
+#: count and up to two more words, then a selling word: "top 10 hot selling", "worst 20
+#: selling", "most sold", "best sellers". "sold to hanlim" or "what did we sell" alone is
+#: not a ranking and is left to the parser.
+_RANKING_WORDS_RE = re.compile(
+    r"\b(?:top|best|worst|worse|worsr|bottom|least|most|highest|lowest|hot|cold)\b"
+    r"(?:\s+\d{1,3})?(?:\s+[a-z]+){0,2}?\s+(?:selling|sold|sellers?)\b"
+)
+_RANKING_COUNT_RE = re.compile(r"\b(?:top|best|worst|worse|worsr|bottom|least|lowest)\s+(\d{1,3})\b")
+_RANKING_BOTTOM_WORDS = frozenset({"worst", "worse", "worsr", "bottom", "least", "lowest", "cold"})
+
+
+def _ranking_words_claim(verdict: dict[str, Any], text: str) -> dict[str, Any] | None:
+    """`verdict` re-read as the top selling ask when the message says one in so many
+    words and the parser read it as something else; None otherwise. The parser's own
+    entities and dates stand; the count and the direction are read off the words only
+    when the parser gave none. A person ask is never claimed."""
+    if jsc.js_string(verdict.get("order_status") or "").strip() == "top_selling":
+        return None
+    if verdict.get("message_type") == "request_for_help":
+        return None
+    lowered = (text or "").lower()
+    if not _RANKING_WORDS_RE.search(lowered):
+        return None
+    out = {
+        **verdict,
+        "message_type": "business_query",
+        "domain_hint": "order",
+        "intent_hint": "check_order",
+        "order_status": "top_selling",
+        "domain_in_message": True,
+        "status": None,
+        "document": None,
+        "reference_positions": [],
+        "is_affirmative": None,
+        "open_question_answer": dict(_NO_OPEN_QUESTION_ANSWER),
+        "asks": None,
+    }
+    count = _RANKING_COUNT_RE.search(lowered)
+    if out.get("top_n") is None and count and int(count.group(1)) >= 1:
+        out["top_n"] = int(count.group(1))
+    if out.get("rank_direction") is None and _RANKING_BOTTOM_WORDS & set(_words(lowered)):
+        out["rank_direction"] = "bottom"
+    return out
+
+
+#: The basis words (PR #1273 round 7: "sales order?" was read as a pick of row 1, and
+#: "based on sales order" left the basis on Delivered). A message made of one of these
+#: and the filler below switches the ranking on screen to that basis. "can show me the
+#: DO" is not one (round 5: the delivery order report), and neither is anything naming
+#: more than the basis.
+TOP_SELLING_BASIS_WORDS: dict[tuple[str, ...], str] = {
+    ("sales", "order"): "ordered",
+    ("sales", "orders"): "ordered",
+    ("so",): "ordered",
+    ("ordered",): "ordered",
+    ("delivery", "order"): "delivered",
+    ("delivery", "orders"): "delivered",
+    ("do",): "delivered",
+    ("delivered",): "delivered",
+    ("delivery",): "delivered",
+}
+_BASIS_FILLER = frozenset({
+    "based", "base", "basis", "on", "by", "in", "use", "using", "terms", "of", "i", "mean", "what", "about",
+    "how", "then", "ok", "okay", "instead", "switch", "to", "please", "pls", "rank", "ranked", "ranking",
+})
+
+
+def _basis_words(text: str) -> str | None:
+    words = [w for w in _words(text) if w not in _BASIS_FILLER]
+    return TOP_SELLING_BASIS_WORDS.get(tuple(words))
+
+
+#: The words a period alone is said in ("2025?", "july", "q1 2026", "in 2024", "last
+#: year"), and the filler around them. PR #1273 round 7: over an open ranking a period
+#: re-runs the ranking for it (round 5 R7), whatever the parser made of the message.
+_MONTH_WORDS = frozenset({
+    "jan", "january", "feb", "february", "mar", "march", "apr", "april", "may", "jun", "june", "jul", "july",
+    "aug", "august", "sep", "sept", "september", "oct", "october", "nov", "november", "dec", "december",
+})
+_PERIOD_WORDS = _MONTH_WORDS | {"q1", "q2", "q3", "q4", "ytd", "quarter", "year", "month", "week", "today", "yesterday"}
+_PERIOD_FILLER = frozenset({
+    "in", "for", "of", "the", "what", "about", "how", "then", "ok", "okay", "i", "mean", "only", "just",
+    "and", "to", "from", "until", "till", "please", "pls", "last", "this", "next", "year", "month",
+    "quarter", "week",
+})
+_PERIOD_TOKEN_RE = re.compile(r"[a-z]+\d*|\d+")
+
+
+def _period_only(text: str) -> bool:
+    """Is the message only a period: a year, a month or a quarter (with filler)?"""
+    tokens = _PERIOD_TOKEN_RE.findall((text or "").lower())
+    if not tokens:
+        return False
+    named = False
+    for token in tokens:
+        if token.isdigit():
+            if len(token) == 4 and 1900 <= int(token) <= 2100:
+                named = True
+            elif not (len(token) <= 2 and any(t in _MONTH_WORDS for t in tokens)):
+                return False
+        elif token in _PERIOD_WORDS:
+            named = named or token not in _PERIOD_FILLER or token in ("year", "month", "quarter", "week")
+        elif token not in _PERIOD_FILLER:
+            return False
+    return named
 
 
 def _bare_year(text: str) -> int | None:
@@ -1142,10 +1278,25 @@ def _top_selling_verdict(
     * R6 an out of scope reading inside a ranking asks one short question instead.
     * R2/R4 a customer word the message calls an agent is the agent; a word carrying
       several things splits into its parts, the leftover said once.
+
+    Round 7 (owner retest of round 5, part 2): ranking words ("top 10 hot selling") are
+    the ranking whatever the parser's status; an echoed word from an earlier turn is
+    dropped; basis words switch the basis; a period alone re-runs the ranking for it.
     """
     focus = state.focus
     slot = focus.top_selling if isinstance(focus.top_selling, dict) else None
     ranking = focus.status == "top_selling" or bool(slot and slot.get("hop"))
+    claimed = _ranking_words_claim(verdict, text)
+    if claimed is not None:
+        verdict = claimed
+    if slot is not None:
+        # R1 (round 7): a word the parser echoes from an earlier turn (`current_message:
+        # false`, no id) is never read again: the ranking already resolved it, and the
+        # report it hands over to carries what it resolved (`apply._hop_to_report`).
+        entities = [e for e in (verdict.get("entities") or []) if isinstance(e, dict)]
+        fresh = [e for e in entities if e.get("current_message") is not False or e.get("uuid")]
+        if len(fresh) != len(entities):
+            verdict = {**verdict, "entities": fresh}
     asks_ranking = jsc.js_string(verdict.get("order_status") or "").strip() == "top_selling"
     if not (ranking or asks_ranking):
         return verdict, state, None
@@ -1158,6 +1309,26 @@ def _top_selling_verdict(
         answer_keys = _top_selling_question_answer(text, verdict, slot.get("asked"))
         if answer_keys is not None:
             return _as_ranking_answer(verdict, **answer_keys), state, "top_selling_question_answer"
+    if focus.status == "top_selling" and claimed is None:
+        # R3 (round 7): "sales order?", "based on sales order", "by SO", "ordered" switch
+        # the ranking on screen to Basis: Ordered; "delivered", "by DO" switch it back.
+        basis = _basis_words(text)
+        if basis is not None:
+            return _as_ranking_answer(verdict, basis=basis), state, "top_selling_basis_words"
+        # R2 (round 7): a year, a month or a quarter alone re-runs the ranking for it,
+        # whether or not a ranked list is open to pick from.
+        if _period_only(text):
+            if verdict.get("date_filter_start") or verdict.get("date_filter_end") or verdict.get("date_mode"):
+                return _as_ranking_answer(verdict), state, "top_selling_period"
+            year = _bare_year(text)
+            if year is not None:
+                return (
+                    _as_ranking_answer(
+                        verdict, date_filter_start=f"{year}-01-01", date_filter_end=f"{year}-12-31", date_mode=None
+                    ),
+                    state,
+                    "top_selling_period",
+                )
     if ranking and pending is not None and pending.kind == "top_selling_pick":
         year = _bare_year(text)
         if year is not None:
@@ -1170,6 +1341,10 @@ def _top_selling_verdict(
             )
         bare = (text or "").strip()
         in_list = bare.isdigit() and 1 <= int(bare) <= len(pending.options)
+        answer = verdict.get("open_question_answer")
+        if isinstance(answer, dict) and answer.get("mode") == "pick" and not in_list:
+            # The same rule for the parser's other way of picking a row (round 7).
+            verdict = {**verdict, "open_question_answer": dict(_NO_OPEN_QUESTION_ANSWER)}
         if verdict.get("reference_positions") and not in_list:
             verdict = {**verdict, "reference_positions": []}
             if verdict.get("message_type") in ("casual", "clarification", "low_signal", None):
@@ -1226,7 +1401,7 @@ def _top_selling_verdict(
         leftover.extend(rest)
         changed = True
     if not changed:
-        return verdict, state, None
+        return verdict, state, "top_selling_ranking_words" if claimed is not None else None
     out = {**verdict, "entities": rebuilt}
     if leftover:
         out["top_selling_leftover"] = leftover
@@ -2096,9 +2271,13 @@ def _run_stages(  # noqa: PLR0915
 
         # Owner retest of top selling round 4 (27 Sep 2026): inside a ranking, the message
         # is read against the question the bot asked before anything routes it.
+        # R2 (round 7): read before the verdict below can change the conversation.
+        in_ranking_conversation = _in_ranking_conversation(state_in.focus)
         verdict, state_in, top_selling_rule = _top_selling_verdict(
             db, verdict, state_in, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
         )
+        if in_ranking_conversation and _asks_for_a_person(verdict):
+            in_ranking_conversation = False
         if top_selling_rule:
             turn_trace.add("top_selling", {"verdict_rule": top_selling_rule})
         if state_in.focus.status == "top_selling" or state_in.focus.top_selling or (
@@ -2197,6 +2376,9 @@ def _run_stages(  # noqa: PLR0915
             access=access,
             media=getattr(envelope, "media", None),
         )[0]["json"]["ctx"]
+        if in_ranking_conversation:
+            # Read by the tail: no escalate offer and no routing picker (round 7).
+            ctx["top_selling_no_offer"] = True
 
         # Grant before roster (SF-1, PLAN-chatbot-answer-half-reattach.md slice R2):
         # an ungranted contact's sales-report ask is refused HERE, before the resolver
@@ -2320,6 +2502,8 @@ def _run_stages(  # noqa: PLR0915
                 resolver_parse_output = _top_selling_dealer_scope(
                     db, resolver_parse_output, state_out.focus, contact_respond_id, space_id_for_turn
                 )
+            elif isinstance(state_out.focus.top_selling, dict) and state_out.focus.top_selling.get("hop"):
+                resolver_parse_output = _without_carried_words(resolver_parse_output)
             if (
                 len(plan.domains) > 1
                 and resolver_parse_output.get("entities")
@@ -3171,6 +3355,8 @@ def _run_stages(  # noqa: PLR0915
             # Owner ruling 26 Sep 2026 (hand test F1): whatever composed this stock
             # reply, a dealer is referred to their salesman, never offered a team.
             answer = _dealer_refers_to_salesman(answer)
+        elif in_ranking_conversation:
+            answer = _without_escalation_offer(answer)
         return _run_answer(
             turn_id=turn_id,
             ctx=ctx,
@@ -3394,6 +3580,35 @@ def _dealer_stock_ask(state_out: Any, plan: Any) -> bool:
         getattr(state_out.focus, "domains", None) or []
     )
     return "inventory" in domains
+
+
+def _in_ranking_conversation(focus: Any) -> bool:
+    """Is the conversation inside a ranking, or a report a ranking handed over to?"""
+    slot = focus.top_selling if isinstance(focus.top_selling, dict) else None
+    return focus.status == "top_selling" or bool(slot and slot.get("hop"))
+
+
+def _asks_for_a_person(verdict: dict[str, Any]) -> bool:
+    escalation = verdict.get("escalation") if isinstance(verdict.get("escalation"), dict) else {}
+    return verdict.get("message_type") == "request_for_help" or escalation.get("is_escalation_confirmation") is True
+
+
+def _without_escalation_offer(answer: Any) -> Any:
+    """PR #1273 round 7 (round 5 R6, restated): inside a ranking or the report it handed
+    over to, a reply offers no escalation and no routing picker unless the customer asked
+    for a person. The sentence, the offer and an escalation question all go; a pick the
+    reply also asked stays, without the offer attached to it."""
+    from app.services.chatbot import dealer_stock as dealer_mod
+    from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS
+
+    text, _had = dealer_mod.refers_to_salesman(getattr(answer, "text", "") or "")
+    question = getattr(answer, "question", None)
+    if question is not None:
+        if question.kind in ESCALATION_OFFER_KINDS:
+            question = None
+        elif (question.payload or {}).get("escalate_offered") is True:
+            question = dataclasses_replace(question, payload={**question.payload, "escalate_offered": False})
+    return dataclasses_replace(answer, text=text, question=question, offer=None)
 
 
 def _dealer_refers_to_salesman(answer: Any) -> Any:
@@ -5036,6 +5251,16 @@ def run_tail(
             gate=values["gate"],
             offer_hold=values["offer_hold"],
         )
+        if ctx.get("top_selling_no_offer") and catalog.get("is_escalate_offer") is True:
+            # PR #1273 round 7: inside a ranking, or the report it handed over to, no
+            # escalate offer and no routing picker unless the customer asked for a person.
+            from app.services.chatbot import dealer_stock as dealer_mod
+
+            catalog = {
+                **catalog,
+                "response": dealer_mod.refers_to_salesman(jsc.js_string(catalog.get("response") or ""))[0],
+                "is_escalate_offer": False,
+            }
         producers["escalate-catalog"] = catalog
         outcome_input = catalog
         if outcome_mod.cs_offer_gate(catalog, ctx, values["gate"]):

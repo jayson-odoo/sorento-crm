@@ -186,7 +186,7 @@ class Console:
         self.session_vars = result.session_vars or {}
         text = result.reply_text or ""
         assert not _SNAKE.search(text), (body, text)
-        assert "—" not in text and "–" not in text, body
+        assert "\u2014" not in text and "\u2013" not in text, body
         self.last = result
         return text, captured
 
@@ -379,13 +379,13 @@ class TestR1CarriedEntities:
         _clean(text, "can see its outstiandg?")
         assert "wt" not in [t.lower() for t in c.asked_tokens()], c.tokens
         assert c.open_question.get("kind") != "customer_pick", c.open_question
-        assert "Outstanding for which document?" in text, text
-        assert f"Order date: {Q1}" in text, text
-        text, captured = c.say(_position(3), "3")
-        _clean(text, "3")
-        (args,) = _calls(captured, OUTSTANDING)
-        assert (args["order_date_from"], args["order_date_to"]) == ("2026-01-01", "2026-03-31"), args
+        # The outstanding orders for the same filters: no customer, Q1 2026, the agent
+        # dropped with its line (the report takes a customer and a period only).
+        (args,) = _calls(captured, ORDERS)
+        assert args["order_status"] in ("outstanding", "so_outstanding"), args
+        assert (args["actual_delivery_date_from"], args["actual_delivery_date_to"]) == ("2026-01-01", "2026-03-31"), args
         assert "customer_ids" not in args, args
+        assert f"Filters from the ranking: Customer: all / Period: {Q1}" in text, text
         assert "Sales agent is not a filter for outstanding orders, showing all sales agents" in text, text
 
     def test_a_carried_word_is_never_re_resolved_under_another_kind(self, console_factory) -> None:
@@ -806,5 +806,5 @@ class TestOwnerTranscript:
         text, captured = c.say(_outstanding_carrying("wt"), "can see its outstiandg?")
         _clean(text, "can see its outstiandg?")
         assert "wt" not in [t.lower() for t in c.asked_tokens()], c.tokens
-        assert "Outstanding for which document?" in text, text
-        assert f"Order date: {Q1}" in text, text
+        assert f"Filters from the ranking: Customer: all / Period: {Q1}" in text, text
+        assert "Sales agent is not a filter for outstanding orders, showing all sales agents" in text, text
