@@ -35,7 +35,6 @@ from app.services.chatbot import jsc
 from app.services.chatbot.contracts import DEFAULT_SUGGESTED_AGENT, DEFAULT_SUGGESTED_TEAM
 from app.services.chatbot.turn.decide import picked_positions
 from app.services.chatbot.turn.pending import (
-    ESCALATION_OFFER_KINDS,
     OFFER_KINDS,
     Pending,
     from_wire,
