@@ -4,14 +4,12 @@
  * My target, at the top of the portal's Sales Opportunity kind (fix lane round 2, F2; mockup
  * and layout choice on PR #1296, "Mockup: my target on the portal").
  *
- * One card per active target of the logging agent: a plain sentence (achieved of target by
- * the end date, the open opportunities closing before then and the gap left if they are all
- * won), a timeline from the start date to the end date with today marked and each open
- * opportunity pinned at its expected close date, a bar towards the target (achieved solid,
- * open opportunities striped, the rest short), and the opportunities themselves.
- *
- * Time and value get a row each: a date axis cannot also show how much an opportunity is
- * worth.
+ * One card per active target of the logging agent, trimmed per the owner's notes on the
+ * mockup ("the wording too long already", "make it structured and simple"): four labelled
+ * figures (target, achieved, open before the end date, short), a timeline from the start to
+ * the end date with today marked and each open opportunity pinned at its close date, one bar
+ * towards the target, and the opportunities themselves. No sentence, no legend: the figures'
+ * own colour dots are the legend.
  */
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -57,23 +55,6 @@ function position(iso: string, start: string, end: string): number {
   return Math.min(100, Math.max(0, ((dayNumber(iso) - dayNumber(start)) / span) * 100));
 }
 
-/** The plain-words line the owner asked for (PR #1296, F2). */
-export function targetSentence(target: MyTarget): string {
-  const v = (x: string | number) => formatTargetValue(x, target.metric);
-  const count = target.opportunities.length;
-  const head = `${v(target.achieved_value)} achieved of ${v(target.target_value)} by ${formatTargetDate(target.end_date)}`;
-  if (num(target.gap_value) <= 0) return `${head}; target reached`;
-  if (count === 0) {
-    return `${head}; no open opportunities before then; still ${v(target.gap_value)} short`;
-  }
-  const opportunities = `${count} open ${count === 1 ? 'opportunity' : 'opportunities'} worth ${v(target.pipeline_value)} before then`;
-  const tail =
-    num(target.short_value) <= 0
-      ? `target reached if ${count === 1 ? 'it is' : 'they are all'} won`
-      : `still ${v(target.short_value)} short`;
-  return `${head}; ${opportunities}; ${tail}`;
-}
-
 function countsLine(target: MyTarget): string {
   const metric = target.metric === 'amount' ? 'Amount' : 'Quantity';
   const scope =
@@ -83,6 +64,18 @@ function countsLine(target: MyTarget): string {
   return `${metric}, ${target.counts_label.toLowerCase()}, ${scope}`;
 }
 
+function Stat({ id, label, value, dot }: { id: string; label: string; value: string; dot?: string }) {
+  return (
+    <div data-testid={`target-stat-${id}`} className="min-w-0">
+      <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        {dot ? <i aria-hidden className={`inline-block size-2 rounded-full ${dot}`} /> : null}
+        {label}
+      </dt>
+      <dd className="truncate text-sm font-semibold tabular-nums">{value}</dd>
+    </div>
+  );
+}
+
 function TargetCard({ target, today, slug }: { target: MyTarget; today: string; slug?: string }) {
   const total = num(target.target_value);
   const achievedPct = total > 0 ? Math.min(100, (num(target.achieved_value) / total) * 100) : 100;
@@ -90,25 +83,45 @@ function TargetCard({ target, today, slug }: { target: MyTarget; today: string; 
     total > 0 ? Math.min(100 - achievedPct, (num(target.pipeline_value) / total) * 100) : 0;
   const todayPct = position(today, target.start_date, target.end_date);
   const v = (x: string | number) => formatTargetValue(x, target.metric);
+  const count = target.opportunities.length;
 
   return (
     <Card>
-      <CardContent className="space-y-3 p-4">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
-          <h3 className="text-base font-semibold break-words">{target.name}</h3>
-          <span className="text-xs text-muted-foreground">{countsLine(target)}</span>
+      <CardContent className="space-y-4 p-4">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="truncate text-sm font-semibold" title={target.name}>
+              {target.name}
+            </h3>
+            <p className="truncate text-xs text-muted-foreground">{countsLine(target)}</p>
+          </div>
+          <span className="shrink-0 text-xs text-muted-foreground">
+            By {formatTargetDate(target.end_date)}
+          </span>
         </div>
-        <p className="text-sm">{targetSentence(target)}</p>
+
+        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat id="target" label="Target" value={v(target.target_value)} />
+          <Stat id="achieved" label="Achieved" value={v(target.achieved_value)} dot="bg-primary" />
+          <Stat id="open" label={`Open (${count})`} value={v(target.pipeline_value)} dot="bg-primary/40" />
+          <Stat id="short" label="Short" value={v(target.short_value)} />
+        </dl>
+
+        <div className="flex h-2 overflow-hidden rounded-full bg-muted">
+          <div className="bg-primary" style={{ width: `${achievedPct}%` }} />
+          <div className="bg-primary/40" style={{ width: `${pipelinePct}%` }} />
+        </div>
 
         <div>
-          <div className="relative h-9 rounded-md border bg-muted">
+          <div className="relative h-4">
+            <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border" />
             <div
-              className="absolute inset-y-0 left-0 rounded-l-md bg-primary/15"
+              className="absolute left-0 top-1/2 h-px -translate-y-1/2 bg-primary"
               style={{ width: `${todayPct}%` }}
             />
             <div
               data-testid="target-today"
-              className="absolute -inset-y-1 w-0.5 bg-primary"
+              className="absolute inset-y-0 w-px bg-primary"
               style={{ left: `${todayPct}%` }}
               title={`Today ${formatTargetDate(today)}`}
             />
@@ -116,66 +129,34 @@ function TargetCard({ target, today, slug }: { target: MyTarget; today: string; 
               <span
                 key={o.id}
                 data-testid="target-pin"
-                className="absolute top-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background bg-warning ring-1 ring-warning"
+                className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/40 ring-2 ring-background"
                 style={{ left: `${position(o.expected_close_date, target.start_date, target.end_date)}%` }}
                 title={`${o.opportunity_no} ${v(o.value)}, ${formatTargetDate(o.expected_close_date)}`}
                 aria-label={`${o.opportunity_no} ${v(o.value)}, closes ${formatTargetDate(o.expected_close_date)}`}
               />
             ))}
           </div>
-          <div className="mt-1 flex justify-between gap-2 text-xs text-muted-foreground">
+          <div className="mt-1 flex justify-between text-xs text-muted-foreground">
             <span>{formatTargetDate(target.start_date)}</span>
-            <span className="text-primary">Today {formatTargetDate(today)}</span>
             <span>{formatTargetDate(target.end_date)}</span>
           </div>
         </div>
 
-        <div>
-          <div className="flex h-3.5 overflow-hidden rounded-full border bg-muted">
-            <div className="bg-success" style={{ width: `${achievedPct}%` }} />
-            <div
-              className="text-warning"
-              style={{
-                width: `${pipelinePct}%`,
-                backgroundImage:
-                  'repeating-linear-gradient(45deg, currentColor 0 4px, transparent 4px 8px)',
-              }}
-            />
-          </div>
-          <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
-            <span className="flex items-center gap-1">
-              <i className="inline-block size-2.5 rounded-sm bg-success" />
-              Achieved {v(target.achieved_value)}
-            </span>
-            <span className="flex items-center gap-1">
-              <i className="inline-block size-2.5 rounded-sm bg-warning" />
-              Open {v(target.pipeline_value)}
-            </span>
-            {num(target.short_value) > 0 ? (
-              <span className="flex items-center gap-1">
-                <i className="inline-block size-2.5 rounded-sm border bg-muted" />
-                Short {v(target.short_value)}
-              </span>
-            ) : null}
-          </div>
-        </div>
-
-        {target.opportunities.length > 0 ? (
+        {count > 0 ? (
           <ul className="divide-y border-t text-sm">
             {target.opportunities.map((o) => (
               <li key={o.id}>
                 <Link
                   href={portalDetailPath('sales_opportunity', o.id, slug)}
-                  className="flex items-start justify-between gap-2 py-2"
+                  className="flex items-center justify-between gap-3 py-2"
                 >
                   <span className="min-w-0">
-                    <span className="block font-medium">{o.opportunity_no}</span>
-                    <span className="block truncate text-xs text-muted-foreground" title={o.title}>
+                    <span className="block text-xs text-muted-foreground">{o.opportunity_no}</span>
+                    <span className="block truncate" title={o.title}>
                       {o.title}
-                      {o.customer_or_prospect ? `, ${o.customer_or_prospect}` : ''}
                     </span>
                   </span>
-                  <span className="shrink-0 text-right">
+                  <span className="shrink-0 text-right tabular-nums">
                     <span className="block">{v(o.value)}</span>
                     <span className="block text-xs text-muted-foreground">
                       {formatTargetDate(o.expected_close_date)}

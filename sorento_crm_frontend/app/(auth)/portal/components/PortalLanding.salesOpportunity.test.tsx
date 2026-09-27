@@ -162,14 +162,18 @@ describe('PortalLanding - Sales Opportunity is one kind in the selector (F1)', (
     mockContact(['sales_opportunity']);
     render(<PortalLanding slug="darren" />);
 
-    expect(await screen.findByText('OPP-000001')).toBeInTheDocument();
+    // The My target panel lists OPP-000001 too; the card is the one inside a role="link".
+    expect((await screen.findAllByText('OPP-000001')).length).toBeGreaterThan(0);
     expect(screen.getByText('OPP-000002')).toBeInTheDocument();
     expect(screen.getAllByText('Chin Chun').length).toBeGreaterThan(0);
     expect(screen.getByText('Lim Tiles', { selector: 'li *' })).toBeInTheDocument();
     // Stage labels, never keys.
     expect(screen.getAllByText('Qualified').length).toBeGreaterThan(0);
     expect(screen.queryByText('qualified')).toBeNull();
-    const card = screen.getByText('OPP-000001').closest('[role="link"]') as HTMLElement;
+    const card = screen
+      .getAllByText('OPP-000001')
+      .map((el) => el.closest('[role="link"]'))
+      .find(Boolean) as HTMLElement;
     expect(within(card).getByText(/15,000/)).toBeInTheDocument();
     expect(within(card).getByText(/18 Oct 2026/)).toBeInTheDocument();
   });
@@ -210,16 +214,22 @@ describe('PortalLanding - Sales Opportunity is one kind in the selector (F1)', (
 });
 
 describe('PortalLanding - My target panel at the top of the Sales Opportunity kind (F2)', () => {
-  it('states achieved, target, end date, the open opportunities before it and the gap in plain words', async () => {
+  it('shows target, achieved, open before the end date and short as labelled rows, no sentence (Lavish notes)', async () => {
     searchParams = new URLSearchParams('type=sales_opportunity');
     mockContact(['sales_opportunity']);
     render(<PortalLanding slug="darren" />);
 
     const panel = await screen.findByRole('region', { name: 'My target' });
     expect(within(panel).getByText('Q4 sales')).toBeInTheDocument();
-    expect(panel.textContent).toContain(
-      'RM 40,000 achieved of RM 100,000 by 31 Oct 2026; 3 open opportunities worth RM 45,000 before then; still RM 15,000 short',
-    );
+    expect(within(panel).getByText('By 31 Oct 2026')).toBeInTheDocument();
+    const stat = (label: string) => within(panel).getByTestId(`target-stat-${label}`).textContent;
+    expect(stat('target')).toBe('TargetRM 100,000');
+    expect(stat('achieved')).toBe('AchievedRM 40,000');
+    expect(stat('open')).toBe('Open (3)RM 45,000');
+    expect(stat('short')).toBe('ShortRM 15,000');
+    // "the wording too long already": no prose sentence left.
+    expect(panel.textContent).not.toContain('achieved of');
+    expect(panel.textContent).not.toContain('before then');
     expect(panel.textContent).toContain('Amount, ordered, all products');
     // One pin per open opportunity on the timeline, and today marked.
     expect(within(panel).getAllByTestId('target-pin')).toHaveLength(3);
@@ -227,7 +237,7 @@ describe('PortalLanding - My target panel at the top of the Sales Opportunity ki
     expect(within(panel).getByText('OPP-000003')).toBeInTheDocument();
   });
 
-  it('says the target is reached when the opportunities would cover it', async () => {
+  it('shows Short as zero when the open opportunities would cover the target', async () => {
     (getMyTargets as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...TARGETS,
       targets: [{ ...TARGETS.targets[0], short_value: '0.00', projected_value: '105000.00', pipeline_value: '65000.00' }],
@@ -236,7 +246,7 @@ describe('PortalLanding - My target panel at the top of the Sales Opportunity ki
     mockContact(['sales_opportunity']);
     render(<PortalLanding slug="darren" />);
     const panel = await screen.findByRole('region', { name: 'My target' });
-    expect(panel.textContent).toContain('target reached if they are all won');
+    expect(within(panel).getByTestId('target-stat-short').textContent).toBe('ShortRM 0');
   });
 
   it('renders no panel when the agent has no active target', async () => {
