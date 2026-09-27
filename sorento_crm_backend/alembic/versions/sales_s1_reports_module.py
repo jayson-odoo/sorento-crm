@@ -23,7 +23,7 @@ revision:
    2026: the deploy ships the config).
 
 Revision ID: sales_s1_reports_module
-Revises: sales_0002_team_leader
+Revises: 527_audit_logs_scrub_secrets, spec_0003_rules_null_brand_pol
 """
 import importlib.util
 import logging
@@ -38,7 +38,9 @@ from sqlalchemy.orm import Session
 from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 
 revision = "sales_s1_reports_module"
-down_revision = "sales_0002_team_leader"
+# Re-parented onto both main heads at the 27 Sep merge round, so this revision doubles as
+# the merge revision (it still descends from sales_0002_team_leader through them).
+down_revision = ("527_audit_logs_scrub_secrets", "spec_0003_rules_null_brand_pol")
 branch_labels = None
 depends_on = None
 
