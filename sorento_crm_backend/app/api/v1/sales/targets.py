@@ -66,12 +66,18 @@ def list_targets(
     subject: Literal["agent", "team"] = Query("team"),
     sales_team_id: Optional[str] = Query(None),
     query: Optional[str] = Query(None),
+    #: Every target of the kind, one row each, whole-range figures (Targets > Teams / Agents).
+    all: bool = Query(False),
     _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
     try:
         if sales_team_id and sales_team_id != "none":
             validate_uuid_path(sales_team_id, resource="Sales Team")
+        if all:
+            return target_service.list_all_targets(
+                db, subject=subject, sales_team_id=sales_team_id, query=query
+            )
         return target_service.list_targets(
             db, on=on, subject=subject, sales_team_id=sales_team_id, query=query
         )

@@ -905,6 +905,112 @@ def list_targets(
     }
 
 
+def list_all_targets(
+    db: Session,
+    *,
+    subject: str = "team",
+    sales_team_id: Optional[str] = None,
+    query: Optional[str] = None,
+) -> dict:
+    """Targets > Teams and Targets > Agents (the owner's hand test of 27 Sep, "it should show a
+    list of team target, that's it"): one row per target of the kind, whatever its dates, with
+    the whole range's figures (the sum of its periods' targets and achievements). No date
+    filter and no "No target" rows. On the Agents tab the Team filter is the agent's team
+    today, or `none` for agents in no team today."""
+    on = _today()
+    company_id = acting_company_id(db)
+    if sales_team_id == "none" and subject != "agent":
+        raise _unprocessable("No team filters agents only.", "INVALID_FILTER")
+    team_of_agent: Dict[str, SalesTeam] = {m.sales_agent_id: t for m, t in _covering_on(db, on)}
+
+    targets_q = db.query(SalesTarget).filter(SalesTarget.subject_kind == subject)
+    if subject == "team" and sales_team_id:
+        targets_q = targets_q.filter(SalesTarget.sales_team_id == sales_team_id)
+    targets = targets_q.all()
+    if subject == "agent" and sales_team_id == "none":
+        targets = [t for t in targets if t.sales_agent_id not in team_of_agent]
+    elif subject == "agent" and sales_team_id:
+        targets = [
+            t for t in targets if getattr(team_of_agent.get(t.sales_agent_id), "id", None) == sales_team_id
+        ]
+
+    if subject == "agent":
+        agents = _agents_by_id(db, company_id, {t.sales_agent_id for t in targets})
+        # An agent this reader cannot see is not listed (the agent visibility rule).
+        targets = [t for t in targets if t.sales_agent_id in agents]
+        labels = {agent_id: agent_label(agent) for agent_id, agent in agents.items()}
+    else:
+        teams = {
+            t.id: t
+            for t in db.query(SalesTeam).filter(SalesTeam.id.in_({x.sales_team_id for x in targets}))
+        } if targets else {}
+        labels = {team_id: team.name for team_id, team in teams.items()}
+
+    periods_by_target: Dict[str, List[SalesTargetPeriod]] = {}
+    if targets:
+        for period in db.query(SalesTargetPeriod).filter(
+            SalesTargetPeriod.target_id.in_([t.id for t in targets])
+        ):
+            periods_by_target.setdefault(period.target_id, []).append(period)
+    pairs = [(t, p) for t in targets for p in periods_by_target.get(t.id, [])]
+    achieved = ach.achieved_by_period(db, _specs(db, company_id, pairs), company_id)
+    scopes = _scope_labels(db, {t.id for t in targets})
+
+    rows: List[dict] = []
+    for target in targets:
+        periods = periods_by_target.get(target.id, [])
+        goal = sum((p.target_value for p in periods), Decimal("0"))
+        value = sum((achieved.get(p.id, Decimal("0")) for p in periods), Decimal("0"))
+        if subject == "agent":
+            team = team_of_agent.get(target.sales_agent_id)
+            subject_id = target.sales_agent_id
+            subject_fields = {
+                "sales_agent_id": subject_id,
+                "team_id": team.id if team else None,
+                "team_name": team.name if team else None,
+            }
+        else:
+            subject_id = target.sales_team_id
+            subject_fields = {
+                "sales_team_id": subject_id,
+                "team_id": subject_id,
+                "team_name": labels.get(subject_id),
+            }
+        rows.append(
+            {
+                **subject_fields,
+                "subject_kind": subject,
+                "subject_label": labels.get(subject_id, ""),
+                "members": None,
+                "target_id": target.id,
+                "target_no": target.target_no,
+                "name": target.name,
+                "metric": target.metric,
+                "basis": target.basis,
+                "product_scope": target.product_scope,
+                "scope_labels": [label for _, _, label in scopes.get(target.id, [])],
+                "start_date": target.start_date,
+                "end_date": target.end_date,
+                "target_value": _num(goal),
+                "achieved_value": _num(value),
+                "achieved_pct": ach.achieved_pct(value, goal),
+                "parent_target_id": target.parent_target_id,
+            }
+        )
+
+    if query and query.strip():
+        needle = query.strip().lower()
+        rows = [
+            r
+            for r in rows
+            if any(needle in (r.get(key) or "").lower() for key in ("subject_label", "name", "target_no"))
+        ]
+    # Newest range first, then by who and the number, so the current targets lead.
+    rows.sort(key=lambda r: (r["subject_label"].lower(), r["target_no"]))
+    rows.sort(key=lambda r: r["start_date"], reverse=True)
+    return {"on": on, "rows": rows, "unassigned_amount": 0.0, "no_team_count": 0}
+
+
 def counts_label(db: Session, basis: str, company_id: str) -> str:
     if basis == "ordered":
         return "Ordered"

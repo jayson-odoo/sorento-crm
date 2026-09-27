@@ -279,6 +279,8 @@ class SalesTargetRow(BaseModel):
     period_id: Optional[str] = None
     period_start: Optional[DateType] = None
     period_end: Optional[DateType] = None
+    #: The whole list (`all=true`): the target's own first day. Its last day is `end_date`.
+    start_date: Optional[DateType] = None
     end_date: Optional[DateType] = None
     target_value: Optional[float] = None
     achieved_value: Optional[float] = None

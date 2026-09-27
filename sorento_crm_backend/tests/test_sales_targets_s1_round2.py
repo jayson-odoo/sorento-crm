@@ -274,3 +274,80 @@ def test_patch_null_messages_have_no_snake_case(api):
         assert res.status_code == 422, res.text
         words = _plain_words(res.json())
         assert "product_scope" not in words and "_" not in words, words
+
+
+# --------------------------------------------------------------------------------------- #
+# F3: Targets > Teams and Targets > Agents list the targets themselves, no date filter
+# --------------------------------------------------------------------------------------- #
+
+
+def test_all_mode_lists_every_team_target_once_with_whole_range_figures(api):
+    client, db, company_id = api
+    a = _agent(db, "A")
+    category = _category(db, company_id)
+    product = _product(db, company_id, category.id)
+    team = client.post(TEAMS_BASE, json={"name": "ZZT North", "sales_agent_ids": [a.id]}).json()
+    idle = client.post(TEAMS_BASE, json={"name": "ZZT Idle", "sales_agent_ids": []}).json()
+
+    def team_target(name, start, end, **extra):
+        res = client.post(BASE, json={
+            "subject_kind": "team", "sales_team_id": team["id"], "name": name, "metric": "amount",
+            "basis": "ordered", "product_scope": "all", "start_date": start, "end_date": end,
+            "agent_figures": [{"sales_agent_id": a.id, "target_value": 100}], **extra,
+        })
+        assert res.status_code == 201, res.text
+        return res.json()
+
+    # Split monthly: three periods of 100 each, so the whole range is 300.
+    current = team_target(
+        "ZZT Q4", "2026-10-01", "2026-12-31", split_every=1, split_unit="month"
+    )
+    past = team_target("ZZT Q3", "2026-07-01", "2026-09-30")
+    _so_line(db, company_id, agent_id=a.id, order_date=date(2026, 10, 5), line_total=Decimal("40"), product_id=product.id)
+    _so_line(db, company_id, agent_id=a.id, order_date=date(2026, 11, 5), line_total=Decimal("20"), product_id=product.id)
+    _so_line(db, company_id, agent_id=a.id, order_date=date(2026, 8, 5), line_total=Decimal("7"), product_id=product.id)
+
+    res = client.get(BASE, params={"subject": "team", "all": "true"})
+    assert res.status_code == 200, res.text
+    rows = res.json()["rows"]
+    ours = [r for r in rows if r["sales_team_id"] in {team["id"], idle["id"]}]
+    # One row per target, no "No target" row for the idle team, no child agent targets.
+    assert sorted(r["target_id"] for r in ours) == sorted([current["id"], past["id"]])
+    by_id = {r["target_id"]: r for r in ours}
+    assert by_id[current["id"]]["target_value"] == 300
+    assert by_id[current["id"]]["achieved_value"] == 60
+    assert by_id[current["id"]]["achieved_pct"] == 20
+    assert by_id[current["id"]]["start_date"] == "2026-10-01"
+    assert by_id[current["id"]]["end_date"] == "2026-12-31"
+    assert by_id[current["id"]]["target_no"].startswith("TGT-")
+    assert by_id[past["id"]]["achieved_value"] == 7
+
+
+def test_all_mode_agents_tab_with_team_filter_and_search(api):
+    client, db, company_id = api
+    a = _agent(db, "A", "ZZT Ali")
+    b = _agent(db, "B", "ZZT Bee")
+    team = client.post(TEAMS_BASE, json={"name": "ZZT North", "sales_agent_ids": [a.id]}).json()
+    t_a = client.post(BASE, json=_agent_payload(a.id, product_scope="all", name="ZZT Ali Oct")).json()
+    t_b = client.post(BASE, json=_agent_payload(b.id, product_scope="all", name="ZZT Bee Oct")).json()
+
+    rows = client.get(BASE, params={"subject": "agent", "all": "true"}).json()["rows"]
+    ids = {r["target_id"] for r in rows}
+    assert {t_a["id"], t_b["id"]} <= ids
+    assert all(r["target_id"] for r in rows)  # no "No target" rows
+
+    in_team = client.get(
+        BASE, params={"subject": "agent", "all": "true", "sales_team_id": team["id"]}
+    ).json()["rows"]
+    assert [r["target_id"] for r in in_team] == [t_a["id"]]
+
+    no_team = client.get(
+        BASE, params={"subject": "agent", "all": "true", "sales_team_id": "none"}
+    ).json()["rows"]
+    assert t_b["id"] in {r["target_id"] for r in no_team}
+    assert t_a["id"] not in {r["target_id"] for r in no_team}
+
+    by_no = client.get(
+        BASE, params={"subject": "agent", "all": "true", "query": t_b["target_no"]}
+    ).json()["rows"]
+    assert [r["target_id"] for r in by_no] == [t_b["id"]]
