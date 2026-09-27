@@ -209,7 +209,7 @@ class TestParserContract:
 
         props = PARSE_OUTPUT_JSON_SCHEMA["properties"]
         assert {"month", "year"} <= set(props["group_by"]["enum"])
-        assert props["sales_basis"]["enum"] == ["ordered", "delivered", None]
+        assert props["sales_basis"]["enum"] == ["ordered", "delivered", "invoiced", None]
         assert "sales_company" in props
         required = set(PARSE_OUTPUT_JSON_SCHEMA["required"])
         assert {"sales_basis", "sales_company"} <= required
