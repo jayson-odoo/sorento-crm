@@ -1,6 +1,7 @@
 {
   "name": "and-in-kuching-carries-live-product",
-  "needs_memory": true,
+  "needs_memory": false,
+  "note": "Replayed at a true level off with the same history (reviewer pass at d89110c0, S19), the previous turn still reaches the parser through the recent exchanges every level carries (PR #1247 round 8), so this case passes without memory and is not counted as one that needs it.",
   "given": {
     "memory_level": "full",
     "live_turns": [

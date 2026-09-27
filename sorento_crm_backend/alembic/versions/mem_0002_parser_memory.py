@@ -10,8 +10,10 @@ Until the prompt names them, the provider never emits either key.
 
 Same shape as `513_chatbot_parser_last_cost.py`: the text lands as the next
 `chatbot_semantic_parser` version with NO label move. Promoting is one label move
-in the admin UI; this migration changes what a customer gets exactly nowhere
-until the owner decides. The production label stays pinned throughout.
+in the admin UI; the production label stays pinned throughout. Not quite nothing
+changes before that (reviewer pass at d89110c0, N3): the strict output schema in
+`head/parser.py` carries `profile_statements` from deploy, on the old production
+prompt too, and a statement the old prompt does emit is saved at every level.
 
 Idempotent, and safe on a fresh database: `seed_prompt_registry` runs first so v1
 and the `production` label exist even on an install that never saw an earlier

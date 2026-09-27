@@ -18,8 +18,6 @@ from app.models.conversation_frame import ConversationFrame
 from app.services.chatbot.turn.episode_digest import digest
 from app.services.chatbot.turn.state import Profile
 
-SOURCE_TYPE_CONVERSATION_FRAME = "conversation_frame"
-
 #: Contract section 2 / PLAN 6.0 (round 3, AC-MEM051): the four values a context level
 #: is ever stored as. "past" was RENAMED "episodes" in round 3 - the stored value
 #: only, the FE label stays "Past conversations" (6.0's own table header). "off" is a
@@ -63,72 +61,6 @@ def resolve_level_source(contact_level: str | None, system_memory: dict[str, Any
 #: Contract section 3 / PLAN 5.5 (Q7 ruling): retention is a COUNT, never a date.
 #: Trimmed on write, never by a scheduled sweep.
 KEEP_EPISODES = 20
-
-
-def write_episode(
-    db: Session,
-    *,
-    contact_respond_id: str,
-    domain: str | None,
-    intent: str | None,
-    entities: dict[str, Any],
-    tools_used: list[str],
-    turn_ids: list[str],
-    summary: str | None,
-    close_reason: str,
-    contact_id: str | None = None,
-    space_id: str | None = None,
-    channel: str | None = None,
-) -> ConversationFrame:
-    """One `conversation_frames` row for a closed topic (contract: "the tail writes
-    one conversation_frames row for the closed topic and enqueues its embedding").
-
-    A direct closed-row insert, not `FrameService.open_frame`/`close_frame` - those
-    validate `reason` against a fixed set (`topic_switch`, `role_switch`, `idle`,
-    `session_end`, `manual`) that does not include this AC's own `conversation_close`,
-    and an episode here is written ONCE, already closed, never opened-then-patched.
-    """
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    frame = ConversationFrame(
-        contact_id=contact_id or contact_respond_id,
-        contact_respond_id=contact_respond_id,
-        space_id=space_id or "0",
-        channel=channel or "whatsapp",
-        domain=domain,
-        intent=intent,
-        entities=entities or {},
-        active_entities=entities or {},
-        tools_used=list(tools_used or []),
-        turn_ids=list(turn_ids or []),
-        summary=summary,
-        status="closed",
-        close_reason=close_reason,
-        started_at=now,
-        opened_at=now,
-        closed_at=now,
-    )
-    db.add(frame)
-    db.commit()
-    db.refresh(frame)
-
-    if summary:
-        from app.services.embedding_service import EmbeddingEventService
-
-        EmbeddingEventService(db).queue_event(
-            source_type=SOURCE_TYPE_CONVERSATION_FRAME,
-            source_id=str(frame.id),
-            event_type="frame_closed",
-            source_updated_at=frame.closed_at,
-            changed_fields=["summary"],
-            payload={
-                "contact_respond_id": frame.contact_respond_id,
-                "domain": frame.domain,
-                "intent": frame.intent,
-                "close_reason": frame.close_reason,
-            },
-        )
-
-    return frame
 
 
 def _naive_utc(when: datetime) -> datetime:

@@ -41,7 +41,7 @@ Four values, stored as these strings:
 |---|---|---|
 | `off` | Off | none: the user block is today's (previous response, current subject, pending, options, and the settings `Profile:` line when it has a value) |
 | `conversation` | This conversation | L3: earlier messages of the live episode |
-| `past` | Past conversations | L3 + L4: plus the last 3 episode summaries |
+| `episodes` | Past conversations | L3 + L4: plus the last 3 episode summaries |
 | `full` | Full memory | L3 + L4 + L5: plus the "About this contact" profile slice |
 
 - System: `system_settings.chatbot_memory` JSONB is exactly
@@ -51,11 +51,12 @@ Four values, stored as these strings:
 - Effective level: the contact's own level when set; else `default_level` when `enabled`; else
   `off`. One function: `app/services/chatbot/turn/memory.py::effective_level(contact_level,
   system_memory) -> str`.
-- `chatbot_recall_enabled` is no longer read by anything after S3 (the recall re-parse is
-  deleted). The column stays, untouched (Q1: no data change); the PUT body stops accepting it
-  and the FE stops sending it.
-- Facts are learned (tally, stated) only when the effective level is not `off`. Episodes are
-  written for every live contact whatever the level (staff see them).
+- `chatbot_recall_enabled` is dropped by the S0 migration (round 3, AC-MEM054); the recall
+  re-parse it gated is deleted, the PUT body rejects it and the FE no longer sends it.
+- Facts are learned (tally, stated) and episodes are written at every level, Off included
+  (round 3, AC-MEM049): the level decides what the parser READS, never what is WRITTEN. A
+  statement is applied on every live arm (answer, casual, escalation), and one that is
+  rejected is traced as `profile_statement_dropped` with its reason.
 
 ## 3. Episodes (S0, S1)
 
@@ -104,16 +105,21 @@ Stored in `respond_contacts.chatbot_profile.facts`, one entry per key:
 | usual_brands | Usual brands | list of brand names, max 3 | tallied, stated, staff | SearchableMultiSelect |
 | usual_sites | Usual sites | list of warehouse names, max 3 | tallied, stated, staff | SearchableMultiSelect |
 | project | Project | str, max 60, newlines stripped | stated, staff | text |
-| about | About | list of str, max 3 entries, each max 200, newest first (a staff save of one text replaces the list with that one entry) | stated, staff | text |
+| about | About | list of str, max 3 entries, each max 120, newest first (a staff save of one text replaces the list with that one entry) | stated, staff | text |
 | note | Note | str, max 200 | staff | text |
 
 - Precedence per key: staff > stated > crm > tallied. A stated write never replaces a staff
   entry; a tally never replaces a staff or stated entry.
 - Staff delete of a learned or said fact: hard delete of the entry, and its values join the
-  key's tombstone (`{"key": k, "source": "staff", "value": null, "removed": [...]}`); the tally
-  skips removed values. Staff delete of a staff fact removes the entry and leaves no tombstone.
+  key's tombstone (`{"key": k, "source": "staff", "value": null, "removed": [...]}`). The
+  tombstone blocks only a tally of the removed values: a tally may still learn other values,
+  and a newer statement replaces it (owner call; the plan says a newer statement replaces).
+  Whatever replaces a tombstone carries its `removed` list; deleting a tombstone again keeps
+  it. Tombstones are never listed by the GET. Staff delete of a staff fact removes the entry
+  and leaves no tombstone. DELETE of a CRM-only key (`customer`, `salesperson`) is 422.
 - Every write is a single-key update under `SELECT ... FOR UPDATE` of the contact row, taken at
-  write time. The whole-profile PUT preserves `facts`.
+  write time. The whole-profile PUT (`PUT /{id}/chatbot`) and the generic `PUT /{id}` never
+  write `facts`: one UPDATE keeps the stored facts as they are at write time.
 - Facts never grant (AC-MEM036).
 
 ## 5. HTTP contract
@@ -123,7 +129,7 @@ All under `/api/v1/user-management/contacts`.
 `GET /{id}` and `PUT /{id}/chatbot` responses gain `chatbot_memory_level: string | null` and
 `chatbot_profile.facts` (both dict builders).
 
-`PUT /{id}/chatbot` body gains `chatbot_memory_level?: "off" | "conversation" | "past" |
+`PUT /{id}/chatbot` body gains `memory_level?: "off" | "conversation" | "episodes" |
 "full" | null` (present and null = follow the system default; absent = leave alone). The body
 drops `chatbot_recall_enabled`. `chatbot_profile` in the body never touches `facts`.
 
@@ -165,7 +171,13 @@ mechanism every other delete uses). 204.
 
 `GET /api/v1/user-management/settings` carries `chatbot_memory: {"enabled", "default_level",
 "own_level_count"}`; `PUT` accepts `{"enabled"?: bool, "default_level"?: "conversation" |
-"past" | "full"}` and 422s anything else.
+"episodes" | "full"}` and 422s anything else; a partial body keeps the other stored key.
+`level.system_default` in the memory GET is `off` while `enabled` is false.
+`GET /` (the Contacts list) takes `chatbot_memory_level=own`: the contacts with their own
+level, the Memory card's count link. `PUT /{id}` needs `user_management.contacts.edit`.
+The fact PUT returns the memory GET body with `episodes: null` unless the caller also holds
+`system.chat_history.view`, as the GET does. Each fact row carries `link` (the customer row
+links to `/order-management/customers/{id}`, every other row `null`).
 
 ## 6. Trace (S0, S3)
 
@@ -190,7 +202,12 @@ chatbot parser row.
 ## 8. Rulings assumed (the owner rules in the morning)
 
 1. Q5 ("why we delete?") is still a question: the build takes the plan recommendation (delete
-   the recall re-parse and the frame embedding enqueue in S3).
+   the recall re-parse and the frame embedding enqueue in S3). Two effects the owner rules on
+   with it (reviewer pass at d89110c0): no new frame is embedded, so
+   `/external/memory/frames/search` (vector only) still answers but finds nothing new, and
+   the backfill deletes the old placeholder frames, so it goes quiet; and the recall column
+   drop cannot be undone for data (downgrade restores `false`). The dead pre-lane writer
+   `memory.write_episode` is deleted.
 2. Q15 console exception taken as recommended (section 3).
 3. Level semantics of section 2 (which layers each level carries) are read off the round 3
    illustrations.
@@ -201,37 +218,39 @@ chatbot parser row.
 6. One schema migration for the lane (S0) carries every schema change, the contact level
    column and the usage-log turn id included; S3 adds one more migration that only publishes
    the new parser prompt version (label unmoved, the 487/513 precedent).
-7. The static prompt ceiling is the measured baseline in the contract's own estimator:
-   37,153 est tokens (bytes / 3) for the rendered production prompt at 232182ae. The plan's
-   22,100 was a chars / 4 figure on a different rendering; the rule it encodes ("the static
-   prompt may not grow") is unchanged.
-   **Re-measured after merging main d8395cb8 (27 Sep 2026), same estimator, same rendering
-   (`tests/chatbot/test_parser_prompt_budget.py::_rendered_production_prompt`):** base
-   232182ae 37,153; lane alone (d89110c0) 37,118; main alone (d8395cb8) 39,484; merged
-   39,647. Main's own `STOCK_TASK_ADDENDUM` (PR #1247 rounds 8 and 9) is +2,331 on main's
-   side; the lane is +163 over main, because main's round 8 made the same "Companies
-   OFFERED" IIFE cut the lane had counted as paying for `MEMORY_ADDENDUM`. 37,153 is not
-   reachable without cutting main's shipped round 8/9 text, which main's own tests pin, so
-   `CEILING` is set to the merged measured value, 39,647, and the overshoot is left for an
-   owner ruling. The merged constant carries main's round 9 open question block, main's
-   ideation changes (separate prompts, `ideation_*` migrations) and the memory addendum,
-   in that order, with CURRENT DATE still the last section.
-   Published text: `SEMANTIC_PARSER_PROMPT` sha256
-   `2ed3cfea8ffe5905342f6e57d031c9e366075baf9286430e422ab1a6251f670a` (92,105 chars). The
-   version `mem_0002_parser_memory` publishes is now `chatbot_rearch_s4`'s body formula
-   (the constant plus the rendered policy blocks), the same as main's
-   `sa2_r9_open_question`; on a fresh `bootstrap_env` database with the seeded blocks that
-   template's sha256 is `ceeb4ccba2049990567845e7fd67fb2d07a3776606629a1428a1abedce52ff82`
-   (95,657 chars). On a real database the blocks come from its own `chatbot_domains`, so the
-   template sha is that database's, and the constant sha above is the stable one. Either
-   revision that runs first publishes it as the next `chatbot_semantic_parser` version with
-   no label; the other then finds it and publishes nothing; `production` is not moved
-   (checked on a scratch copy both ways: sa2_r9 then mem_0002, and mem_0002 alone). The
-   earlier sha `f3b4e634...` was the lane's bare constant before the merge and no longer
-   applies.
+7. The static prompt ceiling is 37,153 est. tokens (bytes / 3), the coordinator's figure.
+   Fix lane round 2 (reviewer pass at d89110c0, S3 and B3): that figure was measured on a
+   rendering that appended the four growth addenda a second time (the constant already
+   carries them). `tests/chatbot/test_parser_prompt_budget.py` now renders exactly what a
+   published version is (`chatbot_rearch_s4._body`: the constant, then the policy blocks
+   between their markers), where the same estimator reads: base 232182ae 29,901; lane at
+   d89110c0 29,866; main 11bf373e 32,231 (its own `STOCK_TASK_ADDENDUM`); this lane merged
+   over it 32,395, under 37,153. `CEILING` is back at 37,153.
+   Published text: `mem_0002_parser_memory` publishes `chatbot_rearch_s4._body(session)`
+   (the constant plus the rendered policy blocks, the way s4 and s12 build production
+   versions), memory addendum included, as the next `chatbot_semantic_parser` version with
+   no label, and nothing when a version already carries that exact template; `production`
+   is not moved (`tests/chatbot/test_mem_0002_publishes_rendered_prompt.py`).
+   - Constant `SEMANTIC_PARSER_PROMPT`: sha256
+     `2ed3cfea8ffe5905342f6e57d031c9e366075baf9286430e422ab1a6251f670a`, 92,105 chars.
+   - Rendered template on a fresh `bootstrap_env` database (seeded blocks): sha256
+     `ceeb4ccba2049990567845e7fd67fb2d07a3776606629a1428a1abedce52ff82`, 95,657 chars,
+     32,395 est. tokens with the date filled in. On that database bootstrap's own s12 step
+     already carries this text as v3, so `alembic downgrade merge_27sep_three_heads` then
+     `upgrade head` logs "already published as v3; nothing to do". On a real database the
+     blocks come from its own `chatbot_domains`, so the template sha is that database's and
+     the constant sha is the stable one.
 8. The 25 Sep prod dump is not on this VM: digest goldens are built from synthetic turn rows in
    the recorded trace shape; the prod-copy goldens, the backfill run and the Q18 counts are
    posted as orchestrator steps.
+   Deploy: run `python scripts/backfill_chatbot_episodes.py` right after this deploy. A
+   reset the live writer handles before it runs can close a contact's whole history as
+   one episode; the backfill finds any frame holding a reset past its first turn, drops
+   that contact's frames and rebuilds them from the turns (`frames_rebuilt` in its output),
+   so running it late still repairs it. It cuts where the live writer cuts, never at a
+   reset a human had the chat for. Episode outcomes and offers are read from the signals
+   the engine writes (`looked_up` status, `missed`, `sections`; `plan.ask`, `plan.denied`;
+   the `memory` record's open question), and day labels are on the Kuala Lumpur clock.
 9. Migrations after the merge: main's three heads off `sales_0002_team_leader`
    (`ideation_confirm_prompts`, `prod_discontinued_at_flt`, `sa2_r9_open_question`) are
    joined on main itself by `merge_27sep_three_heads` (#1308, main 11bf373e). The lane's

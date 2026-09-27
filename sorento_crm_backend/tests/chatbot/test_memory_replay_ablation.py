@@ -126,22 +126,25 @@ def _run_turn(session_factory, stub_access, *, message: str, verdict_overrides: 
 
 
 def _play_case(session_factory, stub_access, case: dict[str, Any], *, ablate: bool) -> tuple[Any, str]:
+    """`ablate` replays the SAME history (frames, facts, live turns) with the contact
+    at level `off`: only the level differs, so the ablation isolates memory from the
+    conversation history and focus a real Off contact still has (reviewer pass at
+    d89110c0, S19)."""
     cid = str(CONTACT_ID)
     given = case.get("given") or {}
-    memory_level = None if ablate else given.get("memory_level")
+    memory_level = "off" if ablate else given.get("memory_level")
     _seed_contact(session_factory, cid, memory_level=memory_level)
 
-    if not ablate:
-        if given.get("frames"):
-            _seed_frames(session_factory, cid, given["frames"])
-        if given.get("profile_facts"):
-            _seed_profile_facts(session_factory, cid, given["profile_facts"])
-        for i, live in enumerate(given.get("live_turns") or []):
-            _run_turn(
-                session_factory, stub_access, message=live["message"],
-                verdict_overrides=live.get("verdict") or {},
-                message_id=f"ZZT-memreplay-{case['name']}-live-{i}",
-            )
+    if given.get("frames"):
+        _seed_frames(session_factory, cid, given["frames"])
+    if given.get("profile_facts"):
+        _seed_profile_facts(session_factory, cid, given["profile_facts"])
+    for i, live in enumerate(given.get("live_turns") or []):
+        _run_turn(
+            session_factory, stub_access, message=live["message"],
+            verdict_overrides=live.get("verdict") or {},
+            message_id=f"ZZT-memreplay-{case['name']}-live-{i}",
+        )
 
     turn = case["turn"]
     result, prompt = _run_turn(

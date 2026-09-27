@@ -65,6 +65,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import random
 import sys
@@ -416,12 +417,17 @@ def grade_verdict(verdict: dict | None, expected: dict) -> tuple[bool, list[str]
         reasons.append(f"message_type: got {verdict.get('message_type')!r}, want {expected['message_type']!r}")
     if expected.get("domain_hint") is not None and verdict.get("domain_hint") != expected["domain_hint"]:
         reasons.append(f"domain_hint: got {verdict.get('domain_hint')!r}, want {expected['domain_hint']!r}")
-    if expected.get("profile_statement") is not None:
-        want_ps = expected["profile_statement"]
-        got_ps = verdict.get("profile_statement") or {}
-        for key, value in want_ps.items():
-            if got_ps.get(key) != value:
-                reasons.append(f"profile_statement.{key}: got {got_ps.get(key)!r}, want {value!r}")
+    # `profile_statements`, the list the parser emits (reviewer pass at d89110c0, S17:
+    # the singular key this used to read is in neither the fixture nor the schema, so
+    # every stated case passed free). Each wanted statement must be present, by key and,
+    # when named, by value.
+    for want in expected.get("profile_statements") or []:
+        got = [s for s in (verdict.get("profile_statements") or []) if isinstance(s, dict)]
+        if not any(
+            s.get("key") == want.get("key") and ("value" not in want or s.get("value") == want["value"])
+            for s in got
+        ):
+            reasons.append(f"profile_statements: missing {want}, got {got}")
     expected_entities = expected.get("entities")
     if expected_entities is not None:
         actual_entities = verdict.get("entities") or []
@@ -433,6 +439,13 @@ def grade_verdict(verdict: dict | None, expected: dict) -> tuple[bool, list[str]
                 if not _entity_matches(actual_entities, wanted):
                     reasons.append(f"entities: missing {wanted}")
     return (not reasons), reasons
+
+
+def counts_for_ablation(case: dict) -> bool:
+    """A case the ablation bar counts: one whose answer needs memory. A stated fact
+    (`expected.profile_statements`) is read off the current message alone, so it stays
+    right with memory ablated and says nothing about memory (S17)."""
+    return bool(case.get("needs_memory")) and not (case.get("expected") or {}).get("profile_statements")
 
 
 def run_memory_cases(args) -> int:
@@ -467,6 +480,9 @@ def run_memory_cases(args) -> int:
 
     with_memory_correct = 0
     ablated_wrong = 0
+    ablation_cases = sum(1 for case in cases if counts_for_ablation(case))
+    # The bar keeps its share (24 of 30) over the cases it now counts.
+    ablated_wrong_bar = math.ceil(MEMORY_CASES_PASS_ABLATED_WRONG * ablation_cases / 30)
     for index, case in enumerate(cases, 1):
         user_block_with_memory, _report = context_mod.assemble(_case_layers(case, level="full"))
         user_block_ablated, _report_off = context_mod.assemble(_case_layers(case, level="off"))
@@ -488,7 +504,7 @@ def run_memory_cases(args) -> int:
         correct_ablated, reasons_ablated = grade_verdict(verdict_ablated, case["expected"])
         if correct_with:
             with_memory_correct += 1
-        if not correct_ablated:
+        if not correct_ablated and counts_for_ablation(case):
             ablated_wrong += 1
 
         with_flag = "OK" if correct_with else "WRONG"
@@ -502,14 +518,14 @@ def run_memory_cases(args) -> int:
 
     print(
         f"\nwith memory: {with_memory_correct}/{len(cases)} correct; "
-        f"ablated: {ablated_wrong}/{len(cases)} wrong"
+        f"ablated: {ablated_wrong}/{ablation_cases} wrong"
     )
-    passed = with_memory_correct >= MEMORY_CASES_PASS_WITH and ablated_wrong >= MEMORY_CASES_PASS_ABLATED_WRONG
+    passed = with_memory_correct >= MEMORY_CASES_PASS_WITH and ablated_wrong >= ablated_wrong_bar
     print(
         f"bars: with-memory >= {MEMORY_CASES_PASS_WITH}/30 "
         f"({'PASS' if with_memory_correct >= MEMORY_CASES_PASS_WITH else 'FAIL'}), "
-        f"ablated-wrong >= {MEMORY_CASES_PASS_ABLATED_WRONG}/30 "
-        f"({'PASS' if ablated_wrong >= MEMORY_CASES_PASS_ABLATED_WRONG else 'FAIL'})"
+        f"ablated-wrong >= {ablated_wrong_bar}/{ablation_cases} "
+        f"({'PASS' if ablated_wrong >= ablated_wrong_bar else 'FAIL'})"
     )
     return 0 if passed else 1
 

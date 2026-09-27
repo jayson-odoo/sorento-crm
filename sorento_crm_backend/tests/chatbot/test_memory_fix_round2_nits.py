@@ -64,3 +64,12 @@ def test_n11_a_respond_id_shared_across_workspaces_degrades_memory(session_facto
     assert intake["contact_pk"] is None, intake
     assert intake["effective_level"] == "off", intake
     assert intake["degraded_reason"] == "respond_id_shared", intake
+
+
+def test_s18_the_dead_pre_lane_writer_is_gone() -> None:
+    """Reviewer pass at d89110c0 (S18): `memory.write_episode` (the pre-lane writer that
+    enqueued an embedding) has no caller left, so a frame is never embedded any more;
+    it is deleted rather than left to look live."""
+    from app.services.chatbot.turn import memory as memory_mod
+
+    assert not hasattr(memory_mod, "write_episode")
