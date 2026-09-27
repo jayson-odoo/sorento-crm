@@ -284,7 +284,8 @@ class TestContractAC1:
         res = env.client.get(CONTRACT_URL)
         assert res.status_code == 200, res.text
         body = res.json()
-        assert body["version"] == "2.5", body["version"]
+        # Bumped again (finance S0, #1309): "2.6" adds `billing_documents`.
+        assert body["version"] == "2.6", body["version"]
         assert "stock_balances" in body["entities"]
         assert "warehouse_inactive" in body["warnings"]
         assert "stock_balances" in body["fields_added"]
