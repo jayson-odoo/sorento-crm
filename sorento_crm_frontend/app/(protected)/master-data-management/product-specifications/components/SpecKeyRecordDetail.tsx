@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import { Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -12,7 +13,9 @@ import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { buildDetailSearch, parseDetailSearch } from '@/lib/listNavQuery';
+import { getProductClassLabels } from '../../product-categories/services/categoryService';
 import { useSpecKeyActions } from '../actions';
+import { useSpecCoverageQuery } from '../hooks/useSpecCoverageQuery';
 import { useSpecKeyRecord } from '../hooks/useSpecKeyRecord';
 import { selectSpecKey, useSpecRegistryQuery } from '../hooks/useSpecRegistryQuery';
 import { filterSpecKeys } from '../lib/specRegistryFilter';
@@ -36,13 +39,24 @@ const LIST_PATH = '/master-data-management/product-specifications';
 export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [tab, setTab] = useState('header');
+  const [tab, setTab] = useState('details');
 
   const { data: keys, isLoading, isError } = useSpecRegistryQuery();
   const row = selectSpecKey(keys, specKey);
   const record = useSpecKeyRecord(row);
   const { actions, pending } = useSpecKeyActions(row, {
     onDeleted: () => router.push(LIST_PATH),
+  });
+  // The header's products count and last read time (fix round 5). A failed read
+  // leaves both as "-" rather than blanking the card.
+  const { data: coverage } = useSpecCoverageQuery();
+  // Product class counts its choices from the category master, the same read and
+  // cache key as the list's Choices column (AC-S3.3, D5).
+  const { data: classLabels } = useQuery({
+    queryKey: ['product-class-labels'],
+    queryFn: () => getProductClassLabels(),
+    staleTime: 5 * 60 * 1000,
+    enabled: specKey === 'class',
   });
 
   // The pager walks the SAME filtered+sorted list the reader came from (B.1, D9):
@@ -92,12 +106,17 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
     return () => window.removeEventListener('beforeunload', handler);
   }, [record.mode]);
 
-  const backLink = <BackToList listPath={LIST_PATH} label="Back to Product Specifications" />;
+  // Back sits with the title (D11, AC-S3.6): the header lives INSIDE a `Container`
+  // of its own, the same gutter as the record card below it, in every state - not
+  // as a sibling of the body's `Container`, which is what left it flush against
+  // the window edge (review R1).
+  const backLink = <BackToList listPath={LIST_PATH} label="Back to specifications" />;
+  const header = <PageHeader title="Product Specifications" actions={backLink} />;
 
   if (isLoading) {
     return (
       <>
-        <PageHeader title="Product Specifications" actions={backLink} />
+        <Container>{header}</Container>
         <Container>
           <div className="space-y-4">
             <Skeleton className="h-24 w-full rounded-xl" />
@@ -111,7 +130,7 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
   if (isError || !row) {
     return (
       <>
-        <PageHeader title="Product Specifications" actions={backLink} />
+        <Container>{header}</Container>
         <Container>
           <Card className="flex flex-col items-center gap-3 p-10 text-center">
             <div className="text-sm font-semibold">Specification not found</div>
@@ -120,7 +139,7 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
               was made.
             </p>
             <Button variant="outline" onClick={() => router.push(LIST_PATH)}>
-              Back to Product Specifications
+              Back to specifications
             </Button>
           </Card>
         </Container>
@@ -147,11 +166,18 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
 
   return (
     <>
-      <PageHeader title={row.label} crumbTitle={row.label} actions={backLink} />
+      <Container>
+        {/* The record's identity lives on the header card below, as on every other
+            record page (Users & Access), so the page title names the module. */}
+        <PageHeader title="Product Specifications" crumbTitle={row.label} actions={backLink} />
+      </Container>
 
       <Container className="flex flex-col gap-4">
         <SpecKeyRecordCard
           row={row}
+          productsCount={coverage ? coverage.coverage[row.spec_key] ?? 0 : undefined}
+          lastReadAt={coverage ? coverage.last_read?.[row.spec_key] ?? null : undefined}
+          classChoiceCount={classLabels?.length}
           mode={record.mode}
           pagerNode={pagerNode}
           actions={actions}
@@ -159,19 +185,22 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
           primary={primary}
         />
 
+        {/* Details, Choices and words, How it is read, Products, in that order, the
+            same in view and edit (AC-S1.11). Rules render on How it is read and
+            nowhere else. */}
         <Tabs value={tab} onValueChange={setTab} className="w-full">
           <TabsList variant="line" className="mb-4 w-full justify-start">
-            <TabsTrigger value="header">Header</TabsTrigger>
-            <TabsTrigger value="values">Values and words</TabsTrigger>
-            <TabsTrigger value="rules">Rules</TabsTrigger>
-            <TabsTrigger value="seen-in">Seen in products</TabsTrigger>
+            <TabsTrigger value="details">Details</TabsTrigger>
+            <TabsTrigger value="choices">Choices and words</TabsTrigger>
+            <TabsTrigger value="rules">How it is read</TabsTrigger>
+            <TabsTrigger value="products">Products</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="header" className="mt-0 focus-visible:outline-none">
+          <TabsContent value="details" className="mt-0 focus-visible:outline-none">
             <HeaderTab row={row} mode={record.mode} draft={record.draft} setDraft={record.setDraft} />
           </TabsContent>
 
-          <TabsContent value="values" className="mt-0 focus-visible:outline-none">
+          <TabsContent value="choices" className="mt-0 focus-visible:outline-none">
             <ValuesAndWordsTab
               row={row}
               mode={record.mode}
@@ -179,16 +208,23 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
               setDraft={record.setDraft}
               onEnterEdit={() => {
                 record.edit();
-                setTab('values');
+                setTab('choices');
               }}
             />
           </TabsContent>
 
           <TabsContent value="rules" className="mt-0 focus-visible:outline-none">
-            <RulesTab row={row} mode={record.mode} draft={record.draft} setDraft={record.setDraft} />
+            <RulesTab
+              row={row}
+              registry={keys ?? []}
+              mode={record.mode}
+              draft={record.draft}
+              setDraft={record.setDraft}
+              onEnterEdit={record.edit}
+            />
           </TabsContent>
 
-          <TabsContent value="seen-in" className="mt-0 focus-visible:outline-none">
+          <TabsContent value="products" className="mt-0 focus-visible:outline-none">
             <SeenInProductsTab
               specKey={row.spec_key}
               label={row.label}

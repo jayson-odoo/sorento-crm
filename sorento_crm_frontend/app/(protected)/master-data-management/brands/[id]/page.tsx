@@ -41,6 +41,7 @@ interface Draft {
   is_active: boolean;
   access_levels: string[];
   flows_to_purchasing: boolean;
+  is_searchable: boolean;
 }
 
 const Empty = ({ children = 'Not set' }: { children?: string }) => (
@@ -139,6 +140,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
       is_active: brand.is_active,
       access_levels: brand.access_levels ?? [],
       flows_to_purchasing: brand.flows_to_purchasing,
+      is_searchable: brand.is_searchable ?? true,
     });
     setEditing(true);
   };
@@ -159,6 +161,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
         is_active: draft.is_active,
         access_levels: draft.access_levels,
         flows_to_purchasing: draft.flows_to_purchasing,
+        is_searchable: draft.is_searchable,
       },
     });
     cancelEdit();
@@ -308,6 +311,20 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
                       }
                     />
                   ) : brand.flows_to_purchasing ? (
+                    'Yes'
+                  ) : (
+                    'No'
+                  )}
+                </Field>
+
+                <Field label="Customers can ask for this brand" htmlFor="brand-is-searchable">
+                  {editing && draft ? (
+                    <Switch
+                      id="brand-is-searchable"
+                      checked={draft.is_searchable}
+                      onCheckedChange={(value) => setDraft({ ...draft, is_searchable: value })}
+                    />
+                  ) : (brand.is_searchable ?? true) ? (
                     'Yes'
                   ) : (
                     'No'

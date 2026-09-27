@@ -220,23 +220,27 @@ def test_a_house_preference_is_never_reported_as_a_match(client, db):
 
 
 def test_the_customers_own_words_still_earn_their_key(client, db):
-    # A stated brand is the customer's, not the house's: even with the same value
-    # weighted, "sorento" is scored the ordinary way (S2 binds it from the brands
-    # table) and lands in matched_specs, never in preferred_specs.
-    _weight(db, "brand", "SORENTO", 1.5)
-    top = _spec_matches(_resolve_raw(client, "sorento double bowl kitchen sink"))[0]
+    # A stated value is the customer's, not the house's: even with the same value
+    # weighted, "stainless steel" is scored the ordinary way and lands in
+    # matched_specs, never in preferred_specs. The brand is the product's own field
+    # (#1286) and "sorento" binds it from the brands table the same way.
+    _weight(db, "material", "stainless_steel", 1.5)
+    top = _spec_matches(
+        _resolve_raw(client, "sorento stainless steel double bowl kitchen sink")
+    )[0]
 
+    assert "material" in top["display"]["matched_specs"]
+    assert "material" not in top["display"]["preferred_specs"]
     assert "brand" in top["display"]["matched_specs"]
-    assert "brand" not in top["display"]["preferred_specs"]
 
 
 def test_a_preference_can_never_satisfy_what_was_asked(client, db):
     # The unmet computation reads matched_specs as the satisfied set. A preference
     # only applies to a key the customer did NOT state, so moving preference keys
     # out of matched_specs cannot change the unmet arithmetic - and a brand the
-    # catalogue does not carry is still reported as unmet while SORENTO is
-    # weighted on every row shown.
-    _weight(db, "brand", "SORENTO", 1.5)
+    # catalogue does not carry is still reported as unmet while a value is weighted
+    # on every row shown.
+    _weight(db, "material", "stainless_steel", 1.5)
     body = _resolve_raw(client, "cabana double bowl kitchen sink")
 
     assert [entry["key"] for entry in body["spec_unmet"]] == ["brand"]

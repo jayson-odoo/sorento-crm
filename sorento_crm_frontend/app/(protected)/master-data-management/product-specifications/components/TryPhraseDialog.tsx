@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { readable, readableValue } from '@/lib/spec-readable';
 import { previewSpecSearch } from '../services/productSpecService';
 import type { SpecPreviewResult } from '../types/productSpec.types';
 
@@ -90,25 +91,17 @@ export function TryPhraseDialog({
           {!loading && result?.understanding && (
             <div className="flex flex-col gap-2 rounded-md border p-3">
               <div className="flex flex-wrap items-center gap-2">
+                {/* No model name and no reading mode (N-11): a spec screen says what
+                    the phrase was understood as, not how. */}
                 <span className="text-xs uppercase tracking-wide text-muted-foreground">
                   Understood as
                 </span>
-                <Badge
-                  variant={result.understanding.source === 'semantic' ? 'success' : 'secondary'}
-                  size="sm"
-                  appearance="light"
-                  shape="circle"
-                >
-                  {result.understanding.source === 'semantic'
-                    ? (result.understanding.model ?? 'semantic')
-                    : 'literal words only'}
-                </Badge>
               </div>
               {result.understanding.specs.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   {result.understanding.specs.map((spec) => (
                     <Badge key={spec.key} variant="outline" size="sm" appearance="light" shape="circle">
-                      {spec.key.replace(/_/g, ' ')} = {String(spec.value)}
+                      {readable(spec.key)}: {readableValue(spec.value)}
                     </Badge>
                   ))}
                 </div>
@@ -126,7 +119,7 @@ export function TryPhraseDialog({
                       appearance="light"
                       shape="circle"
                     >
-                      {spec.key.replace(/_/g, ' ')} ≠ {String(spec.value)}
+                      {readable(spec.key)}: not {readableValue(spec.value)}
                     </Badge>
                   ))}
                 </div>
@@ -161,7 +154,7 @@ export function TryPhraseDialog({
                   <AlertIcon />
                   <AlertTitle>
                     Nothing here is{' '}
-                    {result.unmet.map((u) => String(u.value).replace(/_/g, ' ')).join(' or ')}.
+                    {result.unmet.map((u) => readableValue(u.value)).join(' or ')}.
                     These are the closest the catalogue has.
                   </AlertTitle>
                 </Alert>
@@ -189,12 +182,9 @@ export function TryPhraseDialog({
                   <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                     {candidate.matched_specs.map((key) => (
                       <Badge key={key} variant="success" size="sm" appearance="light" shape="circle">
-                        {key.replace(/_/g, ' ')}
+                        {readable(key)}
                       </Badge>
                     ))}
-                    <span className="font-mono text-sm tabular-nums" title="Total ranking score">
-                      {candidate.score}
-                    </span>
                   </div>
                 </Link>
               ))}
