@@ -55,6 +55,7 @@ export const SCOPE_LABEL: Record<TargetProductScope, string> = {
   all: 'All products',
   categories: 'Categories',
   products: 'Products',
+  brands: 'Brands',
 };
 
 /** RM for an amount target, units for a quantity one. */
@@ -62,22 +63,16 @@ export function unitOf(metric: TargetMetric | null | undefined): string {
   return metric === 'quantity' ? 'units' : 'RM';
 }
 
-/** "All products", "3 categories", "1 product". */
+/** "All products", "3 categories", "1 product", "2 brands". */
 export function scopeSummary(
   scope: TargetProductScope | null,
   count: number,
 ): string {
   if (!scope || scope === 'all') return 'All products';
-  const noun = scope === 'categories' ? 'categor' : 'product';
-  const plural =
-    scope === 'categories'
-      ? count === 1
-        ? 'y'
-        : 'ies'
-      : count === 1
-        ? ''
-        : 's';
-  return `${count} ${noun}${plural}`;
+  if (scope === 'categories')
+    return `${count} ${count === 1 ? 'category' : 'categories'}`;
+  const noun = scope === 'brands' ? 'brand' : 'product';
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
 }
 
 /** "Every 2 weeks", "Every month", or "Off". */

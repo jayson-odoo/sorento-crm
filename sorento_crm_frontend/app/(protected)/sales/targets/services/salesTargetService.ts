@@ -5,7 +5,8 @@
  *
  * Backend contract (module `sales`, mounted at /api/v1/sales behind its module guard):
  *   GET    /sales/targets?on&subject&sales_team_id&query -> SalesTargetList          sales.targets.view
- *          (one row per target period containing `on`, plus "No target" rows)
+ *          (one row per target period containing `on`, plus "No target" rows; with `all=true`
+ *          every target of the kind once, whole-range figures, no date)
  *   GET    /sales/targets/options                        -> SalesTargetOptions       sales.targets.view
  *   GET    /sales/targets/{id}?on                        -> SalesTargetDetail        sales.targets.view
  *   POST   /sales/targets                 body SalesTargetCreatePayload -> detail    sales.targets.add
@@ -45,7 +46,10 @@ function jsonInit(method: string, body: unknown): RequestInit {
 }
 
 export async function getSalesTargets(params: SalesTargetListParams): Promise<SalesTargetList> {
-  const search = new URLSearchParams({ on: params.on, subject: params.subject });
+  const search = new URLSearchParams();
+  if (params.all) search.set('all', 'true');
+  else if (params.on) search.set('on', params.on);
+  search.set('subject', params.subject);
   if (params.salesTeamId) search.set('sales_team_id', params.salesTeamId);
   if (params.query?.trim()) search.set('query', params.query.trim());
   return read(await apiFetch(`${BASE}?${search.toString()}`), 'Failed to load targets');

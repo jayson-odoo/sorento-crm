@@ -43,6 +43,16 @@ describe('salesTargetService', () => {
     );
   });
 
+  it('lists every target of a kind with all, and no date (owner hand test F3)', async () => {
+    apiFetch.mockResolvedValue(ok({ on: '2026-10-15', rows: [], unassigned_amount: 0, no_team_count: 0 }));
+    await getSalesTargets({ all: true, subject: 'team' });
+    expect(apiFetch).toHaveBeenLastCalledWith('/api/v1/sales/targets?all=true&subject=team');
+    await getSalesTargets({ all: true, on: '2026-10-15', subject: 'agent', salesTeamId: 'none' });
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      '/api/v1/sales/targets?all=true&subject=agent&sales_team_id=none',
+    );
+  });
+
   it('reads one target, on a date when given', async () => {
     apiFetch.mockResolvedValue(ok({ id: 't1' }));
     await getSalesTarget('t1');

@@ -1,19 +1,15 @@
 /**
- * Sales > Targets (S1-15, S1-18, S1-21, S1-22, S1-14, S6-10). Modelled on
- * `sales/teams/components/SalesTeamsView.test.tsx`.
+ * Sales > Targets (S1-15, S1-18, S1-22; the S1 hand test of 27 Sep, F3: "why got Active on,
+ * supposed to have search bar, then columns, export. it should show a list of team target").
  *
- * Exported default: `SalesTargetsView` from `./SalesTargetsView`.
- * Assumed stable test surface the coder must match (accessible names/roles, no invented
- * `data-testid`s beyond what `PageHeader`'s mock already exposes as `header-actions`):
- *   - tabs: `getByRole('tab', { name: 'Teams' })`, `'Agents'`, `'Dealers'`.
- *   - the header action: `getByRole('button', { name: /set target/i })`.
- *   - the toolbar's Team filter: `getByRole('combobox', { name: /team/i })` (via the
- *     `SearchableSelect` mock below, a native `<select>`), offering a `'No team'` option.
- *   - the Active on date input: `getByLabelText('Active on')`.
+ * The standard list page: line tabs Teams and Agents, then one DataGrid card per tab with the
+ * shared toolbar (search, Columns, Export; on Agents a Filters popover holding the Team filter),
+ * the standard header row and the standard pager. Each row is one target, whatever its dates
+ * (`all`), with its whole range's figures. No date filter, no "No target" rows, no footer lines.
  */
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 class ResizeObserverStub {
   observe() {}
@@ -22,9 +18,10 @@ class ResizeObserverStub {
 }
 (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
 
+const router = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock('next/navigation', () => ({
   usePathname: () => '/sales/targets',
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => router,
   useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -75,96 +72,142 @@ vi.mock('@/hooks/usePermissions', () => ({
 const hooks = vi.hoisted(() => ({ useSalesTargets: vi.fn() }));
 vi.mock('../hooks/useSalesTargets', () => hooks);
 
-vi.mock('./SetTargetModal', () => ({
-  default: ({ open }: { open: boolean }) => (open ? <div role="dialog">set target modal</div> : null),
-}));
-
 import SalesTargetsView from './SalesTargetsView';
 
 function row(over: Record<string, unknown> = {}) {
   return {
     target_id: 't1', target_no: 'TGT-000001', name: 'North FY26 H2', subject_kind: 'team',
-    sales_agent_id: null, sales_team_id: 'north', subject_label: 'North', team_id: null,
-    team_name: null, left_on: null, members: [{ sales_agent_id: 'a1', label: 'ALI - Ali Hassan' }],
-    metric: 'amount', basis: 'ordered', product_scope: 'all', scope_labels: [],
-    period_id: 'p1', period_start: '2026-10-01', period_end: '2026-10-31', target_value: 1000,
-    achieved_value: 500, achieved_pct: 50, parent_target_id: null,
+    sales_agent_id: null, sales_team_id: 'north', subject_label: 'North', team_id: 'north',
+    team_name: 'North', left_on: null, members: null,
+    metric: 'amount', basis: 'ordered', product_scope: 'brands', scope_labels: ['MOC - Mocha', 'TP - TP Enterprise'],
+    period_id: null, period_start: null, period_end: null, start_date: '2026-10-01',
+    end_date: '2026-12-31', target_value: 3000, achieved_value: 1500, achieved_pct: 50,
+    parent_target_id: null,
     ...over,
   };
 }
 
-function withRows(rows: Record<string, unknown>[], extra: Record<string, unknown> = {}) {
+function withRows(rows: Record<string, unknown>[]) {
   hooks.useSalesTargets.mockReturnValue({
-    data: { on: '2026-10-20', rows, unassigned_amount: 0, no_team_count: 0, ...extra },
-    isLoading: false, isFetching: false, isError: false,
+    data: { on: '2026-10-20', rows, unassigned_amount: 12345, no_team_count: 3 },
+    isLoading: false, isFetching: false, isError: false, isPlaceholderData: false,
   });
 }
 
+function openTab(name: string) {
+  const tab = screen.getByRole('tab', { name });
+  fireEvent.mouseDown(tab);
+  fireEvent.click(tab);
+}
+
 beforeEach(() => {
+  router.push.mockReset();
   perms.granted = new Set(['sales.targets.view', 'sales.targets.add']);
   hooks.useSalesTargets.mockReset();
+  withRows([row()]);
 });
 
 describe('SalesTargetsView', () => {
-  it('opens on the Teams tab, before Agents; no Dealers yet (S1-15 round 4, S7-2 ships it)', () => {
-    withRows([row()]);
+  it('opens on the Teams tab, before Agents (S1-15)', () => {
     render(<SalesTargetsView />);
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Teams', 'Agents']);
-    const teams = screen.getByRole('tab', { name: 'Teams' });
-    const agents = screen.getByRole('tab', { name: 'Agents' });
-    expect(teams.getAttribute('aria-selected')).toBe('true');
-    expect(agents).toBeTruthy();
+    const tabs = screen.getAllByRole('tab').map((t) => t.textContent?.trim());
+    expect(tabs).toEqual(['Teams', 'Agents']);
+    expect(screen.getByRole('tab', { name: 'Teams' }).getAttribute('aria-selected')).toBe('true');
   });
 
-  it('shows Set target alone at the header, only for sales.targets.add (S1-18)', () => {
-    withRows([row()]);
-    const first = render(<SalesTargetsView />);
-    const actions = screen.getByTestId('header-actions');
-    expect(within(actions).getByRole('button', { name: /set target/i })).toBeTruthy();
-    first.unmount();
+  it('lists every team target, no date: no Active on control, the hook asks for all (F3)', () => {
+    render(<SalesTargetsView />);
+    expect(screen.queryByLabelText('Active on')).toBeNull();
+    expect(screen.queryByText('Active on')).toBeNull();
+    expect(hooks.useSalesTargets).toHaveBeenCalledWith({ all: true, subject: 'team' });
+  });
 
+  it('has the standard toolbar: search, then Columns, then Export (F3)', () => {
+    render(<SalesTargetsView />);
+    const search = screen.getByPlaceholderText('Search targets...');
+    const columns = screen.getByRole('button', { name: /columns/i });
+    const exportButton = screen.getByRole('button', { name: /export/i });
+    expect(search.compareDocumentPosition(columns) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(columns.compareDocumentPosition(exportButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Teams has no filter of its own.
+    expect(screen.queryByRole('button', { name: /filters/i })).toBeNull();
+  });
+
+  it('shows one row per target with its number, name, team, measure chips, dates and figures (F3)', () => {
+    render(<SalesTargetsView />);
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim()).filter(Boolean);
+    expect(headers).toEqual(['Target', 'Name', 'Team', 'Measures', 'Dates', 'Target value', 'Achieved', '%']);
+    expect(screen.getByText('TGT-000001')).toBeTruthy();
+    expect(screen.getByText('North FY26 H2')).toBeTruthy();
+    expect(screen.getByText('1 Oct 2026 to 31 Dec 2026')).toBeTruthy();
+    expect(screen.getByText('3,000')).toBeTruthy();
+    expect(screen.getByText('1,500')).toBeTruthy();
+    expect(screen.getByText('50%')).toBeTruthy();
+    const measures = screen.getByLabelText('What North FY26 H2 counts');
+    expect(within(measures).getByText('Amount')).toBeTruthy();
+  });
+
+  it('names a brand target\'s scope as brands in the measure chips (F1)', () => {
+    render(<SalesTargetsView />);
+    // jsdom lays nothing out, so the chips past the first sit behind "+N"; the measuring row
+    // still carries every chip's text.
+    expect(document.body.textContent).toContain('2 brands');
+  });
+
+  it('has the standard pager, and no No team or Unassigned lines under the list (F3)', () => {
+    render(<SalesTargetsView />);
+    expect(screen.getByText('Rows per page')).toBeTruthy();
+    expect(screen.queryByText('Unassigned')).toBeNull();
+    expect(screen.queryByText('No team')).toBeNull();
+  });
+
+  it('Set target opens the new target record for the open tab (F4)', () => {
+    render(<SalesTargetsView />);
+    fireEvent.click(screen.getByRole('button', { name: /set target/i }));
+    expect(router.push).toHaveBeenLastCalledWith('/sales/targets/new?kind=team');
+    openTab('Agents');
+    fireEvent.click(screen.getByRole('button', { name: /set target/i }));
+    expect(router.push).toHaveBeenLastCalledWith('/sales/targets/new?kind=agent');
+  });
+
+  it('hides Set target without sales.targets.add (S1-18)', () => {
     perms.granted = new Set(['sales.targets.view']);
     render(<SalesTargetsView />);
-    expect(screen.queryAllByRole('button', { name: /set target/i })).toEqual([]);
+    expect(screen.queryByRole('button', { name: /set target/i })).toBeNull();
   });
 
-  it('folds one subject into one line with a Targets pill (S1-21)', () => {
-    withRows([row()]);
+  it('Agents lists agent targets with an Agent and a Team column, and a Team filter in Filters', () => {
+    withRows([
+      row({
+        target_id: 'ta1', target_no: 'TGT-000002', name: 'Ali Oct', subject_kind: 'agent',
+        sales_agent_id: 'ali', sales_team_id: null, subject_label: 'ALI - Ali Hassan',
+      }),
+    ]);
     render(<SalesTargetsView />);
-    const line = screen.getByText('North').closest('tr')!;
-    expect(within(line).getByText('North FY26 H2')).toBeTruthy();
-    expect(within(line).getByText('1,000')).toBeTruthy();
+    openTab('Agents');
+    expect(hooks.useSalesTargets).toHaveBeenCalledWith({ all: true, subject: 'agent' });
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim()).filter(Boolean);
+    expect(headers).toEqual(['Target', 'Name', 'Agent', 'Team', 'Measures', 'Dates', 'Target value', 'Achieved', '%']);
+    expect(screen.getByText('ALI - Ali Hassan')).toBeTruthy();
+
+    fireEvent.keyDown(screen.getByRole('button', { name: /filters/i }), { key: 'Enter' });
+    const team = screen.getByLabelText('Team') as HTMLSelectElement;
+    expect(Array.from(team.options).map((o) => o.textContent)).toContain('No team');
+    fireEvent.change(team, { target: { value: 'none' } });
+    expect(hooks.useSalesTargets).toHaveBeenCalledWith({ all: true, subject: 'agent', salesTeamId: 'none' });
   });
 
-  it('ends the Teams tab with No team and Unassigned lines (S1-14, S1-22)', () => {
-    withRows([row()], { no_team_count: 2, unassigned_amount: 300 });
+  it('sends the search to the server', async () => {
     render(<SalesTargetsView />);
-    expect(screen.getByText('No team')).toBeTruthy();
-    expect(screen.getByText('Unassigned')).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText('Search targets...'), { target: { value: 'TGT-000001' } });
+    await waitFor(() =>
+      expect(hooks.useSalesTargets).toHaveBeenCalledWith({ all: true, subject: 'team', query: 'TGT-000001' }),
+    );
   });
 
-  it('offers a clearable Team filter on the Agents tab, including No team (S6-10)', () => {
-    withRows([row({ target_id: null, subject_kind: 'agent', sales_agent_id: 'a1', sales_team_id: null })]);
+  it('says when there is no target yet', () => {
+    withRows([]);
     render(<SalesTargetsView />);
-    fireEvent.click(screen.getByRole('tab', { name: 'Agents' }));
-    const filter = screen.getByRole('combobox', { name: /team/i }) as HTMLSelectElement;
-    expect(Array.from(filter.options).some((o) => o.value === 'none' && /no team/i.test(o.label))).toBe(true);
-  });
-
-  it('renders loading, empty and error states (S1-15)', () => {
-    hooks.useSalesTargets.mockReturnValue({ data: undefined, isLoading: true, isFetching: true, isError: false });
-    const { rerender } = render(<SalesTargetsView />);
-    expect(screen.getAllByRole('row').length).toBeGreaterThanOrEqual(0);
-
-    hooks.useSalesTargets.mockReturnValue({
-      data: { on: '2026-10-20', rows: [], unassigned_amount: 0, no_team_count: 0 },
-      isLoading: false, isFetching: false, isError: false,
-    });
-    rerender(<SalesTargetsView />);
-    expect(screen.getByText(/no team/i)).toBeTruthy();
-
-    hooks.useSalesTargets.mockReturnValue({ data: undefined, isLoading: false, isFetching: false, isError: true, error: new Error('boom') });
-    rerender(<SalesTargetsView />);
-    expect(screen.getByText(/boom|failed to load/i)).toBeTruthy();
+    expect(screen.getByText('No team targets yet')).toBeTruthy();
   });
 });

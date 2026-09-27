@@ -5,7 +5,8 @@
 export type TargetSubjectKind = 'agent' | 'team';
 export type TargetMetric = 'amount' | 'quantity';
 export type TargetBasis = 'ordered' | 'delivered';
-export type TargetProductScope = 'all' | 'categories' | 'products';
+export type TargetProductScope = 'all' | 'categories' | 'products' | 'brands';
+export type TargetScopeKind = 'category' | 'product' | 'brand';
 export type TargetSplitUnit = 'day' | 'week' | 'month';
 
 export interface TargetMemberRef {
@@ -37,6 +38,8 @@ export interface SalesTargetRow {
   period_id: string | null;
   period_start: string | null;
   period_end: string | null;
+  /** The whole list (`all`): the target's own first day; `end_date` is its last. */
+  start_date?: string | null;
   end_date?: string | null;
   target_value: number | null;
   achieved_value: number | null;
@@ -54,7 +57,10 @@ export interface SalesTargetList {
 }
 
 export interface SalesTargetListParams {
-  on: string;
+  /** The date whose periods are listed. Ignored with `all`. */
+  on?: string;
+  /** Every target of the kind, one row each, whole-range figures (Targets > Teams / Agents). */
+  all?: boolean;
   subject: TargetSubjectKind;
   /** A team id, or `none` (agents only) for agents in no team. */
   salesTeamId?: string;
@@ -99,8 +105,8 @@ export interface SalesTargetDetail {
   split_unit: TargetSplitUnit | null;
   /** "Ordered", "Delivered", or "Delivered (by DO date)". */
   counts_label: string;
-  /** The categories or products counted, by their own id. */
-  scope: { id: string; label: string }[];
+  /** The categories, products or brands counted: their id, kind and "CODE - Name" label. */
+  scope: { id: string; kind: TargetScopeKind; label: string }[];
   periods: SalesTargetPeriod[];
   children: SalesTargetChild[];
   members_without_figure: TargetMemberRef[];
@@ -119,6 +125,7 @@ export interface SalesTargetOptions {
     members: { sales_agent_id: string; label: string; valid_from: string | null; valid_to: string | null }[];
   }[];
   categories: { id: string; label: string; parent_category_id: string | null }[];
+  brands: { id: string; label: string }[];
 }
 
 interface TargetCreateBase {
@@ -128,6 +135,7 @@ interface TargetCreateBase {
   product_scope: TargetProductScope;
   category_ids?: string[];
   product_ids?: string[];
+  brand_ids?: string[];
   start_date: string;
   end_date: string;
   split_every?: number;
@@ -158,6 +166,7 @@ export interface SalesTargetUpdatePayload {
   product_scope?: TargetProductScope;
   category_ids?: string[];
   product_ids?: string[];
+  brand_ids?: string[];
   start_date?: string;
   end_date?: string;
   split_every?: number | null;

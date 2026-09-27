@@ -1,7 +1,7 @@
 /**
  * `generatePeriods` (S1-19): the same golden table as
  * `sorento_crm_backend/tests/test_sales_targets_s1.py::test_generate_periods_golden` (16.2), so
- * the FE hint in SetTargetModal (period count + last period's dates, S1-25) can never disagree
+ * the FE hint on the target record (period count + last period's dates, S1-25) can never disagree
  * with what the API actually creates.
  *
  * Exported name/signature the coder must match (stated so both sides land on the same contract):
