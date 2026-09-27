@@ -347,6 +347,14 @@ def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str
         brand_code = stated_brand
         source_name = "stated_brand"
 
+    if brand_code is None and carried_brand and source_name in _ROSTER_WITHOUT_BRAND:
+        # #865 round 6 (R6), n8n escalation-context rev-2: "NO roster was fetched for this
+        # offer, so there is no shown pool for a brand to disagree with - carry the
+        # resolved brand rather than dropping it". The offer named a company and no brand
+        # (a silent-company offer, a company clarify), so the offer turn's own brand
+        # rides with it; the row still decides the company.
+        brand_code = carried_brand
+
     return {
         **item,
         "brand_code": brand_code,
@@ -401,6 +409,12 @@ def _company_clarify_options(ctx: dict[str, Any]) -> list[str]:
     return [row["company_name"] for row in _company_clarify_rows(ctx)]
 
 
+def _picker_was_shown(ctx: dict[str, Any]) -> bool:
+    """Did the offer being clarified print a numbered member picker? n8n's own test
+    (`clarify-company-reply` rev-3: `prev.selection_context === 'member_offer'`)."""
+    return jsc.get(_prev_variables(ctx), "selection_context") == "member_offer"
+
+
 def clarify_company_reply(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str, Any]:
     """The ask that goes out when a multi-company offer was not resolved. Pure.
 
@@ -427,11 +441,14 @@ def clarify_company_reply(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[
     else:
         lead = "More than one team is listed"
 
-    clarify_text = (
-        f"{lead} - reply a number, a name, or the company ({listed}) and I'll assign automatically."
-        if names
-        else f"{lead} - reply a number or a name and I'll assign automatically."
-    )
+    if names and not _picker_was_shown(ctx):
+        # #865 round 6 (R4), n8n rev-3 copy (UAC Q5): the offer printed no numbered
+        # member list, so the clarify invites the company and nothing it cannot resolve.
+        clarify_text = f"{lead} - reply with the company ({' / '.join(names)}) and I'll assign automatically."
+    elif names:
+        clarify_text = f"{lead} - reply a number, a name, or the company ({listed}) and I'll assign automatically."
+    else:
+        clarify_text = f"{lead} - reply a number or a name and I'll assign automatically."
     # `clarify_company_options` rides beside the text for the SAME reason
     # `clarify_team_options` does on the team clarify: the question the customer sees and
     # the numbered options the next turn resolves against are built from ONE list, so
@@ -749,7 +766,9 @@ def _apply_focus_brand(context_item: dict[str, Any], services: Any) -> dict[str,
     was found in, or the codes no company holds, ride on the item for the routing line.
     A seam that answers a bare brand string (an injected stub) still works.
     """
-    if jsc.get(context_item, "routing_source") not in _FOCUS_OUTRANKS:
+    source = jsc.get(context_item, "routing_source")
+    fills_only = source in _ROSTER_WITHOUT_BRAND and not jsc.truthy(jsc.get(context_item, "brand_code"))
+    if source not in _FOCUS_OUTRANKS and not fills_only:
         return context_item
     products = jsc.array(jsc.get(context_item, "focus_products"))
     seam = getattr(services, "product_brand", None) if services is not None else None
@@ -771,6 +790,9 @@ def _apply_focus_brand(context_item: dict[str, Any], services: Any) -> dict[str,
         }
     if not jsc.truthy(brand):
         return item
+    if fills_only:
+        # R6: the picked row keeps the company and its own routing source.
+        return {**item, "brand_code": jsc.js_string(brand).strip().lower()}
     return {
         **item,
         "brand_code": jsc.js_string(brand).strip().lower(),
@@ -862,6 +884,10 @@ def _product_clarify_result(
         "routing": routing,
     }
 
+
+# #865 round 6 (R6): the roster arms whose row named a company but no brand. The offer
+# turn's brand, else the focus product's, fills the brand; the row keeps the company.
+_ROSTER_WITHOUT_BRAND = frozenset({"company_pick", "prior_state", "prior_state_no_company"})
 
 # The `escalation_context` outcomes the focus product's brand replaces (#865). The roster
 # arms (`picked_member`, `company_pick`, the `prior_state*` / `multi_company_unpicked`

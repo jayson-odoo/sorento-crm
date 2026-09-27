@@ -545,9 +545,11 @@ class TestR5OfferHold:
         offered = conv.open_question()
         result = conv.say("asdkjh", _reply())
         assert result.branch_kind == "offer_hold", result.branch_kind
-        assert _said(result).strip() == PLAIN_CLARIFY, _said(result)
+        assert (result.reply or {}).get("text") == PLAIN_CLARIFY, result.reply
         assert conv.last_lane == []
-        assert conv.open_question() == offered
+        held = conv.open_question()
+        held["payload"].pop("ttl", None)  # AC-816: the offer's own clock still ticks
+        assert held == offered
         conv.say("sorento", _reply())
         assert conv.company() == conv.ids["sorento"]
 
@@ -556,7 +558,7 @@ class TestR5OfferHold:
         conv.say(f"{PRODUCT_CODE} kim seng jaya send yet", _order_ask())
         result = conv.say("asdkjh", _reply())
         assert result.branch_kind == "offer_hold", result.branch_kind
-        assert _said(result).strip() == MEMBER_CLARIFY, _said(result)
+        assert (result.reply or {}).get("text") == MEMBER_CLARIFY, result.reply
         assert conv.open_question().get("kind") == "member_offer"
         conv.say("1", _position(1))
         body = conv.routed()["body"]

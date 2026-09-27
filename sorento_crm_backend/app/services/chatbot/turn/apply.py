@@ -47,6 +47,7 @@ from app.services.chatbot.turn.pending import (
     Pending,
     ask as pending_ask,
     is_roster,
+    offered_companies,
     with_answered_positions,
 )
 from app.services.chatbot.turn.plan import FetchSpec, Plan, Trace
@@ -364,6 +365,23 @@ def _answer_offer(pending: Pending, decision: Decision, focus: Focus, trace: Tra
     return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
 
 
+def _holds_the_offer(pending: Pending, decision: Decision, verdict: dict[str, Any]) -> bool:
+    """Is this reply junk over an open multi-company escalation offer (#865 round 6, R5)?
+
+    n8n's Tier 4 (`output_exchange` rev-4, `offer_hold`): no pick of any kind, no yes or
+    no, and not a new question - no domain, no business or clarification reading, no
+    request for help, nothing named. Only a pool of two or more companies is held (rev-4
+    (E)): a single-company offer has nothing left to clarify.
+    """
+    if decision.kind != CARRY or len(offered_companies(pending)) < 2:
+        return False
+    return not (
+        verdict.get("domain_hint")
+        or verdict.get("message_type") in ("business_query", "clarification", "request_for_help")
+        or verdict.get("entities")
+    )
+
+
 def _drop_question_subject(focus: Focus, pending: Pending) -> None:
     """R17: the offer dies, and its filters die with it.
 
@@ -587,7 +605,7 @@ def _answer_outstanding(
     return focus, carried, None, True
 
 
-def _answer_pending(state: State, decision: Decision, trace: Trace):
+def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dict[str, Any] | None = None):
     # Returns (focus_after, pending_after, short_circuit_plan, domain_locked).
     #
     # Every branch here is an EFFECT of the one Decision `decide()` already made; not one
@@ -795,6 +813,16 @@ def _answer_pending(state: State, decision: Decision, trace: Trace):
         # A "no" carrying its own entities is not a decline - the offer stays open.
         trace.rules_fired.append("answer_pending_own_entities")
         return focus, pending, None, False
+
+    if _holds_the_offer(pending, decision, verdict or {}):
+        # #865 round 6 (R5), n8n `offer_hold` (UAC M8d): nothing in this reply answers
+        # an offer that showed MORE THAN ONE company, and it is no question of its own
+        # either. Assigning now would draw from a pool nobody chose, and running the
+        # reply as small talk would drop the offer, so the company clarify is asked again
+        # and the offer stays open exactly as it was.
+        trace.rules_fired.append("offer_hold")
+        trace.lane = "offer_hold"
+        return focus, pending, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
 
     # NOTHING matched the open question: no position, no offered label, no broaden, no
     # yes and no no. Owner ruling, hand pass 3 - the question stays open exactly as it
@@ -2495,7 +2523,7 @@ def apply(
         return state, reconcile_short_circuit
 
     focus_after_pending, pending_after, pending_short_circuit, domain_locked = _answer_pending(
-        state, decision, trace
+        state, decision, trace, verdict
     )
     if pending_short_circuit is not None:
         # Ported from PR #1118 (not merged), D23, review round 8 (finding 3): "never

@@ -315,6 +315,8 @@ def apply_silent_company_offer(
     gate: Mapping[str, Any] | None = None,
     asked_at_turn: int | None = None,
     turn_id: str | None = None,
+    db: Any = None,
+    ctx: Any = None,
 ) -> turn_compose.Answer:
     """Hand pass 11, defect 3 (multi-company HIT parity): a HIT in ONE of several
     searched companies still offers to escalate to the SILENT company's own team -
@@ -441,12 +443,96 @@ def apply_silent_company_offer(
         )
         from dataclasses import replace
 
+        picker = _miss_company_picker(
+            answer.text,
+            offer,
+            company=company,
+            routing=routing or {},
+            db=db,
+            ctx=ctx,
+            asked_at_turn=asked_at_turn,
+            brand=gate.get("routing_brand") if isinstance(gate, Mapping) else None,
+        )
+        if picker is not None:
+            return replace(answer, text=f"{answer.text}\n\n{picker[0]}", question=picker[1])
         return replace(answer, text=f"{answer.text}\n\n{offer}", question=question)
     except Exception:  # noqa: BLE001 - a disclosure bug must never block the answer
         logger.warning(
             "chatbot turn %s: the silent-company escalate offer did not render", turn_id, exc_info=True
         )
         return answer
+
+
+#: n8n `miss-roster-gate` LANE rev-3/rev-4: the member picker is for customer order
+#: enquiries ONLY ("there is no need to get the members for incoming lol, this only applies
+#: for customer order enquiries"); every other lane keeps the plain company-named phrase.
+_MISS_PICKER_ROUTING = ("customer_service", "order_enquiries")
+
+_NUMBERED_LINE = re.compile(r"^(\d+)\.\s", re.MULTILINE)
+
+
+def _miss_company_picker(
+    text: str,
+    offer: str,
+    *,
+    company: Mapping[str, Any],
+    routing: Mapping[str, Any],
+    db: Any,
+    ctx: Any,
+    asked_at_turn: int | None,
+    brand: Any,
+) -> tuple[str, pending.Pending] | None:
+    """#865 round 6 (R1), n8n `build-miss-member-offer` (UAC M1): a partial miss on an
+    order enquiry offers the MISS company's own customer service members, numbered on
+    from the reply's own numbered blocks ("a stray 2 must still pick the right row"),
+    then the single-company yes sentence. `(text, member_offer pending)`, or None - off
+    the order routing pair, without a session, or when that company has no member - in
+    which case the plain offer stands.
+    """
+    if (routing.get("suggested_team"), routing.get("suggested_agent")) != _MISS_PICKER_ROUTING or db is None:
+        return None
+    from app.services.chatbot.tail import member_offer as member_mod
+
+    plan = [
+        {
+            "plan_idx": 0,
+            "company_id": company.get("id"),
+            "company_name": company["name"],
+            "brand_code": None,
+            "codes": [],
+            "multi_company": False,
+            "companies": [company["name"]],
+        }
+    ]
+    built = member_mod.build_cs_member_offer(
+        {"response": offer}, plan, member_mod.fetch_rosters(db, plan, ctx if isinstance(ctx, Mapping) else {})
+    )
+    rows = built.get("cs_last_result_set") or []
+    if built.get("member_offer") is not True or not rows:
+        return None
+    offset = max((int(n) for n in _NUMBERED_LINE.findall(text or "")), default=0)
+    options = [
+        option
+        for option in (member_option({**row, "idx": offset + i + 1}, offset + i + 1) for i, row in enumerate(rows))
+        if option
+    ]
+    lines = "\n".join(f"{o['position']}. {o['label']}" for o in options)
+    picker_text = (
+        f"{offer}\n\nPlease choose who to route to (reply with the number):\n{lines}\n\n"
+        "If you have no preference, just reply 'yes' and we'll assign automatically."
+    )
+    question = pending.ask(
+        "member_offer",
+        options,
+        team=routing.get("suggested_team"),
+        asked_at_turn=asked_at_turn,
+        payload={
+            "agent": routing.get("suggested_agent"),
+            "brand_code": brand,
+            "roster_plan": [{"company_id": company.get("id"), "company_name": company["name"], "brand_code": None}],
+        },
+    )
+    return picker_text, question
 
 
 def _compose_text(lane_item: dict[str, Any], *, ctx: Any, canned: Any, db: Any, **values: Any) -> str:
@@ -769,8 +855,31 @@ def member_option(row: dict[str, Any], position: int) -> dict[str, Any] | None:
         "label": row.get("label"),
         "entity_type": "member",
         "uuid": row.get("uuid"),
-        "payload": {"respond_user_id": row.get("respond_user_id")},
+        "payload": {
+            "respond_user_id": row.get("respond_user_id"),
+            # #865 round 6: the company whose roster listed this member, so picking them
+            # routes to that company (`turn/apply.py::_answer_offer` hands it on as the
+            # company pick) - n8n's `picked_member` arm, the row's own pair verbatim.
+            "company": row.get("company_name"),
+            "company_id": row.get("company_id"),
+            "brand_code": row.get("brand_code"),
+        },
     }
+
+
+def roster_plan_of(member: Any) -> list[dict[str, Any]]:
+    """The companies a built member picker printed rosters for, as pool rows
+    (`tail/member_offer.build_cs_member_offer` keeps its plan on `routing_companies`)."""
+    plan = member.get("routing_companies") if isinstance(member, Mapping) else None
+    return [
+        {
+            "company_id": row.get("company_id") or None,
+            "company_name": row.get("company_name"),
+            "brand_code": row.get("brand_code") or None,
+        }
+        for row in (plan if isinstance(plan, list) else [])
+        if isinstance(row, Mapping) and row.get("company_name")
+    ]
 
 
 def _cs_offer_eligible(catalog: Any, routing: Mapping[str, Any], gate: Any) -> bool:
@@ -1050,8 +1159,12 @@ def _miss_question(
             return pending.ask(
                 "member_offer",
                 options,
+                # #865 round 6: the team the picker was fetched for, and the companies whose
+                # rosters it printed - the pool a bare "yes" clarifies over and a company
+                # word picks from (`turn.pending.offered_companies`).
+                team=team,
                 asked_at_turn=asked_at_turn,
-                payload={"agent": agent, "brand_code": brand},
+                payload={"agent": agent, "brand_code": brand, "roster_plan": roster_plan_of(member)},
             )
 
     if roster_options:

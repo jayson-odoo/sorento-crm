@@ -1588,6 +1588,12 @@ def _run_stages(  # noqa: PLR0915
     # #865 round 5 (R1): an escalate word plus a named team, in the parser's own reading
     # of the message, is a help request whatever product words follow.
     verdict = turn_runtime.with_named_team_escalation(verdict)
+    # #865 round 6 (R3): a reply naming one of the companies an open escalation offer
+    # showed ("mocha", "srt", "yes please escalate to sorento team") picks it - n8n's
+    # deterministic company-pick tier, with the parser's own pick as the validated fallback.
+    verdict = turn_runtime.with_company_pick(
+        verdict, pending=state_in.pending, message=latest_user_message
+    )
 
     # -- access, C APPLY, D ROUTE ------------------------------------------- #
     stage[0] = "access"
@@ -1670,6 +1676,12 @@ def _run_stages(  # noqa: PLR0915
             accepted_lane=plan.trace.lane,
             accepted_rules=plan.trace.rules_fired,
         )
+        if plan.trace.lane == "offer_hold":
+            # #865 round 6 (R5): the held offer's own pool is what the re-asked clarify
+            # names (`lanes/canned.fragments_for` reads it off the same field).
+            roster_plan = [
+                {"plan_idx": i, **row} for i, row in enumerate(turn_pending.offered_companies(state_in.pending))
+            ] or None
         # Security SF-1 (hand pass 11 final): the plan is minted from a PERSISTED offer,
         # which can be turns old, so a row's company must still be in the contact's
         # CURRENT scope before it drives routing - a revoked membership must not keep
@@ -1693,6 +1705,19 @@ def _run_stages(  # noqa: PLR0915
                     "variables": {
                         **prior_variables,
                         "routing_roster_plan": roster_plan,
+                        # #865 round 6 (R4): whether the offer showed a member picker,
+                        # the key n8n's clarify copy branches on ("reply a number, a name,
+                        # or the company" only when numbers were shown), and the picker
+                        # itself, which a clarify keeps open (n8n re-persists the offer) so
+                        # a member number still picks after it.
+                        **(
+                            {
+                                "selection_context": "member_offer",
+                                "held_offer": turn_pending.to_wire(state_in.pending),
+                            }
+                            if state_in.pending is not None and state_in.pending.kind == "member_offer"
+                            else {}
+                        ),
                         # MERGE, never replace (reviewer N-c): `variables.routing` is a
                         # whole routing block on a session n8n wrote, and this needs
                         # exactly one key of it - the team, so `escalation_context`'s own
@@ -2512,6 +2537,9 @@ def _run_stages(  # noqa: PLR0915
                             ),
                             asked_at_turn=turn_no,
                             turn_id=turn_id,
+                            # #865 round 6 (R1): the miss company's CS roster read.
+                            db=db,
+                            ctx=ctx,
                         )
             except Exception as fetch_error:  # noqa: BLE001 - a lane failure, not a crash
                 logger.exception("chatbot turn %s: fetch or compose failed", turn_id)
@@ -4801,6 +4829,14 @@ def _question_offered(
                 "team_pick", _options(jsc.get(clarify, "clarify_team_options"), "team"), expects="pick"
             )
         if jsc.truthy(jsc.get(clarify, "clarify_text")):
+            held = turn_pending.from_wire(
+                jsc.get(jsc.get(jsc.get(jsc.get(ctx, "session"), "session_vars"), "variables"), "held_offer")
+            )
+            if held is not None and turn_pending.offered_companies(held):
+                # #865 round 6 (R4): a bare "yes" over the member picker asked which
+                # company; the picker stays the open question (n8n re-persists the
+                # offer), so a member number, a member name or a company word answers it.
+                return held
             # The clarify's OWN pool first (`escalation.clarify_company_reply`'s
             # `clarify_company_options`): the companies it just printed, carrying the ids
             # that route. `result_set` stays the fallback for a clarify composed by a
@@ -4827,10 +4863,22 @@ def _question_offered(
 
     member = outcome.get("build-cs-member-offer")
     if jsc.truthy(member):
+        from app.services.chatbot import answer_bridge
+
         routing = jsc.get(jsc.get(jsc.get(ctx, "parse"), "output") or {}, "routing") or {}
         return turn_pending.ask(
             "member_offer",
-            _options(jsc.get(member, "cs_last_result_set"), "member"),
+            [
+                option
+                for option in (
+                    answer_bridge.member_option(row, i + 1)
+                    for i, row in enumerate(jsc.array(jsc.get(member, "cs_last_result_set")))
+                )
+                if option
+            ],
+            # #865 round 6: the team and the companies the picker was built for
+            # (`answer_bridge._miss_question`'s own member arm, the same shape).
+            team=jsc.get(routing, "suggested_team"),
             expects="pick",
             # SRTSC07 review round 1, SHOULD-2: picking a member option IS an
             # escalation acceptance (`turn/apply.py:546`). `brand_code` (round 4) is
@@ -4838,6 +4886,7 @@ def _question_offered(
             payload={
                 "agent": jsc.get(routing, "suggested_agent"),
                 "brand_code": jsc.get(values.get("gate"), "routing_brand"),
+                "roster_plan": answer_bridge.roster_plan_of(member),
             },
         )
 
