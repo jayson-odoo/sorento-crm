@@ -12,6 +12,8 @@ agent (Q15).
   S1-4   the blocks come from `demand_class`; the Channel filter narrows them
   S1-5   the basis line
   S1-6   the chatbot's `GET /sales/analysis` answers basis=invoiced from the same dataset
+         (the parser and fetch lane halves are in tests/chatbot/test_sales_analysis_lane.py,
+         inside the chatbot package's import boundary)
   S1-7   `sales.reports.view` alone runs it; no finance slug is needed
   S1-9   an unclassified document is retail S1's `(blank)` row: last, in the cleared total
   kernel a detail column only the other basis holds is left out, an unknown one is 422
@@ -424,18 +426,3 @@ def test_s1_6_the_chatbot_answers_invoiced_from_the_same_dataset(monkeypatch):
     assert body["rows"][0]["label"] == "JAN"
     assert body["rows"][0]["values"][1] == "70.00"
     assert body["totals"]["total"] == "70.00"
-
-
-def test_s1_6_the_parser_can_say_invoiced():
-    from app.services.chatbot.head.parser import PARSE_OUTPUT_JSON_SCHEMA
-    from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT
-
-    props = PARSE_OUTPUT_JSON_SCHEMA["properties"]
-    assert props["sales_basis"]["enum"] == ["ordered", "delivered", "invoiced", None]
-    assert '"invoiced", "invoices", "billed" -> "invoiced"' in SEMANTIC_PARSER_PROMPT
-
-
-def test_s1_6_the_fetch_lane_passes_invoiced_through():
-    from app.services.chatbot.lanes.business import fetch
-
-    assert "invoiced" in fetch.SALES_ANALYSIS_BASES

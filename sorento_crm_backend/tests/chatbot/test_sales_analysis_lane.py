@@ -245,3 +245,21 @@ def test_ac_s1_19_the_seed_rows_carry_the_same_tool():
     assert TOOL in CHATBOT_READ_ONLY_TOOLS
     assert TOOL in policy_rows.DATE_PARAM_TOOLS
     assert TOOL_DOMAINS[TOOL] == "order"
+
+
+# ------------------------------------------------ finance S1 (#1309): basis invoiced
+class TestInvoicedBasis:
+    """UAC S1-6: the parser can say "invoiced" and the fetch lane passes it to the route."""
+
+    def test_s1_6_the_parser_can_say_invoiced(self):
+        from app.services.chatbot.head.parser import PARSE_OUTPUT_JSON_SCHEMA
+        from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT
+
+        props = PARSE_OUTPUT_JSON_SCHEMA["properties"]
+        assert props["sales_basis"]["enum"] == ["ordered", "delivered", "invoiced", None]
+        assert '"invoiced", "invoices", "billed" -> "invoiced"' in SEMANTIC_PARSER_PROMPT
+
+    def test_s1_6_the_fetch_lane_passes_invoiced_through(self):
+        from app.services.chatbot.lanes.business import fetch
+
+        assert "invoiced" in fetch.SALES_ANALYSIS_BASES
