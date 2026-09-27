@@ -336,3 +336,100 @@ def test_a_line_ordered_before_the_target_and_delivered_inside_it_still_counts(a
     })
     assert target.status_code == 201, target.text
     assert target.json()["periods"][0]["achieved_value"] == 400  # 4 of 10 units of RM 1,000
+
+
+# --------------------------------------------------------------------------------------- #
+# The company gate (security review of #1320): another company's line or DO counts nothing
+# --------------------------------------------------------------------------------------- #
+
+
+def _other_company(db):
+    from app.models.company import Company
+
+    from .test_sales_targets_s1 import _uid
+
+    other = Company(id=_uid(), name="ZZT Other Co", code=f"Z{_uid()[:6]}")
+    db.add(other)
+    db.flush()
+    return other.id
+
+
+@pytest.mark.parametrize("basis", ["ordered", "delivered"])
+def test_another_companys_line_on_this_companys_order_counts_nothing(api, basis):
+    """A `sales_order_lines` row stamped with company B on company A's sales order: the line
+    values are gated to 0 inside the statement (no longer filtered out), so each cell, ordered
+    and delivered, counts only A's own line."""
+    from app.models.base import company_scope
+    from app.models.order import SalesOrderLine
+
+    from .test_sales_targets_s1 import _agent, _uid
+
+    client, db, company_id = api
+    agent = _agent(db, "GATE")
+    product = _product(db, company_id, _category(db, company_id).id)
+    so, _ = _so_line(
+        db, company_id, agent_id=agent.id, order_date=date(2026, 10, 5), line_total=Decimal("100"),
+        qty_ordered=10, qty_delivered=10, product_id=product.id,
+    )
+    other = _other_company(db)
+    with company_scope(db, None):
+        db.add(SalesOrderLine(
+            id=_uid(), company_id=other, sales_order_id=so.id, product_id=product.id,
+            qty_ordered=50, qty_delivered=50, line_total=Decimal("9999"), line_status="open",
+        ))
+        db.flush()
+
+    for metric, expected in (("amount", 100), ("quantity", 10)):
+        target = client.post(BASE, json={
+            "subject_kind": "agent", "sales_agent_id": agent.id, "name": "ZZT Gate", "metric": metric,
+            "basis": basis, "product_scope": "all", "start_date": "2026-10-01", "end_date": "2026-10-31",
+            "target_value": 0,
+        })
+        assert target.status_code == 201, target.text
+        assert target.json()["periods"][0]["achieved_value"] == expected, metric
+
+
+@pytest.mark.parametrize("stamp", ["order_in_b", "line_in_b"])
+def test_a_do_with_either_half_in_another_company_counts_nothing(api, stamp):
+    """A DO whose `orders` row or `order_lines` row alone belongs to company B, linked to A's
+    line: it counts nothing and does not use up the cap, so A's figure is the residual alone,
+    exactly as if no DO were linked."""
+    from app.models.base import company_scope
+    from app.models.order import Order, OrderLine
+
+    from .test_sales_targets_s1 import _agent, _uid, _warehouse
+
+    client, db, company_id = api
+    agent = _agent(db, "MIX")
+    product = _product(db, company_id, _category(db, company_id).id)
+    warehouse = _warehouse(db, company_id)
+    _, line = _so_line(
+        db, company_id, agent_id=agent.id, order_date=date(2026, 9, 20), line_total=Decimal("10000"),
+        qty_ordered=100, qty_delivered=100, product_id=product.id,
+    )
+    other = _other_company(db)
+    with company_scope(db, None):
+        order = Order(
+            id=_uid(), company_id=other if stamp == "order_in_b" else company_id,
+            order_number=f"ZZT{_uid()[:8]}", order_date=date(2026, 10, 5), is_cancelled=False,
+        )
+        db.add(order)
+        db.flush()
+        db.add(OrderLine(
+            id=_uid(), company_id=other if stamp == "line_in_b" else company_id, line_sequence=1,
+            order_id=order.id, product_id=product.id, warehouse_id=warehouse.id, quantity=40,
+            sales_order_line_id=line.id,
+        ))
+        db.flush()
+
+    def achieved(start, end):
+        res = client.post(BASE, json={
+            "subject_kind": "agent", "sales_agent_id": agent.id, "name": "ZZT Mix", "metric": "amount",
+            "basis": "delivered", "product_scope": "all", "start_date": start, "end_date": end,
+            "target_value": 0,
+        })
+        assert res.status_code == 201, res.text
+        return res.json()["periods"][0]["achieved_value"]
+
+    assert achieved("2026-09-01", "2026-09-30") == 10000  # the whole residual, on the order date
+    assert achieved("2026-10-01", "2026-10-31") == 0  # the half-foreign DO counts nowhere
