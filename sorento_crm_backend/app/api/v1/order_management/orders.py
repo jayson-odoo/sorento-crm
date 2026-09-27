@@ -19,6 +19,7 @@ from app.dependencies import (
 from app.services.order_service import (
     OrderService,
     has_product_filter,
+    keep_brand_lines,
     narrow_product_ids_by_brand,
     stamp_so_outstanding_rows,
 )
@@ -572,6 +573,10 @@ async def get_orders(
             sort_field=sort or "created_at",
             sort_dir=dir or "asc"
         )
+        # #1262 fix lane round 6: a brand ask lists only that brand's lines inside
+        # each document it keeps. No brand, no change.
+        if _resolved_brand_ids and isinstance(result, dict) and result.get("data"):
+            result = {**result, "data": keep_brand_lines(db, result["data"], _resolved_product_ids)}
         # Date-axis relaxation (§3.4): when the service attached `alternatives` /
         # `relaxed_axis` (only on an empty result), bypass the strict
         # `ListResponse` response_model - which would silently drop those keys -

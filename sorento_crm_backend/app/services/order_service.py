@@ -164,6 +164,31 @@ def narrow_product_ids_by_brand(
     return stmt
 
 
+def keep_brand_lines(db: Session, orders: list, brand_product_filter) -> list:
+    """#1262 fix lane round 6: a `brand_ids` ask lists only that brand's lines. The
+    order filter keeps a document with ANY line of the brand; inside it, the lines of
+    another brand are left out (a Sorento ask never prints a Mocha line).
+
+    `brand_product_filter` is `narrow_product_ids_by_brand`'s subquery. Returns
+    `OrderResponse` rows, never a mutated ORM collection (dropping a line off
+    `Order.lines` would be a pending delete)."""
+    from app.schemas.order import OrderResponse
+
+    line_product_ids = {
+        str(line.product_id) for o in orders for line in (o.lines or []) if line.product_id
+    }
+    kept: set[str] = set()
+    if line_product_ids:
+        stmt = brand_product_filter.where(Product.id.in_(line_product_ids))
+        kept = {str(row[0]) for row in db.execute(stmt)}
+    out = []
+    for o in orders:
+        row = OrderResponse.model_validate(o)
+        row.lines = [line for line in (row.lines or []) if str(line.product_id) in kept]
+        out.append(row)
+    return out
+
+
 def has_product_filter(value) -> bool:
     """A product filter is present: a brand subquery always is, a list when non-empty."""
     return isinstance(value, Select) or bool(value)

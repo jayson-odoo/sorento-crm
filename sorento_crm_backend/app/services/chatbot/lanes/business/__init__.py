@@ -919,6 +919,21 @@ def typed_brand_words(parse_output: dict[str, Any]) -> set[str]:
     return words
 
 
+def _brand_canonical_words(parse_output: dict[str, Any]) -> set[str]:
+    """The `canonical_code` of each brand-hinted entity, folded: the brand the parser
+    read the typed word as, off the Known brands line."""
+    words = {
+        jsc.js_string(e.get("canonical_code") or "").strip().casefold()
+        for e in [
+            *jsc.array(parse_output.get("entities")),
+            *jsc.array(parse_output.get("outstanding_refinement_entities")),
+        ]
+        if isinstance(e, dict) and jsc.js_string(e.get("hint") or "").strip().lower() == "brand"
+    }
+    words.discard("")
+    return words
+
+
 def _resolve_outstanding_brand_ids(
     parse_output: dict[str, Any],
     semantic_input: dict[str, Any],
@@ -947,7 +962,12 @@ def _resolve_outstanding_brand_ids(
     if brand_tokens and db is not None:
         from app.services.chatbot.turn_runtime import active_brands
 
-        folded_tokens = {t.casefold() for t in brand_tokens}
+        # #1262 fix lane round 6: the raw word OR the parser's `canonical_code`, the
+        # same pair `turn_runtime._brand_hinted_entities_matching_live` reads. The
+        # published KNOWN BRANDS rule has the parser put the typed word ("sorneto") in
+        # `raw` and the brand as listed ("Sorento") in `canonical_code`; matching the
+        # raw word alone dropped a misspelt brand in silence.
+        folded_tokens = {t.casefold() for t in brand_tokens} | _brand_canonical_words(parse_output)
         brand_ids: list[str] = []
         for row in active_brands(db):
             name = jsc.js_string(row.get("brand_name") or "").strip().casefold()
