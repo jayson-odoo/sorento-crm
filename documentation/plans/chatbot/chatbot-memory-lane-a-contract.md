@@ -268,3 +268,12 @@ chatbot parser row.
    on :3040 that this VM does not run, and `test_stock_debt_routes.py::test_row_carries_
    supplier_category_total` read rows leaked by the same run (52 of 52 pass on a fresh
    database).
+10. Fix lane round 2 (reviewer pass at d89110c0, main 11bf373e merged), cloud VM,
+    `scripts/cloud-env-setup.sh`, `.env.ci-tests`, CI's commands: backend xdist loadfile
+    18,272 passed, 9 failed (all `test_dealer_kit_pdf_render.py`, which needs the :3040
+    print server this VM does not run); migration tests serial 400 passed; serial_ddl
+    passed; SCM with `DATABASE_URL` exported as CI does 4,109 passed, 1 failed
+    (`test_stock_debt_routes.py::test_row_carries_supplier_category_total`, rows leaked by
+    earlier runs, 52 of 52 on a fresh database); chatbot set plus the touched files 3,710
+    passed, 0 failed; touched vitest 13 files 62 passed (touched directories 35 files 242
+    passed); `tsc --noEmit` the same 73 errors as main, none new.
