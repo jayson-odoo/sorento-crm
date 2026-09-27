@@ -76,15 +76,18 @@ function money(value: number | null, currency: string | null): string {
 function LineCard({
   line,
   showDecisionColumn,
+  isPendingForVerifier,
   onPatch,
   onDecide,
 }: {
   line: CostPriceChangeLine;
   showDecisionColumn: boolean;
+  isPendingForVerifier: boolean;
   onPatch: (patch: PatchLineInput) => void;
   onDecide: (decision: 'accepted' | 'rejected') => void;
 }) {
-  const showDecision = showDecisionColumn && !line.skipped && (line.line_state === 'changed' || line.line_state === 'new_link');
+  const showDecision = isPendingForVerifier && !line.skipped && (line.line_state === 'changed' || line.line_state === 'new_link');
+  const showReadOnlyDecision = showDecisionColumn && !isPendingForVerifier && line.decision != null;
   return (
     <div className="rounded-lg border border-border bg-card p-3">
       <div className="flex items-start justify-between gap-2">
@@ -161,6 +164,24 @@ function LineCard({
           <Button type="button" size="sm" variant={line.decision === 'rejected' ? 'destructive' : 'outline'} onClick={() => onDecide('rejected')}>
             Reject
           </Button>
+        </div>
+      ) : null}
+      {showReadOnlyDecision ? (
+        <div className="mt-2">
+          {line.decision === 'accepted' ? (
+            <Badge variant="success">Accepted</Badge>
+          ) : (
+            <>
+              <Badge variant="destructive" title={line.decision_reason ?? undefined}>
+                Rejected
+              </Badge>
+              {line.decision_reason ? (
+                <div className="mt-0.5 truncate text-xs text-muted-foreground" title={line.decision_reason}>
+                  {line.decision_reason}
+                </div>
+              ) : null}
+            </>
+          )}
         </div>
       ) : null}
     </div>
@@ -244,7 +265,14 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
   }, [searchedLines, activeFilter, activeSheet]);
 
   const isVerifier = changeSet.actions.can_decide || changeSet.actions.can_return;
-  const showDecisionColumn = isVerifier && changeSet.status === 'pending_verification';
+  const isPendingForVerifier = isVerifier && changeSet.status === 'pending_verification';
+  // J14/AC-AU-04 (tester finding 1): once a set leaves Pending, a line's decision must
+  // stay visible - read-only - not vanish the moment `showDecisionColumn`'s original
+  // "verifier on a Pending set" condition goes false. A read-only column earns its
+  // place ONLY when there is something to show; an untouched draft/applied-with-no-
+  // decisions set gets no Decision column at all.
+  const anyLineHasDecision = lines.some((l) => l.decision != null);
+  const showDecisionColumn = isPendingForVerifier || anyLineHasDecision;
   // With the setting on, a staff draft always goes through Submit, never straight to
   // Apply (AC-S2-04) - driven by the set's own workflow, not by whether Submit
   // happens to be enabled right now, so a blocked draft still shows Submit (disabled)
@@ -254,18 +282,26 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
 
   const columns = React.useMemo<ColumnDef<CostPriceChangeLine>[]>(() => {
     const base: ColumnDef<CostPriceChangeLine>[] = [
-      { id: 'sheet', header: 'Sheet', size: 110, cell: ({ row }) => row.original.sheet },
       {
-        id: 'row_no',
-        header: 'Row',
-        size: 60,
-        meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
-        cell: ({ row }) => <span className="tabular-nums">{row.original.row_no}</span>,
+        // Sheet and Row merged into one column (column-width budget, 1280 breakpoint):
+        // the grid must reach the Decision column at ~950px of content width without
+        // horizontal scroll, and neither value is worth its own 60-110px slot.
+        id: 'sheet_row',
+        header: 'Sheet / row',
+        size: 90,
+        cell: ({ row }) => (
+          <div className="min-w-0 text-xs">
+            <span className="block truncate font-medium" title={row.original.sheet}>
+              {row.original.sheet}
+            </span>
+            <span className="text-muted-foreground">Row {row.original.row_no}</span>
+          </div>
+        ),
       },
       {
         id: 'supplier_code',
         header: 'Supplier code',
-        size: 170,
+        size: 140,
         cell: ({ row }) => (
           <div className="min-w-0">
             <span className="block truncate font-medium" title={row.original.supplier_code}>
@@ -282,7 +318,7 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
       {
         id: 'configuration',
         header: 'Configuration',
-        size: 190,
+        size: 90,
         cell: ({ row }) => (
           <div className="min-w-0">
             <span className="block truncate" title={row.original.configuration ?? ''}>
@@ -297,7 +333,7 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
       {
         id: 'product',
         header: 'Our product',
-        size: 260,
+        size: 170,
         cell: ({ row }) => {
           const line = row.original;
           if (line.match_outcome === 'unmatched') {
@@ -414,37 +450,59 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
       base.push({
         id: 'decision',
         header: 'Decision',
-        size: 220,
+        size: isPendingForVerifier ? 150 : 130,
         cell: ({ row }) => {
           const line = row.original;
-          if (line.skipped || (line.line_state !== 'changed' && line.line_state !== 'new_link')) {
-            return <span className="text-muted-foreground">-</span>;
+          if (isPendingForVerifier) {
+            if (line.skipped || (line.line_state !== 'changed' && line.line_state !== 'new_link')) {
+              return <span className="text-muted-foreground">-</span>;
+            }
+            return (
+              <div className="flex items-center gap-1.5">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={line.decision === 'accepted' ? 'primary' : 'outline'}
+                  onClick={() => void decideLine.mutateAsync({ lineId: line.id, decision: 'accepted' })}
+                >
+                  Accept
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={line.decision === 'rejected' ? 'destructive' : 'outline'}
+                  onClick={() => void decideLine.mutateAsync({ lineId: line.id, decision: 'rejected', reason: 'Not agreed' })}
+                >
+                  Reject
+                </Button>
+              </div>
+            );
           }
+          // J14/AC-AU-04: the set has left Pending (or the caller isn't the verifier who
+          // decided it) - a line's decision is now a FACT of the record, not something
+          // to re-decide, so it renders read-only. The reject reason travels with it
+          // (visible text AND `title`, so either a sighted skim or a hover/hit-test
+          // finds it) - a reviewer must not have to cross-reference the History tab to
+          // learn why a line was rejected.
+          if (!line.decision) return <span className="text-muted-foreground">-</span>;
+          if (line.decision === 'accepted') return <Badge variant="success">Accepted</Badge>;
           return (
-            <div className="flex items-center gap-1.5">
-              <Button
-                type="button"
-                size="sm"
-                variant={line.decision === 'accepted' ? 'primary' : 'outline'}
-                onClick={() => void decideLine.mutateAsync({ lineId: line.id, decision: 'accepted' })}
-              >
-                Accept
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={line.decision === 'rejected' ? 'destructive' : 'outline'}
-                onClick={() => void decideLine.mutateAsync({ lineId: line.id, decision: 'rejected', reason: 'Not agreed' })}
-              >
-                Reject
-              </Button>
+            <div className="min-w-0">
+              <Badge variant="destructive" title={line.decision_reason ?? undefined}>
+                Rejected
+              </Badge>
+              {line.decision_reason ? (
+                <span className="mt-0.5 block truncate text-xs text-muted-foreground" title={line.decision_reason}>
+                  {line.decision_reason}
+                </span>
+              ) : null}
             </div>
           );
         },
       });
     }
     return base;
-  }, [changeSet.currency, decideLine, patchLine, showDecisionColumn]);
+  }, [changeSet.currency, decideLine, isPendingForVerifier, patchLine, showDecisionColumn]);
 
   const table = useReactTable({
     columns,
@@ -525,6 +583,7 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
               key={line.id}
               line={line}
               showDecisionColumn={showDecisionColumn}
+              isPendingForVerifier={isPendingForVerifier}
               onPatch={(patch) => void patchLine.mutateAsync({ lineId: line.id, patch })}
               onDecide={(decision) => void decideLine.mutateAsync({ lineId: line.id, decision })}
             />
@@ -544,7 +603,9 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
           never re-derives the four-eyes rule. Nothing left to do on an applied set. */}
       {changeSet.status !== 'applied' ? (
         <div className="sticky bottom-0 z-10 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-background p-3 shadow-sm">
-          <span className="text-sm font-medium">{actions.apply_count} changes ready</span>
+          <span className="text-sm font-medium">
+            {actions.apply_count} {actions.apply_count === 1 ? 'change' : 'changes'} ready
+          </span>
           {changeSet.largest_rise ? (
             <span className="text-sm text-muted-foreground">
               Largest rise: {changeSet.largest_rise.supplier_code} +{changeSet.largest_rise.change_pct.toFixed(1)}%
