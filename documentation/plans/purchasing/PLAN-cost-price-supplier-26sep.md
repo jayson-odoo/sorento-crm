@@ -539,7 +539,7 @@ product Excel import may write a supplier price onto the product or the product-
 The cost lists are the only source of a supplier cost. The purchase order keeps its own line
 price; the import keeps every other column.
 
-Measured in fix lane round 3 on the merged tree (main 9751e55d): **neither path writes one
+Measured in fix lane round 3 on the merged tree (main 9751e55d, then 52b0ac24): **neither path writes one
 today**, so the two "removals" are pins, not code changes. The round 1 writer list (section 3.2)
 over-counted; the corrected paths, with file:line (BE, at the round 3 head):
 
