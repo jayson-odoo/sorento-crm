@@ -69,6 +69,9 @@ const SEGMENTED_KEEPERS = [
   // toggle over one workbook, never navigation between panels - DESIGN-LANGUAGE section 4's
   // pill case, specified as a pill by the UAC.
   'app/(protected)/scm/low-stock-report/components/LowStockReportView.tsx',
+  // The sign-in Email | Phone toggle (PLAN-unified-identity-26sep 5.1, AC-20): two options,
+  // a choice of form inside one card, never navigation between pages.
+  'app/(auth)/signin/page.tsx',
 ];
 
 /** Every `.tsx` under the scanned roots, tests excluded. */
