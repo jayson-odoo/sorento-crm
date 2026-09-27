@@ -8,6 +8,18 @@ export type TargetBasis = 'ordered' | 'delivered';
 export type TargetProductScope = 'all' | 'categories' | 'products' | 'brands';
 export type TargetScopeKind = 'category' | 'product' | 'brand';
 export type TargetSplitUnit = 'day' | 'week' | 'month';
+/** How tiers pay (plan 3.3): `marginal` is "Higher rate above each threshold only", `retroactive`
+ * is "Highest rate on everything". */
+export type CommissionMethod = 'none' | 'marginal' | 'retroactive';
+
+export interface CommissionTier {
+  /** The achievement % the tier starts at. */
+  from_pct: number;
+  /** Amount target: % of the achieved amount. Quantity target: RM per unit. */
+  rate: number;
+  /** RM paid once per period when `from_pct` is reached. */
+  bonus_amount: number | null;
+}
 
 export interface TargetMemberRef {
   sales_agent_id: string;
@@ -75,6 +87,9 @@ export interface SalesTargetPeriod {
   achieved_value: number | null;
   achieved_pct: number | null;
   is_current: boolean;
+  /** Null when the target has no tiers. */
+  commission_earned?: number | null;
+  bonus_earned?: number | null;
 }
 
 export interface SalesTargetChild {
@@ -111,6 +126,8 @@ export interface SalesTargetDetail {
   children: SalesTargetChild[];
   members_without_figure: TargetMemberRef[];
   child_count: number;
+  commission_method: CommissionMethod;
+  tiers: CommissionTier[];
   created_at: string | null;
   updated_at: string | null;
 }
@@ -140,6 +157,8 @@ interface TargetCreateBase {
   end_date: string;
   split_every?: number;
   split_unit?: TargetSplitUnit;
+  commission_method?: CommissionMethod;
+  tiers?: CommissionTier[];
 }
 
 export interface AgentTargetCreatePayload extends TargetCreateBase {
@@ -171,4 +190,11 @@ export interface SalesTargetUpdatePayload {
   end_date?: string;
   split_every?: number | null;
   split_unit?: TargetSplitUnit | null;
+  commission_method?: CommissionMethod;
+  /** Replaces every tier; `[]` removes them. */
+  tiers?: CommissionTier[];
+  /** Every changed figure, in one request: this target's periods, or a team target's agents'. */
+  figures?: { period_id: string; target_value: number }[];
+  /** A team target's members with no figure yet, by the team period's start. */
+  new_agents?: { sales_agent_id: string; figures: { period_start: string; target_value: number }[] }[];
 }

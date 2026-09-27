@@ -130,13 +130,14 @@ def get_target(
 def update_target(
     target_id: str,
     payload: SalesTargetUpdate,
-    _user: dict = Depends(require_permission(EDIT)),
+    user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
+    """The header, the commission tiers and every changed figure in one request (F1, F2)."""
     try:
         target = _load(db, target_id)
         with db.begin_nested():
-            target_service.update_target(db, target, payload)
+            target_service.update_target(db, target, payload, user_id=_user_id(user))
         db.commit()
         db.refresh(target)
         return target_service.target_detail(db, target)

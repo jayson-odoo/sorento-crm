@@ -108,6 +108,7 @@ def test_ac_r4_10_this_plan_adds_no_table_to_the_purge_file_or_the_sales_schema(
         "sales.targets",
         "sales.target_periods",
         "sales.target_scope",
+        "sales.target_commission_tiers",
         "sales.opportunities",
         "sales.opportunity_lines",
     }

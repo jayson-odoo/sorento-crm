@@ -29,6 +29,7 @@ describe('module registry purge manifests', () => {
     expect(modulePurgeTables().sales.tables).toEqual([
       'sales.opportunity_lines',
       'sales.opportunities',
+      'sales.target_commission_tiers',
       'sales.target_scope',
       'sales.target_periods',
       'sales.targets',

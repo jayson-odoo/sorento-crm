@@ -4,7 +4,7 @@ Plan: `documentation/plans/sales/PLAN-sales-targets-opportunities-26sep.md`. Moc
 `documentation/plans/sales/mockups/sales-targets.html`. Slice 1 of #1170 (a sales agent on a
 customer) shipped in PR #1177 and is not repeated here.
 
-Status: building. Wave 2, S1, is on PR #1297 (S1-1, S1-3 to S1-10, S1-12 to S1-15, S1-18 to S1-35 (S1-30 to S1-35 from the owner's hand test of 27 Sep), S6-4 to S6-7, S6-10; plan section 16). Wave 1, S6, merged on PR #1260 (S6-1 to S6-3, S6-8, S6-9, S6-12 to S6-18, S1-17; plan section 15). S6 accepted on the owner's hand test (26 Sep ~13:25Z); fix lane round 2 adds S6-16 to S6-18 (team leader, a returning agent listed once).
+Status: building. Wave 2, S1, is on PR #1297 (S1-1, S1-3 to S1-10, S1-12 to S1-15, S1-18 to S1-38 (S1-30 to S1-35 from the owner's hand test of 27 Sep, S1-36 to S1-38 from the retest), S6-4 to S6-7, S6-10; plan section 16). Wave 1, S6, merged on PR #1260 (S6-1 to S6-3, S6-8, S6-9, S6-12 to S6-18, S1-17; plan section 15). S6 accepted on the owner's hand test (26 Sep ~13:25Z); fix lane round 2 adds S6-16 to S6-18 (team leader, a returning agent listed once).
 Wave 2, S2 (S2-1 to S2-16) is built on PR #1296 (plan sections 16 and 17); S1 is merged into it for the portal target panel (section 18).
 Earlier status: grilled. Round 1 answered by the owner 26 Sep 2026 (PR #1260 comment, 05:25Z); every AC
 is now written to the ruling, marked "(Owner ruling 26 Sep, G#)". Round 2 questions R1 to R5
@@ -427,6 +427,25 @@ WhatsApp message; the **dealer**, who may receive a WhatsApp message.
   half-empty range cannot be saved and says "Pick both a start date and an end date."; the API
   answers a missing or cleared date with "A target needs both a start date and an end date."
   No message a person reads carries snake_case.
+
+### S1 fix lane round 3 (owner's retest, 27 Sep 14:25 MYT; plan section 18)
+
+- **S1-36 [BE][FE] (F1)** Figures are edited in Edit mode only, never by a per-row pencil. The
+  Periods tab takes a figure per period, so periods can carry different figures; a team
+  target's Agents tab takes each agent's figure per period (a member with no figure yet
+  included) and recomputes the team total per period as it is typed. Save sends every changed
+  figure in one `PATCH /sales/targets/{id}` (`figures`, `new_agents`); a period of another
+  target is 422 `UNKNOWN_PERIOD` and nothing is written; Cancel discards. Read mode shows
+  values only.
+- **S1-37 [BE][FE] (F2)** Commission tiers (S4-1's rules: a method needs tiers, `none` takes
+  none, `from_pct` unique and at least 0) are added, edited and removed on the Commission tab
+  in Edit mode; read mode shows How tiers pay and the tiers as rows. Each period returns
+  `commission_earned` and `bonus_earned` (S4-2 to S4-6 golden numbers); Duplicate copies them.
+- **S1-38 [BE][FE] (F3)** An agent target of a team target reads "Agent target, part of <team
+  target>" (a link) in its header and has a Team target tab: the parent's name, what counts,
+  dates, split, its periods with figures, and Open team target. Its What counts and Dates are
+  read-only with one line "Set on the team target". Its own figures per period edit in Edit mode
+  on its record and re-sum the team target in the same request.
 
 ## S2. Opportunities, logged by salespeople in the portal
 

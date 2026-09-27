@@ -394,6 +394,48 @@ class SalesTargetAgentFigure(BaseModel):
     target_value: float = Field(..., ge=0)
 
 
+CommissionMethod = Literal["none", "marginal", "retroactive"]
+
+
+class SalesTargetTierIn(BaseModel):
+    """One commission tier (plan 3.3, UAC S4-1)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: The achievement % the tier starts at; 0 is "from the first ringgit".
+    from_pct: float = Field(..., ge=0, le=99999)
+    #: Amount target: % of the achieved amount. Quantity target: RM per unit.
+    rate: float = Field(0, ge=0, le=99999)
+    #: RM paid once per period when `from_pct` is reached.
+    bonus_amount: Optional[float] = Field(None, ge=0)
+
+
+class SalesTargetFigureIn(BaseModel):
+    """One period's figure in the batched save (the owner's retest of 27 Sep, F1)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    period_id: UuidStr
+    target_value: float = Field(..., ge=0)
+
+
+class SalesTargetNewAgentFigure(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    period_start: DateType
+    target_value: float = Field(..., ge=0)
+
+
+class SalesTargetNewAgent(BaseModel):
+    """A member of the team with no figure yet, given one in the batched save (F1)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sales_agent_id: UuidStr
+    #: By the team period's start; a period left out starts at 0.
+    figures: List[SalesTargetNewAgentFigure] = Field(default_factory=list, max_length=104)
+
+
 class SalesTargetCreate(BaseModel):
     """`extra="forbid"`: the round 3 fields `start_month`, `months`, `periodicity` are 422 (S1-1)."""
 
@@ -419,6 +461,8 @@ class SalesTargetCreate(BaseModel):
     target_value: Optional[float] = Field(None, ge=0)
     #: Team targets: one child agent target per entry; the team figure is their sum (S1-27).
     agent_figures: Optional[List[SalesTargetAgentFigure]] = Field(None, max_length=200)
+    commission_method: CommissionMethod = "none"
+    tiers: List[SalesTargetTierIn] = Field(default_factory=list, max_length=20)
 
     @field_validator("name")
     @classmethod
@@ -432,6 +476,10 @@ _REQUIRED_HEADER_LABELS = {
     "metric": "Measure",
     "basis": "Counts",
     "product_scope": "Applies to",
+    "commission_method": "How tiers pay",
+    "tiers": "Tiers",
+    "figures": "Figures",
+    "new_agents": "Agent figures",
 }
 
 
@@ -452,6 +500,14 @@ class SalesTargetUpdate(BaseModel):
     #: Sent as null (both): the split is turned off.
     split_every: Optional[int] = Field(None, ge=1, le=99)
     split_unit: Optional[SplitUnit] = None
+    commission_method: Optional[CommissionMethod] = None
+    #: Replaces every tier; `[]` removes them.
+    tiers: Optional[List[SalesTargetTierIn]] = Field(None, max_length=20)
+    #: Every changed figure in one request (F1): this target's periods, or on a team target its
+    #: agents' periods. Applied before the header, so a date change keeps them (S1-5).
+    figures: Optional[List[SalesTargetFigureIn]] = Field(None, max_length=5000)
+    #: Team targets: members with no figure yet, given one (F1).
+    new_agents: Optional[List[SalesTargetNewAgent]] = Field(None, max_length=200)
 
     @field_validator("name")
     @classmethod
@@ -556,6 +612,15 @@ class SalesTargetPeriodOut(BaseModel):
     achieved_pct: Optional[float] = None
     #: The period containing `on`.
     is_current: bool
+    #: Plan 3.3: null when the target has no tiers.
+    commission_earned: Optional[float] = None
+    bonus_earned: Optional[float] = None
+
+
+class SalesTargetTierOut(BaseModel):
+    from_pct: float
+    rate: float
+    bonus_amount: Optional[float] = None
 
 
 class SalesTargetChildPeriod(BaseModel):
@@ -597,6 +662,8 @@ class SalesTargetDetail(BaseModel):
     children: List[SalesTargetChild]
     members_without_figure: List[SalesTargetMemberRef]
     child_count: int
+    commission_method: str = "none"
+    tiers: List[SalesTargetTierOut] = Field(default_factory=list)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

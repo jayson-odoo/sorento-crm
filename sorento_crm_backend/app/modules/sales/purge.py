@@ -19,6 +19,7 @@ from app.models.sales import (
     SalesOpportunity,
     SalesOpportunityLine,
     SalesTarget,
+    SalesTargetCommissionTier,
     SalesTargetPeriod,
     SalesTargetScope,
     SalesTeam,
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 PURGE_ORDER: List[Type] = [
     SalesOpportunityLine,
     SalesOpportunity,
+    SalesTargetCommissionTier,
     SalesTargetScope,
     SalesTargetPeriod,
     SalesTarget,
