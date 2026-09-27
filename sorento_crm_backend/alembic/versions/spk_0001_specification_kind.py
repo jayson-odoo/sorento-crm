@@ -95,16 +95,19 @@ def publish(bind) -> None:
     session = Session(bind=bind)
     try:
         template, blocks_hash = _load_s4()._body(session)
-        existing = (
+        # Only the NEWEST version counts as already published: an older version with the
+        # same words (a migration ordered before this one may have published without the
+        # specification kind since) must not stop the merged words becoming the next one.
+        latest = (
             session.query(AIPromptVersion)
-            .filter(AIPromptVersion.name == PROMPT_NAME, AIPromptVersion.template == template)
+            .filter(AIPromptVersion.name == PROMPT_NAME)
+            .order_by(AIPromptVersion.version.desc())
             .first()
         )
-        if existing is not None:
-            logger.info("chatbot parser specification prompt already published as v%s", existing.version)
+        if latest is not None and latest.template == template:
+            logger.info("chatbot parser specification prompt already published as v%s", latest.version)
             return
-        versions = session.query(AIPromptVersion.version).filter(AIPromptVersion.name == PROMPT_NAME).all()
-        next_version = max((int(v[0]) for v in versions), default=0) + 1
+        next_version = (int(latest.version) if latest is not None else 0) + 1
         session.add(
             AIPromptVersion(
                 name=PROMPT_NAME,
