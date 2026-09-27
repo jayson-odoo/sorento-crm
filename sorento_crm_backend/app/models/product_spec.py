@@ -144,7 +144,10 @@ class ProductSpecRegistry(Base):
     # Optional "source": "any" (default) | "description" | "flyer". These were Python
     # lists, which meant a key created in the UI could never be populated - the form
     # made a promise the engine could not keep.
-    derivation_rules = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    # NULL: this key reads with the shipped rules. A list, even an empty one, is this
+    # business's own: [] means the key has no rules (review B-1, #1286). Read it through
+    # `product_spec_derivation.stored_or_shipped_rules`, never `or`.
+    derivation_rules = Column(JSONB, nullable=True)
     # value -> display label ("pp" -> "PP"), purely cosmetic (#423). Editable on seed
     # AND user rows, like user_synonyms: staff-owned, never seed-repaired (nothing in
     # `_seed_values` names this column, so the repair loop cannot touch it).

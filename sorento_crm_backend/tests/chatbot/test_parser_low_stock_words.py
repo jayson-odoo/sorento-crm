@@ -88,6 +88,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         from app.services.chatbot_parser_prompt import (
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
+            STOCK_TASK_ADDENDUM,
         )
 
 
@@ -95,6 +96,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         for name, body in _bodies().items():
             assert (
                 body.removesuffix(SALES_ANALYSIS_ADDENDUM)
+                .removesuffix(STOCK_TASK_ADDENDUM)
                 .removesuffix(SALES_REPORT_ADDENDUM)
                 .endswith(addendum)
             ), (
@@ -114,12 +116,14 @@ class TestBothPublishedBodiesCarryTheVocabulary:
             LAST_COST_ADDENDUM,
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
+            STOCK_TASK_ADDENDUM,
         )
 
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
             assert (
                 body.removesuffix(SALES_ANALYSIS_ADDENDUM)
+                .removesuffix(STOCK_TASK_ADDENDUM)
                 .removesuffix(SALES_REPORT_ADDENDUM)
                 .removesuffix(addendum)
                 .endswith(LAST_COST_ADDENDUM)

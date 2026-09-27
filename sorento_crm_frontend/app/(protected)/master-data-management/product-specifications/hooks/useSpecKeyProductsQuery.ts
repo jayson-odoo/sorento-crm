@@ -13,6 +13,10 @@ export interface SpecKeyProductsParams {
   offset: number;
 }
 
+/** Every page and facet of one key's products - what to invalidate once a save or a
+ *  committed remove has re-read products (S-12). */
+export const specKeyProductsKey = (specKey: string) => ['spec-key-products', specKey] as const;
+
 /**
  * One page of products carrying this specification, plus the facets that narrow it
  * (AC-B.5). `LIST_QUERY_OPTIONS` so paging or filtering does not blank the grid while
@@ -23,7 +27,7 @@ export interface SpecKeyProductsParams {
 export function useSpecKeyProductsQuery(specKey: string, params: SpecKeyProductsParams) {
   return useQuery({
     ...LIST_QUERY_OPTIONS,
-    queryKey: ['spec-key-products', specKey, params],
+    queryKey: [...specKeyProductsKey(specKey), params],
     queryFn: () => getSpecKeyProducts(specKey, params),
     enabled: Boolean(specKey),
   });

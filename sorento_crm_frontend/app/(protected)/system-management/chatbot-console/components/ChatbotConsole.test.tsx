@@ -191,6 +191,28 @@ describe('ChatbotConsole - a send_attachments action', () => {
   });
 });
 
+describe('ChatbotConsole - WhatsApp bold rendering (#1277, AC-7)', () => {
+  it('a bot bubble with a WhatsApp bold label renders it as <strong>', async () => {
+    postConsoleTurn.mockResolvedValue({
+      turn_id: 'turn-bold',
+      branch_kind: 'business_query',
+      reply_text: '*Impact:* faster checkout',
+      quick_replies: [],
+      send_messages: [],
+      session_vars: {},
+      trace_summary: { tool: null, args_short: null, crossdomain_rungs: [], reveals_dropped: [] },
+    });
+
+    renderConsole();
+    fireEvent.change(textarea(), { target: { value: 'idea about checkout' } });
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(1));
+    const strong = await screen.findByText('Impact:');
+    expect(strong.tagName).toBe('STRONG');
+  });
+});
+
 describe('ChatbotConsole - composer keyboard', () => {
   it('Enter sends the message', async () => {
     postConsoleTurn.mockResolvedValue({

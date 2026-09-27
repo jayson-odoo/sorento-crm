@@ -96,10 +96,22 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     # are structured parser fields, read into the fetch's semantic input. 36 -> 38.
     "sales_basis": "app/services/chatbot/lanes/business/__init__.py",
     "sales_company": "app/services/chatbot/lanes/business/__init__.py",
+    # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+    # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3, D13: "go ahead without
+    # answering the open question", read by `turn/task.py::StockQtyTask.claims`/
+    # `fill`, which `apply.py` runs before decide's four outcomes. 36 declared keys ->
+    # 37. The per-entity `entities[].quantity` is NOT a row here: this table is
+    # top-level verdict keys, and that one is a nested field of the `entities` row
+    # above.
+    "proceed_anyway": "app/services/chatbot/turn/task.py",
+    # PR #1247 round 8: the parser's declared answer to the "Open question:" object,
+    # read by `turn/apply.py::_open_question_answer` before any shape rule. 37 -> 38.
+    # Merged with #1267's two rows above: 38 + 2 -> 40.
+    "open_question_answer": "app/services/chatbot/turn/apply.py",
 }
 
 
-def test_measured_read_set_matches_the_38_declared_keys():
+def test_measured_read_set_matches_the_40_declared_keys():
     """The table above is complete and has no typo - every declared key is measured read
     exactly once, and the table names nothing DECLARED_KEYS does not also carry. Catches a
     stale table before it can hide a real drift in the two tests below."""
