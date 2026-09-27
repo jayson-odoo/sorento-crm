@@ -29,6 +29,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     const [options, setOptions] = React.useState(props.options ?? []);
     React.useEffect(() => {
       if (props.fetchOptions) props.fetchOptions(query, 0).then(setOptions);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [query]);
     const label = props['aria-label'] ?? props.placeholder ?? props.id ?? 'select';
     return (

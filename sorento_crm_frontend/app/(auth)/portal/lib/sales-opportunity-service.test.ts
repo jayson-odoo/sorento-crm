@@ -122,13 +122,29 @@ describe('getPortalOpportunityMeta', () => {
 });
 
 describe('getPortalProductOptions', () => {
-  it('GETs the shared product lookup with q and maps id/code/name', async () => {
+  it('GETs the shared product lookup with q and maps id/code/name/listPrice', async () => {
     mockFetch.mockResolvedValue(
-      ok([{ product_id: 'p1', product_code: 'ZZT-001', product_name: 'ZZT Basin' }]),
+      ok([
+        {
+          product_id: 'p1',
+          product_code: 'ZZT-001',
+          product_name: 'ZZT Basin',
+          list_price: '250.00',
+        },
+      ]),
     );
     const options = await getPortalProductOptions('basin');
     expect(mockFetch).toHaveBeenCalledWith('/api/v1/public/portal/lookups/products?q=basin');
-    expect(options).toEqual([{ id: 'p1', code: 'ZZT-001', name: 'ZZT Basin' }]);
+    expect(options).toEqual([{ id: 'p1', code: 'ZZT-001', name: 'ZZT Basin', listPrice: '250.00' }]);
+  });
+
+  // F7: a product with no real price starts the line's Unit price blank, not a guessed 0.
+  it('F7: maps a missing list_price to null', async () => {
+    mockFetch.mockResolvedValue(
+      ok([{ product_id: 'p2', product_code: 'ZZT-002', product_name: 'ZZT Tap', list_price: null }]),
+    );
+    const options = await getPortalProductOptions('tap');
+    expect(options).toEqual([{ id: 'p2', code: 'ZZT-002', name: 'ZZT Tap', listPrice: null }]);
   });
 });
 

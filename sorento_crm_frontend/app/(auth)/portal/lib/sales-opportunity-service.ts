@@ -46,7 +46,7 @@ export interface PortalSalesOpportunitySavePayload {
   prospect_name?: string | null;
   status_id?: string;
   lost_reason?: string | null;
-  lines?: { product_id: string; qty: number; unit_price: number | string | null }[];
+  lines?: { product_id: string; qty: number; unit_price?: number | string | null }[];
 }
 
 export interface PortalCustomerOptionItem {

@@ -24,7 +24,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
       q: string,
       page: number,
     ) => Promise<{ value: string; label: string; disabled?: boolean }[]>;
-    selectedOption?: { value: string; label: string };
+    selectedOption?: { value: string; label: string; disabled?: boolean };
     placeholder?: string;
   }) => {
     const [query, setQuery] = React.useState('');
