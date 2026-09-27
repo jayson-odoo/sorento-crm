@@ -171,20 +171,22 @@ def keep_brand_lines(db: Session, orders: list, brand_product_filter) -> list:
 
     `brand_product_filter` is `narrow_product_ids_by_brand`'s subquery. Returns
     `OrderResponse` rows, never a mutated ORM collection (dropping a line off
-    `Order.lines` would be a pending delete)."""
+    `Order.lines` would be a pending delete). The kept lines are read through the
+    subquery by the page's order ids, so the brand's product ids are never bound (N3)."""
     from app.schemas.order import OrderResponse
 
-    line_product_ids = {
-        str(line.product_id) for o in orders for line in (o.lines or []) if line.product_id
-    }
+    order_ids = [str(o.id) for o in orders]
     kept: set[str] = set()
-    if line_product_ids:
-        stmt = brand_product_filter.where(Product.id.in_(line_product_ids))
+    if order_ids:
+        stmt = select(OrderLine.id).where(
+            OrderLine.order_id.in_(order_ids),
+            OrderLine.product_id.in_(brand_product_filter),
+        )
         kept = {str(row[0]) for row in db.execute(stmt)}
     out = []
     for o in orders:
         row = OrderResponse.model_validate(o)
-        row.lines = [line for line in (row.lines or []) if str(line.product_id) in kept]
+        row.lines = [line for line in (row.lines or []) if str(line.id) in kept]
         out.append(row)
     return out
 
