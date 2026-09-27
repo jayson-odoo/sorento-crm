@@ -106,7 +106,8 @@ export interface ContactChatbotOpenOrderRow {
   kind: string;
   status: string;
   summary: string;
-  date: string;
+  /** Null when the order carries no order date. */
+  date: string | null;
   href: string;
 }
 

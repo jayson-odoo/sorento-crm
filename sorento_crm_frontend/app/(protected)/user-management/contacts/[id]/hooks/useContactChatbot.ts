@@ -29,7 +29,13 @@ export function useSaveContactChatbotProfile(contactId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: ContactChatbotSaveInput) => saveContactChatbotProfile(contactId, input),
-    onSuccess: () => {
+    onSuccess: (profile) => {
+      // Quick successive toggles can otherwise revert each other: an in-flight
+      // refetch from an EARLIER save's invalidate can land after this one and
+      // overwrite it. Setting the cache straight from this save's own response
+      // makes it visible immediately, with no window for that race (review
+      // finding N9).
+      queryClient.setQueryData(contactChatbotQueryKey(contactId), profile);
       queryClient.invalidateQueries({ queryKey: contactChatbotQueryKey(contactId) });
       // The memory context level is the same underlying value the memory card
       // displays (own/system default) - a profile save has to refresh that read too.

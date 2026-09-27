@@ -89,9 +89,15 @@ export default function MemorySettingsCard({
         </div>
         <div className="flex items-center justify-between gap-4">
           <Label className="font-normal">Contacts with their own level</Label>
-          {/* No filter on the Contacts list keys "own chatbot memory level" yet
-              (Phase 1) - a plain link until Phase 2 adds one. */}
-          <Link href="/user-management/contacts" className="text-sm text-primary hover:underline">
+          {/* `chatbot_memory_level=own` (review finding S13, AC-MEM028): the sentinel
+              for "has its own level set" (`respond_contacts.chatbot_memory_level IS
+              NOT NULL`). The Contacts list itself reading this param is separate
+              backend + list-wiring work - carrying it here is what makes that work
+              land as a filtered link rather than a rename. */}
+          <Link
+            href="/user-management/contacts?chatbot_memory_level=own"
+            className="text-sm text-primary hover:underline"
+          >
             {draft.own_level_count} contact{draft.own_level_count === 1 ? '' : 's'}
           </Link>
         </div>

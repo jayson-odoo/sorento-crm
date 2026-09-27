@@ -796,6 +796,10 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
                     + "."
                 ),
             )
+        # A partial body changes only the keys it names (reviewer pass at d89110c0,
+        # S9): `{"enabled": true}` alone must not drop the stored `default_level`,
+        # which would resolve every contact to off with the switch on.
+        update_data["chatbot_memory"] = {**(settings.chatbot_memory or {}), **memory}
 
     # The chatbot columns are NOT NULL with a default, so an explicit `null` in the body
     # means "reset to the default" - not a null write. Without this the loop below sends

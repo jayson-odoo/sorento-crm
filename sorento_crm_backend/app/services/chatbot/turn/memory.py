@@ -255,6 +255,11 @@ def write_episode_for_reset(
         # pre-rearch reader) while `chatbot.turns.id` is UUID - cast to compare.
         ~cast(ChatbotTurn.id, String).in_(already_closed),
     )
+    if is_test:
+        # The only test frames are the console's (D14's named exception), so the range
+        # is console turns only, never another dry run of the same contact (Prompts
+        # screen, API) - reviewer pass at d89110c0, S15.
+        query = query.filter(ChatbotTurn.ingress == "console")
     if upper_bound is not None:
         query = query.filter(ChatbotTurn.created_at <= upper_bound)
     if lower_bound is not None:

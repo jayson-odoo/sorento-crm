@@ -411,11 +411,14 @@ export interface TurnDetailFactSaved {
 }
 
 export interface TurnDetailMemory {
-  level: TurnDetailMemoryLevel;
+  /** `null` on a turn recorded before this key existed on the `memory` trace event -
+   *  the raw entry never had it, so the backend's `_memory()` reads `None`. */
+  level: TurnDetailMemoryLevel | null;
   focus: TurnDetailMemoryFocus;
   profile: TurnDetailMemoryProfile;
-  episodes: TurnDetailMemoryEpisodes;
-  facts_saved: TurnDetailFactSaved[];
+  /** `null` for the same pre-lane reason as `level` above. */
+  episodes: TurnDetailMemoryEpisodes | null;
+  facts_saved: TurnDetailFactSaved[] | null;
   open_question?: unknown;
   written?: boolean;
   dry_run?: boolean;
@@ -455,7 +458,9 @@ export interface TurnDetailOrderNeighbor {
 
 export interface TurnDetailOrder {
   ticket: number;
-  wait_ms: number;
+  /** `null` on a queue TIMEOUT - the wait never finished, so nothing was timed
+   *  (`app/services/chatbot/trace_detail.py::_order`). */
+  wait_ms: number | null;
   previous: TurnDetailOrderNeighbor | null;
   next: TurnDetailOrderNeighbor | null;
 }

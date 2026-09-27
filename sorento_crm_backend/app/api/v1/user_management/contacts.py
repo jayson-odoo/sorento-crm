@@ -79,6 +79,9 @@ async def get_contacts(
     query: Optional[str] = Query(None),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
+    # AC-MEM028 (reviewer pass at d89110c0, S13): `own` lists the contacts that set
+    # their own chatbot memory level, the Memory card's count link.
+    chatbot_memory_level: Optional[Literal["own"]] = Query(None),
     current_user: dict = Depends(require_permission("user_management.contacts.view")),
     db: Session = Depends(get_db)
 ):
@@ -90,7 +93,8 @@ async def get_contacts(
             limit=limit,
             query=query,
             sort_field=sort or "created_at",
-            sort_dir=dir or "asc"
+            sort_dir=dir or "asc",
+            own_memory_level_only=chatbot_memory_level == "own",
         )
         return result
     except HTTPException:
@@ -202,7 +206,9 @@ async def create_contact(
 async def update_contact(
     contact_id: str,
     contact_data: RespondContactUpdate,
-    current_user: dict = Depends(get_current_user),
+    # Reviewer pass at d89110c0 (S8): the same edit slug every other write on the
+    # contact's editable surface requires.
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db)
 ):
     """Update a respond contact."""
@@ -266,22 +272,12 @@ async def update_contact_chatbot(
     """
     _ = current_user
     try:
-        contact = ContactService(db).get_contact(contact_id)
+        service = ContactService(db)
+        contact = service.get_contact(contact_id)
         if body.chatbot_profile is not None:
             # Chatbot memory lane A (contract section 5): "`chatbot_profile` in the
-            # body never touches `facts`" - a whole-profile PUT sends `tier`/
-            # `default_ledgers`, never the facts list, so a bare replace would
-            # silently wipe every learned/said/staff fact on the very next save.
-            # S1 (security review 26 Sep 2026): drop whatever `facts` the body
-            # itself carries UNCONDITIONALLY, then restore what is actually
-            # stored - none stored means none in the saved profile too, never
-            # whatever a caller's body happened to send.
-            merged_profile = dict(body.chatbot_profile)
-            merged_profile.pop("facts", None)
-            existing_facts = (contact.chatbot_profile or {}).get("facts")
-            if existing_facts is not None:
-                merged_profile["facts"] = existing_facts
-            contact.chatbot_profile = merged_profile
+            # body never touches `facts`" - see `write_chatbot_profile_keeping_facts`.
+            service.write_chatbot_profile_keeping_facts(contact.id, body.chatbot_profile)
         # Present (including explicit null) sets it; absent leaves it alone - the same
         # rule every other field on this card follows. `model_fields_set` is the only
         # way to tell "sent as null" from "not sent at all" once both read as `None`.
@@ -355,8 +351,17 @@ async def put_contact_chatbot_fact(
 ):
     """Sets a staff fact; 422 on an unknown key, a CRM-only key, a value outside its
     choices, or over its length/count limit (contract section 5)."""
+    from app.services.user_service import UserPermissionService
+
+    # Reviewer pass at d89110c0 (B4): the response is the memory GET's body, so it
+    # hides `episodes` exactly as the GET does.
+    can_view_episodes = UserPermissionService(db).check_user_has_permission(
+        current_user["id"], _CHATBOT_EPISODES_VIEW
+    )
     try:
-        return ContactService(db).set_contact_fact(contact_id, key, body.value, user_id=current_user["id"])
+        return ContactService(db).set_contact_fact(
+            contact_id, key, body.value, user_id=current_user["id"], include_episodes=can_view_episodes
+        )
     except HTTPException:
         raise
     except Exception as e:

@@ -1213,7 +1213,14 @@ def _short_day_time(when: Any) -> str:
     return f"{_WEEKDAY_ABBR[when.weekday()]} {when.strftime('%H:%M')}"
 
 
-def _memory_intake(db: Session, *, contact_respond_id: str, dry_run: bool) -> dict[str, Any]:
+def _memory_intake(
+    db: Session,
+    *,
+    contact_respond_id: str,
+    dry_run: bool,
+    turn_id: str | None = None,
+    console: bool = False,
+) -> dict[str, Any]:
     """Everything `context.assemble` needs beyond what `turn_runtime.load_profile`
     already reads, loaded once at intake and timed as `memory_ms` (contract section
     3/6.6): the effective level, the last 3 closed-frame summaries (level `past`/
@@ -1248,6 +1255,7 @@ def _memory_intake(db: Session, *, contact_respond_id: str, dry_run: bool) -> di
             "earlier_messages": [],
             "profile_facts": None,
             "read_frames": [],
+            "profile_snapshot": None,
             "ms": int((time.perf_counter() - started) * 1000),
             "degraded_reason": reason,
         }
@@ -1270,6 +1278,8 @@ def _memory_intake(db: Session, *, contact_respond_id: str, dry_run: bool) -> di
             own_level=own_level,
             dry_run=dry_run,
             started=started,
+            turn_id=turn_id,
+            console=console,
         )
     except Exception:  # noqa: BLE001 - a memory read failure degrades, never fails the turn
         logger.warning("chatbot: memory intake failed", exc_info=True)
@@ -1284,6 +1294,8 @@ def _memory_intake_resolved(
     own_level: str | None,
     dry_run: bool,
     started: float,
+    turn_id: str | None = None,
+    console: bool = False,
 ) -> dict[str, Any]:
     from app.models.access import RespondContact
     from app.models.chatbot_turn import ChatbotTurn
@@ -1335,6 +1347,14 @@ def _memory_intake_resolved(
             ChatbotTurn.contact_respond_id == contact_respond_id,
             ChatbotTurn.is_test.is_(dry_run),
         )
+        if turn_id is not None:
+            # `_insert_turn` has already committed THIS turn's row; it is the current
+            # message, never an earlier one (reviewer pass at d89110c0, S1).
+            live_query = live_query.filter(ChatbotTurn.id != turn_id)
+        if dry_run and console:
+            # The console's world is console turns only, not other dry runs of the
+            # same contact (Prompts screen, API) - S15.
+            live_query = live_query.filter(ChatbotTurn.ingress == "console")
         if newest_frame is not None:
             live_query = live_query.filter(ChatbotTurn.created_at > newest_frame.last_activity_at)
         live_turns = live_query.order_by(ChatbotTurn.created_at.desc()).limit(3).all()
@@ -1343,8 +1363,11 @@ def _memory_intake_resolved(
             if text_value:
                 earlier_messages.append({"created_at": _short_day_time(row.created_at), "text": text_value})
 
+    contact_row = db.query(RespondContact).filter(RespondContact.id == contact_pk).first()
+    # The `memory` event's profile BEFORE, taken here, before any write this turn makes
+    # (reviewer pass at d89110c0, S22).
+    profile_snapshot = _profile_snapshot(contact_row)
     if effective == "full":
-        contact_row = db.query(RespondContact).filter(RespondContact.id == contact_pk).first()
         if contact_row is not None:
             merged = profile_facts_mod.merged_facts_for_display(db, contact_row)
             crm = profile_facts_mod.crm_view(db, contact_row)
@@ -1362,7 +1385,21 @@ def _memory_intake_resolved(
         "earlier_messages": earlier_messages,
         "profile_facts": profile_facts_list,
         "read_frames": read_frames,
+        "profile_snapshot": profile_snapshot,
         "ms": int((time.perf_counter() - started) * 1000),
+    }
+
+
+def _profile_snapshot(contact_row: Any) -> dict[str, Any] | None:
+    """What the `memory` event shows of the contact's profile: the saved fact count,
+    tier and language, off one `respond_contacts` row."""
+    if contact_row is None:
+        return None
+    profile = contact_row.chatbot_profile or {}
+    return {
+        "facts_count": len(profile.get("facts") or []),
+        "tier": profile.get("tier"),
+        "language": profile.get("language"),
     }
 
 
@@ -1457,12 +1494,19 @@ def _run_stages(  # noqa: PLR0915
         # summaries, the live episode's earlier messages and the profile slice -
         # everything `context.assemble` needs beyond the profile row already read
         # above, off the SAME session, timed as `memory_ms`.
-        memory_intake = _memory_intake(db, contact_respond_id=contact_respond_id, dry_run=dry_run)
+        memory_intake = _memory_intake(
+            db,
+            contact_respond_id=contact_respond_id,
+            dry_run=dry_run,
+            turn_id=turn_id,
+            console=envelope.ingress == "console",
+        )
         # Security review 26 Sep 2026 (B1): the ONE contact this turn resolved to,
         # already workspace-scoped and lock-safe - every later fact write in this
         # turn (tier, tally, `profile_statement`) reads this instead of re-deriving
         # an ambiguous lookup by `respond_io_id`. `None` when intake degraded.
         remembered_before["_contact_pk"] = memory_intake.get("contact_pk")
+        remembered_before["_profile_before"] = memory_intake.get("profile_snapshot")
         # PR #1247 round 8: the last three exchanges, so a short reply is read against
         # what was asked. Same rows, same scopes, same session as the line above.
         recent = turn_runtime.recent_exchanges(
@@ -3076,6 +3120,10 @@ def _run_stages(  # noqa: PLR0915
             turn_trace=turn_trace,
             stage=stage,
             state=state_out,
+            verdict=verdict,
+            remembered_before=remembered_before,
+            contact_respond_id=contact_respond_id,
+            recalled=recalled,
         )
 
     if branch_kind == "low_signal" and completes_here:
@@ -3092,6 +3140,10 @@ def _run_stages(  # noqa: PLR0915
             clarifier_config=clarifier_config,
             setup_error=clarifier_setup_error,
             state=state_out,
+            verdict=verdict,
+            remembered_before=remembered_before,
+            contact_respond_id=contact_respond_id,
+            recalled=recalled,
         )
 
     return TurnResult(
@@ -3262,63 +3314,15 @@ def _run_answer(
             _log_session_write(db, turn_id=turn_id, contact_respond_id=contact_respond_id)
             written = True
 
-        # AC-MEM033/AC-MEM069 (round 3): `profile_statements` (a LIST, up to 3) the
-        # parser read off THIS message is applied here, in the tail - never earlier,
-        # since a statement is only worth learning once the turn itself is being
-        # persisted (a dry run persists nothing, so it learns nothing either).
-        # Round 3 also drops the OLD level gate here: facts are learned and saved at
-        # EVERY context level, Off included (PLAN 6.0, AC-MEM049) - the level decides
-        # only what the bot READS. `apply_statement` owns every validation and
-        # precedence rule; `None` back means it was rejected (an invalid value, or a
-        # staff fact already owns the key) and nothing is saved.
-        facts_saved: list[dict[str, Any]] = list(remembered_before.get("_facts_tallied") or [])
-        statements_raw = verdict.get("profile_statements")
-        # "up to 3" is a POSITION cap on the verdict's own list, applied before
-        # validation - a verdict naming 4 (however it got past the strict schema)
-        # writes only the first three, whether or not each of those three is itself
-        # valid (AC-MEM033/069's own "keep first 3" test).
-        statements = statements_raw[:3] if isinstance(statements_raw, list) else []
-        if not dry_run:
-            # Security review 26 Sep 2026 (B1): lock by the primary key intake
-            # already resolved for this turn, never re-derive by the ambiguous
-            # `respond_io_id`. An intake that degraded (no pk resolved) writes
-            # nothing, for every statement alike.
-            tail_contact_pk = remembered_before.get("_contact_pk")
-            for statement in statements:
-                if not isinstance(statement, dict) or not statement.get("key"):
-                    continue
-                stmt_key = statement.get("key")
-                stmt_spec = profile_facts_mod.VOCABULARY.get(stmt_key)
-                if stmt_spec is None or not stmt_spec.allow_stated:
-                    # A statement naming a key outside the six-key stated
-                    # vocabulary (contract section 6.5) - traced regardless of the
-                    # contact's own memory level, since this is the PARSER's
-                    # emission being out of bounds, not a settings decision.
-                    turn_trace.add(
-                        "profile_statement_dropped",
-                        {"key": stmt_key, "reason": "not a stated-vocabulary key"},
-                    )
-                    continue
-                if tail_contact_pk is None:
-                    turn_trace.add(
-                        "profile_statement_dropped",
-                        {"key": stmt_key, "reason": "contact resolution degraded"},
-                    )
-                    continue
-                try:
-                    entry = profile_facts_mod.apply_statement(
-                        db,
-                        contact_respond_id,
-                        stmt_key,
-                        statement.get("value"),
-                        turn_id=turn_id,
-                        contact_pk=tail_contact_pk,
-                    )
-                except Exception:  # noqa: BLE001 - a lost statement is never a lost turn
-                    logger.warning("chatbot: profile_statement apply did not run", exc_info=True)
-                    entry = None
-                if entry is not None:
-                    facts_saved.append({"key": entry["key"], "source": entry["source"]})
+        facts_saved = _apply_profile_statements(
+            db,
+            turn_trace,
+            verdict=verdict,
+            remembered_before=remembered_before,
+            contact_respond_id=contact_respond_id,
+            turn_id=turn_id,
+            dry_run=dry_run,
+        )
 
         _record_memory_trace(
             db,
@@ -3364,6 +3368,95 @@ def _run_answer(
         status="done",
         stage="sent",
     )
+
+
+def _apply_profile_statements(
+    db: Session,
+    turn_trace: Any,
+    *,
+    verdict: dict[str, Any],
+    remembered_before: dict[str, Any],
+    contact_respond_id: str,
+    turn_id: str,
+    dry_run: bool,
+) -> list[dict[str, Any]]:
+    """Apply the verdict's `profile_statements` and return the facts this turn saved
+    (the tally's, stashed at the topic reset, plus the stated ones)."""
+    # AC-MEM033/AC-MEM069 (round 3): `profile_statements` (a LIST, up to 3) the
+    # parser read off THIS message is applied in the tail of EVERY live arm - the
+    # answer, the casual lane and the escalation arm (reviewer pass at d89110c0, B1: a
+    # statement-only message has no domain and routes to `low_signal`) - never
+    # earlier, since a statement is only worth learning once the turn itself is being
+    # persisted (a dry run persists nothing, so it learns nothing either).
+    # Round 3 also drops the OLD level gate here: facts are learned and saved at
+    # EVERY context level, Off included (PLAN 6.0, AC-MEM049) - the level decides
+    # only what the bot READS. `apply_statement` owns every validation and
+    # precedence rule; `None` back means it was rejected (an invalid value, or a
+    # staff fact already owns the key) and nothing is saved.
+    facts_saved: list[dict[str, Any]] = list(remembered_before.get("_facts_tallied") or [])
+    statements_raw = verdict.get("profile_statements")
+    # "up to 3" is a POSITION cap on the verdict's own list, applied before
+    # validation - a verdict naming 4 (however it got past the strict schema)
+    # writes only the first three, whether or not each of those three is itself
+    # valid (AC-MEM033/069's own "keep first 3" test).
+    statements = statements_raw[:3] if isinstance(statements_raw, list) else []
+    if not dry_run:
+        # Security review 26 Sep 2026 (B1): lock by the primary key intake
+        # already resolved for this turn, never re-derive by the ambiguous
+        # `respond_io_id`. An intake that degraded (no pk resolved) writes
+        # nothing, for every statement alike.
+        tail_contact_pk = remembered_before.get("_contact_pk")
+        for statement in statements:
+            if not isinstance(statement, dict) or not statement.get("key"):
+                continue
+            stmt_key = statement.get("key")
+            stmt_spec = profile_facts_mod.VOCABULARY.get(stmt_key)
+            if stmt_spec is None or not stmt_spec.allow_stated:
+                # A statement naming a key outside the six-key stated
+                # vocabulary (contract section 6.5) - traced regardless of the
+                # contact's own memory level, since this is the PARSER's
+                # emission being out of bounds, not a settings decision.
+                turn_trace.add(
+                    "profile_statement_dropped",
+                    {"key": stmt_key, "reason": "not a stated-vocabulary key"},
+                )
+                continue
+            if tail_contact_pk is None:
+                turn_trace.add(
+                    "profile_statement_dropped",
+                    {"key": stmt_key, "reason": "contact resolution degraded"},
+                )
+                continue
+            try:
+                entry = profile_facts_mod.apply_statement(
+                    db,
+                    contact_respond_id,
+                    stmt_key,
+                    statement.get("value"),
+                    turn_id=turn_id,
+                    contact_pk=tail_contact_pk,
+                )
+            except Exception:  # noqa: BLE001 - a lost statement is never a lost turn
+                logger.warning("chatbot: profile_statement apply did not run", exc_info=True)
+                turn_trace.add("profile_statement_dropped", {"key": stmt_key, "reason": "apply error"})
+                continue
+            if entry is not None:
+                facts_saved.append({"key": entry["key"], "source": entry["source"]})
+            else:
+                turn_trace.add(
+                    "profile_statement_dropped",
+                    {"key": stmt_key, "reason": _dropped_reason(db, stmt_key, statement.get("value"))},
+                )
+    return facts_saved
+
+
+def _dropped_reason(db: Session, key: str, value: Any) -> str:
+    """Why `apply_statement` saved nothing: the value failed the key's validation, or a
+    fact that outranks a statement (staff) already owns the key."""
+    spec = profile_facts_mod.VOCABULARY[key]
+    if profile_facts_mod._normalize_for_stated(key, spec, value, db) is None:
+        return "invalid value"
+    return "outranked"
 
 
 def _run_entities_only_arm(
@@ -3755,6 +3848,7 @@ def _record_memory_trace(
     dry_run: bool,
     written: bool,
     facts_saved: list[dict[str, Any]] | None = None,
+    record_remembered: bool = True,
 ) -> None:
     """The `memory` trace record (chatbot memory lane A, contract section 6): the
     contact's context level, the three shelves before/after with their writer, what
@@ -3767,21 +3861,21 @@ def _record_memory_trace(
     from app.services.chatbot.turn.pending import to_wire
     from app.services.chatbot.turn.state import focus_to_wire
 
+    # The contact intake resolved (workspace-scoped, by primary key), never a second
+    # `respond_io_id` lookup; the profile BEFORE is intake's snapshot, the AFTER is
+    # read now, once this turn's writes are in (reviewer pass at d89110c0, S22).
+    contact_pk = before.get("_contact_pk")
     contact_row = (
-        db.query(RespondContact.chatbot_memory_level, RespondContact.chatbot_profile)
-        .filter(RespondContact.respond_io_id == contact_respond_id)
-        .first()
+        db.query(RespondContact).filter(RespondContact.id == contact_pk).first()
+        if contact_pk is not None
+        else None
     )
-    own_level = contact_row[0] if contact_row is not None else None
-    chatbot_profile = (contact_row[1] if contact_row is not None else None) or {}
-    facts_count = len(chatbot_profile.get("facts") or {})
+    own_level = contact_row.chatbot_memory_level if contact_row is not None else None
     system_memory = db.query(SystemSetting.chatbot_memory).scalar()
     effective = memory_mod.resolve_level(own_level, system_memory)
-    profile_snapshot = {
-        "facts_count": facts_count,
-        "tier": state.profile.tier,
-        "language": state.profile.language,
-    }
+    profile_after = _profile_snapshot(contact_row)
+    if profile_after is not None and state is not None:
+        profile_after = {**profile_after, "tier": state.profile.tier, "language": state.profile.language}
 
     turn_trace.add(
         "memory",
@@ -3789,12 +3883,12 @@ def _record_memory_trace(
             "level": {"own": own_level, "effective": effective},
             "focus": {
                 "before": before.get("focus") or {},
-                "after": focus_to_wire(state.focus),
+                "after": focus_to_wire(state.focus) if state is not None else None,
                 "writer": "apply",
             },
             "profile": {
-                "before": profile_snapshot,
-                "after": profile_snapshot,
+                "before": before.get("_profile_before"),
+                "after": profile_after,
                 "writer": "contact",
             },
             "episodes": {
@@ -3812,6 +3906,10 @@ def _record_memory_trace(
             "dry_run": dry_run,
         },
     )
+    if not record_remembered:
+        # The casual and escalation arms hand the session write to `complete_turn`,
+        # whose own tail records `remembered`.
+        return
     turn_trace.record(
         "remembered",
         summary=(
@@ -3822,6 +3920,48 @@ def _record_memory_trace(
         why="The CRM is the only writer of the conversation state on the turn path (D2).",
         facts={"written": written, "dry_run": dry_run},
         raw=None,
+    )
+
+
+def _remember_on_delegated_arm(
+    db: Session,
+    turn_trace: Any,
+    *,
+    turn_id: str,
+    verdict: dict[str, Any] | None,
+    remembered_before: dict[str, Any] | None,
+    contact_respond_id: str | None,
+    recalled: list[dict[str, Any]] | None,
+    state: Any,
+    dry_run: bool,
+) -> None:
+    """The memory half of `_run_answer`'s tail for the two arms that hand the session
+    write to `complete_turn` (casual, escalation): apply the verdict's statements and
+    record the `memory` event, so a statement-only turn is remembered and traced like
+    any other (reviewer pass at d89110c0, B1 and S22)."""
+    if verdict is None or remembered_before is None or contact_respond_id is None:
+        return
+    facts_saved = _apply_profile_statements(
+        db,
+        turn_trace,
+        verdict=verdict,
+        remembered_before=remembered_before,
+        contact_respond_id=contact_respond_id,
+        turn_id=turn_id,
+        dry_run=dry_run,
+    )
+    _record_memory_trace(
+        db,
+        turn_trace,
+        contact_respond_id=contact_respond_id,
+        before=remembered_before,
+        state=state,
+        answer=None,
+        recalled=list(recalled or []),
+        dry_run=dry_run,
+        written=not dry_run,
+        facts_saved=facts_saved,
+        record_remembered=False,
     )
 
 
@@ -3839,6 +3979,10 @@ def _run_casual_lane(
     clarifier_config: Any,
     setup_error: str | None = None,
     state: Any = None,
+    verdict: dict[str, Any] | None = None,
+    remembered_before: dict[str, Any] | None = None,
+    contact_respond_id: str | None = None,
+    recalled: list[dict[str, Any]] | None = None,
 ) -> TurnResult:
     """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
 
@@ -3984,6 +4128,17 @@ def _run_casual_lane(
     }
 
     with _session(session_factory) as db:
+        _remember_on_delegated_arm(
+            db,
+            turn_trace,
+            turn_id=turn_id,
+            verdict=verdict,
+            remembered_before=remembered_before,
+            contact_respond_id=contact_respond_id,
+            recalled=recalled,
+            state=state,
+            dry_run=dry_run,
+        )
         _close_turn(
             db,
             turn_id,
@@ -4031,6 +4186,10 @@ def _run_escalation_arm(
     turn_trace: Any,
     stage: list[str],
     state: Any = None,
+    verdict: dict[str, Any] | None = None,
+    remembered_before: dict[str, Any] | None = None,
+    contact_respond_id: str | None = None,
+    recalled: list[dict[str, Any]] | None = None,
 ) -> TurnResult:
     """The `out_of_scope` lane, from the lane call to the closed turn (AC-501 to AC-505).
 
@@ -4124,6 +4283,17 @@ def _run_escalation_arm(
     # tail reads `prior_actions` off it, so a duplicate replays them too (D15).
     all_actions = [*actions, *lane_actions]
     with _session(session_factory) as db:
+        _remember_on_delegated_arm(
+            db,
+            turn_trace,
+            turn_id=turn_id,
+            verdict=verdict,
+            remembered_before=remembered_before,
+            contact_respond_id=contact_respond_id,
+            recalled=recalled,
+            state=state,
+            dry_run=dry_run,
+        )
         _close_turn(
             db,
             turn_id,

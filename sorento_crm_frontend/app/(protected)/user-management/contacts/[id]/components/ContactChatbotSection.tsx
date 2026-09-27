@@ -26,7 +26,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { FormDialogScaffold } from '@/components/common/FormDialogScaffold';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
-import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDate, formatDateSafe, formatDateTimeInMalaysia } from '@/lib/helpers';
 
 import {
   contactChatbotMemoryQueryKey,
@@ -193,7 +193,7 @@ function ChatbotSettingsCard({
               onChange={(v) => save.mutate({ ...profile, tier: v || null })}
               clearable
               disabled={save.isPending}
-              placeholder="(none) - answered on the next pick"
+              placeholder="(none)"
               options={TIER_OPTIONS}
             />
           </div>
@@ -448,21 +448,26 @@ function WhatTheBotKnowsCard({
               >
                 <Pencil className="size-4" />
               </Button>
-              <Button
-                mode="icon"
-                variant="ghost"
-                size="sm"
-                aria-label={`Delete ${fact.label}`}
-                onClick={() => {
-                  deletion.run({
-                    id: factCompositeId(contactId, fact.key),
-                    subject: fact.label,
-                    payload: { contact_id: contactId, key: fact.key },
-                  });
-                }}
-              >
-                <Trash2 className="size-4 text-destructive" />
-              </Button>
+              {/* A CRM fact (e.g. "segment") is a live join, never stored (contract
+                  section 4) - there is nothing behind it to delete, so the countdown
+                  used to commit and change nothing (review finding S11). */}
+              {fact.source !== 'crm' && (
+                <Button
+                  mode="icon"
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Delete ${fact.label}`}
+                  onClick={() => {
+                    deletion.run({
+                      id: factCompositeId(contactId, fact.key),
+                      subject: fact.label,
+                      payload: { contact_id: contactId, key: fact.key },
+                    });
+                  }}
+                >
+                  <Trash2 className="size-4 text-destructive" />
+                </Button>
+              )}
             </div>
           );
         },
@@ -706,7 +711,7 @@ function ConversationsCard({
       emptyMessage={
         noAccess
           ? "You do not have permission to view this contact's conversation history."
-          : 'No conversations recorded yet. See Chat History for the raw transcript.'
+          : 'No conversations recorded yet.'
       }
     >
       <Card>
@@ -769,7 +774,7 @@ function OpenOrdersCard({
       {
         accessorKey: 'date',
         header: 'Date',
-        cell: ({ row }) => <span>{formatDate(row.original.date)}</span>,
+        cell: ({ row }) => <span>{formatDateSafe(row.original.date)}</span>,
         size: 100,
       },
     ],

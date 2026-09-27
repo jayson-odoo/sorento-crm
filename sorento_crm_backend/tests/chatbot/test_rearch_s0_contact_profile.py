@@ -119,7 +119,10 @@ def test_get_contact_detail_returns_chatbot_profile_and_memory_level(db, client)
 
 def test_put_contact_accepts_chatbot_profile(db, client):
     """Superseded (round 3, AC-MEM054) from `test_put_contact_accepts_chatbot_
-    recall_enabled_and_profile`: the recall field is gone from the body too."""
+    recall_enabled_and_profile`: the recall field is gone from the body too.
+    The route needs `user_management.contacts.edit` since the reviewer pass at
+    d89110c0 (S8)."""
+    _GRANTS.add("user_management.contacts.edit")
     contact_id = _seed_contact(db)
     resp = client.put(
         f"{BASE}/{contact_id}",

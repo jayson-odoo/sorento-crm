@@ -202,7 +202,16 @@ def _write_fact(
     contact_pk, profile = locked
     facts = list(profile.get("facts") or [])
     existing = next((f for f in facts if f.get("key") == key), None)
-    if existing is not None and _PRECEDENCE.get(existing.get("source"), -1) > _PRECEDENCE.get(source, -1):
+    # A tombstone (a staff delete of a learned or said fact) blocks only a TALLY of
+    # the values it removed; a newer statement replaces it (reviewer pass at d89110c0,
+    # S10). Its `removed` list rides on whatever replaces it, so the same values stay
+    # blocked for the next tally too.
+    removed = list(existing.get("removed") or []) if existing is not None and existing.get("value") is None else None
+    if removed is not None and source == "tallied":
+        value = [v for v in (value if isinstance(value, list) else [value]) if v not in removed]
+        if not value:
+            return None
+    if removed is None and existing is not None and _PRECEDENCE.get(existing.get("source"), -1) > _PRECEDENCE.get(source, -1):
         # A stated write never replaces a staff entry; a tally never replaces a
         # staff or stated entry (contract section 4) - including a tombstone stub
         # (`value: null`), which still carries `source: "staff"`.
@@ -222,6 +231,8 @@ def _write_fact(
         ),
         "set_by": set_by,
     }
+    if removed:
+        entry["removed"] = removed
     new_facts = [f for f in facts if f.get("key") != key]
     new_facts.append(entry)
     _persist_facts(db, contact_pk, new_facts)
@@ -260,6 +271,8 @@ def crm_view(db: Session, contact: Any) -> list[dict[str, Any]]:
             ),
             "source": "crm",
             "last_seen": None,
+            # AC-MEM043 (reviewer pass at d89110c0, S11): the row links to the customer.
+            "link": f"/order-management/customers/{customer.id}",
         }
     ]
     if customer.market_segment_code:
@@ -483,6 +496,15 @@ def apply_statement(
 
 
 def _normalize_for_staff(key: str, spec: FactSpec, value: Any, db: Session) -> Any:
+    # N4: a list is only a value for a list key, and more brands or sites than the
+    # key keeps is a 422, not a silent cut (`usual_products` is capped, by ruling).
+    if spec.kind == "multi":
+        if key in ("usual_brands", "usual_sites") and isinstance(value, list) and len(value) > (
+            spec.max_items or TALLY_TOP_N
+        ):
+            return None
+    elif not isinstance(value, str):
+        return None
     if spec.choices:
         return _normalize_choice(value, spec.choices)
     if key == "usual_brands":
@@ -493,7 +515,7 @@ def _normalize_for_staff(key: str, spec: FactSpec, value: Any, db: Session) -> A
         return _normalize_usual_products(value, spec.max_items or TALLY_TOP_N)
     if spec.kind == "text":
         cleaned = _collapse_whitespace(value)
-        if spec.max_length and len(cleaned) > spec.max_length:
+        if not cleaned or (spec.max_length and len(cleaned) > spec.max_length):
             return None
         return cleaned
     return None
@@ -527,10 +549,18 @@ def delete_fact(db: Session, contact_pk: str, key: str) -> bool:
     contact_pk_id, profile = locked
     facts = list(profile.get("facts") or [])
     existing = next((f for f in facts if f.get("key") == key), None)
+    if existing is not None and existing.get("value") is None:
+        # Already a tombstone: deleting it again must not let the removed values be
+        # re-learned (reviewer pass at d89110c0, S10).
+        return True
     new_facts = [f for f in facts if f.get("key") != key]
-    if existing is not None and existing.get("source") != "staff":
-        raw_value = existing.get("value")
-        removed = raw_value if isinstance(raw_value, list) else ([raw_value] if raw_value is not None else [])
+    if existing is not None and (existing.get("source") != "staff" or existing.get("removed")):
+        # The removed values accumulate across replacements: a staff entry that
+        # replaced a tombstone keeps blocking what the tombstone blocked.
+        prior = list(existing.get("removed") or [])
+        raw_value = existing.get("value") if existing.get("source") != "staff" else None
+        values = raw_value if isinstance(raw_value, list) else ([raw_value] if raw_value is not None else [])
+        removed = prior + [v for v in values if v not in prior]
         new_facts.append(
             {
                 "key": key,
@@ -583,6 +613,7 @@ def fact_for_display(key: str, entry: dict[str, Any]) -> dict[str, Any]:
         "source": entry.get("source"),
         "last_seen": entry.get("last_seen"),
         "editable": bool(spec and spec.allow_staff),
+        "link": entry.get("link"),
     }
 
 

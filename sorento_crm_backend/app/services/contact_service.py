@@ -105,10 +105,13 @@ class ContactService:
         limit: int = 50,
         query: Optional[str] = None,
         sort_field: str = "created_at",
-        sort_dir: str = "asc"
+        sort_dir: str = "asc",
+        own_memory_level_only: bool = False,
     ):
         """List contacts with pagination and filtering."""
         q = self.db.query(RespondContact)
+        if own_memory_level_only:
+            q = q.filter(RespondContact.chatbot_memory_level.isnot(None))
         
         if query:
             like = f"%{query}%"
@@ -244,6 +247,12 @@ class ContactService:
             if existing is not None and str(existing.id) != contact_id:
                 raise handle_conflict("Contact with this phone number already exists.")
 
+        # Reviewer pass at d89110c0 (S8): `facts` has its own guarded write path
+        # (`chatbot/facts/{key}`); a generic profile write never touches it.
+        chatbot_profile = update_data.pop("chatbot_profile", None)
+        if chatbot_profile is not None:
+            self.write_chatbot_profile_keeping_facts(contact.id, chatbot_profile)
+
         for key, value in update_data.items():
             setattr(contact, key, value)
 
@@ -369,7 +378,27 @@ class ContactService:
     # doorway, the same way it already names `app/api/v1/system/chatbot.py`).
     # --------------------------------------------------------------------- #
 
-    def get_chatbot_memory(self, contact_id: str, *, include_episodes: bool = True) -> dict:
+    def write_chatbot_profile_keeping_facts(self, contact_pk: str, profile: dict) -> None:
+        """Replace `chatbot_profile` with `profile`, except `facts`: whatever `facts`
+        the body carries is dropped, and whatever is stored at write time is kept.
+
+        One UPDATE reading the stored facts inside the statement, so a fact a turn
+        commits between the caller's read and this write is not lost (reviewer pass
+        at d89110c0, S7; AC-MEM040). Not committed here."""
+        from sqlalchemy import text
+
+        body = {k: v for k, v in dict(profile).items() if k != "facts"}
+        self.db.execute(
+            text(
+                "UPDATE respond_contacts SET chatbot_profile = CAST(:p AS jsonb) || CASE "
+                "WHEN chatbot_profile ? 'facts' THEN jsonb_build_object('facts', chatbot_profile->'facts') "
+                "ELSE '{}'::jsonb END WHERE id = :i"
+            ),
+            {"p": json.dumps(body), "i": str(contact_pk)},
+        )
+        self.db.expire_all()
+
+    def get_chatbot_memory(self, contact_id: str, *, include_episodes: bool) -> dict:
         from app.models.user import SystemSetting
         from app.services.chatbot.turn import memory as memory_mod
         from app.services.chatbot.turn import profile_facts
@@ -385,7 +414,8 @@ class ContactService:
             profile_facts.fact_for_display(key, entry)
             for key in profile_facts.VOCABULARY
             for entry in (next((f for f in merged if f.get("key") == key), None),)
-            if entry is not None
+            # A tombstone (`value: null`) is bookkeeping, not a fact (S10).
+            if entry is not None and entry.get("value") is not None
         ]
         vocabulary_out = [profile_facts.vocabulary_entry(key) for key in profile_facts.VOCABULARY]
 
@@ -393,7 +423,11 @@ class ContactService:
             "level": {
                 "own": own_level,
                 "effective": effective,
-                "system_default": system_memory.get("default_level") or "full",
+                # Reviewer pass at d89110c0 (S6): with the switch off, the default
+                # a contact follows is off, whatever `default_level` is stored.
+                "system_default": (
+                    (system_memory.get("default_level") or "full") if system_memory.get("enabled") else "off"
+                ),
             },
             "facts": facts_out,
             "vocabulary": vocabulary_out,
@@ -505,7 +539,7 @@ class ContactService:
             return {"customer_name": None, "rows": []}
         orders = (
             self.db.query(SalesOrder)
-            .filter(SalesOrder.customer_id == primary.id, SalesOrder.status != "closed")
+            .filter(SalesOrder.customer_id == primary.id, SalesOrder.status.notin_(("closed", "cancelled")))
             .order_by(SalesOrder.order_date.desc().nullslast())
             .limit(5)
             .all()
@@ -523,7 +557,7 @@ class ContactService:
         ]
         return {"customer_name": primary.customer_name, "rows": rows}
 
-    def set_contact_fact(self, contact_id: str, key: str, value, *, user_id: str) -> dict:
+    def set_contact_fact(self, contact_id: str, key: str, value, *, user_id: str, include_episodes: bool) -> dict:
         from app.services.chatbot.turn import profile_facts
         from app.services.error_handler import handle_unprocessable
 
@@ -531,7 +565,7 @@ class ContactService:
         entry = profile_facts.set_staff_fact(self.db, contact_id, key, value, user_id=user_id)
         if entry is None:
             raise handle_unprocessable(f"{key!r} is not an editable fact, or the value is invalid.")
-        return self.get_chatbot_memory(contact_id)
+        return self.get_chatbot_memory(contact_id, include_episodes=include_episodes)
 
     def delete_contact_fact(self, contact_id: str, key: str) -> None:
         """N1 (security review 26 Sep 2026): 422 on an unknown key, the same as the
@@ -540,7 +574,9 @@ class ContactService:
         from app.services.error_handler import handle_unprocessable
 
         self.get_contact(contact_id)
-        if key not in profile_facts.VOCABULARY:
+        spec = profile_facts.VOCABULARY.get(key)
+        # N5: a CRM-only key has nothing stored to delete.
+        if spec is None or not spec.allow_staff:
             raise handle_unprocessable(f"{key!r} is not an editable fact.")
         profile_facts.delete_fact(self.db, contact_id, key)
 
