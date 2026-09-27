@@ -2276,3 +2276,33 @@ and `ck_sales_targets_subject` to `dealer` with `customer_id`; S4 adds `commissi
 the tiers table (the Commission section and Add tier are waiting); S3 adds the Pipeline cells
 and `pipeline_value`, `pipeline_count` on each row.
 
+
+## 18. S2 fix lane round 2: the owner's hand test (27 Sep, PR #1296)
+
+Owner rulings, verbatim on the PR ("Owner ruling from the hand test of sales S2 opportunities"
+and its addendum). Track: full (a migration, `sales_0004_opp_line_price`). Branch
+`claude/sales-opportunities-s2-32eppn`, started at 576c2c829.
+
+- **S1 merged in, never rebased.** The portal target panel reuses S1's achievement query, so
+  `origin/claude/sales-targets-s1-ex0fyg` (aa907f53) is merged into this branch, and so is
+  origin/main (d8395cb8). `sales_0003_opportunities` now sits on `sales_0003_targets`. origin/main
+  carried three alembic heads on `sales_0002_team_leader`; `sales_0003m_merge_main_heads` (no
+  schema change) joins them with the sales chain so the branch has one head.
+- **F1, one kind like Price Tag Request.** `sales_opportunity` joins `LANDING_KINDS` after
+  `price_tag_request` (label "Sales Opportunity", singular like every kind), so it gets the
+  same selector, count badge, search, filter, sort, list and grid toggles and New button. The
+  separate "Sales Opportunities / Open" card is removed. The list route takes no search term, so
+  the landing's search is applied client-side over number, title, customer or prospect and stage
+  (an agent holds tens of rows). The opportunity pages stay at `/portal/sales_opportunity/...`
+  and gain `/portal/c/{slug}/sales_opportunity/...` like Price Tag Request.
+- **F2, My target.** `GET /api/v1/public/portal/sales-opportunities/my-targets`
+  (`target_service.agent_progress`): each ACTIVE target (start <= today <= end) whose subject is
+  the contact's agent. Target is the sum of its periods; achieved is
+  `achievement_service.achieved_by_period` over every period, summed (the target page's own
+  figure); gap = target - achieved, floored at 0. An open opportunity of the agent counts when
+  its expected close date is on or before the end date (an overdue open one still counts),
+  at its expected amount for an amount target and its lines' quantity for a quantity target,
+  in full whatever the product scope (trigger to filter by scope: a scoped target whose
+  forecast the owner finds misleading). Projected = achieved + those; short = target -
+  projected, floored at 0. Layout: the mockup's option 1 (timeline plus bar towards the target),
+  posted on the PR before building.
