@@ -1,6 +1,6 @@
 # PLAN: escalation resolves the brand from the focus product (#865)
 
-Status: IN REVIEW (fix round 4 folded in: the owner's retest of round 3, 27 Sep 21:19 MYT; round 3 the owner's console retest of 27 Sep; round 2's S1, S2, N1, N2, N3 before it), small fix track (backend only, under ~300 changed app lines, no migration, no auth/RBAC change, no new ingest surface). PR #1300, branch `fix/chatbot-escalation-brand-from-focus`.
+Status: IN REVIEW (fix round 5 folded in: the owner's hand test of round 4, 28 Sep 00:05 MYT; round 4 the owner's retest of round 3, 27 Sep 21:19 MYT; round 3 the owner's console retest of 27 Sep; round 2's S1, S2, N1, N2, N3 before it), small fix track (backend only, under ~300 changed app lines, no migration, no auth/RBAC change, no new ingest surface). PR #1300, branch `fix/chatbot-escalation-brand-from-focus`.
 
 Source: the root-cause report on #865 ("Root cause: null brand on escalation after a spec answer (backup of 25 Sep)") and the owner ruling of 27 Sep 00:20 MYT authorising its fix option 1. UAC: `chatbot-escalation-brand-from-focus-acceptance-criteria.md`.
 
@@ -35,6 +35,16 @@ Three escalations in one console conversation. 1 ("check spec srtwc286", then "p
 - **R1.** `_named_teams` reads the team the customer named off the parser's `user_goal` (its reading of the message, spelling fixed; never the raw text, D11), and it beats the parser's team. "marketing" about a product in focus is Marketing Product; without one it asks over the three. The draw is made from that team, live and in the dry-run preview. No prompt change (that would be a published prompt version).
 - **R2.** `escalation_services.focus_product_origin`: a code the contact's own company does not hold is looked for across companies, for the brand read only. A row's brand is its brand row, else the brand its company stands for (Mocha company: mocha; the multi-brand Sorento company: none). A code in no company names no brand and the escalation still goes out. The session's scope is restored after the read.
 - **R3.** `routing_line` adds `found in <company>`, or `product <code> not found in any company`.
+
+## Fix round 5: the owner's hand test of round 4 (28 Sep 00:05 MYT)
+
+"pelase escalate to marketing team MWc-SC8609-)PP water closet" (a typo in the code) was answered with the SRTWC286 spec sheet; the same message with the code fixed opened "Which one do you mean? water closet (promotion) / water closet (attachment_type)"; the "1"s after it ended in product misses offering "escalate to customer service team?".
+
+- **Reconciliation.** The parser prompt's MESSAGE TYPE rule 1 already says an escalate word or a named team is `request_for_help`, "even if they also mention a product or order". The parser broke it on the typo turn. Four places in `turn/apply.py` then kept an escalation from reaching the lane: only `request_for_help` reaches it (`_lane`); `_help_request_is_an_ask` turns a help request naming a product and no domain into a product ask; `_reconcile_step`'s kind pick short-circuits before `_lane`; and `route()` lets any narrowing ask outrank the lane. The customer service offer is #1142's last rung (`turn_runtime.lane_parse_output`: accepted > named > domain > prior > `customer_service`); no merged change removed it as the final default. #713 removed the team MENU for a request naming no team; the clarify survives for an ambiguous team word ("marketing" with no product in focus) and a named person on several teams.
+- **R1.** `turn_runtime.with_named_team_escalation`: an escalate word plus a named team in the parser's `user_goal` (`lanes/escalation.asks_for_a_named_team`, the reader round 4's `_named_teams` uses; never the raw text, D11) retypes the verdict to `request_for_help` and stamps `escalation.named_teams`. `apply()` then plans the escalation only: no fetch, no narrowing or kind question, the open offer closed, and an offer made for another team never accepted (#706); one made for the named team still is (#1108).
+- **R2.** The product words are the focus (an unsure code included). `lanes/escalation._product_clarify`: a code no company holds is asked about once inside the escalation, with the resolver's trigram did-you-mean in the contact's scope (`escalation_services.product_suggestions`). The options are a `team_pick` over products; the number is an acceptance that settles the picked product on the focus, whose brand and company the draw reads.
+- **R3.** With the business lane never reached, no customer service offer and no kind menu can appear on such a turn. A miss outside an escalation keeps #1142's chain.
+- No prompt version, no migration: the rule is already the prompt's own words. Trigger to publish one: a recorded escalate-to-a-named-team turn whose `user_goal` also dropped the escalate word or the team.
 
 ## From #866's plan
 
