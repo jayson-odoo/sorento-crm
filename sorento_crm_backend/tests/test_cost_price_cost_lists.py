@@ -264,30 +264,58 @@ def test_daily_tick_has_a_seeded_schedule_row():
     """AC-CL-05: a handler with no `scheduled_tasks` row never runs - the scheduler heartbeat
     only dispatches seeded rows, so without one a Scheduled cost row would never become in
     force in production (found at the relaunch audit; the test above only proves the
-    handler is registered). Asserted on the migrated database, the way the SCM reorder run's
-    seed is (tests/scm/test_m8_slice_d.py): daily, enabled, Malaysia time, just after
-    midnight so the new day's price is in force before anyone reads it."""
+    handler is registered).
+
+    Runs `cpc2_cost_price_tick_schedule`'s own upgrade and downgrade against a blank schema,
+    the way tests/test_cost_price_permissions.py drives cpc1: `scripts.bootstrap_env` builds
+    CI's database from the models and only stamps head, so a migration's seed rows are never
+    there to read back (the same reason tests/scm/test_m8_slice_d.py is in ci_excluded.txt)."""
+    import importlib.util
+    from pathlib import Path
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
     from sqlalchemy import text
 
-    from app.database import SessionLocal
+    from tests._pg_fixture import blank_session
 
-    db = SessionLocal()
-    try:
-        row = db.execute(text("""
+    path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "cpc2_cost_price_tick_schedule.py"
+    spec = importlib.util.spec_from_file_location("zzt_migration_cpc2", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.down_revision == "cpc1_supplier_cost_lists"
+
+    def run(db, direction: str) -> None:
+        context = MigrationContext.configure(connection=db.connection())
+        with Operations.context(context):
+            getattr(module, direction)()
+
+    def read(db):
+        return db.execute(text("""
             SELECT interval_unit, interval_value, enabled, timezone,
                    EXTRACT(hour FROM ((start_at AT TIME ZONE 'utc')
-                           AT TIME ZONE 'Asia/Kuala_Lumpur'))::int AS kl_hour
+                           AT TIME ZONE 'Asia/Kuala_Lumpur'))::int AS kl_hour,
+                   EXTRACT(minute FROM ((start_at AT TIME ZONE 'utc')
+                           AT TIME ZONE 'Asia/Kuala_Lumpur'))::int AS kl_minute,
+                   next_run_at > (now() AT TIME ZONE 'utc') AS next_run_ahead
             FROM scheduled_tasks WHERE key = 'cost_price_daily_tick'
         """)).mappings().first()
-    finally:
-        db.close()
 
-    assert row is not None, "cost_price_daily_tick must be seeded in scheduled_tasks (run migrations)"
-    assert row["interval_unit"] == "days"
-    assert row["interval_value"] == 1
-    assert row["enabled"] is True
-    assert row["timezone"] == "Asia/Kuala_Lumpur"
-    assert row["kl_hour"] == 0, "the tick must run just after midnight Malaysia time"
+    with blank_session() as db:
+        db.execute(text("DELETE FROM scheduled_tasks WHERE key = 'cost_price_daily_tick'"))
+        run(db, "upgrade")
+        run(db, "upgrade")  # idempotent: a redeploy must not fail on the unique key
+        row = read(db)
+        assert row is not None, "cpc2 must seed cost_price_daily_tick in scheduled_tasks"
+        assert row["interval_unit"] == "days"
+        assert row["interval_value"] == 1
+        assert row["enabled"] is True
+        assert row["timezone"] == "Asia/Kuala_Lumpur"
+        assert (row["kl_hour"], row["kl_minute"]) == (0, 5), "the tick runs at 00:05 Malaysia time"
+        assert row["next_run_ahead"] is True
+
+        run(db, "downgrade")
+        assert read(db) is None
 
 
 # --------------------------------------------------------------------------------- AC-CL-06
