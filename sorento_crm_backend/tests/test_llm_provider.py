@@ -104,8 +104,13 @@ class _StubOpenAIClient:
             def __init__(inner) -> None:
                 inner.completions = _Completions()
 
+        class _Models:
+            def retrieve(inner, model, **_kwargs):
+                return types.SimpleNamespace(id=model, object="model")
+
         self.chat = _Chat()
         self.embeddings = _Embeddings()
+        self.models = _Models()
 
 
 # Anthropic stubs ---------------------------------------------------------
@@ -218,6 +223,11 @@ def test_openai_test_connection_failure(monkeypatch):
                 @staticmethod
                 def create(**_kwargs):
                     raise RuntimeError("nope")
+
+        class models:
+            @staticmethod
+            def retrieve(*_args, **_kwargs):
+                raise RuntimeError("nope")
 
         embeddings = None
 
