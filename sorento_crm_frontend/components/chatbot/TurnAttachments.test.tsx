@@ -47,6 +47,30 @@ describe('TurnAttachments', () => {
     const { container } = render(<TurnAttachments attachments={[]} />);
     expect(container).toBeEmptyDOMElement();
   });
+
+  // #1277 (AC-6/AC-7): offered images ride the same send_attachments action, one
+  // per image, captioned with its menu position - the console renders each as a
+  // thumbnail with that caption instead of a bare file link.
+  it('renders an image entry as a thumbnail with its caption', () => {
+    const image = {
+      url: 'https://cdn.example.com/mockup.jpg',
+      filename: 'mockup.jpg',
+      mimeType: 'image/jpeg',
+      attachmentType: 'image',
+      caption: '1',
+    } as TurnAttachment;
+    render(<TurnAttachments attachments={[image]} />);
+
+    const img = screen.getByRole('img');
+    expect(img).toHaveAttribute('src', 'https://cdn.example.com/mockup.jpg');
+    expect(screen.getByText('1')).toBeInTheDocument();
+  });
+
+  it('renders a non-image entry as a link, no <img>, as today', () => {
+    render(<TurnAttachments attachments={[FILE]} />);
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: FILE.filename })).toBeInTheDocument();
+  });
 });
 
 describe('extractTurnAttachments', () => {
@@ -71,5 +95,15 @@ describe('extractTurnAttachments', () => {
   it('drops entries with no url or filename', () => {
     const actions = [{ kind: 'send_attachments', attachments_src: [{ mimeType: 'x' }] }];
     expect(extractTurnAttachments(actions)).toEqual([]);
+  });
+
+  // #1277: `caption` (the menu position, e.g. "1") must survive extraction so the
+  // render side can show it under the thumbnail.
+  it('keeps caption on the extracted entry', () => {
+    const actions = [
+      { kind: 'send_attachments', attachments_src: [{ ...FILE, caption: '1' }] },
+    ];
+    const [entry] = extractTurnAttachments(actions);
+    expect((entry as unknown as { caption?: string }).caption).toBe('1');
   });
 });
