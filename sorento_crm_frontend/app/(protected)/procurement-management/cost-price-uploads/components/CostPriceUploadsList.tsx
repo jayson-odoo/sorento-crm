@@ -71,6 +71,7 @@ export default function CostPriceUploadsList() {
   const { data, isLoading, isPlaceholderData, isFetching, isError, error } = useCostPriceChangeSets({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
+    sorting,
     searchQuery,
     status: statuses.length ? statuses : undefined,
     supplier_id: supplierId || undefined,

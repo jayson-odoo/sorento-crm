@@ -11,30 +11,18 @@ import { toast } from '@/lib/toast';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import * as costPriceService from '../services/costPriceService';
 import type { LineDecision } from '../types/costPrice.types';
-import { OpenSetExistsError } from '../services/costPriceService';
+import { OpenSetExistsError, type CostPriceListParams } from '../services/costPriceService';
 
 export { OpenSetExistsError };
 
-export interface CostPriceListParams {
-  pageIndex: number;
-  pageSize: number;
-  searchQuery?: string;
-  status?: string[];
-  supplier_id?: string;
-}
+export type { CostPriceListParams };
 
 export function costPriceChangeSetsListQueryKey(params: CostPriceListParams): QueryKey {
-  return ['cost-price-change-sets', params.pageIndex, params.pageSize, params.searchQuery, params.status, params.supplier_id];
+  return ['cost-price-change-sets', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.status, params.supplier_id];
 }
 
 export async function fetchCostPriceChangeSetsPage(params: CostPriceListParams): Promise<ListPagerPage> {
-  const result = await costPriceService.getCostPriceChangeSets({
-    page: params.pageIndex + 1,
-    limit: params.pageSize,
-    query: params.searchQuery,
-    status: params.status,
-    supplier_id: params.supplier_id,
-  });
+  const result = await costPriceService.getCostPriceChangeSets(params);
   return { data: result.data, total: result.total };
 }
 
@@ -42,6 +30,7 @@ function costPriceListParamsFromUrl(params: ListPagerParams): CostPriceListParam
   return {
     pageIndex: params.pageIndex,
     pageSize: params.pageSize,
+    sorting: params.sorting,
     searchQuery: params.searchQuery,
     status: params.filters.status ? params.filters.status.split(',').filter(Boolean) : undefined,
     supplier_id: params.filters.supplier_id || undefined,
@@ -58,14 +47,7 @@ export const costPriceChangeSetsPagerQuery = {
 export function useCostPriceChangeSets(params: CostPriceListParams) {
   return useQuery({
     queryKey: costPriceChangeSetsListQueryKey(params),
-    queryFn: () =>
-      costPriceService.getCostPriceChangeSets({
-        page: params.pageIndex + 1,
-        limit: params.pageSize,
-        query: params.searchQuery,
-        status: params.status,
-        supplier_id: params.supplier_id,
-      }),
+    queryFn: () => costPriceService.getCostPriceChangeSets(params),
     placeholderData: (previous) => previous,
   });
 }

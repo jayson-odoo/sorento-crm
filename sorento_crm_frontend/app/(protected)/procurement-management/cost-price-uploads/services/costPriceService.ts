@@ -11,7 +11,7 @@
  */
 
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
+import { buildDataGridParams, extractApiError, type DataGridParamsInput } from '@/lib/api-client';
 import type {
   CostPriceChangeLine,
   CostPriceChangeSetCounts,
@@ -105,10 +105,7 @@ export async function uploadCostPriceFile(input: UploadCostPriceFileInput): Prom
 // 1.3 list, 1.4 detail, 1.5 lines
 // ---------------------------------------------------------------------------
 
-export interface CostPriceListParams {
-  page: number;
-  limit: number;
-  query?: string;
+export interface CostPriceListParams extends DataGridParamsInput {
   status?: string[];
   supplier_id?: string;
 }
@@ -116,10 +113,10 @@ export interface CostPriceListParams {
 export async function getCostPriceChangeSets(
   params: CostPriceListParams,
 ): Promise<{ data: CostPriceChangeSetListItem[]; total: number; page: number; limit: number }> {
-  const sp = new URLSearchParams({ page: String(params.page), limit: String(params.limit) });
-  if (params.query) sp.set('query', params.query);
-  if (params.status?.length) sp.set('status', params.status.join(','));
-  if (params.supplier_id) sp.set('supplier_id', params.supplier_id);
+  const sp = buildDataGridParams(params, {
+    status: params.status?.length ? params.status.join(',') : undefined,
+    supplier_id: params.supplier_id,
+  });
   const res = await apiFetch(`${BASE}?${sp.toString()}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load cost price uploads'));
   return res.json();
