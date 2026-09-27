@@ -13,7 +13,8 @@ Track: full (migration, auth, RBAC, portal ingest). S0 built on PR #1303 (27 Sep
 of 27 Sep 01:04 MYT to build without further alignment); the orchestrator's review at 03d3b474
 (needs work) is addressed by fix lane round 2 on the same PR, which records rulings 4, 10, 12 and
 13 in the PR body. The plan rides in that PR. S1 built on PR #1307 (stacked on S0, branch
-`claude/identity-s1-phone-signin-w6akca`, full track), ready for the orchestrator's review. S2 and S3 not started.
+`claude/identity-s1-phone-signin-w6akca`, full track); the reviewer pass at 56daafae (needs work) is
+addressed by S1 fix lane round 2 on the same PR, ready for the orchestrator's review. S2 and S3 not started.
 UAC: `identity-unified-login-acceptance-criteria.md` (same folder; the Journey is there, and every
 AC traces to a step in it).
 Classification: CORE (auth and users are base-platform), tables stay in `public`.
