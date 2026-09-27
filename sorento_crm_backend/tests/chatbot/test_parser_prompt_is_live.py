@@ -29,6 +29,7 @@ from app.services.chatbot_parser_prompt import (
     LAST_COST_ADDENDUM,
     LIVE_SYSTEM_MESSAGE_SHA256,
     LOW_STOCK_ADDENDUM,
+    SALES_ANALYSIS_ADDENDUM,
     SALES_REPORT_ADDENDUM,
     STOCK_TASK_ADDENDUM,
     TOP_SELLING_ADDENDUM,
@@ -177,10 +178,12 @@ def _without_growth_r1_addendum(text: str) -> str:
     `test_parser_growth_r1_reachability.py::test_the_addendum_is_appended_to_both_bodies`.
     """
     # PLAN-chatbot-top-x-hot-selling-24sep.md S4: `TOP_SELLING_ADDENDUM` is the newest,
-    # so it is peeled first; STOCK_TASK_ADDENDUM (ported from PR #1118, not merged,
-    # chatbot-stock-ask-v2 S3) sits beneath it.
+    # so it is peeled first; SALES_ANALYSIS_ADDENDUM (#1267 S1) sits beneath it, then
+    # STOCK_TASK_ADDENDUM (ported from PR #1118, not merged, chatbot-stock-ask-v2 S3).
     if text.endswith(TOP_SELLING_ADDENDUM):
         text = text[: -len(TOP_SELLING_ADDENDUM)]
+    if text.endswith(SALES_ANALYSIS_ADDENDUM):
+        text = text[: -len(SALES_ANALYSIS_ADDENDUM)]
     if text.endswith(STOCK_TASK_ADDENDUM):
         text = text[: -len(STOCK_TASK_ADDENDUM)]
     if text.endswith(SALES_REPORT_ADDENDUM):

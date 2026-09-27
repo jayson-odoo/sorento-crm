@@ -167,6 +167,10 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
             # PLAN-chatbot-top-x-hot-selling-24sep.md S3 (AC-1941): same rule, an
             # allow-list member only; migration `chatbot_top_selling_tool`.
             "crm_top_selling_report",
+            # PLAN-retail-sales-reports-26sep S1: an allow-list member only, picked by
+            # the `sales_analysis` override in `run_fetch`, never `tools[0]`. Migration
+            # `sales_s1_reports_module` adds it to a seeded database.
+            "crm_sales_analysis",
         ],
         escalation_team_code="customer_service",
         switch_words=[
@@ -339,6 +343,7 @@ DATE_PARAM_TOOLS: set[str] = {
     "crm_sales_report",
     "crm_low_stock_report",
     "crm_top_selling_report",
+    "crm_sales_analysis",
 }
 
 # --------------------------------------------------------------------------- #

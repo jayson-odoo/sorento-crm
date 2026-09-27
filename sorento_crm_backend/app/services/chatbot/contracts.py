@@ -369,8 +369,9 @@ DETAIL_OFFER_KINDS: tuple[str, ...] = ("outstanding_detail", "sales_report_detai
 # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 5: the `order_status`
 # values that read sales figures under the `sales_orders.sales_report` reveal key (the
 # owner's access ruling, 26 Sep 2026: no new key). The engine's grant-before-roster
-# check reads this one tuple, so the two asks cannot be gated differently.
-SALES_FIGURE_STATUSES: tuple[str, ...] = ("sales_report", "top_selling")
+# check reads this one tuple, so the asks cannot be gated differently. `sales_analysis`
+# (PLAN-retail-sales-reports-26sep S1, #1269) is gated by the same key.
+SALES_FIGURE_STATUSES: tuple[str, ...] = ("sales_report", "top_selling", "sales_analysis")
 
 # --------------------------------------------------------------------------- #
 # Session state (R2: every key compile-current-state writes, nothing dropped)
