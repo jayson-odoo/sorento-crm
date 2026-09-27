@@ -152,6 +152,11 @@ handover email purchasing receives carries those files as real attachments, name
 - Security hardening beyond the UAC: content type always derived from the extension, a hard
   10 MB per file and 10 files per request in code (independent of the admin-editable type
   row), malformed ids answer 404/422.
+- Fix round 2 (CI on ab5daf39): the lightbox body's `max-h-[60vh]` was a new site for the
+  M6-02/M6-03 fixed viewport-height sweep; converted to `max-h-[60dvh]` (not allowlisted),
+  pinned by `app/(protected)/mobile-vh.inventory.test.ts`. The red
+  `test_migration_identity_0001_s0_model.py` head check is not this lane's: it asserts
+  identity is the head, and a separate PR on main moves it to check identity's parent.
 
 ## 7. Follow-ups found in review (not this lane)
 
