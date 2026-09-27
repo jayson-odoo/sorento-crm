@@ -1,7 +1,7 @@
 """FastAPI dependencies: require module(s) enabled for current tenant."""
 from __future__ import annotations
 
-from typing import Callable, List
+from typing import Callable, List, Optional
 
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -34,6 +34,25 @@ def _roles_bypass_module(db: Session, user_id: str) -> bool:
     return bool(
         svc.get_user_role_slugs(user_id) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}
     )
+
+
+def module_blocked(db: Session, user_id: str, module_key: Optional[str]) -> bool:
+    """The router guard's own decision, callable per request for a route that serves
+    several modules (the reports kernel checks each definition's own module).
+
+    A missing module key is BLOCKED (fail closed): a report that names no owner could
+    otherwise only ever be gated by whichever router it happened to be mounted under.
+    """
+    if not module_key:
+        return True
+    if not getattr(settings, "module_guard_strict", False):
+        return False
+    if user_id == "system" or _roles_bypass_module(db, user_id):
+        return False
+    tenant_id = _tenant_id_for_request()
+    if _all_modules_effectively_enabled(db, tenant_id):
+        return False
+    return not is_module_enabled(db, tenant_id, module_key)
 
 
 def require_module_enabled(module_key: str) -> Callable:

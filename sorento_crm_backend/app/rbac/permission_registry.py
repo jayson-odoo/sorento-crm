@@ -844,3 +844,16 @@ def sync_permissions(db: Session, created_by_user_id: Optional[str] = None) -> i
     if created:
         db.commit()
     return created
+
+
+# Sales module (PLAN-retail-sales-reports-26sep, S1). One slug covers the Yearly
+# comparison and the Sales report screens, their Excel export and the chatbot route
+# (G10 (a)). Granted to admin and superadmin by `sales_s1_reports_module`; everyone else
+# through the role editor.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "sales.reports.view",
+        "name": "View sales reports",
+        "description": "Open the sales reports (Yearly comparison, Sales report), export them and ask for them on WhatsApp.",
+    },
+])
