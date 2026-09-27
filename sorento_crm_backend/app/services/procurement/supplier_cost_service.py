@@ -88,7 +88,12 @@ def refresh_prices_in_force(db: Session, day: Optional[date] = None) -> int:
     """The daily tick (AC-CL-05): every link with cost list rows whose price in force
     differs from its stored `unit_cost` is updated through the ORM (so the audit listener
     records old/new), and one `SUPPLIER_COST_TICK` row lists them. Idempotent: a second run
-    the same day changes nothing and writes no second audit row."""
+    the same day changes nothing and writes no second audit row.
+
+    Its job is a start or end date arriving. Putting back a price some other writer set
+    directly is only a one-time cleanup of prices written before the Q16 ruling (27 Sep
+    2026): no PO save or product import writes a link price (plan section 7.5), and
+    `tests/test_cost_price_round3_no_direct_writes.py` keeps it that way."""
     from app.models.cost_price import ProductSupplierCost
     from app.models.procurement import ProductSupplier
     from app.services.audit_service import log_audit

@@ -1,13 +1,13 @@
 # PLAN: Cost price from the supplier's price list, as dated cost lists, verified when suppliers submit (#1288)
 
-Status: Lane A (S1 + S2) built on PR #1305, awaiting the orchestrator's review and the owner's
-hand test (27 Sep 2026); Lane B (S3, the supplier page) not started. Plan history:
+Status: Lane A (S1 + S2) built on PR #1305, fix lane round 3 (the Q16 ruling) done, awaiting the
+orchestrator's review and the owner's hand test (27 Sep 2026); Lane B (S3, the supplier page) not started. Plan history:
 draft plan + UAC, round 3 (27 Sep 2026). Owner rulings of 26 Sep 23:45 MYT (Q1, Q2, Q5,
-Q6, Q7, Q9, Q10), 27 Sep 00:10 MYT (Q3, Q4), 27 Sep 00:45 MYT (verification off for the first
+Q6, Q7, Q9, Q10), 27 Sep 00:10 MYT (Q3, Q4), 27 Sep 15:31 MYT (Q16), 27 Sep 00:45 MYT (verification off for the first
 rollout, reuse the existing matching engine, search on every page, mockups) and 27 Sep 00:50 MYT
 (final mockups on the alignment page) are applied (section 12). Q8 and the packaging variants
 question are answered on PR #1291 (issuecomment-5848210931, "Answers to the owner's questions
-(round 3)"): both features are dropped. Q11 to Q15 and the new Q16 are not yet answered. Track: full (new tables and a
+(round 3)"): both features are dropped. Q11 to Q15 are not yet answered. Track: full (new tables and a
 migration, new permissions, a new public ingest surface with uploads). The plan rode into PR #1305 from
 draft PR #1291.
 UAC: `cost-price-supplier-acceptance-criteria.md` (same folder; the Journey is there and every AC
@@ -168,11 +168,13 @@ before a new table.
   is why this plan keeps `unit_cost` as the price-in-force rather than teaching every reader the
   date rule (section 4.2).
 - **Writers of `product_suppliers.unit_cost`:** `procurement_service.py:6972`,
-  `product_service.py:1021,1663` (product Excel import), `rules/product_rules.py:397`,
-  `scm/supplier_code_alias_service.py:251`, `scm/product_supplier_service.py:75,84` (raw SQL),
   `scripts/backfill_product_supplier_from_last_po.py:321`, and the CRUD routes
   `app/api/v1/procurement/product_suppliers.py:61-95`, which need **only a login** although
   `procurement.product_suppliers.{view,add,edit,delete}` exist (`app/rbac/permission_registry.py:226`).
+  Round 3 correction (27 Sep 2026): this list first also named `product_service.py:1021,1663`
+  (product Excel import), `rules/product_rules.py:397`, `scm/supplier_code_alias_service.py:251`
+  and `scm/product_supplier_service.py:75,84`. Read again, those create a link with a lead time
+  only, or write `moq` only; none of them writes `unit_cost` or `currency` (section 7.5).
 - **`products.cost_price` writers and readers:** the ESB masters push writes it only when present
   (`master_ingest_service.py:589-590`); the **AutoCount pull does not** (`autocount_pull_service.py:425-473`
   maps `list_price` only). Stock valuation reads it in MYR (`scm/dashboard_service.py:19,369,434`,
@@ -527,12 +529,58 @@ or delete it (the 10 s deferred action, no dialog). Each write recomputes the pr
 the same transaction and is audited. This is the ERP price list experience the Q3 ruling asks
 for; it is not routed through a change set because only Sorento staff can reach it.
 
-### 7.5 Other write paths (Q13)
+### 7.5 Other write paths (Q13, Q16)
 
-The CRUD routes get their existing permission slugs enforced (AC-S2-14). The PO, alias, rules and
-import writers that set `unit_cost` directly stay as they are for links with no cost lists; for
-a link that has cost lists, the next daily tick puts the price in force back. That is a risk
-(section 11) and an open question (Q16).
+The CRUD routes get their existing permission slugs enforced (AC-S2-14).
+
+**Owner ruling on Q16 (27 Sep 2026, 15:31 MYT): "for cost q16 - hmm purchase order shouldn't do
+this la, product excel import also shouldnt do this".** Neither saving a purchase order nor the
+product Excel import may write a supplier price onto the product or the product-supplier link.
+The cost lists are the only source of a supplier cost. The purchase order keeps its own line
+price; the import keeps every other column.
+
+Measured in fix lane round 3 on the merged tree (main 9751e55d): **neither path writes one
+today**, so the two "removals" are pins, not code changes. The round 1 writer list (section 3.2)
+over-counted; the corrected paths, with file:line (BE, at the round 3 head):
+
+1. **Purchase order save.** `PUT /scm/purchase-orders/{id}` (`app/services/scm/purchase_order_service.py:942`
+   `update`, `:989` `_upsert_lines`) writes only the PO line's own `unit_cost`
+   (`:1046`, `money["unit_cost"] = ln.unit_price`); `bulk_confirm` (`:1134`) moves status and
+   number only. Neither touches `product_suppliers` or `products.cost_price`. Regression test:
+   `tests/scm/test_po_never_writes_supplier_price.py` (revise a line, add a line, confirm; the
+   link keeps 100.00 CNY, `cost_price` keeps 70.00, the PO keeps 66.00 and 77.00).
+2. **Product Excel import.** `bulk_import_products` (`app/services/product_service.py:1540`) reads
+   one price column, `list_price` / `Price` (`:1713`), which is the selling price. Its only
+   `product_suppliers` write is `link_default_supplier` (`:1683`, called at `:1862` for an
+   existing product with no lead time and on create), which sets `standard_lead_time_days` and
+   nothing else. The template has no supplier price column, so there is no column to drop and no
+   ignored-column line to add to the import result: a supplier price column a person adds to the
+   file is ignored like any other unknown column. Regression test:
+   `tests/test_cost_price_round3_no_direct_writes.py::test_r2_product_import_never_writes_a_supplier_price`
+   (a row carrying `Cost Price`, `Unit Cost`, `Supplier Price`, `unit_cost`, `cost_price` and
+   `currency` imports its name and list price and leaves the link price and `cost_price` alone).
+
+**No new direct writer can appear.** `test_r3_only_the_cost_lists_and_the_crud_write_a_link_price`
+in the same file parses every module under `app/` and `scripts/` and fails on any price write to
+`product_suppliers` (a `ProductSupplier(...)` built with a price or `**kwargs`, a
+`query(ProductSupplier).update({...})` with a price, a raw `UPDATE`/`INSERT` naming `unit_cost`
+or `currency`, or an assignment to a link's `unit_cost`/`currency`) outside the allowed writers:
+the cost list code (`supplier_cost_service.py`), the CRUD (`procurement_service.py:6972,7002`,
+gated by AC-S2-14), the owner-run `scripts/backfill_product_supplier_from_last_po.py` and the
+three demo seeders. Kill tests: a link write injected into the PO update, into the import's new
+link, and into the import's update branch each turned it red.
+
+**The daily tick's move onto the cost list price** (`supplier_cost_service.py:87`
+`refresh_prices_in_force`, via `refresh_link` `:57`) stays, because a start or end date arriving
+still needs it. Putting back a price another writer set directly is now only a one-time cleanup
+of prices written before this ruling (through the CRUD form or the backfill script); no PO save or
+import can create a new one.
+
+Left for the owner, not changed here: `scripts/backfill_product_supplier_from_last_po.py
+--all-suppliers` fills a link's `unit_cost`/`currency` from that supplier's newest priced PO
+line when the link's price is NULL (S15, PLAN-product-supplier-all-po.md). It is an operator-run
+one-off, not a PO save, so the ruling's words do not reach it; whether it should stop filling
+prices is a question for the owner.
 
 ## 8. The supplier page and its link
 
@@ -728,10 +776,10 @@ link on a phone at 375).
 
 ### Risks
 
-- **Direct writers overwrite a price that has cost lists** (section 7.5): a PO flow or the
-  product import writes `unit_cost`, and the next tick puts the price in force back. Visible in
-  the audit trail both times; Q16 asks the owner whether those writers should add a cost list row
-  instead.
+- **A hand edit through the product-supplier form overwrites a price that has cost lists**
+  (section 7.5): the CRUD route writes `unit_cost`, and the next tick puts the price in force
+  back. Visible in the audit trail both times. PO saves and the product import cannot do this
+  (Q16 ruling, pinned by a source guard).
 - **Verification off means one person can change a price.** That is the owner's ruling for staff
   uploads; the audit row records `verified = false` and the setting change is itself audited.
 - **The reorder engine starts using applied prices immediately.** The apply bar shows the
@@ -805,9 +853,13 @@ is written to them.
 16. **(new, round 3) Old writers of a supplier price.** PO flows and the product import write the
     supplier price directly. For a product-supplier that has cost lists, should they (a) be
     overwritten back to the cost list's price in force by the next daily tick, or (b) add an
-    "always" cost list row of their own? **Recommend (a)** for the first rollout: no change to
-    those flows, visible in the audit trail. Under (b) five writers change and each writes a cost
-    list row.
+    "always" cost list row of their own? Recommended (a).
+    **Owner ruling (27 Sep 2026, 15:31 MYT): "for cost q16 - hmm purchase order shouldn't do this
+    la, product excel import also shouldnt do this". Neither (a) nor (b): neither path writes a
+    supplier price at all; the cost lists are the only source. Applied in fix lane round 3
+    (section 7.5, AC-CL-09, AC-CL-10): measured, neither path wrote one, so each gets a
+    regression test and a source guard stops a new writer; the tick's move onto the cost list
+    price is only a one-time cleanup for older prices.**
 
 Rulings of 27 Sep 2026 that are not numbered questions:
 

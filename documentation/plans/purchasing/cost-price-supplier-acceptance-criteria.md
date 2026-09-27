@@ -3,7 +3,8 @@
 Status: draft, round 3 (27 Sep 2026). Written to the owner rulings of 26 Sep 23:45 MYT (Q1, Q2,
 Q5, Q6, Q7, Q10), 27 Sep 00:10 MYT (Q3, Q4), 27 Sep 00:45 MYT (verification off for the first
 rollout, the shared matching engine, search on every page) and 27 Sep 00:50 MYT (final mockups);
-Q8 and Q9 are withdrawn features (plan section 12); Q11 to Q16 stay written to their
+Q8 and Q9 are withdrawn features (plan section 12); Q16 is ruled 27 Sep 15:31 MYT (no PO save or
+product import writes a supplier price: AC-CL-09, AC-CL-10); Q11 to Q15 stay written to their
 recommendations. An owner answer that differs rewrites the ACs it names before Phase 1 starts.
 Track: full.
 Plan: `PLAN-cost-price-supplier-26sep.md` (same folder).
@@ -211,6 +212,17 @@ Sorento person, same permissions), Mr Chen (sales at XIAMEN TAIYANG, no Sorento 
   force and its cost lists (same columns as AC-CL-07), with search by supplier name or set code;
   the price renders in the link's own currency (fixes `ProductDetail.tsx` formatting every cost
   as MYR, for the supplier price only).
+- **AC-CL-09** `[BE]` `[T]` (J8, Q16) Given a purchase order is revised (a line re-priced, a line
+  added) or confirmed, then the product-supplier link's `unit_cost` and `currency` and the
+  product's `cost_price` are unchanged, and the PO keeps its own line prices. Given the product
+  Excel import runs over a row that also carries supplier price columns (`Cost Price`, `Unit
+  Cost`, `Supplier Price`, `unit_cost`, `cost_price`, `currency`), then the same holds and every
+  column the import reads still lands. (Plan section 7.5: `purchase_order_service.py:942,989,1134`,
+  `product_service.py:1540,1683,1713`.)
+- **AC-CL-10** `[BE]` `[T]` (Q16) Only the cost list code, the product-supplier CRUD, the owner-run
+  backfill script and the demo seeders put a price on a `product_suppliers` row; a source guard
+  over `app/` and `scripts/` fails on any other writer. The daily tick's move onto the cost list
+  price (AC-CL-05) is then only a one-time cleanup of prices written before the ruling.
 
 ## S2: Verification, built now and switched off
 
