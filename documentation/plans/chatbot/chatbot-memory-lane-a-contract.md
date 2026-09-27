@@ -6,7 +6,7 @@ text. The round 3 mockups (`chatbot-memory-27sep-mockup-*.html`,
 `chatbot-memory-27sep-illustrations.html`) are the screens; where the round 2 plan text and a
 round 3 mockup disagree, the mockup wins (owner ruling 27 Sep 00:50 MYT: "final mockup to align").
 
-Status: lane A built, 27 Sep 2026, PR #1304 ready for the orchestrator review. Track: full.
+Status: lane A built, 27 Sep 2026, main d8395cb8 merged in (fix lane merge round), PR #1304 ready for the orchestrator review. Track: full.
 
 **Round 3 text supersedes parts of this file (merged 27 Sep).** As built after round 3: the level
 values are `off | conversation | episodes | full` (`past` renamed `episodes`, label unchanged);
@@ -205,6 +205,35 @@ chatbot parser row.
    37,153 est tokens (bytes / 3) for the rendered production prompt at 232182ae. The plan's
    22,100 was a chars / 4 figure on a different rendering; the rule it encodes ("the static
    prompt may not grow") is unchanged.
+   **Re-measured after merging main d8395cb8 (27 Sep 2026), same estimator, same rendering
+   (`tests/chatbot/test_parser_prompt_budget.py::_rendered_production_prompt`):** base
+   232182ae 37,153; lane alone (d89110c0) 37,118; main alone (d8395cb8) 39,484; merged
+   39,647. Main's own `STOCK_TASK_ADDENDUM` (PR #1247 rounds 8 and 9) is +2,331 on main's
+   side; the lane is +163 over main, because main's round 8 made the same "Companies
+   OFFERED" IIFE cut the lane had counted as paying for `MEMORY_ADDENDUM`. 37,153 is not
+   reachable without cutting main's shipped round 8/9 text, which main's own tests pin, so
+   `CEILING` is set to the merged measured value, 39,647, and the overshoot is left for an
+   owner ruling. The merged constant carries main's round 9 open question block, main's
+   ideation changes (separate prompts, `ideation_*` migrations) and the memory addendum,
+   in that order, with CURRENT DATE still the last section.
+   Published text: `SEMANTIC_PARSER_PROMPT` sha256
+   `2ed3cfea8ffe5905342f6e57d031c9e366075baf9286430e422ab1a6251f670a` (92,105 chars). The
+   version `mem_0002_parser_memory` publishes is now `chatbot_rearch_s4`'s body formula
+   (the constant plus the rendered policy blocks), the same as main's
+   `sa2_r9_open_question`; on a fresh `bootstrap_env` database with the seeded blocks that
+   template's sha256 is `ceeb4ccba2049990567845e7fd67fb2d07a3776606629a1428a1abedce52ff82`
+   (95,657 chars). On a real database the blocks come from its own `chatbot_domains`, so the
+   template sha is that database's, and the constant sha above is the stable one. Either
+   revision that runs first publishes it as the next `chatbot_semantic_parser` version with
+   no label; the other then finds it and publishes nothing; `production` is not moved
+   (checked on a scratch copy both ways: sa2_r9 then mem_0002, and mem_0002 alone). The
+   earlier sha `f3b4e634...` was the lane's bare constant before the merge and no longer
+   applies.
 8. The 25 Sep prod dump is not on this VM: digest goldens are built from synthetic turn rows in
    the recorded trace shape; the prod-copy goldens, the backfill run and the Q18 counts are
    posted as orchestrator steps.
+9. Migrations after the merge: main carries three heads off `sales_0002_team_leader`
+   (`ideation_confirm_prompts`, `prod_discontinued_at_flt`, `sa2_r9_open_question`). The
+   no-op `mem_0000_merge_main` joins them and `mem_0001_frames_level` ->
+   `mem_0002_parser_memory` hang off it, so `alembic heads` prints one head,
+   `mem_0002_parser_memory`. No main migration is edited.
