@@ -834,9 +834,11 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
 
     if cost_price_verification_changed:
         from app.services.audit_service import log_audit
-        from app.audit_context import get_real_and_effective_user_ids
+        from app.audit_context import get_actor
 
-        real_user_id, _eff = get_real_and_effective_user_ids()
+        # The person at the keyboard: the admin, not the target, under impersonation.
+        actor = get_actor(db)
+        real_user_id = (actor.real_user_id or actor.user_id) if actor else None
         log_audit(
             db, "system_settings", str(settings.id), "COST_VERIFICATION_SETTING",
             new_values={"cost_price_verification_enabled": update_data["cost_price_verification_enabled"]},
