@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useIsMobile } from '@/hooks/use-mobile';
 import {
@@ -84,7 +85,7 @@ function LineCard({
   showDecisionColumn: boolean;
   isPendingForVerifier: boolean;
   onPatch: (patch: PatchLineInput) => void;
-  onDecide: (decision: 'accepted' | 'rejected') => void;
+  onDecide: (decision: 'accepted' | 'rejected', reason?: string) => void;
 }) {
   const showDecision = isPendingForVerifier && !line.skipped && (line.line_state === 'changed' || line.line_state === 'new_link');
   const showReadOnlyDecision = showDecisionColumn && !isPendingForVerifier && line.decision != null;
@@ -161,9 +162,11 @@ function LineCard({
           <Button type="button" size="sm" variant={line.decision === 'accepted' ? 'primary' : 'outline'} onClick={() => onDecide('accepted')}>
             Accept
           </Button>
-          <Button type="button" size="sm" variant={line.decision === 'rejected' ? 'destructive' : 'outline'} onClick={() => onDecide('rejected')}>
-            Reject
-          </Button>
+          <RejectLineButton
+            active={line.decision === 'rejected'}
+            supplierCode={line.supplier_code}
+            onReject={(reason) => onDecide('rejected', reason)}
+          />
         </div>
       ) : null}
       {showReadOnlyDecision ? (
@@ -185,6 +188,64 @@ function LineCard({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * AC-S2-01 + J7: a line is rejected "optionally with a reason", and the reason shown under
+ * the Reject (mockup) and in History must be the verifier's own words, so Reject asks for
+ * it here; an empty reason sends none.
+ */
+function RejectLineButton({
+  active,
+  supplierCode,
+  onReject,
+}: {
+  active: boolean;
+  supplierCode: string | null;
+  onReject: (reason?: string) => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [reason, setReason] = React.useState('');
+  const fieldId = React.useId();
+
+  return (
+    <>
+      <Button type="button" size="sm" variant={active ? 'destructive' : 'outline'} onClick={() => setOpen(true)}>
+        Reject
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reject {supplierCode ?? 'this line'}</DialogTitle>
+          </DialogHeader>
+          <DialogBody className="space-y-1.5">
+            <Label htmlFor={fieldId}>Reason (optional)</Label>
+            <Textarea
+              id={fieldId}
+              value={reason}
+              onChange={(e) => setReason(e.target.value.slice(0, 500))}
+              rows={3}
+            />
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                onReject(reason.trim() || undefined);
+                setOpen(false);
+                setReason('');
+              }}
+            >
+              Reject line
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -467,14 +528,11 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
                 >
                   Accept
                 </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={line.decision === 'rejected' ? 'destructive' : 'outline'}
-                  onClick={() => void decideLine.mutateAsync({ lineId: line.id, decision: 'rejected', reason: 'Not agreed' })}
-                >
-                  Reject
-                </Button>
+                <RejectLineButton
+                  active={line.decision === 'rejected'}
+                  supplierCode={line.supplier_code}
+                  onReject={(reason) => void decideLine.mutateAsync({ lineId: line.id, decision: 'rejected', reason })}
+                />
               </div>
             );
           }
@@ -585,7 +643,7 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
               showDecisionColumn={showDecisionColumn}
               isPendingForVerifier={isPendingForVerifier}
               onPatch={(patch) => void patchLine.mutateAsync({ lineId: line.id, patch })}
-              onDecide={(decision) => void decideLine.mutateAsync({ lineId: line.id, decision })}
+              onDecide={(decision, reason) => void decideLine.mutateAsync({ lineId: line.id, decision, reason })}
             />
           ))}
         </div>
