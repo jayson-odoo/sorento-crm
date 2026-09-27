@@ -833,6 +833,7 @@ def patch_line(
     *, request: Optional[Request] = None,
 ) -> dict:
     from app.models.cost_price import CostPriceChangeLine
+    from app.services.audit_service import log_audit
 
     cs = _get_set_or_404(db, set_id, for_update=True)
     _require_single_company_scope(db, cs)
@@ -863,6 +864,13 @@ def patch_line(
             line.match_outcome = "manual"
             line.match_rung = None
             _recompute_line_price(db, line, cs)
+            # J14/AC-AU-04: a manual map is a decision about WHICH product gets the
+            # new price - the set's History tab must be able to say who chose it.
+            log_audit(
+                db, "cost_price_change_sets", _u(cs.id), "COST_LINE_MAP",
+                description=f"{line.supplier_code} mapped to {product.product_code}",
+                user_id=actor_id,
+            )
         else:
             line.product_id = None
             line.match_outcome = "unmatched"
@@ -874,6 +882,13 @@ def patch_line(
     if "skipped" in body:
         line.skipped = bool(body["skipped"])
         mapped_now = True
+        if line.skipped:
+            reason = body.get("skip_reason") or line.skip_reason
+            log_audit(
+                db, "cost_price_change_sets", _u(cs.id), "COST_LINE_SKIP",
+                description=f"{line.supplier_code} skipped" + (f": {reason}" if reason else ""),
+                user_id=actor_id,
+            )
     if "skip_reason" in body:
         line.skip_reason = body["skip_reason"]
         mapped_now = True
@@ -975,6 +990,7 @@ def decide(
     *, request: Optional[Request] = None,
 ) -> dict:
     from app.models.cost_price import CostPriceChangeLine
+    from app.services.audit_service import log_audit
 
     cs = _get_set_or_404(db, set_id, for_update=True)
     if cs.status != "pending_verification":
@@ -997,10 +1013,20 @@ def decide(
     if reason and len(reason) > 500:
         raise AppException(422, "Reason is too long.", detail={"code": "reason_too_long"}, code="reason_too_long")
 
+    actor_id = _actor_id(request, current_user)
     line.decision = decision
     line.decision_reason = reason
-    line.decided_by_user_id = _actor_id(request, current_user)
+    line.decided_by_user_id = actor_id
     line.decided_at = datetime.utcnow()
+    if decision:
+        # J14/AC-AU-04: the History tab's only record of WHO decided a line and WHY -
+        # the line row itself only carries the LATEST decision, not who made an
+        # earlier one a return then re-decide overwrote.
+        log_audit(
+            db, "cost_price_change_sets", _u(cs.id), "COST_LINE_DECISION",
+            description=f"{line.supplier_code}: {decision}" + (f" - {reason}" if reason else ""),
+            user_id=actor_id,
+        )
     db.commit()
 
     return {
@@ -1015,6 +1041,7 @@ def decide_all(
     *, request: Optional[Request] = None,
 ) -> dict:
     from app.models.cost_price import CostPriceChangeLine
+    from app.services.audit_service import log_audit
 
     cs = _get_set_or_404(db, set_id, for_update=True)
     if cs.status != "pending_verification":
@@ -1040,6 +1067,13 @@ def decide_all(
         ln.decision = decision
         ln.decided_by_user_id = actor_id
         ln.decided_at = now
+        # J14/AC-AU-04: one row per line it decides - the same event `decide()`
+        # writes for a single line, so "decide all" leaves the same trail.
+        log_audit(
+            db, "cost_price_change_sets", _u(cs.id), "COST_LINE_DECISION",
+            description=f"{ln.supplier_code}: {decision}",
+            user_id=actor_id,
+        )
     db.commit()
     return get_detail(db, set_id, current_user)
 
