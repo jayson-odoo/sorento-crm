@@ -53,10 +53,22 @@ const createPendingAction = vi.fn().mockResolvedValue({
   commit_at: '2026-09-27T10:00:10',
   window_seconds: 10,
 });
+const getCurrentPendingAction = vi
+  .fn()
+  .mockResolvedValue({ pending: null, last_outcome: null });
 vi.mock('@/services/pendingActionService', () => ({
   createPendingAction: (...args: unknown[]) => createPendingAction(...args),
   cancelPendingAction: vi.fn(),
-  getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
+  getCurrentPendingAction: (...args: unknown[]) => getCurrentPendingAction(...args),
+}));
+
+// Fix round 1 should-fix 4: the toast the deferred delete raises must survive the
+// lightbox being closed mid-countdown - mirrors `useDeferredRowAction.test.tsx`'s
+// own mock shape.
+const dismissDeferredToast = vi.fn();
+vi.mock('@/components/common/deferredToast', () => ({
+  deferredToast: () => 'pending-action-pa-1',
+  dismissDeferredToast: (...args: unknown[]) => dismissDeferredToast(...args),
 }));
 
 import { SoLineAttachmentsButton } from './SoLineAttachmentsButton';
@@ -100,6 +112,7 @@ function renderButton(
 beforeEach(() => {
   vi.clearAllMocks();
   uploadSoLineAttachments.mockResolvedValue([]);
+  getCurrentPendingAction.mockResolvedValue({ pending: null, last_outcome: null });
 });
 
 describe('SoLineAttachmentsButton', () => {
@@ -172,5 +185,41 @@ describe('SoLineAttachmentsButton', () => {
       ),
     );
     expect(screen.queryByText('Confirm delete')).not.toBeInTheDocument();
+  });
+
+  it('does not dismiss the countdown toast when the lightbox is closed mid-window (fix round 1 should-fix 4)', async () => {
+    // Still counting down for the rest of this test - never resolves to "nothing
+    // pending" on its own, so the only thing that could dismiss the toast is the
+    // close below, not the watch query believing the window already lapsed.
+    getCurrentPendingAction.mockResolvedValue({
+      pending: {
+        id: 'pa-1',
+        action_key: 'sales_order_line_attachment.delete',
+        entity_type: 'sales_order_line_attachment',
+        entity_id: 'link-1',
+        commit_at: '2026-09-27T10:00:10',
+        window_seconds: 10,
+      },
+      last_outcome: null,
+    });
+
+    renderButton({
+      canEdit: true,
+      attachments: [attachment({ id: 'link-1', filename: 'clarification.png' })],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: `Attachments for ${LABEL}` }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete clarification.png' }));
+    await waitFor(() => expect(createPendingAction).toHaveBeenCalledTimes(1));
+
+    // Close the lightbox itself (never a confirm dialog) - the countdown toast is
+    // a GLOBAL surface, not something the lightbox owns, and closing the dialog
+    // must not tear down the hook watching that delete through to its commit.
+    // Two buttons are named "Close": Radix's own corner dismiss and the footer
+    // one - the footer is last in document order.
+    const closeButtons = screen.getAllByRole('button', { name: 'Close' });
+    fireEvent.click(closeButtons[closeButtons.length - 1]);
+
+    expect(dismissDeferredToast).not.toHaveBeenCalled();
   });
 });

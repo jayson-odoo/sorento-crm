@@ -1,18 +1,21 @@
 /**
  * The board's paperclip column (#1312, PLAN-oi-line-attachments-27sep.md, AC-U1/AC-U2):
  * every row carrying a core line id gets its own attachments button in the Verdict cell,
- * after `BoardVerdictActions`, and the count comes from ONE lookup call per grid, never
- * one per row.
+ * after `BoardVerdictActions`.
  *
  * `SoLineAttachmentsButton` itself is mocked (its own contract is
  * `SoLineAttachmentsButton.test.tsx`'s job) - what this file pins is that the BOARD wires
- * a core `line_id` into it, one per contributing line, and reads every visible line's
- * attachments through a single batched lookup call.
+ * a core `line_id` into it, one per contributing line, reading off the `attachmentsByLine`
+ * PROP this view now takes (fix round 1 should-fix 3): the ONE lookup call itself lives in
+ * `FulfilmentBoardPanel` (`FulfilmentBoardPanel.test.tsx` pins "one call, not one per row"
+ * there now), since this view is unit-tested standalone with no `QueryClientProvider` in
+ * scope and the lookup used to carry its own nested one just to survive that.
  */
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BoardContribution, BoardDraft } from '../../_shared/types/fulfilmentPlanning.types';
+import type { SoLineAttachmentsByLine } from '../../_shared/services/soLineAttachmentService';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -26,11 +29,6 @@ if (!window.matchMedia) {
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
-}));
-
-const lookupFn = vi.fn().mockReturnValue({ data: {}, isLoading: false });
-vi.mock('@/app/(protected)/project-sales/_shared/hooks/useSoLineAttachments', () => ({
-  useSoLineAttachmentLookup: (lineIds: string[]) => lookupFn(lineIds),
 }));
 
 vi.mock('@/app/(protected)/project-sales/_shared/components/SoLineAttachmentsButton', () => ({
@@ -70,7 +68,11 @@ function contribution(overrides: Partial<BoardContribution> = {}): BoardContribu
   };
 }
 
-function renderView(contributions: BoardContribution[], draft: BoardDraft = {}) {
+function renderView(
+  contributions: BoardContribution[],
+  draft: BoardDraft = {},
+  attachmentsByLine: SoLineAttachmentsByLine = {},
+) {
   return render(
     <FulfilmentBoardListView
       contributions={contributions}
@@ -78,13 +80,13 @@ function renderView(contributions: BoardContribution[], draft: BoardDraft = {}) 
       onDecide={vi.fn()}
       onDecideMany={vi.fn()}
       onDecideBatch={vi.fn()}
+      attachmentsByLine={attachmentsByLine}
     />,
   );
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  lookupFn.mockReturnValue({ data: {}, isLoading: false });
 });
 
 describe('FulfilmentBoardListView: attachments paperclip (AC-U1/AC-U2)', () => {
@@ -109,25 +111,5 @@ describe('FulfilmentBoardListView: attachments paperclip (AC-U1/AC-U2)', () => {
 
     await screen.findByText('SO397450');
     expect(screen.queryByTestId(/^attachments-button-/)).not.toBeInTheDocument();
-  });
-
-  it('looks up every visible line in ONE call, not one call per row', async () => {
-    renderView([
-      contribution({ key: 'so-1:line-10', line_id: 'core-line-10' }),
-      contribution({
-        key: 'so-2:line-20',
-        sales_order_id: 'so-2',
-        line_id: 'core-line-20',
-        so_number: 'SO397451',
-        line_no: 20,
-      }),
-    ]);
-
-    await screen.findByTestId('attachments-button-core-line-10');
-
-    expect(lookupFn).toHaveBeenCalledTimes(1);
-    expect(lookupFn).toHaveBeenCalledWith(
-      expect.arrayContaining(['core-line-10', 'core-line-20']),
-    );
   });
 });

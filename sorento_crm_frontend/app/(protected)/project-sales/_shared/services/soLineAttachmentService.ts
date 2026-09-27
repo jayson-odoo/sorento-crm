@@ -12,10 +12,12 @@ import { extractApiError } from '@/lib/api-client';
  *  POST   /api/v1/project-sales/sales-order-lines/{lineId}/attachments   multipart files[]
  *         -> 200 SoLineAttachment[] (the line's full list, after the upload)
  *  DELETE goes through the deferred-action mechanism (D7), never a plain call from
- *         this file directly - `sales_order_line_attachment.delete`
+ *         this file - `sales_order_line_attachment.delete`
  *         (`SoLineAttachmentsButton.tsx`'s `useDeferredRowAction`), same as every
- *         other list delete in this codebase. `deleteSoLineAttachment` below exists
- *         for parity with the other feature services in this domain, not for that x.
+ *         other list delete in this codebase. No plain `deleteSoLineAttachment`
+ *         export here (fix round 1 nit): unlike the other feature services this
+ *         file was modelled on, nothing in this domain ever calls the DELETE route
+ *         directly, so there is no caller for it to exist for parity with.
  *  Auth: `projects.projects.view` (lookup), `projects.projects.edit` (upload/delete).
  */
 
@@ -59,12 +61,4 @@ export async function uploadSoLineAttachments(
   });
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to upload files'));
   return response.json();
-}
-
-export async function deleteSoLineAttachment(lineId: string, linkId: string): Promise<void> {
-  const response = await apiFetch(`${BASE}/${lineId}/attachments/${linkId}`, {
-    method: 'DELETE',
-  });
-  if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to delete that file'));
 }

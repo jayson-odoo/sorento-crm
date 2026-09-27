@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { Paperclip, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -52,12 +52,22 @@ export interface SoLineAttachmentsButtonProps {
  * a plain ghost button, and the lightbox is the shared Dialog spring.
  *
  * The button itself calls no react-query hook - only `SoLineAttachmentsDialog` below
- * does, and it mounts only once `open` (same pattern `DecisionTrailButton`'s own
- * dialog uses, for the same reason: this button is rendered per row on the fulfilment
- * board's list view AND the order inquiry Lines tab, both of which are unit-tested
- * with the row/cell in isolation and no `QueryClientProvider` in scope - a row whose
- * paperclip nobody has clicked must not need one just because this button exists on
- * the row).
+ * does, and it mounts only once the paperclip has been clicked at least ONCE (same
+ * pattern `DecisionTrailButton`'s own dialog uses, for the same reason: this button
+ * is rendered per row on the fulfilment board's list view AND the order inquiry
+ * Lines tab, both of which are unit-tested with the row/cell in isolation and no
+ * `QueryClientProvider` in scope - a row whose paperclip nobody has clicked must not
+ * need one just because this button exists on the row).
+ *
+ * Fix round 1 should-fix 4: once opened, `SoLineAttachmentsDialog` stays MOUNTED
+ * even after the reader closes it (`everOpened`, never un-set) - only its own
+ * `open` prop toggles the Radix dialog's visibility. Unmounting it on close used to
+ * tear down `useDeferredRowAction`'s own hook instance mid-countdown, which
+ * (`useDeferredAction`'s own unmount effect) explicitly dismisses every toast that
+ * instance raised and stops watching for the commit - so closing the lightbox
+ * during the 10s window silently killed the Cancel toast AND the refresh the
+ * eventual commit was supposed to trigger, even though the delete itself still
+ * happened on the server a few seconds later.
  */
 export function SoLineAttachmentsButton({
   lineId,
@@ -66,6 +76,13 @@ export function SoLineAttachmentsButton({
   canEdit,
 }: SoLineAttachmentsButtonProps) {
   const [open, setOpen] = useState(false);
+  const [everOpened, setEverOpened] = useState(false);
+  // Nit (fix round 1): the count badge is visual only (`aria-hidden` below) - a
+  // screen reader gets it too, via `aria-describedby` onto this hidden span, WITHOUT
+  // changing the button's own accessible NAME (`aria-label` always wins name
+  // computation over content, so this could not reach it that way regardless) - the
+  // pinned aria-label test asserts the exact string `Attachments for ${label}`.
+  const countId = useId();
 
   return (
     <>
@@ -77,32 +94,40 @@ export function SoLineAttachmentsButton({
           size="sm"
           className="shrink-0"
           aria-label={`Attachments for ${label}`}
+          aria-describedby={attachments.length > 0 ? countId : undefined}
           title="Attachments"
           onClick={(event) => {
             // The row itself is often a clickable surface (the board list, AC-U1) -
             // this button sits on top of it and must not trigger it too.
             event.stopPropagation();
+            setEverOpened(true);
             setOpen(true);
           }}
         >
           <Paperclip className="size-3.5" aria-hidden />
         </Button>
         {attachments.length > 0 ? (
-          <span
-            className="pointer-events-none absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-2xs font-medium text-primary-foreground"
-            aria-hidden
-          >
-            {attachments.length > 99 ? '99+' : attachments.length}
-          </span>
+          <>
+            <span
+              className="pointer-events-none absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-2xs font-medium text-primary-foreground"
+              aria-hidden
+            >
+              {attachments.length > 99 ? '99+' : attachments.length}
+            </span>
+            <span id={countId} className="sr-only">
+              {attachments.length} {attachments.length === 1 ? 'file' : 'files'}
+            </span>
+          </>
         ) : null}
       </span>
 
-      {open ? (
+      {everOpened ? (
         <SoLineAttachmentsDialog
           lineId={lineId}
           label={label}
           attachments={attachments}
           canEdit={canEdit}
+          open={open}
           onOpenChange={setOpen}
         />
       ) : null}
@@ -121,8 +146,12 @@ function SoLineAttachmentsDialog({
   label,
   attachments,
   canEdit,
+  open,
   onOpenChange,
-}: SoLineAttachmentsButtonProps & { onOpenChange: (open: boolean) => void }) {
+}: SoLineAttachmentsButtonProps & {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
@@ -178,7 +207,7 @@ function SoLineAttachmentsDialog({
 
   return (
     <>
-      <Dialog open onOpenChange={closeDialog}>
+      <Dialog open={open} onOpenChange={closeDialog}>
         <DialogContent onClick={(event) => event.stopPropagation()}>
           <DialogHeader>
             <DialogTitle>{label}</DialogTitle>
@@ -229,6 +258,7 @@ function SoLineAttachmentsDialog({
               <FileDropzone
                 accept={ACCEPT}
                 multiple
+                maxSizeMb={10}
                 files={pendingFiles}
                 onFilesChange={setPendingFiles}
                 onReject={(file, reason) =>

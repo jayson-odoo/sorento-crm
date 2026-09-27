@@ -54,6 +54,7 @@ import {
   usePlanningBoard,
 } from '../../_shared/hooks/useFulfilmentPlanning';
 import { usePlanningChangeBatchesByIds } from '../../_shared/hooks/usePlanningChanges';
+import { useSoLineAttachmentLookup } from '../../_shared/hooks/useSoLineAttachments';
 import { canQuickSave, suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 import {
   annotationsByCell,
@@ -585,6 +586,21 @@ export function FulfilmentBoardPanel({
     () => board.data?.contributions ?? [],
     [board.data],
   );
+
+  /**
+   * #1312 (AC-U2, fix round 1 should-fix 3): ONE lookup call for the WHOLE
+   * selection's own line ids - `allContributions`, never the list view's own
+   * search-filtered subset, so a paperclip's count does not flicker away when a
+   * search term temporarily narrows the rows the list view itself renders. Lives
+   * here (under this screen's own `QueryClientProvider`, from wherever mounts
+   * `FulfilmentBoardPanel`) rather than inside `FulfilmentBoardListView`, which is
+   * unit-tested standalone with no provider in scope.
+   */
+  const attachmentLineIds = React.useMemo(
+    () => allContributions.map((contribution) => contribution.line_id),
+    [allContributions],
+  );
+  const { data: attachmentsByLine } = useSoLineAttachmentLookup(attachmentLineIds);
 
   /**
    * Every changed line of EVERY loaded batch arrives PRE-MARKED (AC-P3-3, AC-B2, AC-B3) -
@@ -2253,6 +2269,9 @@ export function FulfilmentBoardPanel({
                 poolSharePct={board.data?.pool_share_pct}
                 // #1312: gates the paperclip's own upload/remove (Q6).
                 canEditAttachments={canEditAttachments}
+                // #1312: the ONE lookup call's own result, computed above over
+                // every contribution the whole selection carries.
+                attachmentsByLine={attachmentsByLine}
               />
             ) : (
               <>

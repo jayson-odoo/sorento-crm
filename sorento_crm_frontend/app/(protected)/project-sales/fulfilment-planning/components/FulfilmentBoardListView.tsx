@@ -10,7 +10,6 @@ import {
   PackageSearch,
 } from 'lucide-react';
 import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -19,7 +18,6 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { DecisionTrailButton } from '../../_shared/components/DecisionTrailButton';
 import { SoLineAttachmentsButton } from '../../_shared/components/SoLineAttachmentsButton';
-import { useSoLineAttachmentLookup } from '../../_shared/hooks/useSoLineAttachments';
 import type { SoLineAttachmentsByLine } from '../../_shared/services/soLineAttachmentService';
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
@@ -148,52 +146,20 @@ export interface FulfilmentBoardListViewProps {
    * never an upload surface nobody checked.
    */
   canEditAttachments?: boolean;
+  /**
+   * #1312 (AC-U2, fix round 1 should-fix 3): every visible line's own files, keyed
+   * by core line id - ONE lookup call `FulfilmentBoardPanel` makes over the WHOLE
+   * selection (`allContributions`, never this view's own search-filtered subset),
+   * under the app's real `QueryClientProvider`. This view stays a pure renderer
+   * over the result, like every other prop here - no hook call of its own. Optional,
+   * defaulting to `{}` (empty), only for a caller that has not wired the lookup
+   * (an older unit test rendering this view standalone) - the real caller always
+   * supplies it.
+   */
+  attachmentsByLine?: SoLineAttachmentsByLine;
 }
 
-/**
- * #1312: a thin wrapper around `FulfilmentBoardListViewGrid` that owns exactly the
- * attachments lookup and nothing else. Split out so the ONE lookup call for the
- * whole grid (AC-U2) survives `PanelDataGrid`'s own post-mount `onSortedRowsChange`
- * effect: that effect re-seeds `FulfilmentBoardListViewGrid`'s own `sortedContributions`
- * state on every mount (a fresh `.map()`-derived array is never reference-equal to
- * the value that seeded it), which re-renders the GRID a second time - and would
- * re-issue the lookup with it, were the lookup called from inside that same
- * component instead of this outer one.
- *
- * Carries its OWN `QueryClient` (component-scoped, `useState` so it survives every
- * re-render but not a remount) rather than assuming an ancestor `QueryClientProvider`:
- * this view is unit-tested standalone (`FulfilmentBoardListView.test.tsx`, predates
- * this lane) with none in scope, the same reason `DecisionTrailButton`'s own dialog
- * query is DEFERRED until the icon is clicked - the count badge here cannot be
- * deferred the same way (AC-U2 wants it on load), so it carries a client instead of
- * deferring. A nested provider is a supported react-query pattern; the tradeoff (this
- * subtree's own cache, not shared with a page-level one) is fine for a read this
- * narrow.
- */
-export function FulfilmentBoardListView(props: FulfilmentBoardListViewProps) {
-  const [queryClient] = React.useState(() => new QueryClient());
-  return (
-    <QueryClientProvider client={queryClient}>
-      <FulfilmentBoardListViewWithAttachments {...props} />
-    </QueryClientProvider>
-  );
-}
-
-function FulfilmentBoardListViewWithAttachments(props: FulfilmentBoardListViewProps) {
-  const attachmentLineIds = React.useMemo(
-    () =>
-      props.contributions
-        .filter((contribution) =>
-          contributionMatchesSearch(contribution, props.externalSearch ?? ''),
-        )
-        .map((contribution) => contribution.line_id),
-    [props.contributions, props.externalSearch],
-  );
-  const { data: attachmentsByLine } = useSoLineAttachmentLookup(attachmentLineIds);
-  return <FulfilmentBoardListViewGrid {...props} attachmentsByLine={attachmentsByLine} />;
-}
-
-function FulfilmentBoardListViewGrid({
+export function FulfilmentBoardListView({
   contributions,
   draft,
   onDecide,
@@ -206,8 +172,8 @@ function FulfilmentBoardListViewGrid({
   onFocusHandled,
   poolSharePct,
   canEditAttachments = false,
-  attachmentsByLine,
-}: FulfilmentBoardListViewProps & { attachmentsByLine: SoLineAttachmentsByLine }) {
+  attachmentsByLine = {},
+}: FulfilmentBoardListViewProps) {
   /**
    * AC-RS-42: the Stock button and the "To plan" figure both open the SAME dialog the grid
    * view's cell strip does, scoped to this one line - never a second table reinventing what
