@@ -1,13 +1,15 @@
 # PLAN: Cost price from the supplier's price list, as dated cost lists, verified when suppliers submit (#1288)
 
-Status: draft plan + UAC, round 3 (27 Sep 2026). Owner rulings of 26 Sep 23:45 MYT (Q1, Q2, Q5,
+Status: Lane A (S1 + S2) built on PR #1305, awaiting the orchestrator's review and the owner's
+hand test (27 Sep 2026); Lane B (S3, the supplier page) not started. Plan history:
+draft plan + UAC, round 3 (27 Sep 2026). Owner rulings of 26 Sep 23:45 MYT (Q1, Q2, Q5,
 Q6, Q7, Q9, Q10), 27 Sep 00:10 MYT (Q3, Q4), 27 Sep 00:45 MYT (verification off for the first
 rollout, reuse the existing matching engine, search on every page, mockups) and 27 Sep 00:50 MYT
 (final mockups on the alignment page) are applied (section 12). Q8 and the packaging variants
 question are answered on PR #1291 (issuecomment-5848210931, "Answers to the owner's questions
 (round 3)"): both features are dropped. Q11 to Q15 and the new Q16 are not yet answered. Track: full (new tables and a
-migration, new permissions, a new public ingest surface with uploads). Nothing built; this lane
-is docs only (draft PR #1291).
+migration, new permissions, a new public ingest surface with uploads). The plan rode into PR #1305 from
+draft PR #1291.
 UAC: `cost-price-supplier-acceptance-criteria.md` (same folder; the Journey is there and every AC
 traces to a step in it).
 Mockups (final, round 3; each file shows every screen at 1280 and at 375):
