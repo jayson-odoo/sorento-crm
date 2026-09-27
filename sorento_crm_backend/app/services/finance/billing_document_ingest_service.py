@@ -25,6 +25,13 @@ incoming one is older, nothing is written: `unchanged` + `stale_ignored` (UAC S0
 backfill and the live feed are two writers of the same documents that can overlap in time.
 
 **Cancel is an update.** `status: "cancelled"` keeps the row and its lines (ruling Q13).
+
+**The sales order type (S1, ruling Q14).** Every push that writes re-decides the header's
+`demand_class` with `classify_document`, the ladder the weekly upload and the SO ingest
+share: the class of the sales order its lowest-numbered linked line came from (for a note
+with none, the class of the document it is against), then the document's OWN agent's class
+(ruling Q15), then the customer's market segment. NULL when nothing classifies, with no new
+warning (the contract 2.6 vocabulary is unchanged); the report reads it as `(blank)`.
 """
 from __future__ import annotations
 
@@ -49,7 +56,7 @@ from app.models.finance import (
     BillingDocument,
     BillingDocumentLine,
 )
-from app.models.order import Customer, SalesOrderLine
+from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product
 from app.models.sales_agent import SalesAgent
 from app.schemas.canonical_documents import (
@@ -75,6 +82,7 @@ from app.services.master_ref_resolver import (
     MasterRefResolver,
     dedupe_warnings,
 )
+from app.services.scm.demand_class import classify_document
 from app.services.scm.sales_agent_service import normalize_code
 
 logger = logging.getLogger(__name__)
@@ -124,6 +132,7 @@ _HEADER_FIELDS = (
     "against_doc_no",
     "ref",
     "description",
+    "demand_class",
     "source_system",
 )
 _LINE_FIELDS = (
@@ -175,6 +184,8 @@ class BillingDocumentIngestService(MasterRefResolver):
 
     def __init__(self, db: Session, integration_id: Optional[str], *, company_id: str):
         super().__init__(db, integration_id, company_id=company_id)
+        # Per batch, for `classify_document`'s customer-segment rung.
+        self._segment_cache: dict = {}
 
     # --------------------------------------------------------------- the batch
     def ingest(
@@ -305,6 +316,7 @@ class BillingDocumentIngestService(MasterRefResolver):
         warnings: list[str] = []
         header = self._header_values(payload, existing, warnings)
         lines = [self._line_values(line, warnings) for line in payload.lines]
+        header["demand_class"] = self._demand_class(header, lines)
 
         if existing is None:
             return self._create(payload, header, lines, warnings)
@@ -547,6 +559,64 @@ class BillingDocumentIngestService(MasterRefResolver):
             )
             self._memo[key] = str(rows[0][0]) if len(rows) == 1 else None
         return self._memo[key]
+
+    def _demand_class(
+        self, header: dict[str, Any], lines: list[dict[str, Any]]
+    ) -> Optional[str]:
+        """The sales order type this document was billed from, by the one ladder (plan
+        3.4). The billing record states no order type, so the "stored order type" rung is
+        the order its first linked line came from, else the document a note is against."""
+        stored = self._order_class(lines) or self._document_class(header["against_document_id"])
+        debtor_code = header["debtor_code"] or self._customer_code(header["customer_id"])
+        return classify_document(
+            self.db,
+            stored_order_type=stored,
+            stated_order_type=None,
+            agent_demand_class=self._agent_class(header["sales_agent_id"]),
+            debtor_code=debtor_code,
+            company_id=self.company_id,
+            segment_cache=self._segment_cache,
+        )
+
+    def _order_class(self, lines: list[dict[str, Any]]) -> Optional[str]:
+        linked = [v for v in lines if v["sales_order_line_id"]]
+        if not linked:
+            return None
+        first = min(linked, key=lambda v: (v["line_no"] is None, v["line_no"] or 0))
+        line_id = first["sales_order_line_id"]
+        key = (SalesOrder.__tablename__, "class_of_line", line_id)
+        if key not in self._memo:
+            self._memo[key] = (
+                self.db.query(SalesOrder.demand_class)
+                .join(SalesOrderLine, SalesOrderLine.sales_order_id == SalesOrder.id)
+                .filter(SalesOrderLine.id == line_id)
+                .scalar()
+            )
+        return self._memo[key]
+
+    def _document_class(self, document_id: Optional[str]) -> Optional[str]:
+        if not document_id:
+            return None
+        return (
+            self.db.query(BillingDocument.demand_class)
+            .filter(BillingDocument.id == document_id)
+            .scalar()
+        )
+
+    def _agent_class(self, agent_id: Optional[str]) -> Optional[str]:
+        if not agent_id:
+            return None
+        key = (SalesAgent.__tablename__, "class", agent_id)
+        if key not in self._memo:
+            self._memo[key] = (
+                self.db.query(SalesAgent.demand_class).filter(SalesAgent.id == agent_id).scalar()
+            )
+        return self._memo[key]
+
+    def _customer_code(self, customer_id: Optional[str]) -> Optional[str]:
+        if not customer_id:
+            return None
+        return self.db.query(Customer.customer_code).filter(Customer.id == customer_id).scalar()
 
     def _against(
         self, payload: CanonicalBillingDocument, self_id: Optional[str]

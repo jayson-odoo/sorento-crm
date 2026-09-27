@@ -13,12 +13,15 @@ Excel and the chatbot share one query.
 - Channel is the sales order's dealer or project class (G4); with both ticked the file
   writes the DEALER block, then the PROJECT TEAM block, on one sheet (Q1 (b), AC-R4-7).
 - Basis is Delivered by default, Ordered on request, printed on every header (G1).
+  Invoiced (finance S1, #1309) reads AutoCount's billing documents instead of the order
+  lines: a second dataset, the same blocks by the sales order type (ruling Q14).
 """
 from __future__ import annotations
 
 from datetime import date
 
 from app.services.reports import registry as reg
+from app.services.reports.datasets import billing_documents as bd
 from app.services.reports.datasets import sales_order_lines as ds
 
 KEY = "sales_yearly"
@@ -34,6 +37,19 @@ DEFAULT_DETAIL_COLUMNS = [
     "channel",
     "sales_value",
 ]
+
+
+def _of(ctx):
+    """The dataset module behind this run: billing documents on Invoiced, else orders."""
+    return bd if ctx.dataset is bd.DATASET else ds
+
+
+def _channel_condition(ctx, values):
+    return _of(ctx).channel_condition(ctx, values)
+
+
+def _order_by(ctx):
+    return _of(ctx).order_by(ctx)
 
 
 def as_at_period() -> dict:
@@ -65,7 +81,7 @@ REPORT = reg.register(
                 multi=True,
                 default=tuple(value for value, _label in ds.CHANNELS),
                 options=lambda db: list(ds.CHANNELS),
-                condition=ds.channel_condition,
+                condition=_channel_condition,
             ),
             reg.SelectParam(
                 key="basis",
@@ -79,7 +95,11 @@ REPORT = reg.register(
             reg.DateBasisParam(key="date_basis", label="Date basis", default="order_date"),
             reg.PeriodParam(key="period", label="Period", default=as_at_period),
         ),
-        detail=reg.DetailLayout(title="Sales order lines", order_by=ds.order_by, cap="truncate"),
+        detail=reg.DetailLayout(
+            title=lambda ctx: "Billing documents" if _of(ctx) is bd else "Sales order lines",
+            order_by=_order_by,
+            cap="truncate",
+        ),
         pivot=reg.PivotLayout(
             title="Year by month",
             variance="last_two_rows",
@@ -101,6 +121,7 @@ REPORT = reg.register(
         },
         note=ds.note,
         opens_on="summary",
+        datasets_by=("basis", {"invoiced": bd.DATASET}),
         workbook=reg.WorkbookSpec(
             # Empty: the company is the one the run READ (the Company filter).
             company_name="",

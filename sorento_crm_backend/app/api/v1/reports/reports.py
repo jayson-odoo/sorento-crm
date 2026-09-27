@@ -202,7 +202,7 @@ def get_report_meta(
             ReportCatalogColumn(
                 key=c.key, label=c.label, type=c.type, tag=c.tag, size=c.size
             )
-            for c in definition.dataset.columns
+            for c in definition.catalog()
         ],
         default_view=default_view,
         can_publish=_holds(db, current_user, PUBLISH_PERMISSION),

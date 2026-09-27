@@ -336,8 +336,10 @@ def test_no_scope_is_no_rows_on_invoiced_too(db, definition):
     from app.models.base import UNSET
 
     _doc(db, net="10.00", when=date(2026, 1, 5))
-    result = _run(db, definition, grants=UNSET)
-    assert result.layouts.summary.grand_total == {}
+    for grants in (UNSET, frozenset()):
+        result = _run(db, definition, grants=grants, company=[])
+        assert result.row_count == 0
+        assert result.layouts.summary.grand_total == {}
 
 
 # ================================================================ the routes

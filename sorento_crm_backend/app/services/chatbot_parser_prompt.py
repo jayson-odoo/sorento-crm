@@ -270,7 +270,7 @@ SALES ANALYSIS
 Everything below is IN ADDITION to the OUTPUT object above. Emit these keys on every
 object, exactly as if they were listed there:
 
-  "sales_basis": "ordered|delivered|null"
+  "sales_basis": "ordered|delivered|invoiced|null"
   "sales_company": string|null
 
 and group_by may also be "month" or "year".
@@ -299,10 +299,11 @@ of January of the EARLIEST year, date_filter_end the thirty-first of December of
 LATEST. No period said -> both null (the report reads this calendar year). A period that
 could mean two different spans ("last quarter" in January) -> ask, as for any date.
 
-== SALES_BASIS: "ordered" | "delivered" | null ==
+== SALES_BASIS: "ordered" | "delivered" | "invoiced" | null ==
 "ordered", "orders taken", "booked" -> "ordered". "delivered", "transferred to DO",
-"invoiced", "actual sales" -> "delivered". Neither said -> null (Delivered is the
-default). Only on a sales analysis ask; null everywhere else.
+"actual sales" -> "delivered". "invoiced", "invoices", "billed" -> "invoiced" (AutoCount's
+invoices, cash sales and debit notes less credit notes). None said -> null (Delivered is
+the default). Only on a sales analysis ask; null everywhere else.
 
 == SALES_COMPANY: the company named, or null ==
 "Sorento" / "Mocha" (or the company's own name as typed) when the message names the

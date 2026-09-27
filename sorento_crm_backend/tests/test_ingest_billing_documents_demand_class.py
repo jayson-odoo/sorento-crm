@@ -172,8 +172,13 @@ class TestTheLadder:
         assert _class_of(env, cn) == "project"
 
     def test_the_customers_market_segment_is_the_last_rung(self, env):
+        from app.models.access import MarketSegment
+
+        segment = MarketSegment(code=f"PROJECTS-{uuid.uuid4().hex[:6]}", name=f"{MARKER} projects")
+        env.db.add(segment)
+        env.db.flush()
         row = env.db.get(Customer, env.customer_id)
-        row.market_segment_code = "PROJECTS"
+        row.market_segment_code = segment.code
         env.db.commit()
         ref = _fresh("CS")
         env.push([_doc(ref, document_type="cash_sale", customer_code="ZZFIN-C1")])

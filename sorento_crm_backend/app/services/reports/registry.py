@@ -267,7 +267,9 @@ class TickGroup:
 
 @dataclass(frozen=True)
 class DetailLayout:
-    title: str
+    #: The detail tab's heading; a callable of the query context when it follows the
+    #: dataset the run reads (the Yearly comparison's Invoiced basis lists documents).
+    title: Union[str, Callable[[Any], str]]
     order_by: Callable[[Any], Sequence[ColumnElement]]
     groups: Tuple[TickGroup, ...] = ()
     key: str = "detail"
@@ -368,11 +370,57 @@ class ReportDefinition:
     note: Optional[Callable[[Any], str]] = None
     #: Which tab the screen opens on.
     opens_on: str = "detail"
+    #: One report over more than one row set: (select param key, {value: dataset}). A run
+    #: whose param names a value here reads that dataset; any other value reads `dataset`.
+    #: The Yearly comparison's Basis = Invoiced reads billing documents, not sales order
+    #: lines (finance S1). The datasets share the company param, the date basis key and the
+    #: default view's pivot axes, so one saved view runs on any of them.
+    datasets_by: Optional[Tuple[str, Dict[str, "Dataset"]]] = None
+
+    def dataset_for(self, values: Dict[str, Any]) -> Dataset:
+        """The dataset a run with these bound param values reads."""
+        if self.datasets_by is None:
+            return self.dataset
+        key, by_value = self.datasets_by
+        chosen = values.get(key) or []
+        return by_value.get(chosen[0], self.dataset) if len(chosen) == 1 else self.dataset
+
+    def datasets(self) -> List[Dataset]:
+        """Every dataset this report can read, `dataset` first."""
+        extra = list(self.datasets_by[1].values()) if self.datasets_by else []
+        return [self.dataset] + [d for d in extra if d is not self.dataset]
+
+    def catalog(self) -> List[Column]:
+        """Every column of every dataset, once per key, `dataset`'s own first: what the
+        Columns panel offers. A column the chosen dataset lacks is left out of that run."""
+        seen: Dict[str, Column] = {}
+        for dataset in self.datasets():
+            for column in dataset.columns:
+                seen.setdefault(column.key, column)
+        return list(seen.values())
 
 
 def validate(definition: ReportDefinition) -> None:
     """Fail at import time rather than on the first run of the screen."""
-    dataset = definition.dataset
+    for dataset in definition.datasets():
+        _validate_against(definition, dataset)
+    if definition.datasets_by is not None:
+        key = definition.datasets_by[0]
+        if not any(isinstance(p, SelectParam) and p.key == key for p in definition.params):
+            raise ValueError(
+                f"Report '{definition.key}' picks its dataset by '{key}', which is not a select param"
+            )
+        for dataset in definition.datasets():
+            if (dataset.company_param, dataset.scope) != (
+                definition.dataset.company_param,
+                definition.dataset.scope,
+            ):
+                raise ValueError(
+                    f"Report '{definition.key}' dataset '{dataset.key}' names another company param or scope"
+                )
+
+
+def _validate_against(definition: ReportDefinition, dataset: Dataset) -> None:
     view = definition.default_view
     pivot = view.get("pivot") or {}
 
@@ -395,8 +443,9 @@ def validate(definition: ReportDefinition) -> None:
                 f"Report '{definition.key}' default view names '{key}' as a measure, "
                 "which is not a catalog measure"
             )
+    catalog = {c.key for c in definition.catalog()}
     for key in (view.get("detail") or {}).get("columns") or ():
-        if dataset.column(key) is None:
+        if key not in catalog:
             raise ValueError(
                 f"Report '{definition.key}' default view names detail column '{key}', "
                 "which the dataset catalog does not hold"
