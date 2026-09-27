@@ -73,7 +73,7 @@ def _admin_permission_ids(db: Session) -> list[str]:
 
 
 def _ensure_principal(db: Session, name: str, label: str) -> User:
-    email = f"{name}@integrations.local"
+    email = f"{name}@integrations.local".lower()
     user = db.query(User).filter(User.email == email).first()
     if user is not None:
         return user

@@ -25,7 +25,7 @@ import pytest
 from sqlalchemy import Column, MetaData, String, Table, inspect
 from sqlalchemy.orm import configure_mappers
 
-from app.audit_context import set_audit_context
+from app.audit_context import clear_actor
 from app.database import Base
 from app.models.audit import AuditLog, audit_columns_excluding_secrets
 from app.models.user import User
@@ -43,7 +43,7 @@ def _listeners():
 @pytest.fixture(autouse=True)
 def _no_leaked_actor():
     yield
-    set_audit_context(None, None)
+    clear_actor()
 
 
 def _user_rows(db, user_id):
