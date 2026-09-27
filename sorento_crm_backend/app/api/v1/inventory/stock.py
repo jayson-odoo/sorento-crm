@@ -58,7 +58,7 @@ from app.dependencies import (
     require_permission_with_api_key,
 )
 from app.services.inventory_service import StockService
-from app.services.uuid_list_param import parse_uuid_list
+from app.services.uuid_list_param import parse_requested_quantities, parse_uuid_list
 from app.schemas.inventory import StockResponse, StockBalanceListResponse, StockDashboardResponse, BulkImportStockRequest, BulkImportStockResponse, StockLedgerResponse
 from app.schemas.common import ListResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
@@ -268,6 +268,16 @@ def get_stock_balance(
             "the quantity again."
         ),
     ),
+    requested_quantities: Optional[str] = Query(
+        None,
+        description=(
+            "Chatbot stock ask v2 (ported from PR #1118, not merged). JSON object, "
+            "product UUID -> the quantity asked for THAT product. Read only under an "
+            "`availability` policy; per product the map wins over `requested_qty`, "
+            "which fills any product it does not name. A non-object body, a "
+            "non-UUID key or a non-int value is HTTP 400."
+        ),
+    ),
     include_sellable: bool = Query(
         False,
         description=(
@@ -299,6 +309,16 @@ def get_stock_balance(
             "pagination": {"total": 0, "page": page, "limit": limit},
             "empty": True,
         }
+    # AC-1752 (ported from PR #1118): parsed OUTSIDE the try/except below on purpose.
+    # That block's `except Exception as e: raise handle_internal_error(str(e))` treats
+    # every exception alike, HTTPException included, so a 400 raised from inside it
+    # comes back as a 500. The two pre-existing `parse_uuid_list` calls are hoisted out
+    # with it rather than left in the trap they were already caught by - a malformed
+    # product/warehouse UUID is the caller's mistake (400), never ours (500), and the
+    # two params now answer a bad value exactly the way this one does.
+    parsed_requested_quantities = parse_requested_quantities(requested_quantities)
+    parsed_warehouse_ids = parse_uuid_list(warehouse_ids, param_name="warehouse_ids")
+    parsed_product_ids = parse_uuid_list(product_ids, param_name="product_ids")
     try:
         service = StockService(db)
         result = service.list_stock(
@@ -308,9 +328,9 @@ def get_stock_balance(
             sort=sort,
             dir=dir,
             warehouse_id=warehouse_id,
-            warehouse_ids=parse_uuid_list(warehouse_ids, param_name="warehouse_ids"),
+            warehouse_ids=parsed_warehouse_ids,
             product_id=product_id,
-            product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
+            product_ids=parsed_product_ids,
             quantity_operator=quantity_operator,
             quantity_value=quantity_value,
             status=status,
@@ -319,6 +339,7 @@ def get_stock_balance(
             contact_id=contact_id,
             space_id=space_id,
             requested_qty=requested_qty,
+            requested_quantities=parsed_requested_quantities,
         )
         # Data-miss path (§3.3): when the service attached `alternatives` /
         # `relaxed_axis` (only on an empty result), bypass the strict
