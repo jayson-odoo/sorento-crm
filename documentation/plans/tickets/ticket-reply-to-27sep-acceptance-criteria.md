@@ -37,9 +37,18 @@ Plan: `PLAN-ticket-reply-to-27sep.md`
   any quote prefix) is written to the clipboard and a "Copied" toast shows.
 - **AC-RT-5** [FE] Given a ticket where replying is not possible (resolved, no send rights), then
   the menu offers Copy only (no Reply). Internal-note bubbles get no menu at all.
-- **AC-RT-6** [FE] Given any other `RespondChatList` surface (Conversations inbox, complaint /
-  stock-inquiry / purchase-request panels, portal), then no chevron and no context menu render
-  (the menu is opt-in via `onReply`).
+- **AC-RT-6** [FE] (revised by owner answer 3, fix lane round 2) Given ANY thread surface (ticket
+  drawer, SLA Chat Records sheet, Conversations inbox pane, complaint / stock-inquiry /
+  purchase-request Chat Records, the portal draft review, the chatbot console transcript and the
+  contact page's Chat history), then every bubble carries the same chevron + right click + long
+  press menu through one shared component (`MessageBubbleActions`), with no opt-in. Where the
+  viewer can reply there, the menu is Reply + Copy and swipe right starts a reply; on a read-only
+  surface (no message box) it is Copy only and a swipe moves nothing. A pending (still sending)
+  bubble has no menu.
+- **AC-RT-6b** [FE] (owner answer 2) Given a quoted reply, then the sent quote line is at most 160
+  characters plus an ellipsis, and the quoted block on the bubble is compact: small text, at most
+  two lines with the rest clipped (full text on hover), the reply text at the bubble's own size
+  and outside the block.
 
 ### Gestures (phone)
 

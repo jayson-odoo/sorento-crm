@@ -21,7 +21,7 @@ import { cn } from '@/lib/utils';
 import { useSwipeToReply } from './useSwipeToReply';
 
 interface MessageBubbleActionsProps {
-  /** Off = the plain bubble every other thread surface renders (AC-RT-6). */
+  /** Off = a plain bubble: only a message still being sent (no menu until it lands). */
   enabled: boolean;
   /** Absent = the menu offers Copy only and there is no swipe (AC-RT-5). */
   onReply?: () => void;
@@ -46,7 +46,10 @@ async function copyToClipboard(text: string) {
  * One message bubble with WhatsApp's message actions (#1317): a chevron at the
  * corner on hover and a right-click menu on desktop, swipe right and long press
  * on a phone. Reply and Copy only. Long press is Radix ContextMenu's own touch
- * behaviour, so the two menus are the same component family.
+ * behaviour, so the two menus are the same component family. Every thread
+ * surface renders its bubbles through this one component (owner answer 3), so
+ * none can drift: RespondChatList for the Respond threads, ChatTranscript for
+ * the chatbot console and the contact page's Chat history.
  */
 export default function MessageBubbleActions({
   enabled,

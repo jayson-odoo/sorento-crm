@@ -7,7 +7,6 @@ import {
   CheckCheck,
   AlertCircle,
   Clock,
-  CornerUpLeft,
   ExternalLink,
   FileText,
   Headphones,
@@ -44,13 +43,14 @@ import {
   getRespondSenderName,
 } from '@/lib/respondIoOutgoingMessage';
 import { linkifySegments } from '@/lib/linkifySegments';
-import { parseWhatsAppText, stripWhatsAppMarkup } from '@/lib/whatsappText';
+import { parseWhatsAppText } from '@/lib/whatsappText';
 import { cn } from '@/lib/utils';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
 import ConversationSearchBar from '@/components/common/conversation/ConversationSearchBar';
 import MessageBubbleActions from '@/components/common/conversation/MessageBubbleActions';
+import QuotedContextBlock from '@/components/common/conversation/QuotedContextBlock';
 import type { ConversationSearchController } from '@/components/common/conversation/useConversationThread';
 import { splitHighlightSegments } from '@/lib/textHighlight';
 import { parseDateTimeAsUTC } from '@/lib/helpers';
@@ -199,14 +199,10 @@ interface RespondChatListProps {
    */
   onJumpToMessage?: (messageId: string) => void;
   /**
-   * #1317: WhatsApp's per-message actions on every bubble (chevron on hover,
-   * right click, long press). Off = the bubbles render exactly as before, which
-   * is every surface except the ticket resolving panel.
-   */
-  messageMenu?: boolean;
-  /**
-   * Adds Reply to that menu and the swipe-right gesture. Absent (a resolved
-   * ticket, no send rights) = Copy only, no swipe.
+   * #1317: every bubble carries WhatsApp's message actions (chevron on hover,
+   * right click, long press) on every surface, with no opt-in (owner answer 3).
+   * This adds Reply to that menu and the swipe-right gesture. Absent (a
+   * read-only surface, a resolved ticket, no send rights) = Copy only, no swipe.
    */
   onReply?: (target: ReplyTarget) => void;
 }
@@ -440,66 +436,6 @@ function ReceiptTicks({ tier }: { tier: ReturnType<typeof getReceiptTier> }) {
   return <CheckCheck className="size-3.5 text-sky-500" aria-label="Read" />;
 }
 
-/**
- * The "replying to" block above a bubble whose message quotes an earlier one
- * (UAC AC-L6). Clickable ONLY when the quoted message is in the loaded window:
- * a control that cannot do the thing it offers is worse than a plain label.
- */
-function QuotedContextBlock({
-  context,
-  agentLabel,
-  contactLabel,
-  onJump,
-}: {
-  context: QuotedContext;
-  /** Who sent the quoted message on OUR side, when it can be named. */
-  agentLabel: string;
-  /** The contact's own name, when the thread knows it. */
-  contactLabel?: string | null;
-  onJump?: () => void;
-}) {
-  // A quoted message from the contact reads as their name when we hold one, and
-  // otherwise as a bare "Replying to" - the generic word "Contact" names nobody.
-  const senderLabel =
-    context.sender === 'contact'
-      ? (contactLabel ?? '').trim() || null
-      : context.sender === 'agent'
-        ? agentLabel
-        : null;
-  const inner = (
-    <>
-      <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide opacity-70">
-        <CornerUpLeft className="size-3" />
-        {senderLabel ? `Replying to ${senderLabel}` : 'Replying to'}
-      </span>
-      <span className="line-clamp-3 whitespace-pre-wrap break-words">
-        {stripWhatsAppMarkup(context.excerpt)}
-      </span>
-    </>
-  );
-  const className =
-    'mb-1 flex w-full flex-col gap-0.5 rounded border-s-2 border-emerald-500 bg-black/5 px-2 py-1 text-start text-xs italic opacity-80 dark:bg-white/5';
-
-  if (!onJump) {
-    return (
-      <div data-testid="quoted-context" className={className}>
-        {inner}
-      </div>
-    );
-  }
-  return (
-    <button
-      type="button"
-      data-testid="quoted-context"
-      onClick={onJump}
-      aria-label="Go to the quoted message"
-      className={`${className} transition-colors hover:bg-black/10 dark:hover:bg-white/10`}
-    >
-      {inner}
-    </button>
-  );
-}
-
 export default function RespondChatList({
   items,
   contactName,
@@ -525,7 +461,6 @@ export default function RespondChatList({
   focusMessageId = null,
   focusNonce = 0,
   onJumpToMessage,
-  messageMenu = false,
   onReply,
   className,
 }: RespondChatListProps) {
@@ -1101,7 +1036,7 @@ export default function RespondChatList({
               )}
               <div className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
                 <MessageBubbleActions
-                  enabled={messageMenu && !isPending}
+                  enabled={!isPending}
                   onReply={onReply ? () => onReply(replyTarget()) : undefined}
                   copyText={text}
                   className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-sm shadow-sm ${bubbleClass}${

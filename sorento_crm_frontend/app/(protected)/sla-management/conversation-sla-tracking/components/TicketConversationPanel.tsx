@@ -12,7 +12,7 @@ import InternalCommentComposer from '@/components/common/conversation/InternalCo
 import SharedConversationComposer from '@/components/common/conversation/SharedConversationComposer';
 import { useConversationEvents } from '@/components/common/conversation/useConversationEvents';
 import { useConversationThread } from '@/components/common/conversation/useConversationThread';
-import type { ReplyTarget } from '@/lib/respondIoChatRender';
+import { useReplyTarget } from '@/components/common/conversation/useReplyTarget';
 
 import {
   useSlaTrackingConversation,
@@ -102,7 +102,8 @@ export default function TicketConversationPanel({
   const [composerMode, setComposerMode] = useState<'reply' | 'comment'>('reply');
   // #1317: the customer message the next Reply answers. Only the Reply
   // composer shows or sends it; Comment never leaves the CRM, so never quotes.
-  const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
+  // Another ticket clears it (the hook's reset key).
+  const { replyTo: replyTarget, startReply, clearReplyTo } = useReplyTarget(ticketId);
   const queryClient = useQueryClient();
 
   const activeId = enabled ? ticketId : null;
@@ -162,7 +163,6 @@ export default function TicketConversationPanel({
   // into someone else's conversation.
   useEffect(() => {
     setComposerMode('reply');
-    setReplyTarget(null);
   }, [ticketId]);
 
   // AC-L7 / AC-L8: scroll-back and search live in the SHARED thread hook.
@@ -270,11 +270,10 @@ export default function TicketConversationPanel({
             onJumpToMessage={thread.jumpToMessage}
             // #1317: WhatsApp's message actions. Reply (menu + swipe) only
             // where this viewer can actually answer; Copy always.
-            messageMenu
             onReply={
               canReply
                 ? (target) => {
-                    setReplyTarget(target);
+                    startReply(target);
                     setComposerMode('reply');
                   }
                 : undefined
@@ -399,9 +398,7 @@ export default function TicketConversationPanel({
             replyTo={canReply ? replyTarget : null}
             // After a send, only the target that send carried is dropped: a
             // bubble picked while it was in flight stays picked.
-            onClearReplyTo={(sent) =>
-              setReplyTarget((current) => (sent && current !== sent ? current : null))
-            }
+            onClearReplyTo={clearReplyTo}
           />
         </div>
       )}

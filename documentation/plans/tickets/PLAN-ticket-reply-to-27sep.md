@@ -1,6 +1,6 @@
 # PLAN: ticket resolving reply-to (quoted message) with WhatsApp gestures (#1317)
 
-Status: Track: full (FE diff over 300 lines with tests; no migration, no auth/RBAC change, no new ingest surface). Built and reviewed on PR #1318 (reviewer: no blockers, 3 should-fix applied); awaiting CI label and owner hand test. Browser pass not run in the cloud lane (needs a Respond-linked ticket on prod-copy data; see cloud-lanes.md "What stays local").
+Status: Track: full (FE diff over 300 lines with tests; no migration, no auth/RBAC change, no new ingest surface). Built and reviewed on PR #1318 (reviewer: no blockers, 3 should-fix applied). Fix lane round 2 (owner answers 28 Sep): menu and swipe on every conversation surface through one shared bubble component, compact quote (AC-RT-6 revised, AC-RT-6b); awaiting CI label and owner hand test. Browser pass not run in the cloud lane (needs a Respond-linked ticket on prod-copy data; see cloud-lanes.md "What stays local").
 UAC: `ticket-reply-to-27sep-acceptance-criteria.md`
 Issue: #1317. Owner's words there are the scope: bring back reply-to in ticket resolving, WhatsApp gestures (swipe right on the phone, chevron or right click on desktop), carried in the outgoing text the way the dropped version did.
 
@@ -74,7 +74,9 @@ answer.
    (verbatim from `e313ac690^`), plus `quoteExcerptOf(item)` (body text, else the attachment
    placeholder, else `[type]`) and `findQuotedOriginal(excerpt, earlier)` (newest earlier message
    whose collapsed text starts with the excerpt minus its `…`).
-2. **Bubble menu** in `RespondChatList`, only when `onReply` is passed (opt-in; AC-RT-6):
+2. **Bubble menu** on every bubble of every thread surface (round 2, owner answer 3; AC-RT-6
+   revised): `MessageBubbleActions` is the one bubble wrapper for `RespondChatList` and
+   `ChatTranscript`; each surface with a composer owns its target via `useReplyTarget`.
    `components/ui/context-menu` wraps the bubble (right click; touch long press is Radix's own),
    `components/ui/dropdown-menu` behind a chevron-down at the bubble's top-end corner, visible on
    `group-hover` / focus under `(hover: hover)`. Items: Reply (when `canReply`), Copy. One
@@ -105,6 +107,7 @@ No backend change, no migration (alembic heads quoted in the PR close-out).
 2. Quote length: **160 characters, whitespace collapsed, then `…` (as shipped).**
 3. Which surfaces get the menu: **only the ticket resolving conversation (drawer + Chat Records
    sheet); the quoted block renders on every thread surface because it is the same message.**
+   Owner (28 Sep): every place a conversation is shown. Round 2 applies it.
 4. Menu items: **Reply and Copy only.**
 5. Comment tab: **a quote never goes into an internal comment; the preview hides on Comment and
    returns on Reply.**
