@@ -16,6 +16,9 @@ row locks on the matching rows until the transaction commits.
 
 Downgrade is a no-op on purpose: a stripped hash cannot, and must not, come back.
 
+Parent: written on `sales_0002_team_leader`; re-parented onto `merge_27sep_three_heads`
+when main (11bf373ec) was merged, so the graph keeps a single head. Schema-free parent.
+
 Revision ID: 527_audit_logs_scrub_secrets
 Revises: merge_27sep_three_heads
 """
