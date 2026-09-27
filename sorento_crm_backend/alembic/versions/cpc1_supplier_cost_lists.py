@@ -20,7 +20,7 @@ Every step is defensive against a schema already built by `Base.metadata.create_
 job on such a database is only the permission grants and the data seeds.
 
 Revision ID: cpc1_supplier_cost_lists
-Revises: sales_0002_team_leader
+Revises: merge_27sep_three_heads
 Create Date: 2026-09-27
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "cpc1_supplier_cost_lists"
-down_revision = "sales_0002_team_leader"
+down_revision = "merge_27sep_three_heads"
 branch_labels = None
 depends_on = None
 
