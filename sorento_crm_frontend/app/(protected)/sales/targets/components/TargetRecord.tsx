@@ -1499,7 +1499,9 @@ function CommissionTiers({
           />
         </Field>
       </div>
-      <div className="overflow-x-auto rounded-lg border">
+      {/* `relative`: the sr-only Remove header is absolutely placed, and must stay inside this
+          scroll box or it widens the page at 375. */}
+      <div className="relative overflow-x-auto rounded-lg border">
         <table aria-label="Commission tiers" className="w-full min-w-[28rem] text-sm">
           <thead className="bg-muted/40 text-xs text-muted-foreground">
             <tr>
