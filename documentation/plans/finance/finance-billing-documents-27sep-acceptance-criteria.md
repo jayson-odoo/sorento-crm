@@ -15,7 +15,7 @@ S2-1, S2-3, S2-11 (new), S2-12 (new), S3-3, S4-1, S4-2, S4-3.
 Round 3 (27 Sep, the owner's round 2 answers, plan section 0.1): Q5 No, Q14 by the sales order
 type, Q15 the invoice's own agent, Q16 the Roles screen. Rewritten: J5, S1-4, S1-5, S1-9,
 S1-10 (sales order type grouping replaces the team grouping; retail S1's `(blank)` row replaces
-the "No team" block). S0 built on PR #1314; S1 building on the S1 lane.
+the "No team" block). S0 built on PR #1314; S1 built, in review on PR #1321.
 Track: full (new module, new schema, a migration, new permissions, a new external ingest entity).
 
 Tags: `[BE]` pytest (Postgres only), `[FE]` vitest, `[E2E]` recorded agent-browser run (no new
