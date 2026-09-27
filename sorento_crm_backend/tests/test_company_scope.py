@@ -559,7 +559,10 @@ def test_every_company_id_table_is_registered():
     # `sales.team_members` are one company's own teams and its agents' dated places in
     # them; the team routes load a team BY ID, so the mixin's filter is what hides another
     # company's team (UAC S6-8).
-    expected_owned = 140
+    # PLAN-finance-billing-documents-27sep.md (S0, #1309) adds 2: `finance.billing_documents`
+    # and `finance.billing_document_lines` are one company's own AutoCount billing documents,
+    # pushed under that company's anchor; the read-back loads a document BY ID.
+    expected_owned = 142
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

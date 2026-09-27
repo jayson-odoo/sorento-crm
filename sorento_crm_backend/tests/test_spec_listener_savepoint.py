@@ -162,6 +162,7 @@ def schema_map():
         "projects": f"{name}_projects",
         "chatbot": f"{name}_chatbot",
         "sales": f"{name}_sales",
+        "finance": f"{name}_finance",
     }
     admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
     try:
@@ -235,7 +236,7 @@ def db(session_factory, schema_map):
     session = session_factory()
     set_company_scope(session, frozenset({DEFAULT_COMPANY_ID}))
     search_path = ", ".join(
-        f'"{schema_map[key]}"' for key in (None, "scm", "dealer_kit", "chatbot", "sales", "projects")
+        f'"{schema_map[key]}"' for key in (None, "scm", "dealer_kit", "chatbot", "sales", "finance", "projects")
     )
     session.execute(text(f"SET search_path TO {search_path}"))
     try:

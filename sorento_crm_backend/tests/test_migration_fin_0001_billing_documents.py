@@ -9,6 +9,11 @@ context. Its `finance.*` DDL is redirected onto a scratch schema by `schema_tran
 (lesson 114: a rolled-back transaction is not isolation for DDL on the shared relations), and
 everything else it writes (permission rows, grants, the catalog row) sits in the outer
 transaction, which is rolled back. Same shape as `test_migration_sales_0001_teams.py`.
+
+Named `test_migration_*.py` on purpose: its DDL adds foreign keys to the SHARED `companies`,
+`customers`, `sales_agents`, `products` and `sales_order_lines`, so it deadlocks with another
+worker's migration test inside the xdist pool (measured: DeadlockDetected on `companies` and
+`sales_agents` against `test_migration_sales_0001_teams.py`). CI runs that glob serially.
 """
 from __future__ import annotations
 
