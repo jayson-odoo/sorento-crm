@@ -1,7 +1,9 @@
 # PLAN: order inquiry line attachments, sent with the OI handover email (27 Sep 2026)
 
-Status: PLANNED 27 Sep 2026. Track: full (one migration, a new upload surface). Grill posted
-on #1312; the build assumes the recommended answers unless the owner rules otherwise.
+Status: BUILT, REVIEW CLEAN 27 Sep 2026 (PR #1313; reviewer + security-reviewer round 1 fixed,
+browser pass done), awaiting owner hand test + merge go. Track: full (one migration, a new
+upload surface). Grill posted on #1312; the build assumes the recommended answers unless the
+owner rules otherwise.
 UAC: `oi-line-attachments-27sep-acceptance-criteria.md`. Issue: #1312.
 Lane: cloud lane, branch `claude/oi-line-attachments-ttlgl0` off `origin/main` 52b0ac24.
 Classification: CORE extension of the project sales / order inquiry domain, `public` schema
@@ -137,7 +139,28 @@ handover email purchasing receives carries those files as real attachments, name
 - The files are not sent with the undo email or the reserve emails. Trigger: purchasing asks.
 - No per-line "sent" marker. Trigger: purchasing reports duplicate attachments as noise (Q2).
 
-## 6. Tests
+## 6. Deviations (recorded for the PR)
+
+- No separate Phase 1 mock commit: the frontend landed after the backend in the same lane.
+  The contract was fixed by the UAC before either, and the red tests (FE and BE) were
+  committed first, from the UAC alone.
+- Review round 1 moved the board's attachment lookup up to `FulfilmentBoardPanel` (one call
+  over every contribution, under the app's own query client), kept the lightbox mounted
+  after first open so a delete countdown survives closing it, and read the handover files
+  with `company_scope(db, None)` on the post-commit session (without it no file would ever
+  attach: `Attachment` is company-scoped and that session carries no scope).
+- Security hardening beyond the UAC: content type always derived from the extension, a hard
+  10 MB per file and 10 files per request in code (independent of the admin-editable type
+  row), malformed ids answer 404/422.
+
+## 7. Follow-ups found in review (not this lane)
+
+- `shipment_line_photos.py` trusts the browser's Content-Type the same way this lane first
+  did; same one-line fix.
+- `DELETE /resource-management/attachments/links/{link_id}` needs no permission slug and can
+  unlink any entity's attachment link, this lane's included. Gate it per entity type.
+
+## 8. Tests
 
 See the UAC's test list. Backend on Postgres via `SORENTO_ENV_FILE=.env.ci-tests`; vitest on
 the touched files.
