@@ -1,0 +1,361 @@
+# Console cases for chatbot-stock-ask-v2 S3 (PLAN-chatbot-stock-ask-v2-24sep.md "S3",
+# UAC AC-SA318 - "Console check per documentation/agents/chatbot-verification.md against
+# an Availability only dealer contact: one turn per branch (B1 via Q > X, B1 via unset X,
+# B2, B3 with toggle on and off, B4)").
+#
+# This file covers B1 (both ways, in one multi-product turn - R14's own "g" sample), B2
+# and B4. B3 (the incoming/packing-list branch, run twice - toggle on and off) is
+# `2026-09-25-stock-ask-v2-s3-incoming-packing-list.yaml`.
+#
+# NOT collected by pytest. Requires the S3 seed data (contact respond_io_id 437264483 on
+# an "Availability only" stock visibility policy, products SA318A/SA318B/SA318C/SA318E,
+# categories SA318CAP (chatbot_max_qty=200, chatbot_eta_offset_days=7) and SA318UNCAP
+# (both NULL) - see the evidence file for the seed script and its exact rows) already
+# applied to the lane database, and the lane's MCP server (`sorento_crm_mcp`, :8765)
+# running alongside the backend - the engine calls it in-process over HTTP for every
+# domain fetch.
+#
+# Round 2 review, Should fix 1: the seed database must ALSO carry a `stock_ledger` row
+# with `transaction_type = 'BULK_IMPORT'`, or the `reply_not_contains: ["Data last
+# updated"]` assertions below prove nothing - `StockService` only ever emits the
+# `_Data last updated_` footer when such a row exists system-wide (`inventory_service.
+# py`'s `last_import_at` query), so a DB with none makes the no-footer case
+# unreachable rather than passing for the right reason (round 1's evidence file
+# had exactly this gap).
+#
+#   cd sorento_crm_backend
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-25-stock-ask-v2-s3-branches.yaml \
+#       --base-url http://127.0.0.1:8000 --api-key <EXTERNAL_API_KEY> --mock-parser
+#
+# `--mock-parser` is mandatory here (no OPENAI_API_KEY in the sandbox this file was
+# authored in): every turn supplies its own deterministic `parser:` block. Each case is
+# two turns - the first names the product(s) with no quantity (opens #1118's StockQtyTask,
+# ported per R1), the second states the quantity/quantities, which is what a REAL
+# `StockQtyTask` loop needs (`tests/test_stock_qty_task_e2e.py`): a turn with no open task
+# and only entities (no `entities[].quantity`) never reaches `task_mod.run()` (it requires
+# an already-open task, `if not tasks: return TaskOutcome(...)`), so a genuinely fresh ask
+# is always at least two turns even when the dealer states everything in one sentence.
+
+contact: "437264483"
+
+cases:
+  - name: "B1 via Q>X and B1 via unset X, one multi-product turn (R14 sample g)"
+    cold: true
+    turns:
+      - text: "Do you have SA318A and SA318B?"
+        parser:
+          message_type: "business_query"
+          intent_hint: "check_stock"
+          domain_hint: "inventory"
+          scope_intent: "specific"
+          is_affirmative: null
+          user_goal: "asking about stock for two products"
+          continuation: null
+          access_levels: []
+          broaden_axis: null
+          broaden_to: null
+          date_mode: null
+          date_filter_start: null
+          date_filter_end: null
+          match_mode: "and"
+          demand_qty: null
+          entities:
+            - raw: "SA318A"
+              hint: "product"
+              canonical_code: "SA318A"
+              current_message: true
+              confident: true
+            - raw: "SA318B"
+              hint: "product"
+              canonical_code: "SA318B"
+              current_message: true
+              confident: true
+          entity_op: "replace_combine"
+          domain_in_message: true
+          requested_attributes: []
+          contains_flyer: false
+          reference_positions: []
+          reference_target: null
+          person_mention: null
+          is_active: null
+          order_status: null
+          group_by: null
+          top_n: null
+          sales_channel: null
+          correction: false
+          routing: {suggested_team: null, suggested_agent: null}
+          escalation: {is_escalation_confirmation: false, company_pick: null}
+          document: null
+          status: null
+          asks: []
+          topic_reset: false
+          anaphora: {backward_reference: false}
+        expect:
+          branch_kind: business_query
+      - text: "250 units for SA318A and 20 for SA318B"
+        parser:
+          message_type: "business_query"
+          intent_hint: "check_stock"
+          domain_hint: "inventory"
+          scope_intent: "specific"
+          is_affirmative: null
+          user_goal: "stating both quantities"
+          continuation: null
+          access_levels: []
+          broaden_axis: null
+          broaden_to: null
+          date_mode: null
+          date_filter_start: null
+          date_filter_end: null
+          match_mode: "and"
+          demand_qty: null
+          entities:
+            - raw: "SA318A"
+              hint: "product"
+              canonical_code: "SA318A"
+              current_message: true
+              confident: true
+              quantity: 250
+            - raw: "SA318B"
+              hint: "product"
+              canonical_code: "SA318B"
+              current_message: true
+              confident: true
+              quantity: 20
+          entity_op: "replace_combine"
+          domain_in_message: false
+          requested_attributes: []
+          contains_flyer: false
+          reference_positions: []
+          reference_target: null
+          person_mention: null
+          is_active: null
+          order_status: null
+          group_by: null
+          top_n: null
+          sales_channel: null
+          correction: false
+          routing: {suggested_team: null, suggested_agent: null}
+          escalation: {is_escalation_confirmation: false, company_pick: null}
+          document: null
+          status: null
+          asks: []
+          topic_reset: false
+          anaphora: {backward_reference: false}
+        expect:
+          branch_kind: business_query
+          # Both lines read IDENTICALLY to the dealer (R14/AC-SA313: the "no cap set for
+          # <category>" wording is S4's AGENT notification reason, never the dealer
+          # sentence) - SA318A is too_big because Q(250) > X(200), SA318B is too_big
+          # because its category's X is unset (reads as 0).
+          reply_contains:
+            - "SA318A x 250: the quantity is more than what I can confirm here, please refer to your salesman."
+            - "SA318B x 20: the quantity is more than what I can confirm here, please refer to your salesman."
+          # Round 2 review, Blocking 1 (AC-SA312): production always sets
+          # `last_updated_at`, and only a DB with a BULK_IMPORT ledger row exercises
+          # this - the round 1 evidence's seeded DB had none, so the footer went
+          # unchecked. This case's seed data carries one.
+          reply_not_contains:
+            - "Data last updated"
+          no_uuid: true
+
+  - name: "B2 - in stock"
+    cold: true
+    turns:
+      - text: "Do you have SA318C in stock?"
+        parser:
+          message_type: "business_query"
+          intent_hint: "check_stock"
+          domain_hint: "inventory"
+          scope_intent: "specific"
+          is_affirmative: null
+          user_goal: "asking about stock"
+          continuation: null
+          access_levels: []
+          broaden_axis: null
+          broaden_to: null
+          date_mode: null
+          date_filter_start: null
+          date_filter_end: null
+          match_mode: "and"
+          demand_qty: null
+          entities:
+            - raw: "SA318C"
+              hint: "product"
+              canonical_code: "SA318C"
+              current_message: true
+              confident: true
+          entity_op: "replace_combine"
+          domain_in_message: true
+          requested_attributes: []
+          contains_flyer: false
+          reference_positions: []
+          reference_target: null
+          person_mention: null
+          is_active: null
+          order_status: null
+          group_by: null
+          top_n: null
+          sales_channel: null
+          correction: false
+          routing: {suggested_team: null, suggested_agent: null}
+          escalation: {is_escalation_confirmation: false, company_pick: null}
+          document: null
+          status: null
+          asks: []
+          topic_reset: false
+          anaphora: {backward_reference: false}
+        expect:
+          branch_kind: business_query
+      - text: "need 50 units"
+        parser:
+          message_type: "business_query"
+          intent_hint: "check_stock"
+          domain_hint: "inventory"
+          scope_intent: "specific"
+          is_affirmative: null
+          user_goal: "stating the quantity"
+          continuation: null
+          access_levels: []
+          broaden_axis: null
+          broaden_to: null
+          date_mode: null
+          date_filter_start: null
+          date_filter_end: null
+          match_mode: "and"
+          demand_qty: null
+          entities:
+            - raw: "SA318C"
+              hint: "product"
+              canonical_code: "SA318C"
+              current_message: true
+              confident: true
+              quantity: 50
+          entity_op: "replace_combine"
+          domain_in_message: false
+          requested_attributes: []
+          contains_flyer: false
+          reference_positions: []
+          reference_target: null
+          person_mention: null
+          is_active: null
+          order_status: null
+          group_by: null
+          top_n: null
+          sales_channel: null
+          correction: false
+          routing: {suggested_team: null, suggested_agent: null}
+          escalation: {is_escalation_confirmation: false, company_pick: null}
+          document: null
+          status: null
+          asks: []
+          topic_reset: false
+          anaphora: {backward_reference: false}
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "SA318C x 50: yes, we have stock, please refer to your salesman to proceed."
+          reply_not_contains:
+            - "Data last updated"
+          no_uuid: true
+
+  - name: "B4 - no stock and no incoming"
+    cold: true
+    turns:
+      - text: "Any stock for SA318E?"
+        parser:
+          message_type: "business_query"
+          intent_hint: "check_stock"
+          domain_hint: "inventory"
+          scope_intent: "specific"
+          is_affirmative: null
+          user_goal: "asking about stock"
+          continuation: null
+          access_levels: []
+          broaden_axis: null
+          broaden_to: null
+          date_mode: null
+          date_filter_start: null
+          date_filter_end: null
+          match_mode: "and"
+          demand_qty: null
+          entities:
+            - raw: "SA318E"
+              hint: "product"
+              canonical_code: "SA318E"
+              current_message: true
+              confident: true
+          entity_op: "replace_combine"
+          domain_in_message: true
+          requested_attributes: []
+          contains_flyer: false
+          reference_positions: []
+          reference_target: null
+          person_mention: null
+          is_active: null
+          order_status: null
+          group_by: null
+          top_n: null
+          sales_channel: null
+          correction: false
+          routing: {suggested_team: null, suggested_agent: null}
+          escalation: {is_escalation_confirmation: false, company_pick: null}
+          document: null
+          status: null
+          asks: []
+          topic_reset: false
+          anaphora: {backward_reference: false}
+        expect:
+          branch_kind: business_query
+      - text: "need 150 units"
+        parser:
+          message_type: "business_query"
+          intent_hint: "check_stock"
+          domain_hint: "inventory"
+          scope_intent: "specific"
+          is_affirmative: null
+          user_goal: "stating the quantity"
+          continuation: null
+          access_levels: []
+          broaden_axis: null
+          broaden_to: null
+          date_mode: null
+          date_filter_start: null
+          date_filter_end: null
+          match_mode: "and"
+          demand_qty: null
+          entities:
+            - raw: "SA318E"
+              hint: "product"
+              canonical_code: "SA318E"
+              current_message: true
+              confident: true
+              quantity: 150
+          entity_op: "replace_combine"
+          domain_in_message: false
+          requested_attributes: []
+          contains_flyer: false
+          reference_positions: []
+          reference_target: null
+          person_mention: null
+          is_active: null
+          order_status: null
+          group_by: null
+          top_n: null
+          sales_channel: null
+          correction: false
+          routing: {suggested_team: null, suggested_agent: null}
+          escalation: {is_escalation_confirmation: false, company_pick: null}
+          document: null
+          status: null
+          asks: []
+          topic_reset: false
+          anaphora: {backward_reference: false}
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "SA318E x 150: no stock and no incoming at the moment, please refer to your salesman."
+          reply_not_contains:
+            - "Data last updated"
+          no_uuid: true
