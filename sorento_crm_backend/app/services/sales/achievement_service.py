@@ -36,12 +36,18 @@ criteria do not reach inside a CTE, so a DO line of another company linked to th
 sales order line would otherwise count. `any_do_linked` applies the same rule, so the Counts
 label and the figures always agree.
 
-**Shape (review round 2, B1).** The DO lines are aggregated once, never per line and period:
-`do_counted` gives each linked DO line its capped quantity once; its per-(period, line) sum on
-the DO date and its per-line total are unioned with the lines dated in each period and grouped
-into one row per (period, line), which then joins the line and its order by primary key. No
-correlated subquery reads the DO lines, and nothing crosses every line with every period, so
-the plan stays linear even where the planner has no statistics (a freshly filled table).
+**Shape (review round 2, B1; #1319).** The credited agents' lines are bounded first: by the
+agents' index and the order date span of all the periods (plus, when a period counts by DO
+date, the lines a DO dated inside that span links to), typed UUID to UUID on every company
+column, so no line outside every period is read. Each source then reaches its periods through
+the credit rows, joined on the agent (a hash join), so a line meets only the periods whose
+subject credits its agent, never every period. Credit windows are merged per (period, agent)
+in Python, so that join yields each line once per period. The DO lines are aggregated once:
+`do_counted` gives each linked DO line its capped quantity; its per-(period, line) sum on the
+DO date and its per-line total are unioned with the lines dated in each period and grouped
+into one row per (period, line). The product scope is resolved once, the category tree walked
+once, into a small (target, scope, product) set a hashed IN reads; an all-products target
+reads none of it.
 """
 from __future__ import annotations
 
@@ -52,17 +58,20 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from sqlalchemy import (
     Date,
+    Integer,
     String,
-    Text,
     and_,
-    cast,
     case,
+    cast,
     column,
-    exists,
     func,
     literal,
+    literal_column,
     or_,
     select,
+    true,
+    tuple_,
+    union,
     union_all,
     values,
 )
@@ -164,100 +173,181 @@ def achievement_value_expr(metric: str, basis: str, delivered_qty, line_total=No
     return func.coalesce(func.round(line_total * delivered_qty / func.nullif(qty_ordered, 0), 2), 0)
 
 
-def _same_company(col, company_id: str):
-    """`col = company_id` for a row reached by its parent's key, compared as text on purpose.
-
-    Written as a plain `=` against a constant, the planner may walk the whole-company index
-    instead of the key it was given: on a table without statistics (a freshly filled one) it
-    believes that index returns one row, and a DO read crossed every DO line with every DO of
-    the company (25.9M rows, 11 s, review round 2). As text it is a filter on rows the key walk
-    already reached. Postgres folds `IS NOT DISTINCT FROM` a constant back into `=`, so that
-    spelling does not work. Same meaning: the column is a non-null uuid.
-    """
-    return cast(col, Text) == str(company_id)
-
-
 # --------------------------------------------------------------------------------------
 # the query
 # --------------------------------------------------------------------------------------
 
 
+def _credit_groups(specs: List[PeriodSpec]) -> Tuple[Dict[str, int], List[Tuple[int, str, date, date]]]:
+    """Each period's credit group, and `(group, agent_id, valid_from, valid_to)` per group.
+
+    Periods with the same credit rows (every period of one target: they share its subject)
+    share one group, so a line meets one credit row per subject crediting its agent, not one
+    per period. Each (group, agent)'s windows are merged: two stays of label siblings can give
+    one agent overlapping windows, and merged, an order date falls inside at most one row, so
+    joining on the credit never counts a line twice (the EXISTS it replaces had the same
+    meaning). An open end is the earliest or latest date, never NULL: a NULL in VALUES is
+    untyped text to Postgres, and `text <= date` does not exist.
+    """
+    group_of: Dict[str, int] = {}
+    groups: Dict[Tuple[Credit, ...], int] = {}
+    for s in specs:
+        key = tuple(
+            sorted(
+                {(a, f or date.min, t or date.max) for a, f, t in s.credits},
+            )
+        )
+        group_of[s.period_id] = groups.setdefault(key, len(groups))
+    rows = []
+    for key, group in groups.items():
+        by_agent: Dict[str, List[Tuple[date, date]]] = {}
+        for agent_id, valid_from, valid_to in key:
+            by_agent.setdefault(agent_id, []).append((valid_from, valid_to))
+        for agent_id, spans in by_agent.items():
+            spans.sort()
+            start, end = spans[0]
+            for next_start, next_end in spans[1:]:
+                if next_start <= end:
+                    end = max(end, next_end)
+                else:
+                    rows.append((group, agent_id, start, end))
+                    start, end = next_start, next_end
+            rows.append((group, agent_id, start, end))
+    return group_of, rows
+
+
 def achieved_by_period(db: Session, specs: List[PeriodSpec], company_id: str) -> Dict[str, Decimal]:
     """`{period_id: achieved}` for every spec, one statement for all of them.
 
-    Steps (review round 2, B1), each reading a small VALUES, one earlier step once, or an index:
-    `agent_lines` (the credited agents' live, dated lines with what the value needs),
-    `do_counted` (their linked DO lines with the capped quantity, and the line's columns), then
-    one row per (period, line) from three sources grouped together: lines dated in the period,
-    DO quantity dated in the period, and all linked DO quantity on the line's own period.
+    Steps (review round 2, B1; #1319), each reading a small VALUES, one earlier step once, or an
+    index: `agent_lines` (the credited agents' live lines dated inside the periods' span, or
+    linked to a DO dated inside it), `do_counted` (their linked DO lines with the capped
+    quantity, and the line's columns), then one row per (period, line) from three sources
+    grouped together, each reaching its periods through the credit rows of the line's agent:
+    lines dated in the period, DO quantity dated in the period, and all linked DO quantity on
+    the line's own period.
     """
     out: Dict[str, Decimal] = {s.period_id: Decimal("0") for s in specs}
-    # An open end becomes the earliest or latest date, never NULL: a NULL in VALUES is untyped
-    # text to Postgres, and `text <= date` does not exist.
-    credit_rows = [
-        (s.period_id, agent_id, valid_from or date.min, valid_to or date.max)
-        for s in specs
-        for agent_id, valid_from, valid_to in s.credits
-    ]
+    group_of, credit_rows = _credit_groups(specs)
     if not credit_rows:
         return out
 
-    def periods(name: str):
+    # Every day of every period, with the period's own columns: a line meets its periods by an
+    # equality on the date (a hash join), never by a range test against every period, and the
+    # period's metric, basis and scope ride along to the end, so nothing joins the periods back.
+    pv = values(
+        column("period_id", _UUID),
+        column("target_id", _UUID),
+        column("credit_group", Integer),
+        column("pstart", Date),
+        column("pend", Date),
+        column("metric", String),
+        column("basis", String),
+        column("product_scope", String),
+        name="pv",
+    ).data(
+        [
+            (
+                s.period_id, s.target_id, group_of[s.period_id], s.period_start, s.period_end,
+                s.metric, s.basis, s.product_scope,
+            )
+            for s in specs
+        ]
+    )
+    # A function in FROM sees the items before it (implicitly LATERAL).
+    day = (
+        func.generate_series(pv.c.pstart, pv.c.pend, literal_column("interval '1 day'"))
+        .table_valued("day")
+        .render_derived(name="d")
+    )
+    period_days = (
+        select(
+            pv.c.period_id, pv.c.target_id, pv.c.credit_group, pv.c.metric, pv.c.basis,
+            pv.c.product_scope, cast(day.c.day, Date).label("day"),
+        )
+        .select_from(pv)
+        .join(day, true())
+        # Built once and hashed, never re-run per line where a single use would be inlined.
+        .cte("period_days")
+        .prefix_with("MATERIALIZED")
+    )
+
+    def credits(name: str):
         # One VALUES per use: a VALUES construct cannot be aliased, it renders its own name.
         return values(
-            column("period_id", _UUID),
-            column("target_id", _UUID),
-            column("pstart", Date),
-            column("pend", Date),
-            column("metric", String),
-            column("basis", String),
-            column("product_scope", String),
+            column("credit_group", Integer),
+            column("agent_id", _UUID),
+            column("valid_from", Date),
+            column("valid_to", Date),
             name=name,
-        ).data(
-            [
-                (s.period_id, s.target_id, s.period_start, s.period_end, s.metric, s.basis, s.product_scope)
-                for s in specs
-            ]
-        )
+        ).data(credit_rows)
 
-    credit = values(
-        column("period_id", _UUID),
-        column("agent_id", _UUID),
-        column("valid_from", Date),
-        column("valid_to", Date),
-        name="credit",
-    ).data(credit_rows)
     agent_ids = sorted({row[1] for row in credit_rows})
-    delivered = any(s.basis == "delivered" for s in specs)
+    delivered = [s for s in specs if s.basis == "delivered"]
 
     # The four order tables are read as tables, not mapped classes: the company rule is named
     # explicitly on each below, and the scope listener's own `company_id IN (...)` on a mapped
     # class is an indexable constant a statistics-less planner walks instead of the key.
     SO, SOL = SalesOrder.__table__.c, SalesOrderLine.__table__.c
     OL, ORD = OrderLine.__table__.c, Order.__table__.c
-    # The credited agents' live lines with a date: the sales report's predicate, company first.
-    agent_lines = (
-        select(
-            SOL.id.label("sol_id"),
-            SOL.product_id.label("product_id"),
-            SOL.qty_ordered.label("qty_ordered"),
-            SOL.qty_delivered.label("qty_delivered"),
-            SOL.line_total.label("line_total"),
-            SO.order_date.label("order_date"),
-            SO.sales_agent_id.label("agent_id"),
+
+    # Another company's line or DO line counts nothing: its values are gated to 0 by a UUID
+    # comparison inside CASE rather than filtered out, so the planner reaches each line by its
+    # parent's key and never walks a whole-company index. A statistics-less planner (a freshly
+    # filled table) believes that index returns one row and probes it once per order: 8.5 s at
+    # 160,000 lines (#1319, measured), where the key walk takes milliseconds.
+    mine = SOL.company_id == company_id
+
+    def credited_lines():
+        # The credited agents' live lines with a date: the sales report's predicate.
+        return (
+            select(
+                SOL.id.label("sol_id"),
+                SOL.product_id.label("product_id"),
+                case((mine, SOL.qty_ordered), else_=0).label("qty_ordered"),
+                case((mine, SOL.qty_delivered), else_=0).label("qty_delivered"),
+                case((mine, SOL.line_total), else_=0).label("line_total"),
+                SO.order_date.label("order_date"),
+                SO.sales_agent_id.label("agent_id"),
+            )
+            .select_from(SalesOrder.__table__)
+            .join(SalesOrderLine.__table__, SOL.sales_order_id == SO.id)
+            .where(
+                SO.company_id == company_id,
+                SO.sales_agent_id.in_(agent_ids),
+                SO.status != "cancelled",
+                SOL.line_status != "cancelled",
+                SO.order_date.isnot(None),
+            )
         )
-        .select_from(SalesOrder.__table__)
-        .join(SalesOrderLine.__table__, SOL.sales_order_id == SO.id)
-        .where(
-            SO.company_id == company_id,
-            _same_company(SOL.company_id, company_id),
-            SO.sales_agent_id.in_(agent_ids),
-            SO.status != "cancelled",
-            SOL.line_status != "cancelled",
-            SO.order_date.isnot(None),
-        )
-        .cte("agent_lines")
+
+    # Only lines dated inside the span every period together covers count by their order date.
+    dated = credited_lines().where(
+        SO.order_date.between(min(s.period_start for s in specs), max(s.period_end for s in specs))
     )
+    if delivered:
+        # A line ordered outside that span still counts where a DO dated inside a delivered
+        # period delivers it. Those DO lines are read first, by the DO date (MATERIALIZED, so
+        # the planner cannot turn it round into every line the agents ever sold); no company
+        # here, this only bounds which lines are read and `do_counted` gates the rest.
+        do_in_span = (
+            select(OL.sales_order_line_id.label("sol_id"))
+            .select_from(Order.__table__)
+            .join(OrderLine.__table__, OL.order_id == ORD.id)
+            .where(
+                ORD.order_date.between(
+                    min(s.period_start for s in delivered), max(s.period_end for s in delivered)
+                )
+            )
+            .cte("do_in_span")
+            .prefix_with("MATERIALIZED")
+        )
+        by_do = credited_lines().join(do_in_span, do_in_span.c.sol_id == SOL.id)
+        # UNION, not UNION ALL: a line both dated in the span and delivered in it, or delivered
+        # by two DOs in it, is read once.
+        agent_lines = union(dated, by_do).cte("agent_lines")
+    else:
+        agent_lines = dated.cte("agent_lines")
     line_cols = (
         agent_lines.c.product_id,
         agent_lines.c.qty_ordered,
@@ -267,27 +357,36 @@ def achieved_by_period(db: Session, specs: List[PeriodSpec], company_id: str) ->
         agent_lines.c.agent_id,
     )
 
-    # Rows of (period, line, line columns..., own, by_do, all_linked). `own` is 1 on the line's
-    # order-date period: ordered figures and the delivered residual count there only.
-    pb = periods("pb")
-    sources = [
-        select(
-            pb.c.period_id, agent_lines.c.sol_id, *line_cols,
-            literal(1).label("own"), literal(0).label("by_do"), literal(0).label("all_linked"),
-        )
-        .select_from(agent_lines)
-        .join(pb, agent_lines.c.order_date.between(pb.c.pstart, pb.c.pend))
-    ]
+    def in_periods(stmt, name: str, agent_id, order_date, on_date):
+        """`stmt` joined to the periods containing `on_date` whose subject credits `agent_id`
+        on `order_date` (the credit window always reads the SALES ORDER's date). The merged
+        credit windows match an order date at most once, so no row repeats."""
+        pd, cr = period_days.alias(name), credits(f"c{name}")
+        stmt = stmt.join(
+            cr, and_(cr.c.agent_id == agent_id, order_date.between(cr.c.valid_from, cr.c.valid_to))
+        ).join(pd, and_(pd.c.credit_group == cr.c.credit_group, pd.c.day == on_date))
+        return stmt, (pd.c.period_id, pd.c.target_id, pd.c.metric, pd.c.basis, pd.c.product_scope), pd
+
+    sources = []
     if delivered:
         # Each linked DO line of those lines with the quantity it counts under the cap:
         # `greatest(least(quantity, qty_ordered - prior), 0)`, `prior` the sum of the line's
         # earlier live DO lines in (DO date nulls last, DO id, line sequence) order, so the
         # first `qty_ordered` units delivered count and the rest counts nowhere (S1-8, S1-26 d).
-        # A cancelled or soft-deleted DO counts nothing: its quantity is 0 here rather than
-        # filtered out, so the planner walks the DO by its key and never by the cancelled or
-        # deleted index (see `_same_company`). Another company's DO never joins.
+        # A cancelled or soft-deleted DO, or another company's DO or DO line, counts nothing:
+        # its quantity is 0 here rather than filtered out, so the planner walks the DO by its
+        # key and never by the cancelled, deleted or company index.
         live_qty = case(
-            (and_(ORD.is_cancelled.is_(False), ORD.deleted_at.is_(None)), OL.quantity), else_=0
+            (
+                and_(
+                    ORD.is_cancelled.is_(False),
+                    ORD.deleted_at.is_(None),
+                    OL.company_id == company_id,
+                    ORD.company_id == company_id,
+                ),
+                OL.quantity,
+            ),
+            else_=0,
         )
         prior = func.sum(live_qty).over(
             partition_by=OL.sales_order_line_id,
@@ -307,10 +406,6 @@ def achieved_by_period(db: Session, specs: List[PeriodSpec], company_id: str) ->
             .select_from(agent_lines)
             .join(OrderLine.__table__, OL.sales_order_line_id == agent_lines.c.sol_id)
             .join(Order.__table__, ORD.id == OL.order_id)
-            .where(
-                _same_company(OL.company_id, company_id),
-                _same_company(ORD.company_id, company_id),
-            )
             .cte("do_counted")
         )
         do_cols = (
@@ -322,63 +417,68 @@ def achieved_by_period(db: Session, specs: List[PeriodSpec], company_id: str) ->
             do_counted.c.agent_id,
         )
         # The capped DO quantity per (period, line), bucketed by the DO date.
-        pd = periods("pd")
+        by_do_rows, do_period, pd = in_periods(
+            select(do_counted).select_from(do_counted), "pd",
+            do_counted.c.agent_id, do_counted.c.order_date, do_counted.c.do_date,
+        )
         sources.append(
-            select(
-                pd.c.period_id, do_counted.c.sol_id, *do_cols,
-                literal(0), func.sum(do_counted.c.counted), literal(0),
+            by_do_rows.with_only_columns(
+                *do_period, do_counted.c.sol_id, *do_cols,
+                literal(0).label("own"), func.sum(do_counted.c.counted).label("by_do"),
+                literal(0).label("all_linked"),
             )
-            .select_from(do_counted)
-            .join(pd, do_counted.c.do_date.between(pd.c.pstart, pd.c.pend))
             .where(pd.c.basis == "delivered")
-            # The line's columns ride along in the key: they are the line's own, one value each.
-            .group_by(pd.c.period_id, do_counted.c.sol_id, *do_cols)
+            # The line's and the period's columns ride along in the key: one value each.
+            .group_by(*do_period, do_counted.c.sol_id, *do_cols)
         )
         # Every linked DO quantity of the line, whatever its date, on the line's own period
         # (the residual's input).
         linked = (
-            select(
-                do_counted.c.sol_id, *do_cols,
-                func.sum(do_counted.c.qty).label("qty"),
-            )
+            select(do_counted.c.sol_id, *do_cols, func.sum(do_counted.c.qty).label("qty"))
             .group_by(do_counted.c.sol_id, *do_cols)
             .subquery("linked")
         )
-        pl = periods("pl")
+        linked_rows, linked_period, pl = in_periods(
+            select(linked).select_from(linked), "pl",
+            linked.c.agent_id, linked.c.order_date, linked.c.order_date,
+        )
         sources.append(
-            select(
-                pl.c.period_id, linked.c.sol_id,
+            linked_rows.with_only_columns(
+                *linked_period, linked.c.sol_id,
                 linked.c.product_id, linked.c.qty_ordered, linked.c.qty_delivered,
                 linked.c.line_total, linked.c.order_date, linked.c.agent_id,
-                literal(0), literal(0), linked.c.qty,
-            )
-            .select_from(linked)
-            .join(pl, linked.c.order_date.between(pl.c.pstart, pl.c.pend))
-            .where(pl.c.basis == "delivered")
+                literal(0).label("own"), literal(0).label("by_do"), linked.c.qty.label("all_linked"),
+            ).where(pl.c.basis == "delivered")
         )
+    # Rows of (period..., line, line columns..., own, by_do, all_linked). `own` is 1 on the
+    # line's order-date period: ordered figures and the delivered residual count there only.
+    own_rows, own_period, _ = in_periods(
+        select(agent_lines).select_from(agent_lines), "pb",
+        agent_lines.c.agent_id, agent_lines.c.order_date, agent_lines.c.order_date,
+    )
+    sources.append(
+        own_rows.with_only_columns(
+            *own_period, agent_lines.c.sol_id, *line_cols,
+            literal(1).label("own"), literal(0).label("by_do"), literal(0).label("all_linked"),
+        )
+    )
     rows = union_all(*sources).subquery("rows")
+    keys = (
+        rows.c.period_id, rows.c.target_id, rows.c.metric, rows.c.basis, rows.c.product_scope,
+        rows.c.sol_id, rows.c.product_id, rows.c.qty_ordered, rows.c.qty_delivered,
+        rows.c.line_total, rows.c.order_date, rows.c.agent_id,
+    )
     pairs = (
         select(
-            rows.c.period_id,
-            rows.c.sol_id,
-            rows.c.product_id,
-            rows.c.qty_ordered,
-            rows.c.qty_delivered,
-            rows.c.line_total,
-            rows.c.order_date,
-            rows.c.agent_id,
+            *keys,
             func.max(rows.c.own).label("own"),
             func.sum(rows.c.by_do).label("by_do"),
             func.sum(rows.c.all_linked).label("all_linked"),
         )
-        .group_by(
-            rows.c.period_id, rows.c.sol_id, rows.c.product_id, rows.c.qty_ordered,
-            rows.c.qty_delivered, rows.c.line_total, rows.c.order_date, rows.c.agent_id,
-        )
+        .group_by(*keys)
         .cte("pairs")
     )
 
-    p = periods("p")
     in_period = pairs.c.own == 1
     confirmed = func.least(pairs.c.qty_delivered, pairs.c.qty_ordered)
     residual = case((in_period, func.greatest(confirmed - pairs.c.all_linked, 0)), else_=0)
@@ -390,7 +490,7 @@ def achieved_by_period(db: Session, specs: List[PeriodSpec], company_id: str) ->
         )
         if basis == "ordered":
             value = case((in_period, value), else_=0)
-        return (and_(p.c.metric == metric, p.c.basis == basis), value)
+        return (and_(pairs.c.metric == metric, pairs.c.basis == basis), value)
 
     value = case(
         cell("amount", "ordered"),
@@ -400,73 +500,69 @@ def achieved_by_period(db: Session, specs: List[PeriodSpec], company_id: str) ->
         else_=0,
     )
 
-    # The scope's categories and every category below them (a "Basins" target counts
-    # "Basins > Countertop"). UNION, not UNION ALL, so a cycle in the tree still terminates.
-    target_ids = sorted({s.target_id for s in specs})
-    scope_cat = (
-        select(
-            SalesTargetScope.target_id.label("target_id"),
-            SalesTargetScope.product_category_id.label("category_id"),
+    stmt = select(pairs.c.period_id, func.sum(value)).group_by(pairs.c.period_id)
+    scoped = sorted({s.target_id for s in specs if s.product_scope != "all"})
+    if scoped:
+        # An all-products target reads no scope at all.
+        stmt = stmt.where(
+            or_(
+                pairs.c.product_scope == "all",
+                tuple_(pairs.c.target_id, pairs.c.product_scope, pairs.c.product_id).in_(
+                    _scope_products(scoped, {s.product_scope for s in specs}, company_id)
+                ),
+            )
         )
-        .where(
-            SalesTargetScope.target_id.in_(target_ids),
-            SalesTargetScope.company_id == company_id,
-            SalesTargetScope.product_category_id.isnot(None),
-        )
-        .cte("scope_cat", recursive=True)
-    )
-    scope_cat = scope_cat.union(
-        select(scope_cat.c.target_id, ProductCategory.id)
-        .join(ProductCategory, ProductCategory.parent_category_id == scope_cat.c.category_id)
-        .where(ProductCategory.company_id == company_id)
-    )
-
-    credited = exists().where(
-        credit.c.period_id == p.c.period_id,
-        credit.c.agent_id == pairs.c.agent_id,
-        pairs.c.order_date.between(credit.c.valid_from, credit.c.valid_to),
-    )
-    in_scope = or_(
-        p.c.product_scope == "all",
-        and_(
-            p.c.product_scope == "categories",
-            exists().where(
-                scope_cat.c.target_id == p.c.target_id,
-                Product.id == pairs.c.product_id,
-                Product.category_id == scope_cat.c.category_id,
-            ),
-        ),
-        and_(
-            p.c.product_scope == "products",
-            exists().where(
-                SalesTargetScope.target_id == p.c.target_id,
-                SalesTargetScope.company_id == company_id,
-                SalesTargetScope.product_id == pairs.c.product_id,
-            ),
-        ),
-        # A brand counts every product carrying it (the owner's hand test of 27 Sep).
-        and_(
-            p.c.product_scope == "brands",
-            exists().where(
-                SalesTargetScope.target_id == p.c.target_id,
-                SalesTargetScope.company_id == company_id,
-                SalesTargetScope.brand_id.isnot(None),
-                Product.id == pairs.c.product_id,
-                Product.brand_id == SalesTargetScope.brand_id,
-            ),
-        ),
-    )
-
-    stmt = (
-        select(p.c.period_id, func.sum(value))
-        .select_from(pairs)
-        .join(p, p.c.period_id == pairs.c.period_id)
-        .where(credited, in_scope)
-        .group_by(p.c.period_id)
-    )
     for period_id, total in db.execute(stmt).all():
         out[str(period_id)] = Decimal(total or 0)
     return out
+
+
+def _scope_products(target_ids: List[str], scopes: Set[str], company_id: str):
+    """`(target_id, product_scope, product_id)` for every product a scoped target counts, read
+    once: its products, every product of its categories and their sub-categories (the tree
+    walked once, a "Basins" target counts "Basins > Countertop"), every product of its brands."""
+    scope = SalesTargetScope
+    parts = []
+    if "categories" in scopes:
+        # UNION, not UNION ALL, so a cycle in the tree still terminates.
+        scope_cat = (
+            select(scope.target_id.label("target_id"), scope.product_category_id.label("category_id"))
+            .where(
+                scope.target_id.in_(target_ids),
+                scope.company_id == company_id,
+                scope.product_category_id.isnot(None),
+            )
+            .cte("scope_cat", recursive=True)
+        )
+        scope_cat = scope_cat.union(
+            select(scope_cat.c.target_id, ProductCategory.id)
+            .join(ProductCategory, ProductCategory.parent_category_id == scope_cat.c.category_id)
+            .where(ProductCategory.company_id == company_id)
+        )
+        parts.append(
+            select(scope_cat.c.target_id, literal("categories", String), Product.id)
+            .join(Product, Product.category_id == scope_cat.c.category_id)
+        )
+    if "products" in scopes:
+        parts.append(
+            select(scope.target_id, literal("products", String), scope.product_id).where(
+                scope.target_id.in_(target_ids),
+                scope.company_id == company_id,
+                scope.product_id.isnot(None),
+            )
+        )
+    if "brands" in scopes:
+        # A brand counts every product carrying it (the owner's hand test of 27 Sep).
+        parts.append(
+            select(scope.target_id, literal("brands", String), Product.id)
+            .join(Product, Product.brand_id == scope.brand_id)
+            .where(
+                scope.target_id.in_(target_ids),
+                scope.company_id == company_id,
+                scope.brand_id.isnot(None),
+            )
+        )
+    return union_all(*parts) if len(parts) > 1 else parts[0]
 
 
 def unassigned_amount(db: Session, on: date, company_id: str) -> Decimal:
