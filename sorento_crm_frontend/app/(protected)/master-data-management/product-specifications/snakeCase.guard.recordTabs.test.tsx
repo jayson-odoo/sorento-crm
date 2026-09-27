@@ -125,7 +125,7 @@ describe('D15 guard - the record page tabs', () => {
   it('How it is read renders the code rule\'s value as "Rose gold"', async () => {
     render(
       withClient(
-        <RulesTab row={FINISH_ROW} registry={[FINISH_ROW]} mode="view" draft={null} setDraft={() => {}} />,
+        <RulesTab row={FINISH_ROW} registry={[FINISH_ROW]} mode="view" draft={null} setDraft={() => {}} onEnterEdit={() => {}} />,
       ),
     );
     await screen.findAllByText('Rose gold');

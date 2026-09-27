@@ -347,7 +347,7 @@ async def get_spec_coverage(
     current_user: dict = Depends(require_permission_with_api_key("master_data.spec_registry.view")),
     db: Session = Depends(get_db),
 ):
-    """How many products actually carry each key, right now.
+    """How many products actually carry each key, right now, and when it was last read.
 
     A separate call rather than a field on the registry payload: that payload is what
     the n8n parser reads to build its extraction prompt, it is ETag-cached, and a
@@ -357,6 +357,10 @@ async def get_spec_coverage(
     The registry's own `measured_coverage` is a figure recorded when the key was
     written, so it is a note about the past. Where the two disagree the screen should
     show this one - `bowl_count` says 106 and the catalogue holds 148.
+
+    `last_read` is the newest read among the products carrying a key: the row's
+    `updated_at`, else its `created_at` (the same stamp the product's own
+    Specifications tab calls `derived_at`). A key no product carries has neither.
     """
     from sqlalchemy import func, text as sql_text
 
@@ -367,13 +371,19 @@ async def get_spec_coverage(
         db.query(
             func.jsonb_object_keys(ProductSpecifications.values).label("spec_key"),
             func.count().label("n"),
+            func.max(
+                func.coalesce(ProductSpecifications.updated_at, ProductSpecifications.created_at)
+            ).label("last_read"),
         )
         .join(Product, Product.id == ProductSpecifications.product_id)
         .filter(Product.is_active.is_(True))
         .group_by(sql_text("1"))
         .all()
     )
-    return {"coverage": {key: n for key, n in rows}}
+    return {
+        "coverage": {key: n for key, n, _ in rows},
+        "last_read": {key: read.isoformat() for key, _, read in rows if read is not None},
+    }
 
 
 @router.get("/applicable-keys")

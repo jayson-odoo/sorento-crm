@@ -1,8 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ColumnDef, getCoreRowModel, getSortedRowModel, useReactTable } from '@tanstack/react-table';
-import { MoreHorizontal } from 'lucide-react';
+import { MoreHorizontal, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -79,6 +79,10 @@ export function ValuesAndWordsTab({
 
   const [editing, setEditing] = useState<{ value: string; column: 'choice' | 'words' } | null>(null);
   const [adding, setAdding] = useState(false);
+  // A Cancel ends the edit session; the next one starts without an open box.
+  useEffect(() => {
+    if (mode === 'view') setAdding(false);
+  }, [mode]);
   const [newChoice, setNewChoice] = useState('');
   const [removingValue, setRemovingValue] = useState<string | null>(null);
 
@@ -434,6 +438,50 @@ export function ValuesAndWordsTab({
   return (
     <div className="flex flex-col gap-2">
       <div className="overflow-hidden rounded-md border">
+        {/* Add a choice sits at the top right, on the toolbar row above the column
+            header, in read mode and edit mode - the same place as Add a rule (fix
+            round 5, owner ruling 27 Sep 2026). A yes-or-no specification has its
+            one choice already, so it has no toolbar. */}
+        {!isBoolean && (
+          <div
+            data-testid="choices-grid-toolbar"
+            className="flex flex-wrap items-center justify-end gap-2 border-b p-2"
+          >
+            {mode === 'edit' && adding ? (
+              <Input
+                autoFocus
+                value={newChoice}
+                placeholder="a choice, e.g. Rose gold"
+                aria-label="New choice"
+                className="h-8 w-full sm:w-64"
+                onChange={(e) => setNewChoice(e.target.value)}
+                onBlur={commitAdd}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitAdd();
+                  if (e.key === 'Escape') {
+                    setNewChoice('');
+                    setAdding(false);
+                  }
+                }}
+              />
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  // From read mode this opens the edit session first; `adding`
+                  // survives the switch, so the box is ready once it renders.
+                  if (mode === 'view') onEnterEdit();
+                  setAdding(true);
+                }}
+              >
+                <Plus className="size-4" aria-hidden />
+                Add a choice
+              </Button>
+            )}
+          </div>
+        )}
         <DataGrid
           table={table}
           recordCount={rows.length}
@@ -445,34 +493,6 @@ export function ValuesAndWordsTab({
           <DataGridTable />
         </DataGrid>
       </div>
-
-      {mode === 'edit' &&
-        !isBoolean &&
-        (adding ? (
-          <Input
-            autoFocus
-            value={newChoice}
-            placeholder="a choice, e.g. Rose gold"
-            className="h-8"
-            onChange={(e) => setNewChoice(e.target.value)}
-            onBlur={commitAdd}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') commitAdd();
-              if (e.key === 'Escape') {
-                setNewChoice('');
-                setAdding(false);
-              }
-            }}
-          />
-        ) : (
-          <button
-            type="button"
-            className="self-start text-sm text-primary hover:underline"
-            onClick={() => setAdding(true)}
-          >
-            + Add a choice
-          </button>
-        ))}
     </div>
   );
 }

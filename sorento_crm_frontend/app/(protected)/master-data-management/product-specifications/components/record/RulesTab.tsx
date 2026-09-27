@@ -21,6 +21,8 @@ export interface RulesTabProps {
   mode: 'view' | 'edit';
   draft: SpecKeyDraft | null;
   setDraft: (updater: (draft: SpecKeyDraft) => SpecKeyDraft) => void;
+  /** Add a rule from read mode opens an edit session first, then the rule form. */
+  onEnterEdit: () => void;
 }
 
 /**
@@ -30,7 +32,7 @@ export interface RulesTabProps {
  * open `SpecRuleModal`; Try it on a product runs against the whole draft list, so
  * the winner shown per row is the one the engine would actually keep.
  */
-export function RulesTab({ row, registry, mode, draft, setDraft }: RulesTabProps) {
+export function RulesTab({ row, registry, mode, draft, setDraft, onEnterEdit }: RulesTabProps) {
   const rules: SpecDerivationRule[] =
     mode === 'edit' && draft ? draft.rules : row.effective_rules ?? EMPTY_RULES;
 
@@ -46,7 +48,10 @@ export function RulesTab({ row, registry, mode, draft, setDraft }: RulesTabProps
 
   const setRules = (next: SpecDerivationRule[]) => setDraft((d) => ({ ...d, rules: next }));
 
+  // The form renders in edit mode only, so from read mode it opens once the edit
+  // session this starts has rendered.
   const openAdd = () => {
+    if (mode === 'view') onEnterEdit();
     setEditingIndex(null);
     setModalOpen(true);
   };

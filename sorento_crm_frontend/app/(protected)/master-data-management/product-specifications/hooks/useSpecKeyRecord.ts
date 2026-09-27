@@ -11,6 +11,7 @@ import {
 } from '../lib/vocabularyEdit';
 import { useSpecRegistryMutations } from './useSpecRegistryMutations';
 import { SPEC_REGISTRY_QUERY_KEY } from './useSpecRegistryQuery';
+import { SPEC_COVERAGE_QUERY_KEY } from './useSpecCoverageQuery';
 import { specKeyProductsKey } from './useSpecKeyProductsQuery';
 import type { SpecDerivationRule, SpecRegistryKey } from '../types/productSpec.types';
 
@@ -205,9 +206,11 @@ export function useSpecKeyRecord(row: SpecRegistryKey | undefined): UseSpecKeyRe
             : old,
       );
       // S-12: the products it re-read now hold other values, so the Products tab
-      // and the Choices counts (one query key) are fetched again.
+      // and the Choices counts (one query key) are fetched again, and so are the
+      // header's products count and last read time.
       if (updated.products_updated > 0) {
         queryClient.invalidateQueries({ queryKey: specKeyProductsKey(row.spec_key) });
+        queryClient.invalidateQueries({ queryKey: SPEC_COVERAGE_QUERY_KEY });
       }
       // AC-S1.16, D10 (fix round 3, D2): the save already re-read exactly the
       // products it changed; there is nothing left to press, so the toast reports

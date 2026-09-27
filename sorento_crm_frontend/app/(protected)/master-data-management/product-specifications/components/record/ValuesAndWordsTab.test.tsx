@@ -159,7 +159,7 @@ describe('ValuesAndWordsTab - inline edit (edit mode, AC-S1.15)', () => {
     let latest: SpecKeyDraft | undefined;
     render(withClient(<EditHarness row={finishOrColour()} onDraftChange={(d) => (latest = d)} />));
 
-    fireEvent.click(screen.getByText('+ Add a choice'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add a choice' }));
     const input = screen.getByPlaceholderText('a choice, e.g. Rose gold');
     fireEvent.change(input, { target: { value: 'Satin chrome' } });
     fireEvent.keyDown(input, { key: 'Enter' });

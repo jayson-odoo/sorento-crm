@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('../../hooks/useSpecTryIt', () => ({
@@ -67,7 +67,7 @@ const gunmetalRule: SpecDerivationRule = {
 describe('RulesTab - a structured grid, never a sentence (AC-S1.6, AC-S1.14)', () => {
   it('renders the rule as labelled grid cells', () => {
     const row = baseRow({ effective_rules: [gunmetalRule] });
-    render(withClient(<RulesTab row={row} registry={[row]} mode="view" draft={null} setDraft={() => {}} />));
+    render(withClient(<RulesTab row={row} registry={[row]} mode="view" draft={null} setDraft={() => {}} onEnterEdit={() => {}} />));
 
     expect(screen.getByText('Ends with: -GM')).toBeInTheDocument();
     expect(screen.getByText('Gunmetal')).toBeInTheDocument();
@@ -76,7 +76,7 @@ describe('RulesTab - a structured grid, never a sentence (AC-S1.6, AC-S1.14)', (
 
   it('renders no "default", "shipped" or "built in" badge, and no Advanced', () => {
     const row = baseRow({ effective_rules: [gunmetalRule] });
-    render(withClient(<RulesTab row={row} registry={[row]} mode="view" draft={null} setDraft={() => {}} />));
+    render(withClient(<RulesTab row={row} registry={[row]} mode="view" draft={null} setDraft={() => {}} onEnterEdit={() => {}} />));
 
     expect(screen.queryByText('default')).not.toBeInTheDocument();
     expect(screen.queryByText('shipped')).not.toBeInTheDocument();
@@ -84,15 +84,19 @@ describe('RulesTab - a structured grid, never a sentence (AC-S1.6, AC-S1.14)', (
     expect(screen.queryByText(/advanced/i)).not.toBeInTheDocument();
   });
 
-  it('an empty key shows "No rules yet" with no CTA in view mode', () => {
+  // Fix round 5 (owner ruling 27 Sep 2026): Add a rule is offered in read mode
+  // too, and opens an edit session first.
+  it('an empty key shows "No rules yet" with Add a rule in view mode', () => {
     const row = baseRow({ effective_rules: [], derivation_rules: [] });
-    render(withClient(<RulesTab row={row} registry={[row]} mode="view" draft={null} setDraft={() => {}} />));
+    const onEnterEdit = vi.fn();
+    render(withClient(<RulesTab row={row} registry={[row]} mode="view" draft={null} setDraft={() => {}} onEnterEdit={onEnterEdit} />));
 
     expect(screen.getByText('No rules yet')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Add a rule/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Add a rule' }));
+    expect(onEnterEdit).toHaveBeenCalledTimes(1);
   });
 
-  it('Add a rule is offered in edit mode only', () => {
+  it('Add a rule is offered in edit mode', () => {
     const row = baseRow({ effective_rules: [gunmetalRule] });
     render(
       withClient(
@@ -113,6 +117,7 @@ describe('RulesTab - a structured grid, never a sentence (AC-S1.6, AC-S1.14)', (
             rules: [gunmetalRule],
           }}
           setDraft={() => {}}
+          onEnterEdit={() => {}}
         />,
       ),
     );

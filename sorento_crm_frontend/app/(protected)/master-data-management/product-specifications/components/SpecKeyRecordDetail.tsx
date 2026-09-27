@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import { Pencil } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -13,11 +13,12 @@ import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { buildDetailSearch, parseDetailSearch } from '@/lib/listNavQuery';
+import { getProductClassLabels } from '../../product-categories/services/categoryService';
 import { useSpecKeyActions } from '../actions';
+import { useSpecCoverageQuery } from '../hooks/useSpecCoverageQuery';
 import { useSpecKeyRecord } from '../hooks/useSpecKeyRecord';
 import { selectSpecKey, useSpecRegistryQuery } from '../hooks/useSpecRegistryQuery';
 import { filterSpecKeys } from '../lib/specRegistryFilter';
-import { specTypeLabel } from '../lib/specTypeLabel';
 import { HeaderTab } from './record/HeaderTab';
 import { RulesTab } from './record/RulesTab';
 import { SeenInProductsTab } from './record/SeenInProductsTab';
@@ -45,6 +46,17 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
   const record = useSpecKeyRecord(row);
   const { actions, pending } = useSpecKeyActions(row, {
     onDeleted: () => router.push(LIST_PATH),
+  });
+  // The header's products count and last read time (fix round 5). A failed read
+  // leaves both as "-" rather than blanking the card.
+  const { data: coverage } = useSpecCoverageQuery();
+  // Product class counts its choices from the category master, the same read and
+  // cache key as the list's Choices column (AC-S3.3, D5).
+  const { data: classLabels } = useQuery({
+    queryKey: ['product-class-labels'],
+    queryFn: () => getProductClassLabels(),
+    staleTime: 5 * 60 * 1000,
+    enabled: specKey === 'class',
   });
 
   // The pager walks the SAME filtered+sorted list the reader came from (B.1, D9):
@@ -155,22 +167,17 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
   return (
     <>
       <Container>
-        <PageHeader
-          title={
-            <span className="inline-flex flex-wrap items-center gap-2">
-              {row.label}
-              <Badge variant="secondary" appearance="light" size="sm" shape="circle">
-                {specTypeLabel(row.data_type, row.unit)}
-              </Badge>
-            </span>
-          }
-          crumbTitle={row.label}
-          actions={backLink}
-        />
+        {/* The record's identity lives on the header card below, as on every other
+            record page (Users & Access), so the page title names the module. */}
+        <PageHeader title="Product Specifications" crumbTitle={row.label} actions={backLink} />
       </Container>
 
       <Container className="flex flex-col gap-4">
         <SpecKeyRecordCard
+          row={row}
+          productsCount={coverage ? coverage.coverage[row.spec_key] ?? 0 : undefined}
+          lastReadAt={coverage ? coverage.last_read?.[row.spec_key] ?? null : undefined}
+          classChoiceCount={classLabels?.length}
           mode={record.mode}
           pagerNode={pagerNode}
           actions={actions}
@@ -213,6 +220,7 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
               mode={record.mode}
               draft={record.draft}
               setDraft={record.setDraft}
+              onEnterEdit={record.edit}
             />
           </TabsContent>
 

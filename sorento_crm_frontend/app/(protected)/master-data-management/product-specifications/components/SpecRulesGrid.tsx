@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { MoreHorizontal } from 'lucide-react';
+import { MoreHorizontal, Plus } from 'lucide-react';
 import { arrayMove } from '@dnd-kit/sortable';
 import type { DragEndEvent } from '@dnd-kit/core';
 import {
@@ -597,11 +597,9 @@ export function SpecRulesGrid({
         <p className="text-sm text-muted-foreground">
           Nothing will fill this specification in until a rule is added.
         </p>
-        {mode === 'edit' && (
-          <Button type="button" size="sm" variant="outline" onClick={onAdd}>
-            Add a rule
-          </Button>
-        )}
+        <Button type="button" size="sm" variant="outline" onClick={onAdd}>
+          Add a rule
+        </Button>
       </div>
     );
   }
@@ -609,6 +607,18 @@ export function SpecRulesGrid({
   return (
     <div className="flex flex-col gap-2">
       <div className="overflow-hidden rounded-md border">
+        {/* Add a rule sits at the top right, on the toolbar row above the column
+            header, in read mode and edit mode (fix round 5, owner ruling 27 Sep
+            2026: under 22 rows it was "too low"). */}
+        <div
+          data-testid="rules-grid-toolbar"
+          className="flex flex-wrap items-center justify-end gap-2 border-b p-2"
+        >
+          <Button type="button" size="sm" variant="outline" onClick={onAdd}>
+            <Plus className="size-4" aria-hidden />
+            Add a rule
+          </Button>
+        </div>
         <DataGrid
           table={table}
           recordCount={data.length}
@@ -629,15 +639,8 @@ export function SpecRulesGrid({
           )}
         </DataGrid>
       </div>
-      <div className="flex items-center justify-between p-2 text-xs text-muted-foreground">
-        <span>
-          {rules.length} rule{rules.length === 1 ? '' : 's'}.
-        </span>
-        {mode === 'edit' && (
-          <Button type="button" size="sm" variant="outline" onClick={onAdd}>
-            Add a rule
-          </Button>
-        )}
+      <div data-testid="rules-grid-footer" className="p-2 text-xs text-muted-foreground">
+        {rules.length} rule{rules.length === 1 ? '' : 's'}.
       </div>
     </div>
   );

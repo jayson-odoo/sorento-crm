@@ -98,6 +98,7 @@ function Harness({ row }: { row: SpecRegistryKey }) {
       mode="edit"
       draft={draft}
       setDraft={(updater) => setDraftState((current) => updater(current))}
+      onEnterEdit={() => {}}
     />
   );
 }

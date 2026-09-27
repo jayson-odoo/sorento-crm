@@ -177,7 +177,7 @@ describe('A choice added in this sitting is dropped locally', () => {
   it('Remove on it drops it with no countdown and no server call', async () => {
     render(withClient(<EditHarness row={finishOrColour()} />));
 
-    fireEvent.click(screen.getByText('+ Add a choice'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add a choice' }));
     const input = screen.getByPlaceholderText('a choice, e.g. Rose gold');
     fireEvent.change(input, { target: { value: 'Satin chrome' } });
     fireEvent.keyDown(input, { key: 'Enter' });
