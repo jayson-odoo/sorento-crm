@@ -31,6 +31,7 @@ from alembic.script import ScriptDirectory
 from app.database import engine
 
 MODULE_NAME = "identity_0001_s0_model"
+PARENT = "sales_0005_commission_tiers"
 VERSIONS = (Path(__file__).resolve().parent / ".." / "alembic" / "versions").resolve()
 PREFIX = "ZZT-mig-identity"
 
@@ -61,23 +62,6 @@ def _script(*extra_version_dirs: Path) -> ScriptDirectory:
     return ScriptDirectory.from_config(cfg)
 
 
-def _current_other_heads(script: ScriptDirectory) -> set[str]:
-    """Every alembic head of the graph WITHOUT this migration (computed, never
-    hard-coded). Once this migration exists it IS the head, so `get_heads()` minus
-    itself is empty; the heads it must sit on are the ones left when it is removed.
-    More than one means this migration doubles as their merge revision."""
-    others = [r for r in script.walk_revisions() if r.revision != MODULE_NAME]
-    pointed_at: set[str] = set()
-    for rev in others:
-        down = rev.down_revision
-        if down is None:
-            continue
-        pointed_at.update(down if isinstance(down, (tuple, list)) else (down,))
-    heads = {r.revision for r in others if r.revision not in pointed_at}
-    assert heads, "expected at least one other head"
-    return heads
-
-
 def _run(conn, fn):
     ctx = MigrationContext.configure(conn)
     with Operations.context(ctx):
@@ -89,12 +73,16 @@ def _mk_id() -> str:
 
 
 def _assert_placement(module, script: ScriptDirectory) -> None:
+    """The id fits `alembic_version.version_num` and the migration sits on its real
+    parent on main. Never that it is the head: a later PR stacks its own migration
+    on top, and the single-head guarantee is CI's `check-migration-heads` gate."""
     assert len(module.revision) <= 32
-    down = module.down_revision
-    assert set(down if isinstance(down, (tuple, list)) else (down,)) == _current_other_heads(script)
+    assert module.down_revision == PARENT
+    assert script.get_revision(MODULE_NAME).down_revision == PARENT
+    assert script.get_revision(PARENT) is not None
 
 
-def test_revision_id_fits_alembic_version_and_sits_on_the_current_head():
+def test_revision_id_fits_alembic_version_and_sits_on_its_parent():
     _assert_placement(_load(), _script())
 
 
