@@ -55,6 +55,45 @@ def est_tokens(value: str) -> int:
     return math.ceil(len(value.encode("utf-8")) / 3)
 
 
+#: How much of one exchange's text the parser reads (PR #1247 round 8). A ten-line
+#: point-form question is about 250 characters; a stock answer for ten products is
+#: longer, and its head is what a short reply refers to. Lives here, not in
+#: `head/parser.py`, so the assembler and `parser.build_user_block` share one copy.
+EXCHANGE_TEXT_CAP = 500
+
+
+def exchange_text(value: Any) -> str:
+    """One line of one exchange: newlines become " / ", at most `EXCHANGE_TEXT_CAP`."""
+    text = " / ".join(part.strip() for part in str(value or "").splitlines() if part.strip())
+    if len(text) > EXCHANGE_TEXT_CAP:
+        return text[:EXCHANGE_TEXT_CAP] + "..."
+    return text
+
+
+def recent_exchange_lines(
+    recent_exchanges: list[tuple[str, str]] | None, previous_response: str
+) -> list[tuple[str, str]]:
+    """PR #1247 round 8's "Recent exchanges" pairs as the `User:` / `Assistant:` lines
+    the parser reads, oldest first. The newest reply IS the Previous response line, so
+    it is not paid for twice - but only when it really is that reply (review S4);
+    otherwise it is printed. `previous_response` is the already-normalized line value."""
+    if not recent_exchanges:
+        return []
+    lines: list[tuple[str, str]] = []
+    last = len(recent_exchanges) - 1
+    for index, (user_text, assistant_text) in enumerate(recent_exchanges):
+        assistant_line = (
+            "Assistant: (the Previous response)"
+            if index == last and str(assistant_text or "").strip() == previous_response.strip()
+            else f"Assistant: {exchange_text(assistant_text)}"
+        )
+        lines.append((f"User: {exchange_text(user_text)}", assistant_line))
+    return lines
+
+
+_RECENT_EXCHANGES_HEADER = "Recent exchanges, oldest first:"
+
+
 def _collapse_whitespace(value: str) -> str:
     """Newlines and repeated whitespace folded to single spaces (security review
     26 Sep 2026, S2) - a multi-line entity or fact value must never break this
@@ -108,6 +147,14 @@ class ContextLayers:
     current_message: str
     reply_to: str | None
     media_line: str | None
+    #: PR #1247 (stock ask v2 S3 / rounds 8 and 9), carried through the merge with
+    #: main: the `Open task: ...` lines (`parser.open_task_lines`), the one question on
+    #: the table as its `Open question: {...}` line, and the last exchanges as
+    #: `(user, assistant)` pairs straight from `turn_runtime.recent_exchanges`. Kept
+    #: whole at every level: they are what a short reply answers.
+    task_lines: list[str] | None = None
+    open_question_line: str | None = None
+    recent_exchanges: list[tuple[str, str]] | None = None
 
 
 def _l5_segment(fact: dict[str, Any]) -> str:
@@ -185,7 +232,12 @@ def _render_l4(summaries: list[str] | None) -> tuple[str, bool]:
     return text, dropped
 
 
-def _render_l3(level: str, earlier_messages: list[dict[str, Any]] | None, previous_response: str | None) -> tuple[str, bool]:
+def _render_l3(
+    level: str,
+    earlier_messages: list[dict[str, Any]] | None,
+    previous_response: str | None,
+    recent_exchanges: list[tuple[str, str]] | None = None,
+) -> tuple[str, bool]:
     dropped = False
     previous_text = ""
     if previous_response:
@@ -194,15 +246,26 @@ def _render_l3(level: str, earlier_messages: list[dict[str, Any]] | None, previo
         if len(raw.encode("utf-8")) > _PREV_RESPONSE_CUT_BYTES:
             dropped = True
 
+    # PR #1247 round 8's exchanges, compared against the FULL normalized previous
+    # response (the same comparison `parser.build_user_block` makes), not the cut one.
+    exchanges = recent_exchange_lines(
+        recent_exchanges, _previous_response_normalized(str(previous_response or ""))
+    )
+    exchange_user_texts = {user_line[len("User: ") :] for user_line, _ in exchanges}
+
     # `earlier_messages` arrives oldest first (the header names it so) - dropping
-    # the oldest one under budget pressure pops from the FRONT of this list.
+    # the oldest one under budget pressure pops from the FRONT of this list. A message
+    # the exchanges below already print is not paid for twice.
     messages: list[dict[str, Any]] = []
     if level in ("conversation", "episodes", "full"):
         messages = list((earlier_messages or [])[:_MAX_EARLIER_MESSAGES])
         if earlier_messages and len(earlier_messages) > _MAX_EARLIER_MESSAGES:
             dropped = True
+        messages = [
+            row for row in messages if exchange_text(row.get("text")) not in exchange_user_texts
+        ]
 
-    def _render(rows: list[dict[str, Any]]) -> str:
+    def _render(rows: list[dict[str, Any]], pairs: list[tuple[str, str]]) -> str:
         parts = []
         if rows:
             lines = "\n".join(
@@ -211,19 +274,35 @@ def _render_l3(level: str, earlier_messages: list[dict[str, Any]] | None, previo
                 for row in rows
             )
             parts.append("Earlier in this conversation (oldest first):\n" + lines)
+        if pairs:
+            parts.append(
+                "\n".join([_RECENT_EXCHANGES_HEADER, *(line for pair in pairs for line in pair)])
+            )
         if previous_text:
             parts.append(f"Previous response: {previous_text}")
         return "\n".join(parts)
 
-    text = _render(messages)
+    # Oldest first, and the older layer first: the episode's earlier messages go
+    # before any exchange does, and the newest exchange is the last thing dropped.
+    text = _render(messages, exchanges)
     while messages and est_tokens(text) > CAPS["L3"]:
         messages.pop(0)
         dropped = True
-        text = _render(messages)
+        text = _render(messages, exchanges)
+    while len(exchanges) > 1 and est_tokens(text) > CAPS["L3"]:
+        exchanges.pop(0)
+        dropped = True
+        text = _render(messages, exchanges)
     return text, dropped
 
 
-def _render_l2(current_subject: str | None, pending_kind: str | None, pending_options: list[str] | None) -> tuple[str, bool]:
+def _render_l2(
+    current_subject: str | None,
+    pending_kind: str | None,
+    pending_options: list[str] | None,
+    task_lines: list[str] | None = None,
+    open_question_line: str | None = None,
+) -> tuple[str, bool]:
     dropped = False
     options_line: str | None = None
     if pending_options:
@@ -248,6 +327,12 @@ def _render_l2(current_subject: str | None, pending_kind: str | None, pending_op
         parts = []
         if subj:
             parts.append(f"Current subject: {subj}")
+        # PR #1247: the open task lines and the Open question object, in the same
+        # order `parser.build_user_block` prints them, and kept whole like the
+        # pending line - only the subject shrinks.
+        parts.extend(task_lines or [])
+        if open_question_line:
+            parts.append(open_question_line)
         if pending_line:
             parts.append(pending_line)
         if options_line:
@@ -297,12 +382,19 @@ def _assemble_off(layers: ContextLayers) -> tuple[str, dict[str, Any]]:
     ]
     if layers.current_subject:
         lines.append(f"Current subject: {layers.current_subject}")
+    lines.extend(layers.task_lines or [])
+    if layers.open_question_line:
+        lines.append(layers.open_question_line)
     if layers.pending_kind:
         lines.append(f"Pending: the assistant is waiting for a {layers.pending_kind} reply.")
     if layers.pending_options:
         lines.append("Open question options: " + "; ".join(layers.pending_options))
     if layers.settings_profile_line:
         lines.append(layers.settings_profile_line)
+    exchanges = recent_exchange_lines(layers.recent_exchanges, previous)
+    if exchanges:
+        lines.append(_RECENT_EXCHANGES_HEADER)
+        lines.extend(line for pair in exchanges for line in pair)
     text = "\n".join(lines)
     report = {
         "level": "off",
@@ -335,8 +427,16 @@ def assemble(layers: ContextLayers) -> tuple[str, dict[str, Any]]:
     if layers.level in ("episodes", "full"):
         l4_text, l4_dropped = _render_l4(layers.summaries)
 
-    l3_text, l3_dropped = _render_l3(layers.level, layers.earlier_messages, layers.previous_response)
-    l2_text, l2_dropped = _render_l2(layers.current_subject, layers.pending_kind, layers.pending_options)
+    l3_text, l3_dropped = _render_l3(
+        layers.level, layers.earlier_messages, layers.previous_response, layers.recent_exchanges
+    )
+    l2_text, l2_dropped = _render_l2(
+        layers.current_subject,
+        layers.pending_kind,
+        layers.pending_options,
+        layers.task_lines,
+        layers.open_question_line,
+    )
     l1_text, l1_dropped = _render_l1(layers.current_message, layers.reply_to, layers.media_line)
 
     blocks = [b for b in (l5_text, l4_text, l3_text, l2_text, l1_text) if b]

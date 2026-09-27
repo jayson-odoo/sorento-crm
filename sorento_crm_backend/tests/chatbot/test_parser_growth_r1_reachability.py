@@ -41,6 +41,7 @@ from app.services.chatbot_parser_prompt import (
     LOW_STOCK_ADDENDUM,
     MEMORY_ADDENDUM,
     SALES_REPORT_ADDENDUM,
+    STOCK_TASK_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
 )
 
@@ -151,7 +152,8 @@ class TestBothPublishedBodiesCarryTheVocabulary:
 
         The strong `.endswith` form is restored (review S4, 12 Sep 2026) by stripping the
         LATER addenda first, newest outermost: `MEMORY_ADDENDUM` (chatbot memory lane A,
-        migration `mem_0002_parser_memory`), then `SALES_REPORT_ADDENDUM`
+        migration `mem_0002_parser_memory`), then `STOCK_TASK_ADDENDUM` (chatbot-stock-ask-v2
+        S3, PR #1247), then `SALES_REPORT_ADDENDUM`
         (PLAN-chatbot-sales-report.md S4 wiring point 1), then `LOW_STOCK_ADDENDUM`
         (PLAN-low-stock-report.md S7, 14 Sep 2026), then `LAST_COST_ADDENDUM`. Each stacks
         AFTER `GROWTH_R1_ADDENDUM` on both bodies, the same way this addendum itself
@@ -159,6 +161,8 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         once the later ones are off."""
         for body in (SEMANTIC_PARSER_PROMPT,):
             assert body.removesuffix(MEMORY_ADDENDUM).removesuffix(
+                STOCK_TASK_ADDENDUM
+            ).removesuffix(
                 SALES_REPORT_ADDENDUM
             ).removesuffix(
                 LOW_STOCK_ADDENDUM

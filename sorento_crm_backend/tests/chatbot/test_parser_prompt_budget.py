@@ -46,8 +46,17 @@ from app.services.chatbot_parser_prompt import (
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
 # Measured baseline (coordinator ruling, 26 Sep 2026), not the plan's 22,100 - see the
-# module docstring for why the two numbers measure different things.
-CEILING = 37_153
+# module docstring for why the two numbers measure different things. 37,153 at
+# 232182ae; the lane itself landed at 37,118.
+# 37,153 -> 39,647 (27 Sep 2026, main d8395cb8 merged into the lane): main's own
+# `STOCK_TASK_ADDENDUM` (PR #1247, rounds 8 and 9) put main alone at 39,484 by this
+# same formula, which is the "genuine new addendum that must land" case the module
+# docstring names. The lane adds 163 over main: main's round 8 made the same
+# "Companies OFFERED" IIFE cut the lane had used to pay for `MEMORY_ADDENDUM`, so
+# that cut is counted once, on main's side. Flagged for an owner ruling in the merge
+# round's PR comment; the ceiling is the measured merged value, so any further
+# growth still fails here.
+CEILING = 39_647
 
 
 def _est_tokens(text: str) -> int:

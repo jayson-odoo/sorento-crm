@@ -86,12 +86,18 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         one, newest outermost, so both are stripped first before `LOW_STOCK_ADDENDUM` is
         asserted as the tail - the same treatment `LAST_COST_ADDENDUM` got here when
         `LOW_STOCK_ADDENDUM` landed."""
-        from app.services.chatbot_parser_prompt import MEMORY_ADDENDUM, SALES_REPORT_ADDENDUM
+        from app.services.chatbot_parser_prompt import (
+            MEMORY_ADDENDUM,
+            SALES_REPORT_ADDENDUM,
+            STOCK_TASK_ADDENDUM,
+        )
 
 
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
-            assert body.removesuffix(MEMORY_ADDENDUM).removesuffix(SALES_REPORT_ADDENDUM).endswith(addendum), (
+            assert body.removesuffix(MEMORY_ADDENDUM).removesuffix(
+                STOCK_TASK_ADDENDUM
+            ).removesuffix(SALES_REPORT_ADDENDUM).endswith(addendum), (
                 f"{name} body does not end with LOW_STOCK_ADDENDUM once the newer "
                 "MEMORY_ADDENDUM/SALES_REPORT_ADDENDUM are stripped - LOW_STOCK_ADDENDUM "
                 "must stay the tail beneath them"
@@ -107,12 +113,14 @@ class TestBothPublishedBodiesCarryTheVocabulary:
             LAST_COST_ADDENDUM,
             MEMORY_ADDENDUM,
             SALES_REPORT_ADDENDUM,
+            STOCK_TASK_ADDENDUM,
         )
 
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
             assert (
                 body.removesuffix(MEMORY_ADDENDUM)
+                .removesuffix(STOCK_TASK_ADDENDUM)
                 .removesuffix(SALES_REPORT_ADDENDUM)
                 .removesuffix(addendum)
                 .endswith(LAST_COST_ADDENDUM)

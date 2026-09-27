@@ -1179,15 +1179,22 @@ class TestParserPromptAndContractsTeachSalesReport:
             MEMORY_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
+            STOCK_TASK_ADDENDUM,
         )
 
         assert SEMANTIC_PARSER_PROMPT.endswith(MEMORY_ADDENDUM), (
             "SEMANTIC_PARSER_PROMPT does not end with MEMORY_ADDENDUM - it is "
             "the newest addendum, so it is the tail"
         )
-        assert SEMANTIC_PARSER_PROMPT.removesuffix(MEMORY_ADDENDUM).endswith(
-            SALES_REPORT_ADDENDUM
-        ), "SALES_REPORT_ADDENDUM must still stack beneath MEMORY_ADDENDUM"
+        # `STOCK_TASK_ADDENDUM` (ported from PR #1118, not merged, chatbot-stock-ask-v2
+        # S3) stacked after this one and beneath MEMORY_ADDENDUM, newest outermost, so
+        # both come off first.
+        assert SEMANTIC_PARSER_PROMPT.removesuffix(MEMORY_ADDENDUM).removesuffix(
+            STOCK_TASK_ADDENDUM
+        ).endswith(SALES_REPORT_ADDENDUM), (
+            "SEMANTIC_PARSER_PROMPT does not end with SALES_REPORT_ADDENDUM once the "
+            "newer MEMORY_ADDENDUM and STOCK_TASK_ADDENDUM are stripped"
+        )
 
     def test_the_addendum_stacks_after_low_stock(self) -> None:
         """The ORDER the existing pins' strip chains assume (`test_parser_prompt_is_live`,
@@ -1201,10 +1208,12 @@ class TestParserPromptAndContractsTeachSalesReport:
             MEMORY_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
+            STOCK_TASK_ADDENDUM,
         )
 
         assert (
             SEMANTIC_PARSER_PROMPT.removesuffix(MEMORY_ADDENDUM)
+            .removesuffix(STOCK_TASK_ADDENDUM)
             .removesuffix(SALES_REPORT_ADDENDUM)
             .endswith(LOW_STOCK_ADDENDUM)
         ), "SALES_REPORT_ADDENDUM must stack AFTER LOW_STOCK_ADDENDUM"
