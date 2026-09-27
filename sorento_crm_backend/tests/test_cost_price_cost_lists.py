@@ -260,6 +260,36 @@ def test_daily_tick_is_scheduled():
     assert "cost_price_daily_tick" in TASK_HANDLERS
 
 
+def test_daily_tick_has_a_seeded_schedule_row():
+    """AC-CL-05: a handler with no `scheduled_tasks` row never runs - the scheduler heartbeat
+    only dispatches seeded rows, so without one a Scheduled cost row would never become in
+    force in production (found at the relaunch audit; the test above only proves the
+    handler is registered). Asserted on the migrated database, the way the SCM reorder run's
+    seed is (tests/scm/test_m8_slice_d.py): daily, enabled, Malaysia time, just after
+    midnight so the new day's price is in force before anyone reads it."""
+    from sqlalchemy import text
+
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        row = db.execute(text("""
+            SELECT interval_unit, interval_value, enabled, timezone,
+                   EXTRACT(hour FROM ((start_at AT TIME ZONE 'utc')
+                           AT TIME ZONE 'Asia/Kuala_Lumpur'))::int AS kl_hour
+            FROM scheduled_tasks WHERE key = 'cost_price_daily_tick'
+        """)).mappings().first()
+    finally:
+        db.close()
+
+    assert row is not None, "cost_price_daily_tick must be seeded in scheduled_tasks (run migrations)"
+    assert row["interval_unit"] == "days"
+    assert row["interval_value"] == 1
+    assert row["enabled"] is True
+    assert row["timezone"] == "Asia/Kuala_Lumpur"
+    assert row["kl_hour"] == 0, "the tick must run just after midnight Malaysia time"
+
+
 # --------------------------------------------------------------------------------- AC-CL-06
 
 
