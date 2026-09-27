@@ -206,6 +206,7 @@ function detail(over: Record<string, unknown> = {}) {
       { id: 'p1', period_start: '2026-10-01', period_end: '2026-12-31', target_value: 1000, achieved_value: 500, achieved_pct: 50, is_current: true },
     ],
     children: [], members_without_figure: [], child_count: 0,
+    commission_method: 'none', tiers: [],
     created_at: '2026-09-26T01:00:00', updated_at: '2026-09-26T01:00:00',
     ...over,
   };
@@ -386,64 +387,333 @@ describe('TargetRecord: view and edit (F4, F5)', () => {
     expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("marks today's period and edits its figure in place on Periods", async () => {
-    render(<TargetRecord id="t1" />);
-    openTab('Periods');
-    const periods = screen.getByRole('region', { name: 'Periods' });
-    expect(within(periods).getByText('Current')).toBeTruthy();
-    fireEvent.click(within(periods).getByRole('button', { name: /edit period figure/i }));
-    fireEvent.change(within(periods).getByLabelText(/new value/), { target: { value: '1200' } });
-    fireEvent.click(within(periods).getByRole('button', { name: 'Save figure' }));
-    await waitFor(() =>
-      expect(patchPeriod.mutateAsync).toHaveBeenCalledWith({ targetId: 't1', periodId: 'p1', target_value: 1200 }),
-    );
-  });
-
-  it('a team target has read-only periods and an Agents tab with Add figure (S1-27, S1-28)', () => {
-    hooks.useSalesTarget.mockReturnValue({
-      data: detail({
-        subject_kind: 'team', sales_agent_id: null, sales_team_id: 'north', subject_label: 'North',
-        product_scope: 'all', scope: [],
-        children: [{ target_id: 'c1', sales_agent_id: 'ali', label: 'ALI - Ali Hassan', periods: [{ id: 'cp1', period_start: '2026-10-01', target_value: 600 }] }],
-        members_without_figure: [{ sales_agent_id: 'mei', label: 'MEI - Tan Mei Ling' }],
-        child_count: 1,
-      }),
-      isLoading: false, isError: false,
-    });
-    render(<TargetRecord id="t1" />);
-    expect(tabNames()).toEqual(['Details', 'Periods', 'Agents', 'Commission']);
-    openTab('Periods');
-    const periods = screen.getByRole('region', { name: 'Periods' });
-    expect(within(periods).queryByRole('button', { name: /edit period/i })).toBeNull();
-    openTab('Agents');
-    const agents = screen.getByRole('region', { name: 'Agents' });
-    expect(within(agents).getByText('ALI - Ali Hassan')).toBeTruthy();
-    expect(within(agents).getByRole('button', { name: /add figure/i })).toBeTruthy();
-  });
-
-  it('a child target names its parent and keeps What counts read-only in edit', () => {
-    hooks.useSalesTarget.mockReturnValue({
-      data: detail({ parent: { id: 'p0', name: 'North Team Target', target_no: 'TGT-000009' } }),
-      isLoading: false, isError: false,
-    });
-    render(<TargetRecord id="t1" />);
-    expect(screen.getAllByText('North Team Target').length).toBeGreaterThan(0);
-    fireEvent.click(within(screen.getByTestId('gear')).getByRole('button', { name: 'Edit' }));
-    expect(screen.queryByLabelText('Applies to')).toBeNull();
-    expect(screen.getByText(/set on north team target/i)).toBeTruthy();
-  });
-
-  it('shows "No commission" with Add tier, disabled, before S4', () => {
-    render(<TargetRecord id="t1" />);
-    openTab('Commission');
-    const commission = screen.getByRole('region', { name: 'Commission' });
-    expect(within(commission).getByText('No commission')).toBeTruthy();
-    expect((within(commission).getByRole('button', { name: /add tier/i }) as HTMLButtonElement).disabled).toBe(true);
-  });
-
   it('offers no Edit without sales.targets.edit', () => {
     perms.granted = new Set(['sales.targets.view']);
     render(<TargetRecord id="t1" />);
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+  });
+});
+
+// ------------------------------------------------------------------------------------------
+// Fix lane round 3 (the owner's retest of 27 Sep 14:25): figures are edited in Edit mode, no
+// row pencils (F1); commission tiers in Edit mode (F2); the agent target record (F3).
+// ------------------------------------------------------------------------------------------
+
+const Q4_PERIODS = [
+  { id: 'p1', period_start: '2026-10-01', period_end: '2026-10-31', target_value: 1000, achieved_value: 500, achieved_pct: 50, is_current: true, commission_earned: null, bonus_earned: null },
+  { id: 'p2', period_start: '2026-11-01', period_end: '2026-11-30', target_value: 1000, achieved_value: 0, achieved_pct: 0, is_current: false, commission_earned: null, bonus_earned: null },
+  { id: 'p3', period_start: '2026-12-01', period_end: '2026-12-31', target_value: 1000, achieved_value: 0, achieved_pct: 0, is_current: false, commission_earned: null, bonus_earned: null },
+];
+
+function splitAgent(over: Record<string, unknown> = {}) {
+  return detail({ split_every: 1, split_unit: 'month', periods: Q4_PERIODS, ...over });
+}
+
+function teamTarget(over: Record<string, unknown> = {}) {
+  return detail({
+    id: 'team1', target_no: 'TGT-000003', name: '2026 Q4 Target', subject_kind: 'team',
+    sales_agent_id: null, sales_team_id: 'north', subject_label: 'North', product_scope: 'all', scope: [],
+    split_every: 1, split_unit: 'month',
+    periods: Q4_PERIODS.map((p) => ({ ...p, id: `t${p.id}`, target_value: 1000 })),
+    children: [
+      {
+        target_id: 'c1', target_no: 'TGT-000004', sales_agent_id: 'ali', label: 'ALI - Ali Hassan',
+        periods: [
+          { id: 'a1', period_start: '2026-10-01', target_value: 600 },
+          { id: 'a2', period_start: '2026-11-01', target_value: 600 },
+          { id: 'a3', period_start: '2026-12-01', target_value: 600 },
+        ],
+      },
+      {
+        target_id: 'c2', target_no: 'TGT-000005', sales_agent_id: 'cin', label: 'CIN - Cindy Lee',
+        periods: [
+          { id: 'b1', period_start: '2026-10-01', target_value: 400 },
+          { id: 'b2', period_start: '2026-11-01', target_value: 400 },
+          { id: 'b3', period_start: '2026-12-01', target_value: 400 },
+        ],
+      },
+    ],
+    members_without_figure: [{ sales_agent_id: 'mei', label: 'MEI - Tan Mei Ling' }],
+    child_count: 2,
+    ...over,
+  });
+}
+
+function openEdit() {
+  fireEvent.click(within(screen.getByTestId('gear')).getByRole('button', { name: 'Edit' }));
+}
+
+describe('TargetRecord round 3, F1: figures are edited in Edit mode', () => {
+  it('Periods in read mode shows values only: no pencil, no input', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: splitAgent(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openTab('Periods');
+    const periods = screen.getByRole('region', { name: 'Periods' });
+    expect(within(periods).getByText('Current')).toBeTruthy();
+    expect(within(periods).queryAllByRole('button')).toHaveLength(0);
+    expect(within(periods).queryAllByRole('spinbutton')).toHaveLength(0);
+    expect(within(periods).getAllByText('1,000')).toHaveLength(3);
+  });
+
+  it('Periods in Edit mode takes a figure per period and Save sends every changed one in one request', async () => {
+    hooks.useSalesTarget.mockReturnValue({ data: splitAgent(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openEdit();
+    openTab('Periods');
+    const periods = screen.getByRole('region', { name: 'Periods' });
+    const inputs = within(periods).getAllByRole('spinbutton');
+    expect(inputs).toHaveLength(3);
+    fireEvent.change(inputs[0], { target: { value: '1500' } });
+    fireEvent.change(inputs[2], { target: { value: '2500' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(patchHeader.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(patchHeader.mutateAsync).toHaveBeenCalledWith({
+      targetId: 't1',
+      figures: [
+        { period_id: 'p1', target_value: 1500 },
+        { period_id: 'p3', target_value: 2500 },
+      ],
+    });
+    expect(patchPeriod.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('Cancel discards the typed figures', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: splitAgent(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openEdit();
+    openTab('Periods');
+    fireEvent.change(within(screen.getByRole('region', { name: 'Periods' })).getAllByRole('spinbutton')[1], {
+      target: { value: '9' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    const periods = screen.getByRole('region', { name: 'Periods' });
+    expect(within(periods).queryAllByRole('spinbutton')).toHaveLength(0);
+    expect(within(periods).getAllByText('1,000')).toHaveLength(3);
+    expect(patchHeader.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('no row pencil anywhere, in read or Edit mode', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: teamTarget(), isLoading: false, isError: false });
+    render(<TargetRecord id="team1" />);
+    const pencil = /edit (period )?figure|edit figure for/i;
+    for (const tab of ['Periods', 'Agents']) {
+      openTab(tab);
+      expect(screen.queryAllByRole('button', { name: pencil })).toHaveLength(0);
+    }
+    openEdit();
+    for (const tab of ['Periods', 'Agents']) {
+      openTab(tab);
+      expect(screen.queryAllByRole('button', { name: pencil })).toHaveLength(0);
+    }
+  });
+
+  it('Agents in read mode: each agent per period, the team total, no buttons', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: teamTarget(), isLoading: false, isError: false });
+    render(<TargetRecord id="team1" />);
+    openTab('Agents');
+    const agents = screen.getByRole('region', { name: 'Agents' });
+    expect(within(agents).getByRole('link', { name: 'ALI - Ali Hassan' })).toBeTruthy();
+    expect(within(agents).getAllByText('600')).toHaveLength(3);
+    expect(within(agents).getByText('No figure yet')).toBeTruthy();
+    expect(within(agents).getByText('Team target')).toBeTruthy();
+    expect(within(agents).queryAllByRole('button')).toHaveLength(0);
+    expect(within(agents).queryAllByRole('spinbutton')).toHaveLength(0);
+  });
+
+  it('Agents in Edit mode: an input per agent per period, the team total per period live, one Save', async () => {
+    hooks.useSalesTarget.mockReturnValue({ data: teamTarget(), isLoading: false, isError: false });
+    render(<TargetRecord id="team1" />);
+    openEdit();
+    openTab('Agents');
+    const agents = screen.getByRole('region', { name: 'Agents' });
+    // Three agents (one with no figure yet) by three months.
+    expect(within(agents).getAllByRole('spinbutton')).toHaveLength(9);
+    fireEvent.change(within(agents).getByLabelText('ALI - Ali Hassan, 1 Nov 2026'), { target: { value: '900' } });
+    fireEvent.change(within(agents).getByLabelText('MEI - Tan Mei Ling, 1 Dec 2026'), { target: { value: '50' } });
+    const totals = within(agents).getByTestId('team-totals');
+    // Oct 1,000; Nov 900 + 400; Dec 1,000 + 50.
+    expect(within(totals).getByText('1,000')).toBeTruthy();
+    expect(within(totals).getByText('1,300')).toBeTruthy();
+    expect(within(totals).getByText('1,050')).toBeTruthy();
+
+    openTab('Periods');
+    const periods = screen.getByRole('region', { name: 'Periods' });
+    expect(within(periods).queryAllByRole('spinbutton')).toHaveLength(0);
+    expect(within(periods).getByText('1,300')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(patchHeader.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(patchHeader.mutateAsync).toHaveBeenCalledWith({
+      targetId: 'team1',
+      figures: [{ period_id: 'a2', target_value: 900 }],
+      new_agents: [
+        {
+          sales_agent_id: 'mei',
+          figures: [{ period_start: '2026-12-01', target_value: 50 }],
+        },
+      ],
+    });
+    expect(addChild.mutateAsync).not.toHaveBeenCalled();
+  });
+});
+
+describe('TargetRecord round 3, F2: commission tiers in Edit mode only', () => {
+  it('read mode with no tiers: "No commission" and Add tier opens Edit mode with a tier row', () => {
+    render(<TargetRecord id="t1" />);
+    openTab('Commission');
+    let commission = screen.getByRole('region', { name: 'Commission' });
+    expect(within(commission).getByText('No commission')).toBeTruthy();
+    expect(within(commission).queryAllByRole('spinbutton')).toHaveLength(0);
+    fireEvent.click(within(commission).getByRole('button', { name: 'Add tier' }));
+    commission = screen.getByRole('region', { name: 'Commission' });
+    expect(within(commission).getByLabelText('Tier 1 from %')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeTruthy();
+  });
+
+  it('adds tiers in Edit mode and saves them with how they pay', async () => {
+    render(<TargetRecord id="t1" />);
+    openEdit();
+    openTab('Commission');
+    const commission = screen.getByRole('region', { name: 'Commission' });
+    fireEvent.click(within(commission).getByRole('button', { name: 'Add tier' }));
+    fireEvent.change(within(commission).getByLabelText('Tier 1 from %'), { target: { value: '0' } });
+    fireEvent.change(within(commission).getByLabelText('Tier 1 rate (% of RM)'), { target: { value: '2' } });
+    fireEvent.click(within(commission).getByRole('button', { name: 'Add tier' }));
+    fireEvent.change(within(commission).getByLabelText('Tier 2 from %'), { target: { value: '100' } });
+    fireEvent.change(within(commission).getByLabelText('Tier 2 rate (% of RM)'), { target: { value: '4' } });
+    fireEvent.change(within(commission).getByLabelText('Tier 2 bonus (RM)'), { target: { value: '500' } });
+    expect((within(commission).getByLabelText('How tiers pay') as HTMLSelectElement).value).toBe('marginal');
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(patchHeader.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(patchHeader.mutateAsync).toHaveBeenCalledWith({
+      targetId: 't1',
+      commission_method: 'marginal',
+      tiers: [
+        { from_pct: 0, rate: 2, bonus_amount: null },
+        { from_pct: 100, rate: 4, bonus_amount: 500 },
+      ],
+    });
+  });
+
+  it('read mode shows saved tiers as rows, no inputs; Edit mode removes one', async () => {
+    hooks.useSalesTarget.mockReturnValue({
+      data: detail({
+        commission_method: 'marginal',
+        tiers: [
+          { from_pct: 0, rate: 2, bonus_amount: null },
+          { from_pct: 100, rate: 4, bonus_amount: 500 },
+        ],
+      }),
+      isLoading: false, isError: false,
+    });
+    render(<TargetRecord id="t1" />);
+    openTab('Commission');
+    let commission = screen.getByRole('region', { name: 'Commission' });
+    expect(within(commission).getByText('Higher rate above each threshold only')).toBeTruthy();
+    expect(within(commission).getByText('100%')).toBeTruthy();
+    expect(within(commission).queryAllByRole('spinbutton')).toHaveLength(0);
+    expect(within(commission).queryByRole('button', { name: /remove tier/i })).toBeNull();
+    openEdit();
+    commission = screen.getByRole('region', { name: 'Commission' });
+    fireEvent.click(within(commission).getByRole('button', { name: 'Remove tier 2' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(patchHeader.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(patchHeader.mutateAsync).toHaveBeenCalledWith({
+      targetId: 't1',
+      commission_method: 'marginal',
+      tiers: [{ from_pct: 0, rate: 2, bonus_amount: null }],
+    });
+  });
+
+  it('removing every tier turns the commission off', async () => {
+    hooks.useSalesTarget.mockReturnValue({
+      data: detail({ commission_method: 'retroactive', tiers: [{ from_pct: 0, rate: 2, bonus_amount: null }] }),
+      isLoading: false, isError: false,
+    });
+    render(<TargetRecord id="t1" />);
+    openEdit();
+    openTab('Commission');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove tier 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(patchHeader.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(patchHeader.mutateAsync).toHaveBeenCalledWith({ targetId: 't1', commission_method: 'none', tiers: [] });
+  });
+
+  it('without sales.targets.edit there is no Add tier', () => {
+    perms.granted = new Set(['sales.targets.view']);
+    render(<TargetRecord id="t1" />);
+    openTab('Commission');
+    const commission = screen.getByRole('region', { name: 'Commission' });
+    expect(within(commission).getByText('No commission')).toBeTruthy();
+    expect(within(commission).queryByRole('button', { name: /add tier/i })).toBeNull();
+  });
+});
+
+describe('TargetRecord round 3, F3: the agent target record', () => {
+  const PARENT = teamTarget();
+  function childRecord() {
+    return splitAgent({
+      id: 'c2', target_no: 'TGT-000005', name: '2026 Q4 Target', sales_agent_id: 'cin',
+      subject_label: 'CIN - Cindy Lee', product_scope: 'all', scope: [],
+      parent: { id: 'team1', name: '2026 Q4 Target', target_no: 'TGT-000003' },
+      periods: Q4_PERIODS.map((p) => ({ ...p, id: `b${p.id.slice(1)}`, target_value: 400 })),
+    });
+  }
+  beforeEach(() => {
+    hooks.useSalesTarget.mockImplementation((id: string | null) => ({
+      data: id === 'team1' ? PARENT : id === 'c2' ? childRecord() : undefined,
+      isLoading: false,
+      isError: false,
+    }));
+  });
+
+  it('heads the record "Agent target, part of" its team target, with a link', () => {
+    render(<TargetRecord id="c2" />);
+    const header = screen.getByTestId('record-header');
+    expect(within(header).getByText(/Agent target, part of/)).toBeTruthy();
+    expect(within(header).getByRole('link', { name: '2026 Q4 Target' }).getAttribute('href')).toBe('/sales/targets/team1');
+    expect(tabNames()).toEqual(['Details', 'Periods', 'Team target', 'Commission']);
+  });
+
+  it('the Team target tab shows the parent: name, what counts, dates, split, periods, and opens it', () => {
+    render(<TargetRecord id="c2" />);
+    openTab('Team target');
+    const team = screen.getByRole('region', { name: 'Team target' });
+    expect(within(team).getByText('2026 Q4 Target')).toBeTruthy();
+    expect(within(team).getByText('TGT-000003')).toBeTruthy();
+    expect(within(team).getByText('Amount (RM)')).toBeTruthy();
+    expect(within(team).getByText('Ordered')).toBeTruthy();
+    expect(within(team).getByText('All products')).toBeTruthy();
+    expect(within(team).getByText('1 Oct 2026 to 31 Dec 2026')).toBeTruthy();
+    expect(within(team).getByText('Every month')).toBeTruthy();
+    expect(within(team).getAllByText('1,000')).toHaveLength(3);
+    expect(within(team).getByRole('link', { name: 'Open team target' }).getAttribute('href')).toBe('/sales/targets/team1');
+  });
+
+  it('inherited fields stay read-only in Edit mode with one "Set on the team target" line', () => {
+    render(<TargetRecord id="c2" />);
+    expect(screen.queryByText(/Set on 2026 Q4 Target/)).toBeNull();
+    openEdit();
+    expect(screen.queryByLabelText('Measure')).toBeNull();
+    expect(screen.queryByLabelText('Applies to')).toBeNull();
+    expect(screen.queryByLabelText('Start date')).toBeNull();
+    expect(screen.queryByRole('switch', { name: 'Split' })).toBeNull();
+    expect(screen.getAllByText('Set on the team target')).toHaveLength(1);
+    expect(screen.queryByText(/Set on 2026 Q4 Target/)).toBeNull();
+  });
+
+  it("edits the agent's own figures per period in Edit mode and saves them in one request", async () => {
+    render(<TargetRecord id="c2" />);
+    openEdit();
+    openTab('Periods');
+    const inputs = within(screen.getByRole('region', { name: 'Periods' })).getAllByRole('spinbutton');
+    expect(inputs).toHaveLength(3);
+    fireEvent.change(inputs[1], { target: { value: '800' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(patchHeader.mutateAsync).toHaveBeenCalledTimes(1));
+    expect(patchHeader.mutateAsync).toHaveBeenCalledWith({
+      targetId: 'c2',
+      figures: [{ period_id: 'b2', target_value: 800 }],
+    });
   });
 });

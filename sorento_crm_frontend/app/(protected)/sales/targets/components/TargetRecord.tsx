@@ -5,14 +5,14 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   CalendarRange,
-  Check,
   CircleDollarSign,
   Info,
   LoaderCircleIcon,
   Plus,
   SquarePen,
+  Target as TargetIcon,
+  Trash2,
   UsersRound,
-  X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -35,9 +35,7 @@ import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateInMalaysia, todayMalaysiaYyyyMmDd } from '@/lib/helpers';
 import {
   useCreateSalesTarget,
-  useCreateTargetChild,
   usePatchSalesTarget,
-  usePatchSalesTargetPeriod,
   useSalesTarget,
   useSalesTargetOptions,
   useSalesTargets,
@@ -57,6 +55,8 @@ import {
 } from '../lib/format';
 import { generatePeriods } from '../lib/periods';
 import type {
+  CommissionMethod,
+  CommissionTier,
   SalesTargetCreatePayload,
   SalesTargetDetail,
   SalesTargetOptions,
@@ -86,6 +86,15 @@ const APPLIES_OPTIONS: { value: TargetProductScope; label: string }[] = [
   { value: 'products', label: SCOPE_LABEL.products },
   { value: 'brands', label: SCOPE_LABEL.brands },
 ];
+const METHOD_LABEL: Record<CommissionMethod, string> = {
+  none: 'None',
+  marginal: 'Higher rate above each threshold only',
+  retroactive: 'Highest rate on everything',
+};
+const METHOD_OPTIONS = (Object.keys(METHOD_LABEL) as CommissionMethod[]).map((value) => ({
+  value,
+  label: METHOD_LABEL[value],
+}));
 const UNIT_OPTIONS = [
   { value: 'day', label: 'Days' },
   { value: 'week', label: 'Weeks' },
@@ -98,7 +107,26 @@ export const SPLIT_HELP =
 /** Both dates are required (owner ruling N6); a half-empty range never reaches Save. */
 export const DATES_REQUIRED = 'Pick both a start date and an end date.';
 
-type RecordTab = 'details' | 'periods' | 'agents' | 'commission';
+type RecordTab = 'details' | 'periods' | 'agents' | 'team' | 'commission';
+
+/** One commission tier as typed (plan 3.3); `key` keeps a row's inputs stable on remove. */
+interface TierDraft {
+  key: number;
+  from: string;
+  rate: string;
+  bonus: string;
+}
+
+let nextTierKey = 0;
+function tierDraft(tier?: CommissionTier, from = ''): TierDraft {
+  nextTierKey += 1;
+  return {
+    key: nextTierKey,
+    from: tier ? String(tier.from_pct) : from,
+    rate: tier ? String(tier.rate) : '',
+    bonus: tier?.bonus_amount === null || tier?.bonus_amount === undefined ? '' : String(tier.bonus_amount),
+  };
+}
 
 interface Draft {
   kind: TargetSubjectKind | '';
@@ -119,6 +147,12 @@ interface Draft {
   figure: string;
   /** A team target's figure per agent, create only. */
   agentFigures: Record<string, string>;
+  /** Edit: each period's figure by period id; on a team target, its agents' periods (F1). */
+  figures: Record<string, string>;
+  /** Edit, a team target: a member with no figure yet, by agent then period start (F1). */
+  newAgentFigures: Record<string, Record<string, string>>;
+  method: CommissionMethod;
+  tiers: TierDraft[];
 }
 
 function emptyDraft(preset: TargetRecordPreset | undefined): Draft {
@@ -140,6 +174,10 @@ function emptyDraft(preset: TargetRecordPreset | undefined): Draft {
     unit: 'month',
     figure: '',
     agentFigures: {},
+    figures: {},
+    newAgentFigures: {},
+    method: 'none',
+    tiers: [],
   };
 }
 
@@ -165,7 +203,46 @@ function draftOf(target: SalesTargetDetail): Draft {
     unit: target.split_unit ?? 'month',
     figure: '',
     agentFigures: {},
+    figures: savedFigures(target),
+    newAgentFigures: {},
+    method: target.commission_method ?? 'none',
+    tiers: (target.tiers ?? []).map((t) => tierDraft(t)),
   };
+}
+
+/** The figures Edit mode edits, by period id: an agent target's own periods, or a team
+ * target's agents' periods (a team period is their sum, T3). */
+function savedFigures(target: SalesTargetDetail): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (target.subject_kind === 'team') {
+    for (const child of target.children) {
+      for (const p of child.periods) if (p.id) out[p.id] = String(p.target_value);
+    }
+  } else {
+    for (const p of target.periods) out[p.id] = String(p.target_value);
+  }
+  return out;
+}
+
+function tiersOf(draft: Draft): CommissionTier[] {
+  return draft.tiers.map((t) => ({
+    from_pct: Number(t.from),
+    rate: Number(t.rate),
+    bonus_amount: t.bonus.trim() === '' ? null : Number(t.bonus),
+  }));
+}
+
+/** Why the tiers cannot be saved yet, or `''`. */
+function tierProblem(draft: Draft): string {
+  const bad = (text: string, required: boolean) =>
+    text.trim() === '' ? required : !Number.isFinite(Number(text)) || Number(text) < 0;
+  if (draft.tiers.some((t) => bad(t.from, true) || bad(t.rate, true) || bad(t.bonus, false))) {
+    return 'Type a from % and a rate for every tier.';
+  }
+  const froms = draft.tiers.map((t) => Number(t.from));
+  if (new Set(froms).size !== froms.length) return 'Two tiers start at the same %.';
+  if (draft.method === 'none' && draft.tiers.length) return 'Pick how the tiers pay, or remove the tiers.';
+  return '';
 }
 
 function splitOf(draft: Draft): { every: number; unit: TargetSplitUnit } | null {
@@ -186,6 +263,29 @@ function scopeLists(draft: Draft) {
 function changes(target: SalesTargetDetail, draft: Draft): SalesTargetUpdatePayload {
   const out: SalesTargetUpdatePayload = {};
   if (draft.name.trim() !== target.name) out.name = draft.name.trim();
+  // Every changed figure rides in this one request (F1).
+  const saved = savedFigures(target);
+  const figures = Object.keys(draft.figures)
+    .filter((periodId) => periodId in saved && toNumber(draft.figures[periodId]) !== Number(saved[periodId]))
+    .map((periodId) => ({ period_id: periodId, target_value: toNumber(draft.figures[periodId]) }));
+  if (figures.length) out.figures = figures;
+  const newAgents = target.members_without_figure.flatMap((m) => {
+    const typed = draft.newAgentFigures[m.sales_agent_id] ?? {};
+    const entries = target.periods
+      .filter((p) => (typed[p.period_start] ?? '').trim() !== '')
+      .map((p) => ({ period_start: p.period_start, target_value: toNumber(typed[p.period_start]) }));
+    return entries.length ? [{ sales_agent_id: m.sales_agent_id, figures: entries }] : [];
+  });
+  if (newAgents.length) out.new_agents = newAgents;
+  const tiers = tiersOf(draft);
+  if (
+    draft.method !== (target.commission_method ?? 'none') ||
+    JSON.stringify(tiers) !== JSON.stringify(target.tiers ?? [])
+  ) {
+    out.commission_method = draft.method;
+    out.tiers = tiers;
+  }
+  // A child's What counts and Dates follow its team target (T3); its figures and tiers are its own.
   if (target.parent) return out;
   if (draft.metric !== target.metric) out.metric = draft.metric;
   if (draft.basis !== target.basis) out.basis = draft.basis;
@@ -253,79 +353,6 @@ function Section({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-/** A figure that edits in place: the value, a pencil, then an input with save and cancel. */
-function InlineFigure({
-  value,
-  label,
-  editable,
-  saving,
-  onSave,
-}: {
-  value: number;
-  label: string;
-  editable: boolean;
-  saving: boolean;
-  onSave: (next: number) => Promise<void>;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [text, setText] = useState('');
-  if (!editing) {
-    return (
-      <span className="inline-flex items-center justify-end gap-1">
-        <span className="tabular-nums">{formatFigure(value)}</span>
-        {editable ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            mode="icon"
-            aria-label={label}
-            onClick={() => {
-              setText(String(value));
-              setEditing(true);
-            }}
-          >
-            <SquarePen className="size-3.5" />
-          </Button>
-        ) : null}
-      </span>
-    );
-  }
-  const commit = async () => {
-    const next = Number(text);
-    if (!Number.isFinite(next) || next < 0) return;
-    try {
-      await onSave(next);
-      setEditing(false);
-    } catch {
-      // The hook toasted the reason; the input stays open with what was typed.
-    }
-  };
-  return (
-    <span className="inline-flex items-center justify-end gap-1">
-      <Input
-        type="number"
-        min={0}
-        step="any"
-        aria-label={`${label}, new value`}
-        value={text}
-        autoFocus
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') void commit();
-          if (e.key === 'Escape') setEditing(false);
-        }}
-        className="h-8 w-28 text-end"
-      />
-      <Button variant="ghost" size="sm" mode="icon" aria-label="Save figure" disabled={saving} onClick={() => void commit()}>
-        {saving ? <LoaderCircleIcon className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-      </Button>
-      <Button variant="ghost" size="sm" mode="icon" aria-label="Cancel" onClick={() => setEditing(false)}>
-        <X className="size-3.5" />
-      </Button>
-    </span>
-  );
-}
-
 export interface TargetRecordPreset {
   kind?: TargetSubjectKind;
   subjectId?: string;
@@ -348,9 +375,16 @@ export interface TargetRecordPreset {
  * picked category, product or brand always shows its "CODE - Name" (F5): the record's own scope
  * labels seed the pickers, and every product the search returns is remembered by name.
  *
- * A child of a team target follows its parent (T3): only its name and its figures are its own,
- * so What counts and Dates stay read-only with "Set on <parent>". A team target's periods are
- * the sum of its agents' figures, so each agent's figure edits on the Agents tab.
+ * Figures are edited in Edit mode only (the owner's retest of 27 Sep, F1): Periods takes a
+ * figure per period, and a team target's Agents tab takes each agent's figure per period, with
+ * the team total per period recomputed as it is typed. Save sends the header, every changed
+ * figure and the commission tiers in one PATCH; Cancel discards. The Commission tab (F2) edits
+ * the tiers in Edit mode and shows them as rows otherwise.
+ *
+ * An agent target of a team target (F3) is headed "Agent target, part of <team target>" and
+ * has a Team target tab showing its parent. It follows its parent (T3): What counts and Dates
+ * stay read-only with one "Set on the team target" line; its name, its figures (which re-sum
+ * the team target) and its tiers are its own.
  */
 export default function TargetRecord({ id, preset }: { id?: string; preset?: TargetRecordPreset }) {
   const router = useRouter();
@@ -367,8 +401,6 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
   const { data: options } = useSalesTargetOptions(editing);
   const create = useCreateSalesTarget();
   const patchHeader = usePatchSalesTarget();
-  const patchPeriod = usePatchSalesTargetPeriod();
-  const addChild = useCreateTargetChild();
   const { actions: targetActions, pending } = useSalesTargetActions(target, {
     onDeleted: () => router.push('/sales/targets'),
   });
@@ -448,8 +480,10 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
     (draft.scope === 'products' && draft.productIds.length > 0) ||
     (draft.scope === 'brands' && draft.brandIds.length > 0);
   const saving = create.isPending || patchHeader.isPending;
+  const commissionProblem = draft ? tierProblem(draft) : '';
   const canSave =
     !!draft &&
+    !commissionProblem &&
     draft.name.trim().length > 0 &&
     !datesMissing &&
     !periodError &&
@@ -486,6 +520,7 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
       start_date: draft.start,
       end_date: draft.end,
       ...(split ? { split_every: split.every, split_unit: split.unit } : {}),
+      ...(draft.tiers.length ? { commission_method: draft.method, tiers: tiersOf(draft) } : {}),
     };
     const payload: SalesTargetCreatePayload =
       draft.kind === 'agent'
@@ -512,6 +547,7 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
     { value: 'details', label: 'Details', icon: Info },
     { value: 'periods', label: 'Periods', icon: CalendarRange },
     ...(isTeam ? [{ value: 'agents' as const, label: 'Agents', icon: UsersRound }] : []),
+    ...(isChild ? [{ value: 'team' as const, label: 'Team target', icon: TargetIcon }] : []),
     { value: 'commission', label: 'Commission', icon: CircleDollarSign },
   ];
 
@@ -520,6 +556,29 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
       ? [{ key: 'sales_target.edit', label: 'Edit', icon: SquarePen, run: () => setDraft(draftOf(target)) }, ...targetActions]
       : targetActions;
   const index = target ? ids.indexOf(target.id) : -1;
+
+  // A team period in Edit mode: the live sum of what is typed for its agents (T3, F1).
+  const teamTotal = (periodStart: string): number => {
+    if (!target || !draft) return 0;
+    let sum = 0;
+    for (const child of target.children) {
+      const cp = child.periods.find((x) => x.period_start === periodStart);
+      if (cp?.id) sum += toNumber(draft.figures[cp.id] ?? '');
+    }
+    for (const typed of Object.values(draft.newAgentFigures)) sum += toNumber(typed[periodStart] ?? '');
+    return sum;
+  };
+  // Add tier on the read-only Commission tab starts Edit mode with a first tier row (F2).
+  const startAddingTier = () => {
+    if (!target) return;
+    const base = draftOf(target);
+    setDraft({
+      ...base,
+      method: base.method === 'none' ? 'marginal' : base.method,
+      tiers: [...base.tiers, tierDraft(undefined, base.tiers.length ? '' : '0')],
+    });
+    setTab('commission');
+  };
 
   return (
     <div className="space-y-5">
@@ -631,6 +690,7 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
           </Section>
 
           <Section label="What counts">
+            {isChild ? <p className="text-xs text-muted-foreground">Set on the team target</p> : null}
             {editing && !isChild ? (
               <WhatCountsEditor draft={draft} set={set} options={options} labels={labels.current} fetchProducts={fetchProducts} />
             ) : target ? (
@@ -651,7 +711,6 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                     ))}
                   </ul>
                 ) : null}
-                {target.parent ? <SetOnParent parent={target.parent} /> : null}
               </div>
             ) : null}
           </Section>
@@ -775,9 +834,10 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                   <div className="rounded-lg border border-dashed py-8 text-center text-sm font-medium">No periods yet</div>
                 )
               ) : target ? (
-                <PeriodsTable unit={unit}>
+                <PeriodsTable unit={unit} commission={target.commission_method !== 'none'}>
                   {target.periods.map((p) => {
                     const future = p.period_start > today;
+                    const periodLabel = `${shortDate(p.period_start)} to ${shortDate(p.period_end)}`;
                     return (
                       <tr key={p.id} className={p.is_current ? 'bg-primary/5' : undefined}>
                         <td className="whitespace-nowrap px-3 py-2">
@@ -790,16 +850,18 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                             ) : null}
                           </span>
                         </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-end">
-                          <InlineFigure
-                            value={p.target_value}
-                            label={`Edit period figure, ${shortDate(p.period_start)}`}
-                            editable={canEdit && !isTeam && !editing}
-                            saving={patchPeriod.isPending}
-                            onSave={async (next) => {
-                              await patchPeriod.mutateAsync({ targetId: target.id, periodId: p.id, target_value: next });
-                            }}
-                          />
+                        <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
+                          {editing && draft && !isTeam ? (
+                            <FigureInput
+                              label={`Figure, ${periodLabel}`}
+                              value={draft.figures[p.id] ?? ''}
+                              onChange={(value) => set({ figures: { ...draft.figures, [p.id]: value } })}
+                            />
+                          ) : editing && isTeam ? (
+                            formatFigure(teamTotal(p.period_start))
+                          ) : (
+                            formatFigure(p.target_value)
+                          )}
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
                           {future ? '-' : formatFigure(p.achieved_value)}
@@ -807,6 +869,13 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                         <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
                           {future ? '-' : formatPct(p.achieved_pct)}
                         </td>
+                        {target.commission_method !== 'none' ? (
+                          <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
+                            {future || p.commission_earned === null || p.commission_earned === undefined
+                              ? '-'
+                              : formatFigure(p.commission_earned + (p.bonus_earned ?? 0))}
+                          </td>
+                        ) : null}
                       </tr>
                     );
                   })}
@@ -831,18 +900,19 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                     onChange={(agentId, value) => set({ agentFigures: { ...draft.agentFigures, [agentId]: value } })}
                   />
                 ) : target ? (
-                  <TeamChildren
+                  <TeamFigures
                     target={target}
-                    editable={canEdit && !editing}
-                    savingFigure={patchPeriod.isPending}
-                    adding={addChild.isPending}
-                    onFigure={(childId, periodId, value) =>
-                      patchPeriod.mutateAsync({ targetId: childId, periodId, target_value: value }).then(() => undefined)
-                    }
-                    onAdd={(agentId) =>
-                      void addChild
-                        .mutateAsync({ targetId: target.id, sales_agent_id: agentId, target_value: 0 })
-                        .catch(() => undefined)
+                    draft={draft}
+                    unit={unit}
+                    total={(p) => (draft ? teamTotal(p.period_start) : p.target_value)}
+                    onFigure={(periodId, value) => set({ figures: { ...(draft?.figures ?? {}), [periodId]: value } })}
+                    onNewFigure={(agentId, periodStart, value) =>
+                      set({
+                        newAgentFigures: {
+                          ...(draft?.newAgentFigures ?? {}),
+                          [agentId]: { ...(draft?.newAgentFigures[agentId] ?? {}), [periodStart]: value },
+                        },
+                      })
                     }
                   />
                 ) : null}
@@ -851,16 +921,24 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
           </TabsContent>
         ) : null}
 
+        {target?.parent ? (
+          <TabsContent value="team">
+            <ParentTarget parentId={target.parent.id} today={today} />
+          </TabsContent>
+        ) : null}
+
         <TabsContent value="commission">
           <Card>
-            <section aria-label="Commission" className="flex flex-col items-center gap-3 p-5">
-              <div className="flex w-full flex-col items-center gap-3 rounded-lg border border-dashed py-8 text-center">
-                <span className="text-sm font-medium">No commission</span>
-                <Button variant="outline" size="sm" disabled>
-                  <Plus className="size-4" />
-                  Add tier
-                </Button>
-              </div>
+            <section aria-label="Commission" className="flex flex-col gap-3 p-5">
+              <CommissionTiers
+                target={target}
+                draft={draft}
+                metric={metric}
+                problem={commissionProblem}
+                canEdit={canEdit}
+                set={set}
+                onStartAdding={startAddingTier}
+              />
             </section>
           </Card>
         </TabsContent>
@@ -909,7 +987,7 @@ function RecordIdentity({
         </span>
         {target.parent ? (
           <span className="min-w-0 truncate">
-            {'Part of '}
+            {'Agent target, part of '}
             <Link href={`/sales/targets/${target.parent.id}`} className="text-primary hover:underline">
               {target.parent.name}
             </Link>
@@ -925,14 +1003,6 @@ function RecordIdentity({
   );
 }
 
-function SetOnParent({ parent }: { parent: NonNullable<SalesTargetDetail['parent']> }) {
-  return (
-    <Link href={`/sales/targets/${parent.id}`} className="truncate text-sm text-primary hover:underline sm:col-span-3">
-      {`Set on ${parent.name}`}
-    </Link>
-  );
-}
-
 /** One figure for every period, or "Varies by period". */
 function figureSummary(target: SalesTargetDetail): string {
   const values = new Set(target.periods.map((p) => p.target_value));
@@ -941,7 +1011,15 @@ function figureSummary(target: SalesTargetDetail): string {
   return `${formatFigure(only)} ${target.periods.length === 1 ? 'for the whole range' : 'per period'}`;
 }
 
-function PeriodsTable({ unit, children }: { unit: string; children: ReactNode }) {
+function PeriodsTable({
+  unit,
+  commission = false,
+  children,
+}: {
+  unit: string;
+  commission?: boolean;
+  children: ReactNode;
+}) {
   return (
     <div className="overflow-x-auto rounded-lg border">
       <table className="w-full min-w-[32rem] text-sm">
@@ -951,6 +1029,7 @@ function PeriodsTable({ unit, children }: { unit: string; children: ReactNode })
             <th className="px-3 py-2 text-end font-medium">{`Target (${unit})`}</th>
             <th className="px-3 py-2 text-end font-medium">Achieved</th>
             <th className="px-3 py-2 text-end font-medium">%</th>
+            {commission ? <th className="px-3 py-2 text-end font-medium">Commission (RM)</th> : null}
           </tr>
         </thead>
         <tbody className="divide-y">{children}</tbody>
@@ -1124,21 +1203,40 @@ function NewTeamFigures({
   );
 }
 
-/** A saved team target's agents: each child's figure in place, and Add figure for the rest. */
-function TeamChildren({
+/** A figure typed in Edit mode (F1): the metric's unit is named by the column. */
+function FigureInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <Input
+      type="number"
+      min={0}
+      step="any"
+      aria-label={label}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="ms-auto h-8 w-28 text-end"
+    />
+  );
+}
+
+/**
+ * A saved team target's agents (F1): one row per agent, one column per period, and the team
+ * total per period in the footer. Read mode shows the figures; Edit mode swaps each for an
+ * input in place (a member with no figure yet included), and the totals follow what is typed.
+ */
+function TeamFigures({
   target,
-  editable,
-  savingFigure,
-  adding,
+  draft,
+  unit,
+  total,
   onFigure,
-  onAdd,
+  onNewFigure,
 }: {
   target: SalesTargetDetail;
-  editable: boolean;
-  savingFigure: boolean;
-  adding: boolean;
-  onFigure: (childId: string, periodId: string, value: number) => Promise<void>;
-  onAdd: (agentId: string) => void;
+  draft: Draft | null;
+  unit: string;
+  total: (period: SalesTargetDetail['periods'][number]) => number;
+  onFigure: (periodId: string, value: string) => void;
+  onNewFigure: (agentId: string, periodStart: string, value: string) => void;
 }) {
   if (target.children.length === 0 && target.members_without_figure.length === 0) {
     return (
@@ -1150,50 +1248,323 @@ function TeamChildren({
       </div>
     );
   }
+  const single = target.periods.length === 1;
+  const heading = (p: SalesTargetDetail['periods'][number]) => (single ? `Target (${unit})` : shortDate(p.period_start));
+  const cell = 'whitespace-nowrap px-3 py-1.5 text-end tabular-nums';
+  const agentCell = 'sticky start-0 z-10 max-w-48 truncate bg-background px-3 py-1.5 text-start';
   return (
-    <ul className="flex flex-col divide-y rounded-lg border">
-      {target.children.map((child) => {
-        const period =
-          child.periods.find((cp) =>
-            target.periods.some((tp) => tp.is_current && tp.period_start === cp.period_start),
-          ) ?? child.periods[0];
-        return (
-          <li key={child.target_id} className="flex min-w-0 items-center justify-between gap-3 px-3 py-2">
-            <Link
-              href={`/sales/targets/${child.target_id}`}
-              className="truncate text-sm text-primary hover:underline"
-              title={child.label}
-            >
-              {child.label}
-            </Link>
-            {period ? (
-              <InlineFigure
-                value={period.target_value}
-                label={`Edit figure for ${child.label}`}
-                editable={editable && !!period.id}
-                saving={savingFigure}
-                onSave={(next) => onFigure(child.target_id, period.id as string, next)}
-              />
-            ) : null}
-          </li>
-        );
-      })}
-      {target.members_without_figure.map((m) => (
-        <li key={m.sales_agent_id} className="flex min-w-0 items-center justify-between gap-3 px-3 py-2">
-          <span className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-sm" title={m.label}>
-              {m.label}
-            </span>
-            <span className="shrink-0 text-xs text-muted-foreground">No figure yet</span>
-          </span>
-          {editable ? (
-            <Button variant="outline" size="sm" disabled={adding} onClick={() => onAdd(m.sales_agent_id)}>
-              <Plus className="size-4" />
-              Add figure
-            </Button>
-          ) : null}
-        </li>
-      ))}
-    </ul>
+    <div className="overflow-x-auto rounded-lg border">
+      <table aria-label="Agent figures" className="w-full text-sm">
+        <thead className="bg-muted/40 text-xs text-muted-foreground">
+          <tr>
+            <th className="sticky start-0 z-10 bg-muted px-3 py-2 text-start font-medium">Agent</th>
+            {target.periods.map((p) => (
+              <th key={p.id} className="whitespace-nowrap px-3 py-2 text-end font-medium">
+                {heading(p)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y">
+          {target.children.map((child) => (
+            <tr key={child.target_id}>
+              <td className={agentCell} title={child.label}>
+                <Link href={`/sales/targets/${child.target_id}`} className="text-primary hover:underline">
+                  {child.label}
+                </Link>
+              </td>
+              {target.periods.map((p) => {
+                const cp = child.periods.find((x) => x.period_start === p.period_start);
+                return (
+                  <td key={p.id} className={cell}>
+                    {draft && cp?.id ? (
+                      <FigureInput
+                        label={`${child.label}, ${shortDate(p.period_start)}`}
+                        value={draft.figures[cp.id] ?? ''}
+                        onChange={(value) => onFigure(cp.id as string, value)}
+                      />
+                    ) : (
+                      formatFigure(cp?.target_value ?? null)
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+          {target.members_without_figure.map((m) => (
+            <tr key={m.sales_agent_id}>
+              <td className={agentCell} title={m.label}>
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="truncate">{m.label}</span>
+                  {draft ? null : <span className="shrink-0 text-xs text-muted-foreground">No figure yet</span>}
+                </span>
+              </td>
+              {target.periods.map((p) => (
+                <td key={p.id} className={cell}>
+                  {draft ? (
+                    <FigureInput
+                      label={`${m.label}, ${shortDate(p.period_start)}`}
+                      value={draft.newAgentFigures[m.sales_agent_id]?.[p.period_start] ?? ''}
+                      onChange={(value) => onNewFigure(m.sales_agent_id, p.period_start, value)}
+                    />
+                  ) : (
+                    '-'
+                  )}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+        <tfoot data-testid="team-totals" className="border-t bg-muted/40 font-medium">
+          <tr>
+            <th scope="row" className="sticky start-0 z-10 bg-muted px-3 py-2 text-start font-medium">
+              Team target
+            </th>
+            {target.periods.map((p) => (
+              <td key={p.id} className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
+                {formatFigure(total(p))}
+              </td>
+            ))}
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * An agent target's Team target tab (F3): the team target it is one line of, read-only, with
+ * what counts, its dates and split, its periods with their figures, and a way to open it.
+ */
+function ParentTarget({ parentId, today }: { parentId: string; today: string }) {
+  const { data: parent, isLoading } = useSalesTarget(parentId);
+  return (
+    <Card>
+      <section aria-label="Team target" className="flex flex-col gap-4 p-5">
+        {isLoading ? (
+          <Skeleton className="h-32 w-full rounded-lg" />
+        ) : !parent ? (
+          <div className="rounded-lg border border-dashed py-8 text-center text-sm font-medium">
+            Team target not found
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="text-xs font-medium text-muted-foreground">{parent.target_no}</span>
+                <h3 className="truncate text-base font-semibold" title={parent.name}>
+                  {parent.name}
+                </h3>
+                <span className="truncate text-xs text-muted-foreground">{`For ${parent.subject_label}`}</span>
+              </div>
+              <Button asChild variant="outline" size="sm" className="shrink-0">
+                <Link href={`/sales/targets/${parent.id}`}>Open team target</Link>
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <Field label="Measure">{`${METRIC_LABEL[parent.metric]} (${unitOf(parent.metric)})`}</Field>
+              <Field label="Counts">{parent.counts_label}</Field>
+              <Field label="Applies to">
+                {parent.product_scope === 'all'
+                  ? SCOPE_LABEL.all
+                  : `${SCOPE_LABEL[parent.product_scope]}: ${scopeSummary(parent.product_scope, parent.scope.length)}`}
+              </Field>
+              <div className="sm:col-span-2">
+                <Field label="Start and end date">{`${shortDate(parent.start_date)} to ${shortDate(parent.end_date)}`}</Field>
+              </div>
+              <Field label="Split">{splitSummary(parent.split_every, parent.split_unit)}</Field>
+            </div>
+            <PeriodsTable unit={unitOf(parent.metric)}>
+              {parent.periods.map((p) => {
+                const future = p.period_start > today;
+                return (
+                  <tr key={p.id} className={p.is_current ? 'bg-primary/5' : undefined}>
+                    <td className="whitespace-nowrap px-3 py-2">{`${shortDate(p.period_start)} to ${shortDate(p.period_end)}`}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatFigure(p.target_value)}</td>
+                    <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
+                      {future ? '-' : formatFigure(p.achieved_value)}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
+                      {future ? '-' : formatPct(p.achieved_pct)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </PeriodsTable>
+          </>
+        )}
+      </section>
+    </Card>
+  );
+}
+
+/**
+ * The Commission tab (plan 3.3; F2): read mode shows how the tiers pay and the tiers as rows;
+ * Edit mode swaps them for inputs in place, with Add tier and a remove per row. Nothing on
+ * this tab writes on its own: Save in the header sends the tiers with everything else.
+ */
+function CommissionTiers({
+  target,
+  draft,
+  metric,
+  problem,
+  canEdit,
+  set,
+  onStartAdding,
+}: {
+  target: SalesTargetDetail | undefined;
+  draft: Draft | null;
+  metric: TargetMetric;
+  problem: string;
+  canEdit: boolean;
+  set: (patch: Partial<Draft>) => void;
+  onStartAdding: () => void;
+}) {
+  const rateUnit = metric === 'quantity' ? 'RM per unit' : '% of RM';
+  const empty = (action: ReactNode) => (
+    <div className="flex w-full flex-col items-center gap-3 rounded-lg border border-dashed py-8 text-center">
+      <span className="text-sm font-medium">No commission</span>
+      {action}
+    </div>
+  );
+
+  if (!draft) {
+    const tiers = target?.tiers ?? [];
+    if (!tiers.length) {
+      return empty(
+        canEdit && target ? (
+          <Button variant="outline" size="sm" onClick={onStartAdding}>
+            <Plus className="size-4" />
+            Add tier
+          </Button>
+        ) : null,
+      );
+    }
+    return (
+      <>
+        <Field label="How tiers pay">{METHOD_LABEL[target?.commission_method ?? 'none']}</Field>
+        <div className="overflow-x-auto rounded-lg border">
+          <table aria-label="Commission tiers" className="w-full text-sm">
+            <thead className="bg-muted/40 text-xs text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 text-start font-medium">From</th>
+                <th className="px-3 py-2 text-end font-medium">{`Rate (${rateUnit})`}</th>
+                <th className="px-3 py-2 text-end font-medium">Bonus (RM)</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {tiers.map((t) => (
+                <tr key={t.from_pct}>
+                  <td className="whitespace-nowrap px-3 py-2">{`${formatFigure(t.from_pct)}%`}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatFigure(t.rate)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatFigure(t.bonus_amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>
+    );
+  }
+
+  const setTier = (key: number, patch: Partial<TierDraft>) =>
+    set({ tiers: draft.tiers.map((t) => (t.key === key ? { ...t, ...patch } : t)) });
+  const addTier = () =>
+    set({
+      tiers: [...draft.tiers, tierDraft(undefined, draft.tiers.length ? '' : '0')],
+      // R5: "Higher rate above each threshold only" is the default once tiers are added.
+      method: draft.method === 'none' ? 'marginal' : draft.method,
+    });
+  const removeTier = (key: number) => {
+    const tiers = draft.tiers.filter((t) => t.key !== key);
+    set({ tiers, method: tiers.length ? draft.method : 'none' });
+  };
+  const addButton = (
+    <Button variant="outline" size="sm" onClick={addTier}>
+      <Plus className="size-4" />
+      Add tier
+    </Button>
+  );
+  if (!draft.tiers.length) return empty(addButton);
+  return (
+    <>
+      <div className="sm:w-80">
+        <Field label="How tiers pay" htmlFor="target-method">
+          <SearchableSelect
+            id="target-method"
+            value={draft.method}
+            onChange={(v) => set({ method: (v as CommissionMethod) || 'none' })}
+            options={METHOD_OPTIONS}
+            wrapOptions
+          />
+        </Field>
+      </div>
+      <div className="overflow-x-auto rounded-lg border">
+        <table aria-label="Commission tiers" className="w-full min-w-[28rem] text-sm">
+          <thead className="bg-muted/40 text-xs text-muted-foreground">
+            <tr>
+              <th className="px-3 py-2 text-start font-medium">From (%)</th>
+              <th className="px-3 py-2 text-end font-medium">{`Rate (${rateUnit})`}</th>
+              <th className="px-3 py-2 text-end font-medium">Bonus (RM)</th>
+              <th className="w-10 px-3 py-2">
+                <span className="sr-only">Remove</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {draft.tiers.map((t, i) => (
+              <tr key={t.key}>
+                <td className="px-3 py-1.5">
+                  <Input
+                    type="number"
+                    min={0}
+                    step="any"
+                    aria-label={`Tier ${i + 1} from %`}
+                    value={t.from}
+                    onChange={(e) => setTier(t.key, { from: e.target.value })}
+                    className="h-8 w-24"
+                  />
+                </td>
+                <td className="px-3 py-1.5">
+                  <Input
+                    type="number"
+                    min={0}
+                    step="any"
+                    aria-label={`Tier ${i + 1} rate (${rateUnit})`}
+                    value={t.rate}
+                    onChange={(e) => setTier(t.key, { rate: e.target.value })}
+                    className="ms-auto h-8 w-28 text-end"
+                  />
+                </td>
+                <td className="px-3 py-1.5">
+                  <Input
+                    type="number"
+                    min={0}
+                    step="any"
+                    aria-label={`Tier ${i + 1} bonus (RM)`}
+                    value={t.bonus}
+                    onChange={(e) => setTier(t.key, { bonus: e.target.value })}
+                    className="ms-auto h-8 w-28 text-end"
+                  />
+                </td>
+                <td className="px-3 py-1.5 text-end">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    mode="icon"
+                    aria-label={`Remove tier ${i + 1}`}
+                    onClick={() => removeTier(t.key)}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {problem ? <p className="text-sm text-destructive">{problem}</p> : null}
+      <div>{addButton}</div>
+    </>
   );
 }
