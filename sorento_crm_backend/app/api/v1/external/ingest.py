@@ -47,6 +47,11 @@ from app.models.project_so import OrderInquiryRow, ProjectSalesOrderLine
 from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.error_handler import AppException
 from app.services.deletion_service import DeletionService
+from app.services.finance.billing_document_ingest_service import (
+    BILLING_DOCUMENT_ENTITIES,
+    BillingDocumentIngestService,
+    BillingDocumentReadService,
+)
 from app.services.document_ingest_service import (
     DOCUMENT_ENTITIES,
     DocumentIngestService,
@@ -101,6 +106,9 @@ INGEST_PERMISSIONS = {
     # write path already uses - pushing a balance through the ESB is that
     # same act, so it is that same permission.
     "stock_balances": "inventory.stock.edit",
+    # billing_documents (contract 2.6, finance S0, ruling Q9): finance's own slugs. `.edit`
+    # is the ingest gate only; no screen creates a billing document.
+    "billing_documents": "finance.billing_documents.edit",
 }
 READ_PERMISSIONS = {
     "product_categories": "master_data.product_categories.view",
@@ -115,6 +123,7 @@ READ_PERMISSIONS = {
     "purchase_orders": "scm.purchase_orders.view",
     "shipping_orders": "scm.shipping_orders.view",
     "stock_balances": "inventory.stock.view",
+    "billing_documents": "finance.billing_documents.view",
 }
 # Deleting through the ESB is its own act, so it takes its own slug on top of the
 # ingest guard the router already carries (group A4 mounts the route). Declared
@@ -134,6 +143,7 @@ DELETE_PERMISSIONS = {
     "purchase_orders": "scm.purchase_orders.delete",
     "shipping_orders": "scm.shipping_orders.delete",
     "stock_balances": "inventory.stock.delete",
+    "billing_documents": "finance.billing_documents.delete",
 }
 
 # A batch cap the ESB can design against. Exceeding it errors rather than
@@ -204,6 +214,7 @@ SUPPORTED_ENTITIES = (
     | set(DOCUMENT_ENTITIES)
     | set(SHIPPING_ORDER_ENTITIES)
     | set(STOCK_BALANCE_ENTITIES)
+    | set(BILLING_DOCUMENT_ENTITIES)
 )
 
 # Bumped whenever the wire shape of an entity changes in a way the ESB must gate
@@ -232,7 +243,12 @@ SUPPORTED_ENTITIES = (
 # removing the row (D7). `warehouse_inactive` joins `warnings`. Additive: an
 # ESB still on 2.4 never sees `stock_balances` in `entities` and keeps
 # whatever it did before (Pull stays unchanged, D12).
-CONTRACT_VERSION = "2.5"
+# "2.6" (finance S0, #1309): `billing_documents` joins as a new push entity - invoices, cash
+# sales, credit notes and debit notes into `finance.billing_documents`, whole-document replace,
+# a stale guard on `source_modified_at`, and the `unchanged` verdict (with `summary.unchanged`)
+# for a push that matches what is stored. `agent_unresolved`, `product_unresolved` and
+# `stale_ignored` join `warnings`. Additive: an ESB on 2.5 never sees the entity.
+CONTRACT_VERSION = "2.6"
 
 
 def _principal_may_delete(db: Session, current_user: dict, entity: str) -> bool:
@@ -768,6 +784,9 @@ def ingest_masters(
         extra["may_delete"] = _principal_may_delete(db, current_user, entity)
     elif entity in DOCUMENT_ENTITIES:
         ingester = DocumentIngestService
+    elif entity in BILLING_DOCUMENT_ENTITIES:
+        # Finance S0: a sibling of the shipping-order service, no post-write hooks.
+        ingester = BillingDocumentIngestService
     elif entity in STOCK_BALANCE_ENTITIES:
         ingester = StockBalanceIngestService
         # Fix round 2 (#1257): its Stock Ledger rows name the integration's
@@ -813,7 +832,7 @@ def ingest_masters(
 
     logger.info(
         "ingest.batch entity=%s integration=%s company=%s dry_run=%s "
-        "created=%d updated=%d failed=%d retryable=%d",
+        "created=%d updated=%d failed=%d retryable=%d unchanged=%d",
         entity,
         current_user.get("integration_name"),
         company_id,
@@ -822,6 +841,7 @@ def ingest_masters(
         result.updated,
         result.failed,
         result.retryable,
+        result.unchanged,
     )
     if not dry_run:
         _log_record_outcomes(
@@ -1026,6 +1046,8 @@ def read_current_state(
 
     if entity in SHIPPING_ORDER_ENTITIES:
         reader = ShippingOrderReadService
+    elif entity in BILLING_DOCUMENT_ENTITIES:
+        reader = BillingDocumentReadService
     elif entity in DOCUMENT_ENTITIES:
         reader = DocumentReadService
     else:

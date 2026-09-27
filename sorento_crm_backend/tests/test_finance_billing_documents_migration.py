@@ -60,8 +60,8 @@ def _role(raw, slug: str) -> str:
     role_id = str(uuid.uuid4())
     raw.execute(
         sa.text(
-            "INSERT INTO user_roles (id, slug, name, description, is_protected, is_default) "
-            "VALUES (:id, :s, :s, '', false, false)"
+            "INSERT INTO user_roles (id, slug, name, description, is_protected, is_default, is_trashed) "
+            "VALUES (:id, :s, :s, '', false, false, false)"
         ),
         {"id": role_id, "s": slug},
     )

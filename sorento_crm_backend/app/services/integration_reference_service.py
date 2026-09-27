@@ -20,7 +20,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import text
+from sqlalchemy import literal, select, text
 from sqlalchemy.orm import Session
 
 from app.models.integration_reference import IntegrationReference
@@ -74,6 +74,9 @@ SUPPORTED_ENTITY_TYPES = {
     "order_lines",
     # autocount-brands-ingest AC-15: brands joined the ingest surface.
     "brands",
+    # Finance S0 (#1309, contract 2.6): `finance.billing_documents`. The one entity type
+    # whose table is not in `public`; see `_module_table`.
+    "billing_documents",
 }
 
 # Tables where a row serves every company (`company_id` NULL). Moved here from
@@ -115,6 +118,17 @@ def is_unclaimed_or_same_source(origin: Optional[IntegrationReference]) -> bool:
     a key on `autocount` - not before.
     """
     return origin is None or origin.source_system == DEFAULT_SOURCE_SYSTEM
+
+
+def _module_table(entity_type: str):
+    """The Table of an entity type that lives in a module schema, else None (public)."""
+    if entity_type == "billing_documents":
+        # Imported here: the finance model has no business being loaded by every caller of
+        # this service, and nothing it imports reaches back here.
+        from app.models.finance import BillingDocument
+
+        return BillingDocument.__table__
+    return None
 
 
 def _require_supported(entity_type: str) -> str:
