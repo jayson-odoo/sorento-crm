@@ -1567,6 +1567,11 @@ def _run_stages(  # noqa: PLR0915
     verdict = turn_runtime.with_set_count_from_text(
         verdict, latest_user_message, carried=state_in.focus.set_page
     )
+    # Round 7 on PR #833 (owner hand test, item 6): a brand the last set answer offered
+    # narrows that set.
+    verdict = turn_runtime.with_brand_from_offer(
+        verdict, latest_user_message, carried=state_in.focus.set_page
+    )
     # Round 3 W3 on PR #833: a class word of this message's own starts a new set.
     verdict = turn_runtime.with_new_set_words(verdict)
 
@@ -2450,7 +2455,12 @@ def _run_stages(  # noqa: PLR0915
                             dry_run=dry_run,
                             asked_at_turn=turn_no,
                             turn_id=turn_id,
-                            focus_products=state_out.focus.products,
+                            # A page of a carried set answers about its own ids only.
+                            # The focus still holds the LAST answer's rows, and reading
+                            # them as this turn's ask closed a Cabana page with "No stock
+                            # and no incoming for" the Sorento rows before it (round 7
+                            # on PR #833, owner hand test item 6).
+                            focus_products=None if set_page_turn else state_out.focus.products,
                         )
                         # BRIDGE (hand pass 11, defect 3): a HIT in one of several
                         # searched companies still offers the SILENT company's own
@@ -2536,6 +2546,19 @@ def _run_stages(  # noqa: PLR0915
                             envelopes[0].get("access_levels_used") if envelopes else None
                         ),
                         shown=0 if withheld else min(asked, business_answer.SET_LIST_MAX),
+                    )
+                elif predicate is not None and plan.fetch and spec_tier and predicate.get("other_brands"):
+                    # Round 7 item 6: the reply closed with "Other brands ... Name one to
+                    # see them.", so the brand named next narrows this set.
+                    state_out.focus.set_page = turn_runtime.set_page_carry(
+                        predicate,
+                        plan.fetch[0],
+                        class_terms,
+                        access_levels=(
+                            envelopes[0].get("access_levels_used") if envelopes else None
+                        ),
+                        shown=qualifying,
+                        offer_only=True,
                     )
                 else:
                     state_out.focus.set_page = None

@@ -436,7 +436,10 @@ fallback on; parser and MCP stubbed), which also replays the owner's eight excha
 - AC-1373 (R3, owner ruling 27 Sep 2026) A counted-set row is at most two lines: "N. <name>
   (<code>)", then the one or two facts the ask was about (stock: Total; certificate:
   Certificate Number and Valid Until; incoming: quantity and arrival date). No spec lines, no
-  per-location lines. Fifty rows fit one WhatsApp message.
+  per-location lines. Fifty rows fit one WhatsApp message. AMENDED 27 Sep 2026 (owner hand test
+  of rounds 4 to 6, items 1 and 7): the two-line row holds for a stock (and promotion) set only.
+  An incoming, certificate or attachment set renders each row as the normal ETA or attachment
+  ask does (AC-1378, AC-1383).
 - AC-1374 (R4, owner ruling 27 Sep 2026) A set that qualifies nothing, described by a class and
   one value, says what it searched and the count in the other values before the escalation
   offer: "No gunmetal wash basins with incoming stock (I looked for Finish or colour: Gunmetal
@@ -469,3 +472,42 @@ fallback on; parser and MCP stubbed), which also replays the owner's eight excha
   list carries `display_value` per spec; the chatbot's Specs line reads any slug that still
   arrives. No reply in the round 4 replays, and no console case expectation, carries a
   snake_case token (the miss copy's domain key included).
+
+## L. Owner hand test of rounds 4 to 6 (27 Sep 2026 10:37 to 10:45 MYT, console :3084, contact Mr Loo) [BE]
+
+The asks come from a salesperson (Leena) who types a product code, a descriptor and a field.
+Every criterion below is tested with her exact messages.
+
+- AC-1378 (F1, item 1) An incoming or ETA ask never says it did not understand "eta" or any word
+  that selected the incoming domain ("65502 eta"), and never closes a row with "not recorded yet"
+  for the ask's own word. A multi-product incoming answer renders each row in the same field
+  structure as the single-product ETA reply (Product Code, Product Name, Shipment Container,
+  Estimated Arrival Date, the other incoming fields, Incoming Quantity), then the packing list
+  files.
+- AC-1379 (F2, items 2 and 3) When the message carries a product code, descriptor words ("s
+  trap", "p trap", "bowl only", "seat cover") pick among that code's variants and never open a
+  category set: "I need srtwc8840 s trap bowl only price" answers SRTWCX8840-S, "Srtwc8840 bowl
+  only price" answers SRTWCX8840-P and SRTWCX8840-S, "Srtwc8840 seat cover price" answers
+  SRTWC8840-SC, each in the normal price structure. A stock ask of the same shape lists the
+  variant's stock, never a counted set.
+- AC-1380 (F3, item 4) A code followed by a descriptor resolves as code, then descriptor:
+  "Srtwc7604 p trap price" answers SRTWCX7604-P-RL-NEW (the X-prefixed sibling), "Srtwc8840 p
+  Trap" answers SRTWCX8840-P. When no variant carries every word, the variants carrying the most
+  are offered; words every variant carries, or none does, leave the code as typed.
+- AC-1381 (F4, items 5 and 7) A described stock set keeps the header shape of rounds 4 to 6: one
+  bold label per attribute the user named, then the count ("*Brand:* Sorento", "*Product type:*
+  Close coupled water closet", "*Trap:* P trap", "4 water closets have stock."), with no second
+  "*Type:*" line. "I could not find X" is never said for a phrase that resolved into the header
+  ("close couple wc", "WALL MOUNTED KITCHEN TAP").
+- AC-1382 (F5, item 6) A bare brand name answering "Other brands with stock: Mocha 2, Cabana 3.
+  Name one to see them." narrows the same set to that brand: "*Brand:* Cabana", the same Product
+  type and Trap lines, "3 water closets have stock.", the three Cabana rows. The count in the
+  offer and the narrowed answer agree; a brand the offer did not name is a new question; "50"
+  and "10" after it stay on the same three products.
+- AC-1383 (F6, item 7) A certificate ask lists certificate files only, never Product Photos,
+  each row in the normal product attachment structure (Product Code, Product Name, Attachment
+  Type, File Name, Certificate Number, Valid Until, Validity, the expiry flag when lapsed), then
+  the files.
+- AC-1384 (F7) Replies are plain, human sentences: no internal phrasing ("described set",
+  "qualifies nothing", "predicate", "unrecognized", "scope term", "None", "null") reaches any
+  reply.

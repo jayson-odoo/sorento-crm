@@ -638,15 +638,33 @@ def describe_set(
         # Round 3 W4: no "(default)" - the reply's last line names the other brands.
         out.append({"key": "brand", "label": "Brand", "value": _display_name(brand)})
     classes = [c for c in membership.get("class") or [] if c]
-    if classes:
-        out.append({"key": "class", "label": "Product type", "value": " or ".join(_sentence_case(c) for c in classes)})
     others = [k for k in membership if k not in ("class", "brand")]
-    if not others:
-        return out
-    rows = {
-        row.spec_key: row
-        for row in db.query(ProductSpecRegistry).filter(ProductSpecRegistry.spec_key.in_(others)).all()
-    }
+    rows = (
+        {
+            row.spec_key: row
+            for row in db.query(ProductSpecRegistry).filter(ProductSpecRegistry.spec_key.in_(others)).all()
+        }
+        if others
+        else {}
+    )
+    # Owner hand test of rounds 4 to 6 on PR #833, item 5 ("close couple wc ... p trap" got
+    # both "Product type: Water closet" and "Type: Close coupled"): what the thing IS is one
+    # line, "Product type: Close coupled water closet", never two. The registry's own
+    # `product_type` key is the narrower noun, so it leads, and the class noun follows
+    # when the value does not already say it ("Kitchen tap" stays "Kitchen tap").
+    kinds = [
+        display_spec_value(v, dict(getattr(rows.get("product_type"), "value_labels", None) or {}))
+        for v in membership.get("product_type") or []
+    ]
+    if kinds:
+        named = []
+        for kind in kinds:
+            noun = _sentence_case(classes[0]).lower() if len(classes) == 1 else ""
+            named.append(kind if not noun or noun in kind.lower() else f"{kind} {noun}")
+        out.append({"key": "class", "label": "Product type", "value": " or ".join(named)})
+        others = [k for k in others if k != "product_type"]
+    elif classes:
+        out.append({"key": "class", "label": "Product type", "value": " or ".join(_sentence_case(c) for c in classes)})
     for key in others:
         row = rows.get(key)
         labels = dict(getattr(row, "value_labels", None) or {})
@@ -1114,20 +1132,27 @@ def resolve_product_set(
     # explicit same-company predicate as `_leg_certificate` itself (the
     # `do_orm_execute` listener's `with_loader_criteria` does not reliably
     # reach every join shape here either), NULL-shared arm included.
+    #
+    # Owner hand test of rounds 4 to 6 on PR #833, item 7 ("any kitchen tap has cert" came
+    # back as Product Photos rows): the BARE leg surfaces its certificate ids too, so the
+    # attachments call narrows to the certificate files and never lists a product's photos
+    # under a certificate question.
     certificate_ids: list[str] | None = None
     cert_require = require_echo.get("certificate")
-    if isinstance(cert_require, dict) and cert_require.get("scheme") and candidates:
+    if cert_require and candidates:
         candidate_ids = [row["product_id"] for row in candidates]
+        cert_filters = [
+            CertificateProduct.product_id.in_(candidate_ids),
+            or_(Certificate.company_id.is_(None), Certificate.company_id == Product.company_id),
+            Certificate.status == "active",
+        ]
+        if isinstance(cert_require, dict) and cert_require.get("scheme"):
+            cert_filters.append(func.lower(Certificate.scheme) == str(cert_require["scheme"]).lower())
         cert_rows = (
             db.query(Certificate.id)
             .join(CertificateProduct, CertificateProduct.certificate_id == Certificate.id)
             .join(Product, Product.id == CertificateProduct.product_id)
-            .filter(
-                CertificateProduct.product_id.in_(candidate_ids),
-                or_(Certificate.company_id.is_(None), Certificate.company_id == Product.company_id),
-                Certificate.status == "active",
-                func.lower(Certificate.scheme) == str(cert_require["scheme"]).lower(),
-            )
+            .filter(*cert_filters)
             .distinct()
             .all()
         )

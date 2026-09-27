@@ -2626,6 +2626,17 @@ def resolve_reference_post(
     db: Session = Depends(get_db),
 ):
     """POST variant for external callers that send JSON body (e.g. n8n HTTP node)."""
+    # A code, then words that pick among its variants ("Srtwc7604 p trap price"; owner
+    # hand test of rounds 4 to 6 on PR #833, items 2 to 4): the code token becomes the
+    # variant codes the words pick, and the description token those words came from is
+    # dropped, so the ask resolves as that code's variants and never as a category set.
+    from app.services.product_code_family import narrow_code_tokens
+
+    narrowed = narrow_code_tokens(
+        db, query=payload.query or "", tokens=payload.tokens, allowed_types=payload.allowed_entity_types
+    )
+    if narrowed is not None:
+        payload = payload.model_copy(update={"tokens": narrowed, "raw_tokens": None})
     try:
         result = _resolve_input(
             db,
@@ -2851,6 +2862,17 @@ def resolve_reference_post(
             brand_key = str(outcome["brand"]).strip().lower()
             result["unresolved_tokens"] = [
                 t for t in (result.get("unresolved_tokens") or []) if str(t).strip().lower() != brand_key
+            ]
+        if outcome["qualifying_total"] and scope_terms:
+            # The class words ARE placed too: they described the set the header names.
+            # Owner hand test of rounds 4 to 6 on PR #833, items 5 and 7: "close couple wc"
+            # and "WALL MOUNTED KITCHEN TAP" were read into the header, then the reply
+            # closed with "I could not find close couple wc." A word the reader could
+            # not use stays reported (`unrecognized_terms`).
+            unread = {str(t).strip().lower() for t in outcome.get("unrecognized_terms") or []}
+            placed = {str(t).strip().lower() for t in scope_terms} - unread
+            result["unresolved_tokens"] = [
+                t for t in (result.get("unresolved_tokens") or []) if str(t).strip().lower() not in placed
             ]
         if outcome.get("row_labels"):
             result["predicate"]["row_labels"] = outcome["row_labels"]

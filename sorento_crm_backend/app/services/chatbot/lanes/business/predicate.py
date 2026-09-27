@@ -272,4 +272,46 @@ def derive_predicate_words(
             word = match.group()
             if word and word not in words:
                 words.append(word)
+    # Owner hand test of rounds 4 to 6 on PR #833, item 1 ("65502 eta" answered "I did not
+    # understand "eta""): every word of the message that names the leg, or that selected
+    # the leg's domain in the first place, is the predicate's word too - never a word the
+    # described set has to bind.
+    leg_words = _leg_words(require)
+    for match in _MESSAGE_WORD_RE.finditer(message_text or ""):
+        word = match.group()
+        if word.lower() in leg_words and word not in words:
+            words.append(word)
     return words
+
+
+_MESSAGE_WORD_RE = re.compile(r"[A-Za-z]+")
+
+#: The routing domain each leg answers in (`turn.policy_rows`), whose `switch_words` are
+#: the customer's own words for it.
+_DOMAIN_BY_LEG: dict[str, str] = {
+    "incoming": "incoming",
+    "stock": "inventory",
+    "promotion": "promotion",
+    "certificate": "product_attachment",
+}
+
+
+def _leg_words(require: dict[str, Any]) -> frozenset[str]:
+    """Every single word that names one of `require`'s legs: `_LEG_BY_ATTRIBUTE_WORD`'s
+    words for it, the bare cert words for a certificate leg, and the leg's domain's own
+    `switch_words` (deferred import: the policy table lives with the turn engine)."""
+    from app.services.chatbot.turn.policy import default_policy, domain_switch_words
+
+    legs = set(require or {})
+    words = {w for w, leg in _LEG_BY_ATTRIBUTE_WORD.items() if leg in legs}
+    if "certificate" in legs:
+        words |= _BARE_CERT_WORDS
+    domains = {_DOMAIN_BY_LEG[leg] for leg in legs if leg in _DOMAIN_BY_LEG}
+    words |= {w for w, domain in domain_switch_words(default_policy()).items() if domain in domains and " " not in w}
+    return frozenset(w.lower() for w in words)
+
+
+def names_a_leg(word: str) -> bool:
+    """Is `word` one of the customer's own words for a leg or its domain ("eta",
+    "incoming", "stock", "cert")?"""
+    return str(word or "").strip().lower() in _leg_words({leg: True for leg in _DOMAIN_BY_LEG})

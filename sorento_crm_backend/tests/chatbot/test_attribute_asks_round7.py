@@ -813,3 +813,11 @@ def test_replay_the_owners_seven_messages(chat, world):
         assert "Product Photos" not in reply, reply
         assert all(_labels(r) == _CERT_LABELS for r in _full_rows(reply)) and _full_rows(reply), reply
     assert "could not find" not in seven_b.lower(), seven_b
+
+
+def test_f3_words_every_variant_carries_leave_the_code_alone(world):
+    """"water closet" is in every 8840 description: it picks nothing, so the code is not
+    swapped for its whole family (X siblings included)."""
+    from app.services.product_code_family import narrow_code_tokens
+
+    assert narrow_code_tokens(world["db"], query="SRTWC8840 water closet", tokens=["SRTWC8840"], allowed_types=["product"]) is None

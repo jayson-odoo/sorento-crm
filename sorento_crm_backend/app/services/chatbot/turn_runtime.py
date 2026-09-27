@@ -2316,8 +2316,14 @@ def set_page_carry(
     *,
     access_levels: Any = None,
     shown: int = 0,
+    offer_only: bool = False,
 ) -> dict[str, Any] | None:
     """The set a too-long counted answer asked about, for `focus.set_page`.
+
+    `offer_only` (owner hand test of rounds 4 to 6 on PR #833, item 6): a set listed in
+    full whose reply closed with "Other brands with stock: Cabana 3, Mocha 2. Name one to
+    see them." is carried too, only so the brand named next narrows THIS set
+    (`with_brand_from_offer`). It never continues as a page.
 
     No paging (owner ruling, 26 Sep 2026): the carry exists only so the answer to "how
     many should I show?" - the parser's own count key, `top_n` - can list that many of
@@ -2354,7 +2360,14 @@ def set_page_carry(
     if not predicate or not (scope_terms or has_description):
         return None
     total = int(predicate.get("qualifying_total") or 0)
-    if total <= 0 or shown >= total:
+    offered = [
+        {"brand": str(o.get("brand")), "count": int(o.get("count") or 0)}
+        for o in (predicate.get("other_brands") or [])
+        if isinstance(o, dict) and str(o.get("brand") or "").strip() and o.get("count")
+    ]
+    if offer_only and not offered:
+        return None
+    if total <= 0 or (shown >= total and not offer_only):
         return None
     labels = [c for c in (predicate.get("class_labels") or []) if isinstance(c, str)]
     from app.services.chatbot.lanes.business.answer import set_noun_for
@@ -2373,7 +2386,56 @@ def set_page_carry(
         key["brand"] = described.get("brand")
         key["brand_default"] = bool(described.get("brand_default"))
         key["product_ids"] = list(described.get("product_ids") or [])
+    if offered:
+        key["other_brands"] = offered
+    if offer_only:
+        key["offer_only"] = True
     return {"set_key": key}
+
+
+#: The verdict key `with_brand_from_offer` sets: the offered brand the message chose.
+SET_BRAND_KEY = "set_brand"
+
+#: Words around a brand name that do not change which brand was named ("show me cabana").
+_BRAND_PICK_FILLER = frozenset(
+    {"show", "see", "me", "only", "the", "please", "pls", "for", "in", "brand", "ok", "okay", "how", "about", "what", "and", "then"}
+)
+
+
+def with_brand_from_offer(verdict: dict[str, Any], message: Any, *, carried: Any) -> dict[str, Any]:
+    """The verdict with `SET_BRAND_KEY` set when the message names one of the brands the
+    last set answer offered ("Other brands with stock: Cabana 3, Mocha 2. Name one to see
+    them.") and nothing else.
+
+    Owner hand test of rounds 4 to 6 on PR #833, item 6: "cabana" answered "1,136 products
+    have stock" over every Cabana product, when the offer had said Cabana 3. The brand
+    named there narrows the SAME set (`turn/apply.py`, `set_brand_chosen`), so the count
+    in the offer and the narrowed answer are one count. A message that names a product,
+    a class or any other subject is a new question and is left alone."""
+    if not isinstance(carried, dict) or not isinstance(message, str):
+        return verdict
+    offered = (carried.get("set_key") or {}).get("other_brands") or []
+    names = {str(o.get("brand") or "").strip().lower(): str(o.get("brand") or "").strip() for o in offered if isinstance(o, dict)}
+    names.pop("", None)
+    if not names:
+        return verdict
+    for e in verdict.get("entities") or []:
+        if not isinstance(e, dict) or e.get("current_message") is not True:
+            continue
+        if str(e.get("hint") or "").strip().lower() != "brand":
+            return verdict
+    lines = message.strip().splitlines()
+    words = [w for w in re.findall(r"[a-z0-9]+", lines[0].lower()) if w not in _BRAND_PICK_FILLER] if lines else []
+    said = " ".join(words)
+    chosen = names.get(said)
+    if chosen is None:
+        return verdict
+    return {
+        **verdict,
+        SET_BRAND_KEY: chosen,
+        "entities": [e for e in verdict.get("entities") or [] if not (isinstance(e, dict) and e.get("current_message") is True)],
+        "reference_positions": [],
+    }
 
 
 def _contact_stock_policy(db: Session, ctx: dict[str, Any], space_id: str | None):

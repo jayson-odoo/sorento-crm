@@ -1,6 +1,6 @@
 # PLAN: attribute-first asks, "which products have X", across every product and domain
 
-Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged, revive repairs R35 to R38 and owner ruling R39 (no paging) built, reviewer pass fix round done; owner hand test round 2 (W1 to W6: brand binding, plain-words header, readable rows, paging keeps the set, chatbot default brand, water basin) built tester first; owner hand test of round 2 (round 3, W1 to W6: vertical rows, a count after a page continues, a new class word starts a new set, no "(default)", brand scope proven) built red first; owner console test of round 3 (round 4, R1 to R7: brand weights, line-by-line header, two-line rows, a miss says what it searched, the clarify answer reruns the ask, unknown values said back, plain words) built red first; reviewer pass at d6fa2b31 (round 5: B1 R6 fires only on a value-position word, S1 list values in the near miss, S2 one display helper, S3 serial_ddl, N1 to N4) fixed red first; reviewer pass at 34cb4697 (round 6: B1-r5 whole-word product name match, N-r5-1 to N-r5-3) fixed red first; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
+Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged, revive repairs R35 to R38 and owner ruling R39 (no paging) built, reviewer pass fix round done; owner hand test round 2 (W1 to W6: brand binding, plain-words header, readable rows, paging keeps the set, chatbot default brand, water basin) built tester first; owner hand test of round 2 (round 3, W1 to W6: vertical rows, a count after a page continues, a new class word starts a new set, no "(default)", brand scope proven) built red first; owner console test of round 3 (round 4, R1 to R7: brand weights, line-by-line header, two-line rows, a miss says what it searched, the clarify answer reruns the ask, unknown values said back, plain words) built red first; reviewer pass at d6fa2b31 (round 5: B1 R6 fires only on a value-position word, S1 list values in the near miss, S2 one display helper, S3 serial_ddl, N1 to N4) fixed red first; reviewer pass at 34cb4697 (round 6: B1-r5 whole-word product name match, N-r5-1 to N-r5-3) fixed red first; owner hand test of rounds 4 to 6 (round 7, items 1 to 7: ETA words and ETA row shape, a code's descriptor picks its variants, code then descriptor, the normal stock header, a brand from the offer narrows the set, certificates only in the attachment shape, plain words) fixed red first; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
 Test report: `attribute-first-asks-test-report.md`.
 UAC: `attribute-first-asks-acceptance-criteria.md`.
 Supersedes: `documentation/plans/_archive/chatbot/PLAN-spec-backward-search.md` (its backend half
@@ -503,6 +503,44 @@ reading of each turn is inferred from the reply the owner saw; the fixture says 
 - N-r5-2 (AC-1374 amended): the near miss lower-cases a value word by word and keeps an all-caps
   word or a `SPEC_ACRONYMS` word ("No PVC pipe wash basins", "No LED white ...").
 - N-r5-3: the console yaml sends all six reviewer phrases and each refuses any "I don't know".
+
+## Owner hand test of rounds 4 to 6, 27 Sep 2026 10:37 to 10:45 MYT (round 7, items 1 to 7)
+
+The asks come from a salesperson (Leena) who types a product code, a descriptor and a field.
+Each item was replayed with her exact message against seeded data, red first.
+
+- F1, item 1 (AC-1378): every word that names the leg or selected its domain (the policy row's
+  own `switch_words`: "eta", "arriving", "shipment", "container" for incoming) is a predicate
+  word, so "65502 eta" never says it did not understand "eta"; the ask's own word is never
+  projected as a missing field ("*Incoming:* not recorded yet"). An incoming set renders each
+  row in the normal ETA reply's field structure, with the packing lists (AC-1373 amended).
+- F2 and F3, items 2 to 4 (AC-1379, AC-1380): `app/services/product_code_family.py`, called by
+  `resolve_reference_post` before resolving. A token that starts with a letters-then-digits
+  word of the message is a code token; its family is every active code starting with that word
+  or with an X after its letters (SRTWC7604 and SRTWCX7604), not followed by another digit. The
+  other words of the message pick variants by two-word phrase, then single words of three
+  letters or more, over code, name, description and spec values; a word no variant carries is
+  ignored, and when no variant carries all of them the ones carrying the most are offered. The
+  code token becomes the picked codes (resolved exactly, so no set ever opens) and a
+  category/product type/spec token whose words were read as the descriptor is dropped. A pick
+  that selects every variant, or nothing, leaves the request byte-identical.
+- F4, items 5 and 7 (AC-1381): `describe_set` says what the thing IS on one line: the
+  registry's `product_type` value leads and the class noun follows when the value lacks it
+  ("*Product type:* Close coupled water closet", "*Product type:* Kitchen tap"), never a second
+  "*Type:*" line. A scope term the set read (not in `unrecognized_terms`) leaves
+  `unresolved_tokens`, so "I could not find close couple wc." is never said.
+- F5, item 6 (AC-1382): a set answer that closes with "Other brands ... Name one to see them."
+  carries the set (`set_page_carry(offer_only=True)`, the offered brands and counts on the
+  key). A message that is only one of those brand names (`with_brand_from_offer`) recounts the
+  SAME set scoped to that brand (`turn/apply.py`, `set_brand_chosen`), so the count agrees with
+  the offer. The page runs off the carry, so the previous answer's rows no longer feed the
+  zero-stock ladder on that turn (`engine.py`, `focus_products=None` on a set page turn).
+- F6, item 7 (AC-1383): the bare certificate leg surfaces its certificate ids, as the scheme
+  form already did, so the attachments call narrows to certificate files; a certificate or
+  attachment set renders each row in the normal attachment structure (AC-1373 amended).
+- F7 (AC-1384): no reply carries internal phrasing; pinned over every reply of the replay.
+
+Parser prompt: not changed. No migration.
 
 ## Definition of done
 

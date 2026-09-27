@@ -1648,6 +1648,42 @@ def apply(
     # Round 4 R5: a clarify is answered on the very next turn or not at all; the engine
     # re-arms it only when this turn asks another one.
     new_state.focus.set_clarify = None
+    # Round 7 on PR #833 (owner hand test, item 6): a brand the last set answer offered
+    # ("Other brands with stock: Cabana 3, Mocha 2. Name one to see them.") narrows THAT
+    # set to the brand, counted the same way the offer counted it, never a new set of
+    # everything the brand has.
+    chosen_brand = verdict.get("set_brand")
+    if carried_set and isinstance(chosen_brand, str) and chosen_brand:
+        key = dict(carried_set.get("set_key") or {})
+        domain = key.get("domain")
+        if domain:
+            offered = next(
+                (o for o in key.get("other_brands") or [] if str(o.get("brand") or "").lower() == chosen_brand.lower()),
+                {},
+            )
+            for stale in ("offer_only", "other_brands"):
+                key.pop(stale, None)
+            key.update(
+                {"brand": chosen_brand, "brand_default": False, "shown": 0, "total": int(offered.get("count") or 0)}
+            )
+            trace.rules_fired.append("set_brand_chosen")
+            return new_state, Plan(
+                domains=[domain],
+                fetch=[
+                    FetchSpec(
+                        domain=domain,
+                        entities=[],
+                        filters={"set_page": {"set_key": key}, "top_n": None},
+                        date_window=None,
+                    )
+                ],
+                ask=None,
+                denied=[],
+                trace=trace,
+            )
+    if carried_set and (carried_set.get("set_key") or {}).get("offer_only"):
+        # Listed in full: carried only for the brand offer, never continued as a page.
+        carried_set = None
     # W4 (owner hand test round 2): a set already LISTED in part (`shown` > 0) is carried
     # too, and continues only on the customer's own "another N"
     # (`turn_runtime.with_set_count_from_text` flags it); the bot never offers it.

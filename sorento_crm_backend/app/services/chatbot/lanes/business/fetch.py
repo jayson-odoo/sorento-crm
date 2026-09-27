@@ -541,6 +541,9 @@ _SET_ROW_NOT_FACTS = frozenset(
     {"Product Code", "Product Name", "Description", "Company", "Dimensions", "List Price", "File Name", "File Link"}
 )
 _SET_ROW_FACT_MAX = 2
+#: Legs whose set rows keep the normal answer's full field structure (owner hand test of
+#: rounds 4 to 6 on PR #833): the owner reads an ETA or a certificate by its fields.
+_FULL_ROW_LEGS = frozenset({"incoming", "certificate", "attachment_type"})
 
 
 def _set_row_code(it: Any) -> str:
@@ -569,6 +572,16 @@ def _set_row_facts(it: Any, require: Any) -> list[str]:
         f"*{jsc.js_string(f.get('label'))}:* {_fmt_value(f.get('value'))}"
         for f in picked[:_SET_ROW_FACT_MAX]
     ]
+
+
+def _names_the_ask(attribute: str) -> bool:
+    """Is this requested attribute the ask's own word ("incoming", "eta", "stock",
+    "cert"), rather than a field of the answer? Owner hand test of rounds 4 to 6 on PR
+    #833, item 1: an incoming answer closed each row with "*Incoming:* not recorded yet"
+    for the word that asked for it. Deferred import: `predicate` is a sibling module."""
+    from app.services.chatbot.lanes.business.predicate import names_a_leg
+
+    return names_a_leg(attribute)
 
 
 def set_rows_text(items: list[Any], row_labels: dict[str, Any], *, require: Any, offset: int = 0) -> str:
@@ -2485,7 +2498,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             have = {jsc.js_string(f["key"]) for f in it["fields"] if _has_key(f)}
             for k in req_attrs:
                 kk = jsc.nullish_str(k).strip()
-                if not kk or kk in have or kk in denied_map:
+                if not kk or kk in have or kk in denied_map or _names_the_ask(kk):
                     continue
                 it["fields"].append(
                     {"key": kk, "label": _label_for(kk, None), "value": "not recorded yet"}
@@ -2590,6 +2603,13 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     set_row_offset = int(jsc.get(set_predicate, "offset") or 0) if set_predicate is not None else 0
 
     set_require = jsc.get(set_predicate, "require") if set_predicate is not None else None
+    # Owner hand test of rounds 4 to 6 on PR #833, items 1 and 7: an incoming, certificate
+    # or attachment set renders each row as the normal ETA or attachment ask does (product
+    # code, container, ETA, ..., incoming quantity; attachment type, certificate number,
+    # valid until, validity), with its files. Only a stock (or promotion) set keeps the
+    # two-line rows of round 4 R3.
+    if set_row_labels is not None and set(set_require or {}) & _FULL_ROW_LEGS:
+        set_row_labels = None
 
     def _item_line(position: int, it: Any) -> str:
         if set_row_labels is not None:
