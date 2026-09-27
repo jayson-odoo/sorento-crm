@@ -893,9 +893,8 @@ def test_dealer_access_type_without_a_linked_customer_is_refused(client, db):
         pytest.param([("End User", True)], id="end-user"),
         pytest.param([("ZZT Sorento Warehouse", True)], id="unknown-type"),
         pytest.param([("Sorento Dealer", True)], id="dealer-type-no-link"),
-        pytest.param([("Sorento Office", True), ("End User", True)], id="office-plus-end-user"),
-        pytest.param([("Sorento Office", True), ("Sorento Dealer", True)], id="office-plus-dealer"),
         pytest.param([("Sorento Office", False)], id="inactive-office"),
+        pytest.param([("Sorento Office", False), ("Sorento Dealer", True)], id="inactive-office-plus-dealer"),
         pytest.param([("Office", True)], id="brandless-office-name"),
     ],
 )
@@ -936,8 +935,63 @@ def test_office_contact_is_staff(client, db, office):
     assert resp.json()["filters"]["dealer_scoped"] is False
 
 
-def test_linked_contact_is_a_dealer_even_with_an_office_type(client, db):
-    """S2: a customer link wins over an office type (most restrictive wins)."""
+#: The owner's hand-test contact Mr Loo (PR #1273, 27 Sep 2026): every office
+#: tier, every dealer tier and End User at once.
+MIXED_STAFF_TYPES = [
+    "Sorento Office", "Mocha Office", "Cabana Office",
+    "Sorento Dealer", "Mocha Dealer", "Cabana Dealer", "End User",
+]
+
+
+def test_active_office_type_is_staff_whatever_else_it_holds(client, db):
+    """Fix round 3 (owner hand test, 27 Sep 2026): any ACTIVE office access type
+    makes the contact staff for this report, whatever dealer or end user types or
+    customer links it also holds. Staff sees every ledger and may name any."""
+    own = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT MIXED OWN")
+    rival = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT MIXED RIVAL")
+    po = _product(db, "ZZTMIXED-OWN")
+    pr = _product(db, "ZZTMIXED-RIVAL")
+    _line(db, product_id=po.id, ordered=1, delivered=1, customer_id=own.id)
+    _line(db, product_id=pr.id, ordered=9, delivered=9, customer_id=rival.id)
+    contact = _contact(db)
+    for name in MIXED_STAFF_TYPES:
+        _access(db, contact, name)
+    _link(db, contact, own)
+    db.commit()
+
+    resp = _get(client, rank_by="quantity", **_as_contact(contact))
+    assert resp.status_code == 200, resp.text
+    assert _codes(resp.json()) == ["ZZTMIXED-RIVAL", "ZZTMIXED-OWN"]
+    assert resp.json()["filters"]["dealer_scoped"] is False
+    named = _get(client, rank_by="quantity", customer_ids=rival.id, **_as_contact(contact))
+    assert named.status_code == 200, named.text
+    assert _codes(named.json()) == ["ZZTMIXED-RIVAL"]
+
+
+def test_active_office_type_is_the_scope_function_staff(db):
+    """The rule itself: `_top_selling_dealer_scope` answers None (staff) for the
+    mixed contact, linked or not."""
+    from app.api.v1.order_management.orders import _top_selling_dealer_scope
+
+    own = customer(db, company_id=DEFAULT_COMPANY_ID)
+    contact = _contact(db)
+    for name in MIXED_STAFF_TYPES:
+        _access(db, contact, name)
+    assert _top_selling_dealer_scope(db, contact.id) is None
+    _link(db, contact, own)
+    assert _top_selling_dealer_scope(db, contact.id) is None
+
+
+@pytest.mark.parametrize(
+    "types",
+    [
+        pytest.param(["Sorento Dealer", "Mocha Dealer", "End User"], id="dealer-types"),
+        pytest.param([], id="no-type"),
+    ],
+)
+def test_linked_contact_without_an_active_office_type_sees_only_its_ledgers(client, db, types):
+    """No active office type keeps today's rule: a customer link forces the
+    contact to its own ledgers, and naming another is refused."""
     own = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT LINKED OWN")
     rival = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT LINKED RIVAL")
     po = _product(db, "ZZTLINKED-OWN")
@@ -945,7 +999,9 @@ def test_linked_contact_is_a_dealer_even_with_an_office_type(client, db):
     _line(db, product_id=po.id, ordered=1, delivered=1, customer_id=own.id)
     _line(db, product_id=pr.id, ordered=9, delivered=9, customer_id=rival.id)
     contact = _contact(db)
-    _access(db, contact, "Sorento Office")
+    for name in types:
+        _access(db, contact, name)
+    _access(db, contact, "Cabana Office", active=False)
     _link(db, contact, own)
     db.commit()
 
@@ -954,6 +1010,39 @@ def test_linked_contact_is_a_dealer_even_with_an_office_type(client, db):
     assert body["filters"]["dealer_scoped"] is True
     refused = _get(client, rank_by="quantity", customer_ids=rival.id, **_as_contact(contact))
     assert refused.status_code == 403, refused.text
+    assert "customer_not_permitted" in refused.text
+
+
+def test_contact_with_no_access_type_and_no_link_is_refused(client, db):
+    """No type and no link: the 403, no figures (the reveal alone is not enough)."""
+    p = _product(db, "ZZTNOTYPE-A")
+    _line(db, product_id=p.id, ordered=1, delivered=1)
+    contact = _contact(db)
+    db.commit()
+
+    resp = _get(client, rank_by="quantity", **_as_contact(contact))
+    assert resp.status_code == 403, resp.text
+    assert "customer_not_permitted" in resp.text
+    assert "ZZTNOTYPE" not in resp.text
+
+
+def test_sales_report_serves_the_mixed_staff_contact(client, db):
+    """The sales report agrees: its only contact gate is the Sales report reveal, so
+    the same mixed contact is answered there too, never refused as a dealer."""
+    own = customer(db, company_id=DEFAULT_COMPANY_ID)
+    p = _product(db, "ZZTSRMIXED-A")
+    _line(db, product_id=p.id, ordered=1, delivered=1, customer_id=own.id)
+    contact = _contact(db)
+    for name in MIXED_STAFF_TYPES:
+        _access(db, contact, name)
+    _link(db, contact, own)
+    db.commit()
+
+    resp = client.get(
+        "/api/v1/order-management/sales-report",
+        params={"product_code": "ZZTSRMIXED-A", **Y2026, **_as_contact(contact)},
+    )
+    assert resp.status_code == 200, resp.text
 
 
 # --------------------------------------------------------------------- auth

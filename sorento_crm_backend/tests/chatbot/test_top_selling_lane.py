@@ -854,6 +854,58 @@ class TestDealer:
         assert args["customer_ids"] == [own_id]
         assert "Which customer" not in reply
 
+    @staticmethod
+    def _give_access_type(session_factory, name: str, *, active: bool = True) -> None:
+        db = session_factory()
+        code = f"zzt_at_{uuid.uuid4().hex[:12]}"
+        db.execute(
+            text("INSERT INTO contact_access_types (code, name, is_active) VALUES (:code, :name, :active)"),
+            {"code": code, "name": name, "active": active},
+        )
+        db.execute(
+            text(
+                "INSERT INTO respond_contact_access_types (contact_id, access_type_code) "
+                "SELECT id, :code FROM respond_contacts WHERE respond_io_id = :cid"
+            ),
+            {"code": code, "cid": str(outstanding_lane.CONTACT_ID)},
+        )
+        db.commit()
+
+    def test_linked_contact_with_an_active_office_type_is_staff(self, session_factory, monkeypatch, route) -> None:
+        """Fix round 3 (owner hand test, 27 Sep 2026, Mr Loo): the lane agrees with the
+        route. A contact holding an active office type is staff even when it also holds
+        dealer types and a customer link, so a customer word goes to the normal
+        resolver and picker, never the dealer refusal."""
+        _seed_contact(session_factory, variables={})
+        self._link_dealer(session_factory)
+        for name in ("Sorento Office", "Mocha Office", "Cabana Office", "Sorento Dealer", "End User"):
+            self._give_access_type(session_factory, name)
+        reply, captured = _turn(
+            session_factory, monkeypatch,
+            _ts(entities=[{"raw": "hanlim", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}]),
+            "top selling for HANLIM by quantity",
+            resolve_services=_ambiguous_hanlim_resolve_services(lambda **_: {"items": [], "has_result": False}),
+        )
+        assert reply.strip() != REFUSED
+        assert "Which customer do you mean?" in reply
+
+    def test_linked_contact_with_only_an_inactive_office_type_stays_a_dealer(
+        self, session_factory, monkeypatch, route
+    ) -> None:
+        """An inactive office type is no office type: the link still scopes the lane."""
+        _seed_contact(session_factory, variables={})
+        self._link_dealer(session_factory)
+        self._give_access_type(session_factory, "Sorento Office", active=False)
+        self._give_access_type(session_factory, "Sorento Dealer")
+        reply, captured = _turn(
+            session_factory, monkeypatch,
+            _ts(entities=[{"raw": "hanlim", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}]),
+            "top selling for HANLIM by quantity",
+            resolve_services=_ambiguous_hanlim_resolve_services(lambda **_: {"items": [], "has_result": False}),
+        )
+        assert reply.strip() == REFUSED
+        assert _calls(captured) == []
+
 
 # --------------------------------------------------------------------------- #
 # AC-1964 / AC-1966 - the ranked list is a sticky pick list
