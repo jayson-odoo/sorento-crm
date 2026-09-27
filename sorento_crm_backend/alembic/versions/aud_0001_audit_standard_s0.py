@@ -31,7 +31,7 @@ table is scanned; VALIDATE CONSTRAINT and the index builds run in an autocommit 
 the rest commits. So the upgrade is rerun-safe (IF NOT EXISTS, DROP ... IF EXISTS), and an
 INVALID index left by an interrupted build is dropped and rebuilt.
 
-Any later migration that rewrites audit rows (the S-1 password scrub) must run
+Any later migration that rewrites audit rows must run
 `SET LOCAL sorento.audit_maintenance = 'on'` first.
 
 Downgrade drops the triggers and the function first, then deletes the EVENT rows (the old
