@@ -1171,12 +1171,13 @@ class TestParserPromptAndContractsTeachSalesReport:
         stays RETIRED on this lane (S0 dropped the dev/prod dual-body split; only ONE
         body ships now, `SEMANTIC_PARSER_PROMPT`) - main's own edit to the SLIM body
         is deliberately dropped, so the original "both texts ship" premise (dev vs
-        prod split) no longer applies. `MEMORY_ADDENDUM` (chatbot memory lane A,
-        migration `mem_0002_parser_memory`) has since stacked AFTER `SALES_REPORT_
-        ADDENDUM` and is now the newest addendum, so it is the tail of the one body
-        that exists - `SALES_REPORT_ADDENDUM` is one peel beneath it."""
+        prod split) no longer applies. `SALES_ANALYSIS_ADDENDUM` (#1267 S1) and then
+        `MEMORY_ADDENDUM` (chatbot memory lane A, migration `mem_0002_parser_memory`) now
+        stack after it, newest outermost, so `SALES_REPORT_ADDENDUM` is the tail of the one
+        body that exists once those are stripped."""
         from app.services.chatbot_parser_prompt import (
             MEMORY_ADDENDUM,
+            SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
             STOCK_TASK_ADDENDUM,
@@ -1187,13 +1188,15 @@ class TestParserPromptAndContractsTeachSalesReport:
             "the newest addendum, so it is the tail"
         )
         # `STOCK_TASK_ADDENDUM` (ported from PR #1118, not merged, chatbot-stock-ask-v2
-        # S3) stacked after this one and beneath MEMORY_ADDENDUM, newest outermost, so
-        # both come off first.
+        # S3), then `SALES_ANALYSIS_ADDENDUM` (#1267 S1), then MEMORY_ADDENDUM stacked after
+        # this one, newest outermost, so they come off first.
+        assert SEMANTIC_PARSER_PROMPT.endswith(MEMORY_ADDENDUM)
         assert SEMANTIC_PARSER_PROMPT.removesuffix(MEMORY_ADDENDUM).removesuffix(
-            STOCK_TASK_ADDENDUM
-        ).endswith(SALES_REPORT_ADDENDUM), (
+            SALES_ANALYSIS_ADDENDUM
+        ).removesuffix(STOCK_TASK_ADDENDUM).endswith(SALES_REPORT_ADDENDUM), (
             "SEMANTIC_PARSER_PROMPT does not end with SALES_REPORT_ADDENDUM once the "
-            "newer MEMORY_ADDENDUM and STOCK_TASK_ADDENDUM are stripped"
+            "newer MEMORY_ADDENDUM, SALES_ANALYSIS_ADDENDUM and STOCK_TASK_ADDENDUM are "
+            "stripped"
         )
 
     def test_the_addendum_stacks_after_low_stock(self) -> None:
@@ -1206,6 +1209,7 @@ class TestParserPromptAndContractsTeachSalesReport:
         from app.services.chatbot_parser_prompt import (
             LOW_STOCK_ADDENDUM,
             MEMORY_ADDENDUM,
+            SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
             STOCK_TASK_ADDENDUM,
@@ -1213,6 +1217,7 @@ class TestParserPromptAndContractsTeachSalesReport:
 
         assert (
             SEMANTIC_PARSER_PROMPT.removesuffix(MEMORY_ADDENDUM)
+            .removesuffix(SALES_ANALYSIS_ADDENDUM)
             .removesuffix(STOCK_TASK_ADDENDUM)
             .removesuffix(SALES_REPORT_ADDENDUM)
             .endswith(LOW_STOCK_ADDENDUM)

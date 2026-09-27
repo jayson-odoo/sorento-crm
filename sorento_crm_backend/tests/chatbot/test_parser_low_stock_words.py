@@ -88,6 +88,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         `LOW_STOCK_ADDENDUM` landed."""
         from app.services.chatbot_parser_prompt import (
             MEMORY_ADDENDUM,
+            SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             STOCK_TASK_ADDENDUM,
         )
@@ -95,12 +96,16 @@ class TestBothPublishedBodiesCarryTheVocabulary:
 
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
-            assert body.removesuffix(MEMORY_ADDENDUM).removesuffix(
-                STOCK_TASK_ADDENDUM
-            ).removesuffix(SALES_REPORT_ADDENDUM).endswith(addendum), (
+            assert (
+                body.removesuffix(MEMORY_ADDENDUM)
+                .removesuffix(SALES_ANALYSIS_ADDENDUM)
+                .removesuffix(STOCK_TASK_ADDENDUM)
+                .removesuffix(SALES_REPORT_ADDENDUM)
+                .endswith(addendum)
+            ), (
                 f"{name} body does not end with LOW_STOCK_ADDENDUM once the newer "
-                "MEMORY_ADDENDUM/SALES_REPORT_ADDENDUM are stripped - LOW_STOCK_ADDENDUM "
-                "must stay the tail beneath them"
+                "MEMORY_ADDENDUM, SALES_ANALYSIS_ADDENDUM and SALES_REPORT_ADDENDUM are "
+                "stripped - LOW_STOCK_ADDENDUM must stay the tail beneath them"
             )
 
     def test_the_addendum_stacks_after_last_cost(self) -> None:
@@ -112,6 +117,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         from app.services.chatbot_parser_prompt import (
             LAST_COST_ADDENDUM,
             MEMORY_ADDENDUM,
+            SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             STOCK_TASK_ADDENDUM,
         )
@@ -120,6 +126,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         for name, body in _bodies().items():
             assert (
                 body.removesuffix(MEMORY_ADDENDUM)
+                .removesuffix(SALES_ANALYSIS_ADDENDUM)
                 .removesuffix(STOCK_TASK_ADDENDUM)
                 .removesuffix(SALES_REPORT_ADDENDUM)
                 .removesuffix(addendum)

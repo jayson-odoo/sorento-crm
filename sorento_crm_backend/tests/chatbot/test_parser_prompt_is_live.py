@@ -30,6 +30,7 @@ from app.services.chatbot_parser_prompt import (
     LIVE_SYSTEM_MESSAGE_SHA256,
     LOW_STOCK_ADDENDUM,
     MEMORY_ADDENDUM,
+    SALES_ANALYSIS_ADDENDUM,
     SALES_REPORT_ADDENDUM,
     STOCK_TASK_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
@@ -189,10 +190,12 @@ def _without_growth_r1_addendum(text: str) -> str:
     `test_parser_growth_r1_reachability.py::test_the_addendum_is_appended_to_both_bodies`.
     """
     # MEMORY_ADDENDUM (chatbot memory lane A) is the newest addendum, then
-    # STOCK_TASK_ADDENDUM (ported from PR #1118, not merged, chatbot-stock-ask-v2 S3), so
-    # they come off FIRST, in that order.
+    # SALES_ANALYSIS_ADDENDUM (#1267 S1), then STOCK_TASK_ADDENDUM (ported from PR #1118,
+    # not merged, chatbot-stock-ask-v2 S3), so they come off FIRST, in that order.
     if text.endswith(MEMORY_ADDENDUM):
         text = text[: -len(MEMORY_ADDENDUM)]
+    if text.endswith(SALES_ANALYSIS_ADDENDUM):
+        text = text[: -len(SALES_ANALYSIS_ADDENDUM)]
     if text.endswith(STOCK_TASK_ADDENDUM):
         text = text[: -len(STOCK_TASK_ADDENDUM)]
     if text.endswith(SALES_REPORT_ADDENDUM):
