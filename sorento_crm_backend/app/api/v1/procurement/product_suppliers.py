@@ -6,7 +6,13 @@ from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, require_permission
 from app.services.procurement_service import ProductSupplierService
-from app.schemas.procurement import ProductSupplierCreate, ProductSupplierUpdate, ProductSupplierResponse
+from app.schemas.procurement import (
+    ProductSupplierCostCreate,
+    ProductSupplierCostUpdate,
+    ProductSupplierCreate,
+    ProductSupplierResponse,
+    ProductSupplierUpdate,
+)
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 
@@ -188,26 +194,26 @@ async def get_product_suppliers_by_product(
 @router.post("/{link_id}/costs", status_code=status.HTTP_201_CREATED)
 async def create_product_supplier_cost(
     link_id: str,
-    body: dict,
+    body: ProductSupplierCostCreate,
     current_user: dict = Depends(require_permission(PS_EDIT_PERM)),
     db: Session = Depends(get_db),
 ):
     from app.services.procurement.supplier_cost_service import create_cost
 
-    return create_cost(db, link_id, body, current_user)
+    return create_cost(db, link_id, body.model_dump(), current_user)
 
 
 @router.put("/{link_id}/costs/{cost_id}")
 async def update_product_supplier_cost(
     link_id: str,
     cost_id: str,
-    body: dict,
+    body: ProductSupplierCostUpdate,
     current_user: dict = Depends(require_permission(PS_EDIT_PERM)),
     db: Session = Depends(get_db),
 ):
     from app.services.procurement.supplier_cost_service import update_cost
 
-    return update_cost(db, link_id, cost_id, body, current_user)
+    return update_cost(db, link_id, cost_id, body.model_dump(exclude_unset=True), current_user)
 
 
 @router.delete("/{link_id}/costs/{cost_id}")

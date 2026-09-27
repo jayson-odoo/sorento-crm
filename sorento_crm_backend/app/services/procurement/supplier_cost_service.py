@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Iterable, Optional, Sequence
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.services.error_handler import AppException
 from app.services.pdf_render import today_in_malaysia
@@ -147,9 +147,11 @@ def _get_cost_or_404(db: Session, link_id: str, cost_id: str):
     return row
 
 
-def _parse_date_or_422(value: Optional[str], *, field: str) -> Optional[date]:
+def _parse_date_or_422(value, *, field: str) -> Optional[date]:
     if not value:
         return None
+    if not isinstance(value, str):
+        return value  # already a `date`, parsed by the route's body model
     try:
         return date.fromisoformat(value)
     except (TypeError, ValueError):
@@ -246,35 +248,11 @@ def delete_cost(db: Session, link_id: str, cost_id: str, current_user: dict) -> 
     db.commit()
 
 
-def _serialize_cost_row(row, siblings: Sequence, today: date) -> dict:
-    from app.models.cost_price import CostPriceChangeSet
-
-    source = None
-    if row.source_change_line_id:
-        # No relationship declared between a cost row and its originating line/set - look
-        # it up directly through the row's own session rather than adding one just for
-        # this display field.
-        from sqlalchemy.orm import object_session
-
-        from app.models.cost_price import CostPriceChangeLine
-
-        cs = None
-        db_session = object_session(row)
-        if db_session is not None:
-            line = (
-                db_session.query(CostPriceChangeLine)
-                .filter(CostPriceChangeLine.id == row.source_change_line_id)
-                .first()
-            )
-            if line is not None:
-                cs = (
-                    db_session.query(CostPriceChangeSet)
-                    .filter(CostPriceChangeSet.id == line.change_set_id)
-                    .first()
-                )
-        if cs is not None:
-            source = {"change_set_id": str(cs.id), "code": cs.code}
-
+def _serialize_cost_row(row, siblings: Sequence, today: date, sources: Optional[dict] = None) -> dict:
+    """`sources` maps `source_change_line_id` to `{change_set_id, code}` when the caller
+    batched that lookup; without it the row looks its own source up."""
+    if sources is None:
+        sources = _sources_for(object_session(row), [row])
     return {
         "id": str(row.id),
         "unit_cost": float(row.unit_cost) if row.unit_cost is not None else None,
@@ -282,8 +260,28 @@ def _serialize_cost_row(row, siblings: Sequence, today: date) -> dict:
         "start_date": row.start_date.isoformat() if row.start_date else None,
         "end_date": row.end_date.isoformat() if row.end_date else None,
         "status": cost_status(row, siblings, today),
-        "source": source,
+        "source": sources.get(str(row.source_change_line_id)) if row.source_change_line_id else None,
         "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+def _sources_for(db: Optional[Session], rows: Iterable) -> dict:
+    """`{source_change_line_id: {change_set_id, code}}` for `rows`, in one query. There is
+    no relationship declared between a cost row and its originating line/set, so join
+    through the line table directly rather than adding one just for this display field."""
+    from app.models.cost_price import CostPriceChangeLine, CostPriceChangeSet
+
+    line_ids = {str(r.source_change_line_id) for r in rows if r.source_change_line_id}
+    if db is None or not line_ids:
+        return {}
+    return {
+        str(line_id): {"change_set_id": str(set_id), "code": code}
+        for line_id, set_id, code in (
+            db.query(CostPriceChangeLine.id, CostPriceChangeSet.id, CostPriceChangeSet.code)
+            .join(CostPriceChangeSet, CostPriceChangeSet.id == CostPriceChangeLine.change_set_id)
+            .filter(CostPriceChangeLine.id.in_(line_ids))
+            .all()
+        )
     }
 
 
@@ -297,14 +295,19 @@ def costs_for_link(db: Session, link_id: str, *, today: Optional[date] = None) -
         .order_by(ProductSupplierCost.start_date.asc().nullsfirst())
         .all()
     )
-    return [_serialize_cost_row(r, rows, today) for r in rows]
+    sources = _sources_for(db, rows)
+    return [_serialize_cost_row(r, rows, today, sources) for r in rows]
 
 
 def list_cost_lists_for_supplier(
     db: Session, supplier_id: str, *, query: Optional[str] = None, status: Optional[str] = None
 ) -> dict:
+    """The supplier's Prices tab. A fixed handful of queries whatever the link count (Nit 3
+    of the review at 232e5706: it used to run three per link). `query` matches the product
+    code, the description or this supplier's own code for the product (AC-CL-07)."""
     from sqlalchemy import or_
 
+    from app.models.cost_price import ProductSupplierCost
     from app.models.procurement import ProductSupplier
     from app.models.product import Product
     from app.models.scm import SupplierProductCodeAlias
@@ -313,36 +316,64 @@ def list_cost_lists_for_supplier(
     statuses = {s.strip() for s in (status or "").split(",") if s.strip()}
 
     q = (
-        db.query(ProductSupplier)
+        db.query(ProductSupplier, Product)
         .join(Product, Product.id == ProductSupplier.product_id)
         .filter(ProductSupplier.supplier_id == supplier_id)
     )
     if query:
         like = f"%{query.strip()}%"
-        q = q.filter(or_(Product.product_code.ilike(like), Product.product_name.ilike(like)))
-
-    data = []
-    for link in q.all():
-        product = db.query(Product).filter(Product.id == link.product_id).first()
-        costs = costs_for_link(db, link.id, today=today)
-        if statuses and not any(c["status"] in statuses for c in costs):
-            continue
-        alias = (
-            db.query(SupplierProductCodeAlias)
+        aliased_products = (
+            db.query(SupplierProductCodeAlias.product_id)
             .filter(
                 SupplierProductCodeAlias.supplier_id == supplier_id,
-                SupplierProductCodeAlias.product_id == link.product_id,
+                SupplierProductCodeAlias.supplier_code.ilike(like),
             )
-            .order_by(SupplierProductCodeAlias.created_at.desc())
-            .first()
         )
+        q = q.filter(or_(
+            Product.product_code.ilike(like),
+            Product.product_name.ilike(like),
+            Product.id.in_(aliased_products),
+        ))
+    pairs = q.all()
+    if not pairs:
+        return {"data": [], "today": today.isoformat()}
+
+    link_ids = [link.id for link, _ in pairs]
+    rows_by_link: dict[str, list] = {}
+    for row in (
+        db.query(ProductSupplierCost)
+        .filter(ProductSupplierCost.product_supplier_id.in_(link_ids))
+        .order_by(ProductSupplierCost.start_date.asc().nullsfirst())
+        .all()
+    ):
+        rows_by_link.setdefault(str(row.product_supplier_id), []).append(row)
+    sources = _sources_for(db, [r for rows in rows_by_link.values() for r in rows])
+
+    alias_by_product: dict[str, str] = {}
+    for product_id, code in (
+        db.query(SupplierProductCodeAlias.product_id, SupplierProductCodeAlias.supplier_code)
+        .filter(
+            SupplierProductCodeAlias.supplier_id == supplier_id,
+            SupplierProductCodeAlias.product_id.in_([p.id for _, p in pairs]),
+        )
+        .order_by(SupplierProductCodeAlias.created_at.desc())
+        .all()
+    ):
+        alias_by_product.setdefault(str(product_id), code)  # newest first wins
+
+    data = []
+    for link, product in pairs:
+        rows = rows_by_link.get(str(link.id), [])
+        costs = [_serialize_cost_row(r, rows, today, sources) for r in rows]
+        if statuses and not any(c["status"] in statuses for c in costs):
+            continue
         data.append({
             "product_supplier_id": str(link.id),
             "product": {
                 "id": str(product.id), "product_code": product.product_code,
                 "description": product.product_name,
-            } if product else None,
-            "supplier_code": alias.supplier_code if alias else None,
+            },
+            "supplier_code": alias_by_product.get(str(product.id)),
             "unit_cost": float(link.unit_cost) if link.unit_cost is not None else None,
             "currency": link.currency,
             "costs": costs,

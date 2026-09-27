@@ -29,7 +29,13 @@ _MAX_FILE_BYTES = 25 * 1024 * 1024
 #: attacker-sized upload into memory before this module ever gets to check it.
 MAX_FILE_BYTES = _MAX_FILE_BYTES
 _MAX_ROWS = 5000
-_MAX_SHEET_CELLS = 20000
+#: Filled rows one sheet may hold below its header, price rows or not. Each costs at most four
+#: cell reads (the header's resolved columns), so this bounds the parse however wide the
+#: letterhead or however far stray formatting pushes `max_column` (Should fix 3 of the
+#: review at 232e5706, which replaced a max_row x max_column cap that refused real files).
+_MAX_SHEET_FILLED_ROWS = 2 * _MAX_ROWS
+#: Columns the header and letterhead scans read; a price list header sits far left of this.
+_MAX_SCAN_COLUMNS = 100
 _HEADER_SCAN_ROWS = 20
 _MAX_CONSECUTIVE_BLANK_ROWS = 5
 
@@ -154,7 +160,7 @@ def _find_header(ws, max_row_cap: int) -> tuple[Optional[int], dict[int, str]]:
     for row_idx in range(1, limit + 1):
         field_by_pos: dict[int, str] = {}
         seen_fields: set[str] = set()
-        for col_idx in range(1, ws.max_column + 1):
+        for col_idx in range(1, min(ws.max_column, _MAX_SCAN_COLUMNS) + 1):
             value = ws.cell(row=row_idx, column=col_idx).value
             f = _header_field(value)
             if f and f not in seen_fields:
@@ -182,7 +188,7 @@ def _vertical_merge_anchors(ws, header_row: int) -> dict[tuple[int, int], tuple[
 def _letterhead_texts(ws, header_row: int) -> list[str]:
     texts: list[str] = []
     for row_idx in range(1, header_row):
-        for col_idx in range(1, ws.max_column + 1):
+        for col_idx in range(1, min(ws.max_column, _MAX_SCAN_COLUMNS) + 1):
             value = ws.cell(row=row_idx, column=col_idx).value
             if value is not None and str(value).strip():
                 texts.append(str(value).strip())
@@ -266,12 +272,6 @@ def read_supplier_price_list(data: bytes, filename: str) -> PriceListRead:
 
     for ws in wb.worksheets:
         max_row = ws.max_row or 0
-        max_col = ws.max_column or 0
-        if max_col and max_row and max_col * max_row > _MAX_SHEET_CELLS:
-            raise AppException(
-                422, "One sheet has too many cells to parse safely.",
-                detail={"code": "too_many_rows"}, code="too_many_rows",
-            )
 
         header_row, field_by_pos = _find_header(ws, max_row)
         if header_row is None:
@@ -290,6 +290,7 @@ def read_supplier_price_list(data: bytes, filename: str) -> PriceListRead:
 
         rows: list[PriceListRow] = []
         blank_run = 0
+        filled_rows = 0
         row_idx = header_row + 1
         while row_idx <= max_row and blank_run < _MAX_CONSECUTIVE_BLANK_ROWS:
             def _raw(field_name: str):
@@ -311,6 +312,12 @@ def read_supplier_price_list(data: bytes, filename: str) -> PriceListRead:
                 row_idx += 1
                 continue
             blank_run = 0
+            filled_rows += 1
+            if filled_rows > _MAX_SHEET_FILLED_ROWS:
+                raise AppException(
+                    422, f"One sheet has more than {_MAX_SHEET_FILLED_ROWS:,} filled rows.",
+                    detail={"code": "sheet_too_large"}, code="sheet_too_large",
+                )
 
             flags: set[str] = set()
             desc_pos = pos_for.get("description")

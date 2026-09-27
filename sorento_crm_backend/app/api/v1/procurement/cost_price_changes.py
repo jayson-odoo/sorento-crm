@@ -162,6 +162,16 @@ async def return_change_set(
     return service.return_set(db, id, body.get("reason") or "", current_user, request=request)
 
 
+@router.post("/{id}/refresh-prices")
+async def refresh_change_set_prices(
+    id: str,
+    request: Request,
+    current_user: dict = Depends(require_permission(UPLOAD_PERM)),
+    db: Session = Depends(get_db),
+):
+    return service.refresh_prices(db, id, current_user, request=request)
+
+
 @router.post("/{id}/apply")
 async def apply_change_set(
     id: str,

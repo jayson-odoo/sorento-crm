@@ -15,6 +15,7 @@ from decimal import Decimal
 from typing import Iterable, Optional
 
 from fastapi import Request
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import app.services.scm.proforma_invoice_service as pi_service
@@ -144,16 +145,24 @@ def _sheets_summary(parsed) -> list[dict]:
 
 
 def _resolve_currency(db, parsed, *, requested: Optional[str], supplier_id: Optional[str]):
-    """`(code, source)` - AC-S1-07: the header's own token wins, else the supplier's
-    existing links, else what the caller typed, else nothing."""
+    """`(code, source)` - AC-S1-07: the header's own token wins, else what the caller
+    picked, else the supplier's existing links, else nothing. A picked currency beats the
+    supplier's links (Should fix 5 of the review at 232e5706: a CNY supplier sending a USD
+    list); one that contradicts the header's own token is refused rather than overridden."""
+    requested = (requested or "").strip().upper() or None
     if parsed.header_currency:
+        if requested and requested != parsed.header_currency:
+            raise AppException(
+                422, f"The price column says {parsed.header_currency}; you picked {requested}.",
+                detail={"code": "currency_conflict"}, code="currency_conflict",
+            )
         return parsed.header_currency, "header"
+    if requested:
+        return requested, "form"
     if supplier_id:
         code = supplier_price_list_currency(db, supplier_id)
         if code:
             return code, "supplier"
-    if requested:
-        return requested.strip().upper(), "form"
     return None, None
 
 
@@ -396,7 +405,16 @@ def upload(
         created_by_user_id=actor_id,
     )
     db.add(cs)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # Nit 9 of the review at 232e5706: a second upload racing past the open-set check
+        # above hits `uq_cost_price_change_sets_open_per_supplier` here.
+        db.rollback()
+        raise AppException(
+            409, "This supplier already has an open price change.",
+            detail={"code": "open_set_exists"}, code="open_set_exists",
+        )
 
     lines = _build_lines(db, parsed, supplier_id=supplier_id, set_currency=resolved_currency, has_dates=bool(start or end))
     for line in lines:
@@ -588,6 +606,19 @@ def _undecided_count(db: Session, set_id: str) -> int:
     )
 
 
+def _stale_count(db: Session, set_id: str) -> int:
+    from app.models.cost_price import CostPriceChangeLine
+
+    return (
+        db.query(CostPriceChangeLine)
+        .filter(
+            CostPriceChangeLine.change_set_id == set_id,
+            CostPriceChangeLine.stale_live_unit_cost.isnot(None),
+        )
+        .count()
+    )
+
+
 def _largest_rise(db: Session, set_id: str) -> Optional[dict]:
     from app.models.cost_price import CostPriceChangeLine
 
@@ -641,10 +672,21 @@ def get_detail(db: Session, set_id: str, current_user: Optional[dict]) -> dict:
                 can_submit = not unresolved
         elif holds_upload:
             can_submit = not unresolved
-    elif cs.status == "pending_verification" and holds_verify and not is_same_person:
-        can_decide = True
-        can_return = True
-        can_apply = not unresolved and not undecided
+    elif cs.status == "pending_verification":
+        # S8 of the review at 232e5706: a Pending set says why Apply is off, too.
+        if not holds_verify:
+            apply_blocked_reason = "Only a verifier can apply this set"
+        elif is_same_person:
+            apply_blocked_reason = "You uploaded, submitted or mapped this set"
+        else:
+            can_decide = True
+            can_return = True
+            if unresolved:
+                apply_blocked_reason = f"{unresolved} row(s) still need you"
+            elif undecided:
+                apply_blocked_reason = f"{undecided} line{'' if undecided == 1 else 's'} undecided"
+            else:
+                can_apply = True
 
     can_discard = cs.status == "draft" and holds_upload
     sheets = (cs.source_meta or {}).get("sheets", [])
@@ -677,9 +719,16 @@ def get_detail(db: Session, set_id: str, current_user: Optional[dict]) -> dict:
         "largest_rise": largest_rise,
         "actions": {
             "can_apply": can_apply, "apply_blocked_reason": apply_blocked_reason,
-            "apply_count": counts["changed"] + counts["new_link"],
+            # Nit 6: on a Pending set only the accepted lines are written.
+            "apply_count": (
+                counts["accepted"] if cs.status == "pending_verification"
+                else counts["changed"] + counts["new_link"]
+            ),
             "can_submit": can_submit, "can_decide": can_decide, "can_return": can_return,
             "can_discard": can_discard, "decide_blocked_reason": None,
+            "can_refresh_prices": (
+                cs.status == "draft" and holds_upload and _stale_count(db, set_id) > 0
+            ),
         },
     }
 
@@ -895,6 +944,11 @@ def patch_line(
         mapped_now = True
     if "new_link_lead_time_days" in body:
         lead_time = body["new_link_lead_time_days"]
+        if lead_time is not None and (isinstance(lead_time, bool) or not isinstance(lead_time, int)):
+            raise AppException(
+                422, "Lead time must be a whole number of days.",
+                detail={"code": "invalid_lead_time"}, code="invalid_lead_time",
+            )
         if lead_time is not None and lead_time < 0:
             raise AppException(
                 422, "Lead time cannot be negative.",
@@ -933,7 +987,11 @@ def _notify_users(db: Session, user_ids: Iterable[str], cs, *, event_type: str, 
         )
 
 
-def _verifier_user_ids(db: Session, company_id: Optional[str] = None) -> list[str]:
+def _verifier_user_ids(
+    db: Session, company_id: Optional[str] = None, *, exclude: Optional[str] = None
+) -> list[str]:
+    """Active verify-holders, minus `exclude` (the submitter is never told about their own
+    set; Nit 1 of the review at 232e5706, AC-S2-12's "active")."""
     from app.models.user import User, UserPermission, UserRoleAssignment, UserRolePermission
 
     rows = (
@@ -941,11 +999,11 @@ def _verifier_user_ids(db: Session, company_id: Optional[str] = None) -> list[st
         .join(UserRoleAssignment, UserRoleAssignment.user_id == User.id)
         .join(UserRolePermission, UserRolePermission.role_id == UserRoleAssignment.role_id)
         .join(UserPermission, UserPermission.id == UserRolePermission.permission_id)
-        .filter(UserPermission.slug == VERIFY_PERM)
+        .filter(UserPermission.slug == VERIFY_PERM, User.status == "ACTIVE")
         .distinct()
         .all()
     )
-    ids = [r[0] for r in rows]
+    ids = [r[0] for r in rows if not exclude or str(r[0]) != str(exclude)]
     if not company_id:
         return ids
     # Nits (security review): a verify-holder with no `user_companies` grant for
@@ -979,7 +1037,7 @@ def submit(db: Session, set_id: str, current_user: dict, *, request: Optional[Re
     db.commit()
 
     _notify_users(
-        db, _verifier_user_ids(db, cs.company_id), cs, event_type="submitted",
+        db, _verifier_user_ids(db, cs.company_id, exclude=actor_id), cs, event_type="submitted",
         title=f"{cs.code} needs verification",
         body=f"A supplier price change ({cs.code}) is waiting for you to verify.",
     )
@@ -994,6 +1052,7 @@ def decide(
     from app.services.audit_service import log_audit
 
     cs = _get_set_or_404(db, set_id, for_update=True)
+    _require_single_company_scope(db, cs)
     if cs.status != "pending_verification":
         raise AppException(409, "Only a Pending set can be decided.", detail={"code": "wrong_status"}, code="wrong_status")
     if not _user_has_permission(db, (current_user or {}).get("id"), VERIFY_PERM):
@@ -1045,6 +1104,7 @@ def decide_all(
     from app.services.audit_service import log_audit
 
     cs = _get_set_or_404(db, set_id, for_update=True)
+    _require_single_company_scope(db, cs)
     if cs.status != "pending_verification":
         raise AppException(409, "Only a Pending set can be decided.", detail={"code": "wrong_status"}, code="wrong_status")
     if not _user_has_permission(db, (current_user or {}).get("id"), VERIFY_PERM):
@@ -1087,6 +1147,7 @@ def return_set(
     from app.services.audit_service import log_audit
 
     cs = _get_set_or_404(db, set_id, for_update=True)
+    _require_single_company_scope(db, cs)
     if cs.status != "pending_verification":
         raise AppException(409, "Only a Pending set can be returned.", detail={"code": "wrong_status"}, code="wrong_status")
     if not _user_has_permission(db, (current_user or {}).get("id"), VERIFY_PERM):
@@ -1242,6 +1303,14 @@ def apply(db: Session, set_id: str, current_user: dict, *, request: Optional[Req
         )
 
     actor_id = _actor_id(request, current_user)
+    from app.models.product import Product
+
+    product_codes = {
+        str(pid): code
+        for pid, code in db.query(Product.id, Product.product_code)
+        .filter(Product.id.in_({ln.product_id for ln in lines if ln.product_id}))
+        .all()
+    } if lines else {}
     changes_summary = []
     for ln in lines:
         link = links_by_line.get(str(ln.id))
@@ -1287,6 +1356,9 @@ def apply(db: Session, set_id: str, current_user: dict, *, request: Optional[Req
                 ))
         changes_summary.append({
             "supplier_code": ln.supplier_code,
+            "product_code": product_codes.get(str(ln.product_id)),
+            "start_date": cs.start_date.isoformat() if cs.start_date else None,
+            "end_date": cs.end_date.isoformat() if cs.end_date else None,
             "old_unit_cost": float(ln.current_unit_cost) if ln.current_unit_cost is not None else None,
             "new_unit_cost": float(ln.new_unit_cost) if ln.new_unit_cost is not None else None,
             "currency": cs.currency,
@@ -1307,6 +1379,36 @@ def apply(db: Session, set_id: str, current_user: dict, *, request: Optional[Req
         db, "cost_price_change_sets", _u(cs.id), "COST_SET_APPLY",
         new_values={"verified": verified, "changes": changes_summary},
         user_id=actor_id,
+    )
+    db.commit()
+    return get_detail(db, set_id, current_user)
+
+
+def refresh_prices(
+    db: Session, set_id: str, current_user: dict, *, request: Optional[Request] = None
+) -> dict:
+    """Re-capture every line's live price on a Draft set (AC-S2-06, Should fix 6 of the
+    review at 232e5706): after the tick or a hand edit moved a link, Apply answers 409
+    `stale_lines`, and this is how the set becomes appliable again."""
+    from app.models.cost_price import CostPriceChangeLine
+    from app.services.audit_service import log_audit
+
+    cs = _get_set_or_404(db, set_id, for_update=True)
+    _require_single_company_scope(db, cs)
+    if cs.status != "draft":
+        raise AppException(409, "Only a Draft set can be refreshed.", detail={"code": "not_draft"}, code="not_draft")
+    lines = (
+        db.query(CostPriceChangeLine)
+        .filter(CostPriceChangeLine.change_set_id == set_id, CostPriceChangeLine.product_id.isnot(None))
+        .all()
+    )
+    for line in lines:
+        _recompute_line_price(db, line, cs)
+        line.stale_live_unit_cost = None
+        line.stale_live_currency = None
+    log_audit(
+        db, "cost_price_change_sets", _u(cs.id), "COST_SET_REFRESH_PRICES",
+        user_id=_actor_id(request, current_user),
     )
     db.commit()
     return get_detail(db, set_id, current_user)

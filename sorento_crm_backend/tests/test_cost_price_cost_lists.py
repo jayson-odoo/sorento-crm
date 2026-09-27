@@ -180,7 +180,7 @@ def test_hand_edit_sets_unit_cost_null_when_nothing_in_force(cost_price_env):
 
     refreshed = e.db.query(ProductSupplier).filter_by(id=link.id).one()
     # The row's own range has already lapsed (relative to `today`), so nothing is in
-    # force: unit_cost must be null, never the ended row's stale price.
+    # force: the link keeps its current price (null here), never the ended row's price.
     assert refreshed.unit_cost is None
 
 
@@ -230,11 +230,13 @@ def test_daily_tick_updates_links_and_writes_one_audit_row(cost_price_env):
     from app.services.procurement.supplier_cost_service import refresh_prices_in_force
 
     changed = refresh_prices_in_force(e.db, TODAY)
-    assert changed == 2
+    assert changed == 1
 
     e.db.expire_all()
     assert e.db.query(ProductSupplier).filter_by(id=scheduled_link.id).one().unit_cost == Decimal("60.00")
-    assert e.db.query(ProductSupplier).filter_by(id=ended_link.id).one().unit_cost is None
+    # Nothing covers TODAY on the ended link: it keeps its price, never null (Blocking 2 of
+    # the review at 232e5706).
+    assert e.db.query(ProductSupplier).filter_by(id=ended_link.id).one().unit_cost == Decimal("80.00")
 
     from app.models.audit import AuditLog
 
