@@ -26,9 +26,9 @@ app - CIN's agent target was opened by clicking her name in the team's Agents gr
 target was re-opened from CIN's "Open team target" link, never a deep URL. `get url` was checked
 after each navigation.
 
-## Defect found
+## Defect found, then fixed (round 3 follow-up)
 
-**Commission tab, Edit mode: the tier table overflows the page at 375px, not just its own box.**
+**Commission tab, Edit mode: the tier table overflowed the page at 375px, not just its own box.**
 
 - Repro: any target record (tested on the team target TGT-000001, and the pattern is shared code
   so the same applies to an agent target) → Commission tab → gear → Edit (or, empty state, "Add
@@ -37,27 +37,33 @@ after each navigation.
   Every other grid on these records (Periods, the team's Agents grid, both wider than 375 too)
   honours this - `document.documentElement.scrollWidth` stayed 375 with those tabs' edit modes
   open.
-- Actual: `document.documentElement.scrollWidth` reads **460** with the Commission tab's tier
-  table visible in Edit mode (one tier row is enough to trigger it; two tiers doesn't make it
-  worse). The table itself does scroll inside its own bordered box (a scrollbar is visible under
-  the From/Rate columns in `06-commission-edit-375.png`), but the PAGE also grows a second,
-  full-width horizontal scrollbar - visible at the very bottom of the same screenshot, below the
-  footer text and the floating AI-assistant button. Confirmed causal, not a snapshot artifact: with
-  the table's own wrapping `<div class="overflow-x-auto rounded-lg border">` toggled to
-  `display:none` via `eval`, `document.documentElement.scrollWidth` drops from 460 to 375;
-  restoring the div brings it back to 460. Read again three times a second apart (460, 460, 460),
-  so not a mid-transition frame either.
-- Root cause pointer for the coder: `TargetRecord.tsx` line ~1503, the tier table
-  (`<table aria-label="Commission tiers" className="w-full min-w-[28rem] text-sm">`, 448px) sits
-  inside `<div className="overflow-x-auto rounded-lg border">` inside `<section
-  className="flex flex-col gap-3 p-5">` (the Commission tab panel). The Periods table one tab
-  over uses the identical wrapper pattern (`overflow-x-auto rounded-lg border` around a
-  `min-w-[32rem]` table, 512px - wider than Commission's) and does NOT leak past the page at
-  375px, so the difference is something specific to the Commission section's markup or its
-  `sm:w-80` "How tiers pay" sibling block, not the overflow pattern itself. No console error and
-  no uncaught exception accompanies it (`console`/`errors` both clean) - it is a pure CSS layout
-  defect, not a JS one.
-- Everything else in F1/F2/F3 passed clean at both widths; this is the one open item.
+- Actual (first pass): `document.documentElement.scrollWidth` read **460** with the Commission
+  tab's tier table visible in Edit mode (one tier row was enough to trigger it; two tiers didn't
+  make it worse). The table itself scrolled inside its own bordered box (a scrollbar was visible
+  under the From/Rate columns), but the PAGE also grew a second, full-width horizontal scrollbar -
+  visible at the very bottom of the original screenshot, below the footer text and the floating
+  AI-assistant button. Confirmed causal, not a snapshot artifact: with the table's own wrapping
+  `<div class="overflow-x-auto rounded-lg border">` toggled to `display:none` via `eval`,
+  `document.documentElement.scrollWidth` dropped from 460 to 375; restoring the div brought it
+  back to 460. Read three times a second apart (460, 460, 460), so not a mid-transition frame
+  either.
+- Root cause (confirmed by the fix): the sr-only "Remove" column header
+  (`<span className="sr-only">Remove</span>` inside a `<th>`) was escaping the scroll box because
+  the wrapping `<div className="overflow-x-auto rounded-lg border">` had no `position: relative`,
+  so an implicit containing-block resolution let the accessibility-hidden content contribute to
+  page-level layout width instead of being clipped by the scroll container. The Periods table one
+  tab over uses the identical `overflow-x-auto rounded-lg border` wrapper with an even wider table
+  (`min-w-[32rem]`, 512px vs Commission's 448px) and never leaked, because its header has no
+  sr-only cell.
+- **Fix verified in this follow-up**: the candidate fix changes the wrapper to
+  `className="relative overflow-x-auto rounded-lg border"` (`TargetRecord.tsx` ~line 1502).
+  Re-ran the identical repro (team target TGT-000001, Commission tab, Edit mode, two tiers: 0%/
+  rate 2, 100%/rate 4/bonus 500, viewport 375x812): `document.documentElement.scrollWidth` now
+  reads **360** (stable across three reads a second apart). `06-commission-edit-375.png` was
+  retaken and shows only the table's own internal scrollbar, no page-level one. No console error
+  or uncaught exception either before or after (`console`/`errors` both clean throughout).
+- Everything else in F1/F2/F3 passed clean at both widths in the original round 3 pass; this was
+  the one open item, and it is now closed.
 
 ## Screenshots
 
@@ -68,7 +74,7 @@ after each navigation.
 | 03-team-agents-read-1280 / -375 | Team target Agents tab, read mode: ALI 600/600/600, CIN 400/400/400, MEI "No figure yet", Team target totals row 1,000/1,000/1,000 |
 | 04-team-agents-edit-live-total-1280 / -375 | Same tab in Edit mode: every cell an input including MEI's row; typing MEI's Oct figure (200) live-updates the Team target totals row to 1,200 before Save |
 | 05-commission-empty-1280 | Commission tab, no tiers: "No commission" + "Add tier" button (F2) |
-| 06-commission-edit-1280 / -375 | Edit mode, two tiers typed (0% / rate 2, 100% / rate 4 / bonus 500) - the 375 shot is also the defect screenshot (see above) |
+| 06-commission-edit-1280 / -375 | Edit mode, two tiers typed (0% / rate 2, 100% / rate 4 / bonus 500) - the 375 shot was retaken after the `relative` fix landed (see "Defect found, then fixed" above) and shows only the table's own internal scrollbar, no page-level one |
 | 07-commission-read-1280 / -375 | Read mode after Save: tiers as read-only rows |
 | 08-agent-record-header-1280 / -375 | CIN's agent target (opened from the team's Agents grid): header reads "2026 Q4 Target / For CIN - Cindy Lee / Agent target, part of 2026 Q4 Target" with a link |
 | 09-agent-team-target-tab-1280 / -375 | CIN's Team target tab: parent's name/number, measure, counts, applies to, dates, split, periods (with the post-save figures) and "Open team target" |
@@ -78,7 +84,8 @@ after each navigation.
 
 ## scrollWidth readings at 375
 
-All screens read `document.documentElement.scrollWidth <= 375` except the one noted above:
+All screens read `document.documentElement.scrollWidth <= 375`, including Commission edit mode
+after the fix landed:
 
 | Screen | scrollWidth |
 | --- | --- |
@@ -86,7 +93,8 @@ All screens read `document.documentElement.scrollWidth <= 375` except the one no
 | Team Periods, edit | 375 |
 | Team Agents, read | 375 |
 | Team Agents, edit (live totals) | 375 |
-| Commission, edit (team target) | **460 - defect** |
+| Commission, edit (team target) - before the `relative` fix | 460 (defect, now fixed) |
+| Commission, edit (team target, two tiers) - after the `relative` fix, this follow-up | 360 |
 | Commission, read (team target, after save) | 375 |
 | Agent record header (CIN) | 360 |
 | Agent Team target tab (CIN) | 360 |
