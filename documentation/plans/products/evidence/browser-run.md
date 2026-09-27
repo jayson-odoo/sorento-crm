@@ -315,4 +315,61 @@ the list, which this lane does not change.
 | Remove a saved rule | 1280 | goes through `/pending-actions` (202) and commits after 5 s; "Remove disabled during its own countdown" is pinned by vitest, the harness is too slow to open a second menu inside 5 s | none |
 | Rule modal | 375 | pass: dialog 0 to 375, no sideways scroll | `r2-rule-modal-375.png` |
 | Product Specifications tab, one search box: "one piece twister wc" reads "This product comes up, 1st of 3", one request (S-15) | 375, 1280 | pass | `r2-product-specs-search-375.png`, `r2-product-specs-tab-375.png`, `r2-product-specs-tab-1280.png` |
+
+## Fix round 3 re-check (N-R6)
+
+Re-shoot of the Rules grid at 375, requested to close reviewer nit N-R6: `r2-rules-grid-375.png`
+still showed the removed "The first rule that finds something wins" copy (predating commit
+2e1d065f) and did not include an edit-mode shot at 375 at all, so the 358/398 px column-sum claim
+from that nit was never verified against HEAD in a real browser. This pass builds a brand new
+stack, seeds a fresh "Finish or colour" specification the ordinary way, and re-measures with JS
+in the page rather than reading the screenshot by eye.
+
+**Stack:** PR #1302 branch `claude/product-specs-non-technical-1rrf5o` at commit `dd323a60`, on
+its own throwaway `sorento_demo` Postgres database (`scripts.bootstrap_env`, run against
+`sorento_demo`, not the `sorento_ci` database another process was using), backend on `:8000`
+(`SORENTO_ENV_FILE=.env.demo`), every catalog module installed and enabled for tenant
+`__default__` so the sidebar shows Products, a fresh superadmin login user created directly in
+the database, `product_spec_registry` seeded the normal way (`seed_spec_registry`, 49 rows,
+`derivation_rules` left `NULL` on every row so each key reads its shipped rule set), frontend
+`npm run dev` on `:3000`, `agent-browser@0.27.0` session `evidence-n-r6`. Navigated by sidebar
+clicks from `/`: Products > Specifications > Product Specifications > searched "Finish" > Finish
+or colour > **How it is read** tab. That specification carries 22 shipped rules including the
+named `GOLDEN YELLOW -> golden_yellow` one, so it is the same case the nit described.
+
+Both `r3-rules-grid-375.png` (view) and `r3-rules-grid-edit-375.png` (edit, drag handles visible)
+are fresh screenshots of that tab at a 375x800 viewport, taken after setting the viewport with
+`agent-browser set viewport 375 800`, plus `r3-rules-grid-1280.png` at the original 1280x633
+viewport, plus one extra, not requested but useful, `r3-rules-grid-edit-375-scrolled.png`: the
+same edit-mode card with its own internal scroller driven to `scrollLeft = scrollWidth` by JS, to
+show what is on the other side of the cut rather than only asserting it exists.
+
+| Check | Width/mode | Result | Measured | Evidence |
+|---|---|---|---|---|
+| Stale copy "The first rule that finds something wins" | either mode | absent | `document.body.innerText.includes('first rule that finds')` = `false` | `r3-rules-grid-375.png`, `r3-rules-grid-edit-375.png` |
+| Page-level sideways scroll | 375, view | none | `document.documentElement.scrollWidth` 360 vs `window.innerWidth` 375 | `r3-rules-grid-375.png` |
+| Page-level sideways scroll | 375, edit | none | `document.documentElement.scrollWidth` 360 vs `window.innerWidth` 375 | `r3-rules-grid-edit-375.png` |
+| Grid's own internal scroller (Order, What to find, Value it sets; no drag handle or Actions column in view mode) | 375, view | fits, no internal scroll needed | scroller `scrollWidth` 311 equals `clientWidth` 311; header row spans 311 of the card's 328 px, the remaining 17 px is the vertical scrollbar's own reserved width (`offsetWidth` 326 vs `clientWidth` 311 on the same element), not clipped content | `r3-rules-grid-375.png` |
+| Grid's own internal scroller (+ 40 px drag handle + 52 px Actions column) | 375, edit | still overflows | scroller `scrollWidth` 398 vs `clientWidth` 311, a 87 px shortfall, i.e. still the same 398 px the nit measured on the pre-fix build | `r3-rules-grid-edit-375.png` |
+| "Value it sets" column header text | 375, edit, unscrolled | visually cut ("Value it s") | header cell's own right edge sits at x=363, the scroller's visible clip is at x=343: 20 px of the header ("ets") is past the clip | `r3-rules-grid-edit-375.png` |
+| Same header, scrolled to the far right of the grid's own frame | 375, edit, `scrollLeft` 87 (max) | fully visible; the Order column and its drag handle are cut on the left instead | visual, matches the "scrolls inside its own frame" behaviour the component's own code comment claims | `r3-rules-grid-edit-375-scrolled.png` |
+| "Value it sets" cell content, e.g. the named `Golden yellow` | 375, view | still ellipsis-truncated to "Golden y...", with a `title="Golden yellow"` tooltip | button `scrollWidth` 93 vs `clientWidth` 74 | `r3-rules-grid-375.png` |
+| "What to find" cell content, e.g. `GOLDEN YELLOW` | 375, view | still ellipsis-truncated to "GOLDEN YELL...", with a title tooltip | span `scrollWidth` 120 vs `clientWidth` 110 | `r3-rules-grid-375.png` |
+| Column widths, view mode | 375 | Order 63 px, What to find 142 px, Value it sets 106 px; sums to the scroller's own 311 px | measured via `getBoundingClientRect()` on each header cell | `r3-rules-grid-375.png` |
+| Same tab, no viewport constraint | 1280 | no truncation visible anywhere in the columns shown ("Golden yellow" reads whole) | n/a | `r3-rules-grid-1280.png` |
+
+**Plainly:** the stale copy is gone and confirmed gone by a text search of the whole page, not
+just by eye. The page itself never scrolls sideways at 375 in either mode. View mode is genuinely
+clean at 375: its three columns fit the card's own scroll frame exactly (311 of 311 px), so nothing
+about the *grid's width* clips there; the individual `Golden yellow` / `GOLDEN YELLOW` cells still
+truncate to an ellipsis with a hover tooltip, which is the documented `truncate` + `title` pattern
+the design standard calls for on DataGrid long text, not a layout bug. Edit mode is the one that
+still clips exactly as the nit described: the drag handle and the row-actions column push the
+grid's own content to 398 px against a 311 px visible frame, a 87 px shortfall that is close to
+the 40 px difference between the nit's reported 358 (view) and 398 (edit) figures, and at 375 the
+card is too narrow to show the Order/drag-handle end and the Value it sets/Actions end at the same
+time: scrolling the grid's own frame reveals one end at the cost of the other, it does not lose
+data, but the "Value it sets" header is visibly cut ("Value it s") the moment edit mode opens,
+before anyone scrolls anything. This is a real, unresolved edit-mode-at-375 layout gap on HEAD
+(`dd323a60`), reported here as measurement only, no source file was edited to produce it.
 | Next.js "1 Issue" badge | all | was a missing-key console error from the protected layout on every page; 0 console errors after the fix on `/`, the spec list and the record page | none |
