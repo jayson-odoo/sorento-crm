@@ -375,28 +375,57 @@ describe('ChatbotConsole - item 6, the prompt version defaults to the newest FUL
     expect(screen.queryByText(/v-19/)).not.toBeInTheDocument();
   });
 
-  it('a stored explicit choice is restored when it still exists', async () => {
+  it('a pick made in this session is used for the next turn, and is never written to storage', async () => {
+    getConsolePromptVersions.mockResolvedValue(VERSIONS);
+    postConsoleTurn.mockResolvedValue(okTurn(16));
+    renderConsole();
+    await waitFor(() => expect(promptTrigger().textContent).toContain('v18 \u00b7 full'));
+
+    fireEvent.click(promptTrigger());
+    fireEvent.click(await screen.findByText('v16 \u00b7 full'));
+    await waitFor(() => expect(promptTrigger().textContent).toContain('v16 \u00b7 full'));
+
+    fireEvent.change(textarea(), { target: { value: 'hello' } });
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(1));
+    expect(postConsoleTurn.mock.calls[0][0]).toMatchObject({ prompt_version_id: 'v-16' });
+
+    // PR #1273 retest: the owner never meant to pin version 34 forever - a pick is React
+    // state for this page session only, never persisted anywhere.
+    expect(window.localStorage.getItem(PROMPT_STORAGE_KEY)).toBeNull();
+    expect(window.sessionStorage.getItem(PROMPT_STORAGE_KEY)).toBeNull();
+  });
+
+  it('a remount (new page load) starts at the newest full version again, ignoring a stale stored value', async () => {
+    // A value here simulates what an earlier build's now-removed persistence left behind -
+    // the console must never read it, on this load or the next.
     window.localStorage.setItem(PROMPT_STORAGE_KEY, JSON.stringify({ id: 'v-17' }));
     getConsolePromptVersions.mockResolvedValue(VERSIONS);
     renderConsole();
-    await waitFor(() => expect(promptTrigger().textContent).toContain('v17 \u00b7 compact'));
-  });
+    await waitFor(() => expect(promptTrigger().textContent).toContain('v18 \u00b7 full'));
 
-  it('a stored choice for a version that no longer exists falls back to the default', async () => {
-    window.localStorage.setItem(PROMPT_STORAGE_KEY, JSON.stringify({ id: 'v-gone' }));
-    getConsolePromptVersions.mockResolvedValue(VERSIONS);
+    cleanup();
     renderConsole();
     await waitFor(() => expect(promptTrigger().textContent).toContain('v18 \u00b7 full'));
   });
+});
 
-  it('picking a version persists it for the next visit', async () => {
+describe('ChatbotConsole - item 6, the active parser version next to the composer', () => {
+  it('reads "Parser v<version>", plain words and no uuid', async () => {
+    getConsolePromptVersions.mockResolvedValue(VERSIONS);
+    renderConsole();
+    expect(await screen.findByTestId('chatbot-console-active-prompt')).toHaveTextContent('Parser v18');
+    expect(screen.queryByText(/v-18/)).not.toBeInTheDocument();
+  });
+
+  it('updates to the picked version', async () => {
     getConsolePromptVersions.mockResolvedValue(VERSIONS);
     renderConsole();
     await waitFor(() => expect(promptTrigger().textContent).toContain('v18'));
     fireEvent.click(promptTrigger());
     fireEvent.click(await screen.findByText('v16 \u00b7 full'));
     await waitFor(() =>
-      expect(JSON.parse(window.localStorage.getItem(PROMPT_STORAGE_KEY) as string)).toEqual({ id: 'v-16' }),
+      expect(screen.getByTestId('chatbot-console-active-prompt')).toHaveTextContent('Parser v16'),
     );
   });
 });

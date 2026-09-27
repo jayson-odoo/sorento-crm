@@ -872,6 +872,10 @@ def lane_parse_output(
         and focus.top_selling
     ):
         out["top_selling"] = dict(focus.top_selling)
+    # Owner retest of round 4 (27 Sep 2026, R5): a report the ranking handed its
+    # filters to says which it carried and which it dropped (`apply._hop_to_report`).
+    if focus is not None and isinstance(focus.top_selling, dict) and focus.top_selling.get("hop"):
+        out["top_selling_hop"] = dict(focus.top_selling["hop"])
 
     routing = dict(out.get("routing") or {})
     if accepted_team:

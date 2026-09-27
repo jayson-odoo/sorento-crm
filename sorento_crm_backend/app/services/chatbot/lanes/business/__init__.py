@@ -83,6 +83,9 @@ TOP_SELLING_ASK_GROUP = (
 )
 TOP_SELLING_ASK_BASIS = "Delivered (transferred to DO) or ordered?"
 TOP_SELLING_REFUSED_OTHER_CUSTOMER = "Sorry, I can only share sales figures for your own account."
+#: Owner retest of round 4 (27 Sep 2026, R8): one short question in words when a message
+#: inside a ranking cannot be placed.
+TOP_SELLING_UNCLEAR = "Sorry, I didn't get that. What would you like to change in the ranking?"
 
 #: PLAN-low-stock-report S6 (AC-62/AC-64). The intent that overrides the inventory domain's
 #: default tool pick, the tool it picks, and the per-contact key that gates it - all three
@@ -822,6 +825,9 @@ def _fetch_semantic_input(
         # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 8: the top selling ask's own
         # axes (`turn_runtime.lane_parse_output` projects them off the focus).
         "top_selling": parse_output.get("top_selling"),
+        # R5 (owner retest of round 4): the report a ranking handed over to
+        # (`turn_runtime.lane_parse_output`); `fetch.output_structurer` prints its line.
+        "top_selling_hop": parse_output.get("top_selling_hop"),
         # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
         # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3, D13/D20:
         # `{product uuid: quantity}`, built by `turn_runtime._spec_quantities` from
@@ -1454,6 +1460,13 @@ def run_fetch(
             if trace is not None:
                 trace.add("top_selling", {"refused": "customer_not_permitted"})
             return _fixed_reply(TOP_SELLING_REFUSED_OTHER_CUSTOMER)
+        if slot.get("unclear"):
+            # Owner retest of round 4 (27 Sep 2026, R6/R8): a message inside a ranking
+            # the parser could not place is asked about in one short line, never sent to
+            # the out of scope lane or the customer service routing.
+            if trace is not None:
+                trace.add("top_selling", {"asked": "unclear"})
+            return _fixed_reply(TOP_SELLING_UNCLEAR)
         who = slot.get("who")
         if isinstance(who, dict):
             if trace is not None:
@@ -1474,7 +1487,7 @@ def run_fetch(
         # line above the ranking, which runs without it; the category word is then
         # forgotten (`top_selling_drop`), the brand and agent words were never kept.
         notes = [
-            f"I don't know '{word}' as a {kind}."
+            f"I don't know '{word}' as a {kind}." if kind else f"I don't know '{word}'."
             for kind, word in (slot.get("unknown") or [])
             if jsc.truthy(word)
         ]

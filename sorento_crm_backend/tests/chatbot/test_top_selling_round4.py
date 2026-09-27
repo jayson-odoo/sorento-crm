@@ -662,7 +662,7 @@ class TestOwnerTranscript:
             replies.append(text)
             assert len(_chips(reply)) <= 3, (body, _chips(reply))
             assert not _SNAKE.search(text), (body, _SNAKE.search(text))
-            assert "—" not in text and "–" not in text, body
+            assert "\u2014" not in text and "\u2013" not in text, body
             assert "Could not find order" not in text, body
             return text, calls
 

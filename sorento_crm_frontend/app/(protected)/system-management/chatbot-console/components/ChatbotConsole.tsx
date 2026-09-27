@@ -165,6 +165,7 @@ export default function ChatbotConsole() {
     promptVersionId,
     setPromptVersionId,
     promptVersions,
+    promptVersionsLoading,
     messages,
     sending,
     sendText,
@@ -190,6 +191,19 @@ export default function ChatbotConsole() {
       })),
     [promptVersions],
   );
+
+  // The version actually in effect, spelled out next to the composer - "Parser v38", never
+  // the raw id. `promptVersionId === null` after the versions have loaded is an explicit
+  // in-session pick of the live production label (the select's "clear" option), not a
+  // loading state.
+  const activePromptVersion = promptVersions.find((v) => v.id === promptVersionId);
+  const activePromptLabel = promptVersionsLoading
+    ? null
+    : activePromptVersion
+      ? `Parser v${activePromptVersion.version}`
+      : promptVersions.length > 0
+        ? 'Parser live (production)'
+        : null;
 
   const handleSend = () => {
     if (!draft.trim() || sending) return;
@@ -265,6 +279,15 @@ export default function ChatbotConsole() {
 
       {/* Composer - pinned at the bottom. */}
       <div className="border-t pt-3">
+        {activePromptLabel ? (
+          <div
+            className="mb-1.5 text-2xs text-muted-foreground"
+            title="The parser prompt version this turn will run"
+            data-testid="chatbot-console-active-prompt"
+          >
+            {activePromptLabel}
+          </div>
+        ) : null}
         <input
           ref={fileInputRef}
           type="file"

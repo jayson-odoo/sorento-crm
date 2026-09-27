@@ -24,6 +24,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import re
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, replace as dataclasses_replace
@@ -68,6 +69,7 @@ from app.services.chatbot.turn import task as turn_task
 from app.services.chatbot.turn.apply import apply as turn_apply
 from app.services.chatbot.turn.apply import is_product_shaped_entity
 from app.services.chatbot.turn.apply import record_top_selling_asked
+from app.services.chatbot.turn.decide import EVERYTHING, broaden_kind, broaden_level
 from app.services.chatbot.turn.policy import load_policy
 from app.services.chatbot.turn.route import route as turn_route
 # Module level and by name, the same shape `app/api/v1/external/media.py` uses for its own
@@ -906,8 +908,261 @@ def _apply_top_selling_updates(focus: Any, updates: dict[str, Any]) -> None:
     if "who" in updates:
         slot["who"] = dict(updates["who"])
     if updates.get("unknown"):
-        slot["unknown"] = [list(u) for u in updates["unknown"]]
+        slot["unknown"] = [*(slot.get("unknown") or []), *[list(u) for u in updates["unknown"]]]
     focus.top_selling = slot
+
+
+#: The words of the options "Do you mean customer X or sales agent Y? Reply 1 for the
+#: customer, 2 for the sales agent." prints (`lanes/business._top_selling_ask_who`),
+#: and the option each names. A reply carrying one of them picks that option, as a typed
+#: label picks any other printed list (owner retest of round 4, 27 Sep 2026, R2).
+TOP_SELLING_WHO_WORDS = {"customer": 1, "sales": 2, "agent": 2}
+_WORD_RE = re.compile(r"[a-z]+")
+
+
+def _words(text: str) -> list[str]:
+    return _WORD_RE.findall((text or "").lower())
+
+
+def _top_selling_who_answer(text: str, verdict: dict[str, Any]) -> int | None:
+    """Which option of the open "customer or sales agent?" question this message
+    picks: 1, 2, 0 for "neither" (the parser's own `is_affirmative: false`), or None
+    when it answers something else."""
+    bare = (text or "").strip()
+    if bare in ("1", "2"):
+        return int(bare)
+    picked = {TOP_SELLING_WHO_WORDS[w] for w in _words(text) if w in TOP_SELLING_WHO_WORDS}
+    if 2 in picked:
+        return 2
+    if picked == {1}:
+        return 1
+    hints = {e.get("hint") for e in (verdict.get("entities") or []) if isinstance(e, dict)}
+    if "sales_agent" in hints:
+        return 2
+    if verdict.get("is_affirmative") is False:
+        return 0
+    return None
+
+
+def _as_ranking_answer(verdict: dict[str, Any], **keys: Any) -> dict[str, Any]:
+    """`verdict` re-read as a refinement of the ranking on screen: the top selling ask,
+    no ask of its own, only its category and brand words kept."""
+    kept = [
+        e for e in (verdict.get("entities") or [])
+        if isinstance(e, dict) and e.get("hint") in ("category", "brand")
+    ]
+    out = {
+        **verdict,
+        "message_type": "business_query",
+        "domain_hint": "order",
+        "intent_hint": "check_order",
+        "order_status": "top_selling",
+        "domain_in_message": None,
+        "reference_positions": [],
+        "entities": kept,
+        "asks": None,
+    }
+    out.update(keys)
+    return out
+
+
+def _bare_year(text: str) -> int | None:
+    """"2025" or "2025?": a year, never a rank (owner retest of round 4, R7)."""
+    bare = (text or "").strip().rstrip("?").strip()
+    if len(bare) == 4 and bare.isdigit() and 1900 <= int(bare) <= 2100:
+        return int(bare)
+    return None
+
+
+def _split_noisy_token(db: Session, raw: str) -> tuple[list[dict[str, Any]], list[str]] | None:
+    """Owner retest of round 4 (27 Sep 2026, R4): one entity carrying several things
+    ("fanny water closet", "bathtub by sean") split into word groups, longest first,
+    each matched against sales agents, categories, brands and customers in turn
+    (`_classify_word_group`). The words the question's own options print ("sales
+    agent", "customer") mark the kind of the group before them, and a leftover of three
+    letters or more is returned to be said once. None when no group matches."""
+    words = raw.split()
+    if len(words) < 2:
+        return None
+    found: list[dict[str, Any]] = []
+    leftover: list[str] = []
+    i = 0
+    while i < len(words):
+        for size in range(len(words) - i, 0, -1):
+            group = " ".join(words[i : i + size])
+            hint = _classify_word_group(db, group)
+            if hint:
+                found.append({"raw": group, "hint": hint})
+                i += size
+                break
+        else:
+            word = words[i]
+            if word.lower() in TOP_SELLING_WHO_WORDS:
+                if TOP_SELLING_WHO_WORDS[word.lower()] == 2 and found and found[-1]["hint"] == "customer":
+                    found[-1]["hint"] = "sales_agent"
+            elif len(word) >= 3:
+                leftover.append(word)
+            i += 1
+    if not found:
+        return None
+    return found, leftover
+
+
+def _classify_word_group(db: Session, group: str) -> str | None:
+    """The kind one word group names, matched strictly (a category by its code, name or
+    class vocabulary term, never by containing a class word), so "fanny water closet"
+    is not taken whole as the Water Closet class."""
+    from app.services.product_class_signal import resolve_classes_for_term
+
+    if group.lower() in TOP_SELLING_WHO_WORDS:
+        return None
+    if business_services.resolve_sales_agent_token(db, group):
+        return "sales_agent"
+    if business_services.resolve_category_token(db, group) or resolve_classes_for_term(db, group.lower()):
+        return "category"
+    if business_services.resolve_brand_token(db, group, exact_only=True):
+        return "brand"
+    if business_services.customers_named(db, group):
+        return "customer"
+    return None
+
+
+def _resolves_whole(db: Session, raw: str, hint: str) -> bool:
+    if hint == "sales_agent":
+        return bool(business_services.resolve_sales_agent_token(db, raw))
+    if hint == "category":
+        return bool(business_services.resolve_category_token(db, raw)) or bool(
+            business_services.resolve_category_class(db, raw)[0]
+        )
+    if hint == "brand":
+        return bool(business_services.resolve_brand_token(db, raw))
+    if hint == "customer":
+        return bool(business_services.customers_named(db, raw))
+    return False
+
+
+def _noisy_split(db: Session, raw: str, hint: str) -> tuple[list[dict[str, Any]], list[str]] | None:
+    """The split of a noisy token, or None to keep it whole. A token naming a sales
+    agent or a brand beside another kind always splits ("fanny water closet"); any
+    other token splits only when it does not resolve whole under its own hint (so
+    "water tap" stays the Tap class and "SAMPLE - FANNY NG" stays one customer)."""
+    split = _split_noisy_token(db, raw)
+    if split is None:
+        return None
+    parts, _rest = split
+    kinds = {p["hint"] for p in parts}
+    if len(kinds) > 1 and kinds & {"sales_agent", "brand"}:
+        return split
+    if hint in ("customer", "sales_agent", "category", "brand") and _resolves_whole(db, raw, hint):
+        return None
+    return split
+
+
+def _top_selling_verdict(
+    db: Session, verdict: dict[str, Any], state: Any, text: str
+) -> tuple[dict[str, Any], Any, str | None]:
+    """Owner retest of top selling round 4 (27 Sep 2026, PR #1273): inside a ranking
+    conversation the message is read against the question the bot asked, before the
+    parser's reading can send it anywhere else. Returns the verdict to apply, the state
+    (a customer picker the correction dismisses is closed) and the rule that fired.
+
+    * R1/R2 an answer to "customer or sales agent?" ("2", "yeah sales agent", "fanny
+      sales agent", "neither") binds to that question only (`top_selling_who`).
+    * R3 "neither" or "customer is everyone" over a customer picker the ranking opened
+      clears the customer; it never picks every row of the picker.
+    * R7 over a ranked list only a bare 1 to N picks a rank; "2025" or "2025?" is the
+      year, anything else is a new message (the positions are dropped).
+    * R6 an out of scope reading inside a ranking asks one short question instead.
+    * R2/R4 a customer word the message calls an agent is the agent; a word carrying
+      several things splits into its parts, the leftover said once.
+    """
+    focus = state.focus
+    slot = focus.top_selling if isinstance(focus.top_selling, dict) else None
+    ranking = focus.status == "top_selling" or bool(slot and slot.get("hop"))
+    asks_ranking = jsc.js_string(verdict.get("order_status") or "").strip() == "top_selling"
+    if not (ranking or asks_ranking):
+        return verdict, state, None
+    pending = state.pending
+    if ranking and slot and slot.get("asked") == "who" and isinstance(slot.get("who"), dict):
+        answer = _top_selling_who_answer(text, verdict)
+        if answer is not None:
+            return _as_ranking_answer(verdict, top_selling_who=answer), state, "top_selling_who_answer"
+    if ranking and pending is not None and pending.kind == "top_selling_pick":
+        year = _bare_year(text)
+        if year is not None:
+            return (
+                _as_ranking_answer(
+                    verdict, date_filter_start=f"{year}-01-01", date_filter_end=f"{year}-12-31", date_mode=None
+                ),
+                state,
+                "top_selling_year_not_rank",
+            )
+        bare = (text or "").strip()
+        in_list = bare.isdigit() and 1 <= int(bare) <= len(pending.options)
+        if verdict.get("reference_positions") and not in_list:
+            verdict = {**verdict, "reference_positions": []}
+            if verdict.get("message_type") in ("casual", "clarification", "low_signal", None):
+                return _as_ranking_answer(verdict), state, "top_selling_not_a_rank"
+    if ranking and pending is not None and pending.kind == "customer_pick":
+        widens = broaden_level(verdict) == EVERYTHING and broaden_kind(verdict) in (None, "customer")
+        says_agent = any(TOP_SELLING_WHO_WORDS.get(w) == 2 for w in _words(text))
+        if widens or says_agent or verdict.get("is_affirmative") is False:
+            entities = [
+                {**e, "hint": "sales_agent"} if says_agent and e.get("hint") == "customer" else e
+                for e in (verdict.get("entities") or [])
+                if isinstance(e, dict)
+            ]
+            state = dataclasses_replace(state, pending=None)
+            return (
+                _as_ranking_answer(
+                    {**verdict, "entities": []},
+                    entities=[e for e in entities if e.get("hint") in ("category", "brand", "sales_agent")],
+                    broaden_axis="customer",
+                    broaden_to="all",
+                    correction=True,
+                ),
+                state,
+                "top_selling_customer_picker_dismissed",
+            )
+    if ranking and verdict.get("message_type") == "out_of_scope":
+        return _as_ranking_answer(verdict, top_selling_unclear=True), state, "top_selling_unclear"
+    entities = [e for e in (verdict.get("entities") or []) if isinstance(e, dict)]
+    says_agent = any(TOP_SELLING_WHO_WORDS.get(w) == 2 for w in _words(text))
+    rebuilt: list[dict[str, Any]] = []
+    leftover: list[str] = []
+    changed = False
+    for e in entities:
+        hint = jsc.js_string(e.get("hint") or "")
+        raw = " ".join(jsc.js_string(e.get("raw") or "").split())
+        current = e.get("current_message") is not False and not e.get("uuid")
+        if not current or not raw or hint not in ("customer", "sales_agent", "category", "brand", "promotion", "product"):
+            rebuilt.append(e)
+            continue
+        split = _noisy_split(db, raw, hint)
+        if split is None:
+            if hint == "customer" and says_agent and business_services.resolve_sales_agent_token(db, raw):
+                # "by sean salea agent": the message calls the name an agent (R2).
+                rebuilt.append({**e, "hint": "sales_agent"})
+                changed = True
+            else:
+                rebuilt.append(e)
+            continue
+        parts, rest = split
+        for part in parts:
+            if says_agent and part["hint"] == "customer" and business_services.resolve_sales_agent_token(db, part["raw"]):
+                part["hint"] = "sales_agent"
+            rebuilt.append({**e, "raw": part["raw"], "hint": part["hint"], "canonical_code": None, "hint_confident": True})
+        leftover.extend(rest)
+        changed = True
+    if not changed:
+        return verdict, state, None
+    out = {**verdict, "entities": rebuilt}
+    if leftover:
+        out["top_selling_leftover"] = leftover
+    if not asks_ranking and out.get("domain_hint") not in (None, "", "order"):
+        # A word the parser sent to a promotion or document lookup, inside a ranking.
+        out = _as_ranking_answer(out, entities=rebuilt)
+    return out, state, "top_selling_split_token"
 
 
 def run_turn(
@@ -1768,6 +2023,24 @@ def _run_stages(  # noqa: PLR0915
         s7_mode = _s7_mode(db, settings_row)
         space_id_for_turn = business_services.fetch_space_id(db)
 
+        # Owner retest of top selling round 4 (27 Sep 2026): inside a ranking, the message
+        # is read against the question the bot asked before anything routes it.
+        verdict, state_in, top_selling_rule = _top_selling_verdict(
+            db, verdict, state_in, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+        )
+        if top_selling_rule:
+            turn_trace.add("top_selling", {"verdict_rule": top_selling_rule})
+        if state_in.focus.status == "top_selling" or state_in.focus.top_selling or (
+            jsc.js_string(verdict.get("order_status") or "").strip() == "top_selling"
+        ):
+            # R8: inside a ranking no picker lists more than five options.
+            roster_caps = {
+                kind: min(cap, turn_compose.MAX_MENU_OPTIONS)
+                if isinstance(cap, int) and cap > 0
+                else turn_compose.MAX_MENU_OPTIONS
+                for kind, cap in roster_caps.items()
+            }
+
         # C APPLY, first pass: state and plan from the verdict alone.
         state_out, plan = turn_apply(state_in, verdict, policy)
 
@@ -2590,7 +2863,12 @@ def _run_stages(  # noqa: PLR0915
                         answer = answer_bridge.apply_scope_block(
                             answer,
                             domain=fetch_plan.fetch[0].domain,
-                            qf=(ctx.get("parse") or {}).get("output"),
+                            # The window the fetch ran over (`_spec_window`), so the
+                            # header's Dates line never says "all dates" above rows a
+                            # carried window narrowed (owner retest of round 4, R5).
+                            qf=turn_runtime._spec_window(
+                                (ctx.get("parse") or {}).get("output") or {}, fetch_plan.fetch[0]
+                            ),
                             gate_json=(
                                 resolver_payload.get("gate")
                                 if isinstance(resolver_payload, dict)

@@ -963,7 +963,10 @@ class TestPickList:
         _seed_contact(session_factory, variables={})
         _turn(session_factory, monkeypatch, _ts(), "top 5 by quantity")
         _reply, captured = _turn(session_factory, monkeypatch, _pick(9), "9")
-        assert _calls(captured) == []
+        # Owner ruling, retest of round 4 (27 Sep 2026, R7): a number past the end is a
+        # new message read against the list's filters, never a pick: the ranking runs
+        # again and no row's detail is opened.
+        assert all("detail_code" not in args for args in _calls(captured))
         assert _open_question(session_factory).get("kind") == "top_selling_pick"
 
     def test_category_pick_runs_that_categorys_items(self, session_factory, monkeypatch, route) -> None:

@@ -1021,17 +1021,26 @@ def _top_selling_rules(
     order_status = verdict.get("order_status")
     asked = isinstance(order_status, str) and order_status.strip() == TOP_SELLING_STATUS
     names_its_ask = decision.starts_fresh or domain_in_message(verdict) is True
+    hopped = isinstance(focus.top_selling, dict) and bool(focus.top_selling.get("hop"))
     if asked:
         focus.status = TOP_SELLING_STATUS
+    elif (focus.status == TOP_SELLING_STATUS or hopped) and _is_report_hop(verdict):
+        _hop_to_report(focus, verdict, trace)
+        return
     elif focus.status == TOP_SELLING_STATUS and names_its_ask and not _narrows_the_ranking(verdict):
         focus.status = None
         focus.top_selling = None
         trace.rules_fired.append("new_ask_leaves_top_selling")
         return
+    elif hopped and not names_its_ask:
+        # An answer inside the report the ranking handed over to ("2" to "Outstanding
+        # for which document?") keeps the carried filters and their header line.
+        return
     if focus.status != TOP_SELLING_STATUS:
         focus.top_selling = None
         return
     carried = dict(focus.top_selling or {})
+    carried.pop("hop", None)
     # What the last reply asked lives one turn: this turn's reply records its own.
     asked_last = carried.pop("asked", None)
     # A word the last reply said it does not know is said once (owner retest, 27 Sep).
@@ -1061,17 +1070,40 @@ def _top_selling_rules(
         own["rank_by"] = TOP_SELLING_METRIC_ORDER[int(positions[0]) - 1]
         trace.rules_fired.append("top_selling_position_is_the_metric")
     who = carried.pop("who", None)
-    if isinstance(who, dict) and asked_last == "who" and not picked and len(positions) == 1:
-        # "1" the customer, "2" the sales agent (`lanes/business` asks it, the engine's
-        # `_top_selling_narrowing` stored both candidates).
-        if int(positions[0]) == 1 and who.get("customer_ids"):
+    # The engine binds an answer to "customer or sales agent?" before this runs
+    # (`engine._top_selling_verdict`: "2", "yeah sales agent", "fanny sales agent");
+    # a bare position the parser read is the same answer.
+    answer = verdict.get("top_selling_who")
+    if answer is None and not picked and len(positions) == 1:
+        answer = int(positions[0])
+    if isinstance(who, dict) and asked_last == "who" and answer in (0, 1, 2):
+        # Owner retest of round 4 (27 Sep 2026, R1): the answer binds to that question
+        # only. "1" the customer, "2" the sales agent, "neither" (0) neither; the other
+        # axis is cleared, every other filter of the ask stays.
+        focus.customers = []
+        carried.pop("customer_ids", None)
+        carried.pop("customer_names", None)
+        if answer == 1 and who.get("customer_ids"):
             carried["customer_ids"] = list(who["customer_ids"])
+            if who.get("customer_label"):
+                carried["customer_names"] = [who["customer_label"]]
             carried.pop("agent_ids", None)
-            focus.customers = []
             trace.rules_fired.append("top_selling_who_is_the_customer")
-        elif int(positions[0]) == 2 and who.get("agent_ids"):
+        elif answer == 2 and who.get("agent_ids"):
             carried["agent_ids"] = list(who["agent_ids"])
             trace.rules_fired.append("top_selling_who_is_the_agent")
+        else:
+            trace.rules_fired.append("top_selling_who_is_neither")
+    if verdict.get("top_selling_unclear"):
+        # A message inside a ranking the bot cannot place (the parser's out_of_scope):
+        # one short question, never the escalation (owner retest of round 4, R6/R8).
+        carried["unclear"] = True
+    else:
+        carried.pop("unclear", None)
+    leftovers = [w for w in (verdict.get("top_selling_leftover") or []) if isinstance(w, str) and w]
+    if leftovers:
+        # R4: the word left over from a split noisy token, said once above the ranking.
+        carried["unknown"] = [["", w] for w in leftovers]
     if broaden_level(verdict) == EVERYTHING and not decision.answers:
         # A correction widening an axis ("customer is everyone") clears that axis's
         # filter on the ranking too; `broaden_axis: "all"` clears every one.
@@ -1108,6 +1140,91 @@ def _top_selling_axis_keys(axis: str | None) -> tuple[str, ...]:
     if axis is None:
         return tuple(k for keys in TOP_SELLING_BROADEN_KEYS.values() for k in keys)
     return TOP_SELLING_BROADEN_KEYS.get(axis, ())
+
+
+#: The order reports a ranking hands its filters to (owner retest of round 4, 27 Sep
+#: 2026, R5): "outstanding", "can show me the DO", "show me the orders". None is the
+#: plain order list.
+TOP_SELLING_REPORT_HOPS = frozenset(
+    {None, "", "outstanding", "so_outstanding", "do_outstanding", "outstanding_both", "delivered"}
+)
+
+#: The ranking filters an order report cannot apply (it takes a customer and a date
+#: window only), as the report's header names each, and the slot keys holding it.
+TOP_SELLING_RANKING_ONLY = (
+    ("Sales agent", "sales agents", ("agent_ids",)),
+    ("Category", "categories", ("category_words", "category_code")),
+    ("Brand", "brands", ("brand_ids",)),
+)
+
+
+def _is_report_hop(verdict: dict[str, Any]) -> bool:
+    """Is this message an order report ask naming no ranking of its own ("outstanding",
+    "can show me the DO", "show me the orders")?"""
+    if verdict.get("domain_hint") != "order":
+        return False
+    status = verdict.get("order_status")
+    if status not in TOP_SELLING_REPORT_HOPS:
+        return False
+    if any(verdict.get(k) is not None for k in TOP_SELLING_KEYS) or _narrows_the_ranking(verdict):
+        return False
+    return bool(status) or bool(verdict.get("document")) or domain_in_message(verdict) is True
+
+
+def _report_name(verdict: dict[str, Any]) -> str:
+    status = verdict.get("order_status")
+    documents = [str(d).upper() for d in (verdict.get("document") or [])]
+    if status == "so_outstanding" or documents == ["SO"]:
+        return "sales orders"
+    if status == "do_outstanding" or "DO" in documents:
+        return "delivery orders"
+    if status in ("outstanding", "outstanding_both"):
+        return "outstanding orders"
+    return "orders"
+
+
+def _hop_to_report(focus: Focus, verdict: dict[str, Any], trace: Trace) -> None:
+    """Owner retest of round 4 (27 Sep 2026, R5): after a ranking, an order report ask
+    runs that report with the filters in force. The customer and the period carry (the
+    ranking's own window, or the current year its route defaults to); a filter the
+    report cannot apply (agent, category, brand) is dropped and said in one line, and its
+    word never reaches the order lookup (it answered "Couldn't find: bathtub
+    (category)"). The slot stays, marked `hop`, so the next report ask carries the same
+    filters and a new ranking ask starts over."""
+    from datetime import datetime, timedelta, timezone
+
+    slot = dict(focus.top_selling or {})
+    for key in ("asked", "who", "unknown", "unclear", "detail_code"):
+        slot.pop(key, None)
+    dropped = [
+        (label, plural)
+        for label, plural, keys in TOP_SELLING_RANKING_ONLY
+        if any(slot.get(k) for k in keys)
+    ]
+    for kind in ("category", "sales_agent", "brand"):
+        focus.extra.pop(kind, None)
+    focus.brands = []
+    names_customer = any(
+        isinstance(e, dict) and e.get("hint") == "customer" and e.get("current_message") is not False
+        for e in (verdict.get("entities") or [])
+    )
+    ids = slot.get("dealer_customer_ids") or slot.get("customer_ids")
+    if ids and not names_customer:
+        labels = list(slot.get("customer_names") or [])
+        focus.customers = [
+            {"uuid": uid, "hint": "customer", "current_message": False, **({"name": labels[0]} if len(ids) == 1 and labels else {})}
+            for uid in ids
+        ]
+    if not (focus.date_window and (focus.date_window.get("start") or focus.date_window.get("end"))):
+        # The route's own default for the ranking: the current calendar year, Malaysia
+        # time (`fetch._current_myt_year`'s formula).
+        year = (datetime.now(timezone.utc) + timedelta(hours=8)).year
+        focus.date_window = {"mode": None, "start": f"{year}-01-01", "end": f"{year}-12-31"}
+    slot["hop"] = {"report": _report_name(verdict), "dropped": [list(d) for d in dropped]}
+    focus.top_selling = slot
+    status = verdict.get("status") or verdict.get("order_status")
+    focus.status = str(status) if status else None
+    trace.rules_fired.append("top_selling_hops_to_report")
 
 
 def _drop_unnamed_filters(focus: Focus, verdict: dict[str, Any]) -> None:
