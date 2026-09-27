@@ -924,6 +924,17 @@ def _focus_rules(
 
     document = verdict.get("document")
     status = verdict.get("status")
+    if not domain_locked and domain_in_message(verdict) is True:
+        # #1262 fix lane round 5, R2 (owner hand test, 27 Sep 2026): a message with a
+        # domain or status word of its OWN states its own document and status, or none.
+        # Writing only when the verdict named one kept "outstanding" on the focus for
+        # every later turn, so "check stock ..." still projected `so_outstanding` and
+        # "list of DO for ..." ran the outstanding DO bucket instead of the delivery
+        # order list. A bare continuation ("1", "and hanlim?") names no domain word and
+        # keeps the carry below; an answer to an open outstanding question is
+        # `domain_locked` and `_answer_outstanding` already wrote both.
+        focus.document = list(document or [])
+        focus.status = status or None
     if document:
         focus.document = list(document)
     if status:
