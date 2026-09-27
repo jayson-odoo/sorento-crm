@@ -135,8 +135,10 @@ page, never per row). Both are null when the caller lacks `user_management.users
 `GET /contacts/{id}` gains:
 
 - `is_salesperson` (bool) and `suggested_role_slug` (`salesperson` | `portal_user`);
-- `linked_user`: `{id, name, email, status, has_password, roles: [{id, name}]}` or null; null
-  when the caller lacks `user_management.users.view`.
+- `linked_user`: `{id, name, email, status, has_password, roles: [{id, name}],
+  phone_differs_from_contact}` or null; null when the caller lacks `user_management.users.view`.
+  `phone_differs_from_contact` (fix round 2, S3) is true when the user's normalised phone is not
+  the contact's, or the user has none.
 
 `RespondContactResponse` declares all five new fields (response_model drops undeclared ones).
 
@@ -167,7 +169,9 @@ locked). Fields in order:
 5. Copy roles from another user (as today).
 6. **Roles**: `SearchableMultiSelect` (replaces the checkbox list); the suggested role gets a
    "Suggested" hint beside the label.
-7. Companies (superadmin only, as today), prefilled from `GET /contacts/{id}/companies`.
+7. Companies (superadmin only, as today), prefilled from `GET /contacts/{id}/companies`. With a
+   contact set it is marked required (`*`) and a save with none picked shows `Pick at least one
+   company.` (plan 7; fix round 2, S4).
 8. Superior (as today).
 
 Picking a contact (or opening with one) loads `GET /contacts/{id}` and its companies, then fills
@@ -200,8 +204,10 @@ viewer has `users.edit`). Rows, in order:
   `No phone yet. Add one to allow phone sign-in.`
 - WhatsApp contact: `<name> - <masked phone>` linking to `/user-management/contacts/<id>`, or
   `Not linked`.
-- Last sign-in: date time (Malaysia) plus method in words (`email`, `phone`, `portal link`), or
-  `Never`.
+- Last sign-in: date time (Malaysia) plus method in words, from the backend's `AUTH_METHODS`:
+  `password` reads `email`, `phone_otp` reads `phone`, `portal_link` reads `portal link`;
+  `impersonation` or any other value names no method (fix round 2, S1). Or `Never`. The Profile
+  card no longer repeats Last Sign In (fix round 2, N6).
 - When `phone_differs_from_contact`: a warning `Alert` `Needs attention: phone differs from
   WhatsApp contact.` with button `Use new number` (PUT `contact_number` = the contact's phone).
 - When linked and the viewer has `users.edit`: `Unlink WhatsApp contact` button running the
@@ -233,16 +239,20 @@ Contact Information (always rendered, explicit empty state):
   and `Link existing user` (users.edit; an inline `SearchableSelect` of `GET /users/select?unlinked=true`
   plus a `Link` button; `PUT /users/{picked} {respond_contact_id}`; 409s inline).
 - Linked: `User <name link>`, `Roles <badges>`, `Signs in by` (`Email and password` when
-  `has_password`, then `WhatsApp code`, `Portal link`), and `Unlink` (users.edit) running
-  `user.unlink_contact` on that user (5s countdown with Cancel).
-- Without `users.view` the section shows the contact's state only as `No user yet` actions hidden.
+  `has_password`, then `WhatsApp code` only when `phone_differs_from_contact` is false, then
+  `Portal link`), and `Unlink` (users.edit) running `user.unlink_contact` on that user (5s
+  countdown with Cancel).
+- Without `users.view` the section is not rendered (fix round 2, S5): the API then sends no
+  linked user, so `No user yet` would be false for a contact that has one.
 
 ### 2.5 Layering
 
 Every new call goes UI -> hook -> service -> `apiFetch`: `userService.ts` gains `createUser`,
-`updateUserContactLink`, `useNewNumber`, `findUserByPhone`, `findUserByContact`,
-`listUnlinkedUsers`; contact reads stay in `contacts/[id]/services/contactService.ts`. Errors use
-`codedError` / `extractApiError`.
+`updateUserContactLink`, `useNewNumber`; contact reads stay in
+`contacts/[id]/services/contactService.ts`. Every `/users/select` read (the 409 holder by
+`phone` or `respond_contact_id`, `unlinked=true`, Superior, Copy roles) goes through the shared
+`services/userSelectService.getUsersSelect`, whose `email` is nullable (fix round 2, S2; CLAUDE.md
+user-select rule). Errors use `codedError` / `extractApiError`.
 
 ## 3. Test list (tester writes these red first)
 
