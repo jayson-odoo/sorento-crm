@@ -13,7 +13,7 @@ is what lets the 66-fixture replay run as JSON in, JSON out.
 | (B-HB-1, not live) | `resolve_and_gate` | S6a's `business.run_until_exit` |
 | (the member roster) | `team_members` | `app.api.v1.external.team_members` |
 | (new, 6 Sep 2026) | `staff_lookup` | `users` x `team_members` x `agent_teams`, read here |
-| (new, 27 Sep 2026, #865) | `product_brand` | `products` x `brands`, read here (`focus_product_brand`) |
+| (new, 27 Sep 2026, #865) | `product_brand` | `products` x `brands` x `companies`, read here (`focus_product_origin`) |
 
 Every test in `test_s5_escalation_lane.py` injects its own `services`, which is the point
 of the seam; `test_s5_escalation_seams.py` covers THIS module - the wiring that runs once
@@ -228,24 +228,57 @@ def _product_refs(products: Any) -> tuple[set[str], set[str]]:
     return uuids, codes
 
 
-def focus_product_brand(db: Any, products: Any) -> str | None:
-    """The brand of the product(s) the conversation is about, off the product row (#865).
+def _company_brand(name: Any, code: Any) -> str | None:
+    """The brand a company's name stands for, or None (fix round 4).
+
+    The Mocha company sells only the MOCHA brand, and its rows carry no brand row, so
+    the company is the brand. The incumbent Sorento company is not: it carries several
+    brands (SORENTO, MOCHA), so a Sorento row without a brand row names none, as before.
+    Keyed off `escalation.CO_ALIASES`, the lane's own company vocabulary.
+    """
+    from app.services.chatbot.lanes.escalation import CO_ALIASES
+
+    keys = {str(v).strip().lower() for v in (name, code) if v}
+    for brand, aliases in CO_ALIASES.items():
+        if brand != "sorento" and keys & {brand, *aliases}:
+            return brand
+    return None
+
+
+def focus_product_origin(db: Any, products: Any) -> dict[str, Any]:
+    """`{brand, company, not_found}` for the product(s) the conversation is about (#865).
 
     The brand is a fact the product row owns, so it is read here at the point of use rather
     than persisted beside the product in the session (contract 129 keeps the five-key wire
     shape byte-compatible). One brand is the answer; products that disagree name none,
-    because a guess there picks a person for the wrong brand. The session is the turn's
-    own, so the read is scoped to the contact's company like every other read the turn
-    makes. Lower-cased, the spelling `next-assignee` narrows by.
+    because a guess there picks a person for the wrong brand. Lower-cased, the spelling
+    `next-assignee` narrows by.
+
+    Fix round 4 (the owner's rule, 27 Sep: every Mocha company item and every Mocha-brand
+    product in Sorento goes to the Mocha brand member, whichever company the customer is
+    talking to): a code is looked for in the contact's own company first, and only a code
+    found nowhere there is looked for across every company. A row's brand is its brand
+    row, else the brand its company stands for (`_company_brand`). This read is for
+    routing only; stock, prices and orders keep the turn's company scope, and so does this
+    session once the read is done. `company` names where the rows were found and
+    `not_found` lists the codes no company holds.
     """
+    empty: dict[str, Any] = {"brand": None, "company": None, "not_found": []}
     uuids, codes = _product_refs(products)
     if not uuids and not codes:
-        return None
+        return empty
     from sqlalchemy import func
 
+    from app.models.base import company_scope
+    from app.models.company import Company
     from app.models.product import Brand, Product
     from app.services.entity_resolver import _prefix_probe_product, _probe_product
 
+    def find(code: str) -> set[str]:
+        hits = _probe_product(db, [code]).get(code) or _prefix_probe_product(db, code)
+        return {str(hit.uuid) for hit in hits if hit.uuid}
+
+    not_found: list[str] = []
     # A savepoint, so a read that fails aborts only itself and never the caller's unit of
     # work (the turn's, or the lane's own before it draws an assignee).
     with db.begin_nested():
@@ -255,25 +288,48 @@ def focus_product_brand(db: Any, products: Any) -> str | None:
         # ones the resolver matched for the answer, so they are found by the resolver's
         # own code tiers: exact, else prefix, else substring.
         for code in sorted(codes):
-            hits = _probe_product(db, [code]).get(code) or _prefix_probe_product(db, code)
-            uuids.update(str(hit.uuid) for hit in hits if hit.uuid)
+            found = find(code)
+            if not found:
+                with company_scope(db, None):
+                    found = find(code)
+            if not found:
+                not_found.append(code)
+            uuids.update(found)
         if not uuids:
-            return None
-        rows = (
-            db.query(func.lower(Brand.brand_code))
-            .select_from(Product)
-            .join(Brand, Brand.id == Product.brand_id)
-            .filter(Product.id.in_(sorted(uuids)))
-            .distinct()
-            .all()
-        )
-    brands = sorted({str(code).strip() for (code,) in rows if code and str(code).strip()})
-    return brands[0] if len(brands) == 1 else None
+            return {**empty, "not_found": not_found}
+        with company_scope(db, None):
+            rows = (
+                db.query(func.lower(Brand.brand_code), Company.name, Company.code)
+                .select_from(Product)
+                .outerjoin(Brand, Brand.id == Product.brand_id)
+                .join(Company, Company.id == Product.company_id)
+                .filter(Product.id.in_(sorted(uuids)))
+                .distinct()
+                .all()
+            )
+    brands = sorted(
+        {
+            str(brand).strip() if brand and str(brand).strip() else _company_brand(name, company_code)
+            for brand, name, company_code in rows
+        }
+        - {None}
+    )
+    companies = sorted({str(name) for _brand, name, _code in rows if name})
+    return {
+        "brand": brands[0] if len(brands) == 1 else None,
+        "company": " and ".join(companies) or None,
+        "not_found": not_found,
+    }
+
+
+def focus_product_brand(db: Any, products: Any) -> str | None:
+    """The brand alone of `focus_product_origin`, for the offer mint sites (#865)."""
+    return focus_product_origin(db, products)["brand"]
 
 
 def _product_brand(db: Any):
-    def call(products: Any) -> str | None:
-        return focus_product_brand(db, products)
+    def call(products: Any) -> dict[str, Any]:
+        return focus_product_origin(db, products)
 
     return call
 

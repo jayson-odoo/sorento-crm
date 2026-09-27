@@ -44,6 +44,7 @@ anywhere in this module, and `test_s5_no_chat_history_write.py` asserts the row 
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
@@ -700,7 +701,9 @@ def _human_intervention(
     if routed is not None and routed["kind"] == "assign":
         actions, routing = _assign(
             ctx,
-            context_item,
+            # The team the draw is made from is the routed one (fix round 4, R1): a team
+            # the customer named replaces the parser's in the next-assignee body too.
+            {**context_item, "team": routed["team"]},
             routed["team"],
             services,
             assignee=routed["assignee"],
@@ -729,6 +732,11 @@ def _apply_focus_brand(context_item: dict[str, Any], services: Any) -> dict[str,
     disagree on the brand, a bundle without the seam, or a read that raises leave the item
     exactly as `escalation_context` built it: the escalation is real whether or not the
     brand can be named.
+
+    Fix round 4: the production seam answers `{brand, company, not_found}` (read across
+    companies, `escalation_services.focus_product_origin`), and the company the product
+    was found in, or the codes no company holds, ride on the item for the routing line.
+    A seam that answers a bare brand string (an injected stub) still works.
     """
     if jsc.get(context_item, "routing_source") not in _FOCUS_OUTRANKS:
         return context_item
@@ -737,14 +745,23 @@ def _apply_focus_brand(context_item: dict[str, Any], services: Any) -> dict[str,
     if not products or seam is None:
         return context_item
     try:
-        brand = seam(products)
+        origin = seam(products)
     except Exception:  # noqa: BLE001 - a brand nobody could read is not a failed turn
         logger.warning("chatbot: the focus product's brand could not be read", exc_info=True)
         return context_item
+    item = context_item
+    brand = origin
+    if isinstance(origin, dict):
+        brand = origin.get("brand")
+        item = {
+            **context_item,
+            "product_company": origin.get("company") or None,
+            "product_not_found": list(origin.get("not_found") or []),
+        }
     if not jsc.truthy(brand):
-        return context_item
+        return item
     return {
-        **context_item,
+        **item,
         "brand_code": jsc.js_string(brand).strip().lower(),
         "routing_source": "focus_product",
     }
@@ -778,6 +795,10 @@ def _routing_record(
         "cursor_key": jsc.get(assignee, "cursor_key") if isinstance(assignee, dict) else None,
         "assignee_name": jsc.get(assignee, "assignee_name") if isinstance(assignee, dict) else None,
         "brand_matched": jsc.get(assignee, "brand_matched") if isinstance(assignee, dict) else None,
+        # Fix round 4: where the product the brand was read from was found, or the codes
+        # no company holds.
+        "product_company": jsc.get(context_item, "product_company") or None,
+        "product_not_found": list(jsc.array(jsc.get(context_item, "product_not_found"))),
     }
 
 
@@ -785,7 +806,9 @@ def routing_line(routing: Any) -> str | None:
     """The draw `_routing_record` recorded, as one readable line, or None without one.
 
     Fix round 3 (the owner's 27 Sep retest): the reply the customer sees names only the
-    team, so the console and the trace screen show this line to say where it went.
+    team, so the console and the trace screen show this line to say where it went. Fix
+    round 4: it also names the company the product was found in, or says in the same
+    line that no company holds the code (the escalation still goes out).
     """
     if not isinstance(routing, dict):
         return None
@@ -794,9 +817,15 @@ def routing_line(routing: Any) -> str | None:
         value = jsc.get(routing, key)
         return jsc.js_string(value) if jsc.truthy(value) else "none"
 
+    where = ""
+    missing = [jsc.js_string(c) for c in jsc.array(jsc.get(routing, "product_not_found"))]
+    if jsc.truthy(jsc.get(routing, "product_company")):
+        where = f"found in {part('product_company')}, "
+    elif missing:
+        where = f"product {', '.join(missing)} not found in any company, "
     return (
         f"Routing: team {part('team_code')}, brand {part('brand_code')}, "
-        f"source {part('routing_source')}, assignee {part('assignee_name')}"
+        f"source {part('routing_source')}, {where}assignee {part('assignee_name')}"
     )
 
 
@@ -964,6 +993,26 @@ def _person_routing(
     if jsc.get(esc, "is_escalation_confirmation") is True:
         return None
     raw_team = _parser_team(ctx, team)
+    named = _named_teams(output)
+    parser_pick = _catalogue_teams(raw_team) if jsc.truthy(raw_team) else []
+    if named and not (parser_pick and set(parser_pick) <= set(named)):
+        # Fix round 4 (R1): the team the customer NAMED beats the parser's suggestion,
+        # which is only the fallback when no team is named. "pelase escalate to
+        # marketing team MWC-SC8609-PP" came back `suggested_team: purchasing`: a
+        # product code reads as the master_products domain, whose routing row is
+        # purchasing. A parser team the customer's word agrees with falls through.
+        chosen = named
+        if len(named) > 1 and "marketing_product" in named and jsc.array(
+            jsc.get(context_item, "focus_products")
+        ):
+            # "marketing" names three teams; about a product, it is Marketing Product
+            # (the owner's rule: product escalations go to its brand member there).
+            chosen = ["marketing_product"]
+        if len(chosen) == 1:
+            if chosen[0] == jsc.nullish_str(team).strip().lower():
+                return None
+            return {"kind": "assign", "team": chosen[0], "assignee": None}
+        return _clarify_over([{"team": t, "label": _pretty_team(t)} for t in chosen])
     if jsc.truthy(raw_team):
         # The parser named SOMETHING. Which catalogue members does that word name?
         matched = _catalogue_teams(raw_team)
@@ -984,6 +1033,55 @@ def _person_routing(
     if offer_is_open(_prev_variables(ctx)):
         return _clarify_over(_team_clarify_pairs([]))
     return None
+
+
+# Fix round 4 (R1): the team words a customer names, longest first, each mapped to the
+# word `_catalogue_teams` reads. Found in the parser's `user_goal`, and only after "to" /
+# "with" or before "team" / "department", so "trying to get the marketing flyer" names no
+# team and "escalate it to marketing" does.
+_TEAM_WORDS: dict[str, str] = {
+    "marketing products": "marketing_product",
+    "marketing product": "marketing_product",
+    "product marketing": "marketing_product",
+    "marketing promotions": "marketing_promotion",
+    "marketing promotion": "marketing_promotion",
+    "marketing forms": "marketing_form",
+    "marketing form": "marketing_form",
+    "purchasing certification": "purchasing_certification",
+    "customer services": "customer_service",
+    "customer service": "customer_service",
+    "customer support": "customer_service",
+    "certification": "purchasing_certification",
+    "procurement": "purchasing",
+    "purchasing": "purchasing",
+    "warehouse": "warehouse",
+    "marketing": "marketing",
+    "it admin": "it_admin",
+}
+_TEAM_WORD = "|".join(w.replace(" ", r"\s+") for w in _TEAM_WORDS)
+_NAMED_TEAM = re.compile(
+    rf"\b(?:to|with)\s+(?:the\s+|your\s+)?({_TEAM_WORD})\b"
+    rf"|\b({_TEAM_WORD})\s+(?:team|teams|department|dept)\b"
+)
+
+
+def _named_teams(output: Any) -> list[str]:
+    """The catalogue teams the customer NAMED on this turn, in catalogue order (R1).
+
+    Read off `user_goal`, the parser's own reading of the message (its spelling fixed:
+    "pelase esclate to marekting team" reads "escalate to the marketing team"), never the
+    customer's raw text (D11). `routing.suggested_team` cannot carry this on its own: the
+    prompt's routing table also fills it from the DOMAIN, so a message naming a team and a
+    product code comes back with the product domain's team (prod turn 14875614, "escalate
+    to marketing for srtsc07 full height": `suggested_team: purchasing_product`,
+    `user_goal: "trying to escalate to marketing for SRtsc07 full height"`).
+    """
+    goal = jsc.nullish_str(jsc.get(output, "user_goal")).lower()
+    teams: set[str] = set()
+    for match in _NAMED_TEAM.finditer(goal):
+        word = " ".join((match.group(1) or match.group(2)).split())
+        teams.update(_catalogue_teams(_TEAM_WORDS[word]))
+    return [t for t in ESCALATION_TEAMS if t in teams]
 
 
 def _catalogue_teams(word: Any) -> list[str]:
@@ -1114,16 +1212,20 @@ def _preview_routing(
     def _both(bundle: Any) -> tuple[dict[str, Any] | None, Any, dict[str, Any] | None]:
         item = _apply_focus_brand(context_item, bundle)
         routed = _person_routing(ctx, item, team, bundle)
-        if routed is not None:
+        if routed is not None and routed["kind"] == "assign" and routed.get("assignee") is None:
+            # A named TEAM is a rotation draw (fix round 4, R1), so preview the draw from
+            # that team exactly as the live branch makes it.
+            item = {**item, "team": routed["team"]}
+        elif routed is not None:
             # A named person IS the assignee, and a clarify assigns nobody. Either way
             # there is no rotation to preview.
             return routed, routed.get("assignee"), _routing_record(item, None, routed.get("assignee"))
         seam = getattr(bundle, "preview_assignee", None)
         body = _next_assignee_body(ctx, item)
         if seam is None:
-            return None, None, _routing_record(item, body, None)
+            return routed, None, _routing_record(item, body, None)
         assignee = seam({**body, "preview": True})
-        return None, assignee, _routing_record(item, body, assignee)
+        return routed, assignee, _routing_record(item, body, assignee)
 
     try:
         if services is not None:

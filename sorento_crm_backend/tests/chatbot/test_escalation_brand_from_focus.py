@@ -1085,7 +1085,7 @@ class TestTheConsoleShowsWhereTheEscalationWent:
         ], turn2.send_messages
         assert turn2.trace_summary["routing_line"] == (
             "Routing: team marketing_product, brand sorento, source focus_product, "
-            "assignee ZZT Tay Zhi Yang"
+            "found in Sorento, assignee ZZT Tay Zhi Yang"
         ), turn2.trace_summary
         assert turn1.trace_summary["routing_line"] is None, turn1.trace_summary
 
@@ -1112,7 +1112,7 @@ class TestTheConsoleShowsWhereTheEscalationWent:
             db.close()
         assert records[-1]["summary"] == (
             "Handed the conversation to a person. Routing: team marketing_product, brand "
-            "sorento, source focus_product, assignee ZZT Tay Zhi Yang"
+            "sorento, source focus_product, found in Sorento, assignee ZZT Tay Zhi Yang"
         ), records[-1]
 
 
@@ -1139,3 +1139,370 @@ class TestFocusProductBrandReadForAnUnsettledCode:
             assert focus_product_brand(db, unsettled("nothing-like-it")) is None
         finally:
             db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 4: the owner's retest of round 3 (27 Sep 21:19 to 21:20 MYT, console).
+#
+# Three escalations in one console conversation:
+#   1. "check spec srtwc286", then "pelase esclate to marekting team": right (sorento).
+#   2. "pelase escalate to marketing team MWC-SC8609-PP": went to PURCHASING with no
+#      brand. The parser's own routing for a message carrying a product code is the
+#      master_products domain's team (purchasing), and the lane carried it over the
+#      customer's own words. The code exists only in the Mocha company, and the brand
+#      read ran under the contact's Sorento scope, so it found no row at all.
+#   3. "please esclate to marketin team MWCY8610": right (mocha, off the Sorento row).
+#
+# Owner's rule: every Mocha company item, and every Mocha-brand product in Sorento,
+# escalates to the Mocha brand member of Marketing Product, whichever company the
+# customer is talking to.
+# --------------------------------------------------------------------------- #
+
+MOCHA_COMPANY_ID = "6f0c2a1e-0000-4000-8000-000000000865"
+
+
+def _seed_mocha_company(session_factory) -> None:
+    from app.models.company import Company
+
+    db = _db(session_factory, scope=None)
+    try:
+        if db.query(Company.id).filter(Company.id == MOCHA_COMPANY_ID).scalar() is None:
+            db.add(Company(id=MOCHA_COMPANY_ID, name="Mocha", code="MCH", is_active=True))
+            db.commit()
+    finally:
+        db.close()
+
+
+def _seed_mocha_company_item(session_factory, *, code: str) -> None:
+    """A product of the Mocha company, with no brand row, as the Mocha catalogue holds it."""
+    import uuid as uuid_mod
+
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+
+    _seed_mocha_company(session_factory)
+    db = _db(session_factory, scope=frozenset({MOCHA_COMPANY_ID}))
+    try:
+        cat = ProductCategory(
+            id=str(uuid_mod.uuid4()),
+            category_code=f"ZZTMC-{code}",
+            category_name="ZZT Mocha",
+            class_label="zzt",
+            search_synonyms=[],
+            company_id=MOCHA_COMPANY_ID,
+        )
+        uom = UnitOfMeasure(
+            id=str(uuid_mod.uuid4()), uom_code=f"ZZTMU-{code}"[:20], uom_name="Each", company_id=MOCHA_COMPANY_ID
+        )
+        db.add_all([cat, uom])
+        db.flush()
+        db.add(
+            Product(
+                id=str(uuid_mod.uuid4()),
+                product_code=code,
+                product_name=f"ZZT Mocha {code}",
+                category_id=cat.id,
+                base_uom_id=uom.id,
+                list_price=1,
+                company_id=MOCHA_COMPANY_ID,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+def _escalation_verdict(*, user_goal: str, team: str, codes: list[str] = ()) -> dict[str, Any]:
+    """An escalation turn as the parser reads it: `request_for_help`, the domain carried,
+    the product code (if the message named one) as an entity, and the parser's own team."""
+    return verdict(
+        message_type="request_for_help",
+        domain_hint="master_products",
+        intent_hint="check_product",
+        user_goal=user_goal,
+        entities=[entity(code, hint="product", confident=True) for code in codes],
+        routing={"suggested_team": team, "suggested_agent": "general_enquiries"},
+        escalation={"is_escalation_confirmation": False, "company_pick": None},
+    )
+
+
+# The owner's four messages, in order, each with the verdict his trace recorded: the
+# parser's team is `marketing_product` for the two that went right, and `purchasing`
+# for "marketing team MWC-SC8609-PP" (a product code in the message reads as the
+# master_products domain, whose team is purchasing). `user_goal` is the parser's own
+# reading of the message, spelling corrected, which is where "marketing team" survives.
+OWNERS_27SEP_ROUND4 = [
+    ("check spec srtwc286", _product_verdict("master_products", "check_product", "srtwc286")),
+    (
+        "pelase esclate to marekting team",
+        _escalation_verdict(user_goal="trying to escalate to the marketing team", team="marketing_product"),
+    ),
+    (
+        "pelase escalate to marketing team MWC-SC8609-PP",
+        _escalation_verdict(
+            user_goal="trying to escalate MWC-SC8609-PP to the marketing team",
+            team="purchasing",
+            codes=["MWC-SC8609-PP"],
+        ),
+    ),
+    (
+        "please esclate to marketin team MWCY8610",
+        _escalation_verdict(
+            user_goal="trying to escalate MWCY8610 to the marketing team",
+            team="marketing_product",
+            codes=["MWCY8610"],
+        ),
+    ),
+]
+
+
+def _seed_owners_catalogue(session_factory) -> None:
+    """SRTWC286-SH: Sorento company, SORENTO brand. MWC-SC8609-PP: Mocha company only, no
+    brand row. MWCY8610: in both, the Sorento row carrying the MOCHA brand."""
+    _seed_branded(session_factory, code="SRTWC286-SH", brand_code="SORENTO")
+    _seed_branded(session_factory, code="MWCY8610", brand_code="MOCHA")
+    _seed_mocha_company_item(session_factory, code="MWC-SC8609-PP")
+    _seed_mocha_company_item(session_factory, code="MWCY8610")
+
+
+def _console_replay(session_factory, monkeypatch, stub_parser, stub_access, messages) -> list[tuple[Any, list]]:
+    """Every message through `console_service.run_console_turn`, the console's own path:
+    dry run, one contact (Sorento company), each turn sending back the `session_vars` the
+    previous one returned. Returns `(turn, next-assignee calls of that turn)` per message."""
+    from app.services.chatbot import console_service
+
+    _seed_contact(session_factory, phone="+60000865400")
+    _seed_borrowable_envelope(session_factory)
+    _seed_marketing_product_team(session_factory)
+    monkeypatch.setattr(console_service, "SessionLocal", session_factory)
+    stub_access()
+    _stub_any_product_tool(monkeypatch)
+    calls = _capture_real_next_assignee(monkeypatch)
+    sla = _capture_sla(monkeypatch)
+
+    results: list[tuple[Any, list]] = []
+    session_vars: dict[str, Any] = {}
+    db = session_factory()
+    try:
+        for text_, parsed in messages:
+            stub_parser(parsed)
+            before = len(calls)
+            turn = console_service.run_console_turn(
+                db,
+                contact_respond_id=str(CONTACT_ID),
+                text=text_,
+                session_vars=session_vars,
+                run_id="zzt-865-r4",
+            )
+            results.append((turn, list(calls[before:])))
+            session_vars = turn.session_vars or {}
+    finally:
+        db.close()
+    assert sla == [], "a console turn is a dry run: no SLA row"
+    return results
+
+
+def _assert_marketing_draw(
+    session_factory, turn, calls, *, brand: str, assignee: str, company: str | None
+) -> None:
+    assert turn.branch_kind == "out_of_scope", turn.branch_kind
+    assert len(calls) == 1, calls
+    body, response = calls[0]["body"], calls[0]["response"]
+    assert body["team_code"] == "marketing_product", body
+    assert body["brand_code"] == brand, body
+    assert response.get("assignee_name") == assignee, response
+    assert response.get("brand_matched") is True, response
+    routing = _looked_up_routing(session_factory, turn.turn_id)
+    assert routing["team_code"] == "marketing_product", routing
+    assert routing["brand_code"] == brand, routing
+    assert routing["routing_source"] == "focus_product", routing
+    assert str(routing["cursor_key"]).endswith(f"~b:{brand}"), routing
+    assert routing["assignee_name"] == assignee, routing
+    assert routing.get("product_company") == company, routing
+    assert turn.send_messages[-1] == (
+        "This inquiry has been routed to the respective person-in-charge (PIC) from "
+        "marketing product team. We will get back to you soon. Thanks for your patience."
+    ), turn.send_messages
+
+
+class TestTheOwnersRetestOfRound3:
+    def test_the_owners_three_escalations_replayed_in_one_console_conversation(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        """R4: the owner's exact messages, in his order, through the console. On 0440ce8e
+        escalation 2 went to purchasing with no brand."""
+        _seed_owners_catalogue(session_factory)
+        results = _console_replay(session_factory, monkeypatch, stub_parser, stub_access, OWNERS_27SEP_ROUND4)
+        (spec, _), first, second, third = results
+        assert spec.branch_kind == "business_query", spec.branch_kind
+
+        _assert_marketing_draw(session_factory, *first, brand="sorento", assignee="ZZT Tay Zhi Yang", company="Sorento")
+        _assert_marketing_draw(session_factory, *second, brand="mocha", assignee="ZZT Kia Yee", company="Mocha")
+        _assert_marketing_draw(session_factory, *third, brand="mocha", assignee="ZZT Kia Yee", company="Sorento")
+
+        assert first[0].trace_summary["routing_line"] == (
+            "Routing: team marketing_product, brand sorento, source focus_product, "
+            "found in Sorento, assignee ZZT Tay Zhi Yang"
+        ), first[0].trace_summary
+        assert second[0].trace_summary["routing_line"] == (
+            "Routing: team marketing_product, brand mocha, source focus_product, "
+            "found in Mocha, assignee ZZT Kia Yee"
+        ), second[0].trace_summary
+
+    @pytest.mark.parametrize(
+        ("index", "brand", "assignee", "company"),
+        [
+            (2, "mocha", "ZZT Kia Yee", "Mocha"),
+            (3, "mocha", "ZZT Kia Yee", "Sorento"),
+        ],
+        ids=["mocha-company-only", "in-both-companies"],
+    )
+    def test_each_one_message_escalation_on_a_fresh_conversation(
+        self, session_factory, stub_parser, stub_access, monkeypatch, index, brand, assignee, company
+    ) -> None:
+        """R4: escalations 2 and 3 on their own, with nothing in focus before them."""
+        _seed_owners_catalogue(session_factory)
+        [(turn, calls)] = _console_replay(
+            session_factory, monkeypatch, stub_parser, stub_access, [OWNERS_27SEP_ROUND4[index]]
+        )
+        _assert_marketing_draw(session_factory, turn, calls, brand=brand, assignee=assignee, company=company)
+
+    def test_a_code_in_no_company_is_said_back_and_the_escalation_still_goes_out(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        """R2: a code found nowhere names no brand, the routing line says so in one line,
+        and the escalation is still drawn (whole Marketing Product team)."""
+        _seed_owners_catalogue(session_factory)
+        [(turn, calls)] = _console_replay(
+            session_factory,
+            monkeypatch,
+            stub_parser,
+            stub_access,
+            [
+                (
+                    "please escalate to marketing team ZZTNOPE99",
+                    _escalation_verdict(
+                        user_goal="trying to escalate ZZTNOPE99 to the marketing team",
+                        team="purchasing",
+                        codes=["ZZTNOPE99"],
+                    ),
+                )
+            ],
+        )
+        assert turn.branch_kind == "out_of_scope", turn.branch_kind
+        assert len(calls) == 1, calls
+        assert calls[0]["body"]["team_code"] == "marketing_product", calls[0]["body"]
+        assert calls[0]["body"]["brand_code"] is None, calls[0]["body"]
+        assert calls[0]["response"].get("assignee_name"), calls[0]["response"]
+        assert turn.trace_summary["routing_line"] == (
+            "Routing: team marketing_product, brand none, source none, "
+            "product ZZTNOPE99 not found in any company, assignee ZZT Kia Yee"
+        ), turn.trace_summary
+
+
+class TestAnExplicitTeamBeatsTheParsersSuggestion:
+    """R1, at the lane: the team the customer named (as the parser read the message, its
+    `user_goal`) wins over `routing.suggested_team`; the suggestion is only the fallback."""
+
+    def _route(self, *, user_goal: Any, parser_team: Any, focus: bool = True, derived: Any = None):
+        from app.services.chatbot.lanes.escalation import _person_routing
+
+        output = {
+            "user_goal": user_goal,
+            "routing": {"suggested_team": derived or parser_team},
+            "escalation": {"is_escalation_confirmation": False},
+        }
+        ctx = {"parse": {"output": output, "_parser_raw": {"routing": {"suggested_team": parser_team}}}}
+        item = {"team": derived or parser_team, "focus_products": [{"raw": "X1", "hint": "product"}] if focus else []}
+        return _person_routing(ctx, item, derived or parser_team, None)
+
+    @pytest.mark.parametrize(
+        ("goal", "parser_team", "expected"),
+        [
+            ("trying to escalate MWC-SC8609-PP to the marketing team", "purchasing", "marketing_product"),
+            ("trying to escalate to marketing for SRtsc07 full height", "purchasing", "marketing_product"),
+            ("trying to pass this to the purchasing team", "marketing_product", "purchasing"),
+            ("wants to talk to customer service about SRT1", "purchasing", "customer_service"),
+            ("trying to escalate to the warehouse team", "purchasing", "warehouse"),
+            ("escalate to marketing product team", "purchasing", "marketing_product"),
+        ],
+    )
+    def test_the_named_team_wins(self, goal, parser_team, expected) -> None:
+        assert self._route(user_goal=goal, parser_team=parser_team) == {
+            "kind": "assign",
+            "team": expected,
+            "assignee": None,
+        }
+
+    @pytest.mark.parametrize(
+        ("goal", "parser_team"),
+        [
+            ("trying to escalate the request to the team", "purchasing"),
+            ("trying to get the technical drawing for SRTW2600", "marketing_product"),
+            (None, "purchasing"),
+            ("trying to escalate to the marketing team", "marketing_product"),
+        ],
+        ids=["no-team-named", "no-escalation-words", "no-goal", "parser-agrees"],
+    )
+    def test_the_parser_team_stands_when_no_other_team_is_named(self, goal, parser_team) -> None:
+        assert self._route(user_goal=goal, parser_team=parser_team) is None
+
+    def test_marketing_with_no_product_in_focus_asks_which_marketing_team(self) -> None:
+        routed = self._route(
+            user_goal="trying to escalate to the marketing team", parser_team="purchasing", focus=False
+        )
+        assert routed["kind"] == "clarify", routed
+        assert [p["team"] for p in routed["option_pairs"]] == [
+            "marketing_product",
+            "marketing_form",
+            "marketing_promotion",
+        ], routed
+
+
+class TestFocusProductOriginAcrossCompanies:
+    def test_the_brand_read_looks_across_companies_and_names_the_company(self, session_factory) -> None:
+        """R2 at the read: Mocha-only means mocha; in both takes the brand row; neither
+        is reported back; the session's own scope is left as it was."""
+        from app.models.base import get_company_scope
+        from app.services.chatbot.lanes.escalation_services import focus_product_brand, focus_product_origin
+
+        _seed_owners_catalogue(session_factory)
+        db = _db(session_factory)
+        try:
+            unsettled = lambda raw: [{"raw": raw, "hint": "product", "canonical_code": raw}]  # noqa: E731
+            assert focus_product_origin(db, unsettled("MWC-SC8609-PP")) == {
+                "brand": "mocha",
+                "company": "Mocha",
+                "not_found": [],
+            }
+            assert focus_product_origin(db, unsettled("MWCY8610")) == {
+                "brand": "mocha",
+                "company": "Sorento",
+                "not_found": [],
+            }
+            assert focus_product_origin(db, unsettled("srtwc286")) == {
+                "brand": "sorento",
+                "company": "Sorento",
+                "not_found": [],
+            }
+            assert focus_product_origin(db, unsettled("ZZTNOPE99")) == {
+                "brand": None,
+                "company": None,
+                "not_found": ["ZZTNOPE99"],
+            }
+            assert focus_product_brand(db, unsettled("MWC-SC8609-PP")) == "mocha"
+            assert get_company_scope(db) == frozenset({"00000000-0000-0000-0000-000000000001"})
+        finally:
+            db.close()
+
+    def test_an_unbranded_sorento_company_product_still_names_no_brand(self, session_factory) -> None:
+        """The Sorento company carries several brands, so its company names none: a
+        Sorento row without a brand row reads as before (no brand)."""
+        from app.services.chatbot.lanes.escalation_services import focus_product_origin
+
+        _seed_product_with_brand(session_factory, code="ZZTPLAIN1", brand_code=None)
+        db = _db(session_factory)
+        try:
+            origin = focus_product_origin(db, [{"raw": "ZZTPLAIN1", "hint": "product", "canonical_code": "ZZTPLAIN1"}])
+        finally:
+            db.close()
+        assert origin == {"brand": None, "company": "Sorento", "not_found": []}, origin
