@@ -25,8 +25,9 @@ export interface ContactActionHandlers {
 }
 
 export interface ContactActionOptions {
-  /** `user_management.users.add` - the row's "Create user" item is absent
-   *  without it, same as any other permission-gated action here. */
+  /** `user_management.users.add` AND `user_management.users.view` - the row's
+   *  "Create user" item is absent without either. Without `users.view` the row
+   *  carries no `linked_user_id`, so a linked contact would look unlinked. */
   canCreateUser?: boolean;
 }
 

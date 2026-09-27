@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const UserAddSchema = z
+const userAddObject = z
   .object({
     name: z
       .string()
@@ -18,28 +18,52 @@ export const UserAddSchema = z
     agent_ids: z.array(z.string()).optional(),
     superior_id: z.string().optional().nullable(),
     companyIds: z.array(z.string()).default([]),
-  })
-  .superRefine((values, ctx) => {
-    const email = values.email?.trim();
-    const phone = values.contact_number?.trim();
-    if (email) {
-      if (!z.string().email().safeParse(email).success) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['email'],
-          message: 'Please enter a valid email address.',
-        });
-      }
-      return;
-    }
-    if (!phone) {
-      // Echoes the backend's `EMAIL_OR_PHONE_REQUIRED` message (S3 contract 1.2).
+  });
+
+type UserAddValues = z.infer<typeof userAddObject>;
+
+function refineEmailOrPhone(values: UserAddValues, ctx: z.RefinementCtx) {
+  const email = values.email?.trim();
+  const phone = values.contact_number?.trim();
+  if (email) {
+    if (!z.string().email().safeParse(email).success) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['email'],
-        message: 'Enter an email or a phone number.',
+        message: 'Please enter a valid email address.',
+      });
+    }
+    return;
+  }
+  if (!phone) {
+    // Echoes the backend's `EMAIL_OR_PHONE_REQUIRED` message (S3 contract 1.2).
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['email'],
+      message: 'Enter an email or a phone number.',
+    });
+  }
+}
+
+/**
+ * `companiesRequired` is true for a superadmin (the only viewer who sees and
+ * sends Companies): then a user created from a WhatsApp contact needs at least
+ * one company, or it is saved with no grants and nothing tells the owner
+ * (plan 7; fix round 2, S4).
+ */
+export function buildUserAddSchema({ companiesRequired }: { companiesRequired: boolean }) {
+  return userAddObject.superRefine((values, ctx) => {
+    refineEmailOrPhone(values, ctx);
+    if (companiesRequired && values.respond_contact_id && !values.companyIds?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['companyIds'],
+        message: 'Pick at least one company.',
       });
     }
   });
+}
+
+export const UserAddSchema = buildUserAddSchema({ companiesRequired: false });
 
 export type UserAddSchemaType = z.infer<typeof UserAddSchema>;

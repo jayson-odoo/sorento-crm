@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -36,9 +36,10 @@ import { Button } from '@/components/ui/button';
 import { LoaderCircleIcon } from 'lucide-react';
 import { UserRole } from '@/app/models/user';
 import { useRoleSelectQuery } from '../../roles/hooks/use-role-select-query';
-import { UserAddSchema, UserAddSchemaType } from '../forms/user-add-schema';
+import { buildUserAddSchema, UserAddSchemaType } from '../forms/user-add-schema';
 import { useCreateUserMutation } from '../hooks/use-create-user-mutation';
-import { findUserByContact, findUserByPhone, updateUserContactLink } from '../services/userService';
+import { updateUserContactLink } from '../services/userService';
+import { getUsersSelect } from '@/services/userSelectService';
 import {
   getContact,
   getContactCompanies,
@@ -78,15 +79,26 @@ const UserAddDialog = ({
   // re-render (or the same contact resolving twice) never re-fills it.
   const appliedContactRef = useRef<string | null>(null);
   const appliedCompaniesRef = useRef<string | null>(null);
+  // Separate from the contact fill: the suggestion can only land once roles
+  // have loaded, which may be after the contact did (fix round 2, N4).
+  const appliedRoleRef = useRef<string | null>(null);
 
   // Fetch available roles. Guarded against a non-array response (a test's
   // generic `apiFetch` stub, say) - this query has no `enabled: open` gate, so
   // it fires the moment the component mounts, dialog closed or not.
   const { data: roleListRaw } = useRoleSelectQuery();
-  const roleList: UserRole[] = Array.isArray(roleListRaw) ? (roleListRaw as UserRole[]) : [];
+  const roleList: UserRole[] = useMemo(
+    () => (Array.isArray(roleListRaw) ? (roleListRaw as UserRole[]) : []),
+    [roleListRaw],
+  );
 
+  // Companies are required with a contact, for the superadmin who sees them (S4).
+  const schema = useMemo(
+    () => buildUserAddSchema({ companiesRequired: isSuperadmin }),
+    [isSuperadmin],
+  );
   const form = useForm<UserAddSchemaType>({
-    resolver: zodResolver(UserAddSchema) as Resolver<UserAddSchemaType>,
+    resolver: zodResolver(schema) as Resolver<UserAddSchemaType>,
     defaultValues: {
       name: '',
       email: '',
@@ -118,19 +130,14 @@ const UserAddDialog = ({
       setResolvedHolder(null);
       appliedContactRef.current = null;
       appliedCompaniesRef.current = null;
+      appliedRoleRef.current = null;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- form is stable; contact.id read fresh on open
   }, [open, contact?.id]);
 
   const { data: superiorUsers } = useQuery({
     queryKey: ['users-select', 'active'],
-    queryFn: async () => {
-      const response = await apiFetch('/api/user-management/users/select?status=ACTIVE');
-      if (!response.ok) {
-        throw new Error('Failed to fetch users.');
-      }
-      return response.json();
-    },
+    queryFn: () => getUsersSelect({ status: 'ACTIVE' }),
     enabled: open,
     staleTime: 1000 * 60 * 5,
   });
@@ -180,10 +187,15 @@ const UserAddDialog = ({
       form.setValue('name', linkedContactDetail.name);
     }
     form.setValue('contact_number', linkedContactDetail.phone_number ?? '');
-    if (!dirty.roleIds && linkedContactDetail.suggested_role_slug && roleList.length) {
-      const suggested = roleList.find((r) => r.slug === linkedContactDetail.suggested_role_slug);
-      if (suggested) form.setValue('roleIds', [suggested.id]);
-    }
+  }, [linkedContactDetail, form]);
+
+  useEffect(() => {
+    if (!linkedContactDetail?.suggested_role_slug || !roleList.length) return;
+    if (appliedRoleRef.current === linkedContactDetail.id) return;
+    appliedRoleRef.current = linkedContactDetail.id;
+    if (form.formState.dirtyFields.roleIds) return;
+    const suggested = roleList.find((r) => r.slug === linkedContactDetail.suggested_role_slug);
+    if (suggested) form.setValue('roleIds', [suggested.id]);
   }, [linkedContactDetail, form, roleList]);
 
   useEffect(() => {
@@ -199,7 +211,10 @@ const UserAddDialog = ({
 
   // Cleared: Contact Number goes editable again, the rest is left as it is.
   useEffect(() => {
-    if (!selectedContactId) appliedContactRef.current = null;
+    if (!selectedContactId) {
+      appliedContactRef.current = null;
+      appliedRoleRef.current = null;
+    }
   }, [selectedContactId]);
 
   const suggestedRole = roleList.find(
@@ -306,11 +321,16 @@ const UserAddDialog = ({
     let cancelled = false;
     (async () => {
       let holder: { id: string; name: string | null } | null = null;
-      if (linkError.code === 'CONTACT_ALREADY_LINKED' && selectedContactId) {
-        holder = await findUserByContact(selectedContactId);
-      } else if (linkError.code === 'PHONE_BELONGS_TO_USER') {
-        const phone = form.getValues('contact_number');
-        if (phone) holder = await findUserByPhone(phone);
+      // Null when it cannot be resolved: the message already names them.
+      try {
+        if (linkError.code === 'CONTACT_ALREADY_LINKED' && selectedContactId) {
+          holder = (await getUsersSelect({ respond_contact_id: selectedContactId }))[0] ?? null;
+        } else if (linkError.code === 'PHONE_BELONGS_TO_USER') {
+          const phone = form.getValues('contact_number');
+          if (phone) holder = (await getUsersSelect({ phone }))[0] ?? null;
+        }
+      } catch {
+        holder = null;
       }
       if (!cancelled) setResolvedHolder(holder);
     })();
@@ -434,13 +454,11 @@ const UserAddDialog = ({
                     placeholder="Copy roles from another user (optional)"
                     emptyMessage="No active user found."
                     triggerClassName="w-full"
-                    options={(superiorUsers || []).map(
-                      (u: { id: string; name?: string | null; email: string }) => ({
-                        value: u.id,
-                        label: u.name || u.email,
-                        searchText: `${u.name ?? ''} ${u.email}`.trim() || u.id,
-                      }),
-                    )}
+                    options={(superiorUsers || []).map((u) => ({
+                      value: u.id,
+                      label: u.name || u.email || 'Unnamed user',
+                      searchText: `${u.name ?? ''} ${u.email ?? ''}`.trim() || u.id,
+                    }))}
                   />
                 </FormControl>
               </FormItem>
@@ -480,7 +498,15 @@ const UserAddDialog = ({
                   name="companyIds"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Companies</FormLabel>
+                      <FormLabel>
+                        Companies
+                        {selectedContactId && (
+                          <>
+                            {' '}
+                            <span className="text-destructive">*</span>
+                          </>
+                        )}
+                      </FormLabel>
                       <FormControl>
                         <SearchableMultiSelect
                           value={field.value ?? []}
@@ -520,15 +546,14 @@ const UserAddDialog = ({
                           triggerClassName="w-full"
                           options={[
                             { value: '__none__', label: 'None' },
-                            ...(superiorUsers || []).map(
-                              (superior: { id: string; name?: string | null; email: string }) => ({
-                                value: superior.id,
-                                label: superior.name || superior.email,
-                                // Searchable by name AND email, as the hand-rolled picker was.
-                                searchText:
-                                  `${superior.name ?? ''} ${superior.email}`.trim() || superior.id,
-                              }),
-                            ),
+                            ...(superiorUsers || []).map((superior) => ({
+                              value: superior.id,
+                              label: superior.name || superior.email || 'Unnamed user',
+                              // Searchable by name AND email, as the hand-rolled picker was.
+                              searchText:
+                                `${superior.name ?? ''} ${superior.email ?? ''}`.trim() ||
+                                superior.id,
+                            })),
                           ]}
                         />
                       </FormControl>

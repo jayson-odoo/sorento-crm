@@ -348,7 +348,9 @@ export default function ContactsList() {
                   },
                   createUser: () => setCreateUserContact(row.original),
                 },
-                { canCreateUser: canAddUsers },
+                // users.view too: without it the row carries no linked_user_id,
+                // so every contact would look unlinked (fix round 2, N3).
+                { canCreateUser: canAddUsers && canViewUsers },
               )}
             />
           </div>

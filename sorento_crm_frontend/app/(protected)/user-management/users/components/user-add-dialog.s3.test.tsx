@@ -162,8 +162,10 @@ const ROLE_LIST = [
   { id: 'role-portal', slug: 'portal_user', name: 'Portal user' },
   { id: 'role-sales', slug: 'salesperson', name: 'Salesperson' },
 ];
+// Mutable so a test can hold the roles back until after the contact loaded (N4).
+const rolesRef = vi.hoisted(() => ({ current: null as unknown }));
 vi.mock('../../roles/hooks/use-role-select-query', () => ({
-  useRoleSelectQuery: () => ({ data: ROLE_LIST }),
+  useRoleSelectQuery: () => ({ data: rolesRef.current }),
 }));
 
 // The contact fixture uses a real UUID shape - the "no UUID in the text"
@@ -195,14 +197,17 @@ vi.mock('../../contacts/[id]/services/contactService', () => ({
 }));
 
 const createUserMock = vi.fn();
-const findUserByPhoneMock = vi.fn();
-const findUserByContactMock = vi.fn();
 const updateUserContactLinkMock = vi.fn();
 vi.mock('../services/userService', () => ({
   createUser: (...a: unknown[]) => createUserMock(...a),
-  findUserByPhone: (...a: unknown[]) => findUserByPhoneMock(...a),
-  findUserByContact: (...a: unknown[]) => findUserByContactMock(...a),
   updateUserContactLink: (...a: unknown[]) => updateUserContactLinkMock(...a),
+}));
+
+// Fix round 2, S2: every user lookup in this form (the 409 holder, Superior,
+// Copy roles) goes through the shared `userSelectService` (CLAUDE.md hard rule).
+const getUsersSelectMock = vi.fn();
+vi.mock('@/services/userSelectService', () => ({
+  getUsersSelect: (...a: unknown[]) => getUsersSelectMock(...a),
 }));
 
 import UserAddDialog from './user-add-dialog';
@@ -241,8 +246,8 @@ beforeEach(() => {
   });
   getContactCompaniesMock.mockResolvedValue([{ id: 'co-1', name: 'Sorento' }]);
   createUserMock.mockResolvedValue({ id: 'user-new' } as never);
-  findUserByPhoneMock.mockResolvedValue(null);
-  findUserByContactMock.mockResolvedValue(null);
+  rolesRef.current = ROLE_LIST;
+  getUsersSelectMock.mockResolvedValue([]);
   updateUserContactLinkMock.mockResolvedValue({});
 });
 
@@ -407,7 +412,9 @@ describe('UserAddDialog - S3 2.1: inline 409s', () => {
     createUserMock.mockImplementationOnce(() =>
       codedRejection('CONTACT_ALREADY_LINKED', 'WhatsApp contact already linked to Bob Lee'),
     );
-    findUserByContactMock.mockResolvedValueOnce({ id: 'user-7', name: 'Bob Lee' });
+    getUsersSelectMock.mockImplementation(async (params?: { respond_contact_id?: string }) =>
+      params?.respond_contact_id ? [{ id: 'user-7', name: 'Bob Lee', email: null }] : [],
+    );
 
     const submit = screen.getByRole('button', { name: 'Add user' });
     await waitFor(() => expect(submit).not.toBeDisabled());
@@ -415,6 +422,7 @@ describe('UserAddDialog - S3 2.1: inline 409s', () => {
 
     expect(await screen.findByText('WhatsApp contact already linked to Bob Lee')).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: 'Open user' })).toBeInTheDocument();
+    expect(getUsersSelectMock).toHaveBeenCalledWith({ respond_contact_id: CONTACT_LOCKED.id });
   });
 
   it('PHONE_BELONGS_TO_USER shows "Link this contact to <name> instead"', async () => {
@@ -430,7 +438,9 @@ describe('UserAddDialog - S3 2.1: inline 409s', () => {
     createUserMock.mockImplementationOnce(() =>
       codedRejection('PHONE_BELONGS_TO_USER', 'This phone already belongs to Jane Tan.'),
     );
-    findUserByPhoneMock.mockResolvedValueOnce({ id: 'user-42', name: 'Jane Tan' });
+    getUsersSelectMock.mockImplementation(async (params?: { phone?: string }) =>
+      params?.phone ? [{ id: 'user-42', name: 'Jane Tan', email: null }] : [],
+    );
 
     const submit = screen.getByRole('button', { name: 'Add user' });
     await waitFor(() => expect(submit).not.toBeDisabled());
@@ -440,5 +450,65 @@ describe('UserAddDialog - S3 2.1: inline 409s', () => {
     expect(
       await screen.findByRole('button', { name: 'Link this contact to Jane Tan instead' }),
     ).toBeInTheDocument();
+    expect(getUsersSelectMock).toHaveBeenCalledWith({ phone: CONTACT_LOCKED.phone_number });
+  });
+});
+
+describe('UserAddDialog - fix round 2, S2: user pickers via userSelectService', () => {
+  it('loads Superior and Copy roles from getUsersSelect({ status: ACTIVE })', async () => {
+    getUsersSelectMock.mockResolvedValue([{ id: 'user-9', name: 'Mei Ling', email: null }]);
+    renderDialog();
+    await waitFor(() => expect(getUsersSelectMock).toHaveBeenCalledWith({ status: 'ACTIVE' }));
+    const superior = screen.getByRole('combobox', { name: 'None' });
+    expect(await within(superior).findByRole('option', { name: 'Mei Ling' })).toBeInTheDocument();
+    expect(
+      apiFetchMock.mock.calls.some((call) => String(call[0]).includes('/users/select')),
+    ).toBe(false);
+  });
+});
+
+describe('UserAddDialog - fix round 2, S4: Companies required when a contact is set', () => {
+  it('marks Companies required and blocks a superadmin save with none picked', async () => {
+    superadminRef.current = true;
+    getContactCompaniesMock.mockResolvedValue([]);
+    renderDialog({ id: CONTACT_LOCKED.id });
+    await waitFor(() => expect(screen.getByLabelText('Name')).toHaveValue(CONTACT_LOCKED.name));
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole('group', { name: 'Select roles' })).getByLabelText('Salesperson'),
+      ).toBeChecked(),
+    );
+
+    expect(screen.getByText('Companies').closest('label')).toHaveTextContent('Companies *');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add user' }));
+    expect(await screen.findByText('Pick at least one company.')).toBeInTheDocument();
+    expect(createUserMock).not.toHaveBeenCalled();
+  });
+
+  it('does not require Companies without a contact', async () => {
+    superadminRef.current = true;
+    renderDialog();
+    expect(screen.getByText('Companies').closest('label')).toHaveTextContent(/^Companies$/);
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'No Contact' } });
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'nc@zzt.test' } });
+    await tickRole('Portal user');
+    fireEvent.click(screen.getByRole('button', { name: 'Add user' }));
+    await waitFor(() => expect(createUserMock).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('UserAddDialog - fix round 2, N4: the suggested role lands when roles load late', () => {
+  it('selects the suggested role once roles arrive after the contact', async () => {
+    rolesRef.current = undefined;
+    renderDialog({ id: CONTACT_LOCKED.id });
+    await waitFor(() => expect(screen.getByLabelText('Name')).toHaveValue(CONTACT_LOCKED.name));
+
+    // Roles arrive; any re-render picks them up from the hook.
+    rolesRef.current = ROLE_LIST;
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'late@zzt.test' } });
+
+    const roles = screen.getByRole('group', { name: 'Select roles' });
+    await waitFor(() => expect(within(roles).getByLabelText('Salesperson')).toBeChecked());
   });
 });

@@ -235,6 +235,22 @@ describe('ContactsList - the "Create user" row action (AC-59)', () => {
     expect(within(menu).queryByRole('menuitem', { name: 'Create user' })).not.toBeInTheDocument();
   });
 
+  // Fix round 2, N3: without users.view the list sends no linked_user_id, so
+  // every row looks unlinked and "Create user" would answer 409 on a linked one.
+  it('is absent without users.view, even with users.add', async () => {
+    permsRef.view = false;
+    renderList();
+    await waitForAisyahRow();
+
+    for (const row of screen.getAllByRole('row').slice(1)) {
+      const trigger = within(row).queryByRole('button', { name: /contact actions/i });
+      if (!trigger) continue;
+      const menu = await openRowMenu(row);
+      expect(within(menu).queryByRole('menuitem', { name: 'Create user' })).not.toBeInTheDocument();
+      fireEvent.keyDown(menu, { key: 'Escape', code: 'Escape' });
+    }
+  });
+
   it('opens the Add user modal with that contact locked', async () => {
     renderList();
     const aisyahSwitch = await waitForAisyahRow();
