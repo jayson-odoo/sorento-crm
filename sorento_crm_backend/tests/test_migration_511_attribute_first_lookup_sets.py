@@ -64,7 +64,10 @@ def test_the_revision_id_is_under_32_characters_and_chains_onto_head():
 
     script_dir = _script_directory()
     known_revisions = {rev.revision for rev in script_dir.walk_revisions()}
-    assert module.down_revision in known_revisions, (module.down_revision, sorted(known_revisions))
+    # A merge re-parent makes `down_revision` a tuple of main's heads; every parent must exist.
+    parents = module.down_revision if isinstance(module.down_revision, tuple) else (module.down_revision,)
+    for parent in parents:
+        assert parent in known_revisions, (parent, sorted(known_revisions))
 
     heads = script_dir.get_heads()
     assert len(heads) == 1, heads
