@@ -69,6 +69,11 @@ export default function SalesOpportunityPortalDetail({ id, slug }: { id: string;
   const [isEditing, setIsEditing] = useState(false);
   const [title, setTitle] = useState('');
   const [customerOrProspect, setCustomerOrProspect] = useState('');
+  // S4: an async SearchableSelect only knows about whatever page it last fetched - without
+  // keeping the picked option here, reopening the field after a different search (that
+  // doesn't include it) shows blank instead of what was just chosen. Seeded from the
+  // opportunity's own value on `beginEdit`, then follows every fresh pick.
+  const [editCustomerOption, setEditCustomerOption] = useState<SearchableSelectOption | undefined>();
   const [expectedAmount, setExpectedAmount] = useState('');
   const [amountTouched, setAmountTouched] = useState(false);
   const [expectedCloseDate, setExpectedCloseDate] = useState('');
@@ -152,6 +157,7 @@ export default function SalesOpportunityPortalDetail({ id, slug }: { id: string;
     setCustomerOrProspect(
       opportunity.customer_id ?? (opportunity.prospect_name ? `${PROSPECT_PREFIX}${opportunity.prospect_name}` : ''),
     );
+    setEditCustomerOption(customerSelectedOption);
     setExpectedCloseDate(opportunity.expected_close_date ?? '');
     const nextLines: LineDraft[] = lines_.map((line) => ({
       key: nextLineKey(),
@@ -313,8 +319,9 @@ export default function SalesOpportunityPortalDetail({ id, slug }: { id: string;
                 aria-label="Customer or prospect"
                 value={customerOrProspect}
                 onChange={setCustomerOrProspect}
+                onOptionChange={(option) => setEditCustomerOption(option ?? undefined)}
                 fetchOptions={fetchCustomerOrProspectOptions}
-                selectedOption={customerSelectedOption}
+                selectedOption={editCustomerOption}
                 placeholder="Search customer or prospect..."
                 emptyMessage={NO_CUSTOMERS_MESSAGE}
                 wrapOptions

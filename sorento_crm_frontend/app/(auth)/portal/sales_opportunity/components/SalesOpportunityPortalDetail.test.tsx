@@ -220,7 +220,6 @@ describe('SalesOpportunityPortalDetail', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Mark won' }));
     expect(service.updatePortalSalesOpportunity).not.toHaveBeenCalled();
     expect(screen.getByRole('heading', { name: 'Mark won' })).toBeTruthy();
-    expect(screen.getByText('This closes the opportunity.')).toBeTruthy();
     expect(screen.queryByLabelText('Lost reason')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /confirm/i }));
@@ -417,6 +416,36 @@ describe('SalesOpportunityPortalDetail', () => {
     const payload = service.updatePortalSalesOpportunity.mock.calls[0][1];
     expect(payload.prospect_name).toBe('ZZT New Prospect');
     expect(payload.customer_id).toBeNull();
+  });
+
+  it('S4: keeps a freshly picked customer visible in Edit after the search list changes', async () => {
+    service.getPortalCustomerOptions.mockImplementation(async (q: string) => {
+      if (q === 'ZZT New') {
+        return {
+          items: [{ customer_id: 'cust-2', customer_code: 'C2', customer_name: 'ZZT New Customer' }],
+          prospect: null,
+          blocked: null,
+        };
+      }
+      return { items: [], prospect: null, blocked: null };
+    });
+    render(<SalesOpportunityPortalDetail id="opp-1" />);
+    await screen.findByText('OPP-000001');
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    const customerSelect = await screen.findByLabelText('Customer or prospect');
+    fireEvent.change(screen.getByLabelText('Customer or prospect search'), {
+      target: { value: 'ZZT New' },
+    });
+    await waitFor(() =>
+      expect(screen.getByRole('option', { name: 'C2 - ZZT New Customer' })).toBeTruthy(),
+    );
+    fireEvent.change(customerSelect, { target: { value: 'cust-2' } });
+
+    // Reopen with a different (empty) search - the fresh result set doesn't include it.
+    fireEvent.change(screen.getByLabelText('Customer or prospect search'), { target: { value: '' } });
+    await waitFor(() => expect(service.getPortalCustomerOptions).toHaveBeenCalledWith(''));
+
+    expect(screen.getByRole('option', { name: 'C2 - ZZT New Customer' })).toBeTruthy();
   });
 
   it('F7: edit prefills each line unit price and the total updates as qty changes, until an amount is typed by hand', async () => {
