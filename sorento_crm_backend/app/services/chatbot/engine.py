@@ -1586,14 +1586,6 @@ def _run_stages(  # noqa: PLR0915
     # below is made against the CARRIED agent, not the default. No `session=` (reviewer
     # round 1, SHOULD-4): no writer ever produces a prior-turn agent nest to read.
     verdict = turn_runtime.with_routing_agent_default(verdict, pending=state_in.pending)
-    # Fix round 8 on PR #833 (owner retest of round 7): every descriptor the parser
-    # emitted is grounded against the specification registry before anything reads the
-    # verdict - the category keeps what the thing IS, a colour or a size becomes a
-    # `specification` entity, and nothing is a document type unless it is on the list.
-    with _session(session_factory) as grounding_db:
-        verdict, grounding_notes = grounding.ground(grounding_db, verdict)
-    if grounding_notes:
-        turn_trace.add("grounding", {"changes": grounding_notes})
     # Reviewer S1 on PR #833: the answer to "how many should I show?" must not rest on
     # the parser filling `top_n` for a bare "10" - its prompt has no example of one, and
     # its positional rule pulls a bare number toward `reference_positions`.
@@ -1611,6 +1603,16 @@ def _run_stages(  # noqa: PLR0915
     )
     # Round 3 W3 on PR #833: a class word of this message's own starts a new set.
     verdict = turn_runtime.with_new_set_words(verdict)
+    # Fix round 8 on PR #833 (owner retest of round 7): every descriptor the parser
+    # emitted is grounded against the specification registry, after the clarify answer
+    # is substituted (so "p trap" answering "t trap" is read as the choice it is) and
+    # before APPLY reads the verdict: the category keeps what the thing IS, a colour or
+    # a size becomes a `specification` entity, and nothing is a document type unless it
+    # is on the list.
+    with _session(session_factory) as grounding_db:
+        verdict, grounding_notes = grounding.ground(grounding_db, verdict)
+    if grounding_notes:
+        turn_trace.add("grounding", {"changes": grounding_notes})
 
     # -- access, C APPLY, D ROUTE ------------------------------------------- #
     stage[0] = "access"

@@ -304,38 +304,38 @@ def _wc_ptrap(**overrides):
 # --------------------------------------------------------------------------- #
 
 
-def test_w1_a_stock_row_is_a_vertical_block_led_by_the_product_name(chat, world):
+def test_w1_a_stock_row_is_a_vertical_block_led_by_the_product_code(chat, world):
     """Round 3 W1 ("line by line ... vertical, don't use |"), in round 4 R3's layout (owner,
-    27 Sep 00:03 MYT: "one product is at most 2 lines"): "N. <name> (<code>)", then the
-    stock total. The header already says Trap and Product type; a row never repeats them."""
+    27 Sep 00:03 MYT: "one product is at most 2 lines"), superseded again by the round 8
+    ruling on PR #833 (owner retest of round 7, 27 Sep 2026): a row is the product-code
+    answer's own row ("N. *Product Code:* X" then its facts), never "N. <name> (<code>)".
+    The header already says Trap and Product type; a row never repeats them."""
     text = chat.say("which water closet has stock, p trap", _wc_ptrap())
 
     assert "|" not in text, text
-    blocks = _blocks(text)
+    blocks = row_blocks(text)
     assert len(blocks) == 5, text
+    codes = row_codes(text)
     by_code = {p.product_code: p for p in world["srt_ptrap"]}
+    assert set(codes) == set(by_code), text
     for block in blocks:
-        code = _block_code(block)
-        assert code in by_code, block
-        assert block[0].split(". ", 1)[1] == f"{by_code[code].product_name} ({code})", block
-        assert block[1:] == ["*Total:* 10"], block
+        assert block[1:] == ["*Total:* 10", f"*{world['warehouse'].warehouse_code}:* 10"], block
     # A blank line between products.
     assert re.search(r"\n\n2\. ", text), text
 
 
 def test_w1_the_header_is_one_short_line(chat, world):
     """Superseded in layout by round 4 R2 (owner: "Brand, product type needs to be line by
-    line, label needs to be bold"): one bold filter per line, then the count."""
+    line, label needs to be bold"), and again by the round 8 ruling on PR #833 (owner
+    retest of round 7, 27 Sep 2026): the header is the product-code answer's own intro
+    naming the described set (brand, product type and trap all still named, inside the
+    phrase) and its count, in ONE line."""
     text = chat.say("which water closet has stock, p trap", _wc_ptrap())
     brand = _display(world["sorento"].brand_name)
     assert text.split("\n\n", 1)[0].splitlines() == [
-        f"*Brand:* {brand}",
-        "*Product type:* Water closet",
-        "*Trap:* P trap",
-        "5 water closets have stock.",
+        f"Stock summary for {brand} P trap water closets with stock (5).",
     ], text
-    # The tool's own intro is not repeated under the set header.
-    assert "Stock summary for the requested products" not in text, text
+    assert "*Brand:*" not in text and "*Product type:*" not in text and "*Trap:*" not in text, text
 
 
 def test_w1_a_certificate_row_is_a_vertical_block_too(chat, world):
@@ -377,43 +377,54 @@ def test_w1_an_incoming_row_is_a_vertical_block_too(chat, world):
 )
 def test_w2_a_count_after_a_listed_page_continues_the_same_set(chat, world, small_list, parser_reads):
     """Owner turns 1 to 3: "which water closet has stock, p trap" -> "30" -> "10". The
-    third answered the old "Stock summary" dump of the SAME first products, no header."""
+    third answered the old "Stock summary" dump of the SAME first products, no header.
+
+    Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
+    header is the product-code answer's own intro naming the described set and its count;
+    a named count says which ones inside the intro's parenthetical, never "Here are N to
+    M.".
+    """
     brand = _display(world["sorento"].brand_name)
     ask = chat.say("which water closet has stock, p trap", _wc_ptrap())
-    assert "5 water closets have stock. That is too many to list" in ask, ask
+    assert f"Stock summary for {brand} P trap water closets with stock (5). That is too many to list" in ask, ask
 
     page1 = chat.say("2", _bare(top_n=2))
     page2 = chat.say("2", _bare(**parser_reads))
 
-    head = f"Brand: {brand}, Product type: Water closet, Trap: P trap. 5 water closets have stock."
-    assert one_line_header(page2) == f"{head} Here are 3 to 4.", page2
-    assert "Stock summary" not in page2, page2
+    head = f"Stock summary for {brand} P trap water closets with stock (5"
+    assert one_line_header(page2) == f"{head}, showing 3 to 4).", page2
+    assert "Stock summary for the requested products" not in page2, page2
     assert [b[0].split(".")[0] for b in _blocks(page2)] == ["3", "4"], page2
     one, two = _listed(page1), _listed(page2)
     every = sorted(_codes(world["srt_ptrap"]))
     assert one + two == every[:4], (page1, page2)
 
     page3 = chat.say("2", _bare(**parser_reads))
-    assert one_line_header(page3) == f"{head} Here are 5 to 5.", page3
+    assert one_line_header(page3) == f"{head}).", page3
     assert _listed(page3) == every[4:], page3
 
     before = len(chat.calls)
     done = chat.say("2", _bare(**parser_reads))
-    assert one_line_header(done) == f"{head} That is all 5.", done
+    assert one_line_header(done) == f"{head}). That is all 5.", done
     assert _blocks(done) == [], done
     assert len(chat.calls) == before, chat.calls[before:]
 
 
 def test_w2_the_owner_sequence_30_then_10_lists_31_to_40(chat, world, monkeypatch):
     """The same sequence at the owner's own sizes, 62 lowered to 5 with a list limit of
-    3: the count asked, then "3", then "10" continues with the 2 left and says so."""
+    3: the count asked, then "3", then "10" continues with the 2 left and says so.
+
+    Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): a
+    named count says which ones inside the intro's parenthetical, never "Here are N to
+    M.".
+    """
     from app.services.chatbot.lanes.business import answer as answer_mod
 
     monkeypatch.setattr(answer_mod, "SET_LIST_MAX", 3)
     chat.say("which water closet has stock, p trap", _wc_ptrap())
     chat.say("3", _bare(top_n=3))
     page = chat.say("10", _bare(top_n=10))
-    assert one_line_header(page).endswith("5 water closets have stock. Here are 4 to 5."), page
+    assert one_line_header(page).endswith("with stock (5)."), page
     assert len(_blocks(page)) == 2, page
 
 
@@ -441,8 +452,10 @@ def test_w3_which_basin_has_cert_after_a_water_closet_set_is_a_new_certificate_s
         ),
     )
 
+    # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
+    # header is the product-code answer's own intro naming the described set and its count.
     brand = _display(world["sorento"].brand_name)
-    assert one_line_header(text) == f"Brand: {brand}, Product type: Wash basin. 3 wash basins have certificates.", text
+    assert one_line_header(text) == f"Certificates found for {brand} wash basins with certificates (3).", text
     assert _codes_in(text, world) == _codes(world["srt_basins"]), text
     assert not text.startswith("Product:"), text
     calls = chat.calls[before:]
@@ -472,7 +485,9 @@ def test_w3_a_new_class_word_replaces_the_carried_set_whatever_the_parser_carrie
         ],
     }[carried]
     text = chat.say("which basin has cert", _ask("cert", "basin", "which basin has cert", extra=old))
-    assert "3 wash basins have certificates." in one_line_header(text), text
+    # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
+    # header is the product-code answer's own intro naming the described set and its count.
+    assert "wash basins with certificates (3)" in one_line_header(text), text
     assert _codes_in(text, world) == _codes(world["srt_basins"]), text
 
 
@@ -482,7 +497,9 @@ def test_w3_a_new_attribute_word_on_the_same_class_starts_a_new_set(chat, world,
     chat.say("which water closet has stock, p trap", _wc_ptrap())
     chat.say("2", _bare(top_n=2))
     text = chat.say("which bathtub has incoming", _ask("incoming", "bathtub", "which bathtub has incoming"))
-    assert "bathtubs have incoming stock." in one_line_header(text), text
+    # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
+    # header is the product-code answer's own intro naming the described set and its count.
+    assert "bathtubs with incoming stock (2)" in one_line_header(text), text
     assert _codes_in(text, world) == _codes(world["srt_tubs"]), text
 
 
@@ -501,10 +518,13 @@ def test_w3_a_new_attribute_word_on_the_same_class_starts_a_new_set(chat, world,
 def test_w4_the_default_brand_reads_plainly_and_the_other_brands_close_the_reply(
     chat, world, kind, class_word, closing
 ):
+    """Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
+    header is the product-code answer's own intro naming the described set and its count."""
     text = chat.say(f"which {class_word} has {kind}", _ask(kind, class_word, f"which {class_word} has {kind}"))
     brand, other = _display(world["sorento"].brand_name), _display(world["mocha"].brand_name)
+    base = "Stock summary for" if kind == "stock" else "Certificates found for"
     noun = "stock" if kind == "stock" else "certificates"
-    assert one_line_header(text) == f"Brand: {brand}, Product type: Wash basin. 3 wash basins have {noun}.", text
+    assert one_line_header(text) == f"{base} {brand} wash basins with {noun} (3).", text
     assert "(default)" not in text, text
     assert text.splitlines()[-1] == f"{closing}: {other} 1. Name one to see them.", text
 
@@ -539,7 +559,9 @@ def test_w4_a_named_brand_answers_that_brand_only(chat, world):
         f"which {mocha.lower()} wash basin has stock",
         _ask("stock", "wash basin", "which wash basin has stock", extra=[_entity(mocha.lower(), "brand")]),
     )
-    assert one_line_header(text) == f"Brand: {_display(mocha)}, Product type: Wash basin. 1 wash basin has stock.", text
+    # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
+    # header is the product-code answer's own intro naming the described set and its count.
+    assert one_line_header(text) == f"Stock summary for {_display(mocha)} wash basins with stock (1).", text
     assert "Other brands" not in text, text
 
 
@@ -562,7 +584,9 @@ def test_w5_every_listed_product_belongs_to_the_header_brand(chat, world, kind):
     brand is never listed under the default brand; one that IS that brand's is."""
     text = chat.say("which wash basin has x", _ask(kind, "wash basin", f"which wash basin has {kind}"))
     brand = world["sorento"].brand_name
-    assert one_line_header(text).startswith(f"Brand: {_display(brand)},"), text
+    # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
+    # header is the product-code answer's own intro naming the described set.
+    assert f"{_display(brand)} wash basins with" in one_line_header(text), text
     # Round 7 on PR #833: a certificate set lists rows in the attachment structure.
     from tests.chatbot.set_reply import full_row_codes
 

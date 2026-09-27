@@ -2637,6 +2637,18 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # MESSAGE, never from the STATE - `answers` below is untouched, so a positional pick
     # still resolves against the same page rows. And ONLY the numbered list goes: the
     # multi-company note reads `e.items` for attribution and must keep seeing the real rows.
+    if set_predicate is not None and stock_ask_render:
+        # Fix round 8 on PR #833: a dealer on availability only, still owing a quantity,
+        # reads the set's products by code (the availability item's own title, as the
+        # product-code answer names it), then the tool's own question - the set intro
+        # replaced the intro that carried it.
+        for i, it in enumerate(e.get("items") or []):
+            title = jsc.nullish_str(jsc.get(it, "title")).strip()
+            if title:
+                msg += f"{i + 1 + set_row_offset}. {title}\n\n"
+        question = jsc.js_string(e.get("intro") or "").strip()
+        if question:
+            msg += question + "\n\n"
     for i, it in enumerate(
         [] if (qs_render or groups_render or stock_ask_render) else (e.get("items") or [])
     ):

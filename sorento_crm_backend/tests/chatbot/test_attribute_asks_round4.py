@@ -486,8 +486,10 @@ def test_r6_a_set_ask_with_an_unknown_value_is_said_back_and_the_answer_reruns_i
     assert text == "I don't know 't trap' as a trap. I know P trap and S trap.", text
     assert not _codes(world["srt_strap"]) & {r["code"] for r in _rows(text)}, text
     again = chat.say("p trap", _product_ask("p trap", "p trap"))
-    assert "*Trap:* P trap" in _header(again), again
-    assert {r["code"] for r in _rows(again)} == _codes(world["srt_ptrap"]), again
+    # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): set
+    # answers use the product-code rows under one intro line.
+    assert "P trap water closets with stock (5)." in again.split("\n\n", 1)[0], again
+    assert set(row_codes(again)) == _codes(world["srt_ptrap"]), again
 
 
 # --------------------------------------------------------------------------- #

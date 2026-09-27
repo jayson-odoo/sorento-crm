@@ -1,6 +1,6 @@
 # PLAN: attribute-first asks, "which products have X", across every product and domain
 
-Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged, revive repairs R35 to R38 and owner ruling R39 (no paging) built, reviewer pass fix round done; owner hand test round 2 (W1 to W6: brand binding, plain-words header, readable rows, paging keeps the set, chatbot default brand, water basin) built tester first; owner hand test of round 2 (round 3, W1 to W6: vertical rows, a count after a page continues, a new class word starts a new set, no "(default)", brand scope proven) built red first; owner console test of round 3 (round 4, R1 to R7: brand weights, line-by-line header, two-line rows, a miss says what it searched, the clarify answer reruns the ask, unknown values said back, plain words) built red first; reviewer pass at d6fa2b31 (round 5: B1 R6 fires only on a value-position word, S1 list values in the near miss, S2 one display helper, S3 serial_ddl, N1 to N4) fixed red first; reviewer pass at 34cb4697 (round 6: B1-r5 whole-word product name match, N-r5-1 to N-r5-3) fixed red first; owner hand test of rounds 4 to 6 (round 7, items 1 to 7: ETA words and ETA row shape, a code's descriptor picks its variants, code then descriptor, the normal stock header, a brand from the offer narrows the set, certificates only in the attachment shape, plain words) fixed red first; main 11bf373ec merged 27 Sep 2026 (single alembic head bcw_0001_brand_chatbot_weight, 511_attribute_first_lookup_sets re-parented onto merge_27sep_three_heads); awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
+Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged, revive repairs R35 to R38 and owner ruling R39 (no paging) built, reviewer pass fix round done; owner hand test round 2 (W1 to W6: brand binding, plain-words header, readable rows, paging keeps the set, chatbot default brand, water basin) built tester first; owner hand test of round 2 (round 3, W1 to W6: vertical rows, a count after a page continues, a new class word starts a new set, no "(default)", brand scope proven) built red first; owner console test of round 3 (round 4, R1 to R7: brand weights, line-by-line header, two-line rows, a miss says what it searched, the clarify answer reruns the ask, unknown values said back, plain words) built red first; reviewer pass at d6fa2b31 (round 5: B1 R6 fires only on a value-position word, S1 list values in the near miss, S2 one display helper, S3 serial_ddl, N1 to N4) fixed red first; reviewer pass at 34cb4697 (round 6: B1-r5 whole-word product name match, N-r5-1 to N-r5-3) fixed red first; owner hand test of rounds 4 to 6 (round 7, items 1 to 7: ETA words and ETA row shape, a code's descriptor picks its variants, code then descriptor, the normal stock header, a brand from the offer narrows the set, certificates only in the attachment shape, plain words) fixed red first; main 11bf373ec merged 27 Sep 2026 (511_attribute_first_lookup_sets re-parented onto merge_27sep_three_heads); owner retest of round 7 (round 8, F1 the parser bounded by the specification registry with a deterministic grounding step, F2 one answer shape per domain) built red first, single alembic head spk_0001_specification_kind; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
 Test report: `attribute-first-asks-test-report.md`.
 UAC: `attribute-first-asks-acceptance-criteria.md`.
 Supersedes: `documentation/plans/_archive/chatbot/PLAN-spec-backward-search.md` (its backend half
@@ -546,6 +546,24 @@ Each item was replayed with her exact message against seeded data, red first.
   `test_resolve_predicate` (the predicate block's keys; the bare leg's certificate ids).
 
 Parser prompt: not changed. No migration.
+
+## Owner retest of round 7, 27 Sep 2026 12:59 to 13:04 MYT (round 8, F1 and F2)
+
+- F1 (AC-1385, AC-1386, AC-1388): `specification` entity kind (contracts, policy row, migration
+  `spk_0001_specification_kind`), `SPECIFICATION_ADDENDUM`, and one Specification line per
+  registry key in the policy blocks (`chatbot_parser_prompt.specification_lines`, through the
+  registry's own readers). `app/services/chatbot/head/grounding.py` runs after every parse:
+  class and type words stay the category, registry choices and measurements become
+  `specification` entities, a word beside a key's own word that is none of its choices is an
+  unknown value said back with the known ones, `attachment_type` survives only for a word on the
+  attachment-type list, a document domain chosen only for a misfiled descriptor becomes the
+  product domain. Grounded values reach the resolver as `extracted_specs` (a grounded number
+  defines membership), unknowns as `unknown_values`; a follow-up keeps them.
+- F2 (AC-1387): `answer.build_set_header` is one intro line (the tool's intro with "the
+  requested products" replaced by the described set and its count); the set's rows are the
+  product-code rows through `fetch._item_line`; `set_rows_text` and the bold header lines are
+  gone. Price asks about a set get a `price` leg (no filter).
+- Latent defect fixed: `_near_miss`'s empty-list fallback was the JSON string "[]".
 
 ## Definition of done
 

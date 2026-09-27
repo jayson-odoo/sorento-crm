@@ -55,7 +55,9 @@ _LABEL_GRAMMAR = frozenset(
     {"or", "of", "and", "a", "an", "the", "in", "with", "has", "is", "number", "comes", "set", "per", "type"}
 )
 
-_TOKEN_RE = re.compile(r"\d+(?:\.\d+)?|[a-z]+", re.IGNORECASE)
+#: A word with letters then digits stays one token ("srtwc8840", a brand "Sorento3d4d");
+#: a number stands apart from its unit ("1.2mm" -> "1.2", "mm").
+_TOKEN_RE = re.compile(r"[a-z]+\d[a-z0-9]*|\d+(?:\.\d+)?|[a-z]+", re.IGNORECASE)
 _NUMBER_RE = re.compile(r"^\d+(?:\.\d+)?$")
 
 

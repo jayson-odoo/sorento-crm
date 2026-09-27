@@ -337,6 +337,58 @@ passed, 214 skipped, 33 xfailed, 0 failed. py3.12 compile ok, dash guard 0 hits,
 on the branch (`bcw_0001_brand_chatbot_weight`, no migration this round). Parser prompt: not
 changed. Live parser: not run (no parser key on this VM).
 
+## Round 8: owner retest of round 7 (27 Sep 2026 12:59 MYT), F1 grounding, F2 one shape per domain
+
+New tests: `tests/chatbot/test_spec_grounding.py` (45: the owner's four descriptor items, plus
+every finish, mounting, trap and material choice the registry holds glued before and after a
+product type, eight measurements with their key word, five unknown values, typos),
+`tests/chatbot/test_spec_grounding_prompt.py` (7: the Specification lines rendered from the
+registry, a staff word reaching them, the addendum, the strict schema, the kind row, the
+migration publishing unlabelled and idempotent), `tests/chatbot/test_attribute_asks_round8.py`
+(35: the owner's messages through `engine.run_turn` with the real resolver and registry, the
+stock tool in detailed and compact mode with the footer stamp, one-shape comparisons of set rows
+against the product-code answer for stock, incoming, certificates and price, 18 registry
+descriptor asks across stock, incoming and certificate, and the retest in order). Red commits:
+`d96d3feba` (45 of 45 red without the grounding module), `fd25ec1f4` (16 of 34 red on
+`fe9cdc6b8`).
+
+Kill tests (one mutation each, restored after): 13 of 13 RED.
+
+| Kill | Mutation | Result |
+|---|---|---|
+| K1 | no grounding step in the engine | RED, 4 |
+| K2 | category keeps the glued descriptor | RED, 22 |
+| K3 | misfiled attachment_type kept | RED, 20 |
+| K4 | document domain not corrected | RED, 3 |
+| K5 | no unknown-value detection | RED, 9 |
+| K6 | unknown values not sent to the resolver | RED, 2 |
+| K7 | grounded numbers not membership | RED, 3 |
+| K8 | a follow-up drops the spec fields | RED, 4 |
+| K9 | near-miss empty list bound as a JSON string | RED, 3 |
+| K10 | the intro does not name the set | RED, 16 |
+| K11 | set rows not the product-code rows | RED, 13 |
+| K12 | no Specification lines in the prompt | RED, 3 |
+| K13 | no price set leg | RED, 1 |
+
+Found in the lane: `_near_miss` bound its empty-list fallback as the JSON string `"[]"`, so any
+zero set with a member missing the key crashed the resolver and the turn fell back to the generic
+"Could not find incoming for category ..." miss (the owner's item 2 reply). Fixed and pinned.
+
+Superseded tests amended to the round 8 ruling (a note on each): 78 across rounds 2, 3, 4 and 7,
+`test_lane_require`, `test_counted_set_no_paging`, `test_counted_set_review_fixes` and
+`test_reverse_asks_owner_phrasings` (bold header lines, count sentence and two-line rows
+retired). The prompt golden file now pins domains and kinds only (the registry lines are pinned on
+a blank schema); the addendum-order checks strip `SPECIFICATION_ADDENDUM` first. One flaky
+assertion fixed: the availability dealer test checked `"37" not in text` while the seeded code is
+random hex.
+
+Gates (`scripts/cloud-env-setup.sh`, `SORENTO_ENV_FILE=.env.ci-tests`, CI flags `-n 4 --dist
+loadfile -m "not serial_ddl"`, `ci_excluded.txt` ignores, migration glob ignored): `tests/chatbot`
+plus the resolver, predicate, spec search, spec list and brand weight files, 3451 passed, 213
+skipped, 33 xfailed, then the last 2 fixed (38 of 38 in their files). Parser prompt: new version
+published unlabelled by `spk_0001_specification_kind`, template 95,278 to 106,386 characters.
+Live parser: not run (no parser key on this VM).
+
 ## Deviations
 
 - Phase 1 skipped by design: no UI surface. The lavish review page stands in for the mock.

@@ -14,6 +14,7 @@ the same four phrasings against the live parser.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import date
 from typing import Any
@@ -392,7 +393,8 @@ def test_dealer_on_availability_only_counts_only_allowed_locations_and_sees_no_q
     assert taps[1].product_code not in text, text
     assert taps[2].product_code not in text, text
     # No quantity of ours: neither on-hand figure, and no quantity field label.
-    assert "37" not in text and "41" not in text, text
+    # Whole numbers only: a seeded product code is random hex and can contain "37".
+    assert not re.search(r"(?<![\w-])(?:37|41)(?![\w-])", text), text
     assert "Quantity" not in text, text
     # The tool was asked only about the product the policy lets the dealer see.
     asked = {pid for c in calls for pid in (c["args"].get("product_ids") or [])}
