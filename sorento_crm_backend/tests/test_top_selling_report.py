@@ -1157,3 +1157,64 @@ def test_top_selling_is_not_enabled_for_the_in_app_assistant():
     import app.main as main_mod
 
     assert "top_selling" not in Path(main_mod.__file__).read_text()
+
+
+# --------------------------------------------------------------------- fix lane round 4
+# Owner retest of top selling, 27 Sep 2026 (PR #1273): narrowing by brand (F6) and the
+# least sold ranking (F7).
+
+
+def _brand(db, name: str, code: str):
+    from app.models.product import Brand
+
+    row = Brand(id=str(uuid.uuid4()), brand_code=code, brand_name=name, company_id=DEFAULT_COMPANY_ID)
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_brand_filter_narrows_and_echoes_the_brand(client, db):
+    """F6: `brand_ids` keeps products of those brands only (`Product.brand_id`, the way
+    PR #1301 narrows the outstanding report) and echoes the brand name."""
+    sorento = _brand(db, "Sorento", unique_code("SRT")[:20])
+    cabana = _brand(db, "Cabana", unique_code("CBN")[:20])
+    a = _product(db, "ZZTBRAND-A")
+    b = _product(db, "ZZTBRAND-B")
+    a.brand_id = sorento.id
+    b.brand_id = cabana.id
+    _line(db, product_id=a.id, ordered=5, delivered=5, line_total=Decimal("50.00"))
+    _line(db, product_id=b.id, ordered=9, delivered=9, line_total=Decimal("90.00"))
+    db.commit()
+
+    body = _get(client, rank_by="quantity", brand_ids=sorento.id).json()
+    assert _codes(body) == ["ZZTBRAND-A"]
+    assert body["filters"]["brand_name"] == "Sorento"
+    assert _get(client, rank_by="quantity").json()["filters"]["brand_name"] is None
+
+
+def test_brand_ids_must_be_uuids(client, db):
+    assert _get(client, rank_by="quantity", brand_ids="sorento").status_code == 422
+
+
+def test_direction_bottom_ranks_ascending(client, db):
+    """F7: `direction=bottom` ranks the least sold first (the metric ascending, ties by
+    the other metric ascending, then code). Items with no sale in the window are not
+    ranked on either direction (the route ranks sales), and the body says which way
+    it ranked."""
+    a = _product(db, "ZZTDIR-A")
+    b = _product(db, "ZZTDIR-B")
+    c = _product(db, "ZZTDIR-C")
+    _product(db, "ZZTDIR-NOSALE")
+    _line(db, product_id=a.id, ordered=10, delivered=10, line_total=Decimal("100.00"))
+    _line(db, product_id=b.id, ordered=2, delivered=2, line_total=Decimal("20.00"))
+    _line(db, product_id=c.id, ordered=5, delivered=5, line_total=Decimal("50.00"))
+    db.commit()
+
+    top = _get(client, rank_by="quantity").json()
+    assert _codes(top) == ["ZZTDIR-A", "ZZTDIR-C", "ZZTDIR-B"]
+    assert top["direction"] == "top"
+    bottom = _get(client, rank_by="quantity", direction="bottom", n=2).json()
+    assert _codes(bottom) == ["ZZTDIR-B", "ZZTDIR-C"]
+    assert bottom["direction"] == "bottom"
+    assert bottom["total_count"] == 3
+    assert _get(client, rank_by="quantity", direction="sideways").status_code == 422

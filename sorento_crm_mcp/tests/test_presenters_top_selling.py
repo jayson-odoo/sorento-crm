@@ -84,16 +84,18 @@ def test_fixed_lines_match_goldens(name: str):
 
 
 def test_items_by_quantity_header_order():
-    """AC-1901: title, Ranked by, Basis, count, Customer, Category, Sales agent,
-    Channel, Delivery date, in that order, then a blank line."""
+    """AC-1901: title, Ranked by, Basis, count, Customer, Category, Brand, Sales
+    agent, Channel, Delivery date, in that order, then a blank line (Brand: fix lane
+    round 4, owner retest 27 Sep 2026)."""
     lines = _top_selling(_mock("items-qty")).splitlines()
-    assert lines[:10] == [
+    assert lines[:11] == [
         "*Top 5 selling items*",
         "Ranked by: Quantity",
         "Basis: Delivered (transferred to DO)",
         "Items with sales: 1,284",
         "Customer: all",
         "Category: all",
+        "Brand: all",
         "Sales agent: all",
         "Channel: all",
         "Delivery date: 01/01/2026 to 31/12/2026",
@@ -471,3 +473,36 @@ def test_a_named_n_of_one_reads_singular():
     body["n"] = 1
     body["rows"] = body["rows"][:1]
     assert _top_selling(body).startswith("*Top 1 selling item*\n")
+
+
+# --------------------------------------------------------------------------
+# Fix lane round 4 (owner retest, 27 Sep 2026): the brand filter (F6) and the
+# least sold ranking (F7)
+# --------------------------------------------------------------------------
+
+
+def test_brand_prints_on_the_header():
+    body = _mock("items-qty")
+    body["filters"]["brand_name"] = "Sorento"
+    text = _top_selling(body)
+    assert "\nCategory: all\nBrand: Sorento\nSales agent: all\n" in text
+
+
+def test_bottom_ranking_titles_and_the_no_sale_line():
+    """F7: a bottom ranking says so in its title, and one line says how items with
+    no sale are treated (the plan does not rank them: the route ranks sales)."""
+    body = _mock("items-qty")
+    body["direction"] = "bottom"
+    text = _top_selling(body)
+    assert text.startswith("*Bottom 5 selling items*\n")
+    assert "\nItems with no sale in this period are not ranked.\n" in text
+    body["n"] = None
+    assert _top_selling(body).startswith("*Least sold items*\n")
+    body["group"] = "category"
+    assert _top_selling(body).startswith("*Least sold categories*\n")
+    body["n"] = 3
+    assert _top_selling(body).startswith("*Bottom 3 selling categories*\n")
+
+
+def test_a_top_ranking_has_no_no_sale_line():
+    assert "no sale" not in _top_selling(_mock("items-qty"))
