@@ -46,11 +46,14 @@ ANALYZED = (
     "sales_agents", "units_of_measure", "product_categories", "products", "warehouses",
     "sales_orders", "sales_order_lines", "orders", "order_lines",
 )
+#: The owner's team: the captured statement's IN list shows eight agents before it is cut off.
+TEAM_SIZE = 20
 #: The owner's words: "well under a second", for one achievement run on a loaded CI runner
 #: (about 0.05 s ordered and 0.2 s delivered serially at this volume, after the fix).
 ACHIEVEMENT_BUDGET = 1.0
-#: A whole save or read, which also writes or reads the periods (about 0.5 s serially).
-REQUEST_BUDGET = 2.0
+#: A hang guard on a whole save or read, which also writes the 20 x 52 child periods: about
+#: 0.5 s serially, 3 s measured under a full `-n auto` run; the old statement took minutes.
+REQUEST_BUDGET = 5.0
 
 
 def _nodes(plan: dict) -> Iterator[dict]:
@@ -165,7 +168,7 @@ def test_lines_outside_every_period_never_reach_a_join(volume, basis):
     )
     span = {"a": agents, "lo": specs[0].period_start, "hi": specs[-1].period_end}
     lines_of_agents = db.execute(text(f"select count(*) {live}"), span).scalar()
-    bound = f"so.order_date between :lo and :hi"
+    bound = "so.order_date between :lo and :hi"
     if basis == "delivered":
         bound += (
             " or sol.id in (select ol.sales_order_line_id from order_lines ol "
@@ -259,20 +262,20 @@ def test_a_save_runs_the_achievement_once(api, monkeypatch):
 
 @pytest.mark.parametrize("basis", ["ordered", "delivered"])
 def test_saving_an_all_products_team_target_returns_inside_the_budget(volume, monkeypatch, basis):
-    """The owner's hand test: an all-products team target of twelve agents over a year, split
+    """The owner's hand test: an all-products team target of twenty agents over a year, split
     weekly, saved; then the Targets list (all mode) and the target page read it back. Each
-    achievement run stays under a second (the old statement took over one at this volume, and
-    minutes on the hand-test stack), and each request under the looser request budget, which
-    also covers writing the 12 x 52 child periods on a loaded CI runner."""
+    achievement run stays under a second (the old statement took 1.6 s delivered at this
+    volume, and minutes on the hand-test stack); each request stays under a hang guard."""
     from app.services.sales import achievement_service as ach
 
     client, db, company_id, vol = volume
-    team = client.post(TEAMS_BASE, json={"name": "ZZT Perf", "sales_agent_ids": vol.agent_ids[:12]}).json()
+    members = vol.agent_ids[:TEAM_SIZE]
+    team = client.post(TEAMS_BASE, json={"name": "ZZT Perf", "sales_agent_ids": members}).json()
     payload = {
         "subject_kind": "team", "sales_team_id": team["id"], "name": "ZZT All products",
         "metric": "amount", "basis": basis, "product_scope": "all",
         "start_date": "2026-01-01", "end_date": "2026-12-30", "split_every": 1, "split_unit": "week",
-        "agent_figures": [{"sales_agent_id": a, "target_value": 10} for a in vol.agent_ids[:12]],
+        "agent_figures": [{"sales_agent_id": a, "target_value": 10} for a in members],
     }
     runs: List[float] = []
     real = ach.achieved_by_period

@@ -13,13 +13,14 @@ credited to the subject:
 
 - **An agent** (G2, R2): the order's `sales_agent_id` is the agent or one of their label
   siblings, the visible agents sharing the agent's non-empty `person_label`.
-- **A team** (T2, R2): EXISTS a stay of a member in the team whose window covers the order's
-  date and whose agent (widened to label siblings) is the order's agent. EXISTS, never a join,
-  so an order counts once for a team even when two members share a person label. The window
-  always reads the SALES ORDER's date, also for DO-dated quantities.
+- **A team** (T2, R2): a stay of a member in the team whose window covers the order's date
+  and whose agent (widened to label siblings) is the order's agent. An order counts once for a
+  team even when two members share a person label. The window always reads the SALES ORDER's
+  date, also for DO-dated quantities.
 
-Both come down to one set of credit rows per period, `(agent_id, valid_from, valid_to)`, built
-in Python from the small agent and membership tables and checked with one EXISTS.
+Both come down to credit rows `(agent_id, valid_from, valid_to)` per period, built in Python
+from the small agent and membership tables; periods with the same rows share one credit group,
+and each (group, agent)'s windows are merged so an order date falls inside at most one.
 
 **How much a line counts** (`achievement_value_expr`): ordered amount is `line_total`, ordered
 quantity `qty_ordered`, both when the order date is in the period. Delivered goes through
@@ -33,21 +34,21 @@ report's `confirmed_value` exactly while no DO is linked.
 also names the company explicitly on every table it reads (`sales_orders`, `sales_order_lines`,
 `orders`, `order_lines`, `product_categories`, `sales.target_scope`): the scope listener's
 criteria do not reach inside a CTE, so a DO line of another company linked to this company's
-sales order line would otherwise count. `any_do_linked` applies the same rule, so the Counts
-label and the figures always agree.
+sales order line would otherwise count. On the order tables below `sales_orders` the rule is a
+UUID comparison gating the values to 0 rather than a filter (see `achieved_by_period`).
+`any_do_linked` applies the same rule, so the Counts label and the figures always agree.
 
-**Shape (review round 2, B1; #1319).** The credited agents' lines are bounded first: by the
-agents' index and the order date span of all the periods (plus, when a period counts by DO
-date, the lines a DO dated inside that span links to), typed UUID to UUID on every company
-column, so no line outside every period is read. Each source then reaches its periods through
-the credit rows, joined on the agent (a hash join), so a line meets only the periods whose
-subject credits its agent, never every period. Credit windows are merged per (period, agent)
-in Python, so that join yields each line once per period. The DO lines are aggregated once:
-`do_counted` gives each linked DO line its capped quantity; its per-(period, line) sum on the
-DO date and its per-line total are unioned with the lines dated in each period and grouped
-into one row per (period, line). The product scope is resolved once, the category tree walked
-once, into a small (target, scope, product) set a hashed IN reads; an all-products target
-reads none of it.
+**Shape (review round 2, B1; #1319).** The credited agents' lines are bounded before anything
+joins them: by the agents and the date span of all the periods (plus, when a period counts by
+DO date, the lines a DO dated inside that span delivers), so no line outside every period
+reaches a join. Each period is expanded to its days once, and a line meets its periods by an
+equality on (credit group, date), a hash join, never by a range test against every period or
+every credit row. The DO lines are aggregated once: `do_counted` gives each linked DO line its
+capped quantity; its per-(period, line) sum on the DO date and its per-line total are unioned
+with the lines dated in each period and grouped into one row per (period, line), carrying the
+period's own columns, so nothing joins the periods back. No correlated subquery reads the DO
+lines. The product scope is resolved once, the category tree walked once, into a small
+(target, scope, product) set a hashed IN reads; an all-products target reads none of it.
 """
 from __future__ import annotations
 
@@ -220,12 +221,12 @@ def achieved_by_period(db: Session, specs: List[PeriodSpec], company_id: str) ->
     """`{period_id: achieved}` for every spec, one statement for all of them.
 
     Steps (review round 2, B1; #1319), each reading a small VALUES, one earlier step once, or an
-    index: `agent_lines` (the credited agents' live lines dated inside the periods' span, or
-    linked to a DO dated inside it), `do_counted` (their linked DO lines with the capped
-    quantity, and the line's columns), then one row per (period, line) from three sources
-    grouped together, each reaching its periods through the credit rows of the line's agent:
-    lines dated in the period, DO quantity dated in the period, and all linked DO quantity on
-    the line's own period.
+    index: `period_days` (every day of every period), `agent_lines` (the credited agents' live
+    lines dated inside the periods' span, or delivered by a DO dated inside it), `do_counted`
+    (their linked DO lines with the capped quantity, and the line's columns), then one row per
+    (period, line) from three sources grouped together, each meeting its periods on (credit
+    group, date) through the credit rows of the line's agent: lines dated in the period, DO
+    quantity dated in the period, and all linked DO quantity on the line's own period.
     """
     out: Dict[str, Decimal] = {s.period_id: Decimal("0") for s in specs}
     group_of, credit_rows = _credit_groups(specs)
