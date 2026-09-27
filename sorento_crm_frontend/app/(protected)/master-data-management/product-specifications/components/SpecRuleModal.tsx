@@ -22,8 +22,10 @@ import {
   builderProblem,
   emptyListProblem,
   gapPhrasesProblem,
+  ruleChoices,
   ruleMessage,
   wordsListProblem,
+  type WordsListRole,
 } from '../lib/ruleValidation';
 import SpecTryItPanel from './SpecTryItPanel';
 import SpecPreviewPanel from './SpecPreviewPanel';
@@ -417,8 +419,9 @@ export function SpecRuleModal({
     value: string[],
     onChange: (next: string[]) => void,
     placeholder: string,
+    role: WordsListRole = 'phrase',
   ) => {
-    const problem = wordsListProblem(value);
+    const problem = wordsListProblem(value, role);
     const error = problem ? ruleMessage(problem, ruleNumber) : null;
     return (
       <div className="flex flex-col gap-1">
@@ -444,11 +447,20 @@ export function SpecRuleModal({
 
   // Every list of words the current draft holds, whichever kind is active -
   // Save is refused if any one of them is over a limit, same as the server.
-  const draftLists = [draft.words, draft.skip_after, draft.before, draft.after, draft.texts];
-  const hasWordsListError = draftLists.some((list) => wordsListProblem(list) !== null);
-  // "..." in one phrase only, across every list (not one list's own limit, so it
-  // shows once, under the form, rather than under whichever list came second).
-  const gapProblem = hasWordsListError ? null : gapPhrasesProblem(draftLists);
+  const draftLists: [string[], WordsListRole][] = [
+    [draft.words, 'find'],
+    [draft.skip_after, 'phrase'],
+    [draft.before, 'phrase'],
+    [draft.after, 'phrase'],
+    [draft.texts, 'code'],
+  ];
+  const hasWordsListError = draftLists.some(([list, role]) => wordsListProblem(list, role) !== null);
+  // "..." in one phrase only, across every phrase list (not one list's own limit, so
+  // it shows once, under the form, rather than under whichever list came second).
+  // A code text is not a phrase, so it is not counted (N-R1).
+  const gapProblem = hasWordsListError
+    ? null
+    : gapPhrasesProblem(draftLists.filter(([, role]) => role !== 'code').map(([list]) => list));
 
   const hideWhereToLook = draft.kind === 'code' || draft.kind === 'product';
   const hideValueItSets = draft.kind === 'number' || draft.kind === 'size' || draft.kind === 'product';
@@ -456,7 +468,7 @@ export function SpecRuleModal({
   const save = () => {
     // The button is already disabled for these - a defensive stop, not the primary guard.
     if (hasWordsListError || gapProblem) return;
-    const problem = builder ? builderProblem(builder) : emptyListProblem(draft.kind);
+    const problem = builder ? builderProblem(builder, ruleChoices(spec)) : emptyListProblem(draft.kind);
     if (!builder || problem) {
       toast.error(ruleMessage(problem ?? 'fill in what this rule reads.', ruleNumber));
       return;
@@ -507,7 +519,7 @@ export function SpecRuleModal({
             <>
               <div className="flex flex-col gap-1.5">
                 <Label>What to find</Label>
-                {wordsMultiSelect(draft.words, (words) => setDraft((d) => ({ ...d, words })), 'Words this spec should read')}
+                {wordsMultiSelect(draft.words, (words) => setDraft((d) => ({ ...d, words })), 'Words this spec should read', 'find')}
               </div>
               <div className="flex items-center gap-2">
                 <Checkbox
@@ -603,7 +615,7 @@ export function SpecRuleModal({
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label>Text</Label>
-                {wordsMultiSelect(draft.texts, (texts) => setDraft((d) => ({ ...d, texts })), 'Piece of the product code')}
+                {wordsMultiSelect(draft.texts, (texts) => setDraft((d) => ({ ...d, texts })), 'Piece of the product code', 'code')}
               </div>
             </>
           )}

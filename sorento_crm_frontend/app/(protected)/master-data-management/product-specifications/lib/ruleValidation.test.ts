@@ -30,10 +30,14 @@ describe('builderProblem - the server refusals, one function', () => {
     expect(builderProblem(builder)).toBe(problem);
   });
 
-  it('"(" and "/" are real words: the number between ( and MM is a real rule', () => {
+  it('"(" and "/" are real words next to a number: the number between ( and MM is a real rule', () => {
     expect(builderProblem({ kind: 'number', after: ['('], before: ['MM'] })).toBeNull();
-    expect(builderProblem(words(['/']))).toBeNull();
-    expect(builderProblem({ kind: 'code', code_match: 'contains', texts: ['/'], value: 'x' })).toBeNull();
+    expect(builderProblem({ kind: 'number', after: ['/'], before: ['MM'] })).toBeNull();
+    // A word to find, or a code text, needs a letter or a number (S-R2, review round 3).
+    expect(builderProblem(words(['/']))).toBe('each word needs a letter or a number.');
+    expect(builderProblem({ kind: 'code', code_match: 'contains', texts: ['/'], value: 'x' })).toBe(
+      'each word needs a letter or a number.',
+    );
   });
 
   it('a rule within every limit has no problem', () => {

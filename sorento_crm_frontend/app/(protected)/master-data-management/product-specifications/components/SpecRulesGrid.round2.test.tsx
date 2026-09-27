@@ -168,10 +168,19 @@ describe('S-11 - in-place edit refuses what the server refuses, in its words', (
     fireEvent.click(document.body.querySelector('[data-slot="searchable-multi-select-create"]')!);
   }
 
-  it('"(" is accepted in place: it is a real word', () => {
+  it('"(" alone is refused as a word to find: it needs a letter or a number (S-R2, round 3)', () => {
     const { onChange } = renderGrid();
     openWordsCell(1, 'ROUND');
     typeAndCreate('(');
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent('Rule 1: each word needs a letter or a number.');
+  });
+
+  it('a word with a letter in it is accepted in place', () => {
+    const { onChange } = renderGrid();
+    openWordsCell(1, 'ROUND');
+    typeAndCreate('(R)');
 
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('alert')).toBeNull();

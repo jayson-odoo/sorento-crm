@@ -38,10 +38,10 @@ function seedRow(overrides: Partial<SpecRegistryKey> = {}): SpecRegistryKey {
   } as SpecRegistryKey;
 }
 
-function renderCard(row: SpecRegistryKey, mode: 'view' | 'edit') {
+// N-R9 (review round 3): the card takes no `row`; nothing on it read one.
+function renderCard(_row: SpecRegistryKey, mode: 'view' | 'edit') {
   return render(
     <SpecKeyRecordCard
-      row={row}
       mode={mode}
       pagerNode={null}
       actions={[]}

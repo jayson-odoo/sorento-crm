@@ -6,7 +6,8 @@
  *     changes; before the fix the modal's save dropped `_uid`, the grid fell back
  *     to a position id nobody else used, and the patch matched nothing.
  * (2) A rule moved to the top and then edited in the modal keeps its own id; it
- *     used to fall back to `r0`, colliding with the first rule's own `r0`.
+ *     used to fall back to `r0`, colliding with the first rule's own `r0`. The edit
+ *     changes a field, so it only lands if the id is kept (S-R4, review round 3).
  */
 import React, { useState } from 'react';
 import { describe, it, expect, vi } from 'vitest';
@@ -148,9 +149,15 @@ describe('B-4 - a rule keeps one stable id through the modal', () => {
     fireEvent.click(within(screen.getByLabelText('Rule 2 actions').closest('tr')!).getByText('Move up'));
     expect(latest!.rules[0].builder).toMatchObject({ words: ['OVAL'] });
 
-    // Edit C in the modal and save it.
+    // Edit C in the modal: add a word to What to find, then save it. A change, so
+    // the save only lands on C if the grid matches C by its own id (S-R4, round 3:
+    // saving C unchanged proved nothing, a lost id left the same rules in place).
     fireEvent.click(within(screen.getByLabelText('Rule 1 actions').closest('tr')!).getByText('Edit'));
     const dialog = await screen.findByRole('dialog', { name: /a rule/ });
+    const findField = within(dialog).getByText('What to find', { selector: 'label' }).closest('div')!;
+    fireEvent.click(findField.querySelector('button[role="combobox"]')!);
+    fireEvent.change(screen.getByPlaceholderText('Search...'), { target: { value: 'ELLIPSE' } });
+    fireEvent.click(document.body.querySelector('[data-slot="searchable-multi-select-create"]')!);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save rule' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /a rule/ })).not.toBeInTheDocument());
 
@@ -158,5 +165,8 @@ describe('B-4 - a rule keeps one stable id through the modal', () => {
     expect(uids[0]).toBe(uidC);
     expect(new Set(uids).size, `duplicate rule ids: ${uids.join(',')}`).toBe(3);
     expect(document.body.querySelectorAll('tbody tr')).toHaveLength(3);
+    expect(latest!.rules[0].builder, 'rule C took the edit').toMatchObject({ words: ['OVAL', 'ELLIPSE'] });
+    expect(latest!.rules[1].builder, 'rule A is untouched').toEqual(row.derivation_rules[0].builder);
+    expect(latest!.rules[2].builder, 'rule B is untouched').toEqual(row.derivation_rules[1].builder);
   });
 });

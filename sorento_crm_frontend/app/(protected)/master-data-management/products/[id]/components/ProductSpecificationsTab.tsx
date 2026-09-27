@@ -353,7 +353,13 @@ function ReadingAndSearch({ productId, renderedText }: { productId: string; rend
   const [submitted, setSubmitted] = useState('');
   const search = useSpecSearchPreviewQuery(submitted);
 
-  const run = () => setSubmitted(phrase.trim());
+  const run = () => {
+    const next = phrase.trim();
+    // Enter on the same phrase asks again (N-R7): its query key is unchanged, so
+    // setting it would not run the search a second time.
+    if (next && next === submitted) void search.refetch();
+    else setSubmitted(next);
+  };
 
   const loading = search.isFetching;
   const answer = !submitted

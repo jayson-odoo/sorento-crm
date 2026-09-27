@@ -5,7 +5,7 @@
  */
 import type { ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import ProductSpecificationsTab from './ProductSpecificationsTab';
@@ -180,5 +180,20 @@ describe('S-15 - the search box', () => {
 
     expect(screen.getByText('This product comes up, 1st of 1')).toBeInTheDocument();
     expect(screen.queryByText('This product does not come up for this')).toBeNull();
+  });
+});
+
+describe('N-R7 (review round 3) - Enter again on the same phrase', () => {
+  it('runs the search again', async () => {
+    previewSpecSearch.mockResolvedValue(answer(['p-1']));
+    mockHook(baseDetail('Water closet'));
+    renderTab();
+
+    search('one piece toilet');
+    await screen.findByText('This product comes up, 1st of 1');
+    expect(previewSpecSearch).toHaveBeenCalledTimes(1);
+
+    search('one piece toilet');
+    await waitFor(() => expect(previewSpecSearch).toHaveBeenCalledTimes(2));
   });
 });

@@ -4,7 +4,6 @@ import type { ReactNode } from 'react';
 import { Card, CardHeader } from '@/components/ui/card';
 import DetailActions from '@/components/common/DetailActions';
 import type { RecordAction } from '@/components/common/recordActions';
-import type { SpecRegistryKey } from '../../types/productSpec.types';
 
 /**
  * The record card (AC-S3.7): read-only in both modes, and NOT where the label or
@@ -22,8 +21,6 @@ export function SpecKeyRecordCard({
   pending,
   primary,
 }: {
-  /** The record the card acts on. Kept for callers; nothing on the card reads it now. */
-  row: SpecRegistryKey;
   mode: 'view' | 'edit';
   pagerNode: ReactNode;
   actions: RecordAction[];

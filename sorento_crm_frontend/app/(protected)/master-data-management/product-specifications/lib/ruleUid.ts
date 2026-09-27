@@ -14,7 +14,17 @@ export function newRuleUid(): string {
   return `new-${sequence}`;
 }
 
-/** A builder as one comparable string: keys sorted, absent parts dropped. */
+/** A part `clean_builder` leaves out of the stored form: absent, null, false, blank
+ *  or an empty list. The modal writes `ignore_below: null` and the server stores no
+ *  `ignore_below` at all, and the two must still be the same rule (S-R3). */
+const isEmptyPart = (value: unknown) =>
+  value === undefined ||
+  value === null ||
+  value === false ||
+  value === '' ||
+  (Array.isArray(value) && value.length === 0);
+
+/** A builder as one comparable string: keys sorted, empty parts dropped. */
 export function builderKey(builder: unknown): string {
   const walk = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(walk);
@@ -22,7 +32,7 @@ export function builderKey(builder: unknown): string {
       return Object.fromEntries(
         Object.keys(value as Record<string, unknown>)
           .sort()
-          .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
+          .filter((key) => !isEmptyPart((value as Record<string, unknown>)[key]))
           .map((key) => [key, walk((value as Record<string, unknown>)[key])]),
       );
     }
@@ -37,6 +47,9 @@ export function builderKey(builder: unknown): string {
  * only in the draft, so taking it away is a local edit that the next Save carries.
  */
 export function isSavedRule(rule: SpecDerivationRule, saved: readonly SpecDerivationRule[]): boolean {
+  // A rule added in this sitting is never the saved one, even when it reads the same
+  // as a saved rule: its Remove must not park a remove of that other rule (N-R8).
+  if (rule._uid?.startsWith('new-')) return false;
   const key = builderKey(rule.builder);
   return saved.some((stored) => builderKey(stored.builder) === key);
 }

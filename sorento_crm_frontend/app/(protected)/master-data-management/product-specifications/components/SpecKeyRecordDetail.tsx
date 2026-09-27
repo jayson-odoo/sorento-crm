@@ -171,7 +171,6 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
 
       <Container className="flex flex-col gap-4">
         <SpecKeyRecordCard
-          row={row}
           mode={record.mode}
           pagerNode={pagerNode}
           actions={actions}

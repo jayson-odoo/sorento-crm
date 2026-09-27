@@ -34,7 +34,7 @@ import { SPEC_REGISTRY_QUERY_KEY } from '../hooks/useSpecRegistryQuery';
 import { specKeyProductsKey } from '../hooks/useSpecKeyProductsQuery';
 import { compileBuilder, ruleCells } from '../lib/ruleSentence';
 import { isSavedRule, ruleUid } from '../lib/ruleUid';
-import { builderProblem, ruleMessage } from '../lib/ruleValidation';
+import { builderProblem, ruleChoices, ruleMessage } from '../lib/ruleValidation';
 import type {
   SpecDerivationRule,
   SpecRegistryKey,
@@ -223,7 +223,7 @@ export function SpecRulesGrid({
     // a stale pattern left over from before the inline edit is what a save's own
     // builder/pattern comparison would refuse.
     const patchBuilder = (next: SpecRuleBuilder) => {
-      const problem = builderProblem(next);
+      const problem = builderProblem(next, ruleChoices(spec));
       if (problem) {
         setCellError({ uid, message: ruleMessage(problem, row.index + 1) });
         return;
