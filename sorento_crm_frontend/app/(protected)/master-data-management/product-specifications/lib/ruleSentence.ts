@@ -248,20 +248,40 @@ export function valueItSetsCell(builder: SpecRuleBuilder, spec?: SpecRegistryKey
   return readableValue(value, undefined, spec?.value_labels);
 }
 
+/** One Only when value as a person reads it. A yes-or-no specification stores
+ *  "true" / "false" (what the engine compares), read as Yes / No. */
+export function onlyWhenValueLabel(value: unknown, other?: SpecRegistryKey): string {
+  const text = String(value).trim().toLowerCase();
+  if (other?.data_type === 'boolean' || value === true || value === false) {
+    if (text === 'true') return 'Yes';
+    if (text === 'false') return 'No';
+  }
+  return readableValue(value, undefined, other?.value_labels);
+}
+
+function onlyWhenParts(
+  builder: SpecRuleBuilder,
+  lookupSpec?: (specKey: string) => SpecRegistryKey | undefined,
+): { label: string; not: boolean; values: string[] } | null {
+  const onlyWhen = builder.only_when;
+  if (!onlyWhen) return null;
+  const other = lookupSpec?.(onlyWhen.spec);
+  return {
+    // A spec the registry no longer carries still reads as words, never its key (N-9).
+    label: other?.label || readable(onlyWhen.spec),
+    not: onlyWhen.is === false,
+    values: onlyWhen.values.map((value) => onlyWhenValueLabel(value, other)),
+  };
+}
+
 /** "Only when" cell: "Shape is not: Round, Square", or blank. */
 export function onlyWhenCell(
   builder: SpecRuleBuilder,
   lookupSpec?: (specKey: string) => SpecRegistryKey | undefined,
 ): string {
-  const onlyWhen = builder.only_when;
-  if (!onlyWhen) return '';
-  const other = lookupSpec?.(onlyWhen.spec);
-  // A spec the registry no longer carries still reads as words, never its key (N-9).
-  const label = other?.label || readable(onlyWhen.spec);
-  const values = onlyWhen.values
-    .map((value) => readableValue(value, undefined, other?.value_labels))
-    .join(', ');
-  return `${label} is${onlyWhen.is === false ? ' not' : ''}: ${values}`;
+  const parts = onlyWhenParts(builder, lookupSpec);
+  if (!parts) return '';
+  return `${parts.label} is${parts.not ? ' not' : ''}: ${parts.values.join(', ')}`;
 }
 
 /** Every rules-grid column for one rule, in one call (D14). */
@@ -283,4 +303,100 @@ export function ruleCells(
     valueItSets: valueItSetsCell(builder, spec),
     onlyWhen: onlyWhenCell(builder, lookupSpec),
   };
+}
+
+// --- The rule in one plain sentence (fix round 4, F3) ---------------------------
+//
+// Owner, 27 Sep: "how is this rule explained". The rule modal says what the rule
+// does in one sentence above its grid row, built from the same labels the grid
+// cells use, so the two never disagree.
+
+const LOOK_IN_PLACE: Record<SpecRuleLookIn, string> = {
+  any: 'the description or flyer',
+  description: 'the description',
+  flyer: 'the flyer',
+  name: 'the product name',
+};
+
+/** "A", "A or B", "A, B or C". */
+function orList(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? '';
+  return `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}`;
+}
+
+const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
+
+function place(builder: SpecRuleBuilder, specKey?: string): string {
+  const fallback: SpecRuleLookIn = specKey === 'class' ? 'name' : 'any';
+  const lookIn = 'look_in' in builder ? builder.look_in : undefined;
+  return LOOK_IN_PLACE[lookIn ?? fallback];
+}
+
+/**
+ * The rule as one sentence: "When the description or flyer contains the word
+ * BLACK and Chopping board is Yes, set Finish or colour to Black."
+ */
+export function ruleSentence(
+  builder: SpecRuleBuilder,
+  spec?: SpecRegistryKey,
+  lookupSpec?: (specKey: string) => SpecRegistryKey | undefined,
+): string {
+  const label = spec?.label || readable(spec?.spec_key ?? '');
+  const conditions: string[] = [];
+  let target = '';
+  const extras: string[] = [];
+
+  switch (builder.kind) {
+    case 'words': {
+      const words =
+        builder.words.length > 1 ? `any of the words ${orList(builder.words)}` : `the word ${builder.words[0] ?? ''}`;
+      let condition = `${place(builder, spec?.spec_key)} contains ${words}`;
+      if (builder.at_end) condition += ' at the end of the product name';
+      if (builder.skip_after?.length) condition += `, but not right after ${orList(builder.skip_after)}`;
+      conditions.push(condition);
+      target = valueItSetsCell(builder, spec);
+      break;
+    }
+    case 'number': {
+      const around: string[] = [];
+      if (builder.after?.length) around.push(`after ${orList(builder.after)}`);
+      if (builder.before?.length) around.push(`before ${orList(builder.before)}`);
+      let condition = `${place(builder, spec?.spec_key)} has a number ${around.join(' and ')}`;
+      if (builder.skip_after?.length) condition += `, but not right after ${orList(builder.skip_after)}`;
+      conditions.push(condition);
+      target = 'that number';
+      if (builder.written_in) extras.push(`written in ${builder.written_in}`);
+      if (builder.ignore_below !== undefined && builder.ignore_below !== null) {
+        extras.push(`ignoring numbers below ${builder.ignore_below}`);
+      }
+      break;
+    }
+    case 'size': {
+      const pick = builder.pick;
+      const which =
+        pick === 'L' || pick === 'W' || pick === 'H'
+          ? `the number labelled ${pick} in`
+          : `the ${lowerFirst(sizePickLabel(pick))} of`;
+      target = `${which} the size in ${place(builder, spec?.spec_key)}`;
+      break;
+    }
+    case 'code':
+      conditions.push(
+        `the product code ${CODE_MATCH_LABEL[builder.code_match].toLowerCase()} ${orList(builder.texts)}`,
+      );
+      target = valueItSetsCell(builder, spec);
+      break;
+    case 'product':
+      target = lowerFirst(PRODUCT_FACT_LABEL[builder.fact]);
+      break;
+  }
+
+  const onlyWhen = onlyWhenParts(builder, lookupSpec);
+  if (onlyWhen) {
+    conditions.push(`${onlyWhen.label} is${onlyWhen.not ? ' not' : ''} ${orList(onlyWhen.values)}`);
+  }
+
+  const action = `set ${label} to ${[target, ...extras].join(', ')}`;
+  if (conditions.length === 0) return `${action.charAt(0).toUpperCase()}${action.slice(1)}.`;
+  return `When ${conditions.join(' and ')}, ${action}.`;
 }

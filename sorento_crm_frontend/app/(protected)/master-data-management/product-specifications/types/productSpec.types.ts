@@ -226,9 +226,11 @@ export interface SpecTryResult {
   winner_index: number | null;
 }
 
-/** One row of the preview's before/after sample. */
+/** One row of the preview's before/after sample. "Before" is what the rules live
+ *  today read, not the stored value (fix round 4). */
 export interface SpecPreviewSampleRow {
   code: string;
+  name?: string | null;
   before: string | number | boolean | null;
   after: string | number | boolean | null;
 }
@@ -239,9 +241,12 @@ export interface SpecPreviewSampleRow {
 export interface SpecPreviewJobResult {
   status: 'pending' | 'done' | 'failed';
   changed?: number;
-  added?: number;
-  removed?: number;
+  now_set?: number;
+  no_longer_set?: number;
   unchanged?: number;
+  /** Products whose stored value already differs from what today's rules read. A
+   *  save re-reads them too, so it can update more products than the counts say. */
+  drift?: number;
   sample?: SpecPreviewSampleRow[];
   error?: string;
 }

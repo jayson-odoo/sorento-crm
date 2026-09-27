@@ -19,6 +19,24 @@ import type {
 } from '../types/productSpec.types';
 
 
+// The counts compare what the rules live today read with what the draft reads, in
+// the owner's words (fix round 4, 27 Sep).
+const COUNTS = [
+  ['changed', 'changed'],
+  ['now_set', 'now set'],
+  ['no_longer_set', 'no longer set'],
+  ['unchanged', 'unchanged'],
+] as const;
+
+/** Stored values that already differ from today's rules are not this draft's doing,
+ *  so they are not in the counts; a save re-reads them too, which is why it can
+ *  report more updates than the preview. */
+function driftLine(count: number): string {
+  return count === 1
+    ? "1 product has a stored value that differs from today's rules; saving this rule refreshes it too."
+    : `${count} products have a stored value that differs from today's rules; saving this rule refreshes them too.`;
+}
+
 /**
  * "Preview on catalogue" (AC-B.4): before saving, how many products would change and a
  * sample of before/after, so a rule reorder can be checked against the whole catalogue
@@ -55,7 +73,20 @@ export default function SpecPreviewPanel({
             {row.original.code}
           </span>
         ),
-        size: 160,
+        size: 130,
+      },
+      {
+        accessorKey: 'name',
+        header: 'Name',
+        cell: ({ row }) => {
+          const text = row.original.name || '-';
+          return (
+            <span className="truncate" title={text}>
+              {text}
+            </span>
+          );
+        },
+        size: 220,
       },
       {
         accessorKey: 'before',
@@ -68,7 +99,7 @@ export default function SpecPreviewPanel({
             </span>
           );
         },
-        size: 140,
+        size: 120,
       },
       {
         accessorKey: 'after',
@@ -81,7 +112,7 @@ export default function SpecPreviewPanel({
             </span>
           );
         },
-        size: 140,
+        size: 120,
       },
     ],
     [readable],
@@ -126,23 +157,16 @@ export default function SpecPreviewPanel({
       {status === 'done' && result && (
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap gap-4 text-sm">
-            <span>
-              <span className="font-medium">{result.changed ?? 0}</span>{' '}
-              <span className="text-muted-foreground">changed</span>
-            </span>
-            <span>
-              <span className="font-medium">{result.added ?? 0}</span>{' '}
-              <span className="text-muted-foreground">added</span>
-            </span>
-            <span>
-              <span className="font-medium">{result.removed ?? 0}</span>{' '}
-              <span className="text-muted-foreground">removed</span>
-            </span>
-            <span>
-              <span className="font-medium">{result.unchanged ?? 0}</span>{' '}
-              <span className="text-muted-foreground">unchanged</span>
-            </span>
+            {COUNTS.map(([field, words]) => (
+              <span key={field}>
+                <span className="font-medium">{result[field] ?? 0}</span>{' '}
+                <span className="text-muted-foreground">{words}</span>
+              </span>
+            ))}
           </div>
+          {(result.drift ?? 0) > 0 && (
+            <p className="text-xs text-muted-foreground">{driftLine(result.drift ?? 0)}</p>
+          )}
 
           {(result.sample?.length ?? 0) > 0 && (
             <DataGrid

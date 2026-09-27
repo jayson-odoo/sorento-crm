@@ -16,7 +16,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { readable, readableValue } from '@/lib/spec-readable';
 import { toast } from '@/lib/toast';
-import { compileBuilder, ruleCells } from '../lib/ruleSentence';
+import { compileBuilder, onlyWhenValueLabel, ruleCells, ruleSentence } from '../lib/ruleSentence';
 import { newRuleUid, ruleUid } from '../lib/ruleUid';
 import {
   builderProblem,
@@ -263,7 +263,8 @@ function buildBuilder(draft: RuleDraft, spec: SpecRegistryKey): SpecRuleBuilder 
   }
 }
 
-/** The rule as the one grid row it will become - never a sentence (AC-S1.7). */
+/** The rule as one plain sentence (owner, 27 Sep: "how is this rule explained"),
+ *  then the one grid row it will become. */
 function RulePreviewRow({
   builder,
   spec,
@@ -276,6 +277,10 @@ function RulePreviewRow({
   if (!builder) return <p className="text-sm text-muted-foreground">-</p>;
   const cells = ruleCells(builder, spec, lookupSpec);
   return (
+    <>
+    <p data-testid="rule-sentence" className="text-sm">
+      {ruleSentence(builder, spec, lookupSpec)}
+    </p>
     <div className="overflow-hidden rounded-md border">
       <div className="overflow-x-auto">
       <table className="w-full min-w-[560px] text-sm">
@@ -307,6 +312,7 @@ function RulePreviewRow({
       </table>
       </div>
     </div>
+    </>
   );
 }
 
@@ -326,8 +332,8 @@ export interface SpecRuleModalProps {
 
 /**
  * Add a rule / Edit (AC-S1.7, AC-S1.8, AC-S1.18): the grid's own parts, in the
- * grid's own order, every pick a `SearchableSelect` or `SearchableMultiSelect`. No
- * sentence anywhere - the fields are previewed as the one grid row they become.
+ * grid's own order, every pick a `SearchableSelect` or `SearchableMultiSelect`. The
+ * fields are previewed as one plain sentence and the one grid row they become.
  */
 export function SpecRuleModal({
   open,
@@ -402,14 +408,25 @@ export function SpecRuleModal({
     }
     return options;
   }, [registry, spec.spec_key, draft.only_when_spec]);
+  // A yes-or-no specification has no choice list: it offers Yes and No, stored as
+  // "true" / "false", the value the engine compares (fix round 4, F1).
+  const onlyWhenOther = lookupSpec(draft.only_when_spec);
   const onlyWhenValueOptions = useMemo(() => {
-    const other = lookupSpec(draft.only_when_spec);
-    const values = Array.from(new Set([...(other?.allowed_values ?? []), ...draft.only_when_values]));
+    const own = onlyWhenOther?.data_type === 'boolean' ? ['true', 'false'] : (onlyWhenOther?.allowed_values ?? []);
+    const values = Array.from(new Set([...own, ...draft.only_when_values]));
     return values.map((value) => ({
       value,
-      label: readableValue(value, undefined, other?.value_labels),
+      label: onlyWhenValueLabel(value, onlyWhenOther),
     }));
-  }, [draft.only_when_spec, draft.only_when_values, lookupSpec]);
+  }, [onlyWhenOther, draft.only_when_values]);
+  // Never "No results found." for a list that is empty to begin with (owner, 27 Sep).
+  const onlyWhenOtherLabel = onlyWhenOther?.label || (draft.only_when_spec ? readable(draft.only_when_spec) : '');
+  const onlyWhenEmptyMessage =
+    onlyWhenValueOptions.length > 0
+      ? 'No choice matches that.'
+      : onlyWhenOther?.data_type === 'numeric'
+        ? `${onlyWhenOtherLabel} is a number, so it has no choices to pick.`
+        : `${onlyWhenOtherLabel} has no choices yet.`;
 
   // The rule's own number once it has one (Edit); a rule being added has none yet.
   // Every refusal reads the server's words through the ONE shared check (S-11).
@@ -650,6 +667,9 @@ export function SpecRuleModal({
                   options={valueOptions}
                   clearable
                   placeholder="Pick a choice"
+                  emptyMessage={
+                    valueOptions.length > 0 ? 'No choice matches that.' : `${spec.label} has no choices yet.`
+                  }
                 />
               )}
             </div>
@@ -684,6 +704,7 @@ export function SpecRuleModal({
                 options={onlyWhenValueOptions}
                 disabled={!draft.only_when_spec}
                 placeholder="Its values"
+                emptyMessage={onlyWhenEmptyMessage}
                 triggerClassName="sm:flex-1"
               />
             </div>
