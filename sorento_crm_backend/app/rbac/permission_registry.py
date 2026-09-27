@@ -821,6 +821,9 @@ PERMISSION_REGISTRY.extend([
 PERMISSION_REGISTRY.extend(_crud("sales", "teams", "Sales Teams"))
 # Slice S2 (opportunities). Migration `sales_0003_opportunities` grants these the same way.
 PERMISSION_REGISTRY.extend(_crud("sales", "opportunities", "Sales Opportunities"))
+# Slice S1: `sales_0003_targets` creates and grants these the same way. `.edit` also gates a
+# period's figure, Duplicate and Add figure (plan 3.7).
+PERMISSION_REGISTRY.extend(_crud("sales", "targets", "Sales Targets"))
 
 
 def sync_permissions(db: Session, created_by_user_id: Optional[str] = None) -> int:

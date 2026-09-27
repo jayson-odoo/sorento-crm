@@ -80,10 +80,16 @@ export const MENU_SIDEBAR: MenuConfig = [
     // Sales module (plan 3.7, UAC S1-17, owner rulings 26 Sep (Lavish) L1 and
     // 26 Sep 06:01 (Lavish) N1). No group-level moduleKey: each child carries the module
     // that owns its route, so Sales Agents (module `product`, path unchanged) stays visible
-    // when `sales` is switched off. Targets joins with its own lane (S1).
+    // when `sales` is switched off.
     title: 'Sales',
     icon: TrendingUp,
     children: [
+      {
+        title: 'Targets',
+        path: '/sales/targets',
+        permission: 'sales.targets.view',
+        moduleKey: 'sales',
+      },
       {
         title: 'Opportunities',
         path: '/sales/opportunities',
@@ -1853,10 +1859,16 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     // Sales module (plan 3.7, UAC S1-17, owner rulings 26 Sep (Lavish) L1 and
     // 26 Sep 06:01 (Lavish) N1). No group-level moduleKey: each child carries the module
     // that owns its route, so Sales Agents (module `product`, path unchanged) stays visible
-    // when `sales` is switched off. Targets joins with its own lane (S1).
+    // when `sales` is switched off.
     title: 'Sales',
     icon: TrendingUp,
     children: [
+      {
+        title: 'Targets',
+        path: '/sales/targets',
+        permission: 'sales.targets.view',
+        moduleKey: 'sales',
+      },
       {
         title: 'Opportunities',
         path: '/sales/opportunities',

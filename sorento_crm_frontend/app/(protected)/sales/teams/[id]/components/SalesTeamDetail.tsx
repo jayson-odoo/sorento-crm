@@ -1,8 +1,9 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { LoaderCircleIcon, Plus, SquarePen, X } from 'lucide-react';
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { LoaderCircleIcon, Plus, SquarePen, Target, X } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
@@ -11,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import DetailActions from '@/components/common/DetailActions';
+import { PillOverflow } from '@/components/common/PillOverflow';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -25,6 +27,61 @@ import {
 import { useSalesTeamActions } from '../../actions';
 import { agentOptionLabel, agentsMovingIn, leftLabel } from '../../lib/moves';
 import type { SalesTeamDetail as Detail } from '../../types/salesTeam.types';
+import { useSalesTargets } from '../../../targets/hooks/useSalesTargets';
+import SetTargetModal from '../../../targets/components/SetTargetModal';
+import { foldBySubject } from '../../../targets/lib/fold';
+import {
+  BASIS_LABEL,
+  METRIC_LABEL,
+  formatFigure,
+  formatPct,
+  scopeSummary,
+  shortDate,
+} from '../../../targets/lib/format';
+import type { SalesTargetRow } from '../../../targets/types/salesTarget.types';
+
+/** Metric, counts and scope of a target as pills, the metric first (N4). */
+function measurePills(row: SalesTargetRow) {
+  if (!row.metric) return [];
+  return [
+    { key: 'metric', label: METRIC_LABEL[row.metric] },
+    { key: 'basis', label: row.basis ? BASIS_LABEL[row.basis] : '' },
+    { key: 'scope', label: scopeSummary(row.product_scope, row.scope_labels.length) },
+  ].filter((p) => p.label);
+}
+
+/** One agent's targets on their row: the first target's name, or a pill per target. */
+function AgentTargets({ rows, label }: { rows: SalesTargetRow[]; label: string }) {
+  if (rows.length === 1) {
+    return (
+      <Link
+        href={`/sales/targets/${rows[0].target_id}`}
+        className="block truncate text-sm text-primary hover:underline"
+        title={rows[0].name ?? undefined}
+      >
+        {rows[0].name}
+      </Link>
+    );
+  }
+  return (
+    <PillOverflow
+      ariaLabel={`Targets of ${label}`}
+      items={rows.map((r) => ({ key: r.target_id as string, label: r.name ?? '' }))}
+      renderPopover={() => (
+        <ul className="flex flex-col gap-1 text-sm">
+          {rows.map((r) => (
+            <li key={r.target_id} className="flex min-w-0 items-center justify-between gap-3">
+              <Link href={`/sales/targets/${r.target_id}`} className="truncate text-primary hover:underline">
+                {r.name}
+              </Link>
+              <span className="shrink-0 tabular-nums">{formatPct(r.achieved_pct)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    />
+  );
+}
 
 /**
  * A sales team's own page (UAC S6-13, S6-15; owner rulings 26 Sep 06:01 (Lavish) N5 and
@@ -35,9 +92,13 @@ import type { SalesTeamDetail as Detail } from '../../types/salesTeam.types';
  * control per row; nothing moves. Read-only metadata (agent count, Created, Updated) sits in
  * the header's meta strip.
  *
- * One section in this lane, always rendered: **Agents**. The Team targets section, and each
- * agent's targets on their row, arrive with S1. An agent who left this month keeps a muted
- * line with a "Left 14 Oct" pill, so the team's figure for the month is explained on screen.
+ * Two sections, in order, always rendered (S6-13, S1): **Team targets** (one line per team
+ * target active on the date, "No team target" with Set target) and **Agents**, each agent's
+ * line carrying their own targets and the first one's Target, Achieved and %. The date is the
+ * Targets page's Active on (`?on=`), today otherwise. An agent who left this month keeps a
+ * muted line with a "Left 14 Oct" pill, so the team's figure for the month is explained on
+ * screen. Set target is the header's primary action and presets this team (plan 3.9), Edit
+ * the secondary one; on an agent's line, Set target presets that agent.
  * Each agent is one line, however often they left and came back (owner ruling 26 Sep ~13:05Z).
  *
  * The leader (owner ruling 26 Sep ~13:25Z, W1) is named on its own line under the team name,
@@ -46,8 +107,15 @@ import type { SalesTeamDetail as Detail } from '../../types/salesTeam.types';
  */
 export function SalesTeamDetail({ id }: { id: string }) {
   const router = useRouter();
+  const params = useSearchParams();
+  // The Targets page's Active on date, carried in the URL; today when opened any other way.
+  const on = params.get('on') || todayMalaysiaYyyyMmDd();
   const canEdit = useHasPermission('sales.teams.edit');
-  const { data: team, isLoading, isError } = useSalesTeam(id);
+  const canSetTarget = useHasPermission('sales.targets.add');
+  const { data: team, isLoading, isError } = useSalesTeam(id, on);
+  const { data: teamTargets } = useSalesTargets({ on, subject: 'team', salesTeamId: id });
+  const { data: agentTargets } = useSalesTargets({ on, subject: 'agent', salesTeamId: id });
+  const [setTarget, setSetTarget] = useState<{ kind: 'agent' | 'team'; subjectId: string } | null>(null);
   const { data: list } = useSalesTeams('');
   const save = useSaveSalesTeam();
   const { actions, pending } = useSalesTeamActions(team, {
@@ -65,6 +133,20 @@ export function SalesTeamDetail({ id }: { id: string }) {
 
   const teams = list?.data ?? [];
   const index = teams.findIndex((t) => t.id === id);
+
+  // Team targets active on the date, one line each; an agent's own targets folded to one line.
+  const teamLines = useMemo(
+    () => (teamTargets?.rows ?? []).filter((r) => r.target_id && r.sales_team_id === id),
+    [teamTargets, id],
+  );
+  const agentLines = useMemo(() => {
+    const folded = foldBySubject(
+      (agentTargets?.rows ?? [])
+        .filter((r) => r.target_id && r.sales_agent_id)
+        .map((r) => ({ ...r, subject_key: r.sales_agent_id as string, end_date: r.end_date ?? null })),
+    );
+    return new Map(folded.map((f) => [f.subject_key, f]));
+  }, [agentTargets]);
 
   const beginEdit = (current: Detail) => {
     setName(current.name);
@@ -231,6 +313,15 @@ export function SalesTeamDetail({ id }: { id: string }) {
                 </Button>
               </div>
             ) : (
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {/* Edit is the secondary action (plan 3.9, team form view); it steps aside while a
+                  delete is counting down, as DetailActions' own primary does. */}
+              {canEdit && !pending ? (
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => beginEdit(team)}>
+                  <SquarePen className="size-4" />
+                  Edit
+                </Button>
+              ) : null}
               <DetailActions
                 pagerNode={
                   <RecordNavigation
@@ -246,17 +337,86 @@ export function SalesTeamDetail({ id }: { id: string }) {
                 actions={actions}
                 pendingAction={pending}
                 primary={
-                  canEdit ? (
-                    <Button variant="primary" size="sm" className="gap-1.5" onClick={() => beginEdit(team)}>
-                      <SquarePen className="size-4" />
-                      Edit
+                  canSetTarget ? (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => setSetTarget({ kind: 'team', subjectId: team.id })}
+                    >
+                      <Target className="size-4" />
+                      Set target
                     </Button>
                   ) : undefined
                 }
               />
+              </div>
             )}
           </div>
         </CardHeader>
+      </Card>
+
+      <Card>
+        <section aria-label="Team targets" className="flex flex-col gap-3 p-4">
+          <h3 className="text-sm font-semibold">Team targets</h3>
+          {teamLines.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed py-8 text-center">
+              <span className="text-sm font-medium">No team target</span>
+              {/* Outline: the header's Set target is the page's one primary action. */}
+              {canSetTarget ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSetTarget({ kind: 'team', subjectId: team.id })}
+                >
+                  <Plus className="size-4" />
+                  Set target
+                </Button>
+              ) : null}
+            </div>
+          ) : (
+            <ul className="flex flex-col divide-y rounded-lg border">
+              {teamLines.map((row) => (
+                <li
+                  key={row.target_id}
+                  className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-3 py-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1.5fr)_7rem_6rem_6rem_4rem]"
+                >
+                  <Link
+                    href={`/sales/targets/${row.target_id}`}
+                    className="truncate text-sm text-primary hover:underline"
+                    title={row.name ?? undefined}
+                  >
+                    {row.name}
+                  </Link>
+                  <span className="hidden min-w-0 sm:block">
+                    <PillOverflow
+                      ariaLabel={`What ${row.name} counts`}
+                      items={measurePills(row)}
+                      renderPopover={(items) => (
+                        <ul className="flex flex-col gap-1 text-sm">
+                          {items.map((i) => (
+                            <li key={i.key}>{i.label}</li>
+                          ))}
+                          {row.scope_labels.map((label) => (
+                            <li key={label} className="truncate text-muted-foreground" title={label}>
+                              {label}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    />
+                  </span>
+                  <span className="hidden truncate text-xs text-muted-foreground sm:block">
+                    {row.period_end ? `to ${shortDate(row.end_date ?? row.period_end)}` : ''}
+                  </span>
+                  <span className="hidden text-end text-sm tabular-nums sm:block">{formatFigure(row.target_value)}</span>
+                  <span className="hidden text-end text-sm tabular-nums sm:block">{formatFigure(row.achieved_value)}</span>
+                  <span className="text-end text-sm font-medium tabular-nums">{formatPct(row.achieved_pct)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </Card>
 
       <Card>
@@ -326,6 +486,12 @@ export function SalesTeamDetail({ id }: { id: string }) {
                       </Badge>
                     ) : null}
                   </span>
+                  <AgentFigures
+                    line={agentLines.get(m.sales_agent_id)}
+                    label={m.label}
+                    canSetTarget={canSetTarget && !isEditing}
+                    onSetTarget={() => setSetTarget({ kind: 'agent', subjectId: m.sales_agent_id })}
+                  />
                   {isEditing ? (
                     <Button
                       variant="ghost"
@@ -353,12 +519,61 @@ export function SalesTeamDetail({ id }: { id: string }) {
                       {leftLabel(m.valid_to)}
                     </Badge>
                   ) : null}
+                  <AgentFigures line={agentLines.get(m.sales_agent_id)} label={m.label} canSetTarget={false} />
                 </li>
               ))}
             </ul>
           )}
         </section>
       </Card>
+      {setTarget ? (
+        <SetTargetModal
+          open
+          onOpenChange={(open) => (open ? null : setSetTarget(null))}
+          presetKind={setTarget.kind}
+          presetSubjectId={setTarget.subjectId}
+        />
+      ) : null}
     </div>
+  );
+}
+
+/**
+ * An agent's figures on their row (S1): their targets, then the first target's Target,
+ * Achieved and %. A member who left in the period shows their OWN target, muted with the Left
+ * pill, which is why a team's achieved can differ from the sum of these lines (plan 16.3).
+ */
+function AgentFigures({
+  line,
+  label,
+  canSetTarget,
+  onSetTarget,
+}: {
+  line: { primary: SalesTargetRow; targets: SalesTargetRow[] } | undefined;
+  label: string;
+  canSetTarget: boolean;
+  onSetTarget?: () => void;
+}) {
+  if (!line) {
+    return (
+      <span className="ms-auto flex shrink-0 items-center gap-2">
+        <span className="text-xs text-muted-foreground">No target</span>
+        {canSetTarget && onSetTarget ? (
+          <Button variant="outline" size="sm" className="h-7" onClick={onSetTarget}>
+            Set target
+          </Button>
+        ) : null}
+      </span>
+    );
+  }
+  return (
+    <span className="ms-auto flex min-w-0 items-center justify-end gap-3">
+      <span className="hidden min-w-0 max-w-[14rem] sm:block">
+        <AgentTargets rows={line.targets} label={label} />
+      </span>
+      <span className="hidden w-24 text-end text-sm tabular-nums md:block">{formatFigure(line.primary.target_value)}</span>
+      <span className="hidden w-24 text-end text-sm tabular-nums md:block">{formatFigure(line.primary.achieved_value)}</span>
+      <span className="w-14 shrink-0 text-end text-sm font-medium tabular-nums">{formatPct(line.primary.achieved_pct)}</span>
+    </span>
   );
 }

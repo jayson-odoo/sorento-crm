@@ -559,6 +559,10 @@ def test_every_company_id_table_is_registered():
     # `sales.team_members` are one company's own teams and its agents' dated places in
     # them; the team routes load a team BY ID, so the mixin's filter is what hides another
     # company's team (UAC S6-8).
+    # PLAN-sales-targets-opportunities-26sep.md (S1) adds 3: `sales.targets`,
+    # `sales.target_periods` and `sales.target_scope` are one company's own targets, their
+    # per-period figures and their product scope rows; every target route loads BY ID, so the
+    # mixin's filter is what hides another company's target (UAC S1-13).
     # PLAN-sales-targets-opportunities-26sep.md (S2, section 16) adds 2:
     # `sales.opportunities` is one company's own pipeline entry, logged by its agent in the
     # portal or by its staff in the CRM, and `sales.opportunity_lines` are that entry's
@@ -566,7 +570,7 @@ def test_every_company_id_table_is_registered():
     # PATCH replaces the set by opportunity id and the mixin stamps the company at insert,
     # the same reason `order_inquiry_reserve_request_rows` is owned beside its request.
     # Both sit in the sales module's PURGE_ORDER and `purge_tables.json`.
-    expected_owned = 142
+    expected_owned = 145
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

@@ -18,6 +18,9 @@ from sqlalchemy.orm import Session
 from app.models.sales import (
     SalesOpportunity,
     SalesOpportunityLine,
+    SalesTarget,
+    SalesTargetPeriod,
+    SalesTargetScope,
     SalesTeam,
     SalesTeamMember,
 )
@@ -28,6 +31,9 @@ logger = logging.getLogger(__name__)
 PURGE_ORDER: List[Type] = [
     SalesOpportunityLine,
     SalesOpportunity,
+    SalesTargetScope,
+    SalesTargetPeriod,
+    SalesTarget,
     SalesTeamMember,
     SalesTeam,
 ]
