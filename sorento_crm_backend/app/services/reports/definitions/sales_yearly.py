@@ -28,9 +28,14 @@ KEY = "sales_yearly"
 PERMISSION = "sales.reports.view"
 MODULE_KEY = "sales"
 
+# One list for both bases: a key the run's dataset does not hold is left out of that run,
+# so Delivered opens on the order columns and Invoiced on the document ones.
 DEFAULT_DETAIL_COLUMNS = [
     "so_number",
+    "document_no",
     "order_date",
+    "document_date",
+    "document_type",
     "customer",
     "agent_code",
     "product_code",

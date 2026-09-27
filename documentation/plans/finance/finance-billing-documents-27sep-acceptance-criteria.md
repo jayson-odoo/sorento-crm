@@ -172,8 +172,9 @@ Grouping by the sales order type (ruling Q14, plan 3.4), not by the agent's team
   lowest-numbered linked line came from; for a CN or DN with none, the class of the document it
   is against; else its own agent's class; else the customer's market segment. Given an invoice
   from a retail SO, a cash sale with no SO whose agent is project, and a CN against a project
-  invoice, then they count in Dealer, Project team and Project team respectively. The Channel
-  filter on Invoiced offers Dealer and Project team, as on the order bases.
+  invoice, then they count in Dealer, Project team and Project team respectively, and the CN
+  stays with its invoice whichever arrived first and when the invoice is re-decided later.
+  The Channel filter on Invoiced offers Dealer and Project team, as on the order bases.
 - **S1-5 [T]** (J5) Given Basis = Invoiced, then the basis line under the filters and in the
   workbook reads "Basis: Invoiced (invoices, cash sales and debit notes less credit notes,
   excluding tax), by document date, grouped by the sales order type."
@@ -186,7 +187,7 @@ Grouping by the sales order type (ruling Q14, plan 3.4), not by the agent's team
   copy after the backfill, are recorded against the PDF in this file's "Measured" block, per block
   (Dealer, Project team) and for `(blank)`.
 - **S1-9 [BE]** (J5) Given a document the ladder cannot classify (no linked SO, no against
-  document, an agent with no demand class or none resolved, a customer with no project
+  document, an agent with no demand class or none resolved, a customer with no market
   segment), then it stores `demand_class` NULL and reads exactly as retail S1's AC-S1-4 reads an
   unclassified order: with the Channel filter cleared it is a `(blank)` row, sorted last and in
   the total; with Dealer and Project team ticked it is in neither block. The company total on

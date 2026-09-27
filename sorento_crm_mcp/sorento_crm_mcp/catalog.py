@@ -783,7 +783,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "invoiced). `company` - the "
             "company NAME the person named (Sorento, Mocha); absent = the contact's only "
             "company, or the bot is asked 'Sorento or Mocha?'. `date_from`/`date_to` on the "
-            "sales order date; absent = this calendar year to today. `n` (1 to 100) - the top "
+            "sales order date (the document date on invoiced); absent = this calendar year to today. `n` (1 to 100) - the top "
             "N rows by total, after the full count and totals.\n\n"
             "REQUIRED: pass BOTH `contact_id` (Respond.io contact id) and `space_id` - the "
             "answer is per contact (their company, their reveal key, their chat for the file)."

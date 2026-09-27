@@ -344,6 +344,53 @@ def test_no_scope_is_no_rows_on_invoiced_too(db, definition):
         assert result.layouts.summary.grand_total == {}
 
 
+def test_the_order_bases_offer_no_new_dimension(definition):
+    """The union catalog must not hand the order bases' Configure summary an axis they
+    cannot group by (review round 1 S1)."""
+    from app.services.reports.datasets import sales_order_lines as ds
+
+    order_dims = {c.key for c in ds.DATASET.columns if c.tag == "dimension"}
+    catalog_dims = {c.key for c in definition.catalog() if c.tag == "dimension"}
+    assert catalog_dims == order_dims
+
+
+def test_the_invoiced_detail_opens_with_the_documents_own_columns(db, definition):
+    """The screen ticks `default_view.detail.columns` visible (review round 1 S2)."""
+    defaults = definition.default_view["detail"]["columns"]
+    assert {"document_no", "document_date", "document_type"} <= set(defaults)
+    _doc(db, net="10.00", when=date(2026, 1, 5), doc_no="IV-DEFAULTS")
+    rows = _run(db, definition, columns=tuple(defaults)).layouts.detail.rows
+    assert rows[0]["document_no"] == "IV-DEFAULTS"
+    order_rows = _run(db, definition, columns=tuple(defaults), basis=["delivered"])
+    assert "document_no" not in [c.key for c in order_rows.layouts.detail.columns]
+
+
+def test_the_detail_tab_is_named_for_what_it_lists(db, definition):
+    assert _run(db, definition).layouts.detail.title == "Billing documents"
+    assert _run(db, definition, basis=["delivered"]).layouts.detail.title == "Sales order lines"
+
+
+def test_the_export_checks_the_view_on_the_basis_the_job_will_run():
+    """The filter bar's params win over the view's own (`_params_of`), so the button must
+    check the pivot on THAT basis (review round 1 S3)."""
+    from app.schemas.report import ReportViewConfig
+    from tests.test_sales_yearly_routes import BASE, _body, _client, _user
+
+    with blank_session() as s:
+        set_company_scope(s, frozenset({DEFAULT_COMPANY_ID}))
+        seed_mocha(s)
+        principal = _user(s, DEFAULT_COMPANY_ID)
+        view = ReportViewConfig.model_validate({
+            "params": _params(basis=["delivered"]),
+            "detail": {"columns": [], "order": []},
+            "pivot": {"rows": "year", "cols": "month_of_year", "measures": ["ordered_value"]},
+        }).model_dump(mode="json")
+        body = {**_body(basis=["invoiced"]), "view": view}
+        with _client(s, principal, allow=("sales.reports.view",)) as client:
+            response = client.post(f"{BASE}/export", json=body)
+    assert response.status_code == 422, response.text
+
+
 # ================================================================ the routes
 def test_s1_3_s1_7_the_meta_offers_invoiced_and_its_columns_to_a_sales_reports_holder():
     """S1-7: `sales.reports.view` alone; no `finance.billing_documents.view`."""

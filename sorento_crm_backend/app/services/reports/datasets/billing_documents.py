@@ -88,7 +88,9 @@ COLUMNS: Tuple[reg.Column, ...] = (
                lambda c: BillingDocument.doc_no, size=140),
     reg.Column("document_date", "Document date", "date", "date",
                lambda c: BillingDocument.doc_date, size=120),
-    reg.Column("document_type", "Type", "text", "dimension", lambda c: _TYPE_LABEL, size=110),
+    # Text, not a dimension: the report has no document axis, and a dimension here would
+    # land in the order bases' Configure summary through the union catalog.
+    reg.Column("document_type", "Type", "text", "text", lambda c: _TYPE_LABEL, size=110),
     reg.Column("customer", "Customer", "text", "text",
                lambda c: sa.func.coalesce(Customer.customer_name, BillingDocument.customer_name),
                size=220),

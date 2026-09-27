@@ -984,7 +984,11 @@ def workbook_columns(definition: reg.ReportDefinition, view: ReportViewConfig) -
     return list((definition.default_view.get("detail") or {}).get("columns") or [])
 
 
-def validate_view(definition: reg.ReportDefinition, view: ReportViewConfig) -> None:
+def validate_view(
+    definition: reg.ReportDefinition,
+    view: ReportViewConfig,
+    dataset: Optional[reg.Dataset] = None,
+) -> None:
     """Answer a bad view at the button, not in a download row a minute later.
 
     ``run`` finds these faults on the way to the screen, but ``export`` hands the view to a
@@ -995,10 +999,12 @@ def validate_view(definition: reg.ReportDefinition, view: ReportViewConfig) -> N
     for key in workbook_columns(definition, view):
         if key not in catalog:
             raise _invalid(f"Unknown detail column '{key}'")
-    # The pivot must hold on the dataset the view's own params pick.
-    dataset = definition.dataset_for(
-        {k: _as_list(v) for k, v in (view.params or {}).items()}
-    )
+    # The pivot must hold on the dataset the run will read: the caller's resolved one
+    # (the export's filter-bar params win over the view's own), else the view's params'.
+    if dataset is None:
+        dataset = definition.dataset_for(
+            {k: _as_list(v) for k, v in (view.params or {}).items()}
+        )
 
     pivot = view.pivot
     if pivot.rows == pivot.cols:

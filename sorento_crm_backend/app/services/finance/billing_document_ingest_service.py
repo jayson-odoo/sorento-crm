@@ -365,6 +365,7 @@ class BillingDocumentIngestService(MasterRefResolver):
         self.db.flush()
         self._link(doc, payload)
         self._fill_waiting_notes(doc)
+        self._redecide_notes(doc)
         return _Verdict(
             IngestOutcome.CREATED,
             str(doc.id),
@@ -419,6 +420,7 @@ class BillingDocumentIngestService(MasterRefResolver):
         self.db.flush()
         self._link(doc, payload)
         self._fill_waiting_notes(doc)
+        self._redecide_notes(doc)
         return _Verdict(IngestOutcome.UPDATED, str(doc.id), warnings, counts)
 
     def _link(self, doc: BillingDocument, payload: CanonicalBillingDocument) -> None:
@@ -567,16 +569,55 @@ class BillingDocumentIngestService(MasterRefResolver):
         3.4). The billing record states no order type, so the "stored order type" rung is
         the order its first linked line came from, else the document a note is against."""
         stored = self._order_class(lines) or self._document_class(header["against_document_id"])
-        debtor_code = header["debtor_code"] or self._customer_code(header["customer_id"])
+        return self._classify(stored, header["sales_agent_id"], header["debtor_code"],
+                              header["customer_id"])
+
+    def _classify(
+        self,
+        stored: Optional[str],
+        agent_id: Optional[str],
+        debtor_code: Optional[str],
+        customer_id: Optional[str],
+    ) -> Optional[str]:
         return classify_document(
             self.db,
             stored_order_type=stored,
             stated_order_type=None,
-            agent_demand_class=self._agent_class(header["sales_agent_id"]),
-            debtor_code=debtor_code,
+            agent_demand_class=self._agent_class(agent_id),
+            debtor_code=debtor_code or self._customer_code(customer_id),
             company_id=self.company_id,
             segment_cache=self._segment_cache,
         )
+
+    def _redecide_notes(self, doc: BillingDocument) -> None:
+        """The notes against this document follow its class (a CN reduces the block its
+        invoice counts in), whichever arrived first and however the document was re-decided
+        since. A note billed from a sales order of its own keeps that order's class.
+        Through the ORM, so the audit listener records the change."""
+        if doc.document_type not in AGAINST_TARGET_TYPES:
+            return
+        notes = (
+            self.db.query(BillingDocument)
+            .filter(
+                BillingDocument.company_id == self.company_id,
+                BillingDocument.document_type.in_(AGAINST_SOURCE_TYPES),
+                BillingDocument.against_document_id == doc.id,
+                BillingDocument.id != doc.id,
+            )
+            .all()
+        )
+        changed = False
+        for note in notes:
+            if any(line.sales_order_line_id for line in note.lines):
+                continue
+            cls = self._classify(
+                doc.demand_class, note.sales_agent_id, note.debtor_code, note.customer_id
+            )
+            if cls != note.demand_class:
+                note.demand_class = cls
+                changed = True
+        if changed:
+            self.db.flush()
 
     def _order_class(self, lines: list[dict[str, Any]]) -> Optional[str]:
         linked = [v for v in lines if v["sales_order_line_id"]]

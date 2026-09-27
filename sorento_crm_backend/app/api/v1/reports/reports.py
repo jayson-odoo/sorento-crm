@@ -285,7 +285,7 @@ def export_report(
         params = {**params, company_param: ctx.values.get(company_param) or []}
 
     view = body.view or engine.view_config(definition)
-    engine.validate_view(definition, view)
+    engine.validate_view(definition, view, ctx.dataset)
     download = DownloadService(db).create(
         user_id=str(current_user["id"]),
         kind="report_xlsx",

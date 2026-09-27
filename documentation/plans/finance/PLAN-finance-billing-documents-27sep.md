@@ -443,9 +443,16 @@ the SO ingest already share, never a copy of it:
 3. **the agent's demand class**: the document's OWN agent (ruling Q15), never the SO's;
 4. **the customer's market segment**, by `debtor_code` within the company.
 
-It is re-decided on every push that writes (a push is the whole document), so an invoice that
-landed before its sales order takes the order's class on its next push. A replay that writes
-nothing leaves it alone (UAC S0-5).
+It is re-decided on every push of the document (a push is the whole document), so an invoice
+that landed before its sales order takes the order's class on its next push. An identical
+replay stays `unchanged` and writes nothing (UAC S0-5) unless the answer itself changed (an
+order arrived, an agent's class or a customer's segment was set since): then it is an
+`updated` that writes the new class.
+
+**A note follows its document.** Whenever a document a note can be against (IV, CS, DN) is
+written, the credit and debit notes against it are re-decided on its class, so a CN reduces
+the block its invoice counts in whichever arrived first and however the invoice was
+re-decided since. A note billed from a sales order of its own keeps that order's class.
 
 **The fallback is retail S1's own.** A document the ladder cannot classify stores NULL, and
 reads exactly as an unclassified sales order does in retail sales S1 (its AC-S1-4, pinned by

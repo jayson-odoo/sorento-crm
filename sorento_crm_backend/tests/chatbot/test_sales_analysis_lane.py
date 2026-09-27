@@ -110,6 +110,11 @@ class TestToolPickAndArgs:
         assert args["basis"] == "ordered"
         assert args["company"] == "Mocha"
 
+    def test_s1_6_invoiced_reaches_the_route(self, session_factory):
+        """Finance S1 (#1309): the parser's "invoiced" is the tool's basis, not Delivered."""
+        _name, args = _args(session_factory, sales_basis="invoiced")
+        assert args["basis"] == "invoiced"
+
     def test_the_outstanding_and_sales_report_picks_are_untouched(self, session_factory):
         from app.services.chatbot.lanes.business import run_fetch
 

@@ -120,6 +120,14 @@ def test_down_then_up_again(migrated):
     assert "demand_class" in columns
 
 
+def test_downgrade_restores_the_parser_label(migrated, monkeypatch):
+    raw, conn, _scratch, module = migrated
+    calls = []
+    monkeypatch.setattr(module, "restore_parser_label", lambda bind: calls.append(bind))
+    _run(conn, module.downgrade)
+    assert len(calls) == 1
+
+
 def test_the_model_declares_the_same_check_for_a_create_all_database():
     from app.models.finance import BillingDocument
 

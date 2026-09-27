@@ -184,6 +184,37 @@ class TestTheLadder:
         env.push([_doc(ref, document_type="cash_sale", customer_code="ZZFIN-C1")])
         assert _class_of(env, ref) == "project"
 
+    def test_the_lowest_line_number_decides_whatever_the_payload_order(self, env):
+        retail = _order_line(env, demand_class="retail")
+        project = _order_line(env, demand_class="project")
+        ref = _fresh("IV")
+        record = _doc(ref, from_refs=(retail, project))
+        record["lines"].reverse()  # line 2 (project) is sent first
+        env.push([record])
+        assert _class_of(env, ref) == "retail"
+
+    def test_a_line_with_no_number_is_after_every_numbered_one(self, env):
+        retail = _order_line(env, demand_class="retail")
+        project = _order_line(env, demand_class="project")
+        ref = _fresh("IV")
+        record = _doc(ref, from_refs=(project, retail))
+        record["lines"][0]["line_number"] = None  # the project line has no number
+        env.push([record])
+        assert _class_of(env, ref) == "retail"
+
+    def test_the_segment_rung_reads_the_resolved_customers_code_when_none_is_sent(self, env):
+        from app.models.access import MarketSegment
+
+        segment = MarketSegment(code=f"PROJECTS-{uuid.uuid4().hex[:6]}", name=f"{MARKER} projects")
+        env.db.add(segment)
+        env.db.flush()
+        env.db.get(Customer, env.customer_id).market_segment_code = segment.code
+        env.db.commit()
+        ref = _fresh("CS")
+        # Named by ref only: the ladder needs the code, so it reads the resolved customer's.
+        env.push([_doc(ref, document_type="cash_sale", customer_ref="SRT_DB:ZZFIN-C1")])
+        assert _class_of(env, ref) == "project"
+
     def test_it_is_re_decided_on_the_next_push_once_the_order_has_landed(self, env):
         """An invoice pushed before its sales order falls to the agent, then takes the
         order's class the next time AutoCount pushes it."""
@@ -209,6 +240,60 @@ class TestTheLadder:
         res = env.push([record])
         assert _outcomes(res)[ref] == "unchanged"
         assert env.dump() == before
+
+
+# ============================================ S1-4: a note follows its document
+class TestANoteFollowsItsDocument:
+    """A credit or debit note reduces the block its document counts in, whatever order
+    they arrive in and however the document is re-decided later (review round 1 B1)."""
+
+    def _pair(self, env):
+        _agent(env, "ZZFIN-RET3", demand_class="retail")
+        project = _order_line(env, demand_class="project")
+        iv, cn = _fresh("IV"), _fresh("CN")
+        iv_no = f"{MARKER}-IV-{uuid.uuid4().hex[:6]}"
+        invoice = _doc(iv, doc_no=iv_no, from_refs=(project,))
+        note = _doc(cn, document_type="credit_note", against_doc_no=iv_no,
+                    agent_code="ZZFIN-RET3")
+        return iv, cn, invoice, note
+
+    def test_the_note_first_in_another_push(self, env):
+        iv, cn, invoice, note = self._pair(env)
+        env.push([note])
+        assert _class_of(env, cn) == "retail"  # its own agent, for now
+        env.push([invoice])
+        assert _class_of(env, iv) == "project"
+        assert _class_of(env, cn) == "project"
+
+    def test_the_note_first_in_the_same_batch(self, env):
+        iv, cn, invoice, note = self._pair(env)
+        res = env.push([note, invoice])
+        assert set(_outcomes(res).values()) == {"created"}
+        assert _class_of(env, cn) == "project"
+
+    def test_the_document_re_decided_later_takes_its_notes_along(self, env):
+        _agent(env, "ZZFIN-RET4", demand_class="retail")
+        so_ref = f"SRT_DB:SO:{uuid.uuid4().hex[:8]}:1"
+        iv, cn = _fresh("IV"), _fresh("CN")
+        iv_no = f"{MARKER}-IV-{uuid.uuid4().hex[:6]}"
+        invoice = _doc(iv, doc_no=iv_no, from_refs=(so_ref,), agent_code="ZZFIN-RET4")
+        env.push([invoice])
+        env.push([_doc(cn, document_type="credit_note", against_doc_no=iv_no)])
+        assert _class_of(env, cn) == "retail"
+        _order_line(env, demand_class="project", ref=so_ref)
+        env.push([invoice])
+        assert _class_of(env, iv) == "project"
+        assert _class_of(env, cn) == "project"
+
+    def test_a_note_billed_from_an_order_of_its_own_keeps_that_orders_class(self, env):
+        retail = _order_line(env, demand_class="retail")
+        project = _order_line(env, demand_class="project")
+        iv, dn = _fresh("IV"), _fresh("DN")
+        iv_no = f"{MARKER}-IV-{uuid.uuid4().hex[:6]}"
+        env.push([_doc(dn, document_type="debit_note", against_doc_no=iv_no,
+                       from_refs=(retail,))])
+        env.push([_doc(iv, doc_no=iv_no, from_refs=(project,))])
+        assert _class_of(env, dn) == "retail"
 
 
 # ===================================================================== S1-9
