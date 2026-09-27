@@ -8,6 +8,18 @@ round 3 mockup disagree, the mockup wins (owner ruling 27 Sep 00:50 MYT: "final 
 
 Status: lane A build, 27 Sep 2026. Track: full.
 
+**Round 3 text supersedes parts of this file (merged 27 Sep).** As built after round 3: the level
+values are `off | conversation | episodes | full` (`past` renamed `episodes`, label unchanged);
+`resolve_level` is the one resolver and the `context` event records `level_source`; facts are
+learned and saved at every level (the level decides what is READ, never what is WRITTEN), dry
+runs never write the profile; the parser emits `profile_statements` (a list, at most 3); `about`
+is cut to 120 chars; `respond_contacts.chatbot_recall_enabled` is dropped (check constraint on
+`chatbot_memory_level`); the PUT body field is `memory_level`; the `queued` stage carries
+`ticket` and `wait_ms` and Chat History rows carry `queue_ticket`; the memory cards live on a
+contact Chatbot tab. AC-MEM037 (tier pick persisted from chat) is not built: it conflicts with
+the owner's hand pass 10 ruling of 21 Sep 2026 (a fresh ask after a tier pick reopens the
+roster), pinned by `test_rearch_r10_handpass10_replay.py`.
+
 ## 1. Rulings the build applies (binding, from PR #1284)
 
 | ruling | applied as |
@@ -185,7 +197,7 @@ chatbot parser row.
 4. `about` (free text, stated or staff) is the reading of the Q6 ruling "anything a dealer says
    about themselves is remembered"; it is validated like `project` (newlines stripped, printed
    quoted, length capped).
-5. Facts are learned only at a level other than `off`.
+5. (Superseded by round 3: facts are learned at every level.)
 6. One schema migration for the lane (S0) carries every schema change, the contact level
    column and the usage-log turn id included; S3 adds one more migration that only publishes
    the new parser prompt version (label unmoved, the 487/513 precedent).
