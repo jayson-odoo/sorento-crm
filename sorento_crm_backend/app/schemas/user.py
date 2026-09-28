@@ -308,11 +308,11 @@ class UserResponse(UserBase):
     is_trashed: Optional[bool] = False
     is_protected: Optional[bool] = False
     # identity S1 (#1280), plan 5.3: whether the user has a password set (a
-    # phone-only user may not) + when they last proved their phone. Populated
-    # by every manual UserResponse builder (see users.py) - `response_model`
-    # silently drops an ORM-only field that isn't declared here.
+    # phone-only user may not). Populated by every manual UserResponse builder
+    # (see users.py) - `response_model` silently drops an ORM-only field that
+    # isn't declared here. `phone_verified_at` is declared once, with the S3
+    # Sign-in fields below.
     has_password: Optional[bool] = None
-    phone_verified_at: Optional[datetime] = None
     roles: Optional[List[UserRoleSimple]] = None  # Assigned roles from user_role_assignments
     superior_name: Optional[str] = None  # Superior's name for display
     # Which slice of the catalogue the product-discontinued notice reports to this

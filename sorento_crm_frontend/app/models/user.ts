@@ -45,8 +45,6 @@ export interface User {
   /** Whether the user has a password set (a phone-only user may not). */
   hasPassword?: boolean;
   has_password?: boolean;
-  phoneVerifiedAt?: Date | null;
-  phone_verified_at?: string | null;
   isTrashed: boolean;
   avatar?: string | null;
   invitedByUserId?: string | null;
