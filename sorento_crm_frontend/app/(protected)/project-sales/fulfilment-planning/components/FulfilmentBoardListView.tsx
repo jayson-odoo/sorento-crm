@@ -17,6 +17,8 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { DecisionTrailButton } from '../../_shared/components/DecisionTrailButton';
+import { SoLineAttachmentsButton } from '../../_shared/components/SoLineAttachmentsButton';
+import type { SoLineAttachmentsByLine } from '../../_shared/services/soLineAttachmentService';
 import { BoardCellBreakdownDialog } from './BoardCellBreakdownDialog';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
 import {
@@ -81,19 +83,7 @@ function boardCellForContribution(contribution: BoardContribution): BoardCell {
  * either - see `FulfilmentBoardPanel`'s own note): this is a second READING of the identical
  * data, never a second source of it.
  */
-export function FulfilmentBoardListView({
-  contributions,
-  draft,
-  onDecide,
-  onDecideMany,
-  onDecideBatch,
-  annotations,
-  externalSearch,
-  pageResetKey,
-  focusKey,
-  onFocusHandled,
-  poolSharePct,
-}: {
+export interface FulfilmentBoardListViewProps {
   contributions: BoardContribution[];
   draft: BoardDraft;
   onDecide: (key: string, decision: BoardDecision | null) => Promise<boolean> | void;
@@ -147,7 +137,43 @@ export function FulfilmentBoardListView({
    * can carry a site-pool row as readily as a cell's can.
    */
   poolSharePct?: number;
-}) {
+  /**
+   * #1312: whether the signed-in reader may upload/remove a line's own attachments
+   * (`projects.projects.edit`) - resolved by the caller (`FulfilmentBoardPanel`, which
+   * already owns every other permission check on this screen) rather than read here,
+   * so this view stays a pure renderer over its props like every other reading of the
+   * board. Defaults to false: a caller that forgets to pass it gets a read-only lightbox,
+   * never an upload surface nobody checked.
+   */
+  canEditAttachments?: boolean;
+  /**
+   * #1312 (AC-U2, fix round 1 should-fix 3): every visible line's own files, keyed
+   * by core line id - ONE lookup call `FulfilmentBoardPanel` makes over the WHOLE
+   * selection (`allContributions`, never this view's own search-filtered subset),
+   * under the app's real `QueryClientProvider`. This view stays a pure renderer
+   * over the result, like every other prop here - no hook call of its own. Optional,
+   * defaulting to `{}` (empty), only for a caller that has not wired the lookup
+   * (an older unit test rendering this view standalone) - the real caller always
+   * supplies it.
+   */
+  attachmentsByLine?: SoLineAttachmentsByLine;
+}
+
+export function FulfilmentBoardListView({
+  contributions,
+  draft,
+  onDecide,
+  onDecideMany,
+  onDecideBatch,
+  annotations,
+  externalSearch,
+  pageResetKey,
+  focusKey,
+  onFocusHandled,
+  poolSharePct,
+  canEditAttachments = false,
+  attachmentsByLine = {},
+}: FulfilmentBoardListViewProps) {
   /**
    * AC-RS-42: the Stock button and the "To plan" figure both open the SAME dialog the grid
    * view's cell strip does, scoped to this one line - never a second table reinventing what
@@ -798,6 +824,16 @@ export function FulfilmentBoardListView({
                 onDecide={(next) => onDecide(key, next)}
                 onChange={() => openRow(key)}
               />
+              {/* #1312 (AC-U1): a row with no core line id (never mirrored yet) gets
+                  no paperclip - there is nowhere to file a clarification against. */}
+              {contribution.line_id ? (
+                <SoLineAttachmentsButton
+                  lineId={contribution.line_id}
+                  label={`${contribution.so_number} L${contribution.line_no} ${contribution.item_code}`}
+                  attachments={attachmentsByLine[contribution.line_id] ?? []}
+                  canEdit={canEditAttachments}
+                />
+              ) : null}
             </div>
           );
         },
@@ -810,7 +846,16 @@ export function FulfilmentBoardListView({
         minSize: 170,
       },
     ],
-    [changeIcons, dirtySetterFor, draft, onDecide, openRow, setOpenContribution],
+    [
+      changeIcons,
+      dirtySetterFor,
+      draft,
+      onDecide,
+      openRow,
+      setOpenContribution,
+      attachmentsByLine,
+      canEditAttachments,
+    ],
   );
 
   return (
