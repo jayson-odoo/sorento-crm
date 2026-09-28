@@ -136,7 +136,6 @@ export default function CompaniesList() {
         isLoading={isLoading}
         isPlaceholderData={isPlaceholderData}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">

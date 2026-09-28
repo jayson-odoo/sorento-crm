@@ -166,6 +166,14 @@ describe('ForecastClient', () => {
     expect(screen.getByText(/Register a project/i)).toBeInTheDocument();
   });
 
+  // #1335: no subtitle line under the page title.
+  it('carries no subtitle under the page title', async () => {
+    renderPage(null);
+
+    expect(await screen.findByText('Forecast and reports')).toBeInTheDocument();
+    expect(screen.queryByText(/Three numbers, kept apart/i)).not.toBeInTheDocument();
+  });
+
   it('still shows committed money when no pursuit is live', async () => {
     // `project_count` counts LIVE pursuits, and a lost project keeps its purchase order in
     // Committed because an order does not un-happen. Gating the page on the count alone put

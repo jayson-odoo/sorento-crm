@@ -24,6 +24,7 @@ paying for an embedding call per turn to answer a question with one answer.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -519,3 +520,242 @@ def production_services(db: Session, *, space_id: str | None = None) -> ResolveG
         resolve_entity=_resolve_entity(db),
         probe=_probe(db),
     )
+
+
+def top_selling_dealer_ledgers(
+    db: Session, contact_respond_id: Any, space_id: str | None
+) -> list[tuple[str, str]] | None:
+    """A linked dealer contact's own customers as `(id, customer_name)`, or None when
+    the contact is staff or is linked to none (someone the route refuses on its own).
+
+    Reviewer S2 on PR #1273 (owner: a dealer sees only its own customers; ruling
+    pending owner confirmation): the lane never shows a linked dealer the customer
+    picker, which lists other customers' names before the route could refuse. The
+    rule is the route's own (`orders._top_selling_dealer_scope`): any active office
+    access type makes the contact staff whatever else it holds (fix round 3, owner
+    hand test 27 Sep 2026); otherwise any `respond_contact_customers` row makes it
+    that customer's dealer. Read on the engine's per-contact scoped session."""
+    from app.api.v1.order_management.orders import _top_selling_is_staff
+    from app.models.order import Customer
+    from app.services.contact_customer_service import list_links
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    if not contact_respond_id:
+        return None
+    contact_id = resolve_contact_with_null_workspace_fallback(
+        db, contact_id=str(contact_respond_id), space_id=space_id
+    )
+    if not contact_id or _top_selling_is_staff(db, contact_id):
+        return None
+    ids: list[str] = []
+    for link in list_links(db, contact_id):
+        if str(link.customer_id) not in ids:
+            ids.append(str(link.customer_id))
+    if not ids:
+        return None
+    names = {
+        str(row[0]): row[1] or ""
+        for row in db.query(Customer.id, Customer.customer_name).filter(Customer.id.in_(ids)).all()
+    }
+    return [(i, names.get(i, "")) for i in ids]
+
+
+def top_selling_dealer_customer_ids(
+    own: list[tuple[str, str]], words: list[str]
+) -> list[str] | None:
+    """The dealer's own ledgers the customer words name, or None when any word names
+    none of them (the lane then refuses). Matched the way the route matches a
+    `customer_query` (a case-insensitive substring of the name), over the dealer's own
+    ledgers only, so nothing outside them is ever looked at."""
+    matched: list[str] = []
+    for word in words:
+        needle = " ".join((word or "").split()).lower()
+        hits = [cid for cid, name in own if needle and needle in (name or "").lower()]
+        if not hits:
+            return None
+        matched.extend(h for h in hits if h not in matched)
+    return matched
+
+
+def _category_words(text: str) -> list[str]:
+    """Lower-cased words, each plural folded to its singular by one trailing `s`
+    ("sinks" -> "sink"), applied to both sides so a match is word for word."""
+    return [w[:-1] if len(w) > 3 and w.endswith("s") else w for w in (text or "").lower().split()]
+
+
+def resolve_category_token(db: Session, token: str) -> list[tuple[str, str, str]]:
+    """A top selling ask's category word, as `(id, category_code, category_name)` rows
+    (PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 4, AC-1954).
+
+    Not the generic resolver: under `order` it re-types a category token as a customer
+    (`entity_resolver._DOMAIN_HINT_EXPANSIONS`). An exact `category_code` or
+    `category_name` (case-insensitive, a plural folded) wins alone; otherwise a category
+    matches when the word is a whole-word run of its name ("sinks" is in "KITCHEN
+    SINK"). Never the reverse (reviewer S1, PR #1273: "kitchen sinks" took the category
+    KIT and "basin mixers" took BASIN beside BASIN MIXER, a silent widening). Several
+    matches are returned for the lane to ASK about, never all kept. Read under the
+    engine's per-contact company scope, like `resolve_warehouse_token` above."""
+    from app.models.product import ProductCategory
+
+    word = " ".join((token or "").split()).lower()
+    if not word:
+        return []
+    words = _category_words(word)
+    rows = [
+        (str(r[0]), r[1] or "", r[2] or "")
+        for r in db.query(ProductCategory.id, ProductCategory.category_code, ProductCategory.category_name)
+        .order_by(ProductCategory.category_name)
+        .all()
+    ]
+    exact = [
+        r for r in rows
+        if r[1].lower() == word or r[2].lower() == word or _category_words(r[2]) == words
+    ]
+    if exact:
+        return exact
+
+    def _has_run(name: str) -> bool:
+        have = _category_words(name)
+        return any(have[i : i + len(words)] == words for i in range(len(have) - len(words) + 1))
+
+    return [r for r in rows if _has_run(r[2])]
+
+
+
+# --------------------------------------------------------------------------- #
+# Fix lane round 4 (owner retest of top selling, 27 Sep 2026): the words a ranking is
+# narrowed by, matched against their own tables under the engine's per-contact company
+# scope. Never the generic resolver, which types a brand or a person as a customer.
+# --------------------------------------------------------------------------- #
+
+
+def _norm(text: str | None) -> str:
+    return " ".join((text or "").split()).lower()
+
+
+def _whole_word_run(needle: str, haystack: str) -> bool:
+    """`needle`'s words appear together, in order, inside `haystack`'s words."""
+    want, have = _category_words(needle), _category_words(haystack)
+    return bool(want) and any(have[i : i + len(want)] == want for i in range(len(have) - len(want) + 1))
+
+
+def resolve_sales_agent_token(db: Session, token: str) -> list[tuple[str, str]]:
+    """Sales agents a word names, as `(id, sales_agent code)`. Matched the way the
+    route matches a customer name (a case-insensitive part of the name), on the agent
+    code ("FANNY", "SEAN I") and on its person label, whole words only, so "an" never
+    names every agent. Inactive agents still sold what they sold, so they match too."""
+    from app.models.sales_agent import SalesAgent
+
+    word = _norm(token)
+    if not word:
+        return []
+    rows = (
+        db.query(SalesAgent.id, SalesAgent.sales_agent, SalesAgent.person_label, SalesAgent.aliases)
+        .order_by(SalesAgent.sales_agent)
+        .all()
+    )
+    exact = [(str(r[0]), r[1]) for r in rows if word in (_norm(r[1]), _norm(r[2]))]
+    if exact:
+        return exact
+    named = [(str(r[0]), r[1]) for r in rows if _whole_word_run(word, r[1] or "") or _whole_word_run(word, r[2] or "")]
+    if named:
+        return named
+    # "Also known as" (PR #1273 round 7: "WT is william"). A name belongs to the PERSON,
+    # so it covers every account of theirs, whichever one the owner typed it on.
+    hits = [r for r in rows if any(_whole_word_run(word, alias) for alias in (r[3] or "").split(","))]
+    stems = {_code_stem(r[1]) for r in hits}
+    labels = {_norm(r[2]) for r in hits if _norm(r[2])}
+    return [(str(r[0]), r[1]) for r in rows if _code_stem(r[1]) in stems or (_norm(r[2]) and _norm(r[2]) in labels)]
+
+
+#: The account numeral a person's codes end in ("WT I", "WT III", "SEAN IV").
+_ACCOUNT_NUMERAL = re.compile(r"\s+(?:I|II|III|IV|V|VI|VII|VIII|IX|X)$", re.IGNORECASE)
+
+
+def _code_stem(code: str | None) -> str:
+    """An agent code without its account numeral ("WT III" -> "wt"): the person the
+    master's own `(name, I|III|IV)` split names."""
+    return _norm(_ACCOUNT_NUMERAL.sub("", code or ""))
+
+
+def customers_named(db: Session, token: str, *, limit: int = 50) -> list[tuple[str, str]]:
+    """Customers whose name carries the word as whole words, `(id, customer_name)`, at
+    most `limit`: enough to tell whether "fanny" could also be a customer."""
+    from app.models.order import Customer
+    from app.services.sales_report_service import _LIKE_ESCAPE, _escape_like
+
+    word = _norm(token)
+    if len(word) < 3:
+        return []
+    rows = (
+        db.query(Customer.id, Customer.customer_name)
+        .filter(Customer.customer_name.ilike(f"%{_escape_like(word)}%", escape=_LIKE_ESCAPE))
+        .order_by(Customer.customer_name)
+        .limit(limit)
+        .all()
+    )
+    return [(str(r[0]), r[1] or "") for r in rows if _whole_word_run(word, r[1] or "")]
+
+
+def resolve_brand_token(db: Session, token: str, *, exact_only: bool = False) -> list[tuple[str, str]]:
+    """Brands a word names, `(id, brand_name)`, from the live `brands` table (the list
+    PR #1301 reads for its `Known brands` line). An exact brand name or code wins;
+    otherwise, unless `exact_only`, a brand whose name is a whole word of the message's
+    word ("sorento brand" names Sorento)."""
+    from app.models.product import Brand
+
+    word = _norm(token)
+    if not word:
+        return []
+    rows = db.query(Brand.id, Brand.brand_name, Brand.brand_code).order_by(Brand.brand_name).all()
+    exact = [(str(r[0]), r[1]) for r in rows if word in (_norm(r[1]), _norm(r[2]))]
+    if exact or exact_only:
+        return exact
+    return [(str(r[0]), r[1]) for r in rows if _whole_word_run(r[1] or "", word)]
+
+
+def resolve_category_class(db: Session, token: str) -> tuple[list[str], list[str]]:
+    """A category word through the catalogue's class vocabulary, the one the stock ask
+    reads (`product_class_signal.resolve_classes_for_term`: a class label, its synonyms,
+    classes products carry, staff synonyms). Returns `(category ids, class labels)`.
+    Category names are copies of their codes on live rows (SRT-WC), so "water closet"
+    only ever meets its categories here.
+
+    No exact hit: the class whose label or synonym is a whole word run of the word
+    ("water tap" holds "tap"), taken only when exactly one class answers; several are
+    returned as labels with no ids for the lane to ask about."""
+    from app.models.product import ProductCategory
+    from app.services.product_class_signal import resolve_classes_for_term
+
+    word = _norm(token)
+    if not word:
+        return [], []
+    labels = set(resolve_classes_for_term(db, word))
+    singular = " ".join(_category_words(word))
+    if not labels and singular != word:
+        labels = set(resolve_classes_for_term(db, singular))
+    if not labels:
+        rows = (
+            db.query(ProductCategory.class_label, ProductCategory.search_synonyms)
+            .filter(ProductCategory.is_searchable.is_(True), ProductCategory.class_label.isnot(None))
+            .all()
+        )
+        vocabulary: dict[str, set[str]] = {}
+        for label, synonyms in rows:
+            words = {label, *[str(x) for x in (synonyms or [])]}
+            vocabulary.setdefault(label, set()).update(words)
+        labels = {
+            label for label, words in vocabulary.items() if any(_whole_word_run(w, word) for w in words if w)
+        }
+        if len(labels) > 1:
+            return [], sorted(labels)
+    if not labels:
+        return [], []
+    ids = [
+        str(r[0])
+        for r in db.query(ProductCategory.id)
+        .filter(ProductCategory.class_label.in_(sorted(labels)))
+        .order_by(ProductCategory.category_code)
+        .all()
+    ]
+    return ids, sorted(labels)

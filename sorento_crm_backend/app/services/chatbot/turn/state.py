@@ -141,6 +141,14 @@ class Focus:
     # `{"term", "options", "ask"}`, read only by that question's answer ("tap" after "Did
     # you mean tap or wash basin?") and cleared by every other turn.
     set_clarify: dict[str, Any] | None = None
+    # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 8: a top selling
+    # ask's own axes (`rank_by`, `basis`, `rank_group`, `top_n`, the category words and a
+    # picked row's `detail_code` / `category_code`), carried while `status ==
+    # "top_selling"`. The metric, grain, basis and count questions are answered in a
+    # SECOND message that names only the answer, so the ask they complete has to be
+    # somewhere; `turn/apply._top_selling_rules` is its one writer. One slot, not four
+    # fields: every key lives and dies with the one ask.
+    top_selling: dict[str, Any] | None = None
     # Ported from PR #1118 (not merged) for chatbot-stock-ask-v2 S3: what the
     # conversation still OWES (Focus.tasks, D21). A tuple of `turn/task.py::Task`, at
     # most one per kind. Its own axis rather than a flag on `products`, because
@@ -226,6 +234,7 @@ def focus_to_wire(focus: Focus) -> dict[str, Any]:
     wire["date_window"] = focus.date_window
     wire["set_page"] = focus.set_page
     wire["set_clarify"] = focus.set_clarify
+    wire["top_selling"] = dict(focus.top_selling) if focus.top_selling else None
     # Ported from PR #1118 (not merged): the open tasks travel INSIDE the focus, not
     # on a session key of their own - the focus is the context, and a second key
     # could disagree with it.
@@ -281,6 +290,8 @@ def focus_from_wire(raw: Any) -> Focus:
     focus.set_page = page if isinstance(page, dict) else None
     clarify = raw.get("set_clarify")
     focus.set_clarify = clarify if isinstance(clarify, dict) else None
+    top_selling = raw.get("top_selling")
+    focus.top_selling = dict(top_selling) if isinstance(top_selling, dict) else None
     tasks = raw.get("tasks")
     if isinstance(tasks, list):
         # Ported from PR #1118 (not merged): a focus persisted before this slice

@@ -14,7 +14,8 @@ import type {
 
 /**
  * The letterhead, laid out the way the customer reads it on the printed quotation: the refs
- * that get quoted back on the right, who it is to on the left, then the one line naming the job.
+ * that get quoted back on the right, who it is to on the left. The line naming the job is not
+ * repeated here as a read: the record header above the card already shows it (#1335).
  *
  * Every field here ARRIVES derived - recipient from the project's party, subject from the project
  * title, ref from the numbering rule. The screen shows them rather than asking for them, which
@@ -222,8 +223,10 @@ export function QuotationDocumentHeader({
           </div>
         </div>
 
-        <div className="border-t border-border pt-4 md:col-span-2">
-          {onChange ? (
+        {/* The subject is only an input here. As a read it would repeat the project title the
+            record header already shows right above this card (#1335). */}
+        {onChange ? (
+          <div className="border-t border-border pt-4 md:col-span-2">
             <EditField id="quotation-subject-title" label="Subject">
               <Input
                 id="quotation-subject-title"
@@ -232,12 +235,8 @@ export function QuotationDocumentHeader({
                 placeholder="The one line naming the job"
               />
             </EditField>
-          ) : (
-            <p className="min-w-0 break-words text-sm font-semibold uppercase tracking-wide">
-              {document.subject_title ?? '-'}
-            </p>
-          )}
-        </div>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

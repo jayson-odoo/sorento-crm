@@ -133,7 +133,6 @@ export default function BrandsList() {
         rowHref={(row) => `/master-data-management/brands/${row.id}`}
         rowPending={rowPending}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">

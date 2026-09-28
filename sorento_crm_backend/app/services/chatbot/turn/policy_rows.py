@@ -164,6 +164,9 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
             # `tools[0]` - the pick is an override in
             # `lanes/business/__init__.py::run_fetch`, beside the outstanding one.
             "crm_sales_report",
+            # PLAN-chatbot-top-x-hot-selling-24sep.md S3 (AC-1941): same rule, an
+            # allow-list member only; migration `chatbot_top_selling_tool`.
+            "crm_top_selling_report",
             # PLAN-retail-sales-reports-26sep S1: an allow-list member only, picked by
             # the `sales_analysis` override in `run_fetch`, never `tools[0]`. Migration
             # `sales_s1_reports_module` adds it to a seeded database.
@@ -339,6 +342,7 @@ DATE_PARAM_TOOLS: set[str] = {
     "crm_outstanding_report",
     "crm_sales_report",
     "crm_low_stock_report",
+    "crm_top_selling_report",
     "crm_sales_analysis",
 }
 

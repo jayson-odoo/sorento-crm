@@ -67,8 +67,6 @@ export function PipelineBoard({
       <EmptyState
         title="No pipeline stages configured"
         body="The board shows one column per configured project status. Set them up under System Management → Status Graphs, then projects will appear here."
-        actionHref="/system-management/status-graphs"
-        actionLabel="Configure stages"
       />
     );
   }
@@ -318,29 +316,12 @@ function formatNextActionDate(iso: string): string {
   return date.toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-export function EmptyState({
-  title,
-  body,
-  actionHref,
-  actionLabel,
-}: {
-  title: string;
-  body: string;
-  actionHref?: string;
-  actionLabel?: string;
-}) {
+/** Heading and hint only: the page's one CTA lives in its header (PR #1336). */
+export function EmptyState({ title, body }: { title: string; body: string }) {
   return (
     <div className="rounded-lg border border-dashed border-border px-6 py-12 text-center">
       <h3 className="text-sm font-semibold">{title}</h3>
       <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">{body}</p>
-      {actionHref && actionLabel && (
-        <Link
-          href={actionHref}
-          className="mt-4 inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-        >
-          {actionLabel}
-        </Link>
-      )}
     </div>
   );
 }

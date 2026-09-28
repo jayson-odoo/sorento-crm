@@ -310,7 +310,6 @@ export function SpecRegistryGrid() {
       listingKey="master_data.spec_registry.view::v2"
       tableLayout={{ width: 'fixed', columnsResizable: true }}
       emptyMessage="No specifications match that search."
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

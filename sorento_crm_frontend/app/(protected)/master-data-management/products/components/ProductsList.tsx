@@ -878,7 +878,6 @@ const ProductsList = () => {
       tableClassNames={{
         edgeCell: 'px-5',
       }}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

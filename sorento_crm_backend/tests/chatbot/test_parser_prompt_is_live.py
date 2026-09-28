@@ -36,6 +36,7 @@ from app.services.chatbot_parser_prompt import (
     SALES_REPORT_ADDENDUM,
     SPECIFICATION_ADDENDUM,
     STOCK_TASK_ADDENDUM,
+    TOP_SELLING_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
 )
 
@@ -204,13 +205,16 @@ def _without_growth_r1_addendum(text: str) -> str:
     tail once `LAST_COST_ADDENDUM` is off lives in
     `test_parser_growth_r1_reachability.py::test_the_addendum_is_appended_to_both_bodies`.
     """
-    # ESCALATION_CONFIRMATION_ADDENDUM (#1323) is the newest addendum, so it comes off
-    # FIRST, then the #1262 pair (KNOWN_BRANDS_ADDENDUM, QUANTITY_ADDENDUM), then
+    # ESCALATION_CONFIRMATION_ADDENDUM (#1323) is the prompt's tail, so it is peeled
+    # first; `TOP_SELLING_ADDENDUM` (PLAN-chatbot-top-x-hot-selling-24sep.md S4) sits
+    # beneath it, then the #1262 pair (KNOWN_BRANDS_ADDENDUM, QUANTITY_ADDENDUM), then
     # SPECIFICATION_ADDENDUM (fix round 8 on PR #833), then SALES_ANALYSIS_ADDENDUM
     # (#1267 S1), then STOCK_TASK_ADDENDUM (ported from PR #1118, not merged,
     # chatbot-stock-ask-v2 S3).
     if text.endswith(ESCALATION_CONFIRMATION_ADDENDUM):
         text = text[: -len(ESCALATION_CONFIRMATION_ADDENDUM)]
+    if text.endswith(TOP_SELLING_ADDENDUM):
+        text = text[: -len(TOP_SELLING_ADDENDUM)]
     if text.endswith(KNOWN_BRANDS_ADDENDUM):
         text = text[: -len(KNOWN_BRANDS_ADDENDUM)]
     if text.endswith(QUANTITY_ADDENDUM):

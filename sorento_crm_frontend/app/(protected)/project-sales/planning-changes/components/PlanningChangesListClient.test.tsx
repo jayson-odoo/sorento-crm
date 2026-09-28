@@ -139,6 +139,17 @@ describe('PlanningChangesListClient - empty state', () => {
       ),
     ).toBeInTheDocument();
   });
+
+  // #1335: no subtitle line under the page title.
+  it('carries no subtitle under the page title', async () => {
+    listPlanningChangeBatches.mockResolvedValue(envelope([]));
+    renderClient();
+
+    await screen.findByText('No planning changes yet');
+    expect(
+      screen.queryByText('Every re-uploaded sales order book that moved a planned line.'),
+    ).not.toBeInTheDocument();
+  });
 });
 
 describe('PlanningChangesListClient - error state', () => {
