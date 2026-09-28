@@ -1,6 +1,6 @@
 # PLAN: one branded email layout for every outgoing mail, theme and element order configurable (#1349)
 
-**Status:** building (full track: migration + a new System Management page). Plan committed first; owner alignment notes arrive as a later round on the same PR.
+**Status:** built, reviewed (reviewer + security), browser-verified at 1280/375; waiting on main's two alembic heads to be joined, then one re-parent push, and on the owner's alignment round (Q1 to Q8). Full track.
 **Base:** origin/main `445cb1eb37f4e66820f007ca4730c09ee0225128`. `alembic heads` on it: `merge_28sep_batch3 (head)`, one head.
 **Lane branch:** `claude/email-layout-theme-h8nb3p` (the session-designated branch; the brief named `feat/email-layout-theme`, the harness only allows pushes to the designated one). One PR against main.
 **UAC:** `email-layout-28sep-acceptance-criteria.md` (AC-EM001 onward). **Alignment page:** `ALIGN-email-layout.html`.
