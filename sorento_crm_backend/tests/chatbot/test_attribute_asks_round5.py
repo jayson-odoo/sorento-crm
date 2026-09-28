@@ -150,10 +150,13 @@ def test_s1_a_set_whose_only_other_finish_is_a_dual_finish_says_it(chat, world):
         "any gunmetal water closet has incoming",
         _ask("incoming", "gunmetal water closet", "any gunmetal water closet has incoming"),
     )
-    assert text.startswith(
-        "No gunmetal water closets with incoming stock "
-        "(I looked for Finish or colour: Gunmetal among water closets). "
-        "1 water closet has incoming stock in another finish or colour: Black 1, Rose gold 1."
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: no explanations, the one reply structure): the other finishes are the
+    # breakdown lines; the dual-finish product is listed under each of its finishes.
+    assert text == (
+        "Here's what you want: gunmetal water closets with incoming stock\n"
+        "• Black water closets: 1\n"
+        "• Rose gold water closets: 1\n\n"
+        "Couldn't find: gunmetal (finish or colour). Would you like me to escalate to purchasing team?"
     ), text
 
 
@@ -175,9 +178,8 @@ def test_s1_a_dual_finish_product_is_counted_once_beside_the_scalar_ones(chat, w
         "any gunmetal bathtub has incoming",
         _ask("incoming", "gunmetal bathtub", "any gunmetal bathtub has incoming"),
     )
-    assert (
-        "3 bathtubs have incoming stock in another finish or colour: White 2, Black 1, Rose gold 1." in text
-    ), text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: no explanations, the one reply structure): one line per other finish.
+    assert "• White bathtubs: 2\n• Black bathtubs: 1\n• Rose gold bathtubs: 1\n" in text, text
 
 
 # --------------------------------------------------------------------------- #

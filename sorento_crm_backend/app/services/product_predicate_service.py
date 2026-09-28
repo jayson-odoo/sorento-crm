@@ -1077,7 +1077,8 @@ def resolve_product_set(
     # in weight order, then by count. No weighted brand in the set leaves the set whole; a
     # brand the customer named always wins.
     other_brands: list[dict[str, Any]] = []
-    if prefer_weighted_brand and not brand:
+    set_brands: list[dict[str, Any]] = []
+    if not brand:
         per_brand = (
             _base(db.query(Brand.brand_name, Brand.chatbot_weight, func.count(func.distinct(family))))
             .join(Brand, Brand.id == Product.brand_id)
@@ -1094,7 +1095,12 @@ def resolve_product_set(
             counts[name] = counts.get(name, 0) + int(n)
             weights[name] = max(weights.get(name, 0.0), float(weight or 0))
         ranked = sorted(counts, key=lambda name: (-weights[name], -counts[name], name))
-        if ranked and weights[ranked[0]] > 0:
+        # Fix round 9 on PR #833: no brand named means every brand. The set's brands are
+        # still returned (never said in the reply), so a brand named next narrows this set
+        # (`turn_runtime.with_brand_from_offer`).
+        if len(ranked) > 1:
+            set_brands = [{"brand": _display_name(name), "count": counts[name]} for name in ranked]
+        if prefer_weighted_brand and ranked and weights[ranked[0]] > 0:
             brand = ranked[0]
             brand_is_default = True
             other_brands = [{"brand": _display_name(name), "count": counts[name]} for name in ranked[1:]]
@@ -1277,6 +1283,8 @@ def resolve_product_set(
         outcome["brand_default"] = True
     if other_brands:
         outcome["other_brands"] = other_brands
+    elif set_brands:
+        outcome["set_brands"] = set_brands
     # R4 (round 4 on PR #833): a set that qualifies nothing says what it looked for and
     # how many qualify in the key's other values.
     if not qualifying_total and not product_ids:

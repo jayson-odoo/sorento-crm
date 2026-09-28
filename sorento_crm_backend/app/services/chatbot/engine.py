@@ -2652,7 +2652,9 @@ def _run_stages(  # noqa: PLR0915
                         ),
                         shown=0 if withheld else min(asked, business_answer.SET_LIST_MAX),
                     )
-                elif predicate is not None and plan.fetch and spec_tier and predicate.get("other_brands"):
+                elif predicate is not None and plan.fetch and spec_tier and (
+                    predicate.get("other_brands") or predicate.get("set_brands")
+                ):
                     # Round 7 item 6: the reply closed with "Other brands ... Name one to
                     # see them.", so the brand named next narrows this set.
                     state_out.focus.set_page = turn_runtime.set_page_carry(

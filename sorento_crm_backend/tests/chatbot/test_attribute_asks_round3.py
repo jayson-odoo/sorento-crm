@@ -333,7 +333,7 @@ def test_w1_the_header_is_one_short_line(chat, world):
     text = chat.say("which water closet has stock, p trap", _wc_ptrap())
     brand = _display(world["sorento"].brand_name)
     assert text.split("\n\n", 1)[0].splitlines() == [
-        f"Stock summary for {brand} P trap water closets with stock (5).",
+        f"Stock summary for {brand} P trap water closets (5).",
     ], text
     assert "*Brand:*" not in text and "*Product type:*" not in text and "*Trap:*" not in text, text
 
@@ -386,12 +386,12 @@ def test_w2_a_count_after_a_listed_page_continues_the_same_set(chat, world, smal
     """
     brand = _display(world["sorento"].brand_name)
     ask = chat.say("which water closet has stock, p trap", _wc_ptrap())
-    assert f"Stock summary for {brand} P trap water closets with stock (5). That is too many to list" in ask, ask
+    assert f"Stock summary for {brand} P trap water closets (5). That is too many to list" in ask, ask
 
     page1 = chat.say("2", _bare(top_n=2))
     page2 = chat.say("2", _bare(**parser_reads))
 
-    head = f"Stock summary for {brand} P trap water closets with stock (5"
+    head = f"Stock summary for {brand} P trap water closets (5"
     assert one_line_header(page2) == f"{head}, showing 3 to 4).", page2
     assert "Stock summary for the requested products" not in page2, page2
     assert [b[0].split(".")[0] for b in _blocks(page2)] == ["3", "4"], page2
@@ -455,7 +455,7 @@ def test_w3_which_basin_has_cert_after_a_water_closet_set_is_a_new_certificate_s
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
     # header is the product-code answer's own intro naming the described set and its count.
     brand = _display(world["sorento"].brand_name)
-    assert one_line_header(text) == f"Certificates found for {brand} wash basins with certificates (3).", text
+    assert one_line_header(text) == f"Certificates found for {brand} wash basins (3).", text
     assert _codes_in(text, world) == _codes(world["srt_basins"]), text
     assert not text.startswith("Product:"), text
     calls = chat.calls[before:]
@@ -561,7 +561,7 @@ def test_w4_a_named_brand_answers_that_brand_only(chat, world):
     )
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
     # header is the product-code answer's own intro naming the described set and its count.
-    assert one_line_header(text) == f"Stock summary for {_display(mocha)} wash basins with stock (1).", text
+    assert one_line_header(text) == f"Stock summary for {_display(mocha)} wash basins (1).", text
     assert "Other brands" not in text, text
 
 

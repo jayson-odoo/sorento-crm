@@ -21,7 +21,12 @@ from tests.chatbot.test_attribute_asks_round3 import world as r3world  # noqa: F
 from tests.chatbot.test_engine import stub_access, stub_parser  # noqa: F401 - fixtures used by name
 from tests.chatbot.test_reverse_asks_owner_phrasings import _class_category
 
-EIGHT = "I don't know 't trap' as a trap. I know P trap and S trap."
+# Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): the one reply structure, no list
+# of known choices.
+EIGHT = (
+    "Here's what you want: water clost t trap\n\n"
+    "Couldn't find: t trap (trap). Would you like me to escalate to purchasing team?"
+)
 
 # --------------------------------------------------------------------------- #
 # B1-r5: a product names a phrase only as whole words                           #

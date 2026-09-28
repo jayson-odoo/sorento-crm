@@ -557,8 +557,8 @@ def test_f1_no_word_that_chose_the_incoming_domain_is_said_back_on_a_class_ask(c
     message = f"any kitchen sink {word}"
     text = chat.say(message, _ask("incoming", "kitchen sink", message, requested_attributes=["incoming"]))
     assert "did not understand" not in text, text
-    brand = _display(world["sorento"].brand_name)
-    assert f"Incoming stock found for {brand} kitchen sinks with incoming stock (2)." in _header(text), text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every brand.
+    assert "Incoming stock found for kitchen sinks (2)." in _header(text), text
 
 
 def test_f1_each_row_of_a_multi_product_eta_answer_has_the_single_product_structure(chat, world):
@@ -666,9 +666,9 @@ def test_f4_a_described_stock_set_keeps_the_normal_header(chat, world):
     header is the product-code answer's own intro naming the described set (brand, trap and
     product type all still named, inside the phrase) and its count."""
     text = chat.say(M5, _v5())
-    sorento = _display(world["sorento"].brand_name)
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every brand: all 9.
     assert _header(text) == [
-        f"Stock summary for {sorento} P trap close coupled water closets with stock (4).",
+        "Stock summary for P trap close coupled water closets (9).",
     ], text
     assert not re.search(r"^\*Type:\*", text, re.MULTILINE), text
     assert "*Brand:*" not in text and "*Product type:*" not in text and "*Trap:*" not in text, text
@@ -690,13 +690,15 @@ def test_f5_a_brand_from_the_offer_narrows_the_same_set(chat, world, reading):
     """Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
     header is the product-code answer's own intro naming the described set."""
     first = chat.say(M5, _v5())
-    cabana, mocha = _display(world["cabana"].brand_name), _display(world["mocha"].brand_name)
-    assert first.splitlines()[-1] == f"Other brands with stock: {mocha} 2, {cabana} 3. Name one to see them.", first
+    cabana = _display(world["cabana"].brand_name)
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): the set is every brand and no "Other brands" line
+    # is said; a brand named next still narrows the same set.
+    assert "Other brands" not in first and "(9)" in first.splitlines()[0], first
     word = _brand_word(world, "cabana")
     verdict = _brand_pick(world, "cabana") if reading == "stock-intent" else _bare(entities=[_entity(word, "brand")])
     text = chat.say(word, verdict)
     assert _header(text) == [
-        f"Stock summary for {cabana} P trap close coupled water closets with stock (3).",
+        f"Stock summary for {cabana} P trap close coupled water closets (3).",
     ], text
     assert _codes_listed(text, world) == {p.product_code for p in world["close_couple"]["cabana"]}, text
     assert "Other brands" not in text, text
@@ -803,16 +805,19 @@ def test_replay_the_owners_seven_messages(chat, world):
     # 5: the normal stock header; no miss tail. Amended to the round 8 ruling on PR #833
     # (owner retest of round 7, 27 Sep 2026): the header is the product-code answer's own
     # intro naming the described set and its count.
-    assert _header(five) == [f"Stock summary for {sorento} P trap close coupled water closets with stock (4)."], five
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every
+    # brand, and no "Other brands" line.
+    assert _header(five) == ["Stock summary for P trap close coupled water closets (9)."], five
     assert "could not find" not in five.lower(), five
     # 6: the brand narrows the same set, and the counts agree.
-    assert f"{cabana} 3" in five.splitlines()[-1], five
-    assert _header(six) == [f"Stock summary for {cabana} P trap close coupled water closets with stock (3)."], six
+    assert "Other brands" not in five, five
+    assert _header(six) == [f"Stock summary for {cabana} P trap close coupled water closets (3)."], six
     assert _codes_listed(six, world) == cabana_rows, six
     # "50" and "10" stay on the same three products.
     for reply in (fifty, ten):
         assert _codes_listed(reply, world) <= cabana_rows, reply
-        assert "1,1" not in reply and "with stock" in reply, reply
+        # Amended to fix round 9 on PR #833: the intro names its leg once.
+        assert "1,1" not in reply and reply.startswith("Stock summary for"), reply
     # 7: certificates only, in the attachment structure; no miss tail.
     for reply in (seven_a, seven_b):
         assert "Product Photos" not in reply, reply

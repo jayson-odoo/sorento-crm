@@ -2714,7 +2714,7 @@ def set_page_carry(
     total = int(predicate.get("qualifying_total") or 0)
     offered = [
         {"brand": str(o.get("brand")), "count": int(o.get("count") or 0)}
-        for o in (predicate.get("other_brands") or [])
+        for o in (predicate.get("other_brands") or predicate.get("set_brands") or [])
         if isinstance(o, dict) and str(o.get("brand") or "").strip() and o.get("count")
     ]
     if offer_only and not offered:

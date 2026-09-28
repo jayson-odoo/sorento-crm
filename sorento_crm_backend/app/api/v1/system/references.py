@@ -1368,6 +1368,17 @@ class ResolveReferenceRequest(BaseModel):
             "the known choices before anything is counted or searched."
         ),
     )
+    set_list_max: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Fix round 9 on PR #833: the longest set the caller lists in one reply. A "
+            "`require` set longer than it carries `predicate.breakdown` (its members "
+            "counted by the next attribute), and a set that qualifies nothing carries "
+            "`predicate.members` (the described products without the legs). Absent: "
+            "neither is computed."
+        ),
+    )
     hidden_spec_keys: list[str] | None = Field(
         default=None,
         description=(
@@ -1637,13 +1648,6 @@ def _with_grounded_unknowns(found: list[dict], grounded: list[dict] | None) -> l
     extra = [dict(u) for u in (grounded or []) if isinstance(u, dict) and str(u.get("said") or "").strip()]
     keys = {u.get("key") for u in extra if u.get("key")}
     return extra + [u for u in found if u.get("key") not in keys]
-
-
-def _set_list_max() -> int:
-    """The longest set one chatbot reply lists (`answer.SET_LIST_MAX`), read at call time."""
-    from app.services.chatbot.lanes.business import answer as answer_mod
-
-    return int(answer_mod.SET_LIST_MAX)
 
 
 def _unknown_value_members(db: Session, payload, query_text: str, unknown: list[dict], current_user) -> dict | None:
@@ -2890,7 +2894,7 @@ def resolve_reference_post(
             # brand, never a silent default. R1's weighted default is off here; a set too
             # long for one message is broken down by brand instead (`breakdown`).
             prefer_weighted_brand=False,
-            breakdown_over=_set_list_max(),
+            breakdown_over=payload.set_list_max,
         )
         # One nested block, not top-level scalars: n8n item-mutation chains
         # persist top-level keys across nodes. And never inside `by_entity_type`,
@@ -2965,7 +2969,7 @@ def resolve_reference_post(
             result["predicate"]["near_miss"] = outcome["near_miss"]
         # Fix round 9: a long set's breakdown by the next attribute, and a zero set's
         # described products without the legs.
-        for key in ("breakdown", "members"):
+        for key in ("breakdown", "members", "set_brands"):
             if outcome.get(key):
                 result["predicate"][key] = outcome[key]
         # W4: what a page of this set replays - the bound specs, the brand and the ids

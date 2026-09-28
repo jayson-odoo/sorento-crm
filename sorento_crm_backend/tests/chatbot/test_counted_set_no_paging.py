@@ -127,11 +127,11 @@ def seven_taps(session_factory, monkeypatch):
 @pytest.mark.parametrize(
     "require, base",
     [
-        ({"certificate": True}, "Certificates found for taps with certificates"),
+        ({"certificate": True}, "Certificates found for taps"),
         ({"certificate": {"scheme": "PPS"}}, "Certificates found for taps with PPS certificates"),
-        ({"stock": True}, "Stock summary for taps with stock"),
-        ({"incoming": True}, "Incoming stock found for taps with incoming stock"),
-        ({"promotion": True}, "Promotions found for taps with a promotion"),
+        ({"stock": True}, "Stock summary for taps"),
+        ({"incoming": True}, "Incoming stock found for taps"),
+        ({"promotion": True}, "Promotions found for taps"),
         ({"attachment_type": "Product Photos"}, "Files found for taps with product photos"),
     ],
 )
@@ -149,10 +149,10 @@ def test_every_leg_lists_in_full_under_its_count_and_never_says_showing(require,
 @pytest.mark.parametrize(
     "require, base",
     [
-        ({"certificate": True}, "Certificates found for taps with certificates"),
-        ({"stock": True}, "Stock summary for taps with stock"),
-        ({"incoming": True}, "Incoming stock found for taps with incoming stock"),
-        ({"promotion": True}, "Promotions found for taps with a promotion"),
+        ({"certificate": True}, "Certificates found for taps"),
+        ({"stock": True}, "Stock summary for taps"),
+        ({"incoming": True}, "Incoming stock found for taps"),
+        ({"promotion": True}, "Promotions found for taps"),
         ({"attachment_type": "Product Photos"}, "Files found for taps with product photos"),
     ],
 )
@@ -181,7 +181,7 @@ def test_a_named_count_below_the_total_says_how_many_are_listed():
     from app.services.chatbot.lanes.business.answer import build_set_header
 
     assert build_set_header(60, 20, "taps", {"stock": True}) == (
-        "Stock summary for taps with stock (60, showing 1 to 20)."
+        "Stock summary for taps (60, showing 1 to 20)."
     )
 
 
@@ -211,7 +211,7 @@ def test_a_set_that_fits_is_listed_in_full(session_factory, stub_parser, stub_ac
 
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap has cert")
 
-    assert one_line_header(text).startswith("Certificates found for taps with certificates (7)."), text
+    assert one_line_header(text).startswith("Certificates found for taps (7)."), text
     assert "Showing" not in text, text
     assert _s4_codes_in(text) == set(codes), text
     assert len(calls) == 1 and len(calls[0]["args"]["product_ids"]) == 7, calls
@@ -245,7 +245,7 @@ def test_a_longer_set_states_the_count_asks_and_lists_nothing(
 
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
     # header is the product-code answer's own intro naming the described set and its count.
-    assert one_line_header(text).startswith("Certificates found for taps with certificates (7)."), text
+    assert one_line_header(text).startswith("Certificates found for taps (7)."), text
     assert "too many to list in one message" in text, text
     assert "How many should I show (up to 5)" in text, text
     assert _s4_codes_in(text) == set(), text
@@ -270,7 +270,7 @@ def test_answering_how_many_lists_that_many_and_then_more_pages_nothing(
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): a
     # named count says which ones inside the intro's parenthetical, never "Here are the
     # first N.".
-    assert one_line_header(text).startswith("Certificates found for taps with certificates (7, showing 1 to 3)."), text
+    assert one_line_header(text).startswith("Certificates found for taps (7, showing 1 to 3)."), text
     assert len(_s4_codes_in(text)) == 3, text
     assert len(calls) == before + 1 and len(calls[-1]["args"]["product_ids"]) == 3, calls
     # W4 (owner hand test round 2): the set stays carried past what was listed, so the
@@ -301,7 +301,7 @@ def test_how_many_is_capped_at_the_list_limit(
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): a
     # named count says which ones inside the intro's parenthetical, never "Here are the
     # first N.".
-    assert one_line_header(text).startswith("Certificates found for taps with certificates (7, showing 1 to 5)."), text
+    assert one_line_header(text).startswith("Certificates found for taps (7, showing 1 to 5)."), text
     assert len(_s4_codes_in(text)) == 5, text
 
 
@@ -315,7 +315,7 @@ def test_a_count_in_the_ask_itself_lists_that_many(session_factory, stub_parser,
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): a
     # named count says which ones inside the intro's parenthetical, never "Here are the
     # first N.".
-    assert one_line_header(text).startswith("Certificates found for taps with certificates (7, showing 1 to 2)."), text
+    assert one_line_header(text).startswith("Certificates found for taps (7, showing 1 to 2)."), text
     assert len(_s4_codes_in(text)) == 2, text
     assert len(calls[0]["args"]["product_ids"]) == 2, calls
 

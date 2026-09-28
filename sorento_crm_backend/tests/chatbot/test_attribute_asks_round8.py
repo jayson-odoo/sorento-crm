@@ -14,7 +14,7 @@ know colour is colour one meh, why it become document type one, ... (I don't wan
 make it smarter for this case only, it should be general)"
 
 Rulings assumed (the owner confirms): a set answer's intro names the described set and
-the count ("Stock summary for Sorento wash basins with stock (276, showing 1 to 10).")
+the count ("Stock summary for Sorento wash basins (276, showing 1 to 10).")
 then exactly the product-code rows, detailed or compact by the same mode switch, then the
 same footer; the same rule per domain (incoming, attachments, price).
 
@@ -316,10 +316,13 @@ def test_item1_a_stock_set_reads_exactly_like_the_product_code_answer(chat, worl
     compact by the same mode, with the same flags and the same footer; only the intro
     names the set and the count."""
     first = chat.say(M1A, _ask("stock", "basin", M1A))
-    assert "too many to list" in first, first
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): too many is the count and a breakdown by the next
+    # attribute (every brand, no default), never a paging question.
+    assert re.match(r"Stock summary for wash basins \(\d+\)\.\n• ", first), first
+    assert "too many to list" not in first, first
     text = chat.say(M1B, _ask("stock", "basin", M1B, top_n=2, entities=[]))
     total = int(re.search(r"\((\d+), showing 1 to 2\)", text).group(1))
-    assert _intro(text) == f"Stock summary for {_brand(world)} wash basins with stock ({total}, showing 1 to 2).", text
+    assert _intro(text) == f"Stock summary for wash basins ({total}, showing 1 to 2).", text
     assert re.search(r"\n\n_Data last updated: 21/09/2026 \d\d:32:45_$", text.rstrip()), text
     blocks = _blocks(text)
     assert len(blocks) == 2, text
@@ -346,8 +349,8 @@ def test_f2_incoming_and_certificate_sets_read_like_the_product_code_answer(comp
     assert set(blocks) == {p.product_code for p in world["gunmetal"]}, text
     for code, block in blocks.items():
         assert block == _blocks(_by_code(compact, code, kind))[code], code
-    noun = "incoming stock" if kind == "incoming" else "certificates"
-    assert f"gunmetal wash basins with {noun} (3)" in _intro(text), text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): the intro names its leg once ("no repeats").
+    assert "gunmetal wash basins (3)" in _intro(text), text
     assert "*Finish or colour:*" not in text, text
 
 
@@ -361,7 +364,8 @@ def test_item2_gunmetal_basin_incoming_answers_the_gunmetal_basins(compact, worl
     assert "Could not find" not in text, text
     assert _codes(text, world) == {p.product_code for p in world["gunmetal"]}, text
     assert _intro(text).startswith("Incoming stock found for"), text
-    assert f"{_brand(world)} gunmetal wash basins with incoming stock (3)" in _intro(text), text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every brand; the leg is said once.
+    assert _intro(text) == "Incoming stock found for gunmetal wash basins (3).", text
 
 
 def test_item2_a_finish_no_basin_has_incoming_says_what_it_looked_for_never_a_category_miss(compact, world):
@@ -372,8 +376,10 @@ def test_item2_a_finish_no_basin_has_incoming_says_what_it_looked_for_never_a_ca
     message = "any rose gold basin has incoming?"
     text = compact.say(message, _ask("incoming", "rose gold basin", message))
     assert "Could not find" not in text and "category" not in text, text
-    assert "No rose gold wash basins with incoming stock (I looked for Finish or colour: Rose gold among wash basins)." in text, text
-    assert "in another finish or colour: Gunmetal 3, Chrome 1" in text, text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no explanation of how it searched: the one reply
+    # structure: the finishes the basins with incoming do come in, one line each.
+    assert text.startswith("Here's what you want: rose gold wash basins with incoming stock\n• Gunmetal wash basins: 3\n"), text
+    assert text.endswith("Couldn't find: rose gold (finish or colour). Would you like me to escalate to purchasing team?"), text
 
 
 def test_item2_then_cert_switches_the_domain_and_keeps_the_gunmetal_basins(compact, world):
@@ -381,7 +387,7 @@ def test_item2_then_cert_switches_the_domain_and_keeps_the_gunmetal_basins(compa
     text = compact.say(M2B, _v2b())
     assert "Could not find" not in text, text
     assert _codes(text, world) == {p.product_code for p in world["gunmetal"]}, text
-    assert "*Certificate Number:*" in text and "gunmetal wash basins with certificates" in _intro(text), text
+    assert "*Certificate Number:*" in text and "gunmetal wash basins (3)" in _intro(text), text
 
 
 @pytest.mark.parametrize("word,kind", [("stock?", "stock"), ("incoming?", "incoming")])
@@ -399,14 +405,17 @@ def test_a_one_word_follow_up_switches_the_domain_and_keeps_the_described_set(co
 
 def test_item3_f_trap_is_an_unknown_trap(compact, world):
     text = compact.say(M3, _v3())
-    assert "I don't know 'f trap' as a trap. I know P trap and S trap." in text, text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): the one reply structure, broken down by the key.
+    assert text.startswith("Here's what you want: f trap water closets\n• P trap water closets: "), text
+    assert "Couldn't find: f trap (trap). Would you like me to escalate to" in text, text
     assert "document type" not in text.lower(), text
 
 
 def test_item4_pink_colour_is_an_unknown_finish_or_colour_never_a_document_type(compact, world):
     text = compact.say(M4, _v4())
-    assert "I don't know 'pink' as a finish or colour." in text, text
-    assert "White" in text and "Gunmetal" in text, text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no list of known choices; what the set does come in.
+    assert text.startswith("Here's what you want: pink water closets\n• White water closets: "), text
+    assert "Couldn't find: pink (finish or colour)." in text, text
     assert "document type" not in text.lower(), text
 
 
@@ -416,7 +425,7 @@ def test_item5_thickness_1_2_mm_narrows_the_kitchen_sinks(compact, world, kind):
     assert "document type" not in text.lower(), text
     if kind == "stock":
         assert _codes(text, world) == {p.product_code for p in world["thick12"]}, text
-        assert "kitchen sinks with thickness 1.2 mm with stock (2)" in _intro(text), text
+        assert "kitchen sinks with thickness 1.2 mm (2)" in _intro(text), text
     else:
         # No 1.2 mm sink has a certificate: said as a miss about THOSE sinks.
         assert not (_codes(text, world) & {p.product_code for p in world["thick10"]}), text
@@ -481,7 +490,8 @@ def test_price_of_a_described_set_reads_like_the_product_code_price(compact, wor
     assert set(blocks) == {p.product_code for p in world["gunmetal"]}, text
     for code, block in blocks.items():
         assert block == _blocks(_by_code(compact, code, "price"))[code], code
-    assert _intro(text) == f"Prices for {_brand(world)} gunmetal wash basins (3).", text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no silent brand default.
+    assert _intro(text) == "Prices for gunmetal wash basins (3).", text
 
 
 # --------------------------------------------------------------------------- #
@@ -502,7 +512,7 @@ def test_the_retest_in_order(compact, world, list_max_3):
     assert "Stock summary for" in replies[1], replies[1]
     assert _codes(replies[2], world) == {p.product_code for p in world["gunmetal"]}, replies[2]
     assert _codes(replies[3], world) == {p.product_code for p in world["gunmetal"]}, replies[3]
-    assert "as a trap" in replies[4] and "as a finish or colour" in replies[5], replies[4:6]
+    assert "Couldn't find: f trap (trap)." in replies[4] and "Couldn't find: pink (finish or colour)." in replies[5], replies[4:6]
     assert _codes(replies[6], world) == {p.product_code for p in world["thick12"]}, replies[6]
     for text in replies:
         assert "document type" not in text.lower(), text

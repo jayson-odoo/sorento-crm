@@ -2635,6 +2635,8 @@ _SET_INTRO_BY_LEG: dict[str, str] = {
     "price": "Prices for the requested products.",
 }
 _REQUESTED = "the requested products"
+#: The legs whose intro sentence already says what the set has.
+_LEGS_THE_INTRO_NAMES = frozenset({"stock", "incoming", "certificate", "promotion", "price"})
 #: A product ask about a described set (`predicate.derive_require`'s `{"price":
 #: "described"}`): the products tool's own intro, about the described set.
 _DESCRIBED_INTRO = "Here are the requested products."
@@ -2699,7 +2701,25 @@ def described_members_reply(predicate: Any, team: Any) -> str | None:
     return what_you_want_reply(f"{phrase} ({total:,})" if total else phrase, lines, leg=noun_of_leg, team=team)
 
 
-def unknown_values_reply(unknown: Any, predicate: Any, team: Any) -> str:
+def near_miss_reply(predicate: Any, team: Any) -> str:
+    """A set none of whose described products exist ("gunmetal bathtubs"), in
+    `what_you_want_reply`: the key's other values the set does hold, one line each, as
+    the resolver counted them (`predicate.near_miss`), then "Couldn't find: gunmetal
+    (finish or colour)". The same reply an unknown value gets."""
+    near = jsc.get(predicate, "near_miss")
+    labels = [jsc.js_string(c) for c in jsc.array(jsc.get(predicate, "class_labels")) if jsc.truthy(c)]
+    noun = set_noun_for(labels)
+    asked = described_set_phrase(jsc.get(predicate, "description"), noun, jsc.get(predicate, "require") or {})
+    lines = breakdown_lines({"rows": jsc.array(jsc.get(near, "other_values"))}, set_noun_for(
+        [jsc.js_string(c) for c in jsc.array(jsc.get(near, "class_labels")) if jsc.truthy(c)] or labels
+    ))
+    value = jsc.js_string(jsc.get(near, "value")).strip()
+    label = jsc.js_string(jsc.get(near, "label")).strip().lower()
+    missing = f"{_value_words(value)} ({label})" if value and label else ""
+    return what_you_want_reply(asked, lines, missing=missing, team=team)
+
+
+def unknown_values_reply(unknown: Any, predicate: Any, team: Any, *, subject: str = "") -> str:
     """A value the registry does not know ("pink" as a finish or colour), in
     `what_you_want_reply`: the subject with the value as asked, the subject broken down
     by that key (`predicate.members.breakdown`), then "Couldn't find: pink (finish or
@@ -2713,7 +2733,9 @@ def unknown_values_reply(unknown: Any, predicate: Any, team: Any) -> str:
         *jsc.array(jsc.get(members, "description")),
         *({"key": "said", "label": "", "value": w, "kind": "enum"} for w in said),
     ]
-    asked = described_set_phrase(description, noun, {}) if members is not None else " ".join(said)
+    # No described set to break down (the product route's own reading): the customer's
+    # own words for the subject.
+    asked = described_set_phrase(description, noun, {}) if members is not None else (subject or " ".join(said))
     missing = _and_list(
         [
             f"{w} ({jsc.js_string(jsc.get(u, 'label')).strip().lower()})"
@@ -2810,10 +2832,15 @@ def build_set_header(
         base = tool_intro
     else:
         base = _SET_INTRO_BY_LEG.get(leg, "Here are the results for the requested products.")
-    # Fix round 9 on PR #833 (owner: "no repeats"): every intro above already names what
-    # the set has ("Incoming stock found for ..."), so the phrase does not say it again.
-    names_leg = described_only or _REQUESTED in tool_intro or leg in _SET_INTRO_BY_LEG
-    phrase = described_set_phrase(description, set_noun, {} if names_leg else require)
+    # Fix round 9 on PR #833 (owner: "no repeats"): the intro already names its own leg
+    # ("Incoming stock found for ..."), so the phrase does not say that leg again. What
+    # the intro does not name stays: a document type ("Files found for taps with product
+    # photos"), a certificate scheme, a second leg ("... with stock").
+    said_by_intro = leg in _LEGS_THE_INTRO_NAMES and not (
+        leg == "certificate" and isinstance((require or {}).get(leg), dict)
+    )
+    rest = {k: v for k, v in (require or {}).items() if not (k == leg and said_by_intro)}
+    phrase = described_set_phrase(description, set_noun, rest)
     withheld = not exhausted and shown <= 0 and qualifying_total > 0
     if withheld or exhausted or shown >= qualifying_total - offset:
         count = f"{qualifying_total:,}"
@@ -3725,13 +3752,7 @@ def not_found_error_message(
                 # structure to stay"): round 4's near-miss sentence ("I looked for ...
                 # in another finish or colour") is retired for the product-code miss's
                 # own structure, the described products line by line.
-                escalate_message = described_members_reply(predicate, team) or what_you_want_reply(
-                    described_set_phrase(jsc.get(predicate, "description"), set_noun_for(
-                        [jsc.js_string(c) for c in jsc.array(jsc.get(predicate, "class_labels")) if jsc.truthy(c)]
-                    ), jsc.get(predicate, "require") or {}),
-                    [],
-                    team=team,
-                )
+                escalate_message = described_members_reply(predicate, team) or near_miss_reply(predicate, team)
             elif (
                 described_set_answers
                 and jsc.get(predicate, "qualifying_total") == 0
@@ -3971,7 +3992,22 @@ def not_found_error_message(
     if unknown_values:
         # Fix round 9 on PR #833: the one reply structure, the subject broken down by the
         # unknown value's key; the escalate offer stands, so it is not a clarify.
-        escalate_message = unknown_values_reply(unknown_values, predicate, team)
+        subject = next(
+            (
+                words
+                for hints in (("category", "product_type"), ("product",))
+                for words in [
+                    " ".join(
+                        jsc.js_string(jsc.get(e, "raw"))
+                        for e in entities_list
+                        if jsc.get(e, "hint") in hints and jsc.truthy(jsc.get(e, "raw"))
+                    )
+                ]
+                if words
+            ),
+            "",
+        )
+        escalate_message = unknown_values_reply(unknown_values, predicate, team, subject=subject)
         is_clarification = False
         found_summary = ""
 
