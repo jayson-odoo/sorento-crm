@@ -463,6 +463,7 @@ class ContactService:
 
     def _chatbot_episodes_summary(self, contact: RespondContact) -> dict:
         from app.models.conversation_frame import ConversationFrame
+        from app.services.chatbot.turn.episode_digest import readable_summary, topic_label
         from app.services.chatbot.turn.memory import KEEP_EPISODES
 
         empty = {
@@ -519,7 +520,11 @@ class ContactService:
                 "id": f.id,
                 "date": f.last_activity_at.isoformat() if f.last_activity_at else None,
                 "domains": [f.domain] if f.domain else [],
-                "summary": f.summary or "",
+                # The recall reply's own Topic word (`Stock`, `Incoming stock`).
+                "topic": topic_label(f.domain),
+                # Fix round 6: never the old bracket-tag chain, even before the
+                # backfill rewrites it (the recall reply reads the same way).
+                "summary": readable_summary(f.summary, f.domain, f.entities),
                 "turn_count": len(f.turn_ids or []),
                 "close_reason": f.close_reason,
                 "first_turn_id": (f.turn_ids or [None])[0],
@@ -543,7 +548,7 @@ class ContactService:
         planned, never an empty list while one exists."""
         from app.models.chatbot_turn import ChatbotTurn
         from app.services.chatbot.turn import memory as memory_mod
-        from app.services.chatbot.turn.episode_digest import digest, topic_domain
+        from app.services.chatbot.turn.episode_digest import digest, topic_domain, topic_label
 
         query = memory_mod._open_turns_query(
             self.db, contact_respond_id=respond_id, is_test=is_test, exclude_turn_id=None
@@ -567,6 +572,7 @@ class ContactService:
             "started_at": first.created_at.isoformat() if first is not None and first.created_at else None,
             "summary": digest(turn_dicts)["summary"] if turn_dicts else "",
             "domains": [domain] if domain else [],
+            "topic": topic_label(domain),
         }
 
     def _chatbot_open_orders(self, contact: RespondContact) -> dict:

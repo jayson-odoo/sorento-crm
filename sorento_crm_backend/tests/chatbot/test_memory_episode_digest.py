@@ -220,9 +220,12 @@ class TestSummaryRules:
         summary = result["summary"]
 
         assert len(summary) <= 240, summary
-        assert summary.startswith("Fri 25 Sep, 3 turns:"), summary
-        assert "SRTWB1455 (answered)" in summary, summary
-        assert "M486-75-BL (not found)" in summary, summary
+        # Fix round 6 (owner hand test, 28 Sep 2026): prose, asked then got, no date
+        # header, no turn count, no bracket tags. The date is the frame's own column.
+        assert summary == (
+            "Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. "
+            "M486-75-BL was not found, the rest got an answer."
+        ), summary
         # Coordinator fix, 26 Sep 2026: a blanket `not re.search(r"\d{2,}", summary)`
         # contradicts the date ("25 Sep") and the product codes ("SRTWB1455",
         # "M486-75-BL") this same test just asserted ARE in the summary - it could

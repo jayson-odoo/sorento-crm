@@ -154,7 +154,7 @@ class TestOwnerHandTestReplay:
         assert list(frame.turn_ids) == [r.turn_id for r in results[:4]]
         assert frame.domain == "inventory"
         assert frame.close_reason == "topic_switch"
-        assert "inventory SRTWC286" in (frame.summary or ""), frame.summary
+        assert "stock for SRTWC286" in (frame.summary or ""), frame.summary
         assert "SRTWC287" in (frame.summary or ""), frame.summary
         # The world stays apart: a console episode is never a live one, and back.
         assert _frames(session_factory, is_test=not console) == []
@@ -201,7 +201,7 @@ class TestOwnerHandTestReplay:
         # numbered list and its re-run offer; what is pinned is unchanged: memory names
         # the open inventory conversation, not the clarifier.
         assert CHATBOT_REPLY_HISTORY_LEAD["en"] in text_value, text_value
-        assert "1. " in text_value and "inventory SRTWC286" in text_value, text_value
+        assert "1. " in text_value and "Stock: Asked about stock for SRTWC286" in text_value, text_value
         assert "SRTWC287" in text_value, text_value
 
 
@@ -219,7 +219,7 @@ class TestOpenTopicIsTheCurrentDomain:
             "episodes"
         ]["current"]
         assert current["domains"] == ["inventory"]
-        assert "inventory SRTWC286" in current["summary"], current["summary"]
+        assert "stock for SRTWC286" in current["summary"], current["summary"]
 
 
 class TestHistoryFallbackGates:
@@ -248,8 +248,9 @@ class TestHistoryFallbackGates:
         # Round 4 (S4): numbered newest first, the open incoming conversation, then
         # the closed inventory one.
         assert "1. " in text_value and "2. " in text_value, text_value
-        assert "incoming SRTWC286" in text_value and "inventory SRTWC286" in text_value, text_value
-        assert text_value.index("incoming SRTWC286") < text_value.index("inventory SRTWC286"), text_value
+        incoming, stock = "Incoming stock: Asked about incoming stock for SRTWC286", ", Stock: Asked about stock for SRTWC286"
+        assert incoming in text_value and stock in text_value, text_value
+        assert text_value.index(incoming) < text_value.index(stock), text_value
 
 
 class TestCloseTrigger:

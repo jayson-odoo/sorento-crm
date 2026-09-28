@@ -24,6 +24,7 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.models.conversation_frame import ConversationFrame
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.turn import memory as memory_mod
+from app.services.chatbot.turn import episode_digest as episode_digest_mod
 from app.services.chatbot.turn.episode_digest import digest
 from tests.chatbot._turn_helpers import entity, verdict
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, seeded, stub_access, stub_parser  # noqa: F401
@@ -65,8 +66,11 @@ class TestS5GoldenFromAnEngineTrace:
         engine_mod.run_turn(second, session_factory=session_factory)
 
         (frame,) = _frames(session_factory, cid)
-        assert "inventory SRTWB1455 (not found)" in frame.summary, frame.summary
-        assert "offered warehouse team, no answer" in frame.summary, frame.summary
+        # Fix round 6: the same facts as readable prose, asked, got, still open.
+        assert frame.summary == (
+            "Asked about stock for SRTWB1455, but nothing was found. "
+            "Still open: the offer to pass this to the warehouse team got no reply."
+        ), frame.summary
 
     def test_a_denied_plan_reads_denied(self) -> None:
         turn = {
@@ -84,7 +88,7 @@ class TestS5GoldenFromAnEngineTrace:
             ],
             "result_refs": [],
         }
-        assert "(denied)" in digest([turn])["summary"]
+        assert digest([turn])["summary"] == "Asked about sales report, which this contact cannot see."
 
 
 class TestS14DealersClock:
@@ -99,7 +103,10 @@ class TestS14DealersClock:
             "trace": [],
             "result_refs": [],
         }
-        assert digest([turn])["summary"].startswith("Fri 25 Sep"), digest([turn])["summary"]
+        # Fix round 6: the day moved out of the stored summary into the line the
+        # recall reply and the memory layer print from the frame's own columns.
+        line = episode_digest_mod.episode_line(turn["created_at"], None, digest([turn])["summary"])
+        assert line.startswith("Fri 25 Sep, "), line
 
     def test_a_naive_utc_time_reads_the_same(self) -> None:
         assert engine_mod._short_day_time(datetime(2026, 9, 24, 23, 10)) == "Fri 07:10"

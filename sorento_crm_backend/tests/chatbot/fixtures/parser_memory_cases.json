@@ -38,8 +38,8 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [
       {
@@ -50,8 +50,8 @@
     "previous_response": "Yes, SRTWB1455 is available in JB - 120 units on hand.",
     "current_subject": "SRTWB1455 stock in JB",
     "current_message": "and in kuching?",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nEarlier in this conversation (oldest first):\n- Thu 3:14pm you: do you have SRTWB1455 in JB?\nPrevious response: Yes, SRTWB1455 is available in JB - 120 units on hand.\nCurrent subject: SRTWB1455 stock in JB\nCurrent user message: and in kuching?",
-    "assembled_est_tokens": 209,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nEarlier in this conversation (oldest first):\n- Thu 3:14pm you: do you have SRTWB1455 in JB?\nPrevious response: Yes, SRTWB1455 is available in JB - 120 units on hand.\nCurrent subject: SRTWB1455 stock in JB\nCurrent user message: and in kuching?",
+    "assembled_est_tokens": 243,
     "expected": {
       "entities": [
         {
@@ -107,8 +107,8 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [
       {
@@ -119,8 +119,8 @@
     "previous_response": "M486-75-BL: 0 units in Miri right now.",
     "current_subject": "M486-75-BL stock in Miri",
     "current_message": "what about kuching?",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nEarlier in this conversation (oldest first):\n- Mon 10:02am you: stock check for M486-75-BL in Miri?\nPrevious response: M486-75-BL: 0 units in Miri right now.\nCurrent subject: M486-75-BL stock in Miri\nCurrent user message: what about kuching?",
-    "assembled_est_tokens": 208,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nEarlier in this conversation (oldest first):\n- Mon 10:02am you: stock check for M486-75-BL in Miri?\nPrevious response: M486-75-BL: 0 units in Miri right now.\nCurrent subject: M486-75-BL stock in Miri\nCurrent user message: what about kuching?",
+    "assembled_est_tokens": 243,
     "expected": {
       "entities": [
         {
@@ -176,16 +176,16 @@
       }
     ],
     "summaries": [
-      "Wed 24 Sep: stock check for CWCX604-S-RL in JB (answered, 40 units).",
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Wed 24 Sep, Stock: Asked about stock for CWCX604-S-RL in JB and got an answer, 40 units.",
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": "promotions for this quarter",
     "current_message": "back to that one, stock in kuching?",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\n- Wed 24 Sep: stock check for CWCX604-S-RL in JB (answered, 40 units).\nCurrent subject: promotions for this quarter\nCurrent user message: back to that one, stock in kuching?",
-    "assembled_est_tokens": 186,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\n- Wed 24 Sep, Stock: Asked about stock for CWCX604-S-RL in JB and got an answer, 40 units.\nCurrent subject: promotions for this quarter\nCurrent user message: back to that one, stock in kuching?",
+    "assembled_est_tokens": 227,
     "expected": {
       "entities": [
         {
@@ -241,8 +241,8 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [
       {
@@ -253,8 +253,8 @@
     "previous_response": "Noted - 50 units of SRTWB1455. I'll pass this to Aina to confirm.",
     "current_subject": "an order for SRTWB1455",
     "current_message": "can I place the same order as last time?",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nEarlier in this conversation (oldest first):\n- Thu 2:40pm you: order 50 units of SRTWB1455 please\nPrevious response: Noted - 50 units of SRTWB1455. I'll pass this to Aina to confirm.\nCurrent subject: an order for SRTWB1455\nCurrent user message: can I place the same order as last time?",
-    "assembled_est_tokens": 223,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nEarlier in this conversation (oldest first):\n- Thu 2:40pm you: order 50 units of SRTWB1455 please\nPrevious response: Noted - 50 units of SRTWB1455. I'll pass this to Aina to confirm.\nCurrent subject: an order for SRTWB1455\nCurrent user message: can I place the same order as last time?",
+    "assembled_est_tokens": 257,
     "expected": {
       "entities": [
         {
@@ -306,8 +306,8 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [
       {
@@ -318,8 +318,8 @@
     "previous_response": "Got it - PS202609-0063 for 100 units of M486-75-BL.",
     "current_subject": "purchase request PS202609-0063",
     "current_message": "same as before, another 100 units",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nEarlier in this conversation (oldest first):\n- Tue 9:12am you: PS202609-0063 100 units of M486-75-BL\nPrevious response: Got it - PS202609-0063 for 100 units of M486-75-BL.\nCurrent subject: purchase request PS202609-0063\nCurrent user message: same as before, another 100 units",
-    "assembled_est_tokens": 220,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nEarlier in this conversation (oldest first):\n- Tue 9:12am you: PS202609-0063 100 units of M486-75-BL\nPrevious response: Got it - PS202609-0063 for 100 units of M486-75-BL.\nCurrent subject: purchase request PS202609-0063\nCurrent user message: same as before, another 100 units",
+    "assembled_est_tokens": 254,
     "expected": {
       "entities": [
         {
@@ -371,16 +371,16 @@
       }
     ],
     "summaries": [
-      "Fri 19 Sep: order for 200 units of SRTWC8517 (answered).",
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Fri 19 Sep, Orders: Asked about an order for 200 units of SRTWC8517 and got an answer.",
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "reorder same as last time please",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\n- Fri 19 Sep: order for 200 units of SRTWC8517 (answered).\nCurrent user message: reorder same as last time please",
-    "assembled_est_tokens": 166,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\n- Fri 19 Sep, Orders: Asked about an order for 200 units of SRTWC8517 and got an answer.\nCurrent user message: reorder same as last time please",
+    "assembled_est_tokens": 210,
     "expected": {
       "entities": [
         {
@@ -432,15 +432,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "stock for the usual please",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: stock for the usual please",
-    "assembled_est_tokens": 144,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent user message: stock for the usual please",
+    "assembled_est_tokens": 178,
     "expected": {
       "entities": [
         {
@@ -496,15 +496,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "can you check the usual for me",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: can you check the usual for me",
-    "assembled_est_tokens": 145,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent user message: can you check the usual for me",
+    "assembled_est_tokens": 180,
     "expected": {
       "entities": [
         {
@@ -560,15 +560,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "reorder the usual, same site as always",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: reorder the usual, same site as always",
-    "assembled_est_tokens": 148,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent user message: reorder the usual, same site as always",
+    "assembled_est_tokens": 182,
     "expected": {
       "entities": [
         {
@@ -624,15 +624,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": "upcoming promotions",
     "current_message": "actually, is that one still available?",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent subject: upcoming promotions\nCurrent user message: actually, is that one still available?",
-    "assembled_est_tokens": 160,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent subject: upcoming promotions\nCurrent user message: actually, is that one still available?",
+    "assembled_est_tokens": 195,
     "expected": {
       "entities": [
         {
@@ -684,16 +684,16 @@
       }
     ],
     "summaries": [
-      "Sat 20 Sep: incoming ETA for CBFAL5570 (answered, 3 Oct).",
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Sat 20 Sep, Incoming stock: Asked about the ETA for CBFAL5570 and got an answer, 3 Oct.",
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": "a different customer's warranty claim",
     "current_message": "sorry, back to that one - any update?",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\n- Sat 20 Sep: incoming ETA for CBFAL5570 (answered, 3 Oct).\nCurrent subject: a different customer's warranty claim\nCurrent user message: sorry, back to that one - any update?",
-    "assembled_est_tokens": 186,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\n- Sat 20 Sep, Incoming stock: Asked about the ETA for CBFAL5570 and got an answer, 3 Oct.\nCurrent subject: a different customer's warranty claim\nCurrent user message: sorry, back to that one - any update?",
+    "assembled_est_tokens": 230,
     "expected": {
       "entities": [
         {
@@ -745,15 +745,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": "a new promotion this dealer asked about",
     "current_message": "anyway is that one back in stock now?",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent subject: a new promotion this dealer asked about\nCurrent user message: anyway is that one back in stock now?",
-    "assembled_est_tokens": 167,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent subject: a new promotion this dealer asked about\nCurrent user message: anyway is that one back in stock now?",
+    "assembled_est_tokens": 201,
     "expected": {
       "entities": [
         {
@@ -805,15 +805,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "any update on that DO?",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: any update on that DO?",
-    "assembled_est_tokens": 143,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent user message: any update on that DO?",
+    "assembled_est_tokens": 177,
     "expected": {
       "entities": null,
       "message_type": null,
@@ -860,15 +860,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "has that delivery order moved at all?",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: has that delivery order moved at all?",
-    "assembled_est_tokens": 148,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent user message: has that delivery order moved at all?",
+    "assembled_est_tokens": 182,
     "expected": {
       "entities": null,
       "message_type": null,
@@ -915,15 +915,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "still waiting on that DO from before, any news?",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: still waiting on that DO from before, any news?",
-    "assembled_est_tokens": 151,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent user message: still waiting on that DO from before, any news?",
+    "assembled_est_tokens": 185,
     "expected": {
       "entities": null,
       "message_type": null,
@@ -970,15 +970,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "what did I ask you last week?",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: what did I ask you last week?",
-    "assembled_est_tokens": 145,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent user message: what did I ask you last week?",
+    "assembled_est_tokens": 179,
     "expected": {
       "entities": null,
       "message_type": "history_question",
@@ -1025,15 +1025,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "apa yang saya tanya minggu lepas?",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: apa yang saya tanya minggu lepas?",
-    "assembled_est_tokens": 146,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent user message: apa yang saya tanya minggu lepas?",
+    "assembled_est_tokens": 181,
     "expected": {
       "entities": null,
       "message_type": "history_question",
@@ -1080,15 +1080,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "我上星期问了什么？",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: 我上星期问了什么？",
-    "assembled_est_tokens": 144,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent user message: 我上星期问了什么？",
+    "assembled_est_tokens": 179,
     "expected": {
       "entities": null,
       "message_type": "history_question",
@@ -1135,15 +1135,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "I'm the new purchaser here, taking over from Mr Lim",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: I'm the new purchaser here, taking over from Mr Lim",
-    "assembled_est_tokens": 152,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent user message: I'm the new purchaser here, taking over from Mr Lim",
+    "assembled_est_tokens": 187,
     "expected": {
       "entities": null,
       "message_type": null,
@@ -1195,15 +1195,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "boleh reply dalam Bahasa Melayu lepas ni?",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: boleh reply dalam Bahasa Melayu lepas ni?",
-    "assembled_est_tokens": 149,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent user message: boleh reply dalam Bahasa Melayu lepas ni?",
+    "assembled_est_tokens": 183,
     "expected": {
       "entities": null,
       "message_type": null,
@@ -1255,15 +1255,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "just so you know, we're ordering for our Riverside Tower Phase 2 project",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: just so you know, we're ordering for our Riverside Tower Phase 2 project",
-    "assembled_est_tokens": 159,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent user message: just so you know, we're ordering for our Riverside Tower Phase 2 project",
+    "assembled_est_tokens": 194,
     "expected": {
       "entities": null,
       "message_type": null,
@@ -1315,15 +1315,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "by the way, we can only take deliveries before 10am",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: by the way, we can only take deliveries before 10am",
-    "assembled_est_tokens": 152,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent user message: by the way, we can only take deliveries before 10am",
+    "assembled_est_tokens": 187,
     "expected": {
       "entities": null,
       "message_type": null,
@@ -1374,15 +1374,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "we mostly buy Sorento brand stuff these days",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: we mostly buy Sorento brand stuff these days",
-    "assembled_est_tokens": 150,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent user message: we mostly buy Sorento brand stuff these days",
+    "assembled_est_tokens": 184,
     "expected": {
       "entities": null,
       "message_type": null,
@@ -1436,15 +1436,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "our new site is in Miri now, not Kuching",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: our new site is in Miri now, not Kuching",
-    "assembled_est_tokens": 149,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent user message: our new site is in Miri now, not Kuching",
+    "assembled_est_tokens": 183,
     "expected": {
       "entities": null,
       "message_type": null,
@@ -1497,15 +1497,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "stock M483-BL",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: stock M483-BL",
-    "assembled_est_tokens": 135,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent user message: stock M483-BL",
+    "assembled_est_tokens": 169,
     "expected": {
       "entities": [
         {
@@ -1557,15 +1557,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "stock SRTWB1455 in JB",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: stock SRTWB1455 in JB",
-    "assembled_est_tokens": 142,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent user message: stock SRTWB1455 in JB",
+    "assembled_est_tokens": 177,
     "expected": {
       "entities": [
         {
@@ -1621,15 +1621,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": null,
     "current_subject": null,
     "current_message": "how about CWCX604-S-RL instead",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nCurrent user message: how about CWCX604-S-RL instead",
-    "assembled_est_tokens": 145,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nCurrent user message: how about CWCX604-S-RL instead",
+    "assembled_est_tokens": 180,
     "expected": {
       "entities": [
         {
@@ -1681,15 +1681,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": "Yes, SRTWB1455 is available in JB - 120 units on hand.",
     "current_subject": "SRTWB1455 stock in JB",
     "current_message": "ok thanks!",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nPrevious response: Yes, SRTWB1455 is available in JB - 120 units on hand.\nCurrent subject: SRTWB1455 stock in JB\nCurrent user message: ok thanks!",
-    "assembled_est_tokens": 176,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nPrevious response: Yes, SRTWB1455 is available in JB - 120 units on hand.\nCurrent subject: SRTWB1455 stock in JB\nCurrent user message: ok thanks!",
+    "assembled_est_tokens": 211,
     "expected": {
       "entities": [],
       "message_type": "casual",
@@ -1736,15 +1736,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": "For the outstanding DOs of Chin Chun Trading: DO-2409-118 is still pending dispatch.",
     "current_subject": "outstanding DO status",
     "current_message": "noted, thank you",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nPrevious response: For the outstanding DOs of Chin Chun Trading: DO-2409-118 is still pending dispatch.\nCurrent subject: outstanding DO status\nCurrent user message: noted, thank you",
-    "assembled_est_tokens": 188,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nPrevious response: For the outstanding DOs of Chin Chun Trading: DO-2409-118 is still pending dispatch.\nCurrent subject: outstanding DO status\nCurrent user message: noted, thank you",
+    "assembled_est_tokens": 223,
     "expected": {
       "entities": [],
       "message_type": "casual",
@@ -1791,15 +1791,15 @@
       }
     ],
     "summaries": [
-      "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.",
-      "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      "Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.",
+      "Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
     ],
     "earlier_messages": [],
     "previous_response": "M486-75-BL is expected in on 3 Oct.",
     "current_subject": "M486-75-BL incoming stock",
     "current_message": "great, see you!",
-    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered).\n- Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined.\nPrevious response: M486-75-BL is expected in on 3 Oct.\nCurrent subject: M486-75-BL incoming stock\nCurrent user message: great, see you!",
-    "assembled_est_tokens": 173,
+    "user_block_with_memory": "About this contact:\ncustomer Chin Chun Trading (CC001); segment dealer; salesperson Aina; language en; role purchaser; usual products [\"SRTWB1455\", \"M486-75-BL\"]; usual sites [\"Kuching\"]\nRecent conversations:\n- Tue 23 Sep, Orders: Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer.\n- Thu 25 Sep, Stock: Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team.\nPrevious response: M486-75-BL is expected in on 3 Oct.\nCurrent subject: M486-75-BL incoming stock\nCurrent user message: great, see you!",
+    "assembled_est_tokens": 207,
     "expected": {
       "entities": [],
       "message_type": "casual",

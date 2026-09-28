@@ -20,12 +20,16 @@ place in the LIVE episode history this backfill exists to seed.
 
 Usage:
     python scripts/backfill_chatbot_episodes.py [--dry-run]
+
+Fix round 6: every run also rewrites a stored summary still in the pre round 6 tag
+shape (`rerender_summaries`), console frames included. Until it runs, every reader
+shows such a frame through `episode_digest.readable_summary`, never the tags.
 """
 from __future__ import annotations
 
 import sys
 
-from sqlalchemy import distinct
+from sqlalchemy import String, cast, distinct
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -107,6 +111,34 @@ def _drop_frames_spanning_a_reset(db: Session, contact_respond_id: str, reset_id
     return len(frames)
 
 
+def rerender_summaries(db: Session) -> int:
+    """Fix round 6: rewrite every stored summary still in the old tag shape
+    (`Tue 8 Sep, 639 turns: (declined); ...`) by running the SAME `digest()` over the
+    frame's own turns, live and console frames alike (the owner hand-tests from the
+    console). A frame whose turns are gone gets the sentence its own columns and old
+    tags give (`episode_digest.readable_summary`, what every reader shows meanwhile).
+    Returns the number rewritten; a second run rewrites nothing."""
+    rewritten = 0
+    for frame in db.query(ConversationFrame).yield_per(200):
+        if not episode_digest.is_legacy_summary(frame.summary):
+            continue
+        rows = (
+            db.query(ChatbotTurn)
+            .filter(cast(ChatbotTurn.id, String).in_([str(t) for t in frame.turn_ids or []]))
+            .order_by(ChatbotTurn.created_at.asc())
+            .all()
+        )
+        if rows:
+            summary = episode_digest.digest([memory_mod._turn_to_digest_dict(r) for r in rows])["summary"]
+        else:
+            summary = episode_digest.readable_summary(frame.summary, frame.domain, frame.entities)
+        db.query(ConversationFrame).filter(ConversationFrame.id == frame.id).update(
+            {ConversationFrame.summary: summary}, synchronize_session=False
+        )
+        rewritten += 1
+    return rewritten
+
+
 def backfill(db: Session) -> dict[str, int]:
     """Run the backfill once. Returns `{contacts, frames_written,
     placeholders_deleted, frames_rebuilt}`. Commits its own work - callers do not
@@ -142,12 +174,15 @@ def backfill(db: Session) -> dict[str, int]:
             if frame is not None:
                 frames_written += 1
 
+    summaries_rewritten = rerender_summaries(db)
+
     db.commit()
     return {
         "contacts": len(contacts),
         "frames_written": frames_written,
         "placeholders_deleted": placeholders_deleted,
         "frames_rebuilt": frames_rebuilt,
+        "summaries_rewritten": summaries_rewritten,
     }
 
 
@@ -166,7 +201,8 @@ def main(argv: list[str] | None = None) -> int:
             f"contacts={counts['contacts']} "
             f"frames_written={counts['frames_written']} "
             f"placeholders_deleted={counts['placeholders_deleted']} "
-            f"frames_rebuilt={counts['frames_rebuilt']}"
+            f"frames_rebuilt={counts['frames_rebuilt']} "
+            f"summaries_rewritten={counts['summaries_rewritten']}"
         )
         return 0
     finally:

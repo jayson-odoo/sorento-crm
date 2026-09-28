@@ -15,7 +15,13 @@ from sqlalchemy.orm import Session
 
 from app.models.chatbot_turn import ChatbotTurn
 from app.models.conversation_frame import ConversationFrame
-from app.services.chatbot.turn.episode_digest import digest, topic_domain
+from app.services.chatbot.turn.episode_digest import (
+    SMALL_TALK_SUMMARY,
+    digest,
+    episode_line,
+    readable_summary,
+    topic_domain,
+)
 from app.services.chatbot.turn.state import Profile
 
 #: Contract section 2 / PLAN 6.0 (round 3, AC-MEM051): the four values a context level
@@ -344,6 +350,18 @@ def _item_text(summary: str) -> str:
     return summary.strip().rstrip(".").strip()
 
 
+def frame_line(frame: ConversationFrame) -> str:
+    """One closed conversation as the recall reply and the parser's memory layer both
+    print it (fix round 6): `Mon 28 Sep, Stock: Asked about stock for SRTWC286 and got
+    an answer.` The day is the conversation's last turn; a summary still in the old tag
+    shape reads from the frame's own columns until the backfill rewrites it."""
+    return episode_line(
+        frame.last_activity_at,
+        frame.domain,
+        readable_summary(frame.summary, frame.domain, frame.entities),
+    )
+
+
 def history_items(
     db: Session,
     *,
@@ -374,7 +392,9 @@ def history_items(
             if open_digest.get("summary") and any(
                 a.get("domain") or a.get("entities") for a in (open_digest.get("asks") or [])
             ):
-                items.append(_item_text(open_digest["summary"]))
+                items.append(
+                    _item_text(episode_line(open_rows[-1].created_at, open_digest.get("domain"), open_digest["summary"]))
+                )
     if level in _CLOSED_LEVELS:
         frames = (
             db.query(ConversationFrame)
@@ -387,7 +407,12 @@ def history_items(
             .limit(HISTORY_ITEMS)
             .all()
         )
-        items.extend(_item_text(f.summary) for f in frames if f.summary)
+        # A conversation that asked nothing names nothing to run again.
+        items.extend(
+            _item_text(frame_line(f))
+            for f in frames
+            if readable_summary(f.summary, f.domain, f.entities) != SMALL_TALK_SUMMARY
+        )
     return items[:HISTORY_ITEMS]
 
 

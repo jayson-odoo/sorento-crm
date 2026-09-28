@@ -9,12 +9,12 @@
       {
         "days_ago": 3,
         "domain": "inventory",
-        "summary": "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined."
+        "summary": "Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team."
       },
       {
         "days_ago": 5,
         "domain": "order",
-        "summary": "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+        "summary": "Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
       }
     ],
     "profile_facts": [
@@ -70,10 +70,11 @@
     }
   },
   "expected": {
-    "reply_starts_with": "Carrying on from Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading",
+    "reply_starts_with": "Carrying on from ",
+    "reply_contains": [": orders for CC001."],
     "prompt_contains": [
       "Recent conversations:",
-      "Tue 23 Sep: outstanding DO for CC001"
+      ", Orders: Asked about outstanding DOs for CC001"
     ]
   }
 }

@@ -15,6 +15,10 @@ signals the engine really writes (reviewer pass at d89110c0, S5): `branch_kind`,
 `facts.missed` / `facts.sections`, and the `memory` record's open question - never from
 a rendered reply, which can say anything.
 
+**Readable.** The summary is a grammar-aware template, not a model call (fix round 6):
+what the contact asked about, what they got, what is still open, as plain sentences.
+The stored text is what the recall reply and the staff Conversations card both show.
+
 Input: a list of turn dicts, oldest first, each shaped
 `{id, created_at, branch_kind, status, message, trace, result_refs}` - the same shape
 `chatbot.turns` rows project to (`created_at` a datetime, `trace` the same list of stage/
@@ -25,19 +29,10 @@ reply left open, a `replied` stage whose rendered facts are never read here).
 """
 from __future__ import annotations
 
+import re
 from datetime import timezone
 from typing import Any
 from zoneinfo import ZoneInfo
-
-#: One clause per outcome (AC-MEM022), read from structural data only.
-_OUTCOME_WORDS: dict[str, str] = {
-    "answered": "answered",
-    "not_found": "not found",
-    "asked_back": "asked back",
-    "escalated": "escalated",
-    "declined": "declined",
-    "denied": "denied",
-}
 
 #: `branch_kind` values that decide the outcome outright, before any ask/lookup signal
 #: is consulted (AC-MEM022).
@@ -53,7 +48,10 @@ _SMALL_TALK_BRANCH = "low_signal"
 #: The one close trigger there is today (contract section 3 / PLAN 5.1, Q2 ruling).
 _CLOSE_REASON = "topic_switch"
 
-_SUMMARY_CHAR_CAP = 240
+#: The printed line (`episode_line`: date, topic, summary) stays within AC-MEM021's 240
+#: chars: the longest `Wed 30 Sep, Product photos and files: ` head is 38, so the
+#: sentence gets 200 and the L4 memory layer's worst case is round 5's (fix round 6).
+_SUMMARY_CHAR_CAP = 200
 _LAST_MESSAGE_CHAR_CAP = 200
 #: A `raw` (unresolved) entity token is a customer's own typed text, not a
 #: catalog-checked value - capped and whitespace-collapsed (security review 26
@@ -291,40 +289,257 @@ def _date_prefix(when: Any) -> str:
     return f"{weekday} {when.day} {month}"
 
 
-def _summary(turns: list[dict[str, Any]], asks: list[dict[str, Any]], offers: list[dict[str, Any]]) -> str:
-    # "1 turn", never "1 turns": the history reply shows this line to the dealer (S4).
-    header = f"{_date_prefix(turns[0]['created_at'])}, {len(turns)} turn{'' if len(turns) == 1 else 's'}"
+#: What a domain is called in a sentence a person reads (fix round 6, owner hand test
+#: 28 Sep 2026: "the structure of our summary is quite messy"). A domain missing here
+#: reads as its own name with the underscores spaced out.
+_DOMAIN_NOUNS: dict[str, str] = {
+    "inventory": "stock",
+    "incoming": "incoming stock",
+    "order": "orders",
+    "master_products": "product details",
+    "product_attachment": "product photos and files",
+    "promotion": "promotions",
+    "forms": "forms",
+    "portal_link": "a portal link",
+    "resource_attachment": "documents",
+    "goods_receive": "goods received",
+    "spo_allocation": "stock allocation",
+    "ideate": "product ideas",
+    "purchase_order": "purchase orders",
+    "purchase_cost": "purchase cost",
+}
 
-    # Collapse consecutive/repeated asks about the same (domain, entities, outcome)
-    # into one clause - two turns both asking "stock SRTWB1455" and both answered read
-    # as one line, not two.
-    seen: set[tuple[Any, ...]] = set()
-    clauses: list[str] = []
+#: The whole summary of an episode that asked nothing. The recall reply skips it.
+SMALL_TALK_SUMMARY = "Small talk only, nothing was asked."
+
+#: The stored summary before fix round 6: a date and turn-count header, then
+#: semicolon-chained `subject (outcome)` clauses. Read-time code never shows one
+#: (`readable_summary`); `scripts/backfill_chatbot_episodes.py` rewrites them.
+_LEGACY_SUMMARY_TAG = re.compile(r"\((answered|not found|asked back|escalated|declined|denied)\)")
+_LEGACY_SUMMARY = re.compile(
+    r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{1,2} [A-Z][a-z]{2}(, \d+ turns?)?: "
+    r"|\((answered|not found|asked back|escalated|declined|denied)\)"
+)
+
+
+def domain_noun(domain: str | None) -> str:
+    """`inventory` -> `stock`: the word a sentence uses for a domain."""
+    if not domain:
+        return ""
+    return _DOMAIN_NOUNS.get(domain, domain.replace("_", " "))
+
+
+def topic_label(domain: str | None) -> str:
+    """The Topic a recall line and the parser's memory layer print: `Incoming stock`."""
+    noun = domain_noun(domain) or "general chat"
+    return noun[0].upper() + noun[1:]
+
+
+def _join(words: list[str]) -> str:
+    """`a`, `a and b`, `a, b and c`: a list as a person writes it."""
+    if len(words) <= 1:
+        return "".join(words)
+    return ", ".join(words[:-1]) + " and " + words[-1]
+
+
+def _codes(words: list[str], cap: int) -> str:
+    """`A, B and C`, or past the cap `A, B plus 3 more`, so a long list never
+    nests a second "and" inside the topic list around it."""
+    if cap <= 0:
+        return ""
+    if len(words) <= cap:
+        return _join(words)
+    return ", ".join(words[:cap]) + f" plus {len(words) - cap} more"
+
+
+def _display_code(token: str) -> str:
+    """A typed product or container code reads in capitals (`srtwc286` ->
+    `SRTWC286`); a name such as a customer's stays as typed."""
+    return token.upper() if any(ch.isdigit() for ch in token) and " " not in token else token
+
+
+def _subject_phrase(subjects: dict[str | None, list[str]], code_cap: int, domain_cap: int) -> str:
+    parts: list[str] = []
+    for domain, codes in subjects.items():
+        noun = domain_noun(domain)
+        shown = _codes(codes, code_cap)
+        if noun and shown:
+            parts.append(f"{noun} for {shown}")
+        elif noun or shown:
+            parts.append(noun or shown)
+    if len(parts) > domain_cap:
+        parts = parts[:domain_cap] + ["other topics"]
+    return _join(parts)
+
+
+def _was(codes: list[str]) -> str:
+    return "was" if len(codes) == 1 else "were"
+
+
+def _team_phrase(team: Any) -> str:
+    return f"the {team} team" if team else "our staff"
+
+
+def _render_summary(
+    asks: list[dict[str, Any]], offers: list[dict[str, Any]], code_cap: int, domain_cap: int
+) -> str:
+    """Asked, got, still open, in that order (owner round 6 feedback)."""
+    subjects: dict[str | None, list[str]] = {}
+    answered: list[str] = []
+    not_found: list[str] = []
+    outcomes: list[str] = []
     for ask in asks:
-        key = (ask["domain"], tuple(ask["entities"]), ask["outcome"])
-        if key in seen:
-            continue
-        seen.add(key)
-        entities_words = ", ".join(ask["entities"])
-        domain_words = ask["domain"] or ""
-        subject = " ".join(w for w in (domain_words, entities_words) if w)
-        if not subject and ask["outcome"] in ("answered", "asked_back"):
-            # A menu or a history question names nothing: a bare "(asked back)" says
-            # nothing a staff reader or the parser can use (fix lane round 3).
-            continue
-        outcome_word = _OUTCOME_WORDS.get(ask["outcome"], ask["outcome"])
-        clauses.append(f"{subject} ({outcome_word})".strip())
+        codes = [_display_code(c) for c in ask.get("entities") or []]
+        domain = ask.get("domain")
+        if domain or codes:
+            bucket = subjects.setdefault(domain, [])
+            bucket.extend(c for c in codes if c not in bucket)
+        outcome = ask.get("outcome") or "answered"
+        outcomes.append(outcome)
+        target = answered if outcome == "answered" else not_found if outcome == "not_found" else None
+        if target is not None:
+            target.extend(c for c in codes if c not in target)
+    # A code answered once and missed once reads as answered.
+    not_found = [c for c in not_found if c not in answered]
 
-    for offer in offers:
-        if not offer.get("team"):
-            continue
-        clauses.append(f"offered {offer['team']} team, {offer.get('answer') or 'no answer'}")
+    if not asks:
+        return SMALL_TALK_SUMMARY
 
-    body = "; ".join(clauses) if clauses else "small talk"
-    summary = f"{header}: {body}."
-    if len(summary) > _SUMMARY_CHAR_CAP:
-        summary = summary[: _SUMMARY_CHAR_CAP - 1].rstrip() + "."
-    return summary
+    subject = _subject_phrase(subjects, code_cap, domain_cap)
+    handed = [o for o in offers if o.get("answer") == "accepted"]
+    turned_down = [o for o in offers if o.get("answer") == "declined"]
+    unanswered = [o for o in offers if o.get("answer") is None]
+    has_miss = "not_found" in outcomes
+    # Every code named was missed: a subject-less "answered" (a menu) is no answer.
+    all_missed = bool(not_found) and not answered
+    has_answer = "answered" in outcomes and not all_missed
+
+    if subject:
+        opening = f"Asked about {subject}"
+    elif "escalated" in outcomes or "declined" in outcomes:
+        opening = "Asked for something the bot does not cover"
+    elif "denied" in outcomes:
+        opening = "Asked for something this contact cannot see"
+    else:
+        opening = "Asked a general question"
+
+    sentences: list[str] = []
+    if has_answer and not has_miss:
+        sentences.append(f"{opening} and got {'an answer' if len(answered) <= 1 else 'answers'}.")
+    elif has_miss and not has_answer:
+        sentences.append(f"{opening}, but nothing was found.")
+    elif subject and set(outcomes) == {"denied"}:
+        sentences.append(f"{opening}, which this contact cannot see.")
+    else:
+        sentences.append(f"{opening}.")
+        if has_answer and has_miss:
+            if not_found:
+                sentences.append(
+                    f"{_codes(not_found, 2)} {_was(not_found)} not found, the rest got an answer."
+                )
+            else:
+                sentences.append("Most of it got an answer, but one search found nothing.")
+
+    passed = bool(handed) or "escalated" in outcomes
+    refused = bool(turned_down) or "declined" in outcomes
+    if passed and refused:
+        sentences.append("Was offered our staff, said no once and was passed on once.")
+    elif passed:
+        sentences.append(f"Was passed to {_team_phrase(handed[0].get('team') if handed else None)}.")
+    elif refused:
+        team = turned_down[0].get("team") if turned_down else None
+        sentences.append(f"Chose not to be passed to {_team_phrase(team)}.")
+    if "denied" in outcomes and subject and set(outcomes) != {"denied"}:
+        sentences.append("Some of it is not open to this contact.")
+
+    if unanswered:
+        sentences.append(
+            f"Still open: the offer to pass this to {_team_phrase(unanswered[-1].get('team'))} got no reply."
+        )
+    elif outcomes[-1] == "asked_back":
+        sentences.append("Still open: the bot asked a follow-up question that got no reply.")
+    return " ".join(sentences)
+
+
+def _summary(asks: list[dict[str, Any]], offers: list[dict[str, Any]]) -> str:
+    """One or two short sentences a person reads in one pass (fix round 6). No date
+    and no turn count: the recall reply and the Conversations card print those from
+    the frame's own columns. A long episode shows fewer codes and topics ("and 2
+    more") before anything is cut."""
+    # Fewer codes before fewer topics: a long episode keeps every topic by name.
+    for code_cap, domain_cap in ((3, 4), (2, 4), (1, 4), (0, 4), (0, 3), (0, 2), (0, 1)):
+        summary = _render_summary(asks, offers, code_cap, domain_cap)
+        if len(summary) <= _SUMMARY_CHAR_CAP:
+            return summary
+    cut = summary[: _SUMMARY_CHAR_CAP - 1].rsplit(" ", 1)[0].rstrip(",.")
+    return cut + "."
+
+
+_LEGACY_TAG_OUTCOME = {
+    "answered": "answered",
+    "not found": "not_found",
+    "asked back": "asked_back",
+    "escalated": "escalated",
+    "declined": "declined",
+    "denied": "denied",
+}
+_LEGACY_OFFER = re.compile(r"offered (.+?) team, (no answer|declined|accepted)")
+
+
+def summary_from_columns(domain: str | None, entities: Any, legacy: str | None = None) -> str:
+    """A readable sentence for a frame whose stored summary predates fix round 6 and
+    whose turns are not re-digested yet: what was asked from its own `domain` and
+    `entities` columns, the handovers and offers the old text's tags still say, and an
+    answer only when every tag said answered."""
+    codes: list[str] = []
+    if isinstance(entities, dict):
+        for values in entities.values():
+            for v in values if isinstance(values, list) else []:
+                token = _entity_token(v)
+                if token and token not in codes:
+                    codes.append(token)
+    tags = [_LEGACY_TAG_OUTCOME[t] for t in _LEGACY_SUMMARY_TAG.findall(legacy or "")]
+    offers = [
+        {"team": team, "answer": None if answer == "no answer" else answer}
+        for team, answer in _LEGACY_OFFER.findall(legacy or "")
+    ]
+    if not domain and not codes and not tags and not offers:
+        return SMALL_TALK_SUMMARY
+    asks: list[dict[str, Any]] = []
+    if domain or codes:
+        outcome = "answered" if tags and set(tags) == {"answered"} else "unknown"
+        asks.append({"domain": domain, "entities": codes, "outcome": outcome})
+    asks.extend({"domain": None, "entities": [], "outcome": t} for t in tags if t != "answered")
+    if not asks:
+        asks.append({"domain": None, "entities": [], "outcome": "unknown"})
+    return _summary(asks, offers)
+
+
+def is_legacy_summary(summary: str | None) -> bool:
+    """True for a summary in the pre round 6 shape (header, bracket tags)."""
+    return bool(summary) and bool(_LEGACY_SUMMARY.search(summary or ""))
+
+
+def readable_summary(summary: str | None, domain: str | None, entities: Any) -> str:
+    """The stored summary, or, when it is still the old tag chain, the sentence
+    `summary_from_columns` builds. Never a bracket tag, never empty."""
+    if summary and not is_legacy_summary(summary):
+        return summary
+    return summary_from_columns(domain, entities, summary)
+
+
+#: Public names for the engine's carried-episode line (`engine._carried_line`).
+join_words = _join
+display_code = _display_code
+day_label = _date_prefix
+
+
+def episode_line(when: Any, domain: str | None, summary: str) -> str:
+    """`Mon 28 Sep, Incoming stock: Asked about ...`: date, topic, sentence. The one
+    line the recall reply numbers and the parser's memory layer lists."""
+    day = _date_prefix(when) if when is not None else ""
+    head = f"{day}, {topic_label(domain)}" if day else topic_label(domain)
+    return f"{head}: {summary}"
 
 
 def digest(turns: list[dict[str, Any]]) -> dict[str, Any]:
@@ -347,7 +562,7 @@ def digest(turns: list[dict[str, Any]]) -> dict[str, Any]:
     tools_used = _tools_used(turns)
     offers = _offers(turns)
     asks, small_talk_turns = _asks_and_small_talk(turns)
-    summary = _summary(turns, asks, offers)
+    summary = _summary(asks, offers)
 
     first_turn = turns[0]
     last_turn = turns[-1]

@@ -5,7 +5,7 @@
     "memory_level": "full",
     "frames": [
       {
-        "summary": "Thu 25 Sep: stock SRTWB1455 (answered).",
+        "summary": "Asked about stock for SRTWB1455 and got an answer.",
         "days_ago": 1,
         "entities": {"product": ["SRTWB1455"]}
       }

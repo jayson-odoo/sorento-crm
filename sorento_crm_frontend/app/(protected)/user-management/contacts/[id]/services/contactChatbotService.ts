@@ -89,12 +89,16 @@ export interface ContactChatbotEpisodeCurrent {
   started_at: string;
   summary: string;
   domains: string[];
+  /** The Topic the chatbot's recall reply prints (`Stock`, `Incoming stock`). */
+  topic?: string;
 }
 
 export interface ContactChatbotEpisodeRow {
   id: string;
   date: string;
   domains: string[];
+  /** The Topic the chatbot's recall reply prints (`Stock`, `Incoming stock`). */
+  topic?: string;
   summary: string;
   turn_count: number;
   close_reason: string;

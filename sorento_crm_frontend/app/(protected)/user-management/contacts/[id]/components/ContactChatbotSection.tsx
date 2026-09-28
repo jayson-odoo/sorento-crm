@@ -605,6 +605,7 @@ function ConversationsCard({
               id: console ? '__console_current__' : '__current__',
               date: current.started_at,
               domains: current.domains,
+              topic: current.topic,
               summary: current.summary,
               turn_count: current.turn_count,
               close_reason: null as string | null,
@@ -652,7 +653,9 @@ function ConversationsCard({
         header: 'Topic',
         cell: ({ row }) => {
           const domains = row.original.domains;
-          const label = domains.length ? domains.map((d) => d[0].toUpperCase() + d.slice(1)).join(', ') : '-';
+          const label =
+            row.original.topic ??
+            (domains.length ? domains.map((d) => d[0].toUpperCase() + d.slice(1)).join(', ') : '-');
           return (
             <span className="truncate" title={label}>
               {label}

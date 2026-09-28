@@ -1617,7 +1617,7 @@ def _memory_intake_resolved(
             .limit(3)
             .all()
         )
-        summaries = [f.summary for f in frames if f.summary]
+        summaries = [memory_mod.frame_line(f) for f in frames]
         read_frames = [{"id": f.id} for f in frames]
         newest_frame = frames[0] if frames else None
 
@@ -1856,15 +1856,19 @@ def _carried_line(
         .all()
     )
     for frame in frames:
-        summary = frame.summary or ""
-        if not all(c.upper() in summary.upper() for c in codes):
+        # Matched on the frame's own entity codes (fix round 6: the summary is prose
+        # now, not a clause chain to split), with the summary text as the fallback.
+        named = " ".join(
+            str(v) for values in (frame.entities or {}).values() if isinstance(values, list) for v in values
+        )
+        haystack = f"{named} {frame.summary or ''}".upper()
+        if not all(c.upper() in haystack for c in codes):
             continue
-        head, _, body = summary.partition(": ")
-        clause = next((part for part in body.split("; ") if codes[0].upper() in part.upper()), body)
-        subject = clause.split(" (")[0].strip().rstrip(".")
-        day = head.split(",")[0].strip() if body else _short_day_time(frame.last_activity_at)
-        if subject:
-            return canned.render_in("carried_episode", language, day=day, subject=subject)
+        noun = episode_digest_mod.domain_noun(frame.domain)
+        listed = episode_digest_mod.join_words([episode_digest_mod.display_code(c) for c in codes])
+        subject = f"{noun} for {listed}" if noun else listed
+        day = episode_digest_mod.day_label(frame.last_activity_at) if frame.last_activity_at else None
+        return canned.render_in("carried_episode", language, day=day or "earlier", subject=subject)
 
     return None
 

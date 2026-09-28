@@ -157,9 +157,12 @@ class TestCompose:
         assert fallback.compose("Hi!", _ctx(), COPY, "en") == f"Hi! {COPY.render('fallback_offer')}"
 
     def test_small_talk_with_a_last_conversation_offers_a_rerun(self) -> None:
-        text = fallback.compose("Hi!", _ctx(last_time="Thu 25 Sep: stock X (answered)"), COPY, "en")
+        text = fallback.compose(
+            "Hi!", _ctx(last_time="Thu 25 Sep, Stock: Asked about stock for X and got an answer"), COPY, "en"
+        )
         assert text == (
-            "Hi! Last time: Thu 25 Sep: stock X (answered). Want me to check any of that again, or something new?"
+            "Hi! Last time: Thu 25 Sep, Stock: Asked about stock for X and got an answer. "
+            "Want me to check any of that again, or something new?"
         )
 
     def test_usual_products_and_site_shape_the_offer(self) -> None:
@@ -199,7 +202,7 @@ class TestCompose:
 # Engine: levels, the two-turn re-run, no silence, no exception text, who
 # --------------------------------------------------------------------------- #
 
-FRAME = {"days_ago": 3, "domain": "inventory", "summary": "Thu 25 Sep: stock SRTWB1455 (answered)."}
+FRAME = {"days_ago": 3, "domain": "inventory", "summary": "Asked about stock for SRTWB1455 and got an answer."}
 STOCK = {"domain_hint": "inventory", "entities": [{"raw": "SRTWC286", "hint": "product", "canonical_code": "SRTWC286",
                                                    "current_message": True, "confident": True, "hint_confident": True}]}
 USUAL = [{"key": "usual_products", "value": ["SRTWB1455"], "source": "tallied", "source_ref": None,
@@ -228,7 +231,7 @@ class TestLevelsDecideWhatTheReplyReads:
         _seed_frames(session_factory, [FRAME], is_test=False)
         result = _turn(session_factory, stub_access, "morning", {"message_type": "casual"}, 5)
         text = sent_text(result)
-        assert "Last time: Thu 25 Sep: stock SRTWB1455" in text, text
+        assert "Last time: " in text and ", Stock: Asked about stock for SRTWB1455" in text, text
         assert "Want me to check stock for" not in text, "usual products need Full memory"
 
     def test_off_holds_the_fallback_with_no_memory_line(self, session_factory, stub_access, lane) -> None:
@@ -246,7 +249,7 @@ class TestLevelsDecideWhatTheReplyReads:
         _turn(session_factory, stub_access, "morning", {"message_type": "casual"}, 5)
         prompt = lane.clarifier_prompts[-1]
         assert '"ack"' in prompt and "first_name: Tan" in prompt
-        assert "Recent conversations: Thu 25 Sep: stock SRTWB1455" in prompt
+        assert "Recent conversations: " in prompt and ", Stock: Asked about stock for SRTWB1455" in prompt
         assert "About this contact: usual products" in prompt
 
 
