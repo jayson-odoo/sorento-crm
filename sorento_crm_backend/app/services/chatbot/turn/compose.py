@@ -232,6 +232,17 @@ HEADER_SUBJECT_MAX = 5
 _PRODUCT_DOMAINS = frozenset({"inventory", "incoming", "product_attachment", "master_products", "promotion"})
 
 
+def _routing_brand(ctx: Any) -> Any:
+    """The brand a freshly minted `team_pick` stamps: this turn's resolved brand, else the
+    focus product's, read only now, at the mint (#865, fix round 2 N2: the read used to run
+    on every such turn whether or not anything was minted)."""
+    brand = getattr(ctx, "routing_brand", None)
+    if brand:
+        return brand
+    thunk = getattr(ctx, "focus_brand", None)
+    return thunk() if callable(thunk) else None
+
+
 def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: Any) -> Answer:
     sections: list[Section] = []
     seen_rows: set[tuple] = set()
@@ -463,7 +474,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                         "brand_code": (
                             carried.payload.get("brand_code")
                             if carried.team
-                            else getattr(ctx, "routing_brand", None)
+                            else _routing_brand(ctx)
                         ),
                     },
                 )
@@ -479,7 +490,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                     missed_domains,
                     policy,
                     agent=getattr(ctx, "suggested_agent", None),
-                    brand=getattr(ctx, "routing_brand", None),
+                    brand=_routing_brand(ctx),
                 )
 
     actions: list[dict[str, Any]] = []

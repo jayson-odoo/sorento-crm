@@ -12,13 +12,18 @@ assignment path inside `sub-human-intervention` (@ `ae310ea1`). The live graph i
 they belong to unpromoted builds (B-HB-1 and B-TEAM-1'). Porting them would have shipped
 behaviour production has never run, so:
 
-* **H26 stays open.** The lane never calls the resolver, so escalation routing is
-  brand-blind exactly as it is today. `resolve_and_gate` is in the services bundle for the
-  day B-HB-1 promotes and is never invoked.
+* **H26, the brand half, is closed (#865, owner ruling 27 Sep 2026, fix option 1).** The
+  lane still never calls `resolve_and_gate`, but it no longer routes brand-blind: the brand
+  of the product the escalation is about (this turn's named product, else the product the
+  conversation is focused on) is read off the product row through the `product_brand`
+  seam, at the point of use (`_apply_focus_brand`). It used to survive into the escalation
+  turn only when some earlier turn happened to mint an offer that stamped it, so a spec
+  question answered successfully and then "escalate to marketing" drew the whole team.
 * **H27 stays open.** There is no team clarify. A null team is not reachable through the
   real pipeline anyway - `head/output_exchange.derive_routing`'s nullish chain hard-defaults
   `suggested_team` to `customer_service` long before this lane sees it - so the hazard is
-  live in the PARSER, not here, and this lane simply carries whatever arrives.
+  live in the PARSER, not here, and this lane carries whatever arrives, except that a team
+  the customer NAMED beats it (fix round 4, `_named_teams`).
 
 Both are marked `xfail(strict=True)` in the tester's suite, so the promotion makes itself
 noticed rather than needing to be remembered.
@@ -40,6 +45,7 @@ anywhere in this module, and `test_s5_no_chat_history_write.py` asserts the row 
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
@@ -211,6 +217,14 @@ def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str
     5. `stated_brand` - a brand the customer named when no roster was involved at all;
     6. `none`.
 
+    **`focus_product` (#865) outranks rungs 4 and 6, never rung 5** and is applied after
+    this function, by `_apply_focus_brand`, because it needs a seam and this function is
+    pure. Rung 5 is this turn's own `query_brands`, the customer's explicit brand word, and
+    it wins over a product carried in focus (fix round 2, S1). The focus rung is the brand
+    of the product the escalation is about, read off the product row. It is not a carry
+    that can go stale: the focus product itself drops on a topic reset or a newer product
+    (`turn/apply.py::_focus_rules`), and the brand is re-read from the row every time.
+
     Both axes are always what the `get-cs-members` call USED, never re-derived from this
     turn's `query_brands`: re-deriving would narrow the assignee pool to one the customer
     was never shown. `carried_brand` is the ONE exception to "never re-derived" by
@@ -333,6 +347,14 @@ def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str
         brand_code = stated_brand
         source_name = "stated_brand"
 
+    if brand_code is None and carried_brand and source_name in _ROSTER_WITHOUT_BRAND:
+        # #865 round 6 (R6), n8n escalation-context rev-2: "NO roster was fetched for this
+        # offer, so there is no shown pool for a brand to disagree with - carry the
+        # resolved brand rather than dropping it". The offer named a company and no brand
+        # (a silent-company offer, a company clarify), so the offer turn's own brand
+        # rides with it; the row still decides the company.
+        brand_code = carried_brand
+
     return {
         **item,
         "brand_code": brand_code,
@@ -387,6 +409,12 @@ def _company_clarify_options(ctx: dict[str, Any]) -> list[str]:
     return [row["company_name"] for row in _company_clarify_rows(ctx)]
 
 
+def _picker_was_shown(ctx: dict[str, Any]) -> bool:
+    """Did the offer being clarified print a numbered member picker? n8n's own test
+    (`clarify-company-reply` rev-3: `prev.selection_context === 'member_offer'`)."""
+    return jsc.get(_prev_variables(ctx), "selection_context") == "member_offer"
+
+
 def clarify_company_reply(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str, Any]:
     """The ask that goes out when a multi-company offer was not resolved. Pure.
 
@@ -413,11 +441,14 @@ def clarify_company_reply(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[
     else:
         lead = "More than one team is listed"
 
-    clarify_text = (
-        f"{lead} - reply a number, a name, or the company ({listed}) and I'll assign automatically."
-        if names
-        else f"{lead} - reply a number or a name and I'll assign automatically."
-    )
+    if names and not _picker_was_shown(ctx):
+        # #865 round 6 (R4), n8n rev-3 copy (UAC Q5): the offer printed no numbered
+        # member list, so the clarify invites the company and nothing it cannot resolve.
+        clarify_text = f"{lead} - reply with the company ({' / '.join(names)}) and I'll assign automatically."
+    elif names:
+        clarify_text = f"{lead} - reply a number, a name, or the company ({listed}) and I'll assign automatically."
+    else:
+        clarify_text = f"{lead} - reply a number or a name and I'll assign automatically."
     # `clarify_company_options` rides beside the text for the SAME reason
     # `clarify_team_options` does on the team clarify: the question the customer sees and
     # the numbered options the next turn resolves against are built from ONE list, so
@@ -596,7 +627,7 @@ def run(
             "due_at": PREVIEW,
             "due_at_resolution": PREVIEW,
         }
-        routed, preview_assignee = _preview_routing(
+        routed, preview_assignee, routing = _preview_routing(
             ctx, context_item, team, services, session_factory
         )
         if routed is not None and routed["kind"] == "clarify":
@@ -615,7 +646,10 @@ def run(
                     "kind": "team_clarify",
                     "options": routed.get("option_pairs") or [],
                 },
+                "routing": routing,
             }
+        if routed is not None and routed["kind"] == "clarify_product":
+            return _product_clarify_result(context_item, routed, dry_run=True, routing=routing)
         if routed is not None and routed["kind"] == "assign":
             team = routed["team"]
         actions = _assignment_actions(
@@ -627,7 +661,7 @@ def run(
             dry_run=True,
             preview=True,
         )
-        return {**result, "actions": actions, "pending": None}
+        return {**result, "actions": actions, "pending": None, "routing": routing}
 
     if services is not None:
         return _human_intervention(ctx, context_item, team, services, result)
@@ -653,8 +687,10 @@ def _human_intervention(
     """Assign the conversation, or ask which team - one place, both seam sources.
 
     The person / team decision needs a seam, so it happens HERE rather than in `run()`,
-    where the production bundle does not exist yet.
+    where the production bundle does not exist yet. So does the focus product's brand
+    (#865), for the same reason.
     """
+    context_item = _apply_focus_brand(context_item, services)
     routed = _person_routing(ctx, context_item, team, services)
     if routed is not None and routed["kind"] == "clarify":
         # The tail keys on `clarify_text` (`compile_state`'s clarify arm), the same field
@@ -680,18 +716,239 @@ def _human_intervention(
                 "kind": "team_clarify",
                 "options": routed.get("option_pairs") or [],
             },
+            "routing": _routing_record(context_item, None, None),
         }
-    if routed is not None and routed["kind"] == "assign":
-        actions = _assign(
-            ctx,
+    asked = _product_clarify(context_item, routed, team, services)
+    if asked is not None:
+        return _product_clarify_result(
             context_item,
+            asked,
+            dry_run=False,
+            routing=_routing_record({**context_item, "team": asked["team"]}, None, None),
+        )
+    if routed is not None and routed["kind"] == "assign":
+        actions, routing = _assign(
+            ctx,
+            # The team the draw is made from is the routed one (fix round 4, R1): a team
+            # the customer named replaces the parser's in the next-assignee body too.
+            {**context_item, "team": routed["team"]},
             routed["team"],
             services,
             assignee=routed["assignee"],
         )
-        return {**result, "actions": actions, "pending": None}
-    actions = _assign(ctx, context_item, team, services)
-    return {**result, "actions": actions, "pending": None}
+        return {**result, "actions": actions, "pending": None, "routing": routing}
+    actions, routing = _assign(ctx, context_item, team, services)
+    return {**result, "actions": actions, "pending": None, "routing": routing}
+
+
+def _apply_focus_brand(context_item: dict[str, Any], services: Any) -> dict[str, Any]:
+    """#865: the brand of the product this escalation is about, from the product row.
+
+    Owner ruling 27 Sep 2026 (fix option 1 of the root-cause report on #865): the brand is
+    a fact about the product the conversation is about, so the lane reads it at the point
+    of use instead of depending on whichever offer an earlier turn happened to mint. The
+    product is `item["focus_products"]`, which the engine hands over from THIS turn's
+    applied focus: this turn's named product when it named one, else the product the
+    previous turn left in focus. Nothing here decides when that carry ends; the focus
+    rules already drop it on a topic reset or a newer product.
+
+    It outranks the offer carry and `none` (rungs 4 and 6 of `escalation_context`). It
+    never outranks `stated_brand` (rung 5), the brand the customer named on THIS turn:
+    "I need the Mocha catalogue, escalate to marketing" after a SORENTO spec answer is a
+    Mocha escalation (fix round 2, S1). Nor the three roster arms above them, whose brand
+    is a SPECIFIC row the customer was shown. A product with no brand row, products that
+    disagree on the brand, a bundle without the seam, or a read that raises leave the item
+    exactly as `escalation_context` built it: the escalation is real whether or not the
+    brand can be named.
+
+    Fix round 4: the production seam answers `{brand, company, not_found}` (read across
+    companies, `escalation_services.focus_product_origin`), and the company the product
+    was found in, or the codes no company holds, ride on the item for the routing line.
+    A seam that answers a bare brand string (an injected stub) still works.
+    """
+    source = jsc.get(context_item, "routing_source")
+    fills_only = source in _ROSTER_WITHOUT_BRAND and not jsc.truthy(jsc.get(context_item, "brand_code"))
+    if source not in _FOCUS_OUTRANKS and not fills_only:
+        return context_item
+    products = jsc.array(jsc.get(context_item, "focus_products"))
+    seam = getattr(services, "product_brand", None) if services is not None else None
+    if not products or seam is None:
+        return context_item
+    try:
+        origin = seam(products)
+    except Exception:  # noqa: BLE001 - a brand nobody could read is not a failed turn
+        logger.warning("chatbot: the focus product's brand could not be read", exc_info=True)
+        return context_item
+    item = context_item
+    brand = origin
+    if isinstance(origin, dict):
+        brand = origin.get("brand")
+        item = {
+            **context_item,
+            "product_company": origin.get("company") or None,
+            "product_not_found": list(origin.get("not_found") or []),
+        }
+    if not jsc.truthy(brand):
+        return item
+    if fills_only:
+        # R6: the picked row keeps the company and its own routing source.
+        return {**item, "brand_code": jsc.js_string(brand).strip().lower()}
+    return {
+        **item,
+        "brand_code": jsc.js_string(brand).strip().lower(),
+        "routing_source": "focus_product",
+    }
+
+
+def _product_clarify(
+    context_item: dict[str, Any], routed: Any, team: Any, services: Any
+) -> dict[str, Any] | None:
+    """The did-you-mean for a typed product code no company holds, asked INSIDE the
+    escalation (fix round 5, R2), or None.
+
+    Owner hand test, 28 Sep: "pelase escalate to marketing team MWc-SC8609-)PP water
+    closet" is an escalation about a product whose code has a typo. The product lane would
+    answer a spec sheet or a "Couldn't find ... would you like me to escalate to customer
+    service team?" miss; here the customer already said where it goes. So the lane asks
+    once, with the resolver's own trigram neighbours (`product_suggestions`, the product
+    lane's did-you-mean), names the team it will go to, and the number the customer
+    replies with is an acceptance (`turn/apply.py::_answer_offer`) that settles the picked
+    code onto the focus, whose brand the draw then reads.
+
+    Only for a code-shaped token (letters and digits: a class word such as "water closet"
+    is never asked about), only after the team is settled (a team clarify asks first, one
+    question at a time), never over a named person, and never when nothing is near enough
+    to offer: then the escalation goes out as before, naming no brand.
+    """
+    if routed is not None and routed["kind"] != "assign":
+        return None
+    if routed is not None and routed.get("assignee") is not None:
+        return None
+    missing = {jsc.js_string(c).strip().upper() for c in jsc.array(jsc.get(context_item, "product_not_found"))}
+    seam = getattr(services, "product_suggestions", None) if services is not None else None
+    if not missing or seam is None:
+        return None
+    typed = None
+    for entry in jsc.array(jsc.get(context_item, "focus_products")):
+        if not isinstance(entry, dict) or entry.get("hint") not in (None, "product"):
+            continue
+        code = jsc.nullish_str(entry.get("canonical_code") or entry.get("raw")).strip()
+        if code.upper() in missing and any(c.isdigit() for c in code) and any(c.isalpha() for c in code):
+            typed = jsc.nullish_str(entry.get("raw")).strip() or code
+            break
+    if typed is None:
+        return None
+    try:
+        codes = [jsc.js_string(c).strip() for c in (seam(typed) or []) if jsc.truthy(c)]
+    except Exception:  # noqa: BLE001 - a did-you-mean nobody could read is not a failed turn
+        logger.warning("chatbot: the escalation's product did-you-mean did not run", exc_info=True)
+        return None
+    if not codes:
+        return None
+    chosen = routed["team"] if routed is not None else team
+    lines = "\n".join(f"{i}. {code}" for i, code in enumerate(codes, start=1))
+    return {
+        "kind": "clarify_product",
+        "team": chosen,
+        "text": (
+            f'Couldn\'t find "{typed}". Did you mean:\n{lines}\n'
+            f"Reply with the number and I will pass it to the {_pretty_team(chosen)} team."
+        ),
+        "option_pairs": [
+            {"position": i, "label": code, "product_code": code, "team": chosen}
+            for i, code in enumerate(codes, start=1)
+        ],
+    }
+
+
+def _product_clarify_result(
+    context_item: dict[str, Any], asked: dict[str, Any], *, dry_run: bool, routing: Any
+) -> dict[str, Any]:
+    """The lane's answer when it asks the product did-you-mean: nothing is drawn, the
+    question is sent, and `engine._question_offered` mints its options as an escalation
+    offer (`clarify_product`)."""
+    clarify = {
+        **context_item,
+        "team": asked["team"],
+        "clarify_product": True,
+        "clarify_text": asked["text"],
+        "clarify_product_options": asked["option_pairs"],
+    }
+    return {
+        "arm": "clarify",
+        "clarify": clarify,
+        # The numbered list is the whole answer; no quick replies (as the CS member
+        # picker, #1147).
+        "actions": _clarify_actions(asked["text"], options=[], dry_run=dry_run),
+        "pending": {"kind": "product_clarify", "options": asked["option_pairs"]},
+        "routing": routing,
+    }
+
+
+# #865 round 6 (R6): the roster arms whose row named a company but no brand. The offer
+# turn's brand, else the focus product's, fills the brand; the row keeps the company.
+_ROSTER_WITHOUT_BRAND = frozenset({"company_pick", "prior_state", "prior_state_no_company"})
+
+# The `escalation_context` outcomes the focus product's brand replaces (#865). The roster
+# arms (`picked_member`, `company_pick`, the `prior_state*` / `multi_company_unpicked`
+# family) are a specific row the customer was shown and keep their own brand, and
+# `stated_brand` is the customer's own word on this turn (fix round 2, S1).
+_FOCUS_OUTRANKS = frozenset({"carried_brand", "none"})
+
+
+def _routing_record(
+    context_item: dict[str, Any], body: dict[str, Any] | None, assignee: Any
+) -> dict[str, Any]:
+    """What the escalation trace records about the draw (#865 observability).
+
+    The next-assignee body's routing axes and the rung that chose the brand, plus the
+    round-robin cursor key the draw used (`next-assignee` echoes it as `cursor_key`: the
+    segment key, with a `~b:<brand>` suffix when the pool narrowed). Before this, the brand
+    a lane sent was visible only by joining the SLA row by time.
+    """
+    source = body if body is not None else {
+        "team_code": jsc.get(context_item, "team"),
+        "brand_code": jsc.get(context_item, "brand_code"),
+    }
+    return {
+        "team_code": jsc.get(source, "team_code"),
+        "brand_code": jsc.get(source, "brand_code"),
+        "routing_source": jsc.get(context_item, "routing_source"),
+        "cursor_key": jsc.get(assignee, "cursor_key") if isinstance(assignee, dict) else None,
+        "assignee_name": jsc.get(assignee, "assignee_name") if isinstance(assignee, dict) else None,
+        "brand_matched": jsc.get(assignee, "brand_matched") if isinstance(assignee, dict) else None,
+        # Fix round 4: where the product the brand was read from was found, or the codes
+        # no company holds.
+        "product_company": jsc.get(context_item, "product_company") or None,
+        "product_not_found": list(jsc.array(jsc.get(context_item, "product_not_found"))),
+    }
+
+
+def routing_line(routing: Any) -> str | None:
+    """The draw `_routing_record` recorded, as one readable line, or None without one.
+
+    Fix round 3 (the owner's 27 Sep retest): the reply the customer sees names only the
+    team, so the console and the trace screen show this line to say where it went. Fix
+    round 4: it also names the company the product was found in, or says in the same
+    line that no company holds the code (the escalation still goes out).
+    """
+    if not isinstance(routing, dict):
+        return None
+
+    def part(key: str) -> str:
+        value = jsc.get(routing, key)
+        return jsc.js_string(value) if jsc.truthy(value) else "none"
+
+    where = ""
+    missing = [jsc.js_string(c) for c in jsc.array(jsc.get(routing, "product_not_found"))]
+    if jsc.truthy(jsc.get(routing, "product_company")):
+        where = f"found in {part('product_company')}, "
+    elif missing:
+        where = f"product {', '.join(missing)} not found in any company, "
+    return (
+        f"Routing: team {part('team_code')}, brand {part('brand_code')}, "
+        f"source {part('routing_source')}, {where}assignee {part('assignee_name')}"
+    )
 
 
 def _parser_team(ctx: dict[str, Any], team: Any) -> Any:
@@ -858,6 +1115,26 @@ def _person_routing(
     if jsc.get(esc, "is_escalation_confirmation") is True:
         return None
     raw_team = _parser_team(ctx, team)
+    named = _named_teams(output)
+    parser_pick = _catalogue_teams(raw_team) if jsc.truthy(raw_team) else []
+    if named and not (parser_pick and set(parser_pick) <= set(named)):
+        # Fix round 4 (R1): the team the customer NAMED beats the parser's suggestion,
+        # which is only the fallback when no team is named. "pelase escalate to
+        # marketing team MWC-SC8609-PP" came back `suggested_team: purchasing`: a
+        # product code reads as the master_products domain, whose routing row is
+        # purchasing. A parser team the customer's word agrees with falls through.
+        chosen = named
+        if len(named) > 1 and "marketing_product" in named and jsc.array(
+            jsc.get(context_item, "focus_products")
+        ):
+            # "marketing" names three teams; about a product, it is Marketing Product
+            # (the owner's rule: product escalations go to its brand member there).
+            chosen = ["marketing_product"]
+        if len(chosen) == 1:
+            if chosen[0] == jsc.nullish_str(team).strip().lower():
+                return None
+            return {"kind": "assign", "team": chosen[0], "assignee": None}
+        return _clarify_over([{"team": t, "label": _pretty_team(t)} for t in chosen])
     if jsc.truthy(raw_team):
         # The parser named SOMETHING. Which catalogue members does that word name?
         matched = _catalogue_teams(raw_team)
@@ -878,6 +1155,80 @@ def _person_routing(
     if offer_is_open(_prev_variables(ctx)):
         return _clarify_over(_team_clarify_pairs([]))
     return None
+
+
+# Fix round 4 (R1): the team words a customer names, longest first, each mapped to the
+# word `_catalogue_teams` reads. Found in the parser's `user_goal`, and only after "to" /
+# "with" or before "team" / "department", so "trying to get the marketing flyer" names no
+# team and "escalate it to marketing" does.
+_TEAM_WORDS: dict[str, str] = {
+    "marketing products": "marketing_product",
+    "marketing product": "marketing_product",
+    "product marketing": "marketing_product",
+    "marketing promotions": "marketing_promotion",
+    "marketing promotion": "marketing_promotion",
+    "marketing forms": "marketing_form",
+    "marketing form": "marketing_form",
+    "purchasing certification": "purchasing_certification",
+    "customer services": "customer_service",
+    "customer service": "customer_service",
+    "customer support": "customer_service",
+    "certification": "purchasing_certification",
+    "procurement": "purchasing",
+    "purchasing": "purchasing",
+    "warehouse": "warehouse",
+    "marketing": "marketing",
+    "it admin": "it_admin",
+}
+_TEAM_WORD = "|".join(w.replace(" ", r"\s+") for w in _TEAM_WORDS)
+_NAMED_TEAM = re.compile(
+    rf"\b(?:to|with)\s+(?:the\s+|your\s+)?({_TEAM_WORD})\b"
+    rf"|\b({_TEAM_WORD})\s+(?:team|teams|department|dept)\b"
+)
+
+
+def _named_teams(output: Any) -> list[str]:
+    """The catalogue teams the customer NAMED on this turn, in catalogue order (R1).
+
+    Read off `user_goal`, the parser's own reading of the message (its spelling fixed:
+    "pelase esclate to marekting team" reads "escalate to the marketing team"), never the
+    customer's raw text (D11). `routing.suggested_team` cannot carry this on its own: the
+    prompt's routing table also fills it from the DOMAIN, so a message naming a team and a
+    product code comes back with the product domain's team (prod turn 14875614, "escalate
+    to marketing for srtsc07 full height": `suggested_team: purchasing_product`,
+    `user_goal: "trying to escalate to marketing for SRtsc07 full height"`).
+    """
+    goal = jsc.nullish_str(jsc.get(output, "user_goal")).lower()
+    teams: set[str] = set()
+    for match in _NAMED_TEAM.finditer(goal):
+        word = " ".join((match.group(1) or match.group(2)).split())
+        teams.update(_catalogue_teams(_TEAM_WORDS[word]))
+    return [t for t in ESCALATION_TEAMS if t in teams]
+
+
+# Fix round 5 (R1): the words that hand a matter to a person, as the parser's `user_goal`
+# spells them (its spelling fixed: "pelase esclate" reads "escalate").
+_ESCALATE_WORD = re.compile(
+    r"\b(?:escalat\w*|eskalasi|transfer\w*|forward\w*"
+    r"|hand(?:s|ed|ing)?\s+(?:\w+\s+){0,2}(?:over|to)"
+    r"|pass(?:es|ed|ing)?\s+(?:\w+\s+){0,2}(?:on\s+)?to"
+    r"|(?:talk|speak)(?:s|ed|ing)?\s+(?:\w+\s+)?(?:to|with))\b"
+)
+
+
+def asks_for_a_named_team(output: Any) -> bool:
+    """Did the customer ask to hand this to a team they named (fix round 5, R1)?
+
+    The parser's own MESSAGE TYPE rule 1 says so already: asking for a specific team or to
+    escalate is `request_for_help`, "even if they also mention a product or order". The
+    owner's "pelase escalate to marketing team MWc-SC8609-)PP water closet" came back a
+    master_products business query anyway, while its `user_goal` kept the words. So this
+    reads the same field `_named_teams` reads (the parser's reading, never the raw text,
+    D11): an escalate word AND a named team. A team mentioned with no escalate word
+    ("the spec of SRTWC286 for the marketing team") is not a request for anyone.
+    """
+    goal = jsc.nullish_str(jsc.get(output, "user_goal")).lower()
+    return bool(goal and _ESCALATE_WORD.search(goal) and _named_teams(output))
 
 
 def _catalogue_teams(word: Any) -> list[str]:
@@ -994,8 +1345,10 @@ def _preview_routing(
     team: Any,
     services: Any,
     session_factory: Any,
-) -> tuple[dict[str, Any] | None, Any]:
-    """`(routing decision, assignee)` for a dry run - both READS, in one unit of work.
+) -> tuple[dict[str, Any] | None, Any, dict[str, Any] | None]:
+    """`(routing decision, assignee, routing record)` for a dry run - READS only, in one
+    unit of work. The record is `_routing_record`'s, so a dry run's trace shows the same
+    next-assignee body a live turn's does.
 
     Fails soft throughout, on purpose: a bundle with no preview seam (an older injected
     stub), a lookup that raises, or no session factory at all leave the assignee null,
@@ -1003,22 +1356,32 @@ def _preview_routing(
     extra detail it is trying to show.
     """
 
-    def _both(bundle: Any) -> tuple[dict[str, Any] | None, Any]:
-        routed = _person_routing(ctx, context_item, team, bundle)
-        if routed is not None:
+    def _both(bundle: Any) -> tuple[dict[str, Any] | None, Any, dict[str, Any] | None]:
+        item = _apply_focus_brand(context_item, bundle)
+        routed = _person_routing(ctx, item, team, bundle)
+        asked = _product_clarify(item, routed, team, bundle)
+        if asked is not None:
+            return asked, None, _routing_record({**item, "team": asked["team"]}, None, None)
+        if routed is not None and routed["kind"] == "assign" and routed.get("assignee") is None:
+            # A named TEAM is a rotation draw (fix round 4, R1), so preview the draw from
+            # that team exactly as the live branch makes it.
+            item = {**item, "team": routed["team"]}
+        elif routed is not None:
             # A named person IS the assignee, and a clarify assigns nobody. Either way
             # there is no rotation to preview.
-            return routed, routed.get("assignee")
+            return routed, routed.get("assignee"), _routing_record(item, None, routed.get("assignee"))
         seam = getattr(bundle, "preview_assignee", None)
+        body = _next_assignee_body(ctx, item)
         if seam is None:
-            return None, None
-        return None, seam({**_next_assignee_body(ctx, context_item), "preview": True})
+            return routed, None, _routing_record(item, body, None)
+        assignee = seam({**body, "preview": True})
+        return routed, assignee, _routing_record(item, body, assignee)
 
     try:
         if services is not None:
             return _both(services)
         if session_factory is None:
-            return None, None
+            return None, None, None
         # Production dry run: the same read-only unit of work the live branch uses, so both
         # reads are scoped to the contact's company exactly as the draw would be (H56).
         from app.services.chatbot.lanes import escalation_services
@@ -1027,7 +1390,7 @@ def _preview_routing(
             return _both(escalation_services.build(db))
     except Exception:  # noqa: BLE001 - a preview is never worth failing a test turn for
         logger.warning("chatbot: dry-run routing preview did not run", exc_info=True)
-        return None, None
+        return None, None, None
 
 
 def _assign(
@@ -1037,8 +1400,10 @@ def _assign(
     services: Any,
     *,
     assignee: Any = None,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Draw an assignee, start the SLA clock, and build the four actions in live's order.
+
+    Returns `(actions, routing record)`; the record is what the trace shows (#865).
 
     Both seams run before a single action is built, which is what makes the failure shape
     in `engine.py` true: the lane returns its whole list or raises before returning any of
@@ -1048,10 +1413,12 @@ def _assign(
     a direct pick is not a rotation, so the round robin is not drawn from at all. The SLA
     clock still starts, because the escalation is just as real.
     """
+    body = None
     if assignee is None:
-        assignee = services.next_assignee(_next_assignee_body(ctx, context_item))
+        body = _next_assignee_body(ctx, context_item)
+        assignee = services.next_assignee(body)
     sla = services.sla_create(_sla_body(ctx, context_item, assignee))
-    return _assignment_actions(
+    actions = _assignment_actions(
         ctx,
         team,
         assignee=assignee,
@@ -1062,6 +1429,7 @@ def _assign(
         dry_run=False,
         preview=False,
     )
+    return actions, _routing_record(context_item, body, assignee)
 
 
 def _assignment_actions(
