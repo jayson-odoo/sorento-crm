@@ -11,6 +11,7 @@ import RespondChatList from '@/components/common/RespondChatList';
 import SharedConversationComposer from '@/components/common/conversation/SharedConversationComposer';
 import { invalidateConversationWindow } from '@/components/common/conversation/useConversationWindowState';
 import { usePendingThreadItems } from '@/components/common/conversation/usePendingThreadItems';
+import { useReplyTarget } from '@/components/common/conversation/useReplyTarget';
 
 interface StockInquiryConversationPanelProps {
   inquiryId: string;
@@ -48,6 +49,8 @@ export default function StockInquiryConversationPanel({
   const queryClient = useQueryClient();
   const pending = usePendingThreadItems();
   const { clearPending } = pending;
+  // #1317: the message the next Reply quotes; another record never inherits it.
+  const { replyTo, startReply, clearReplyTo } = useReplyTarget(inquiryId);
 
   // A different inquiry is a different draft: never leave a stranger's
   // in-flight send dimmed in a thread that just mounted under a new id.
@@ -129,6 +132,8 @@ export default function StockInquiryConversationPanel({
             contactName={data?.contact?.name ?? contactName}
             contactPhone={data?.contact?.phone ?? contactPhone}
             maxHeightClass={showAsPopup ? 'max-h-[60vh]' : 'max-h-[400px]'}
+            // #1317: Reply (menu + swipe) only where this viewer can answer.
+            onReply={canReply ? startReply : undefined}
           />
         )}
 
@@ -143,6 +148,8 @@ export default function StockInquiryConversationPanel({
           replyComposePrefill={replyComposePrefill}
           onSent={refetchSoon}
           pendingBubble={{ add: pending.addPending, remove: pending.removePending }}
+          replyTo={canReply ? replyTo : null}
+          onClearReplyTo={clearReplyTo}
           notAvailableMessage="Reply is only available when the inquiry is pending purchasing review or responded."
         />
       </CardContent>
