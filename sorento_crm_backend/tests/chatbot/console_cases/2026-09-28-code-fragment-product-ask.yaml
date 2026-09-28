@@ -54,10 +54,32 @@ cases:
             - "have stock"
             - "Showing"
 
+  - name: "7820 got stock? reads the same"
+    cold: true
+    turns:
+      - text: "7820 got stock?"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "MKT7820SS-BL-DIY"
+            - "MKT7820SS-GM-DIY"
+          reply_not_contains:
+            - "have stock"
+            - "Showing"
+
   - name: "a described ask with no code keeps the counted set"
     cold: true
     turns:
       - text: "which gunmetal basin has stock"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "basin"
+
+  - name: "any gunmetal basin have stock is still the set answer"
+    cold: true
+    turns:
+      - text: "any gunmetal basin have stock"
         expect:
           branch_kind: business_query
           reply_contains:
