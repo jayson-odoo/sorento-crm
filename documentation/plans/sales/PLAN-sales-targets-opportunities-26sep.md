@@ -4,7 +4,9 @@ Status: **building, wave 2.** S1 built on PR #1297 (track: full; build contract 
 membership, the Sales menu with Sales Agents moved in; section 15). S6 accepted on the owner's
 hand test (26 Sep ~13:25Z); fix lane round 2 on the same PR adds the team leader (W1) and lists
 a returning agent once (W2), section 15. Track: full. Wave 2: S2
-(opportunities) built on PR #1296 beside S1, contract in section 16, build record in section 17. Ready to build since the owner accepted V1 to V3 as recommended (Owner ruling
+(opportunities) built on PR #1296 beside S1, contract in section 16, build record in section 17;
+merge-main round 3 (main 12c3a07a, 28 Sep) brought #1316 and #1320 in with no conflict and no
+behaviour change, single alembic head `sales_0005_opp_line_price`. Ready to build since the owner accepted V1 to V3 as recommended (Owner ruling
 26 Sep ~09:05, section 14).
 Earlier status: grilled, round 5 (the owner's answers to R1 to R5 and T1 to T5, PR #1260 comment
 5843775673 of 26 Sep 06:09Z, folded in as "Owner ruling 26 Sep 06:09" lines; section 13 says how
