@@ -1520,6 +1520,47 @@ class ResolveReferenceRequest(BaseModel):
         return v
 
 
+def _code_fragment_matched(result: dict[str, Any], tokens: list[str] | None = None) -> bool:
+    """Hotfix round 2, PR #1351 (owner ruling, 28 Sep 2026): did a caller token that
+    carries a DIGIT match a product by its CODE?
+
+    "7820 stock" is a product-code ask, never a reverse ask: the dealer typed part of a
+    code, and the answer lists every product whose code contains it, zero on hand
+    included. `_has_exact_product_match` misses it because "7820" is not code-shaped
+    (digits only reads as a measurement), so the HAS branch below counted the seven
+    MKT7820SS code matches down to the two with stock and dropped the rest.
+
+    A code match is a code tier (never `spec_search`, `trgm` or `embedding`, which are
+    nearest-neighbour guesses) whose own code contains the token, separators and case
+    ignored. A word token ("basin", "gunmetal") carries no digit and never blocks HAS.
+    """
+    code_tiers = {"exact", "prefix", "substring", "head_code", "and"}
+
+    def _fold(value: Any) -> str:
+        return re.sub(r"[^0-9a-z]", "", str(value or "").lower())
+
+    def _hit(token: Any, match: Any) -> bool:
+        fragment = _fold(token)
+        return (
+            len(fragment) >= 3
+            and any(ch.isdigit() for ch in fragment)
+            and isinstance(match, dict)
+            and match.get("entity_type") == "product"
+            and match.get("match_tier") in code_tiers
+            and fragment in _fold(match.get("canonical_code"))
+        )
+
+    for resolution in result.get("resolutions") or []:
+        token = (resolution or {}).get("token")
+        if any(_hit(token, m) for m in (resolution or {}).get("matches") or []):
+            return True
+    return any(
+        _hit(token, match)
+        for token in tokens or []
+        for match in result.get("intersection") or []
+    )
+
+
 def _has_exact_product_match(result: dict[str, Any], tokens: list[str] | None = None) -> bool:
     """AC-1305/R1 (console fix round 2, 11 Sep): did a CODE-SHAPED caller token
     already resolve to a product match, at ANY tier?
@@ -2638,8 +2679,13 @@ def resolve_reference_post(
     # and it runs whenever the parser asked it, whatever the normal probes found -
     # UNLESS a caller token already resolved to a full product code (AC-1305): the
     # customer typed a complete code, so the response stays byte-identical to the
-    # same request without `require`.
-    if payload.require and not _has_exact_product_match(result, payload.tokens):
+    # same request without `require`. The same holds for a typed code FRAGMENT that
+    # matched products by code ("7820": `_code_fragment_matched`, hotfix PR #1351).
+    if (
+        payload.require
+        and not _has_exact_product_match(result, payload.tokens)
+        and not _code_fragment_matched(result, payload.tokens)
+    ):
         from app.services.product_predicate_service import (
             recover_certificate_scheme,
             resolve_product_set,
