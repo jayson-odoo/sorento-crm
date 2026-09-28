@@ -202,6 +202,10 @@ class ProjectRegisterRequest(BaseModel):
     owner_user_id: Optional[str] = Field(
         None, description="Defaults to the caller. Reassigning needs projects.manage."
     )
+    # The lead this project came from (#1339). Linking marks the lead as Qualify does; a
+    # lead another project already carries is refused.
+    lead_id: Optional[str] = None
+    admin_ref: Optional[str] = Field(None, max_length=64)
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
@@ -237,6 +241,8 @@ class ProjectUpdateRequest(BaseModel):
     expected_delivery_from: Optional[date] = None
     expected_delivery_to: Optional[date] = None
     brand_ids: Optional[List[str]] = None
+    # Sent as null to unlink; omitted leaves the link as it is (#1339).
+    lead_id: Optional[str] = None
 
     # AC-G7: critical is a flag settable at any status, never a funnel rung.
     is_critical: Optional[bool] = None
