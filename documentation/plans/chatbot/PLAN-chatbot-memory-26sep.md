@@ -1,6 +1,6 @@
 # PLAN - Chatbot memory: contact profile, episodes and turn context under a token budget
 
-Status: lane A (S0 to S3) BUILT on PR #1304, 27 Sep 2026, awaiting review and the owner's S3T
+Status: lane A (S0 to S3) BUILT on PR #1304, 27 Sep 2026, awaiting review and the owner's S3T; integration round 5 (28 Sep 2026) merged main b299bf6e then d79b46c5: #1301's `Known brands:` line rides the context layers (L2, kept whole), static prompt 36,176 of the 37,153 est. token ceiling, mem_0001_frames_level re-parented onto merge_28sep_batch2
 test; S4 built on the same PR in fix lane round 4 (below). Build rulings and deviations: `chatbot-memory-lane-a-contract.md`.
 Merge-main round, 27 Sep 2026: main at 52b0ac24 merged in; `mem_0001_frames_level` now hangs off
 main's single merge revision `sales_s1_reports_module`, and the parser prompt chain ends
