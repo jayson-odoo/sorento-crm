@@ -206,7 +206,7 @@ cursor = {book: "db1", doc_type: "DO", last_complete_day: "2026-09-27",
   `backfill_done_through`. After it finishes, one byLastModified sweep from the backfill's first
   day catches documents edited during the backfill.
 - **Manual re-pull of one day:** DocDate(d) for the one day, pushed as normal; used when the
-  operator suspects a day. On the CRM it is the pull screen's date picker (3.4.1).
+  operator suspects a day. On the CRM it is the pull screen's date picker (3.5.1).
 
 If **V1** answers that byLastModified is "on or after the day", the nightly loop is one call per
 night and the outage walk disappears. Nothing else changes.
