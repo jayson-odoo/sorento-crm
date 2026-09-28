@@ -53,6 +53,7 @@ export const SKIP_REASON_LABEL: Record<string, string> = {
   agent_has_no_contact: 'The sales agent has no contact',
   agent_contact_has_no_respond_id: 'The sales agent contact is not on WhatsApp',
   send_failed: 'The WhatsApp message failed to send',
+  enqueue_failed: 'The WhatsApp message could not be queued',
 };
 
 export const STATE_OPTIONS: { value: StockAskState; label: string }[] = [

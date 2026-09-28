@@ -2,6 +2,7 @@
  * Chatbot stock ask v2 S6: the portal's Customer asks, for a contact linked to a sales
  * agent. The same rows (and the same `state` / `note`) the CRM customer's Asks tab works.
  */
+import { buildDataGridParams } from '@/lib/api-client';
 import { portalFetch, unwrap } from './portal-client';
 import type { StockAsk, StockAskPage, StockAskPatch, StockAskState } from '@/lib/stock-asks';
 
@@ -21,9 +22,10 @@ export async function listCustomerAsks(params: {
   q?: string;
   state?: StockAskState;
 }): Promise<StockAskPage> {
-  const usp = new URLSearchParams({ page: String(params.page), limit: String(params.limit) });
-  if (params.q && params.q.trim()) usp.set('q', params.q.trim());
-  if (params.state) usp.set('state', params.state);
+  const usp = buildDataGridParams(
+    { pageIndex: params.page - 1, pageSize: params.limit },
+    { q: params.q?.trim(), state: params.state },
+  );
   const res = await portalFetch(`${BASE}?${usp.toString()}`);
   if (res.status === 403) throw new NotASalesAgentError();
   return unwrap<StockAskPage>(res, 'Failed to load customer asks');

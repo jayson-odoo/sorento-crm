@@ -284,3 +284,57 @@ def test_security_the_dealer_name_is_one_short_line_in_the_agent_message(
     for _ident, sent in _FakeRespond.sent:
         assert "\n" not in sent
         assert "x" * 101 not in sent
+
+
+def test_ac_sa501_a_reply_still_owing_a_quantity_records_and_notifies_nothing(
+    session_factory, monkeypatch, stub_access
+):
+    """Reviewer blocker (PR #1333): "ZZTSA-INS 50 and ZZTSA-BIG" is answered with a
+    quantity question, not with INS's line, so INS is not an answered ask yet. It is
+    recorded (once) on the turn that answers it."""
+    from tests.chatbot._r9_engine_console import product, stock
+
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
+    out = dealer.say(
+        "ZZTSA-INS 50 and ZZTSA-BIG",
+        stock(product("ZZTSA-INS", 50), product("ZZTSA-BIG")),
+    )
+    assert out.error is None, out.error
+    assert "ZZTSA-INS x 50:" not in (out.reply or {}).get("text", "")
+    assert _asks(session_factory) == []
+    assert dealer.notified == []
+
+
+def test_review_a_failed_enqueue_is_written_on_the_row(session_factory, monkeypatch, stub_access):
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
+
+    def redis_down(*a, **k):
+        raise ConnectionError("redis is down")
+
+    monkeypatch.setattr(stock_ask_service, "enqueue_job", redis_down)
+    out = dealer.ask_all_four()
+    assert out.error is None, out.error
+    rows = _by_code(session_factory)
+    for code in ("ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI"):
+        assert rows[code].notify_skip_reason == "enqueue_failed", code
+        assert rows[code].notified_agent is False
+
+
+def test_review_a_failed_success_log_still_marks_the_row_sent(
+    session_factory, monkeypatch, stub_access, respond
+):
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
+    _give_customer_an_agent(session_factory, dealer.customer_id)
+    dealer.ask_all_four()
+    _window(monkeypatch, open_=True)
+    real_log = stock_ask_service._log
+
+    def log(db_, **kwargs):
+        if kwargs.get("status") == "success":
+            raise RuntimeError("integration_logs is locked")
+        return real_log(db_, **kwargs)
+
+    monkeypatch.setattr(stock_ask_service, "_log", log)
+    results = _run_jobs(session_factory, dealer)
+    assert [r["status"] for r in results] == ["sent", "sent", "sent"]
+    assert _by_code(session_factory)["ZZTSA-BIG"].notified_agent is True

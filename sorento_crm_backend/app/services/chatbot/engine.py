@@ -4728,13 +4728,21 @@ def _stock_ask_packing_list_files(envelopes: list[dict[str, Any]]) -> list[dict[
 
 def _stock_ask_answered_entries(envelopes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Chatbot stock ask v2 S4: every `stock_availability` entry of this turn's fetch that
-    carries an answer (a branch and the dealer's quantity), in the order asked."""
+    carries an answer (a branch and the dealer's quantity), in the order asked.
+
+    An envelope where any product still needs a quantity was not answered at all: the
+    presenter prints no answer line then, and the reply is the quantity question. Its
+    entries become asks on the turn that answers them, once (review, PR #1333)."""
     from app.services import stock_ask_service
 
     entries: list[dict[str, Any]] = []
     for envelope in envelopes or []:
-        if isinstance(envelope, dict):
-            entries.extend(stock_ask_service.answered_entries(envelope.get("stock_availability")))
+        if not isinstance(envelope, dict):
+            continue
+        block = [e for e in envelope.get("stock_availability") or [] if isinstance(e, dict)]
+        if any(e.get("needs_quantity") is True for e in block):
+            continue
+        entries.extend(stock_ask_service.answered_entries(block))
     return entries
 
 

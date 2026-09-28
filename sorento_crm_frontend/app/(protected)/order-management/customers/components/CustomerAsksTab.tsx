@@ -27,7 +27,7 @@ export function CustomerAsksTab({ customerId }: { customerId: string }) {
   const canEdit = useHasPermission('order_management.customers.edit');
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 20 });
   const { data, isLoading, isPlaceholderData } = useCustomerAsksQuery(customerId, pagination);
-  const update = useUpdateAskMutation(customerId);
+  const { mutate: updateAsk } = useUpdateAskMutation(customerId);
   const rows = data?.data ?? [];
   const total = data?.pagination?.total ?? 0;
 
@@ -106,7 +106,7 @@ export function CustomerAsksTab({ customerId }: { customerId: string }) {
           <AskStateCell
             ask={row.original}
             editable={canEdit}
-            onSave={(patch) => update.mutate({ askId: row.original.id, patch })}
+            onSave={(patch) => updateAsk({ askId: row.original.id, patch })}
           />
         ),
       },
@@ -118,12 +118,12 @@ export function CustomerAsksTab({ customerId }: { customerId: string }) {
           <AskNoteCell
             ask={row.original}
             editable={canEdit}
-            onSave={(patch) => update.mutate({ askId: row.original.id, patch })}
+            onSave={(patch) => updateAsk({ askId: row.original.id, patch })}
           />
         ),
       },
     ],
-    [canEdit, update],
+    [canEdit, updateAsk],
   );
 
   const table = useReactTable({

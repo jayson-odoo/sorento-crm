@@ -180,7 +180,12 @@ def after_answered_turn(
         }
         from app.tasks.stock_ask_tasks import notify_salesman as notify_job
 
-        enqueue_job(notify_job, facts, queue_name="respond_io", job_timeout=180)
+        try:
+            enqueue_job(notify_job, facts, queue_name="respond_io", job_timeout=180)
+        except Exception:  # noqa: BLE001 - e.g. Redis down: say so on the row, not "pending"
+            logger.warning("stock ask %s: could not enqueue the salesman notification", ask.id, exc_info=True)
+            _record_outcome(db, facts, sent=False, reason="enqueue_failed")
+            continue
         enqueued.append(facts)
     return enqueued
 
@@ -379,14 +384,18 @@ def notify_salesman(db: Session, facts: dict[str, Any]) -> dict[str, Any]:
         return {"status": "failed", "error": str(exc)}
 
     response = result.get("response")
-    _log(
-        db,
-        facts=facts,
-        identifier=identifier,
-        status="success",
-        request_payload=result.get("request_payload") or attempted,
-        response_payload=str(response)[:50000] if response else None,
-    )
+    try:
+        _log(
+            db,
+            facts=facts,
+            identifier=identifier,
+            status="success",
+            request_payload=result.get("request_payload") or attempted,
+            response_payload=str(response)[:50000] if response else None,
+        )
+    except Exception:  # noqa: BLE001 - the message went out; the row must still say so
+        db.rollback()
+        logger.warning("stock ask %s: could not write the success send log", facts.get("turn_id"))
     _record_outcome(db, facts, sent=True, reason=None)
     return {"status": "sent", "sent_as": result.get("sent_as")}
 

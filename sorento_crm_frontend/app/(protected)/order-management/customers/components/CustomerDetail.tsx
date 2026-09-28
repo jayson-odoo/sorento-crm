@@ -15,9 +15,10 @@ import DetailActions from '@/components/common/DetailActions';
 import { useCustomerActions } from '../actions';
 import { CustomerAsksTab } from './CustomerAsksTab';
 
-type CustomerTab = 'details' | 'asks';
+export type CustomerTab = 'details' | 'asks';
 
-const CUSTOMER_TABS: { value: CustomerTab; label: string; icon: typeof Info }[] = [
+/** Shared with the edit page, so view and edit carry the same tabs in the same order. */
+export const CUSTOMER_TABS: { value: CustomerTab; label: string; icon: typeof Info }[] = [
   { value: 'details', label: 'Details', icon: Info },
   { value: 'asks', label: 'Asks', icon: MessageSquareText },
 ];

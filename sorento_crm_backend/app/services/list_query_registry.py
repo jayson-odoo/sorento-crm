@@ -187,11 +187,12 @@ ADAPTERS: Dict[str, ListQueryResourceAdapter] = {
         description="Ticket list filter/export metadata",
     ),
     # Chatbot stock ask v2 S5: the customer detail page's Asks tab (column config is keyed
-    # by `order_management.customers.view::stock_asks`). No export slug of its own.
+    # by `order_management.customers.view::stock_asks`). The plan builds no export, so the
+    # export slug is one no role is granted (`_crud` seeds view/add/edit/delete only).
     "stock_asks": ListQueryResourceAdapter(
         resource_key="stock_asks",
         view_slug="order_management.customers.view",
-        export_slug="order_management.customers.view",
+        export_slug="order_management.customers.export",
         serializer=_serialize_stock_asks,
         model=StockAsk,
         compile_prefix="stock_ask",

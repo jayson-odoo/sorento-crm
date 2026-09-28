@@ -237,6 +237,11 @@ def test_ac_sa507_the_list_query_registry_entry_serializes_a_row(world):
     adapter = ADAPTERS["stock_asks"]
     assert adapter.model is StockAsk
     assert adapter.view_slug == VIEW
+    # No export (plan "Simplest thing, not built"): a slug no role holds.
+    assert adapter.export_slug == "order_management.customers.export"
+    from app.rbac.permission_registry import PERMISSION_REGISTRY
+
+    assert adapter.export_slug not in {p["slug"] for p in PERMISSION_REGISTRY}
     out = adapter.serializer([world["older"]])
     assert len(out) == 1
     dumped = out[0].model_dump()
