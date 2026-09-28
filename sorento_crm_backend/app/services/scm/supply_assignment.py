@@ -131,6 +131,12 @@ DEFAULT_OVERDUE_DEAD_DAYS = 0
 POOL_GROUP = "__pool__"
 
 
+def ownership_group(warehouse: Optional[str], is_pool: bool = False) -> str:
+    """Public name for `_group_of`, for a caller outside this module that must agree with
+    the walk about which pile a location is (R42's S/O pin stays inside its own group)."""
+    return _group_of(warehouse, is_pool)
+
+
 def _group_of(warehouse: Optional[str], is_pool: bool) -> str:
     """The ownership group a location belongs to, in ONE spelling.
 
@@ -261,6 +267,11 @@ class Hold:
     #: reason `spo_number` rides here.
     po_number: Optional[str] = None
     purchase_order_id: Optional[str] = None
+    #: R42: this hold is the BOOK's S/O reference on a PO line, not a confirmed decision.
+    #: It decides WHO the document goes to, never WHEN the line had it: a document landing
+    #: after the line's own date still leaves the line short in its own month (R37), so
+    #: that quantity books there. A placement or an allocation keeps pinning at any date.
+    from_book_so: bool = False
 
 
 @dataclass(frozen=True)
@@ -346,6 +357,9 @@ class _Open:
     #: so the line reads `pinned`, and the goods are still not there, so the month is still
     #: owed the quantity. Without this the two rulings would cancel each other out.
     uncounted_pinned: float = 0.0
+    #: R42: pinned by the book's S/O to a document landing AFTER the line's own date. The
+    #: document is the line's, and it still went without on its date (R37).
+    late_pinned: float = 0.0
 
 
 def parse_supply_key(supply_key: str) -> Tuple[Optional[str], Optional[str]]:
@@ -567,6 +581,11 @@ def assign(
                 continue
             left[hold.supply_key] -= take
             event = events[hold.supply_key]
+            if hold.from_book_so and effective_date(event.at, as_of) > effective_date(
+                state.line.required_date, as_of
+            ):
+                state.late_pinned += take
+                state.late = True
         elif hold.supply_key in uncounted_by_key:
             # A DEAD document (R-O) somebody has already been promised - `uncounted_by_key`
             # holds only what `counted_event` refused outright, past `overdue_dead_days`, a
@@ -767,7 +786,7 @@ def _walk(
         # still clear it (it becomes `late`), and that does not give the month back: the
         # order was still short in the month it was promised for.
         state.short_at_date = _round(
-            max(state.remaining, 0.0) + state.uncounted_pinned
+            max(state.remaining, 0.0) + state.uncounted_pinned + state.late_pinned
         )
         if state.remaining > EPSILON:
             shortfalls.setdefault(group, []).append(state)
@@ -961,6 +980,7 @@ __all__ = [
     "group_book_positions",
     "month_axis",
     "month_key",
+    "ownership_group",
     "parse_supply_key",
     "tone_for",
 ]

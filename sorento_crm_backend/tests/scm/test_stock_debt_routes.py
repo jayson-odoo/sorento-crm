@@ -674,7 +674,7 @@ def test_a_po_line_hold_pins_the_line_in_stock_debt(scm_app):
     )
     project_order, project_line = _project_line_for(db, core_line)
     po, po_line = _po_line_for_hold(db, product, warehouse, qty=50, issue_date=TODAY)
-    inquiry_row, _link = _order_back_link_on_po(
+    _row, _link = _order_back_link_on_po(
         db, project_order, project_line, po_line=po_line, qty=50
     )
     db.flush()

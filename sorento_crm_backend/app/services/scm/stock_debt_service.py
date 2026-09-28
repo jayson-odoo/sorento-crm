@@ -77,9 +77,11 @@ from app.services.scm.supply_assignment import (
     Hold,
     SupplyEvent,
     assign,
+    counted_event,
     effective_date,
     month_axis,
     month_key,
+    ownership_group,
     parse_supply_key,
     tone_for,
 )
@@ -144,8 +146,14 @@ def book_so_pins(
 
     A line the walk will not draw for (TBA, undated, unlocated - R14) is never given one:
     `assign()` would drop the pin and the quantity would be lost to the free pile's
-    other claimants for nothing. PO lines are taken in delivery-date order so two PO lines
-    naming one order fill it the way the walk would.
+    other claimants for nothing. Nor is a line in ANOTHER ownership group (or a site pool
+    against a project group): a book S/O is the book's statement, not a Confirm somebody
+    pressed, and only a Confirm moves supply across a group (R40). PO lines are taken in
+    delivery-date order so two PO lines naming one order fill it the way the walk would.
+
+    `po_lines` carries the events AS THE WALK COUNTS THEM - the caller drops a dead or
+    undated PO first (`_book_so_holds`), because a pin on a document that is not supply
+    takes the line out of the walk and leaves it short beside free stock in its own bin.
     """
     already: Dict[str, float] = {}
     for hold in holds:
@@ -156,6 +164,7 @@ def book_so_pins(
         budget = float(event.qty) - float(placed or 0.0)
         if budget <= 0:
             continue
+        group = ownership_group(event.warehouse, event.is_pool)
         lines = sorted(
             (
                 line
@@ -164,6 +173,7 @@ def book_so_pins(
                 and line.required_date is not None
                 and line.required_date < tba_from
                 and (line.warehouse or line.is_pool)
+                and ownership_group(line.warehouse, line.is_pool) == group
             ),
             key=lambda line: (
                 line.required_date, line.core_line_no or 0, line.key,
@@ -188,6 +198,7 @@ def book_so_pins(
                     ref=event.ref,
                     po_number=event.po_number,
                     purchase_order_id=event.purchase_order_id,
+                    from_book_so=True,
                 )
             )
     return out
@@ -752,14 +763,17 @@ class StockDebtService:
             {line.key for lines in demand_rows.values() for line in lines},
             include_po=include_po,
         )
-        if view and include_po:
-            # R42: AFTER the confirmed holds, so a placement binds first and the book's S/O
-            # takes only what is left of the PO line (and of the sales-order line).
-            holds = holds + self._book_so_holds(supply_rows, demand_rows, holds, tba_from)
 
         settings = self.supply._fulfilment_settings()
         grace = settings.get("overdue_grace_days")
         dead = settings.get("overdue_dead_days")
+        if view and include_po:
+            # R42: AFTER the confirmed holds, so a placement binds first and the book's S/O
+            # takes only what is left of the PO line (and of the sales-order line).
+            holds = holds + self._book_so_holds(
+                supply_rows, demand_rows, holds, tba_from,
+                as_of=as_of, grace=grace, dead=dead,
+            )
 
         out: Dict[str, Assignment] = {}
         for product_id in product_ids:
@@ -1354,6 +1368,10 @@ class StockDebtService:
         demand_rows: Dict[str, List[DemandLine]],
         holds: Sequence[Hold],
         tba_from: date,
+        *,
+        as_of: date,
+        grace: Optional[int],
+        dead: Optional[int],
     ) -> List[Hold]:
         """R42: a PO line whose S/O names a sales order covers THAT order first.
 
@@ -1368,15 +1386,24 @@ class StockDebtService:
         a decision somebody confirmed and it binds first (`_holds`), so on the owner's
         4-unit line (S/O SO419208, Placed 4) the book pins nothing and nothing is counted
         twice. The arithmetic is `book_so_pins`, pure.
+
+        Only a PO line the walk COUNTS may pin (`counted_event`, the overdue rule's one
+        home): a dead or undated PO is not supply, and pinning to it would take the line out
+        of the walk, so it reads short beside free stock in its own bin. It is listed as
+        `overdue, not counted` and pins nothing until somebody re-dates it or raises the
+        grace. A late-but-alive one pins at its ASSUMED date.
         """
         po_events: Dict[str, Tuple[str, SupplyEvent]] = {}
         for product_id, events in supply_rows.items():
             for event in events:
                 if event.kind != KIND_PO:
                     continue
+                admitted = counted_event(
+                    event, as_of=as_of, overdue_grace_days=grace, overdue_dead_days=dead,
+                )
                 _kind, line_id = parse_supply_key(event.key)
-                if line_id:
-                    po_events[line_id] = (product_id, event)
+                if admitted is not None and line_id:
+                    po_events[line_id] = (product_id, admitted)
         if not po_events:
             return []
         ids = list(po_events)

@@ -580,10 +580,9 @@ class _PoRow:
     bought_for: Optional[date]
     qty: Decimal
     supplier_name: Optional[str] = None
-    #: R42 (Stock Debt only, 28 Sep 2026): the document's own id, the RAW ordered/received
-    #: quantities beside the netted `qty` above, and the buyer's Delivery date read as a
-    #: date the view parks the line on. Defaulted so every other construction keeps
-    #: working; the board and the ladder read none of them.
+    #: R42 (Stock Debt only, 28 Sep 2026): the document's own id and the RAW ordered/
+    #: received quantities beside the netted `qty` above. Defaulted so every other
+    #: construction keeps working; the board and the ladder read none of them.
     purchase_order_id: Optional[str] = None
     ordered_qty: Optional[Decimal] = None
     received_qty: Optional[Decimal] = None

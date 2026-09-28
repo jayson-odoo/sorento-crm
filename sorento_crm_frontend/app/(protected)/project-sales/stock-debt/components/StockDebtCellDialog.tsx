@@ -91,18 +91,42 @@ function date(value: string | null): string {
  * much. `highlightLines` marks the document's own line when the dialog opens from here
  * (R31b), so a reader can jump straight to it.
  */
+/** R42: a PO line - the document link, then its line number, muted. */
+function PoLineLink({
+  poNumber,
+  poLineNumber,
+  poId,
+  poLineId,
+}: {
+  poNumber: string;
+  poLineNumber: number | null;
+  poId: string | null;
+  poLineId: string | null;
+}) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1">
+      <OrderInquiryDocumentLink kind="po" document={poNumber} poId={poId} poLineId={poLineId} />
+      {poLineNumber != null && (
+        <span className="shrink-0 text-muted-foreground">line {poLineNumber}</span>
+      )}
+    </span>
+  );
+}
+
 function CoveredByEntry({ entry }: { entry: StockDebtAssignedFrom }) {
   if (entry.kind === 'on_hand') {
     return <span className="truncate text-muted-foreground">{entry.ref}</span>;
   }
   if (entry.kind === 'po') {
     // R42: a purchase order covers a line too. The same link, kind `po`, opened on the
-    // PO line itself (`poLineId` marks it and offers the jump), which is how the PO's
-    // number and line both reach the reader.
+    // PO line itself (`poLineId` marks it and offers the jump). The line number rides
+    // beside it, unlike an SPO's (R31a): one PO often covers one order from two lines
+    // (PO 202609-S0029's 1,305 and 4 both name SO419208), and two identical numbers
+    // side by side read as one document listed twice.
     return entry.po_number ? (
-      <OrderInquiryDocumentLink
-        kind="po"
-        document={entry.po_number}
+      <PoLineLink
+        poNumber={entry.po_number}
+        poLineNumber={entry.po_line_number ?? null}
         poId={entry.po_id ?? null}
         poLineId={entry.po_line_id ?? null}
       />
@@ -422,9 +446,9 @@ export function StockDebtCellDialog({
         cell: ({ row }) =>
           row.original.kind === 'po' && row.original.po_number ? (
             // R42: a PO line, linked the way Covered by links it.
-            <OrderInquiryDocumentLink
-              kind="po"
-              document={row.original.po_number}
+            <PoLineLink
+              poNumber={row.original.po_number}
+              poLineNumber={row.original.po_line_number ?? null}
               poId={row.original.po_id ?? null}
               poLineId={row.original.po_line_id ?? null}
             />

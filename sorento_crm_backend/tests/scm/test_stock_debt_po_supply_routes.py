@@ -83,8 +83,9 @@ def _csk14a(db, *, grace: int, dead: int):
     product = _product(db, f"{marker}-CSK14A-NL")
     due = _months_ahead(1)
     earlier = TODAY + timedelta(days=15) if grace else TODAY
+    # 100, more than the free 41: without the S/O pins it would eat into the named lines.
     other_order, _other = _demand(
-        db, product, warehouse, qty=41, required_date=earlier,
+        db, product, warehouse, qty=100, required_date=earlier,
         so_number=f"{marker}-SO-OTHER",
     )
     order, core_line = _demand(
@@ -171,6 +172,7 @@ def test_a_po_line_naming_a_sales_order_covers_it_first_at_14_90(scm_app):
 
     other = _by_so(earlier, "SO-OTHER")
     assert other["assigned_qty"] == 41
+    assert other["short_qty"] == 59, "the free 41 lands on as_of + 14, a day before it is due"
     assert [entry["po_line_id"] for entry in other["assigned_from"]] == [
         str(seed["free"].id)
     ]
@@ -189,9 +191,10 @@ def test_a_po_line_naming_a_sales_order_covers_it_first_at_14_90(scm_app):
 
 def test_at_the_shipped_0_0_every_late_po_counts_as_nothing(scm_app):
     """AC-PO-6 (the shipped policy): 14 and 18 days late are past a dead line of 0, so all
-    three PO lines are listed in the CURRENT month as overdue and counted as nothing. The
-    promise still stands - SO419208 reads `pinned` and Covered by still names the PO - but
-    its month books the whole 1,309, and the earlier order is short its 41."""
+    three PO lines are listed in the CURRENT month as overdue and counted as nothing. A
+    dead PO pins nothing through its S/O; the placement of 4 is a confirmed decision and
+    still names its PO line, counting as nothing (the SPO precedent). SO419208 is short
+    and its month books the whole 1,309; the earlier order is short its 100."""
     app, db = _client(scm_app)
     seed = _csk14a(db, grace=0, dead=0)
 
@@ -204,13 +207,15 @@ def test_at_the_shipped_0_0_every_late_po_counts_as_nothing(scm_app):
         ).json()
 
     line = _by_so(cell, "SO419208")
-    assert line["status"] == "pinned"
+    assert line["status"] == "short"
     assert line["short_qty"] == 1309
-    assert {entry["kind"] for entry in line["assigned_from"]} == {"po"}
+    assert [(entry["po_line_id"], entry["qty"]) for entry in line["assigned_from"]] == [
+        (str(seed["placed"].id), 4)
+    ]
 
     other = _by_so(today, "SO-OTHER")
     assert other["status"] == "short"
-    assert other["short_qty"] == 41
+    assert other["short_qty"] == 100
 
     rows = [row for row in today["supply"] if row["kind"] == "po"]
     assert len(rows) == 3
@@ -241,6 +246,37 @@ def test_an_s_o_that_names_no_sales_order_held_here_leaves_the_po_free(scm_app):
     line = cell["demand"][0]
     assert line["status"] == "covered"
     assert line["assigned_qty"] == 30
+
+
+def test_a_po_line_with_no_date_at_all_is_listed_uncounted_and_pins_nothing(scm_app):
+    """AC-PO-2's second half: no Delivery date and no issue date, so no date to park it
+    on. It is listed in the current month, counts as nothing, and its S/O pins nothing."""
+    app, db = _client(scm_app)
+    _policy(db, 14, 90)
+    marker = f"ZZTPO{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    due = _months_ahead(1)
+    order, _line = _demand(
+        db, product, warehouse, qty=30, required_date=due, so_number=f"{marker}-SO1"
+    )
+    order.source_ref = f"ZZTBOOK:{marker}"
+    po = _purchase_order(db, f"{marker}-PO", issue_date=None)
+    po_line = _po_line(
+        db, po, product, warehouse, qty=30, delivery=None, so_ref=f"ZZTBOOK:{marker}:1"
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
+        today = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(TODAY)}).json()
+
+    assert cell["demand"][0]["status"] == "short"
+    assert cell["demand"][0]["assigned_from"] == []
+    [row] = [row for row in today["supply"] if row["kind"] == "po"]
+    assert row["po_line_id"] == str(po_line.id)
+    assert row["date"] is None
+    assert row["free_qty"] == 0
 
 
 def test_the_board_path_is_unchanged_and_differs_from_the_view_only_by_r42(scm_app):

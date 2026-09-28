@@ -176,6 +176,16 @@ VIEW. The board and the ladder do not change.
    - A book pin is made only for a PO line INSIDE the read span, so it names a real dated event
      that the overdue rule has already read. A placement outside the span keeps AC-S2-1b's
      stood-up branch; a book S/O is not a confirmed decision and does not get one.
+   - **Three limits, added by the lane's own review (28 Sep), all from that same fact (a book S/O
+     is the book's statement, not a Confirm):**
+     - It pins only a PO line the walk COUNTS (`counted_event`). A dead or undated PO is not
+       supply, and a pin on it takes the line out of the walk, so the line read short beside
+       free stock in its own bin. It pins nothing until it is re-dated or the grace is raised.
+     - It pins only inside the PO's own ownership group (a site pool is its own group). Only a
+       Confirm moves supply across a group (R40).
+     - It decides WHO gets the PO, never WHEN the line had it: a PO landing after the line's own
+       date still leaves that quantity short in the line's own month (R37). A placement or a
+       confirmed allocation keeps pinning at any date, as before.
    - A TBA, undated or unlocated sales-order line draws nothing (R14), so it is never given a
      book pin; its share stays free.
 4. **Covered by and the Supply tab.** A demand line covered by a PO prints the PO in Covered by
@@ -185,8 +195,9 @@ VIEW. The board and the ladder do not change.
    Outstanding = what the walk counts, Assigned to and Free as for an SPO.
 5. **Overdue is the SPO rule, unchanged (R-O).** A PO line whose delivery date has passed counts
    on `as_of + overdue_grace_days`, and past `overdue_dead_days` it counts as nothing and is
-   listed as `overdue, not counted`. A pinned line on a dead PO keeps reading `pinned` and its
-   month still books the quantity (the SPO precedent, AC-S2-7). The policy ships at 0 / 0 on
+   listed as `overdue, not counted`. A dead PO pins nothing through its S/O (point 3); a
+   PLACEMENT on a dead PO keeps naming it and its month still books the quantity (the SPO
+   precedent, AC-S2-7). The policy ships at 0 / 0 on
    `scm.priority_policy`, so with no change to the settings every PO line whose delivery date is
    before today counts as nothing. Raise the two numbers on `/scm/policies` (Fulfilment priority
    panel, `PUT` through the `scm.priority_policy` settings route); 14 / 90 is the recommended

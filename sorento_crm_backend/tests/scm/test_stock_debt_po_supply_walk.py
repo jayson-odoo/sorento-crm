@@ -27,6 +27,7 @@ from app.services.scm.supply_assignment import (
     Hold,
     SupplyEvent,
     assign,
+    counted_event,
     free_piles_at,
 )
 
@@ -100,7 +101,20 @@ def test_acc6001_with_no_purchase_order_reads_minus_156_in_december():
     assert all(balance == 0 for key, balance in months.items() if key != "2026-12")
 
 
-def _csk14a():
+def _counted(events, grace, dead):
+    """What `_book_so_holds` hands `book_so_pins`: only the PO lines the walk counts, at
+    the date it counts them on."""
+    out = []
+    for event in events:
+        admitted = counted_event(
+            event, as_of=AS_OF, overdue_grace_days=grace, overdue_dead_days=dead
+        )
+        if admitted is not None:
+            out.append(admitted)
+    return out
+
+
+def _csk14a(grace=14, dead=90):
     """PO 202609-S0029 for CSK14A-NL, and SO419208's open line for it at BRW-BB."""
     free_41 = _po("l41", 41, date(2026, 9, 10), "BRW", is_pool=True, line_no=1)
     named_1305 = _po("l1305", 1305, date(2026, 9, 14), "BRW-BB", line_no=2)
@@ -116,10 +130,11 @@ def _csk14a():
         oi_number="OI-1",
         oi_id="oi-1",
     )
+    placed_by_key = {named_1305.key: 0.0, placed_4.key: 4.0}
     pins = book_so_pins(
         [
-            ("P", named_1305, "id-SO419208", 0.0),
-            ("P", placed_4, "id-SO419208", 4.0),
+            ("P", event, "id-SO419208", placed_by_key[event.key])
+            for event in _counted([named_1305, placed_4], grace, dead)
         ],
         {"P": [so_line]},
         [placement],
@@ -167,18 +182,41 @@ def test_csk14a_at_14_90_is_pinned_and_the_41_is_free_in_the_pool():
 
 def test_csk14a_at_0_0_counts_nothing_and_october_still_owes_1309():
     """AC-PO-6 (the SHIPPED policy, 0 / 0): any lateness at all is dead, so all three PO
-    lines count as nothing and are returned `uncounted`. The pins stand - SO419208 reads
-    `pinned` and Covered by still names the PO - but a pin on a dead document is not
-    supply (R31), so October books the whole 1,309 and nothing is free anywhere."""
-    supply, so_line, placement, pins = _csk14a()
+    lines count as nothing and are returned `uncounted`. A dead PO is not supply, so the
+    book S/O pins nothing (review of this lane: a pin on it would take the line out of
+    the walk). The placement of 4 is a confirmed decision and still names its PO (the SPO
+    precedent), counting as nothing. SO419208 is short, October books the whole 1,309."""
+    supply, so_line, placement, pins = _csk14a(grace=0, dead=0)
+    assert pins == []
     result = _walk(supply, [so_line], [placement, *pins])
 
     [line] = result.lines
-    assert line.status == STATUS_PINNED
+    assert line.status == STATUS_SHORT
     assert line.short_at_date == 1309
+    assert [(item.event.key, item.qty) for item in line.assigned] == [("po:l4", 4)]
     assert {event.key for event in result.uncounted} == {"po:l41", "po:l1305", "po:l4"}
     assert result.free == {}
     assert _months(result)["2026-10"] == -1309
+
+
+def test_a_dead_po_naming_an_order_does_not_keep_it_from_stock_in_its_own_bin():
+    """Review of this lane, the blocker it found: a PO one day late at 0 / 0 names SO X,
+    and 100 sits on hand at the same bin. The PO counts as nothing, so it pins nothing,
+    and the line draws the on hand and reads covered."""
+    on_hand = SupplyEvent(key="on_hand:bb", kind="on_hand", warehouse="BRW-BB",
+                          at=AS_OF, qty=100)
+    po = _po("x", 100, date(2026, 9, 27), "BRW-BB")
+    line = _line("x", "SOX", 100, date(2026, 10, 20), sales_order_id="id-SOX")
+    pins = book_so_pins(
+        [("P", event, "id-SOX", 0.0) for event in _counted([po], 0, 0)],
+        {"P": [line]}, [], tba_from=TBA_FROM,
+    )
+    result = _walk([on_hand, po], [line], pins)
+
+    assert pins == []
+    assert result.lines[0].status == "covered"
+    assert result.lines[0].short_at_date == 0
+    assert all(month.balance == 0 for month in result.months)
 
 
 # ---------------------------------------------------------------- the pin rule
@@ -241,6 +279,37 @@ def test_tba_undated_and_unlocated_lines_are_never_pinned():
     ]
     assert book_so_pins([("P", po, "id-SO1", 0.0)], {"P": lines}, [],
                         tba_from=TBA_FROM) == []
+
+
+def test_a_po_landing_after_the_line_still_books_the_lines_own_month():
+    """Review of this lane: the S/O decides WHO gets the PO, never WHEN the line had it.
+    A line of 100 due 20 Oct named by a PO delivering 15 Dec is pinned to it, and still
+    went without on 20 Oct, so October books -100 (R37) and the PO is spent, free in no
+    month."""
+    po = _po("a", 100, date(2026, 12, 15), "BRW-BB")
+    line = _line("n", "SO1", 100, date(2026, 10, 20), sales_order_id="id-SO1")
+    pins = book_so_pins([("P", po, "id-SO1", 0.0)], {"P": [line]}, [], tba_from=TBA_FROM)
+    result = _walk([po], [line], pins)
+
+    [row] = result.lines
+    assert row.status == STATUS_PINNED
+    assert row.short_at_date == 100
+    months = _months(result)
+    assert months["2026-10"] == -100
+    assert months["2026-12"] == 0
+
+
+def test_an_s_o_never_pins_across_an_ownership_group():
+    """R40: only a Confirm moves supply across a group. A PO to BRW (a site pool) or to
+    MWH-IB naming an order booked at BRW-BB pins nothing; its quantity stays in its own
+    group's pile."""
+    pool_po = _po("p", 41, date(2026, 10, 5), "BRW", is_pool=True)
+    ib_po = _po("i", 20, date(2026, 10, 5), "MWH-IB")
+    line = _line("n", "SO1", 50, date(2026, 11, 1), sales_order_id="id-SO1")
+    assert book_so_pins(
+        [("P", pool_po, "id-SO1", 0.0), ("P", ib_po, "id-SO1", 0.0)],
+        {"P": [line]}, [], tba_from=TBA_FROM,
+    ) == []
 
 
 def test_a_po_line_wholly_placed_pins_nothing_more():

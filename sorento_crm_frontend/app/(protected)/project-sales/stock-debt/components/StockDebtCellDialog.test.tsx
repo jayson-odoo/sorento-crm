@@ -853,6 +853,8 @@ describe('StockDebtCellDialog', () => {
     const row = (await screen.findByText('SO419208')).closest('tr') as HTMLElement;
 
     const trigger = within(row).getByTestId('document-detail-trigger-202609-S0029');
+    // The line rides beside the number: one PO often covers one order from two lines.
+    expect(within(row).getByText('line 2')).toBeInTheDocument();
     fireEvent.click(trigger);
 
     expect(await screen.findByText('Purchase order')).toBeInTheDocument();
@@ -900,6 +902,7 @@ describe('StockDebtCellDialog', () => {
     const trigger = await screen.findByTestId('document-detail-trigger-202609-S0029');
     const row = trigger.closest('tr') as HTMLElement;
     expect(within(row).getByText('PO')).toBeInTheDocument();
+    expect(within(row).getByText('line 1')).toBeInTheDocument();
     expect(within(row).getByText('12/10/2026')).toBeInTheDocument();
     expect(within(row).getByText('45')).toBeInTheDocument();
     expect(within(row).getByText('4')).toBeInTheDocument();
