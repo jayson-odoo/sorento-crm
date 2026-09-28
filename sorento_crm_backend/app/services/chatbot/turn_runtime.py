@@ -741,7 +741,8 @@ def set_clarify_carry(verdict: dict[str, Any], predicate: Any, resolved: Any) ->
     Round 4 R5 (owner console test on PR #833: "i clarify if it is tap or wash basin and i
     said tap, you supposed to do the searching"). Two questions carry it: the product-type
     clarify ("I don't know 'water tap basin' as a product type. Did you mean tap or wash
-    basin?", AC-1320) and the unknown value one (R6, "I know P trap and S trap."). Kept:
+    basin?", AC-1320, retired in fix round 10: no product types are offered) and the unknown
+    value one (R6, "I know P trap and S trap."). Kept:
     the unknown words, the options offered, and the ask itself (intent, domain, attribute
     and this message's own entities), so the answer is that ask with the word replaced."""
     term: str | None = None
@@ -754,10 +755,6 @@ def set_clarify_carry(verdict: dict[str, Any], predicate: Any, resolved: Any) ->
     if unknown:
         term = jsc.nullish_str(unknown[0].get("said")).strip()
         options = [jsc.nullish_str(k).strip().lower() for k in unknown[0].get("known") or []]
-    elif isinstance(predicate, dict) and not predicate.get("qualifying_total") and predicate.get("suggestions"):
-        terms = [t for t in (predicate.get("unrecognized_terms") or []) if isinstance(t, str) and t.strip()]
-        term = terms[0].strip() if terms else None
-        options = [jsc.nullish_str(o).strip().lower() for o in predicate.get("suggestions") or []]
     options = [o for o in options if o]
     if not term or not options:
         return None

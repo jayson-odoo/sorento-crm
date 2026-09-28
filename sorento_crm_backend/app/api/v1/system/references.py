@@ -1583,13 +1583,24 @@ def _has_exact_product_match(result: dict[str, Any], tokens: list[str] | None = 
     return False
 
 
-def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
-    """Every product uuid LOOKUP already matched, in order, deduped.
+#: The resolver tiers that match a product CODE (`entity_resolver`): the whole code, a
+#: code prefix, a code substring, a set's head code, the AND probe (code-only by design).
+#: Never `embedding`, `trgm` or `spec_search`: those are nearest-neighbour guesses.
+_CODE_MATCH_TIERS = frozenset({"exact", "prefix", "substring", "head_code", "and"})
+
+
+def _collect_lookup_product_ids(result: dict[str, Any], tokens: list[str] | None = None) -> list[str]:
+    """Every product uuid LOOKUP matched BY CODE, in order, deduped.
 
     Work item C2: the described set's other half besides the class/product_type/
-    brand bindings - a caller who typed "bidet" already has three name matches from
-    the ordinary product probes (the screenshot picker), and those ids are a
-    perfectly good described set on their own.
+    brand bindings.
+
+    Fix round 10 on PR #833 (owner, 28 Sep 2026: "i tried to search like gunmetal
+    basin, there is no such thing and it gives me flexible trap", "for #833 yeah exact
+    only"): only a code-shaped token's code-tier match counts. A word ("basin",
+    "gunmetal basin") describes the set through the catalogue's own vocabulary alone
+    (`filter_specs`); the resolver's embedding and trigram neighbours of a word are a
+    guess, and the embedding tier is what put a flexible trap into "gunmetal basin".
     """
     ids: list[str] = []
     seen: set[str] = set()
@@ -1597,16 +1608,21 @@ def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
     def _take(match: Any) -> None:
         if not isinstance(match, dict) or match.get("entity_type") != "product":
             return
+        if match.get("match_tier") not in _CODE_MATCH_TIERS:
+            return
         uid = match.get("uuid")
         if uid and uid not in seen:
             seen.add(uid)
             ids.append(uid)
 
     for resolution in result.get("resolutions") or []:
+        if not _is_code_shaped(str((resolution or {}).get("token") or "")):
+            continue
         for match in (resolution or {}).get("matches") or []:
             _take(match)
-    for match in result.get("intersection") or []:
-        _take(match)
+    if any(_is_code_shaped(str(t or "")) for t in (tokens or [])):
+        for match in result.get("intersection") or []:
+            _take(match)
     return ids
 
 
@@ -2867,7 +2883,7 @@ def resolve_reference_post(
         # (`payload.limit`, 15), which would cut a 40-product set that fits one
         # message down to 15.
         # Read BEFORE `_emit_spec_matches` adds the qualifying set to the resolutions.
-        lookup_ids = _collect_lookup_product_ids(result)
+        lookup_ids = _collect_lookup_product_ids(result, payload.tokens)
         outcome = resolve_product_set(
             db,
             # R14/AC-1338: the PROMOTED require (a bare `true` recovered a
@@ -2915,17 +2931,6 @@ def resolve_reference_post(
         # never the product-type sentence below.
         if "attachment_types_on_file" in outcome:
             result["predicate"]["attachment_types_on_file"] = outcome["attachment_types_on_file"]
-        # F2/AC-1320: nearest class-label suggestions on an unrecognized-term
-        # zero - absent whenever the resolver found none to offer, same
-        # present-only-on-the-relevant-miss convention as `schemes_on_file`.
-        if outcome.get("suggestions"):
-            result["predicate"]["suggestions"] = outcome["suggestions"]
-        # F2/AC-1320 fix round: the last-resort fallback (the catalogue's own
-        # most common class labels) when NOTHING was near enough to offer as a
-        # `suggestions` entry - a distinct key because it carries different
-        # copy ("Try a product type such as ...", never "Did you mean ...?").
-        if outcome.get("common_class_labels"):
-            result["predicate"]["common_class_labels"] = outcome["common_class_labels"]
         # E2/AC-1316: the described set's class label(s), for the set-answer
         # header's noun (`answer.set_noun_for`) - present only when non-empty
         # (AC-1309's own shape-lock test asserts `predicate` carries EXACTLY its
@@ -3123,7 +3128,10 @@ def resolve_reference_post(
         if hidden_spec_keys:
             specs = [s for s in specs if s.get("key") not in hidden_spec_keys]
 
-        found = search_specs(db, specs=specs, exclusions=exclusions, free_terms=free_terms)
+        # Fix round 10 on PR #833 (owner, 28 Sep 2026: "for #833 yeah exact only"): the
+        # chatbot's spec fallback lists only products that hold every value asked for,
+        # never the nearest by relevance (`search_specs(exact=True)`).
+        found = search_specs(db, specs=specs, exclusions=exclusions, free_terms=free_terms, exact=True)
         if hidden_spec_keys:
             from app.services.product_spec_rendering import render_spec_sentence
 

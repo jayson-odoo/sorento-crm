@@ -3063,6 +3063,34 @@ def not_found_error_message(
         if (domain_hint == "order" and order_status == "outstanding")
         else ("delivered " if (domain_hint == "order" and order_status == "delivered") else "")
     )
+    # Fix round 10 on PR #833: read before the branches, so the unknown-value reply below
+    # has its team on every path (it failed on the needs-scope one).
+    routing = jsc.get(q, "routing")
+    suggested_team = jsc.get(routing, "suggested_team") if jsc.truthy(routing) else None
+    # Owner ruling 22 Sep 2026, R6 (AC-EQ-12..14): a stock/incoming question with
+    # NO team named at all must still get the domain's own escalation team
+    # (inventory -> warehouse, incoming -> purchasing), never the generic
+    # "customer_service" literal. On the `engine.run_turn` path
+    # `turn_runtime.lane_parse_output` is what actually fills a null
+    # `routing.suggested_team` (its own `DEFAULT_SUGGESTED_TEAM` chain, now
+    # domain-aware - see that function), so `suggested_team` read off
+    # `q["routing"]` here is rarely still falsy by the time a real TURN reaches
+    # this composer. This is the SAME fallback anyway, kept as the direct-call
+    # belt-and-braces: a caller that reaches `complete_answer` directly, bypassing
+    # `run_turn`/`lane_parse_output` entirely, builds its `parser` dict with no
+    # `routing` key at all - `test_s6c_answer_lane.py::TestErrorArmRendersTheMissLane
+    # .test_the_error_arm_reaches_the_miss_renderer` is exactly that shape
+    # (`domain_hint = "inventory"`, no `routing` key), and pins this fallback
+    # directly; this composer must not hand a caller like that the generic literal
+    # either.
+    if not jsc.truthy(suggested_team):
+        from app.services.chatbot.turn.policy import default_policy
+
+        domain_row = default_policy().domain(
+            jsc.js_string(domain_hint if jsc.truthy(domain_hint) else "").lower()
+        )
+        suggested_team = domain_row.escalation_team_code if domain_row is not None else None
+    team = _pretty_team(suggested_team if jsc.truthy(suggested_team) else "customer_service")
     escalate_message: Any = None
     is_clarification = False
     # datemiss-summary: the resolved-entity bullets, exposed so `build-suggest-offer` can show
@@ -3171,32 +3199,6 @@ def not_found_error_message(
             if (jsc.get(q, "intent_hint") == "check_promotion" and access_levels)
             else ""
         )
-        routing = jsc.get(q, "routing")
-        suggested_team = jsc.get(routing, "suggested_team") if jsc.truthy(routing) else None
-        # Owner ruling 22 Sep 2026, R6 (AC-EQ-12..14): a stock/incoming question with
-        # NO team named at all must still get the domain's own escalation team
-        # (inventory -> warehouse, incoming -> purchasing), never the generic
-        # "customer_service" literal. On the `engine.run_turn` path
-        # `turn_runtime.lane_parse_output` is what actually fills a null
-        # `routing.suggested_team` (its own `DEFAULT_SUGGESTED_TEAM` chain, now
-        # domain-aware - see that function), so `suggested_team` read off
-        # `q["routing"]` here is rarely still falsy by the time a real TURN reaches
-        # this composer. This is the SAME fallback anyway, kept as the direct-call
-        # belt-and-braces: a caller that reaches `complete_answer` directly, bypassing
-        # `run_turn`/`lane_parse_output` entirely, builds its `parser` dict with no
-        # `routing` key at all - `test_s6c_answer_lane.py::TestErrorArmRendersTheMissLane
-        # .test_the_error_arm_reaches_the_miss_renderer` is exactly that shape
-        # (`domain_hint = "inventory"`, no `routing` key), and pins this fallback
-        # directly; this composer must not hand a caller like that the generic literal
-        # either.
-        if not jsc.truthy(suggested_team):
-            from app.services.chatbot.turn.policy import default_policy
-
-            domain_row = default_policy().domain(
-                jsc.js_string(domain_hint if jsc.truthy(domain_hint) else "").lower()
-            )
-            suggested_team = domain_row.escalation_team_code if domain_row is not None else None
-        team = _pretty_team(suggested_team if jsc.truthy(suggested_team) else "customer_service")
         is_active = jsc.get(q, "is_active")
         active_inactive = (
             " active"
@@ -3731,28 +3733,29 @@ def not_found_error_message(
                 # AC-1320 (work item F2): the described set named NOTHING this
                 # catalogue can read. Fix round 9 on PR #833 (owner, 28 Sep 2026: "no
                 # explanations", no typo mention): the word is the "did not match" line
-                # of the one reply structure, never a "did you mean" or a list of the
-                # product types the catalogue knows.
+                # of the one reply structure, never a "did you mean". Fix round 10 (owner,
+                # 28 Sep 2026: "for #833 yeah exact only"): no product types are offered
+                # as lines either; a word said as the product type is named with its kind
+                # ("Couldn't find: water tap basin (product type)").
                 terms = [jsc.js_string(t) for t in jsc.array(jsc.get(predicate, "unrecognized_terms")) if jsc.truthy(t)]
+                type_raws = [
+                    jsc.js_string(jsc.get(e, "raw")).strip()
+                    for e in entities_list
+                    if jsc.get(e, "hint") in ("category", "product_type") and jsc.truthy(jsc.get(e, "raw"))
+                ]
                 asked = " ".join(
                     jsc.js_string(jsc.get(e, "raw"))
                     for e in entities_list
                     if jsc.get(e, "hint") in ("category", "product_type", "specification") and jsc.truthy(jsc.get(e, "raw"))
                 ) or terms[0]
-                # The nearest product types stay on offer as the lines (a reply naming one
-                # re-runs the ask, `turn_runtime.with_clarify_answer`).
-                near = [
-                    jsc.js_string(x).strip()
-                    for x in (
-                        jsc.array(jsc.get(predicate, "suggestions"))
-                        or jsc.array(jsc.get(predicate, "common_class_labels"))
-                    )
-                    if jsc.truthy(x)
-                ]
-                lines = [f"• {set_noun_for([x]).capitalize()}" for x in near]
+                is_type = {raw.lower() for raw in type_raws}
                 escalate_message = what_you_want_reply(
-                    asked, lines, missing=_and_list([f'"{t}"' for t in terms]), team=team
+                    asked,
+                    [],
+                    missing=_and_list([f"{t} (product type)" if t.strip().lower() in is_type else f'"{t}"' for t in terms]),
+                    team=team,
                 )
+
             elif (
                 described_set_answers
                 and jsc.get(predicate, "qualifying_total") == 0

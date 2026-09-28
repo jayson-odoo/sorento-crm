@@ -31,6 +31,7 @@ Product Specifications changes what grounds, with no prompt or code change.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -61,22 +62,21 @@ _TOKEN_RE = re.compile(r"[a-z]+\d[a-z0-9]*|\d+(?:\.\d+)?|[a-z]+", re.IGNORECASE)
 _NUMBER_RE = re.compile(r"^\d+(?:\.\d+)?$")
 
 
-def _near(a: str, b: str) -> bool:
-    """One typo apart: one insert, delete, substitution or swap of two neighbours, on
-    words of five letters or more ("thicnkess" is "thickness", "kitchne" is "kitchen",
-    "color" is "colour"). Shorter words must match exactly: "tap" and "cap" are two
-    different things."""
-    if a == b:
-        return True
-    if min(len(a), len(b)) < 5 or abs(len(a) - len(b)) > 1:
-        return False
-    if len(a) == len(b):
-        diff = [i for i, (x, y) in enumerate(zip(a, b)) if x != y]
-        if len(diff) == 1:
-            return True
-        return len(diff) == 2 and diff[1] == diff[0] + 1 and a[diff[0]] == b[diff[1]] and a[diff[1]] == b[diff[0]]
-    short, long_ = (a, b) if len(a) < len(b) else (b, a)
-    return any(long_[:i] + long_[i + 1 :] == short for i in range(len(long_)))
+def _same(a: str, b: str) -> bool:
+    """The same word: equal once case-folded, trimmed and NFKC-normalised, a regular plural
+    "s" aside ("basins" is "basin", "colours" is "colour").
+
+    Fix round 10 on PR #833 (owner, 28 Sep 2026: "we don't match 100% isit? i was thinking
+    to need exact match though", "for #833 yeah exact only"). This replaced `_near`, which
+    read one typo apart as the same word ("thicnkess" as thickness, "kitchne" as kitchen,
+    "gunmetl" as gunmetal): a word the catalogue does not hold is now said back as typed,
+    never put right."""
+    a, b = _fold(a), _fold(b)
+    return a == b or _singular(a) == _singular(b)
+
+
+def _fold(word: str) -> str:
+    return unicodedata.normalize("NFKC", str(word or "")).strip().casefold()
 
 
 @dataclass
@@ -111,7 +111,7 @@ class Vocabulary:
 
 
 def _words(text: Any) -> list[str]:
-    return [w.lower() for w in _TOKEN_RE.findall(str(text or ""))]
+    return [w.casefold() for w in _TOKEN_RE.findall(unicodedata.normalize("NFKC", str(text or "")))]
 
 
 def load_vocabulary(db: "Session") -> Vocabulary:
@@ -304,7 +304,7 @@ def ground_words(text: str, vocab: Vocabulary, *, keep: set[int] | None = None) 
     def free(i: int) -> bool:
         return i not in used and i not in keep
 
-    # 1. Registry phrases, longest first; a one-typo single word of five letters or more.
+    # 1. Registry phrases, longest first; a single word also in its plural.
     candidates: list[tuple[int, str, _Key, Any]] = []
     for entry in vocab.keys:
         for phrase, value in entry.phrases.items():
@@ -318,12 +318,12 @@ def ground_words(text: str, vocab: Vocabulary, *, keep: set[int] | None = None) 
                 continue
             window = tokens[start : start + size]
             exact = window == words
-            if not exact and not (size == 1 and _near(window[0], words[0]) and window[0] not in vocab.class_words):
+            if not exact and not (size == 1 and _same(window[0], words[0]) and window[0] not in vocab.class_words):
                 continue
             taken = set(span)
             # A key word right beside its value is part of what was said ("gunmetal colour").
             for j in (start - 1, start + size):
-                if 0 <= j < len(tokens) and free(j) and any(_near(tokens[j], name) for name in entry.names):
+                if 0 <= j < len(tokens) and free(j) and any(_same(tokens[j], name) for name in entry.names):
                     taken.add(j)
             used.update(taken)
             if not any(g.key == entry.key and g.value == value for g in out):
@@ -336,7 +336,7 @@ def ground_words(text: str, vocab: Vocabulary, *, keep: set[int] | None = None) 
         if entry.data_type != "numeric":
             continue
         for i, token in enumerate(tokens):
-            if not free(i) or not any(_near(token, name) for name in entry.names):
+            if not free(i) or not any(_same(token, name) for name in entry.names):
                 continue
             number_at = next(
                 (j for j in (i + 1, i + 2, i - 1, i - 2) if 0 <= j < len(tokens) and free(j) and _NUMBER_RE.match(tokens[j])),
@@ -367,7 +367,7 @@ def ground_words(text: str, vocab: Vocabulary, *, keep: set[int] | None = None) 
             if not free(i):
                 continue
             is_head = token in entry.heads
-            is_name = any(_near(token, name) for name in entry.names)
+            is_name = any(_same(token, name) for name in entry.names)
             if not (is_head or is_name):
                 continue
             sides = (i - 1,) if is_head and not is_name else (i - 1, i + 1)
@@ -411,9 +411,10 @@ def _on_attachment_list(db: "Session", raw: str, vocab: Vocabulary) -> bool:
 
 
 def _corrected_class(db: "Session", text: str, vocab: Vocabulary) -> str:
-    """A class phrase with one typo per word put right against the class vocabulary
-    ("kitchne sink" -> "kitchen sink"), only when the corrected phrase names a class and
-    the typed one does not. Otherwise the text as typed."""
+    """A class phrase said in the plural put in the singular against the class vocabulary
+    ("kitchen sinks" -> "kitchen sink"), only when the singular phrase names a class and
+    the typed one does not. Otherwise the text as typed. Fix round 10 on PR #833: never a
+    typo put right ("kitchne sink" stays as typed, and is said back as not found)."""
     from app.services.product_class_signal import resolve_classes_for_term
 
     if not text or resolve_classes_for_term(db, text):
@@ -421,10 +422,64 @@ def _corrected_class(db: "Session", text: str, vocab: Vocabulary) -> str:
     fixed = []
     for word in text.split():
         low = word.lower()
-        near = next((w for w in sorted(vocab.class_words) if low not in vocab.class_words and _near(low, w)), None)
+        near = next((w for w in sorted(vocab.class_words) if low not in vocab.class_words and _same(low, w)), None)
         fixed.append(near or word)
     candidate = " ".join(fixed)
     return candidate if candidate != text and resolve_classes_for_term(db, candidate) else text
+
+
+#: The entity kind of a product the customer named (a code, or a product's own name).
+_PRODUCT_HINT = "product"
+
+
+def _names_a_class_not_a_code(raw: str, vocab: Vocabulary) -> bool:
+    """A `product` token that is words only, no code among them, one of which is a class or
+    type phrase said word for word ("gunmetal basin", "sorento water closet")."""
+    tokens = _words(raw)
+    if not tokens or any(any(ch.isdigit() for ch in t) for t in tokens):
+        return False
+    return bool(_covered_by_class(tokens, vocab))
+
+
+def _names_two_types(db: "Session", raw: str, vocab: Vocabulary) -> bool:
+    """Does `raw` name two different product types word for word, and no type phrase of
+    the registry as a whole (`product_spec_search._exact_classes` is None)?"""
+    from app.services.product_spec_search import _exact_classes
+
+    tokens = _words(raw)
+    for phrase in vocab.type_phrases:
+        words = phrase.split()
+        if len(words) >= 2 and any(tokens[i : i + len(words)] == words for i in range(len(tokens) - len(words) + 1)):
+            return False
+    return len(tokens) >= 2 and _exact_classes(db, " ".join(tokens)) is None
+
+
+def _unheard_words(db: "Session", raw: str, used: set[int], keep: set[int]) -> tuple[list[str], set[int]]:
+    """The words of a category token the catalogue's vocabulary does not hold at all
+    (`product_spec_search.unrecognized_words`), and `used` with their positions added.
+
+    Fix round 10 on PR #833 ("for #833 yeah exact only"): "pnk water closet" is water
+    closets and a word nothing matched, said back in the "Couldn't find" line; the word is
+    never searched for as the nearest product. Only beside a class or type phrase the
+    token does hold (`keep`): a token that names nothing at all stays whole, the unknown
+    product type it is."""
+    if not keep:
+        return [], used
+    from app.services.product_spec_search import unrecognized_words
+
+    alien = set(unrecognized_words(db, raw))
+    if not alien:
+        return [], used
+    tokens = _words(raw)
+    found: list[str] = []
+    positions = set(used)
+    for i, token in enumerate(tokens):
+        if i in positions or i in keep or token not in alien:
+            continue
+        positions.add(i)
+        if token not in found:
+            found.append(token)
+    return found, positions
 
 
 def _remainder(raw: str, used: set[int]) -> str:
@@ -471,11 +526,58 @@ def _validate(entity: dict[str, Any], vocab: Vocabulary) -> list[Grounded]:
     return []
 
 
-def ground(db: "Session", verdict: dict[str, Any], *, vocab: Vocabulary | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _as_typed(grounded: list[Grounded], entity: dict[str, Any], message: str | None, vocab: Vocabulary, others: list[str]) -> list[Grounded]:
+    """`grounded` in the customer's own words, when the parser put a word right.
+
+    Fix round 10 on PR #833 (owner, 28 Sep 2026: "for #833 yeah exact only"). The parser
+    is told to spell a colour word right ("any pnk water closet?" -> raw "pink",
+    "gunmetl basin" -> raw "gunmetal", value gunmetal). A descriptor none of whose words
+    the message holds was put right by the parser, so it binds nothing: it becomes an
+    unknown value of its key, said as the customer typed it (the message's words that
+    nothing else in the turn and nothing in the catalogue's vocabulary accounts for).
+    Left as grounded when the message is not known or holds no such word, and for an
+    entity carried from an earlier message."""
+    if not message or not grounded or entity.get("current_message") is False:
+        return grounded
+    said = _words(message)
+    if not said:
+        return grounded
+    out: list[Grounded] = []
+    for g in grounded:
+        words = _words(g.said)
+        if not words or any(any(_same(w, t) for t in said) for w in words):
+            out.append(g)
+            continue
+        accounted = {w for text in others for w in _words(text)}
+        typed = [
+            t
+            for t in said
+            if not _NUMBER_RE.match(t)
+            and t not in _STOPWORDS
+            and t not in vocab.known_words
+            and t not in vocab.brand_words
+            and t not in vocab.attachment_words
+            and t not in accounted
+            and not any(_same(t, k) for k in vocab.class_words)
+        ]
+        typed = [t for i, t in enumerate(typed) if t not in typed[:i] and len(t) >= 3]
+        if not typed:
+            out.append(g)
+            continue
+        entry = next((k for k in vocab.keys if k.key == g.key), None)
+        known = list(entry.known) if entry is not None else list(g.known)
+        out.append(Grounded(g.key, g.label, " ".join(typed), None, None, known))
+    return out
+
+
+def ground(
+    db: "Session", verdict: dict[str, Any], *, vocab: Vocabulary | None = None, message: str | None = None
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """The verdict with every descriptor grounded, and a note per change for the trace.
 
     Entities the registry says nothing about are returned untouched, in place: a turn
-    with no descriptor is byte-identical to the parse."""
+    with no descriptor is byte-identical to the parse. `message` is the customer's own
+    text: a descriptor the parser put right is read as typed (`_as_typed`)."""
     entities = verdict.get("entities")
     if not isinstance(entities, list) or not entities:
         return verdict, []
@@ -483,7 +585,7 @@ def ground(db: "Session", verdict: dict[str, Any], *, vocab: Vocabulary | None =
         e
         for e in entities
         if isinstance(e, dict)
-        and str(e.get("hint") or "").strip().lower() in (_CLASS_HINTS | _SPEC_HINTS | {_ATTACHMENT_HINT})
+        and str(e.get("hint") or "").strip().lower() in (_CLASS_HINTS | _SPEC_HINTS | {_ATTACHMENT_HINT, _PRODUCT_HINT})
     ]
     if not touched:
         return verdict, []
@@ -513,15 +615,38 @@ def ground(db: "Session", verdict: dict[str, Any], *, vocab: Vocabulary | None =
             continue
         hint = str(entity.get("hint") or "").strip().lower()
         raw = str(entity.get("raw") or "").strip()
+        if hint == _PRODUCT_HINT and _names_a_class_not_a_code(raw, vocab):
+            # Fix round 10 on PR #833 (owner, 28 Sep 2026: "i tried to search like gunmetal
+            # basin, there is no such thing and it gives me flexible trap"): words with no
+            # code in them that say what the thing IS are the described set's words, read
+            # word for word like a category, never a product search by nearest neighbour.
+            entity = {**entity, "hint": "category"}
+            hint = "category"
+            notes.append({"from": _PRODUCT_HINT, "raw": raw, "to": "category"})
         if hint in _SPEC_HINTS:
-            grounded = _validate(entity, vocab)
+            others = [
+                str(e.get("raw") or "")
+                for e in entities
+                if isinstance(e, dict) and e is not entity and str(e.get("hint") or "").strip().lower() not in _SPEC_HINTS
+            ]
+            grounded = _as_typed(_validate(entity, vocab), entity, message, vocab, others)
             add(grounded, entity)
             notes.append({"from": hint, "raw": raw, "to": [g.__dict__ for g in grounded]})
+            continue
+        if hint in _CLASS_HINTS and raw and _names_two_types(db, raw, vocab):
+            # Fix round 10 on PR #833: "water tap basin" holds two product types word for
+            # word ("water tap", a tap, and "basin", a wash basin). No one product is
+            # both, and reading it as either or as both would be a guess at what was
+            # meant: the phrase is an unknown product type, said back as typed.
+            add([Grounded("product_type", "Product type", raw)], entity)
+            notes.append({"from": hint, "raw": raw, "to": "unknown product type"})
             continue
         if hint in _CLASS_HINTS and raw:
             tokens = _words(raw)
             keep = _covered_by_class(tokens, vocab)
             grounded, used = ground_words(raw, vocab, keep=keep)
+            unheard, used = _unheard_words(db, raw, used, keep)
+            grounded = [*grounded, *(Grounded("", "", word) for word in unheard)]
             if not grounded:
                 fixed = _corrected_class(db, raw, vocab)
                 if fixed != raw:

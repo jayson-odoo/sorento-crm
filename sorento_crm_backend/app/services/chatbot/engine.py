@@ -1913,7 +1913,9 @@ def _run_stages(  # noqa: PLR0915
     # a size becomes a `specification` entity, and nothing is a document type unless it
     # is on the list.
     with _session(session_factory) as grounding_db:
-        verdict, grounding_notes = grounding.ground(grounding_db, verdict)
+        verdict, grounding_notes = grounding.ground(
+            grounding_db, verdict, message=latest_user_message.split("\n", 1)[0] if isinstance(latest_user_message, str) else None
+        )
     if grounding_notes:
         turn_trace.add("grounding", {"changes": grounding_notes})
 

@@ -72,78 +72,6 @@ class _UnrecognizedLabel(Exception):
         self.extra = extra or {}
 
 
-def _company_scoped_class_labels(db: Session) -> list[str]:
-    """Every distinct class value a product IN THE CALLER'S OWN SCOPE carries
-    (SEC-S2/AC-1335). `ProductSpecifications` carries no `company_id` of its
-    own, so this joins `Product` (the scoped side) - the `do_orm_execute`
-    listener's `with_loader_criteria` scopes ORM entities like `Product`, not
-    a bare unjoined `ProductSpecifications` query, which would otherwise read
-    every company's class labels. ORM only, never the raw `text()` SQL
-    `product_class_signal.stored_class_labels` runs - that helper reads other,
-    non-customer-facing callers and is out of scope here."""
-    expr = ProductSpecifications.values["class"]["value"].astext
-    rows = (
-        db.query(expr)
-        .join(Product, Product.id == ProductSpecifications.product_id)
-        .filter(expr.isnot(None))
-        .distinct()
-        .all()
-    )
-    return sorted({row[0] for row in rows if row[0]})
-
-
-def _nearest_class_labels(db: Session, term: str, *, limit: int = 3) -> list[str]:
-    """Nearest class-label suggestions for an unrecognized term (AC-1320): every
-    content word in `term` against the class labels products actually carry
-    IN THE CALLER'S OWN SCOPE (`_company_scoped_class_labels`) - an exact word
-    match first ("tap" out of "water tap" against the label "Tap"), then a
-    fuzzy nearest-neighbour for a near-miss spelling. Order-stable, deduped,
-    capped at `limit` - the reply names a few candidates, never the whole
-    vocabulary.
-    """
-    import difflib
-
-    from app.services.product_spec_search import _content_words
-
-    labels = _company_scoped_class_labels(db)
-    if not labels:
-        return []
-    lowered = {label.lower(): label for label in labels}
-    found: list[str] = []
-    for word in _content_words(term):
-        if word in lowered:
-            if lowered[word] not in found:
-                found.append(lowered[word])
-            continue
-        for match in difflib.get_close_matches(word, lowered.keys(), n=limit, cutoff=0.6):
-            label = lowered[match]
-            if label not in found:
-                found.append(label)
-    return found[:limit]
-
-
-def _common_class_labels(db: Session, *, limit: int = 3) -> list[str]:
-    """The class labels the MOST products carry, most-common first (AC-1320's
-    last-resort fallback): when a term names nothing `_nearest_class_labels`
-    can read at all - no exact word match, no fuzzy near-miss - the reply still
-    has to offer SOMETHING real ("Try a product type such as tap, wash basin,
-    water closet."), never the contentless "Did you mean the product types I
-    know?". SEC-S2/AC-1335: joins `Product` (the scoped side) so a company B
-    class label never reaches a company A reply.
-    """
-    expr = ProductSpecifications.values["class"]["value"].astext
-    rows = (
-        db.query(expr, func.count())
-        .join(Product, Product.id == ProductSpecifications.product_id)
-        .filter(expr.isnot(None))
-        .group_by(expr)
-        .order_by(func.count().desc())
-        .limit(limit)
-        .all()
-    )
-    return [row[0] for row in rows if row[0]]
-
-
 def _bound_spec_matches(values: dict | None, specs: list[dict] | None) -> set[str]:
     """R30/AC-1355: which of `specs`' own keys (bindings - class included) the
     product's OWN spec row satisfies - the require-only arm's answer to what
@@ -1020,16 +948,13 @@ def resolve_product_set(
         # is no id set either: the described set is undefined. Answering the
         # predicate over the WHOLE catalogue would be an answer to a question
         # nobody asked.
-        # AC-1320/F2: nearest class-label suggestions for the FIRST unrecognized
-        # term, so the reply can offer a real "did you mean" instead of naming
-        # nothing at all. When NOTHING is near enough either (no exact word
-        # match, no fuzzy near-miss), the fallback is the catalogue's own most
-        # common class labels under a DIFFERENT sentence template
-        # ("common_class_labels", never "suggestions") - the two carry
-        # different copy in `answer.not_found_error_message` and must not be
-        # conflated into one key.
-        nearest = _nearest_class_labels(db, unrecognized[0]) if unrecognized else []
-        zero_result: dict[str, Any] = {
+        # Fix round 10 on PR #833 (owner, 28 Sep 2026: "we don't match 100% isit? i was
+        # thinking to need exact match though", "for #833 yeah exact only"): a word
+        # that names no product type is said back as it was typed ("Couldn't find:
+        # water tap basin (product type)"), never matched to the nearest class label
+        # (the retired difflib `_nearest_class_labels`) nor answered with the
+        # catalogue's most common ones (`_common_class_labels`, retired with it).
+        return {
             "candidates": [],
             "qualifying_total": 0,
             "truncated": False,
@@ -1037,13 +962,6 @@ def resolve_product_set(
             "require": require_echo,
             "class_labels": verdict["class_labels"],
         }
-        if nearest:
-            zero_result["suggestions"] = nearest
-        elif unrecognized:
-            common = _common_class_labels(db)
-            if common:
-                zero_result["common_class_labels"] = common
-        return zero_result
 
     parent = aliased(Product)
     family = func.coalesce(parent.product_code, Product.product_code)

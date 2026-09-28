@@ -1092,6 +1092,43 @@ def _fails_threshold(values: dict, specs: list[dict]) -> bool:
     return False
 
 
+#: A product type no product holds: what two product types named in one phrase narrow to.
+_NO_CLASS = "\x00no class"
+
+
+def _exact_classes(db: Session, term: str) -> list[str] | None:
+    """The product type(s) a phrase names word for word, for `search_specs(exact=True)`.
+
+    The whole phrase first (`resolve_classes_for_term`, an exact label or synonym), then
+    the longest class phrase inside it, word for word ("gunmetal basin" -> Wash Basin); a
+    word in the plural is read in the singular ("basins"). `[]` when the phrase names no
+    product type. None when it names two different ones ("water tap basin": "water tap"
+    is a tap and "basin" a wash basin), which is no one product type at all. No near
+    spelling: a word the class vocabulary does not hold names nothing."""
+    whole = resolve_classes_for_term(db, term)
+    if whole:
+        return whole
+    words = [w for w in re.split(r"[^a-z0-9]+", str(term or "").lower()) if w]
+    used: set[int] = set()
+    found: list[frozenset[str]] = []
+    for size in range(len(words), 0, -1):
+        for start in range(len(words) - size + 1):
+            span = set(range(start, start + size))
+            if span & used:
+                continue
+            phrase = words[start : start + size]
+            classes = resolve_classes_for_term(db, " ".join(phrase))
+            if not classes and phrase[-1].endswith("s") and len(phrase[-1]) > 3:
+                classes = resolve_classes_for_term(db, " ".join([*phrase[:-1], phrase[-1][:-1]]))
+            if classes:
+                used |= span
+                found.append(frozenset(classes))
+    distinct = set(found)
+    if len(distinct) > 1:
+        return None
+    return sorted(next(iter(distinct))) if distinct else []
+
+
 def search_specs(
     db: Session,
     *,
@@ -1101,6 +1138,7 @@ def search_specs(
     limit: int | None = None,
     floor: float | None = None,
     product_ids: list[str] | None = None,
+    exact: bool = False,
 ) -> dict:
     """Rank the catalog against extracted specs. Returns candidates and a floor verdict.
 
@@ -1110,6 +1148,13 @@ def search_specs(
     `product_ids` restricts ranking to a caller-supplied whitelist (shape B's
     stage 2: membership was decided in SQL, the ranker only ORDERS what already
     qualifies). None means the whole catalog; an empty list ranks nothing.
+
+    `exact` (fix round 10 on PR #833, owner 28 Sep 2026: "i tried to search like gunmetal
+    basin, there is no such thing and it gives me flexible trap", "for #833 yeah exact
+    only"): a candidate must HOLD every value that was asked for, the product type
+    included (`_exact_classes`), and a free word that merely appears in its sentence is
+    no evidence at all. A product with no exact signal is never a result. Off for every
+    caller but the chatbot's spec fallback.
     """
     specs = specs or []
     exclusions = exclusions or []
@@ -1178,8 +1223,12 @@ def search_specs(
     implied_classes = {
         label.lower()
         for term in free_terms
-        for label in resolve_classes_for_term(db, term)
+        for label in (_exact_classes(db, term) if exact else resolve_classes_for_term(db, term))
     }
+    if exact and any(_exact_classes(db, term) is None for term in free_terms):
+        # The words name two different product types ("water tap basin"): no one product
+        # is both, so none qualifies.
+        implied_classes = {_NO_CLASS}
 
     candidate_query = (
         db.query(ProductSpecifications, Product, ProductCategory)
@@ -1342,7 +1391,10 @@ def search_specs(
             hits = wanted_terms & haystack
             if hits:
                 score += free_term_boost * len(hits)
-                evidence += free_term_boost * len(hits)
+                # Exact mode: a word appearing in the sentence orders the answers, it
+                # never makes one ("basin" in "flexible trap for wash basin").
+                if not exact:
+                    evidence += free_term_boost * len(hits)
                 matched.append("free_terms")
 
 
@@ -1369,6 +1421,17 @@ def search_specs(
             penalty += discontinued_penalty
 
         score -= penalty
+
+        if exact:
+            # Every value asked for, held exactly: the product type (when one was named)
+            # and every stated specification. Anything less is not a result.
+            if implied_classes and "class" not in matched:
+                continue
+            if any(
+                entry.get("key") and entry.get("value") is not None and entry.get("key") not in matched
+                for entry in specs
+            ):
+                continue
 
         # Dropped for having NO positive evidence, never for scoring badly. A penalty
         # that can delete a row is a filter wearing a boost's clothes, and this file's
