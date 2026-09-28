@@ -601,6 +601,20 @@ def _ideation_idle_sweep_tick():
         logger.error("Ideation idle sweep tick failed: %s", e, exc_info=True)
 
 
+def _ideation_status_events_tick():
+    """APScheduler tick: pull the shared service's idea status-event feed and send the
+    ``ideation_status_update`` template to each requester (#1355, AC-IS017). Owns its
+    own DB session; best-effort and never raises - same shape as
+    `_ideation_idle_sweep_tick`."""
+    try:
+        from app.services import ideation_status_update_service
+
+        with scheduler_session() as db:
+            ideation_status_update_service.poll_ideation_status_events(db)
+    except Exception as e:
+        logger.error("Ideation status events tick failed: %s", e, exc_info=True)
+
+
 def _autocount_pull_advance_tick():
     """APScheduler tick: drive the AutoCount pull build -> preview transition
     server-side (D27), so a snapshot that finishes building has its preview
@@ -748,6 +762,16 @@ def start_scheduler():
         trigger=IntervalTrigger(minutes=15),
         id="ideation_idle_sweep",
         name="Ideation idle draft sweep",
+        replace_existing=True,
+    )
+
+    # Ideation status events poll (#1355, AC-IS017): every 60s. Pulls the shared
+    # service's idea status-event feed and sends the ideation_status_update template.
+    scheduler.add_job(
+        _ideation_status_events_tick,
+        trigger=IntervalTrigger(seconds=60),
+        id="ideation_status_events_poll",
+        name="Ideation status events poll",
         replace_existing=True,
     )
 

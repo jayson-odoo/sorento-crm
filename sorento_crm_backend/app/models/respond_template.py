@@ -124,6 +124,13 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # naming the idea's title. Unmapped -> the send is skipped and logged, the
     # draft still closes on schedule (AC-1405).
     "ideation_draft_reminder",
+    # Ideation status update (#1355, PLAN-ideation-status-update-29sep). Sent to the
+    # requester for every event on the shared service's idea status-event feed
+    # (stage change, merged, separated again). ALWAYS this template, never free
+    # text. Suggested body "Update on your idea {{1}}: it is now {{2}}. Track it
+    # here: {{3}}" maps to ``idea_number`` / ``status_label`` / ``track_url``
+    # (``message`` carries the whole sentence). Unmapped -> skipped and logged.
+    "ideation_status_update",
 )
 
 # Chat reply use cases - a *_chat / conversation_chat default MUST map a slot to the
