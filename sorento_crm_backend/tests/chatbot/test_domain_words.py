@@ -57,7 +57,9 @@ def test_a_quantity_over_a_carried_incoming_focus_is_a_stock_ask():
     assert rule == "stock_quantity"
 
 
-@pytest.mark.parametrize("text", [f"stick {CODE}", f"stack {CODE}", f"stocking {CODE}"])
+@pytest.mark.parametrize(
+    "text", [f"stick {CODE}", f"stack {CODE}", f"stocking {CODE}", f"sock {CODE}", f"stoc {CODE}"]
+)
 def test_a_near_word_that_is_another_word_is_not_stock(text):
     v = _v("incoming", "check_incoming")
     out, rule = stock_or_incoming(v, text, carried=[])

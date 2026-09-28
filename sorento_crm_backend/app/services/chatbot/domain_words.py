@@ -37,8 +37,9 @@ _INTENT = {STOCK: "check_stock", INCOMING: "check_incoming"}
 _WORD_RE = re.compile(r"[0-9a-z]+")
 
 #: The stock word a customer's typo is read against: "stoick", "stcok", "stockk". Only an
-#: extra letter, a missing one or two swapped neighbours - never a changed letter, which
-#: makes another word ("stick", "stack").
+#: extra letter or two swapped neighbours, in a word of five letters or more - never a
+#: changed letter, which makes another word ("stick", "stack"), and never a dropped one
+#: below five ("sock"); "stok" is one of the domain's own words already.
 _TYPO_ROOTS = ("stock",)
 
 
@@ -69,7 +70,7 @@ def _says(words: Iterable[str], vocabulary: frozenset[str], *, typos: bool) -> b
     for word in words:
         if word in vocabulary:
             return True
-        if typos and len(word) >= 4 and any(_one_slip(word, root) for root in _TYPO_ROOTS):
+        if typos and len(word) >= 5 and any(_one_slip(word, root) for root in _TYPO_ROOTS):
             return True
     return False
 
