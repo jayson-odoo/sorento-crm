@@ -264,6 +264,15 @@ def _a_real_price(value) -> Optional[Decimal]:
     return price
 
 
+def flyer_price(value) -> Optional[Decimal]:
+    """A product's list price as the dealer flyer prints it: ``None`` when there is none.
+
+    The public name of ``_a_real_price`` for callers outside the Kit that default a figure
+    from it (sales opportunity lines, PR #1296 F7), so zero means "no price" there too.
+    """
+    return _a_real_price(value)
+
+
 #: What a LINE total is rounded to (D2/D3/D4, S7). The engine sums several
 #: products; this keeps the sum to two places the way `_a_real_price` keeps
 #: one product's own figure to two places.
