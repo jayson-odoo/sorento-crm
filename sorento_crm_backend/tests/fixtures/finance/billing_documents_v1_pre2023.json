@@ -1,0 +1,89 @@
+{
+  "companyCode": "SRT",
+  "records": [
+    {
+      "source_ref": "SRT_DB:IV:5001",
+      "document_type": "invoice",
+      "doc_no": "IV-OLD/001",
+      "doc_date": "2019-06-30",
+      "status": "posted",
+      "source_modified_at": "2019-06-30T09:00:00",
+      "customer_code": "ZZFIN-C1",
+      "agent_code": "ZZFIN-AG1",
+      "currency_code": "MYR",
+      "currency_rate": 1,
+      "net_total": 10.0,
+      "tax_total": 0,
+      "total": 10.0,
+      "local_net_total": 10.0,
+      "lines": [
+        {
+          "source_ref": "SRT_DB:IV:5001:1",
+          "line_number": 1,
+          "product_code": "ZZFIN-P1",
+          "quantity": 1,
+          "unit_price": 10.0,
+          "net_amount": 10.0,
+          "tax_amount": 0,
+          "line_total": 10.0
+        }
+      ]
+    },
+    {
+      "source_ref": "SRT_DB:IV:5002",
+      "document_type": "invoice",
+      "doc_no": "IV-OLD/002",
+      "doc_date": "2022-12-31",
+      "status": "posted",
+      "source_modified_at": "2022-12-31T09:00:00",
+      "customer_code": "ZZFIN-C1",
+      "agent_code": "ZZFIN-AG1",
+      "currency_code": "MYR",
+      "currency_rate": 1,
+      "net_total": 10.0,
+      "tax_total": 0,
+      "total": 10.0,
+      "local_net_total": 10.0,
+      "lines": [
+        {
+          "source_ref": "SRT_DB:IV:5002:1",
+          "line_number": 1,
+          "product_code": "ZZFIN-P1",
+          "quantity": 1,
+          "unit_price": 10.0,
+          "net_amount": 10.0,
+          "tax_amount": 0,
+          "line_total": 10.0
+        }
+      ]
+    },
+    {
+      "source_ref": "SRT_DB:IV:5003",
+      "document_type": "invoice",
+      "doc_no": "IV-OLD/003",
+      "doc_date": "2023-01-01",
+      "status": "posted",
+      "source_modified_at": "2023-01-01T09:00:00",
+      "customer_code": "ZZFIN-C1",
+      "agent_code": "ZZFIN-AG1",
+      "currency_code": "MYR",
+      "currency_rate": 1,
+      "net_total": 10.0,
+      "tax_total": 0,
+      "total": 10.0,
+      "local_net_total": 10.0,
+      "lines": [
+        {
+          "source_ref": "SRT_DB:IV:5003:1",
+          "line_number": 1,
+          "product_code": "ZZFIN-P1",
+          "quantity": 1,
+          "unit_price": 10.0,
+          "net_amount": 10.0,
+          "tax_amount": 0,
+          "line_total": 10.0
+        }
+      ]
+    }
+  ]
+}
