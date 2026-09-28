@@ -146,8 +146,10 @@ def _offsets_by_shipment_number(db: Session, numbers: Iterable[str]) -> dict[str
 
 
 def _codes_of(row: dict[str, Any]) -> list[str]:
-    if isinstance(row.get("lines"), list):
-        return [line.get("product_code") for line in row["lines"] if isinstance(line, dict)]
+    # `/list` rows carry `lines`, `/shipments/{id}/products` carries `products`.
+    for key in ("lines", "products"):
+        if isinstance(row.get(key), list):
+            return [line.get("product_code") for line in row[key] if isinstance(line, dict)]
     if row.get("product_code"):
         return [row["product_code"]]
     return []
@@ -160,28 +162,79 @@ def _pad(node: dict[str, Any], offset: int, rules: ContactEtaRules) -> None:
             node[key] = visible_eta(value, offset, rules)
 
 
+def _in_window(value: Any, eta_from: Optional[date], eta_to: Optional[date]) -> bool:
+    if not isinstance(value, date):
+        return eta_from is None and eta_to is None
+    return (eta_from is None or value >= eta_from) and (eta_to is None or value <= eta_to)
+
+
+# --------------------------------------------------------------- the request
+
+
+def resolve_request_contact(
+    db: Session, contact_id: Optional[str], space_id: Optional[str]
+) -> Optional[str]:
+    """The internal `respond_contacts.id` a chat request names, resolved ONCE for both the
+    ETA/packing-list rules and the field reveals, so the two gates can never disagree.
+
+    Uses the same NULL-workspace fallback the chatbot's own access check admits a contact
+    through (`field_access.resolve_contact_with_null_workspace_fallback`): a contact the
+    chatbot answers must not read as nobody on the data route. Unresolved = None, which
+    both gates treat fail-closed."""
+    if not contact_id:
+        return None
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    return resolve_contact_with_null_workspace_fallback(
+        db, contact_id=contact_id, space_id=space_id
+    )
+
+
+def max_offset_days(db: Session) -> int:
+    """The largest offset any product or category carries - how far back a contact's ETA
+    window must reach so a shipment whose PADDED date falls inside it is not filtered out
+    on its real date."""
+    from sqlalchemy import func
+
+    from app.models.product import Product, ProductCategory
+
+    product_max = db.query(func.max(Product.chatbot_eta_offset_days)).scalar() or 0
+    category_max = db.query(func.max(ProductCategory.chatbot_eta_offset_days)).scalar() or 0
+    return max(int(product_max), int(category_max), 0)
+
+
+def query_eta_from(db: Session, rules: Optional[ContactEtaRules], eta_from: Optional[date]) -> Optional[date]:
+    """The `eta_from` the SQL filter should use. A padded date is never earlier than the
+    real one, so only the lower bound widens; `apply_to_incoming` then filters on the
+    padded date, so the window a contact asks about is judged on the date they are told."""
+    if eta_from is None or rules is None or not rules.offset_applied:
+        return eta_from
+    return eta_from - timedelta(days=max_offset_days(db))
+
+
 def apply_to_incoming(
     db: Session,
     payload: Any,
+    rules: ContactEtaRules,
     *,
-    contact_id: Optional[str],
-    space_id: Optional[str] = None,
+    eta_from: Optional[date] = None,
+    eta_to: Optional[date] = None,
 ) -> Any:
-    """Apply the contact's ETA offset and packing-list rule to an incoming payload.
+    """Apply one contact's ETA offset and packing-list rule to an incoming payload.
 
-    Handles the three incoming shapes: `/list` (shipment rows with `lines`),
-    `/by-product` (product rows with `shipments`) and `/shipments` (bare shipment rows).
-    Runs BEFORE `field_access.apply_field_access`; the two are independent.
+    Handles every incoming shape: `/list` (shipment rows with `lines`), `/by-product`
+    (product rows with `shipments`), `/shipments` (bare shipment rows), and the single-row
+    `/shipments/{id}/products` and `/shipments/{id}/attachment` (a dict, not a list).
+    With the offset applied and a window given, rows are re-judged on the padded date
+    (the SQL window was widened by `query_eta_from`). Runs BEFORE
+    `field_access.apply_field_access`; the two are independent.
     """
-    if not contact_id or not isinstance(payload, dict):
+    if not isinstance(payload, dict):
         return payload
-    rows = payload.get("data")
+    data = payload.get("data")
+    rows = [data] if isinstance(data, dict) else data
     if not isinstance(rows, list) or not rows:
         return payload
-
-    from app.services.field_access import resolve_contact_id
-
-    rules = rules_for_contact(db, resolve_contact_id(db, contact_id, space_id))
 
     by_code: dict[str, int] = {}
     by_shipment: dict[str, int] = {}
@@ -196,8 +249,11 @@ def apply_to_incoming(
         ]
         by_shipment = _offsets_by_shipment_number(db, bare)
 
+    windowed = rules.offset_applied and (eta_from is not None or eta_to is not None)
+    kept: list[Any] = []
     for row in rows:
         if not isinstance(row, dict):
+            kept.append(row)
             continue
         codes = _codes_of(row)
         if codes:
@@ -207,10 +263,34 @@ def apply_to_incoming(
         _pad(row, offset, rules)
         if not rules.packing_list_allowed:
             row.pop("attachment", None)
-        for shipment in row.get("shipments") or []:
-            if not isinstance(shipment, dict):
-                continue
-            _pad(shipment, offset, rules)
-            if not rules.packing_list_allowed:
-                shipment.pop("attachment", None)
+        if isinstance(row.get("shipments"), list):
+            shipments = []
+            for shipment in row["shipments"]:
+                if not isinstance(shipment, dict):
+                    continue
+                _pad(shipment, offset, rules)
+                if not rules.packing_list_allowed:
+                    shipment.pop("attachment", None)
+                if not windowed or _in_window(
+                    shipment.get("estimated_arrival_date"), eta_from, eta_to
+                ):
+                    shipments.append(shipment)
+            row["shipments"] = shipments
+            if windowed:
+                etas = [s.get("estimated_arrival_date") for s in shipments]
+                etas = [e for e in etas if isinstance(e, date)]
+                row["nearest_estimated_arrival_date"] = min(etas) if etas else None
+                if not shipments:
+                    continue
+        elif windowed and not _in_window(row.get("estimated_arrival_date"), eta_from, eta_to):
+            continue
+        kept.append(row)
+
+    if isinstance(data, list) and len(kept) != len(rows):
+        payload["data"] = kept
+        pagination = payload.get("pagination")
+        if isinstance(pagination, dict) and isinstance(pagination.get("total"), int):
+            pagination["total"] = max(0, pagination["total"] - (len(rows) - len(kept)))
+        if not kept:
+            payload["empty"] = True
     return payload

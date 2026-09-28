@@ -99,6 +99,8 @@ NON_CLEARANCE_KEYS: frozenset[str] = frozenset(
 #: the incoming quantity must not read it back off the unallocated gap, a warehouse
 #: allocation, or the `/shipments` total.
 STRIP_WITH: dict[str, frozenset[str]] = {
+    # `/by-product` also states the product's nearest ETA; a revoked ETA takes it too.
+    "estimated_arrival_date": frozenset({"nearest_estimated_arrival_date"}),
     "remaining_incoming_quantity": frozenset(
         {"unallocated_quantity", "allocated_quantity", "total_remaining_incoming_quantity"}
     ),

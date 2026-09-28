@@ -461,3 +461,156 @@ def test_staff_without_a_contact_keep_container_and_quantity(client, db):
     row = _list(client, p)["data"][0]
     assert row["shipping_container_number"]
     assert row["lines"][0]["remaining_incoming_quantity"] == 40
+
+
+# ============================================================== security review round 1
+
+
+def test_a_revoked_eta_also_takes_the_nearest_eta_on_by_product(client, db):
+    """Should-fix 1: `/by-product` states the product's nearest ETA beside each
+    shipment's; a per-contact revoke of the ETA must take both."""
+    p, _ = _seed(db)
+    dealer = _contact(db)
+    _deny_on_agent(db, "estimated_arrival_date", contact=dealer)
+    keys = set(_walk_keys(_by_product(client, p, dealer)["data"]))
+    assert "estimated_arrival_date" not in keys
+    assert "nearest_estimated_arrival_date" not in keys
+
+
+def _list_window(client, p, contact, **window):
+    params = {"product_ids": p.product_code, "contact_id": contact.id, **window}
+    res = client.get("/api/v1/incoming-stock/list", params=params)
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def test_an_eta_window_is_judged_on_the_date_the_contact_is_told(client, db):
+    """Should-fix 2: real ETA 28 Oct, offset 5, told 2 Nov. "Arriving by 31 Oct?" must
+    not return it (that would reveal the real date), and "arriving from 1 Nov?" must,
+    even though the real date is earlier than the window."""
+    p, _ = _seed(db)
+    padded = _contact(db, offset_applied=True)
+    assert _list_window(client, p, padded, eta_to="2026-10-31")["data"] == []
+    hit = _list_window(client, p, padded, eta_from="2026-11-01", eta_to="2026-11-05")
+    assert [r["estimated_arrival_date"] for r in hit["data"]] == [PADDED]
+
+    exact = _contact(db, offset_applied=False)
+    assert len(_list_window(client, p, exact, eta_to="2026-10-31")["data"]) == 1
+    assert _list_window(client, p, exact, eta_from="2026-11-01")["data"] == []
+
+
+def test_the_by_product_window_is_judged_on_the_padded_date_too(client, db):
+    p, _ = _seed(db)
+    padded = _contact(db, offset_applied=True)
+    res = client.get(
+        "/api/v1/incoming-stock/by-product",
+        params={"product_ids": p.id, "contact_id": padded.id, "eta_to": "2026-10-31"},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["data"] == []
+
+
+def test_the_single_shipment_products_route_follows_the_contact(client, db):
+    """Should-fix 3: `/shipments/{id}/products` carries the container, every quantity,
+    the ETA and the packing list; a contact gets them on their own rules."""
+    _p, shipment = _seed(db)
+    _deny_on_agent(db, "shipping_container_number")
+    _deny_on_agent(db, "remaining_incoming_quantity")
+    dealer = _contact(db, packing_list_allowed=False)
+
+    res = client.get(
+        f"/api/v1/incoming-stock/shipments/{shipment.id}/products",
+        params={"contact_id": dealer.id},
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()["data"]
+    assert data["estimated_arrival_date"] == PADDED
+    keys = set(_walk_keys(data))
+    assert not keys & {
+        "attachment",
+        "shipping_container_number",
+        "remaining_incoming_quantity",
+        "unallocated_quantity",
+    }
+    assert data["products"][0]["product_code"]
+
+    staff = client.get(f"/api/v1/incoming-stock/shipments/{shipment.id}/products").json()
+    assert staff["data"]["estimated_arrival_date"] == EXACT
+    assert staff["data"]["attachment"]["filename"] == "packing-list.pdf"
+
+
+def test_the_single_shipment_attachment_route_follows_the_packing_list_switch(client, db):
+    _p, shipment = _seed(db)
+    url = f"/api/v1/incoming-stock/shipments/{shipment.id}/attachment"
+
+    denied = client.get(url, params={"contact_id": _contact(db).id}).json()
+    assert "attachment" not in denied["data"]
+    assert denied["empty"] is True
+
+    allowed = client.get(
+        url, params={"contact_id": _contact(db, packing_list_allowed=True).id}
+    ).json()
+    assert allowed["data"]["attachment"]["filename"] == "packing-list.pdf"
+    assert client.get(url).json()["data"]["attachment"]["filename"] == "packing-list.pdf"
+
+
+def _workspace(db, space_id: str):
+    from app.models.respond_workspace import RespondWorkspace
+
+    ws = RespondWorkspace(
+        id=str(uuid.uuid4()),
+        space_id=space_id,
+        name=f"ZZT {space_id}",
+        api_key_ciphertext="zzt-not-a-real-key",
+    )
+    db.add(ws)
+    db.flush()
+    return ws
+
+
+def test_a_null_workspace_contact_is_answered_on_its_own_rules(client, db):
+    """Should-fix 4: the chatbot admits a NULL-workspace contact through the fallback
+    resolver; the data route resolves it the same way, so it is not read as nobody."""
+    p, _ = _seed(db)
+    contact = _contact(db, packing_list_allowed=True)
+    contact.respond_io_id = unique_code("RIO")
+    db.flush()
+
+    res = client.get(
+        "/api/v1/incoming-stock/list",
+        params={
+            "product_ids": p.product_code,
+            "contact_id": contact.respond_io_id,
+            "space_id": "364817",
+        },
+    )
+    assert res.status_code == 200, res.text
+    row = res.json()["data"][0]
+    assert row["attachment"]["filename"] == "packing-list.pdf"
+    assert row["shipping_container_number"]
+    assert row["estimated_arrival_date"] == PADDED
+
+
+def test_a_contact_in_another_workspace_fails_closed(client, db):
+    """A Respond.io id paired with the wrong space_id names nobody: no packing list, and
+    every gated field (the ETA included) is withheld rather than served as staff."""
+    p, _ = _seed(db)
+    contact = _contact(db, packing_list_allowed=True)
+    contact.respond_io_id = unique_code("RIO")
+    contact.workspace_id = _workspace(db, unique_code("SPACE")[:30]).id
+    db.flush()
+
+    res = client.get(
+        "/api/v1/incoming-stock/list",
+        params={
+            "product_ids": p.product_code,
+            "contact_id": contact.respond_io_id,
+            "space_id": "some-other-space",
+        },
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    keys = set(_walk_keys(body["data"]))
+    assert not keys & {"attachment", "shipping_container_number", "estimated_arrival_date"}
+    outcomes = {d["outcome"] for d in body["field_access"]["denied"]}
+    assert outcomes == {"contact_not_found"}

@@ -25,7 +25,12 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
-from app.services.eta_policy import apply_to_incoming
+from app.services.eta_policy import (
+    apply_to_incoming,
+    query_eta_from,
+    resolve_request_contact,
+    rules_for_contact,
+)
 from app.services.field_access import CLEARANCE_PERMISSION, apply_field_access
 from app.services.error_handler import handle_internal_error
 from app.services.incoming_stock_service import IncomingStockService
@@ -35,23 +40,60 @@ from app.services.uuid_list_param import parse_uuid_list
 router = APIRouter()
 
 
-def _for_contact(db: Session, result, *, contact_id, space_id, current_user):
-    """Issue #1328: one gate for all three incoming routes. The contact's ETA offset and
-    packing list rule (`eta_policy.apply_to_incoming`), then the per-field reveals. With
-    no contact in play the payload is returned exactly as before - staff see the exact
-    date, and `/by-product` / `/shipments` never grew a `field_access` block."""
-    if not contact_id:
+class _Contact:
+    """Who a request asks on behalf of, resolved ONCE (issue #1328): the internal contact
+    id, and that contact's ETA / packing-list rules. `None` rules = no contact in play (a
+    staff session or the bare API key), and the payload goes out exactly as before."""
+
+    def __init__(self, db: Session, contact_id: Optional[str], space_id: Optional[str]):
+        self.asked = bool(contact_id)
+        self.resolved = resolve_request_contact(db, contact_id, space_id) if contact_id else None
+        self.rules = rules_for_contact(db, self.resolved) if contact_id else None
+
+    def eta_from(self, db: Session, eta_from: Optional[date]) -> Optional[date]:
+        return query_eta_from(db, self.rules, eta_from)
+
+
+def _for_contact(
+    db: Session,
+    result,
+    contact: _Contact,
+    *,
+    current_user,
+    eta_from: Optional[date] = None,
+    eta_to: Optional[date] = None,
+):
+    """One gate for every incoming route: the contact's ETA offset and packing list rule
+    (`eta_policy.apply_to_incoming`), then the per-field reveals. Both read the SAME
+    resolved id; an unresolved contact passes an id that resolves to nobody, so the
+    field gate denies every gated field (fail closed), exactly as before this change.
+    With no contact in play the payload is returned untouched."""
+    if contact.rules is None:
         return result
-    result = apply_to_incoming(db, result, contact_id=contact_id, space_id=space_id)
+    result = apply_to_incoming(db, result, contact.rules, eta_from=eta_from, eta_to=eta_to)
     return apply_field_access(
         db,
         result,
         resource="incoming_stock",
         current_user=current_user,
-        contact_id=contact_id,
-        space_id=space_id,
+        contact_id=contact.resolved or _UNRESOLVED_CONTACT,
         staff_permission=CLEARANCE_PERMISSION,
     )
+
+
+#: A contact id no row carries: `apply_field_access` treats a contact that named nobody
+#: as CONTACT_NOT_FOUND on every gated field. Passing `None` instead would switch it to
+#: the STAFF path and hand an unresolved contact the whole payload.
+_UNRESOLVED_CONTACT = "__unresolved_contact__"
+
+
+_CONTACT_ID_DOC = (
+    "The contact this question is being asked ON BEHALF OF (respond_contacts.id or the "
+    "Respond.io id). When set, the ETA carries that contact's +x days offset when their "
+    "switch is on, the packing list is sent only when their packing list switch is on, "
+    "and gated fields follow their Incoming Stock Enquiries field reveals."
+)
+_SPACE_ID_DOC = "Respond.io workspace id, to disambiguate a Respond.io `contact_id`."
 
 
 @router.get("/by-product")
@@ -75,19 +117,8 @@ def get_incoming_for_product(
     eta_from: Optional[date] = Query(None, description="Include shipments with ETA on/after this date (YYYY-MM-DD)."),
     eta_to: Optional[date] = Query(None, description="Include shipments with ETA on/before this date (YYYY-MM-DD)."),
     limit: int = Query(10, ge=1, le=50),
-    contact_id: Optional[str] = Query(
-        None,
-        description=(
-            "The contact this question is being asked ON BEHALF OF (respond_contacts.id "
-            "or the Respond.io id). When set, the ETA carries that contact's +x days "
-            "offset when their switch is on, the packing list is sent only when their "
-            "packing list switch is on, and the container number / quantity follow "
-            "their Incoming Stock Enquiries field reveals."
-        ),
-    ),
-    space_id: Optional[str] = Query(
-        None, description="Respond.io workspace id, to disambiguate a Respond.io `contact_id`."
-    ),
+    contact_id: Optional[str] = Query(None, description=_CONTACT_ID_DOC),
+    space_id: Optional[str] = Query(None, description=_SPACE_ID_DOC),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -132,17 +163,18 @@ def get_incoming_for_product(
             resolved_product_filter.extend(buckets.product_codes)
     try:
         svc = IncomingStockService(db)
+        contact = _Contact(db, contact_id, space_id)
         result = svc.incoming_for_product(
             product_ids=resolved_product_filter or None,
             query=query,
-            eta_from=eta_from,
+            eta_from=contact.eta_from(db, eta_from),
             eta_to=eta_to,
             limit=limit,
         )
         if entity_echo is not None and isinstance(result, dict):
             result["resolved_entities"] = entity_echo
         return _for_contact(
-            db, result, contact_id=contact_id, space_id=space_id, current_user=current_user
+            db, result, contact, current_user=current_user, eta_from=eta_from, eta_to=eta_to
         )
     except Exception as e:
         raise handle_internal_error(str(e))
@@ -170,19 +202,8 @@ def get_incoming_shipments(
     eta_to: Optional[date] = Query(None, description="Include shipments with ETA on/before this date."),
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=50),
-    contact_id: Optional[str] = Query(
-        None,
-        description=(
-            "The contact this question is being asked ON BEHALF OF (respond_contacts.id "
-            "or the Respond.io id). When set, the ETA carries that contact's +x days "
-            "offset when their switch is on, the packing list is sent only when their "
-            "packing list switch is on, and the container number / quantity follow "
-            "their Incoming Stock Enquiries field reveals."
-        ),
-    ),
-    space_id: Optional[str] = Query(
-        None, description="Respond.io workspace id, to disambiguate a Respond.io `contact_id`."
-    ),
+    contact_id: Optional[str] = Query(None, description=_CONTACT_ID_DOC),
+    space_id: Optional[str] = Query(None, description=_SPACE_ID_DOC),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -215,11 +236,12 @@ def get_incoming_shipments(
                 }
     try:
         svc = IncomingStockService(db)
+        contact = _Contact(db, contact_id, space_id)
         result = svc.incoming_shipments(
             query=extra_query,
             shipment_ids=shipment_uuid_list,
             supplier_ids=supplier_uuid_list,
-            eta_from=eta_from,
+            eta_from=contact.eta_from(db, eta_from),
             eta_to=eta_to,
             page=page,
             limit=limit,
@@ -227,7 +249,7 @@ def get_incoming_shipments(
         if entity_echo is not None and isinstance(result, dict):
             result["resolved_entities"] = entity_echo
         return _for_contact(
-            db, result, contact_id=contact_id, space_id=space_id, current_user=current_user
+            db, result, contact, current_user=current_user, eta_from=eta_from, eta_to=eta_to
         )
     except Exception as e:
         raise handle_internal_error(str(e))
@@ -297,6 +319,7 @@ def get_incoming_list(
                 flat_product_ids.append(piece)
     try:
         svc = IncomingStockService(db)
+        contact = _Contact(db, contact_id, space_id)
         # product_ids may be UUIDs or product_codes; the service resolves both, so
         # pass through raw rather than via parse_uuid_list (which rejects codes).
         result = svc.incoming_list(
@@ -304,7 +327,7 @@ def get_incoming_list(
             shipment_ids=parse_uuid_list(shipment_ids, param_name="shipment_ids"),
             supplier_ids=parse_uuid_list(supplier_ids, param_name="supplier_ids"),
             query=query,
-            eta_from=eta_from,
+            eta_from=contact.eta_from(db, eta_from),
             eta_to=eta_to,
             page=page,
             limit=limit,
@@ -317,9 +340,9 @@ def get_incoming_list(
         #
         # Issue #1328: a contact's question also gets that contact's ETA offset and
         # packing list rule, before the field reveals (`_for_contact`).
-        if contact_id:
+        if contact.asked:
             return _for_contact(
-                db, result, contact_id=contact_id, space_id=space_id, current_user=current_user
+                db, result, contact, current_user=current_user, eta_from=eta_from, eta_to=eta_to
             )
         return apply_field_access(
             db,
@@ -337,6 +360,8 @@ def get_incoming_list(
 @router.get("/shipments/{shipment_id}/products")
 def get_incoming_shipment_products(
     shipment_id: str,
+    contact_id: Optional[str] = Query(None, description=_CONTACT_ID_DOC),
+    space_id: Optional[str] = Query(None, description=_SPACE_ID_DOC),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -347,7 +372,12 @@ def get_incoming_shipment_products(
     """
     try:
         svc = IncomingStockService(db)
-        return svc.shipment_incoming_products(shipment_id)
+        return _for_contact(
+            db,
+            svc.shipment_incoming_products(shipment_id),
+            _Contact(db, contact_id, space_id),
+            current_user=current_user,
+        )
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -355,19 +385,26 @@ def get_incoming_shipment_products(
 @router.get("/shipments/{shipment_id}/attachment")
 def get_incoming_shipment_attachment(
     shipment_id: str,
+    contact_id: Optional[str] = Query(None, description=_CONTACT_ID_DOC),
+    space_id: Optional[str] = Query(None, description=_SPACE_ID_DOC),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """Fetch the packing list / shipment document attachment for a shipment.
 
     Returns `{shipment_number, attachment: {filename, file_path, mime_type}}`, or the same
-    shape with `attachment: null` when no file is linked.
+    shape with `attachment: null` when no file is linked. For a contact without the
+    packing list permission (#1328) `attachment` is absent and the answer is empty.
     """
     try:
         svc = IncomingStockService(db)
         data = svc.shipment_attachment(shipment_id)
         if data is None:
             return {"data": None, "empty": True}
+        gated = _for_contact(
+            db, {"data": data}, _Contact(db, contact_id, space_id), current_user=current_user
+        )
+        data = gated["data"]
         return {"data": data, "empty": data.get("attachment") is None}
     except Exception as e:
         raise handle_internal_error(str(e))
