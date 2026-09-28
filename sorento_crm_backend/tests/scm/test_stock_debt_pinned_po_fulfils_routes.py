@@ -26,6 +26,7 @@ from tests.scm.test_stock_debt_routes import (
     TODAY,
     _client,
     _demand,
+    _months_ahead,
     _product,
     _row_of,
     _u,
@@ -157,7 +158,9 @@ def test_production_case_under_a_raised_rule_is_not_short_1309(scm_app):
         later = _cell(c, seed, month_key(TODAY + timedelta(days=45)))
 
     _assert_fulfilled(cell, seed)
-    assert cell["supply_total_qty"] >= 1309
+    # Lines 2 and 3, listed here for the rows they cover; line 1's 41 is listed in its own
+    # (assumed) month only.
+    assert cell["supply_total_qty"] == 1309
     for row in cell["supply"]:
         if row["kind"] == "po" and row["po_line_id"] != str(seed["free"].id):
             assert row["free_qty"] == 0
@@ -167,3 +170,45 @@ def test_production_case_under_a_raised_rule_is_not_short_1309(scm_app):
     home = {row["po_line_id"]: row for row in later["supply"] if row["kind"] == "po"}
     assert home[str(seed["free"].id)]["free_qty"] == 41
     assert home[str(seed["line_3"].id)]["free_qty"] == 0
+
+
+def test_a_partly_pinned_po_line_is_free_only_in_its_own_month(scm_app):
+    """AC-PO-13, the footing half: a PO line of 100 delivering two months out names an order
+    whose row this month needs 30. This month's drill lists it with Assigned to and Free 0,
+    so Free less Short still foots with the board cell; its own month lists the other 70
+    free. `supply_total_qty` sums the column as listed."""
+    app, db = _client(scm_app)
+    _policy(db, 0, 0)
+    marker = f"ZZTPF{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    order, row = _demand(
+        db, product, warehouse, qty=30, required_date=TODAY, so_number=f"{marker}-SO1",
+    )
+    order.source_ref = f"ZZTBOOK:{marker}"
+    row.source_ref = f"ZZTBOOK:{marker}:d1"
+    delivery = _months_ahead(2)
+    po = _purchase_order(db, f"{marker}-PO", issue_date=TODAY)
+    po_line = _po_line(
+        db, po, product, warehouse, qty=100, delivery=delivery,
+        so_ref=f"ZZTBOOK:{marker}:d1",
+    )
+    db.flush()
+    seed = {"product": product, "marker": marker}
+
+    with TestClient(app) as c:
+        here = _cell(c, seed, month_key(TODAY))
+        home = _cell(c, seed, month_key(delivery))
+        balance = _board_balance(c, seed, month_key(TODAY))
+        home_balance = _board_balance(c, seed, month_key(delivery))
+
+    [demand] = here["demand"]
+    assert (demand["status"], demand["short_qty"]) == ("pinned", 0)
+    [listed] = [r for r in here["supply"] if r["po_line_id"] == str(po_line.id)]
+    assert listed["free_qty"] == 0
+    assert listed["assigned_to"][0]["qty"] == 30
+    assert here["supply_total_qty"] == 100
+    assert balance == 0
+    [own] = [r for r in home["supply"] if r["po_line_id"] == str(po_line.id)]
+    assert own["free_qty"] == 70
+    assert home_balance == 70

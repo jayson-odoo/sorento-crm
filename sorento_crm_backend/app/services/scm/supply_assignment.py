@@ -564,6 +564,7 @@ def assign(
     left = {event.key: float(event.qty) for event in counted}
     events = {event.key: event for event in counted}
     uncounted_by_key = {event.key: event for event in uncounted}
+    uncounted_left = {event.key: float(event.qty) for event in uncounted}
     states = {
         line.key: _Open(line=line, remaining=float(line.open_qty)) for line in dated
     }
@@ -594,11 +595,18 @@ def assign(
             #
             # R43: unless the hold `fulfils` (the view's PO pins): assigned means fulfilled,
             # so the line is owed nothing for it, and the document still adds nothing free.
+            # A fulfilling hold is capped by what the document still has outstanding, the
+            # way a counted one is capped by `left`: two placements, or a placement larger
+            # than what is left after a receipt, cannot fulfil more than the PO will bring.
             take = min(float(hold.qty), state.remaining)
+            if hold.fulfils:
+                take = min(take, uncounted_left[hold.supply_key])
             if take <= EPSILON:
                 continue
             event = uncounted_by_key[hold.supply_key]
-            if not hold.fulfils:
+            if hold.fulfils:
+                uncounted_left[hold.supply_key] -= take
+            else:
                 state.uncounted_pinned += take
         else:
             take = min(float(hold.qty), state.remaining)

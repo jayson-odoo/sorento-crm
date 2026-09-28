@@ -248,11 +248,15 @@ them):
    quantity. A hold that is not a PO in the view (on hand, SPO, anything on the board) keeps
    AC-S2-7 (a promise on a dead document still books its month).
 3. **Covered by lists exactly the lines that cover the row.** A PO line pins the sales-order LINE
-   its S/O names first (`from_so_line_ref` = `sales_order_lines.source_ref`), then, when the ref
-   names no line held here, a line needing exactly what the PO line has left, then the order's
-   other lines earliest first. The three passes run over every PO line in turn, so no PO line
-   spills over a row another PO line names. No quantity is counted twice (the walk caps each
-   pin by what the event and the line have left).
+   its S/O names first (`from_so_line_ref` = `sales_order_lines.source_ref`, trimmed); then, for
+   a PO line whose ref names no line held here AND only when another such PO line names the
+   same order for the product, a line needing exactly what the PO line has left (quantity is
+   what tells two PO lines of one order apart; a lone PO line keeps date order, so it never
+   skips an earlier row for a later one); then the order's other lines earliest first. The
+   three passes run over every PO line in turn, so no PO line spills over a row another PO
+   line names. No quantity is counted twice: the walk caps each pin by what the event and the
+   line have left, a past-due or undated PO included (a fulfilling hold on it is capped by its
+   outstanding, so a placement larger than what is left after a receipt fulfils only that).
 4. **The Supply tab** of a bucket lists every PO line pinned to a row of that bucket, with its
    Assigned to, even when its own date files it in another month. Listed there with Free 0: any
    spare quantity is credited to its own month, which lists it as before.

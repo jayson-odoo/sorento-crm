@@ -247,3 +247,85 @@ def test_a_hold_that_does_not_fulfil_keeps_the_spo_precedent():
     [line] = result.lines
     assert line.status == STATUS_PINNED
     assert line.short_at_date == 4
+
+
+def test_the_s_o_line_ref_wins_over_quantity_and_date():
+    """AC-PO-12, the named pass on its own: two rows of 4 and two PO lines of 4 with CROSSED
+    refs (the first PO line names the second row). Quantity and date cannot tell them
+    apart, so only the S/O line ref puts each PO line on the row it names. Trailing
+    whitespace on the ref does not change the answer."""
+    row_1 = _line("r1", 4, core_line_no=1, source_ref="AED:SO419208:d1")
+    row_2 = _line("r2", 4, core_line_no=2, source_ref="AED:SO419208:d2 ")
+    first = _po("a", 4, line_no=2)
+    second = _po("b", 4, line_no=3)
+    pins = book_so_pins(
+        [("P", first, ORDER, 0.0), ("P", second, ORDER, 0.0)],
+        {"P": [row_1, row_2]},
+        [],
+        tba_from=TBA_FROM,
+        line_refs={first.key: "AED:SO419208:d2", second.key: " AED:SO419208:d1"},
+    )
+
+    assert sorted((pin.line_key, pin.supply_key) for pin in pins) == [
+        ("r1", "po:b"),
+        ("r2", "po:a"),
+    ]
+
+
+def test_a_lone_po_line_naming_only_the_order_keeps_date_order():
+    """Review of this lane: the exact-quantity pass tells two PO lines of one order apart.
+    A LONE PO line of 100 naming only the order fills its September row of 60 first and
+    gives the December row of 100 the other 40, rather than jumping to the row whose need
+    happens to equal 100 and leaving September red."""
+    po = _po("x", 100, line_no=1, at=date(2026, 10, 1))
+    september = _line("sep", 60, core_line_no=1, due=date(2026, 9, 30))
+    december = _line("dec", 100, core_line_no=2, due=date(2026, 12, 15))
+    pins = book_so_pins(
+        [("P", po, ORDER, 0.0)], {"P": [september, december]}, [], tba_from=TBA_FROM
+    )
+
+    assert [(pin.line_key, pin.qty) for pin in pins] == [("sep", 60), ("dec", 40)]
+
+
+def _received_placement(dead):
+    """A PO line of 10 with 6 received (4 outstanding), a placement of 10 on it, and 6 on
+    hand at the same bin, for a line needing 10."""
+    po = _po("x", 4, line_no=1)
+    on_hand = SupplyEvent(key="on_hand:bb", kind="on_hand", warehouse="BRW-BB",
+                          at=AS_OF, qty=6)
+    row = _line("row", 10, core_line_no=1)
+    placement = Hold(line_key="row", supply_key=po.key, qty=10, kind=KIND_PO, fulfils=True)
+    return _walk([po, on_hand], [row], [placement], dead=dead)
+
+
+def test_a_fulfilling_hold_on_a_past_due_po_is_capped_by_its_outstanding():
+    """Review of this lane: a pin fulfils what the PO still brings, never more. At 0 days
+    (the PO past the rule) and at 60 days (counted) the line gets the same answer: 4 from
+    the PO, 6 from the on hand, nothing short and nothing spare."""
+    for dead in (0, 60):
+        result = _received_placement(dead)
+        [line] = result.lines
+        assert sorted((item.event.key, item.qty) for item in line.assigned) == [
+            ("on_hand:bb", 6),
+            ("po:x", 4),
+        ], dead
+        assert line.short_at_date == 0
+        assert all(month.balance == 0 for month in result.months), dead
+
+
+def test_two_fulfilling_holds_on_one_past_due_po_share_its_outstanding():
+    """Two placements of 4 on one past-due PO with 4 outstanding: the first is fulfilled,
+    the second finds nothing left and its line stays short."""
+    po = _po("x", 4, line_no=1)
+    first = _line("r1", 4, core_line_no=1)
+    second = _line("r2", 4, core_line_no=2)
+    holds = [
+        Hold(line_key=key, supply_key=po.key, qty=4, kind=KIND_PO, fulfils=True)
+        for key in ("r1", "r2")
+    ]
+    result = _walk([po], [first, second], holds)
+
+    by_key = {row.line.key: row for row in result.lines}
+    assert by_key["r1"].status == STATUS_PINNED
+    assert by_key["r2"].status == STATUS_SHORT
+    assert by_key["r2"].short_at_date == 4

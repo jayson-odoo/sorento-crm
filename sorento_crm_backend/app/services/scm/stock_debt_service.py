@@ -150,9 +150,11 @@ def book_so_pins(
     "the 1305 supposed to be for the 2nd line, 4 supposed to be for 1st line"):
 
     1. the line the S/O itself names - `line_refs[event.key]` (the PO line's
-       `from_so_line_ref`) equal to the line's own `source_ref`;
-    2. a line that needs exactly what the PO line has left, when the ref names no line held
-       here (the S/O resolves at document level, R42);
+       `from_so_line_ref`) equal to the line's own `source_ref`, both trimmed;
+    2. a line that needs exactly what the PO line has left - only for a PO line whose ref
+       names no line held here, and only when ANOTHER such PO line names the same order
+       for the product: quantity is what tells two PO lines of one order apart, and a
+       lone PO line has nothing to be told apart from, so it keeps date order;
     3. the order's other lines, earliest required date first.
 
     Before R43 every PO line filled the order earliest-first on its own, so two PO lines
@@ -167,7 +169,7 @@ def book_so_pins(
     R43 withdrew R42's "only a PO line the overdue rule counts": `po_lines` carries every PO
     line naming an order, dead, late or undated, and every pin `fulfils` (see `Hold`).
     """
-    refs = line_refs or {}
+    refs = {key: (ref or "").strip() for key, ref in (line_refs or {}).items()}
     already: Dict[str, float] = {}
     for hold in holds:
         already[hold.line_key] = already.get(hold.line_key, 0.0) + float(hold.qty)
@@ -195,6 +197,23 @@ def book_so_pins(
             ),
         )
 
+    #: PO lines (with quantity to pin) whose ref names none of their order's lines here,
+    #: counted per (product, order) - the exact pass's own gate, see the docstring.
+    unnamed: Dict[str, bool] = {}
+    siblings: Dict[Tuple[str, str], int] = {}
+    for product_id, event, sales_order_id, _placed in ordered:
+        if event.key not in budgets:
+            continue
+        ref = refs.get(event.key)
+        unnamed[event.key] = not any(
+            ref and (line.source_ref or "").strip() == ref
+            for line in candidates[event.key]
+        )
+        if unnamed[event.key]:
+            siblings[(product_id, sales_order_id)] = (
+                siblings.get((product_id, sales_order_id), 0) + 1
+            )
+
     out: List[Hold] = []
 
     def need_of(line: DemandLine) -> float:
@@ -217,22 +236,26 @@ def book_so_pins(
             )
         )
 
-    def named(event: SupplyEvent, line: DemandLine) -> bool:
+    def named(_key: Tuple[str, str], event: SupplyEvent, line: DemandLine) -> bool:
         ref = refs.get(event.key)
-        return bool(ref) and line.source_ref == ref
+        return bool(ref) and (line.source_ref or "").strip() == ref
 
-    def exact(event: SupplyEvent, line: DemandLine) -> bool:
-        return abs(need_of(line) - budgets[event.key]) <= EPSILON
+    def exact(key: Tuple[str, str], event: SupplyEvent, line: DemandLine) -> bool:
+        return (
+            unnamed.get(event.key, False)
+            and siblings.get(key, 0) > 1
+            and abs(need_of(line) - budgets[event.key]) <= EPSILON
+        )
 
-    def anywhere(_event: SupplyEvent, _line: DemandLine) -> bool:
+    def anywhere(_key: Tuple[str, str], _event: SupplyEvent, _line: DemandLine) -> bool:
         return True
 
     for matches in (named, exact, anywhere):
-        for _product_id, event, _order, _placed in ordered:
+        for product_id, event, sales_order_id, _placed in ordered:
             for line in candidates.get(event.key, ()):
                 if budgets[event.key] <= EPSILON:
                     break
-                if not matches(event, line):
+                if not matches((product_id, sales_order_id), event, line):
                     continue
                 take = min(budgets[event.key], need_of(line))
                 if take <= EPSILON:
