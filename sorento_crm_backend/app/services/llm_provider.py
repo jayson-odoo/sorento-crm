@@ -426,13 +426,17 @@ class OpenAIProvider:
         return list(resp.data[0].embedding)
 
     def test_connection(self) -> tuple[bool, str, int]:
+        """Retrieve the selected model: authenticated, free, no thinking-token trap.
+
+        A one-token generate was the probe until a reasoning model (gpt-5.4-mini)
+        spent its first tokens thinking and OpenAI answered 400 "max_tokens or
+        model output limit was reached" to a working key (#1315). `GET
+        /models/{id}` still fails in OpenAI's own words for a bad key (401) and
+        for a model this key cannot see (404).
+        """
         started = time.perf_counter()
         try:
-            self.chat(
-                [{"role": "user", "content": "hi"}],
-                temperature=0,
-                max_tokens=1,
-            )
+            self._client().models.retrieve(self.default_model)
             elapsed = int((time.perf_counter() - started) * 1000)
             return True, "OK", elapsed
         except Exception as exc:  # noqa: BLE001
@@ -762,13 +766,15 @@ class AnthropicProvider:
         )
 
     def test_connection(self) -> tuple[bool, str, int]:
+        """Retrieve the selected model, for the same reason as the OpenAI probe.
+
+        A one-token generate leaves an extended-thinking model no room to answer
+        (#1315); `GET /v1/models/{id}` accepts an alias, costs nothing, and fails
+        in Anthropic's own words for a bad key (401) or an unknown model (404).
+        """
         started = time.perf_counter()
         try:
-            self.chat(
-                [{"role": "user", "content": "hi"}],
-                temperature=0,
-                max_tokens=1,
-            )
+            self._client().models.retrieve(self.default_model)
             elapsed = int((time.perf_counter() - started) * 1000)
             return True, "OK", elapsed
         except Exception as exc:  # noqa: BLE001
@@ -1360,7 +1366,7 @@ class GeminiProvider:
     def test_connection(self) -> tuple[bool, str, int]:
         """List one model: authenticated, free, and no thinking-token trap.
 
-        A one-token generate is the probe the other two adapters use, but a
+        A one-token generate is the trap all three adapters avoid now: a
         Gemini 2.5 model spends its first tokens thinking and returns a
         candidate with no parts at ``maxOutputTokens: 1`` - which would report
         a perfectly good key as broken.
