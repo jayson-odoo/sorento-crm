@@ -1,7 +1,9 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { extractApiError } from '@/lib/api-client';
+import { useHasPermission } from '@/hooks/usePermissions';
 
 import {
   ColumnDef,
@@ -48,9 +50,13 @@ import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { contactActions } from '../actions';
 import { ContactImpersonateDialog } from './ContactImpersonateDialog';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
+import UserAddDialog from '../../users/components/user-add-dialog';
 
 export default function ContactsList() {
   const queryClient = useQueryClient();
+  const canViewUsers = useHasPermission('user_management.users.view');
+  const canAddUsers = useHasPermission('user_management.users.add');
+  const [createUserContact, setCreateUserContact] = useState<RespondContact | null>(null);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const {
@@ -264,6 +270,33 @@ export default function ContactsList() {
         },
         meta: { headerTitle: 'Access types', skeleton: <Skeleton className="h-4 w-32" /> },
       },
+      // Identity S3 (AC-59): the linked user's name, a link; blank when none.
+      // Hidden entirely without `users.view` - a caller who cannot open the
+      // user has nothing to do with the name either.
+      ...(canViewUsers
+        ? [
+            {
+              id: 'linked_user',
+              header: 'User',
+              size: 180,
+              enableSorting: false,
+              cell: ({ row }: { row: { original: RespondContact } }) =>
+                row.original.linked_user_id ? (
+                  <Link
+                    href={`/user-management/users/${row.original.linked_user_id}`}
+                    className="text-primary hover:underline truncate block"
+                    title={row.original.linked_user_name ?? ''}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {row.original.linked_user_name}
+                  </Link>
+                ) : (
+                  <span className="text-muted-foreground"> - </span>
+                ),
+              meta: { headerTitle: 'User', skeleton: <Skeleton className="h-4 w-28" /> },
+            } satisfies ColumnDef<RespondContact>,
+          ]
+        : []),
       {
         accessorKey: 'outbound_enabled',
         header: ({ column }) => <DataGridColumnHeader title="Outbound" column={column} />,
@@ -310,13 +343,20 @@ export default function ContactsList() {
             {/* The record's own set, in the row's "..." (D15). */}
             <RowActionsMenu
               ariaLabel="contact"
-              actions={contactActions(row.original, {
-                impersonate: () => setImpersonateTarget(row.original),
-                remove: () => {
-                  setContactToDelete(row.original);
-                  setDeleteDialogOpen(true);
+              actions={contactActions(
+                row.original,
+                {
+                  impersonate: () => setImpersonateTarget(row.original),
+                  remove: () => {
+                    setContactToDelete(row.original);
+                    setDeleteDialogOpen(true);
+                  },
+                  createUser: () => setCreateUserContact(row.original),
                 },
-              })}
+                // users.view too: without it the row carries no linked_user_id,
+                // so every contact would look unlinked (fix round 2, N3).
+                { canCreateUser: canAddUsers && canViewUsers },
+              )}
             />
           </div>
         ),
@@ -329,6 +369,8 @@ export default function ContactsList() {
       bulkSyncMutation.isPending,
       outboundBusy,
       setOutboundOne,
+      canViewUsers,
+      canAddUsers,
     ],
   );
 
@@ -484,6 +526,12 @@ export default function ContactsList() {
       <ContactImpersonateDialog
         contact={impersonateTarget}
         onClose={() => setImpersonateTarget(null)}
+      />
+
+      <UserAddDialog
+        open={!!createUserContact}
+        closeDialog={() => setCreateUserContact(null)}
+        contact={createUserContact ? { id: createUserContact.id } : undefined}
       />
     </DataGrid>
   );

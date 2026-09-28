@@ -7,6 +7,7 @@ import type { RespondContact } from '../../types/contact.types';
  *
  * GET /api/v1/user-management/contacts/{id}           -> RespondContact
  * GET /api/v1/user-management/contacts?page&limit&... -> { data: RespondContact[], pagination }
+ * GET /api/v1/user-management/contacts/{id}/companies -> { id, name }[]
  */
 
 export interface RespondContactListResponse {
@@ -32,4 +33,14 @@ export async function getContacts(
     throw new Error(await extractApiError(response, 'Failed to load contacts'));
   }
   return (await response.json()) as RespondContactListResponse;
+}
+
+/** Superadmin-only; a 403 for anyone else resolves to an empty list rather than
+ *  an error, since the caller only uses this to prefill a form. */
+export async function getContactCompanies(
+  contactId: string,
+): Promise<{ id: string; name: string }[]> {
+  const response = await apiFetch(`/api/user-management/contacts/${contactId}/companies`);
+  if (!response.ok) return [];
+  return (await response.json()) as { id: string; name: string }[];
 }
