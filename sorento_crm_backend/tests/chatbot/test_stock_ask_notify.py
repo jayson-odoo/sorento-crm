@@ -77,6 +77,7 @@ class LiveDealer:
         *,
         notify: bool,
         with_customer: bool = True,
+        agent_allowed: bool | None = None,
     ) -> None:
         self.session_factory = session_factory
         self._next: dict[str, Any] | None = None
@@ -94,14 +95,44 @@ class LiveDealer:
             {"c": str(CONTACT_ID)},
         ).scalar()
         self.customer_id = None
+        self.agent_contact_id = None
         if with_customer:
             self.customer_id = str(uuid.uuid4())
+            sales_agent_id = None
+            if agent_allowed is not None:
+                # Fix round 2 (AC-SA410): a sales agent whose Respond contact carries the
+                # allowed-to-send flag (`respond_contacts.outbound_enabled`).
+                self.agent_contact_id = str(uuid.uuid4())
+                db.execute(
+                    text(
+                        "INSERT INTO respond_contacts (id, respond_io_id, phone_number, name, "
+                        "session_vars, outbound_enabled) VALUES (:id, :rid, :phone, "
+                        "'Agent Lim', CAST('{}' AS jsonb), :ok)"
+                    ),
+                    {
+                        "id": self.agent_contact_id,
+                        "rid": f"ZZT-agent-{uuid.uuid4().hex[:8]}",
+                        "phone": f"+6003{uuid.uuid4().int % 10**7:07d}",
+                        "ok": agent_allowed,
+                    },
+                )
+                sales_agent_id = str(uuid.uuid4())
+                db.add(
+                    SalesAgent(
+                        id=sales_agent_id,
+                        sales_agent=f"ZZT{uuid.uuid4().hex[:6]}",
+                        contact_id=self.agent_contact_id,
+                        company_id=SORENTO,
+                    )
+                )
+                db.flush()
             db.add(
                 Customer(
                     id=self.customer_id,
                     customer_code=f"ZZT-C-{uuid.uuid4().hex[:6]}",
                     customer_name="Hock Lee Trading",
                     company_id=SORENTO,
+                    sales_agent_id=sales_agent_id,
                 )
             )
             db.flush()
@@ -378,6 +409,65 @@ def test_ac_sa402_a_turn_that_fails_before_the_write_enqueues_nothing(
     out = dealer.ask_all_four()
     assert out.status == "failed"
     assert dealer.jobs == []
+
+
+def _asks_and_logs(session_factory, contact_id: str) -> tuple[list[Any], list[IntegrationLog]]:
+    from app.models.stock_ask import StockAsk
+
+    db = session_factory()
+    db.info["company_scope"] = None
+    asks = db.query(StockAsk).filter(StockAsk.contact_id == contact_id).all()
+    ids = [a.id for a in asks]
+    logs = (
+        db.query(IntegrationLog)
+        .filter(IntegrationLog.business_table == "stock_asks", IntegrationLog.business_id.in_(ids))
+        .all()
+        if ids
+        else []
+    )
+    return asks, logs
+
+
+@pytest.mark.parametrize("console", [False, True], ids=["live", "console"])
+def test_ac_sa410_agent_not_allowed_to_send_enqueues_nothing_but_writes_and_logs(
+    session_factory, monkeypatch, stub_access, console
+):
+    """Fix round 2 (owner note on PR #1333, 28 Sep 2026): the salesperson notification
+    respects the allowed-to-send flag on the salesperson's Respond contact
+    (`respond_contacts.outbound_enabled`), live and console alike. Flag off: no job, the
+    ask rows are still written (the Asks tab shows them), and each notified branch gets
+    one integration log line saying why nothing went out."""
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True, agent_allowed=False)
+    out = dealer.ask_all_four(console=console)
+    assert out.error is None, out.error
+    assert dealer.notified == []
+
+    asks, logs = _asks_and_logs(session_factory, dealer.contact_id)
+    assert sorted(a.branch for a in asks) == ["in_stock", "incoming", "no_incoming", "too_big"]
+    assert {a.source for a in asks} == {"console" if console else "live"}
+    notified = [a for a in asks if a.branch != "incoming"]
+    assert all(a.notified_agent is False for a in notified)
+    assert {a.notify_skip_reason for a in notified} == {"contact_not_allowed_to_send"}
+    assert len(logs) == 3
+    for log in logs:
+        assert log.status == "skipped"
+        assert log.error_message == "not sent: contact not allowed to send"
+        assert log.integration_channel == "respond_io"
+        assert log.direction == "outbound"
+
+
+@pytest.mark.parametrize("console", [False, True], ids=["live", "console"])
+def test_ac_sa410_agent_allowed_to_send_enqueues_the_jobs(
+    session_factory, monkeypatch, stub_access, console
+):
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True, agent_allowed=True)
+    out = dealer.ask_all_four(console=console)
+    assert out.error is None, out.error
+    facts = dealer.notified
+    assert sorted(f["branch"] for f in facts) == ["in_stock", "no_incoming", "too_big"]
+    asks, logs = _asks_and_logs(session_factory, dealer.contact_id)
+    assert len(asks) == 4
+    assert logs == []
 
 
 # --------------------------------------------------------------------------------------- #
