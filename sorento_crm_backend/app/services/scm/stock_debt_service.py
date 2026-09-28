@@ -1,6 +1,8 @@
 """Stock Debt: every outstanding sales order without supply, as a month x product balance.
 
-S2 of `PLAN-scm-borrow-ladder-v7-stock-debt.md` (section 3.4), rulings R6/R7, R15, R21, R23.
+S2 of `PLAN-scm-borrow-ladder-v7-stock-debt.md` (section 3.4), rulings R6/R7, R15, R21, R23,
+and R42 (section 3.4b, 28 Sep 2026): purchase orders are supply here again, parked on the PO
+line's Delivery date, and a PO line naming a sales order covers that order first.
 
 **The view SHOWS; the board DECIDES** (R23). Nothing here writes, proposes or reserves. It
 reads the same book the ladder reads, hands it to `supply_assignment.assign()` - the one
@@ -54,7 +56,7 @@ from app.models.sales_agent import SalesAgent
 from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
 from app.services.project_supply_service import ProjectSupplyService, held_qty_expr
-from app.services.scm import sales_agent_service, spo_supply
+from app.services.scm import order_link_service, sales_agent_service, spo_supply
 from app.services.scm.demand import demand_qty, is_open_demand, plan_qty
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
 # Reused, not reinvented (AC-18): the low stock report's own cap. A read-only export off a
@@ -78,6 +80,7 @@ from app.services.scm.supply_assignment import (
     effective_date,
     month_axis,
     month_key,
+    parse_supply_key,
     tone_for,
 )
 
@@ -121,6 +124,73 @@ def _spo_ref(spo_number: Optional[str]) -> str:
     if not spo_number:
         return "SPO"
     return spo_number if spo_number.upper().startswith("SPO") else f"SPO {spo_number}"
+
+
+def book_so_pins(
+    po_lines: Sequence[Tuple[str, SupplyEvent, str, float]],
+    demand: Dict[str, Sequence[DemandLine]],
+    holds: Sequence[Hold],
+    *,
+    tba_from: date,
+) -> List[Hold]:
+    """R42, pure: the holds a PO line's S/O makes on its sales order's lines.
+
+    `po_lines` is `(product_id, PO event, sales_order_id the S/O names, qty placement links
+    already hold on the PO line)`. Each PO line may pin its outstanding (`event.qty`) less
+    that placed quantity, over the named order's lines for the SAME product, earliest
+    required date first, each up to what the line still needs once the confirmed holds
+    (`holds`: allocations and placements) and earlier S/O pins have spoken. What is left
+    over is not pinned, so it stays in the free pile on the delivery date.
+
+    A line the walk will not draw for (TBA, undated, unlocated - R14) is never given one:
+    `assign()` would drop the pin and the quantity would be lost to the free pile's
+    other claimants for nothing. PO lines are taken in delivery-date order so two PO lines
+    naming one order fill it the way the walk would.
+    """
+    already: Dict[str, float] = {}
+    for hold in holds:
+        already[hold.line_key] = already.get(hold.line_key, 0.0) + float(hold.qty)
+    out: List[Hold] = []
+    ordered = sorted(po_lines, key=lambda item: (item[1].at or date.max, item[1].key))
+    for product_id, event, sales_order_id, placed in ordered:
+        budget = float(event.qty) - float(placed or 0.0)
+        if budget <= 0:
+            continue
+        lines = sorted(
+            (
+                line
+                for line in demand.get(product_id, ())
+                if line.sales_order_id == sales_order_id
+                and line.required_date is not None
+                and line.required_date < tba_from
+                and (line.warehouse or line.is_pool)
+            ),
+            key=lambda line: (
+                line.required_date, line.core_line_no or 0, line.key,
+            ),
+        )
+        for line in lines:
+            if budget <= 0:
+                break
+            need = float(line.open_qty) - already.get(line.key, 0.0)
+            take = min(budget, need)
+            if take <= 0:
+                continue
+            already[line.key] = already.get(line.key, 0.0) + take
+            budget -= take
+            out.append(
+                Hold(
+                    line_key=line.key,
+                    supply_key=event.key,
+                    qty=take,
+                    kind=KIND_PO,
+                    warehouse=event.warehouse,
+                    ref=event.ref,
+                    po_number=event.po_number,
+                    purchase_order_id=event.purchase_order_id,
+                )
+            )
+    return out
 
 
 class StockDebtService:
@@ -169,6 +239,7 @@ class StockDebtService:
             warehouses,
             date_from=date_from,
             date_to=date_to,
+            view=True,
         )
         supplier_map = self._last_supplier_map(product_ids)
 
@@ -291,6 +362,7 @@ class StockDebtService:
         products = [(str(product.id), product.product_code, product.product_name)]
         assignments = self._assignments(
             products, warehouses, keep_events=True, date_from=date_from, date_to=date_to,
+            view=True,
         )
         result = assignments[str(product.id)]
         events = self._event_cache[str(product.id)]
@@ -355,6 +427,7 @@ class StockDebtService:
                 if key != month:
                     continue
                 stated = walked.stated_at if counted else None
+                is_document = event.kind in (KIND_SPO, KIND_PO)
                 supply.append(
                     {
                         "kind": event.kind,
@@ -362,6 +435,9 @@ class StockDebtService:
                         # R29: the Document cell's own link target.
                         "spo_number": event.spo_number,
                         "spo_line_number": event.spo_line_number,
+                        # R42: the PO's own link target - the document, its line, and the
+                        # two ids `OrderInquiryDocumentLink` opens a PO on.
+                        **self._po_fields(event),
                         "warehouse_code": event.warehouse,
                         # THE ASSUMED date where there is one (R-O), because that is what
                         # the walk planned against; the paperwork's own date travels beside
@@ -377,9 +453,14 @@ class StockDebtService:
                         # against, stated here as its own column instead. On hand has no
                         # such split (it is not a document with a received/outstanding
                         # history), so both are `None` - blank, never a fabricated 0.
-                        "qty": event.ordered_qty if event.kind == KIND_SPO else event.qty,
-                        "received_qty": event.received_qty if event.kind == KIND_SPO else None,
-                        "outstanding_qty": event.qty if event.kind == KIND_SPO else None,
+                        #
+                        # R42: a PO line states the same three, off its own
+                        # `qty_ordered`/`qty_received`, Outstanding being what the walk counts.
+                        "qty": event.ordered_qty
+                        if is_document and event.ordered_qty is not None
+                        else event.qty,
+                        "received_qty": event.received_qty if is_document else None,
+                        "outstanding_qty": event.qty if is_document else None,
                         # What nobody took, once the whole walk was over - the other half of
                         # the cell (R37). A DEAD document is free of nothing: it is not
                         # supply until somebody re-dates it (R31).
@@ -416,7 +497,7 @@ class StockDebtService:
         # the column up themselves.
         demand_total_qty = sum(row["open_qty"] for row in demand)
         supply_total_qty = sum(
-            row["outstanding_qty"] if row["kind"] == KIND_SPO else row["qty"]
+            row["outstanding_qty"] if row["outstanding_qty"] is not None else row["qty"]
             for row in supply
         )
         return {
@@ -599,11 +680,11 @@ class StockDebtService:
         site pools, because it has a pool step and the view has not (see
         `ProjectSupplyService.planning_assignments`).
 
-        `include_po` defaults `True` here: R23 ("got PO doesn't mean got supply") is the
-        STOCK DEBT VIEW's own reading, not the shared assignment's - the board and the
-        ladder still net a PO as supply (plan v7 R29), and `planning_assignments` is
-        exactly this caller, so its own default has to keep doing that without having to
-        say so at every call site.
+        `include_po` defaults `True` here: the board and the ladder net a PO as supply at
+        `issue + lead` (plan v7 R29). R42 (28 Sep 2026) is the VIEW's own reading - a PO
+        parked on its Delivery date and pinned by its S/O - and never reaches this path:
+        `view` stays `False`, so the board's answer is what it was before R42
+        (AC-PO-8 pins it).
         """
         return self._assignments(
             [(str(pid), "", None) for pid in product_ids],
@@ -621,7 +702,8 @@ class StockDebtService:
         as_of: Optional[date] = None,
         date_from: Optional[date] = None,
         date_to: Optional[date] = None,
-        include_po: bool = False,
+        include_po: bool = True,
+        view: bool = False,
     ) -> Dict[str, Assignment]:
         """One `assign()` per product, off ONE read per input for the whole set.
 
@@ -630,9 +712,12 @@ class StockDebtService:
         (AC-3: supply landing after a line's own due date, but on or before `date_to`,
         still covers it - the walk itself is unchanged).
 
-        `include_po` defaults `False`: `list()`/`cell()` (the Stock Debt VIEW, R23) never
-        pass it, so a PO is neither supply nor a hold's own document there. `assignments_for`
-        (the board/ladder's own path) passes `True`.
+        `include_po` reads PO lines as supply on both paths (R42 retired the view's
+        `False`, 28 Sep 2026). `view` is the Stock Debt VIEW's own reading of them (R42): a
+        PO line is dated on its Delivery date (`expected_date`, else `issue + lead`), and a
+        PO line whose S/O names a sales order is pinned to that order's lines before the
+        walk (`_book_so_holds`). `list()`/`cell()` pass it; `assignments_for` (the board
+        and the ladder) never does.
         """
         self._event_cache: Dict[str, List[SupplyEvent]] = {}
         self._lead_cache: Dict[str, int] = {}
@@ -657,6 +742,7 @@ class StockDebtService:
         leads = self.supply.lead_times(product_ids)
         supply_rows = self._supply(
             product_ids, warehouse_ids, codes, pools, as_of=as_of, include_po=include_po,
+            delivery_dated=view,
         )
         demand_rows = self._demand(
             product_ids, warehouse_ids, codes, pools, date_from=date_from, date_to=date_to,
@@ -666,6 +752,10 @@ class StockDebtService:
             {line.key for lines in demand_rows.values() for line in lines},
             include_po=include_po,
         )
+        if view and include_po:
+            # R42: AFTER the confirmed holds, so a placement binds first and the book's S/O
+            # takes only what is left of the PO line (and of the sales-order line).
+            holds = holds + self._book_so_holds(supply_rows, demand_rows, holds, tba_from)
 
         settings = self.supply._fulfilment_settings()
         grace = settings.get("overdue_grace_days")
@@ -713,7 +803,8 @@ class StockDebtService:
         pools: set,
         *,
         as_of: Optional[date] = None,
-        include_po: bool = False,
+        include_po: bool = True,
+        delivery_dated: bool = False,
     ) -> Dict[str, List[SupplyEvent]]:
         """On hand and SPO for the whole page - two reads, neither of them per product.
         A THIRD, PO, joins them when `include_po` is set (the board/ladder's own path,
@@ -741,6 +832,12 @@ class StockDebtService:
         - the board and the ladder still net a PO as supply (plan v7 R29,
         `test_ladder_v7_po_never_supplies.py`/`test_ladder_v7_incoming_spo_only.py`'s own
         guards), which is `assignments_for`'s `include_po=True` default reaching here.
+
+        R42 (owner, 28 Sep 2026, supersedes R23 for the view): "unless we follwo the PO line
+        delivery date and park it as like a supply". The view reads PO again, and
+        `delivery_dated` parks each line on its Delivery date (`expected_date`, the column
+        the PO lines tab labels so), falling back to R29's `issue + lead` only when the line
+        states none. The board keeps `issue + lead` (`delivery_dated=False`).
         """
         as_of = as_of or date.today()
         out: Dict[str, List[SupplyEvent]] = {}
@@ -800,23 +897,35 @@ class StockDebtService:
                     )
                 )
 
-        # R23 (VIEW only, `include_po=False` by default) / plan v7 R29 (board and ladder,
-        # `include_po=True`): see the docstring above.
+        # Plan v7 R29 (board and ladder: `issue + lead`) / R42 (the view: the Delivery
+        # date): see the docstring above.
         if include_po:
             for (product_id, warehouse_id), lines in self.supply.po_by_location(
                 product_ids, warehouse_ids
             ).items():
                 for line in lines:
+                    parked = delivery_dated and line.bought_for is not None
                     out.setdefault(product_id, []).append(
                         SupplyEvent(
                             key=f"po:{line.line_id}",
                             kind=KIND_PO,
                             warehouse=codes.get(warehouse_id),
-                            at=line.arrival_date,
+                            at=line.bought_for if parked else line.arrival_date,
                             qty=_float(line.qty),
                             ref=f"PO {line.po_number} line {line.po_line_no}",
-                            bought_for=line.bought_for,
+                            # Parked on it, the delivery date IS the date; stating it again
+                            # as "bought for" would print one date twice.
+                            bought_for=None if parked else line.bought_for,
                             is_pool=warehouse_id in pools,
+                            ordered_qty=_float(line.ordered_qty)
+                            if line.ordered_qty is not None
+                            else None,
+                            received_qty=_float(line.received_qty)
+                            if line.received_qty is not None
+                            else None,
+                            po_number=line.po_number,
+                            po_line_number=line.po_line_no,
+                            purchase_order_id=line.purchase_order_id,
                         )
                     )
         return out
@@ -925,14 +1034,14 @@ class StockDebtService:
         product_ids: Sequence[str],
         line_keys: set,
         *,
-        include_po: bool = False,
+        include_po: bool = True,
     ) -> List[Hold]:
         """What is already promised: confirmed allocations and placement links (R21).
 
-        `include_po` (fix round, CI, 25 Sep): `False` is the Stock Debt VIEW's own reading
-        (R23) - a placement link naming a PO line pins nothing here, the same way a PO is
-        not a supply event in `_supply` above. `True` (the board/ladder's own path,
-        `assignments_for`) restores the PO branch exactly as it read before R23.
+        `include_po` (fix round, CI, 25 Sep): `False` was the Stock Debt VIEW's own reading
+        under R23 - a placement link naming a PO line pinned nothing. R42 (28 Sep 2026)
+        retired that: both paths read the PO branch, so a placement on a PO line pins it in
+        the view exactly as on the board.
 
         Two shapes, one meaning. A `so_line_allocations` row is a decision holding STOCK at a
         bin; an `order_inquiry_links` row is a placement holding a DOCUMENT. Both bind before
@@ -993,6 +1102,7 @@ class StockDebtService:
                 SPOAllocation.spo_number,
                 SPOAllocation.spo_line_number,
                 PurchaseOrder.po_number,
+                PurchaseOrder.id.label("purchase_order_id"),
                 # R29 addendum: the order inquiry this placement came through - a
                 # placement is part of an OI ROW's quantity on one document line, and
                 # `_holds` already joins that row to get here.
@@ -1034,12 +1144,8 @@ class StockDebtService:
             if qty <= 0:
                 continue
             if not row.spo_allocation_id:
-                # R23 (VIEW only): a placement link to a PO line pins nothing in Stock
-                # Debt's own reading - PO is not supply here at all, so there is no
-                # PO-kind event left in this read's span for it to bind to (AC-S2-1b's
-                # "stand an event up from the hold's own fields" branch would otherwise
-                # manufacture one). `include_po` (board/ladder, plan v7 R29) restores
-                # exactly the pre-R23 PO branch.
+                # A placement on a PO line. `include_po=False` is kept for a caller that
+                # wants on hand and SPO only; neither path passes it since R42.
                 if not include_po or not row.po_line_id:
                     continue
                 out.append(
@@ -1049,6 +1155,12 @@ class StockDebtService:
                         qty=qty,
                         kind=KIND_PO,
                         ref=f"PO {row.po_number}" if row.po_number else "PO",
+                        oi_number=row.inquiry_no,
+                        oi_id=str(row.order_inquiry_id),
+                        po_number=row.po_number,
+                        purchase_order_id=str(row.purchase_order_id)
+                        if row.purchase_order_id
+                        else None,
                     )
                 )
                 continue
@@ -1210,11 +1322,109 @@ class StockDebtService:
                         "qty": 0.0,
                         "oi_number": item.oi_number,
                         "oi_id": item.oi_id,
+                        # R42: Covered by opens a PO on its own line, the way it opens an SPO.
+                        **self._po_fields(event),
                     }
             entries[event.key]["qty"] += item.qty
         return [
             {**entries[key], "qty": round(entries[key]["qty"], 4)} for key in order
         ]
+
+    @staticmethod
+    def _po_fields(event: SupplyEvent) -> Dict[str, Any]:
+        """R42: a PO event's link target - `po_number`, `po_line_number`, `po_id` and
+        `po_line_id` (the event key's own id). All four `None` for any other kind, so a
+        supply row and a Covered by entry always carry the same keys."""
+        if event.kind != KIND_PO:
+            return {
+                "po_number": None, "po_line_number": None, "po_id": None,
+                "po_line_id": None,
+            }
+        _kind, line_id = parse_supply_key(event.key)
+        return {
+            "po_number": event.po_number,
+            "po_line_number": event.po_line_number,
+            "po_id": event.purchase_order_id,
+            "po_line_id": line_id,
+        }
+
+    def _book_so_holds(
+        self,
+        supply_rows: Dict[str, List[SupplyEvent]],
+        demand_rows: Dict[str, List[DemandLine]],
+        holds: Sequence[Hold],
+        tba_from: date,
+    ) -> List[Hold]:
+        """R42: a PO line whose S/O names a sales order covers THAT order first.
+
+        The S/O is the book's own `purchase_order_lines.from_so_line_ref`, resolved the one
+        way the PO lines tab resolves it (`order_link_service.book_sales_orders_by_ref`,
+        document level). Only PO lines already in this read's supply are asked about, so a
+        pin always names a real dated event the overdue rule has already read (R-O). Two
+        reads for the whole page - the refs and the placements - never one per product.
+
+        What the S/O may still pin is the PO line's outstanding LESS every live placement
+        link on it (`order_inquiry_links.po_line_id`, any sales-order line): a placement is
+        a decision somebody confirmed and it binds first (`_holds`), so on the owner's
+        4-unit line (S/O SO419208, Placed 4) the book pins nothing and nothing is counted
+        twice. The arithmetic is `book_so_pins`, pure.
+        """
+        po_events: Dict[str, Tuple[str, SupplyEvent]] = {}
+        for product_id, events in supply_rows.items():
+            for event in events:
+                if event.kind != KIND_PO:
+                    continue
+                _kind, line_id = parse_supply_key(event.key)
+                if line_id:
+                    po_events[line_id] = (product_id, event)
+        if not po_events:
+            return []
+        ids = list(po_events)
+        refs = {
+            str(line_id): ref
+            for line_id, ref in self.db.query(
+                PurchaseOrderLine.id, PurchaseOrderLine.from_so_line_ref
+            )
+            .filter(
+                PurchaseOrderLine.id.in_(ids),
+                PurchaseOrderLine.from_so_line_ref.isnot(None),
+            )
+            .all()
+            if ref
+        }
+        if not refs:
+            return []
+        orders = order_link_service.book_sales_orders_by_ref(
+            self.db, sorted(set(refs.values()))
+        )
+        named = {
+            line_id: orders[ref][0] for line_id, ref in refs.items() if ref in orders
+        }
+        if not named:
+            return []
+        placed = {
+            str(line_id): _float(qty)
+            for line_id, qty in self.db.query(
+                OrderInquiryLink.po_line_id, func.sum(OrderInquiryLink.qty)
+            )
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+            .filter(
+                OrderInquiryLink.po_line_id.in_(list(named)),
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+            .group_by(OrderInquiryLink.po_line_id)
+            .all()
+        }
+        return book_so_pins(
+            [
+                (po_events[line_id][0], po_events[line_id][1], sales_order_id,
+                 placed.get(line_id, 0.0))
+                for line_id, sales_order_id in named.items()
+            ],
+            demand_rows,
+            holds,
+            tba_from=tba_from,
+        )
 
     def _source_text(self, line) -> Optional[str]:
         """What a demand row says it is covered FROM - `On hand BRW-BB`, `SPO ...`, `PO ...`.

@@ -656,15 +656,13 @@ def _order_back_link_on_spo(db, project_order, so_line, *, allocation, qty):
     return inquiry, row, link
 
 
-def test_a_po_line_hold_pins_nothing_in_stock_debt(scm_app):
-    """REWRITTEN for R23 (owner, 24 Sep): "got PO doesn't mean got supply." Before R23
-    this asserted the opposite - that a placement link (`order_inquiry_links.po_line_id`)
-    pinned the PO's quantity to the line and put a `kind: "po"` row in the drill's Supply
-    tab. Stock Debt's own walk now counts supply as on hand + SPO ONLY: a PO never enters
-    it, pinned or free, so this same placement link now pins NOTHING here (the fulfilment
-    board and ladder, plan v7 R29, still read PO and are untouched - this is Stock Debt's
-    own reading). The line reads `short` and the drill lists no PO row at all, in EITHER
-    month.
+def test_a_po_line_hold_pins_the_line_in_stock_debt(scm_app):
+    """R42 (owner, 28 Sep 2026) supersedes R23 here. R23 had this placement link
+    (`order_inquiry_links.po_line_id`) pin NOTHING in Stock Debt; R42 counts purchase
+    orders as supply again, so the placement pins the PO's quantity to the line exactly as
+    it does on the board, Covered by names the PO with its own link target, and the PO's
+    own month lists it with kind `po`. This PO line states no Delivery date, so it is
+    parked on R29's `issue + lead`.
     """
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
@@ -676,7 +674,9 @@ def test_a_po_line_hold_pins_nothing_in_stock_debt(scm_app):
     )
     project_order, project_line = _project_line_for(db, core_line)
     po, po_line = _po_line_for_hold(db, product, warehouse, qty=50, issue_date=TODAY)
-    _order_back_link_on_po(db, project_order, project_line, po_line=po_line, qty=50)
+    inquiry_row, _link = _order_back_link_on_po(
+        db, project_order, project_line, po_line=po_line, qty=50
+    )
     db.flush()
 
     from app.services.project_supply_service import ProjectSupplyService
@@ -695,44 +695,57 @@ def test_a_po_line_hold_pins_nothing_in_stock_debt(scm_app):
     assert len(cell["demand"]) == 1
     demand_line = cell["demand"][0]
     assert demand_line["so_number"] == f"{marker}-SO1"
-    assert demand_line["status"] == "short"
-    assert demand_line["assigned_qty"] == 0
+    assert demand_line["status"] == "pinned"
+    assert demand_line["assigned_qty"] == 50
+    [entry] = demand_line["assigned_from"]
+    assert entry["kind"] == "po"
+    assert entry["po_number"] == po.po_number
+    assert entry["po_line_number"] == 1
+    assert entry["po_id"] == str(po.id)
+    assert entry["po_line_id"] == str(po_line.id)
+    assert entry["qty"] == 50
 
-    assert supply_cell["supply"] == []
+    rows = [row for row in supply_cell["supply"] if row["kind"] == "po"]
+    assert len(rows) == 1
+    assert rows[0]["date"] == arrival.isoformat()
+    assert rows[0]["po_line_id"] == str(po_line.id)
+    assert rows[0]["assigned_to"] == [
+        {"so_number": f"{marker}-SO1", "line_no": None, "qty": 50},
+    ]
 
 
-def test_a_line_covered_only_by_a_free_po_reads_short(scm_app):
-    """R23 (owner, 24 Sep, third red batch): a line whose only covering document is a
-    FREE (unpinned) PO - the ordinary first-come-by-date case, not the placement-link
-    case the previous test covers - still reads `short`, never `covered`/`late`, and the
-    PO's own arrival month lists no supply row at all.
-    """
+def test_a_line_covered_only_by_a_free_po_reads_covered(scm_app):
+    """R42 supersedes R23's "a line covered only by a PO reads short": a FREE (unpinned,
+    no S/O) PO line dated on its Delivery date before the line's due date covers it
+    first-come, and the PO's own month lists it with Qty, Received and Outstanding."""
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
     product = _product(db, f"{marker}-A")
-    due = _months_ahead(1)
+    due = _months_ahead(2)
+    delivery = _months_ahead(1)
     _demand(db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1")
-    _po_line_for_hold(db, product, warehouse, qty=50, issue_date=TODAY)
+    _po, po_line = _po_line_for_hold(db, product, warehouse, qty=80, issue_date=TODAY)
+    po_line.expected_date = delivery
+    po_line.qty_received = Decimal("20")
     db.flush()
-
-    from app.services.project_supply_service import ProjectSupplyService
-
-    po_rows = ProjectSupplyService(db).po_by_location(
-        [str(product.id)], [str(warehouse.id)]
-    )
-    arrival = po_rows[(str(product.id), str(warehouse.id))][0].arrival_date
 
     with TestClient(app) as c:
         cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
         supply_cell = c.get(
-            f"{BASE}/{product.id}/cell", params={"month": month_key(arrival)}
+            f"{BASE}/{product.id}/cell", params={"month": month_key(delivery)}
         ).json()
 
     line = cell["demand"][0]
-    assert line["status"] == "short"
-    assert line["assigned_qty"] == 0
-    assert supply_cell["supply"] == []
+    assert line["status"] == "covered"
+    assert line["assigned_qty"] == 50
+    assert [entry["kind"] for entry in line["assigned_from"]] == ["po"]
+    [row] = supply_cell["supply"]
+    assert row["kind"] == "po"
+    assert row["date"] == delivery.isoformat()
+    assert (row["qty"], row["received_qty"], row["outstanding_qty"]) == (80, 20, 60)
+    assert row["free_qty"] == 10
+    assert supply_cell["supply_total_qty"] == 60
 
 
 def test_a_line_covered_by_an_spo_reads_covered_as_before(scm_app):
@@ -866,6 +879,8 @@ def test_the_cell_carries_linked_documents_and_named_lines(scm_app):
             # R29 addendum: this line drew the SPO off the plain WALK (no placement
             # link), so it names no order inquiry at all.
             "oi_number": None, "oi_id": None,
+            # R42: a document entry always carries the PO link keys, null for an SPO.
+            "po_number": None, "po_line_number": None, "po_id": None, "po_line_id": None,
         }
     ]
 
@@ -910,6 +925,7 @@ def test_a_pinned_source_names_the_order_inquiry_it_came_through(scm_app):
             "kind": "spo", "ref": f"SPO {allocation.spo_number}",
             "spo_number": allocation.spo_number, "spo_line_number": allocation.spo_line_number,
             "qty": 50, "oi_number": inquiry.inquiry_no, "oi_id": str(inquiry.id),
+            "po_number": None, "po_line_number": None, "po_id": None, "po_line_id": None,
         }
     ]
 

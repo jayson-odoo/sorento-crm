@@ -580,6 +580,13 @@ class _PoRow:
     bought_for: Optional[date]
     qty: Decimal
     supplier_name: Optional[str] = None
+    #: R42 (Stock Debt only, 28 Sep 2026): the document's own id, the RAW ordered/received
+    #: quantities beside the netted `qty` above, and the buyer's Delivery date read as a
+    #: date the view parks the line on. Defaulted so every other construction keeps
+    #: working; the board and the ladder read none of them.
+    purchase_order_id: Optional[str] = None
+    ordered_qty: Optional[Decimal] = None
+    received_qty: Optional[Decimal] = None
 
 
 @dataclass(frozen=True)
@@ -9036,6 +9043,7 @@ class ProjectSupplyService:
                 PurchaseOrderLine.expected_date,
                 PurchaseOrder.po_number,
                 PurchaseOrder.issue_date,
+                PurchaseOrder.id.label("purchase_order_id"),
                 Supplier.supplier_name,
                 ProductSupplier.standard_lead_time_days.label("lead_days"),
                 numbered.c.line_no,
@@ -9092,6 +9100,9 @@ class ProjectSupplyService:
                     bought_for=row.expected_date,
                     qty=balance,
                     supplier_name=row.supplier_name,
+                    purchase_order_id=str(row.purchase_order_id),
+                    ordered_qty=_dec(row.qty_ordered),
+                    received_qty=_dec(row.qty_received),
                 )
             )
         return out

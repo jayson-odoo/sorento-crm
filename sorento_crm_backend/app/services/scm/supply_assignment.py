@@ -190,6 +190,13 @@ class SupplyEvent:
     #: entry. `None` for on hand, which is a bin rather than a document.
     spo_number: Optional[str] = None
     spo_line_number: Optional[int] = None
+    #: R42 (Stock Debt only, 28 Sep 2026): a PO line's own document number, its position in
+    #: the document and the document's id - the FE opens the PO on that line from Covered
+    #: by and from the Supply tab. `None` for every other kind. The PO LINE's id is the
+    #: event key itself (`po:<id>`, `parse_supply_key`).
+    po_number: Optional[str] = None
+    po_line_number: Optional[int] = None
+    purchase_order_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -250,6 +257,10 @@ class Hold:
     #: is a decision (`so_line_allocations`), never a placement.
     oi_number: Optional[str] = None
     oi_id: Optional[str] = None
+    #: R42: a PO placement's own document, for the stood-up branch (AC-S2-1b) - the same
+    #: reason `spo_number` rides here.
+    po_number: Optional[str] = None
+    purchase_order_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -583,6 +594,8 @@ def assign(
                 ref=hold.ref,
                 spo_number=hold.spo_number,
                 spo_line_number=hold.spo_line_number,
+                po_number=hold.po_number,
+                purchase_order_id=hold.purchase_order_id,
             )
             counted.append(event)
         state.remaining -= take
