@@ -125,11 +125,13 @@ export function RegisterProjectDialog({
     setTemplateId('');
   }, [typeId]);
 
-  // Template counts only when the chosen type offers one to pick.
+  // Template counts only when the chosen type offers one to pick, and only once
+  // that is known: an unanswered template list must not open Details early.
   const templateNeeded = Boolean(typeId) && (templates.data?.length ?? 0) > 0;
   const whoComplete =
     Boolean(developerId) &&
     Boolean(typeId) &&
+    templates.isSuccess &&
     titleSettled &&
     title.trim().length > 0 &&
     (!templateNeeded || Boolean(templateId));
@@ -194,7 +196,11 @@ export function RegisterProjectDialog({
         }}
       >
         {/* max-h + scrolling body so the submit button stays reachable at phone width */}
-        <DialogContent className="max-h-[92vh] w-full max-w-2xl overflow-hidden">
+        {/* No subtitle (CRM-wide rule, PR #1336), so no description to point at. */}
+        <DialogContent
+          className="max-h-[92vh] w-full max-w-2xl overflow-hidden"
+          aria-describedby={undefined}
+        >
           <DialogHeader>
             <DialogTitle>Register a project</DialogTitle>
           </DialogHeader>
