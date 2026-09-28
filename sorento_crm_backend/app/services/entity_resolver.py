@@ -1036,6 +1036,36 @@ def _name_hit(name: str | None, token: str) -> bool:
     return bool(len(norm_token) >= _NORM_MIN_LEN and norm_token in _strip_all_ws(lowered_name))
 
 
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def _whole_word_name_hit(name: str | None, token: str) -> bool:
+    """Is `token` whole words of `name`: its words a run of the name's words, or, typed
+    without its spaces, a run of them joined ("hanlimtrading" is HANLIM TRADING)? Never
+    a part of a word ("wt" is not in "NEWTON")."""
+    have = _WORD_RE.findall((name or "").lower())
+    want = _WORD_RE.findall((token or "").lower())
+    if not have or not want:
+        return False
+    if any(have[i : i + len(want)] == want for i in range(len(have) - len(want) + 1)):
+        return True
+    joined = "".join(want)
+    for i in range(len(have)):
+        run = ""
+        for word in have[i:]:
+            run += word
+            if run == joined:
+                return True
+            if len(run) >= len(joined):
+                break
+    return False
+
+
+def _phone_hit(phone: str | None, token: str) -> bool:
+    digits = "".join(ch for ch in token if ch.isdigit())
+    return bool(digits) and digits in "".join(ch for ch in (phone or "") if ch.isdigit())
+
+
 def _probe_customer(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
     """Exact match on customer_code; fuzzy ILIKE on customer_name / phone_number / email."""
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
@@ -1102,6 +1132,10 @@ def _probe_customer(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
         truncated = len(rows) > _CUSTOMER_FUZZY_LIMIT
         rows = rows[:_CUSTOMER_FUZZY_LIMIT]
         for cid, code, name, phone, email in rows:
+            if not (_whole_word_name_hit(name, token) or (token_has_digit and _phone_hit(phone, token))):
+                # Whole words only (PR #1273 round 7): "wt" is not a customer because
+                # "SHOPEE - 260818MRNUPWTS" or "NEWTON BUILDMATE" carry the letters.
+                continue
             display = {"customer_name": name, "phone_number": phone, "email": email}
             if truncated:
                 display["truncated_more_available"] = True
