@@ -996,6 +996,16 @@ def record_top_selling_asked(focus: Focus, envelopes: list[dict[str, Any]]) -> N
         if isinstance(e, dict):
             for key in e.get("top_selling_drop") or ():
                 slot.pop(key, None)
+    # The item codes the reply listed: an outstanding ask after the ranking asks about
+    # these (fix lane round 8, `_hop_to_report`). A reply that listed none forgets them;
+    # a detail or a refusal (None) leaves the listed ranking's codes standing.
+    for e in envelopes or []:
+        codes = e.get("top_selling_codes") if isinstance(e, dict) else None
+        if isinstance(codes, list):
+            if codes:
+                slot["ranked_codes"] = list(codes)
+            else:
+                slot.pop("ranked_codes", None)
 
 
 def _top_selling_rules(
@@ -1154,13 +1164,9 @@ TOP_SELLING_REPORT_HOPS = frozenset(
     {None, "", "outstanding", "so_outstanding", "do_outstanding", "outstanding_both", "delivered"}
 )
 
-#: The ranking filters an order report cannot apply (it takes a customer and a date
-#: window only), as the report's header names each, and the slot keys holding it.
-TOP_SELLING_RANKING_ONLY = (
-    ("Sales agent", "sales agents", ("agent_ids",)),
-    ("Category", "categories", ("category_words", "category_code")),
-    ("Brand", "brands", ("brand_ids",)),
-)
+#: The outstanding asks (`order_status`): after a ranking each is the ordinary
+#: outstanding ask with the ranked codes as its products (fix lane round 8).
+TOP_SELLING_OUTSTANDING_HOPS = frozenset({"outstanding", "so_outstanding", "do_outstanding", "outstanding_both"})
 
 
 def _is_report_hop(verdict: dict[str, Any]) -> bool:
@@ -1189,32 +1195,39 @@ def _report_name(verdict: dict[str, Any]) -> str:
 
 
 def _hop_to_report(focus: Focus, verdict: dict[str, Any], trace: Trace) -> None:
-    """Owner retest of round 4 (27 Sep 2026, R5): after a ranking, an order report ask
-    runs that report with the filters in force. The customer and the period carry (the
-    ranking's own window, or the current year its route defaults to); a filter the
-    report cannot apply (agent, category, brand) is dropped and said in one line, and its
-    word never reaches the order lookup (it answered "Couldn't find: bathtub
-    (category)"). The slot stays, marked `hop`, so the next report ask carries the same
-    filters and a new ranking ask starts over."""
+    """After a ranking, an order report ask runs that report with the ranking's filters
+    as its inputs (owner retest of round 4, R5; owner hand test of round 7, 28 Sep 2026).
+
+    * The customer and the period carry (the ranking's own window, or the current year
+      its route defaults to).
+    * An OUTSTANDING ask is the ordinary outstanding ask: its products are the item
+      codes the ranking listed (`ranked_codes`), unless the message names a product of
+      its own. It then prints the ordinary Product / Customer / Location / Order date
+      header and the "Outstanding for which document?" menu, and goes on exactly as a
+      direct outstanding ask does. Without them the ask carried no subject, missed the
+      outstanding report and fell into the order list, whose window is the actual
+      delivery date an outstanding order does not have yet: "No matching results found".
+    * The agent, category and brand filters are not the report's; they are simply not
+      carried, and their words never reach the order lookup (it answered "Couldn't find:
+      bathtub (category)"). Nothing is printed about them.
+
+    The slot stays, marked `hop`, so the next report ask carries the same filters and a
+    new ranking ask starts over."""
     from datetime import datetime, timedelta, timezone
 
     slot = dict(focus.top_selling or {})
     for key in ("asked", "who", "unknown", "unclear", "detail_code"):
         slot.pop(key, None)
-    dropped = [
-        (label, plural)
-        for label, plural, keys in TOP_SELLING_RANKING_ONLY
-        if any(slot.get(k) for k in keys)
-    ]
     for kind in ("category", "sales_agent", "brand"):
         focus.extra.pop(kind, None)
     focus.brands = []
-    names_customer = any(
-        isinstance(e, dict) and e.get("hint") == "customer" and e.get("current_message") is not False
+    named = [
+        e.get("hint")
         for e in (verdict.get("entities") or [])
-    )
+        if isinstance(e, dict) and e.get("current_message") is not False
+    ]
     ids = slot.get("dealer_customer_ids") or slot.get("customer_ids")
-    if ids and not names_customer:
+    if ids and "customer" not in named:
         labels = list(slot.get("customer_names") or [])
         focus.customers = [
             {"uuid": uid, "hint": "customer", "current_message": False, **({"name": labels[0]} if len(ids) == 1 and labels else {})}
@@ -1225,9 +1238,14 @@ def _hop_to_report(focus: Focus, verdict: dict[str, Any], trace: Trace) -> None:
         # time (`fetch._current_myt_year`'s formula).
         year = (datetime.now(timezone.utc) + timedelta(hours=8)).year
         focus.date_window = {"mode": None, "start": f"{year}-01-01", "end": f"{year}-12-31"}
-    slot["hop"] = {"report": _report_name(verdict), "dropped": [list(d) for d in dropped]}
-    focus.top_selling = slot
     status = verdict.get("status") or verdict.get("order_status")
+    hop: dict[str, Any] = {"report": _report_name(verdict)}
+    outstanding = (verdict.get("order_status") or verdict.get("status")) in TOP_SELLING_OUTSTANDING_HOPS
+    if outstanding and "product" not in named and slot.get("ranked_codes"):
+        hop["product_codes"] = list(slot["ranked_codes"])
+        focus.products = []
+    slot["hop"] = hop
+    focus.top_selling = slot
     focus.status = str(status) if status else None
     trace.rules_fired.append("top_selling_hops_to_report")
 

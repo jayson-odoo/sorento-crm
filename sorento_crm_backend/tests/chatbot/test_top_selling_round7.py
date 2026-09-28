@@ -361,8 +361,8 @@ class TestR1CarriedEntities:
         (args,) = _calls(captured, OUTSTANDING)
         assert args["scope"] == "so", args
         assert sorted(args["customer_ids"]) == c.seeded.customers(*HANLIM), args
-        assert "Sales agent is not a filter for outstanding orders, showing all sales agents" in text, text
-        assert "Customer: HANLIM TRADING" in text, text
+        # Fix lane round 8: the agent is simply not carried, with no line about it.
+        assert "is not a filter for" not in text and "Filters from the ranking" not in text, text
 
     @pytest.mark.parametrize("reading", list(OUTSTANDING_READINGS))
     def test_can_see_its_outstanding_after_sold_by_wt(self, console_factory, reading) -> None:
@@ -379,14 +379,15 @@ class TestR1CarriedEntities:
         _clean(text, "can see its outstiandg?")
         assert "wt" not in [t.lower() for t in c.asked_tokens()], c.tokens
         assert c.open_question.get("kind") != "customer_pick", c.open_question
-        # The outstanding orders for the same filters: no customer, Q1 2026, the agent
-        # dropped with its line (the report takes a customer and a period only).
-        (args,) = _calls(captured, ORDERS)
-        assert args["order_status"] in ("outstanding", "so_outstanding"), args
-        assert (args["actual_delivery_date_from"], args["actual_delivery_date_to"]) == ("2026-01-01", "2026-03-31"), args
-        assert "customer_ids" not in args, args
-        assert f"Filters from the ranking: Customer: all / Period: {Q1}" in text, text
-        assert "Sales agent is not a filter for outstanding orders, showing all sales agents" in text, text
+        # Fix lane round 8: the ordinary outstanding question for the same filters (the
+        # ranked codes, every customer, Q1 2026), the agent silently not carried; never
+        # the order list, whose delivery date window found nothing.
+        assert _calls(captured, ORDERS) == [], captured
+        assert text.startswith(
+            f"Product: {', '.join(ITEM_CODES)}\nCustomer: all\nLocation: all\nOrder date: {Q1}\n"
+            "Outstanding for which document?"
+        ), text
+        assert "is not a filter for" not in text and "Filters from the ranking" not in text, text
 
     def test_a_carried_word_is_never_re_resolved_under_another_kind(self, console_factory) -> None:
         """The same carry on the plain order list ("show me the orders"): the agent word
@@ -493,7 +494,9 @@ class TestR2PeriodOverARanking:
         _bottom_water_closet(c)
         text, captured = c.say(_year(2025, order_status="outstanding", domain_in_message=True), "outstanding in 2025")
         assert _calls(captured) == [], captured
-        assert "Filters from the ranking: Customer: all / Period: 01/01/2025 to 31/12/2025" in text, text
+        # Fix lane round 8: the ordinary outstanding question over the ranking's codes.
+        assert "Order date: 01/01/2025 to 31/12/2025\nOutstanding for which document?" in text, text
+        assert "Filters from the ranking" not in text, text
 
 
 RANKING_WORD_READINGS = {
@@ -644,7 +647,9 @@ class TestR3BasisWords:
         _bottom_water_closet(c)
         text, captured = c.say(_report(None, document=["DO"], domain_in_message=True), "can show me the DO")
         assert _calls(captured) == [], captured
-        assert "Category is not a filter for delivery orders, showing all categories" in text, text
+        (args,) = _calls(captured, ORDERS)
+        assert "category_ids" not in args, args
+        assert "is not a filter for" not in text, text
 
     def test_a_bare_rank_is_still_a_pick(self, console_factory) -> None:
         c = console_factory()
@@ -806,5 +811,6 @@ class TestOwnerTranscript:
         text, captured = c.say(_outstanding_carrying("wt"), "can see its outstiandg?")
         _clean(text, "can see its outstiandg?")
         assert "wt" not in [t.lower() for t in c.asked_tokens()], c.tokens
-        assert f"Filters from the ranking: Customer: all / Period: {Q1}" in text, text
-        assert "Sales agent is not a filter for outstanding orders, showing all sales agents" in text, text
+        # Fix lane round 8: the ordinary outstanding question, no ranking header.
+        assert f"Location: all\nOrder date: {Q1}\nOutstanding for which document?" in text, text
+        assert "Filters from the ranking" not in text and "is not a filter for" not in text, text

@@ -27,7 +27,10 @@ and the lane's first migration re-parented onto `sales_s1_reports_module`. Fix l
 7 (27 Sep, owner retest of round 5 part 2, parser v39): carried entities across report
 kinds, period and basis words over a ranking, no offer inside a ranking conversation, and
 sales agent "Also known as" names (`sales_agent_aliases_r7`); no parser words change ("As
-built (fix lane round 7)"). S5 (sales
+built (fix lane round 7)"). Fix lane round 8 (28 Sep, owner hand test of round 7 at
+b992353c): an outstanding ask after a ranking is the ordinary outstanding ask with the
+ranked codes as its products, and the "Filters from the ranking" header and dropped filter
+lines are gone; no parser words change ("As built (fix lane round 8)"). S5 (sales
 agent) is built by round 4 as a lane-side resolver; S6 (review + live console) and S7 (per-month breakdown) open. Track: full track (new route + MCP tool = a new external
 ingest surface, one policy-row migration, one prompt migration, one entity-kind migration;
 the diff will pass 300 lines).
@@ -713,6 +716,33 @@ run_console_turn`, dry run, the second turn sent the `session_vars` the first re
   answer to the ranking's own question as `domain_in_message false`, never an order list.
   Republished unlabelled by `chatbot_top_selling_vocab_r6` as the next version after
   whatever the database holds (v40 on a database whose newest is v39).
+
+### As built (fix lane round 8, owner hand test of round 7, 28 Sep 2026)
+
+Supersedes round 5 R5's and round 7's "Filters from the ranking" shape (owner: "why don't
+we just show as is ... it should carry all these as an input to the message and continue
+from there").
+
+- **R1 the ordinary route.** A ranking that lists items records their codes on the slot
+  (`fetch._top_selling_output` `top_selling_codes`, `turn_runtime.envelope_of`,
+  `apply.record_top_selling_asked` `ranked_codes`). An outstanding ask after it
+  (`apply.TOP_SELLING_OUTSTANDING_HOPS`) writes them on the hop (`apply._hop_to_report`
+  `product_codes`), unless the message names a product of its own, and
+  `turn_runtime.lane_parse_output` hands them to the lane as the ordinary carried
+  subject (`outstanding_carried_product_code(s)`, which `run_fetch`'s `carried_subject`
+  now also reads). From there it is the direct path: the outstanding override, the
+  Product / Customer / Location / Order date header, the scope menu, and "1" answered off
+  the question's own stored filters (`_settle_question_subject`).
+- **R2 no header.** `fetch.top_selling_hop_lines`, the `output_structurer` wrapper, the
+  `top_selling_hop` lane key and `TOP_SELLING_RANKING_ONLY` are deleted. The agent,
+  category and brand filters are simply not carried into another report.
+- **R3 cause.** With no product and no customer the ask missed the outstanding override,
+  so it ran `crm_order_management_orders_list`, whose window is the actual delivery date
+  (`fetch.DATE_PARAMS`); `order_service.py:880` filters `Order.actual_delivery_date >=
+  from`, and an outstanding order has none yet: "No matching results found." With the
+  ranked codes carried the ask never reaches the order list.
+- Tests: `tests/chatbot/test_top_selling_round8.py` (the owner's seven messages, R1, R2);
+  round 5 `TestR5Continuity` / `TestOwnerTranscripts` and round 7's hop pins updated.
 
 ### As built (fix lane round 7, owner retest of round 5 part 2, 27 Sep 2026)
 

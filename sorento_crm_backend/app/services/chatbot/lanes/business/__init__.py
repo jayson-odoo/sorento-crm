@@ -868,9 +868,6 @@ def _fetch_semantic_input(
         # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 8: the top selling ask's own
         # axes (`turn_runtime.lane_parse_output` projects them off the focus).
         "top_selling": parse_output.get("top_selling"),
-        # R5 (owner retest of round 4): the report a ranking handed over to
-        # (`turn_runtime.lane_parse_output`); `fetch.output_structurer` prints its line.
-        "top_selling_hop": parse_output.get("top_selling_hop"),
         # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
         # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3, D13/D20:
         # `{product uuid: quantity}`, built by `turn_runtime._spec_quantities` from
@@ -1410,8 +1407,10 @@ def run_fetch(
     # R13: on an ANSWERING turn the subject is whatever the stored filters carry - the
     # product code, the customer ids, or both - and neither needs resolving again: they
     # were resolved on the turn that asked.
-    carried_subject = bool(jsc.truthy(parse_output.get("outstanding_carried_product_code"))) or bool(
-        jsc.array(parse_output.get("outstanding_carried_customer_ids"))
+    carried_subject = (
+        bool(jsc.truthy(parse_output.get("outstanding_carried_product_code")))
+        or bool(jsc.array(parse_output.get("outstanding_carried_product_codes")))
+        or bool(jsc.array(parse_output.get("outstanding_carried_customer_ids")))
     )
     if (
         domain == "order"

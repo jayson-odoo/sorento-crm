@@ -406,10 +406,11 @@ class TestOwnerTranscripts:
         r.say(_position(2), "2", two)
 
         def outstanding(text, captured):
-            assert not _calls(captured)
-            assert "Filters from the ranking: Customer: all / Period: 01/01/2026 to 31/12/2026" in text
-            assert "Sales agent is not a filter for outstanding orders, showing all sales agents" in text
-            assert "Category is not a filter for outstanding orders, showing all categories" in text
+            # Fix lane round 8: the ordinary outstanding question over the ranked codes.
+            assert captured == [], captured
+            assert text.startswith(f"Product: {', '.join(ITEM_CODES)}\nCustomer: all\nLocation: all\n"), text
+            assert "Outstanding for which document?" in text
+            assert "Filters from the ranking" not in text and "is not a filter for" not in text
 
         r.say(_report("outstanding"), "outstanding", outstanding)
 
@@ -469,9 +470,8 @@ class TestOwnerTranscripts:
             (args,) = _calls(captured, ORDERS)
             assert "customer_ids" not in args
             assert args["actual_delivery_date_from"] == "2026-01-01" and args["actual_delivery_date_to"] == "2026-12-31"
-            assert "Filters from the ranking: Customer: all / Period: 01/01/2026 to 31/12/2026" in text
-            assert "Category is not a filter for delivery orders, showing all categories" in text
-            assert "Sales agent is not a filter for delivery orders, showing all sales agents" in text
+            # Fix lane round 8: the filters carry silently.
+            assert "Filters from the ranking" not in text and "is not a filter for" not in text
             assert "Dates: 01/01/2026 to 31/12/2026" in text
 
         r.say(_report(None, document=["DO"]), "can show me the DO", do)
@@ -758,27 +758,47 @@ def _ranked_with_filters(session_factory, monkeypatch, cat) -> None:
 
 
 class TestR5Continuity:
+    """Superseded in part by fix lane round 8 (owner hand test, 28 Sep 2026): a report
+    after a ranking carries the ranking's filters silently (no "Filters from the
+    ranking" header, no "... is not a filter for ..." line), and an OUTSTANDING ask is
+    the ordinary outstanding question over the ranked codes (`test_top_selling_round8`)."""
+
     @pytest.mark.parametrize(
-        "message, qf, tool, report",
+        "message, qf",
         [
-            ("outstanding", _report("outstanding"), ORDERS, "outstanding orders"),
-            ("the outstanding", _report("outstanding"), ORDERS, "outstanding orders"),
-            ("show me outstanding", _report("outstanding"), ORDERS, "outstanding orders"),
-            ("can show me the DO", _report(None, document=["DO"]), ORDERS, "delivery orders"),
-            ("the DO", _report(None, document=["DO"]), ORDERS, "delivery orders"),
-            ("show me the orders", _report(None), ORDERS, "orders"),
+            ("outstanding", _report("outstanding")),
+            ("the outstanding", _report("outstanding")),
+            ("show me outstanding", _report("outstanding")),
         ],
     )
-    def test_a_report_after_a_ranking_carries_its_filters(self, session_factory, monkeypatch, cat, message, qf, tool, report) -> None:
+    def test_an_outstanding_ask_after_a_ranking_is_the_ordinary_question(self, session_factory, monkeypatch, cat, message, qf) -> None:
+        _ranked_with_filters(session_factory, monkeypatch, cat)
+        text, captured = _turn(session_factory, monkeypatch, qf, message)
+        assert captured == [], captured
+        assert text.startswith(
+            f"Product: {', '.join(ITEM_CODES)}\nCustomer: all\nLocation: all\nOrder date: 01/01/2026 to 31/12/2026\n"
+            "Outstanding for which document?"
+        ), text
+        assert "Filters from the ranking" not in text and "is not a filter for" not in text, text
+        assert not any(bad in text for bad in NEVER), text
+        assert _open_question(session_factory).get("kind") == "outstanding_scope"
+
+    @pytest.mark.parametrize(
+        "message, qf",
+        [
+            ("can show me the DO", _report(None, document=["DO"])),
+            ("the DO", _report(None, document=["DO"])),
+            ("show me the orders", _report(None)),
+        ],
+    )
+    def test_a_report_after_a_ranking_carries_its_filters(self, session_factory, monkeypatch, cat, message, qf) -> None:
         _ranked_with_filters(session_factory, monkeypatch, cat)
         text, captured = _turn(session_factory, monkeypatch, qf, message)
         assert not _calls(captured)
-        (args,) = _calls(captured, tool)
+        (args,) = _calls(captured, ORDERS)
         assert args["actual_delivery_date_from"] == "2026-01-01"
-        lines = text.split("\n")
-        assert "Filters from the ranking: Customer: all / Period: 01/01/2026 to 31/12/2026" in lines
-        for label, plural in (("Sales agent", "sales agents"), ("Category", "categories"), ("Brand", "brands")):
-            assert f"{label} is not a filter for {report}, showing all {plural}" in lines
+        assert "category_ids" not in args and "sales_agent_ids" not in args and "brand_ids" not in args, args
+        assert "Filters from the ranking" not in text and "is not a filter for" not in text, text
         assert not any(bad in text for bad in NEVER), text
         assert _open_question(session_factory).get("kind") not in ("member_offer", "team_pick")
 
@@ -788,20 +808,22 @@ class TestR5Continuity:
         text, captured = _turn(session_factory, monkeypatch, _report(None, document=["DO"]), "can show me the DO")
         (args,) = _calls(captured, ORDERS)
         assert args["customer_ids"] == [cat.customers["SAMPLE - FANNY NG"]]
-        assert "Filters from the ranking: Customer: SAMPLE - FANNY NG / Period: 01/01/2026 to 31/12/2026" in text
+        assert "Filters from the ranking" not in text
 
     def test_a_named_year_carries(self, session_factory, monkeypatch, cat) -> None:
         _turn(session_factory, monkeypatch, _ask(top_n=10, rank_by="amount", date_filter_start="2025-01-01", date_filter_end="2025-12-31"), "top 10 hot selling in 2025 by amount")
         text, captured = _turn(session_factory, monkeypatch, _report(None, document=["DO"]), "can show me the DO")
         (args,) = _calls(captured, ORDERS)
         assert args["actual_delivery_date_from"] == "2025-01-01" and args["actual_delivery_date_to"] == "2025-12-31"
-        assert "Period: 01/01/2025 to 31/12/2025" in text
+        assert "Filters from the ranking" not in text
 
     def test_the_next_report_carries_the_same_and_a_new_ranking_starts_over(self, session_factory, monkeypatch, cat) -> None:
         _ranked_with_filters(session_factory, monkeypatch, cat)
-        _turn(session_factory, monkeypatch, _report("outstanding"), "outstanding")
-        text, _ = _turn(session_factory, monkeypatch, _report(None, document=["DO"]), "can show me the DO")
-        assert "Category is not a filter for delivery orders, showing all categories" in text
+        _turn(session_factory, monkeypatch, _report(None), "show me the orders")
+        text, captured = _turn(session_factory, monkeypatch, _report(None, document=["DO"]), "can show me the DO")
+        (args,) = _calls(captured, ORDERS)
+        assert args["actual_delivery_date_from"] == "2026-01-01" and "category_ids" not in args, args
+        assert "is not a filter for" not in text
         text, captured = _turn(session_factory, monkeypatch, _ask(top_n=10, rank_by="amount"), "top 10 hot selling by amount")
         (args,) = _calls(captured)
         assert "category_ids" not in args and "sales_agent_ids" not in args and "Filters from the ranking" not in text
@@ -936,18 +958,10 @@ class TestR8ShortMenus:
 class TestR9PlainReplies:
     def test_no_snake_case_in_the_new_lines(self) -> None:
         from app.services.chatbot.lanes.business import TOP_SELLING_UNCLEAR
-        from app.services.chatbot.lanes.business.fetch import top_selling_hop_lines
+        from app.services.chatbot.lanes.business import fetch
 
-        lines = top_selling_hop_lines({
-            "semantic_input": {
-                "top_selling_hop": {"report": "delivery orders", "dropped": [["Category", "categories"]]},
-                "date_filter_start": "2026-01-01", "date_filter_end": "2026-12-31",
-            },
-            "entities": [],
-        })
-        assert lines == [
-            "Filters from the ranking: Customer: all / Period: 01/01/2026 to 31/12/2026",
-            "Category is not a filter for delivery orders, showing all categories",
-        ]
+        # Fix lane round 8: the hop's header and dropped filter lines are gone.
+        assert not hasattr(fetch, "top_selling_hop_lines")
+        lines: list[str] = []
         for text in [*lines, TOP_SELLING_UNCLEAR]:
             assert not _SNAKE.search(text) and "\u2014" not in text and "\u2013" not in text

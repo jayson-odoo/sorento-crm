@@ -872,10 +872,17 @@ def lane_parse_output(
         and focus.top_selling
     ):
         out["top_selling"] = dict(focus.top_selling)
-    # Owner retest of round 4 (27 Sep 2026, R5): a report the ranking handed its
-    # filters to says which it carried and which it dropped (`apply._hop_to_report`).
-    if focus is not None and isinstance(focus.top_selling, dict) and focus.top_selling.get("hop"):
-        out["top_selling_hop"] = dict(focus.top_selling["hop"])
+    # Fix lane round 8 (owner hand test, 28 Sep 2026): an outstanding ask after a ranking
+    # is the ORDINARY outstanding ask with the ranked codes as its products
+    # (`apply._hop_to_report` wrote them on the hop). The same carried keys an answering
+    # turn sends (`outstanding_carry`), so the lane's outstanding override, its scope
+    # question and its header read them the way they read any carried subject.
+    hop = focus.top_selling.get("hop") if focus is not None and isinstance(focus.top_selling, dict) else None
+    hop_codes = [c for c in (hop.get("product_codes") or []) if c] if isinstance(hop, dict) else []
+    if hop_codes and not out.get("outstanding_carried_product_code"):
+        out["outstanding_carried_product_code"] = hop_codes[0]
+        if len(hop_codes) > 1:
+            out["outstanding_carried_product_codes"] = list(hop_codes)
 
     routing = dict(out.get("routing") or {})
     if accepted_team:
@@ -2975,6 +2982,9 @@ def envelope_of(
         # `focus.top_selling` (`turn/apply.record_top_selling_asked`), reviewer B2 on
         # PR #1273.
         "top_selling_asked": fetched.get("top_selling_asked"),
+        # The item codes a listed ranking printed, recorded on the slot by the same
+        # `record_top_selling_asked` (fix lane round 8).
+        "top_selling_codes": fetched.get("top_selling_codes"),
         # Slot keys the reply asks to forget (a category word it said it does not
         # know), applied by the same `record_top_selling_asked`.
         "top_selling_drop": fetched.get("top_selling_drop"),

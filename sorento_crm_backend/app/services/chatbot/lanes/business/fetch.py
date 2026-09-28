@@ -2279,6 +2279,15 @@ def _top_selling_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
         # next bare number is its count, while a list or a single row asks nothing and
         # the next ask naming the ranking starts fresh.
         "top_selling_asked": "how_many" if envelope.get("result_type") == "top_selling_how_many" else None,
+        # The item codes the ranking listed, in rank order: an outstanding ask after it
+        # asks about exactly these (fix lane round 8, `apply._hop_to_report`). An empty
+        # list on a ranking that listed none (how many, no sales, a category ranking),
+        # None on a detail or a refusal, which leave the listed ranking standing.
+        "top_selling_codes": (
+            [jsc.js_string(r.get("code")) for r in rows if r.get("entity_type") == "product" and jsc.truthy(r.get("code"))]
+            if envelope.get("result_type") in ("top_selling", "top_selling_how_many")
+            else None
+        ),
         "top_selling_drop": list(semantic_input.get("top_selling_drop") or []) or None,
     }
 
@@ -2289,42 +2298,7 @@ def _dmy(value: Any) -> str:
     return f"{parts[2]}/{parts[1]}/{parts[0]}" if len(parts) == 3 else text
 
 
-def top_selling_hop_lines(ctx: dict[str, Any]) -> list[str]:
-    """Owner retest of round 4 (27 Sep 2026, R5): a report run from a ranking's filters
-    says in one header line which it carried, and in one line each which it could not
-    apply ("Category is not a filter for delivery orders, showing all categories")."""
-    semantic_input = ctx.get("semantic_input") if isinstance(ctx.get("semantic_input"), dict) else {}
-    hop = semantic_input.get("top_selling_hop")
-    if not isinstance(hop, dict):
-        return []
-    report = jsc.js_string(hop.get("report") or "orders")
-    names = []
-    for e in jsc.array(ctx.get("entities")):
-        if isinstance(e, dict) and e.get("entity_type") == "customer":
-            name = jsc.js_string(e.get("name") or e.get("display_name") or e.get("canonical_code") or "").strip()
-            if name and name not in names:
-                names.append(name)
-    start, end = semantic_input.get("date_filter_start"), semantic_input.get("date_filter_end")
-    period = f"{_dmy(start)} to {_dmy(end)}" if start and end else "all"
-    lines = [f"Filters from the ranking: Customer: {', '.join(names) or 'all'} / Period: {period}"]
-    for dropped in jsc.array(hop.get("dropped")):
-        if isinstance(dropped, list) and len(dropped) == 2:
-            lines.append(f"{dropped[0]} is not a filter for {report}, showing all {dropped[1]}")
-    return lines
-
-
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
-    """The MCP render envelope becomes a WhatsApp message, with the lines of a report a
-    ranking handed its filters to above it (`top_selling_hop_lines`)."""
-    ctx = ctx if isinstance(ctx, dict) else {}
-    structured = _output_structurer(result, ctx)
-    lines = top_selling_hop_lines(ctx)
-    if lines and isinstance(structured, dict) and jsc.truthy(structured.get("response")):
-        structured["response"] = "\n".join(lines) + "\n\n" + jsc.js_string(structured["response"])
-    return structured
-
-
-def _output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
     """The MCP render envelope becomes a WhatsApp message. Deterministic, no LLM (H7).
 
     `result` is what the MCP client returned (n8n's `$('MCP Client1').first().json`) and
