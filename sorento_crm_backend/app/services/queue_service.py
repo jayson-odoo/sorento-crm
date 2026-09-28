@@ -71,19 +71,24 @@ def current_actor_meta() -> Dict[str, Any]:
 
 @contextmanager
 def job_actor_scope(job):
-    """Run a job as `worker`, on behalf of whoever enqueued it (identity S0, AC-10).
+    """Run a job as `worker`, on behalf of whoever enqueued it (identity S0, AC-10), inside
+    its request's business action (#1281 S0).
 
     Shared by the RQ work-horse (`worker.ForkSafeWorker.perform_job`) and the
     in-process drain (`run_sync_rq_jobs`). Restores the previous actor afterwards,
     because both run on threads that outlive the job.
     """
-    from app.audit_context import AuditActor, actor_scope, get_trace_id, set_trace_id
+    from app.audit_context import AuditActor, actor_scope, audit_context_scope, get_trace_id, set_trace_id
 
     meta = {}
+    business = {}
     try:
-        meta = (getattr(job, "meta", None) or {}).get("actor") or {}
+        job_meta = getattr(job, "meta", None) or {}
+        meta = job_meta.get("actor") or {}
+        business = job_meta.get("audit_context") or {}
     except Exception:
         meta = {}
+        business = {}
     user_id = meta.get("user_id")
     actor = AuditActor(
         actor_type="worker",
@@ -93,8 +98,16 @@ def job_actor_scope(job):
     )
     previous_trace = get_trace_id()
     set_trace_id(meta.get("trace_id") or previous_trace)
+    # The business action (#1281 S0): the channel is the queue (an import, else a worker
+    # job) and the rows keep the enqueuing request's correlation id.
+    queue_name = getattr(job, "origin", None)
     try:
-        with actor_scope(actor):
+        # An imports-queue job is an import path: default-on auditing is off in it (review B3).
+        with actor_scope(actor), audit_context_scope(
+            source="import" if queue_name == "imports" else "worker",
+            correlation_id=business.get("correlation_id") or meta.get("trace_id") or actor.job_id,
+            sync_writer="imports" if queue_name == "imports" else None,
+        ):
             yield actor
     finally:
         set_trace_id(previous_trace)
@@ -120,6 +133,11 @@ def enqueue_job(
     # meta keys are kept.
     meta = dict(kwargs.pop("meta", None) or {})
     meta.setdefault("actor", current_actor_meta())
+    # And the business action it belongs to (#1281 S0): its rows share the request's
+    # correlation id.
+    from app.audit_context import business_meta_for_job
+
+    meta.setdefault("audit_context", business_meta_for_job())
     job = queue.enqueue(
         func,
         *args,

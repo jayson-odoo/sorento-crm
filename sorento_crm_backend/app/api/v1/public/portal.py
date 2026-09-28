@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from decimal import Decimal
 from typing import Annotated, Optional
 
 from fastapi import (
@@ -54,6 +55,7 @@ from app.services.error_handler import (
     handle_validation_error,
 )
 from app.services.uuid_path_param import validate_uuid_path
+from app.services.dealer_kit.pricing import flyer_price
 from app.services.portal_service import (
     PORTAL_ATTACHMENT_TYPE_CODE,
     PortalAuthError,
@@ -154,9 +156,11 @@ def get_portal_token(
     # Stamped on the SHARED db.info as well as the contextvar: FastAPI runs this sync
     # dependency in a different threadpool thread than the path op + flush, so the
     # contextvar alone would not be visible at flush time (see app.audit_context).
-    from app.audit_context import stamp_actor
+    from app.audit_context import set_source, stamp_actor
 
     stamp_actor(_portal_actor(db, resolved, request), db=db, request=request)
+    # The channel, whoever the actor is (an admin viewing as the contact too): #1281 S0.
+    set_source("portal")
     return resolved
 
 
@@ -438,11 +442,18 @@ def portal_impersonation_stop(
 
 
 class ProductLookupItem(BaseModel):
+    # Additive (plan section 16, S2-16): the portal opportunity form's product lines need
+    # the real id (`sales_opportunity_lines.product_id`), not just the printed code the
+    # complaint form's free-text line uses. Named `product_id`, not `id` - this schema's
+    # "id" would read as the lookup ROW's own id, which nothing here has any use for.
+    product_id: Optional[str] = None
     product_code: str
     product_name: Optional[str] = None
     category_id: Optional[str] = None
     category_code: Optional[str] = None
     category_name: Optional[str] = None
+    #: The price the dealer flyer prints; null when the product has none (F7, PR #1296).
+    list_price: Optional[Decimal] = None
 
 
 @router.get("/lookups/products", response_model=list[ProductLookupItem])
@@ -465,11 +476,13 @@ def lookup_products(
     rows = query.order_by(Product.product_code).limit(limit).all()
     return [
         ProductLookupItem(
+            product_id=str(p.id) if p.id else None,
             product_code=p.product_code,
             product_name=p.product_name,
             category_id=str(p.category_id) if p.category_id else None,
             category_code=c.category_code if c else None,
             category_name=c.category_name if c else None,
+            list_price=flyer_price(p.list_price),
         )
         for (p, c) in rows
     ]

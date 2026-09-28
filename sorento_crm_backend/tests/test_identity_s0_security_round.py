@@ -18,6 +18,7 @@ import uuid
 from datetime import datetime
 
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from starlette.requests import Request
 
 import app.main  # noqa: F401  registers every model and router
@@ -83,6 +84,8 @@ def test_activity_feed_filters_and_labels_impersonated_rows():
         admin = _user(db, "Nurain Admin")
         target = _user(db, "Aisyah Target")
         db.commit()
+        # audit_logs is append-only (#1281 S0): the wipe runs under the maintenance flag.
+        db.execute(text("SET LOCAL sorento.audit_maintenance = 'on'"))
         db.query(AuditLog).delete()
         db.commit()
         row = _impersonated_row(db, admin, target)

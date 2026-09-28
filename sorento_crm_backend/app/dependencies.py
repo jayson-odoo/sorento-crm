@@ -114,8 +114,14 @@ def _clean_tool_name(raw: Optional[str]) -> Optional[str]:
 
 
 def _stamp_integration_actor(request: Request, db: Session, user: dict) -> None:
-    """Stamp an integration API key as the audit actor (identity S0, AC-09)."""
-    from app.audit_context import AuditActor, stamp_actor
+    """Stamp an integration API key as the audit actor (identity S0, AC-09).
+
+    Also records the request's channel (n8n, mcp, chatbot, external_api) and trusts the
+    integration's X-Correlation-Id for the business action (#1281 S0).
+    """
+    from app.audit_context import AuditActor, mark_integration_request, stamp_actor
+
+    mark_integration_request(user.get("integration_type"), request.url.path)
 
     stamp_actor(
         AuditActor(

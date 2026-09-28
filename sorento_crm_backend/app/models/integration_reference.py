@@ -28,6 +28,7 @@ import uuid
 
 class IntegrationReference(Base):
     __tablename__ = "integration_references"
+    __audit_skip__ = "sync bookkeeping (external id map), 13,315 to 79,431 rows a day (measured 27 Sep 2026, review B3)"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
 
