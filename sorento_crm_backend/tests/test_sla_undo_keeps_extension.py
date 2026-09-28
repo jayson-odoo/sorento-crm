@@ -358,3 +358,39 @@ def test_an_extension_superseded_by_an_escalation_is_not_restored(db, monkeypatc
     assert reopened.is_resolved is False
     assert reopened.due_at_resolution > datetime.utcnow() + timedelta(days=2)
     assert reopened.due_at_resolution < datetime.utcnow() + timedelta(days=10)
+
+
+def test_an_extension_is_written_to_the_complaint_audit_trail(db):
+    """Display fault 2: the owner looked for the extension on the complaint's audit
+    trail and it was not there. It is now an UPDATE row against the complaint whose
+    description names the new deadline, the working days, the tier and the reason."""
+    from app.models.audit import AuditLog
+    from app.services.form_sla_service import _fmt_due
+    from app.services.sla_service import ConversationSLATrackingService
+
+    magen = _user(db, "Magen")
+    policy, agent, main = _chain(db)
+    complaint, tracker = _complaint_with_stage(
+        db, policy=policy, agent=agent, main=main, magen=magen
+    )
+
+    ConversationSLATrackingService(db).extend_tracking(
+        tracker.id, magen.id, days=30, reason="Technician to attend and check"
+    )
+    db.refresh(tracker)
+
+    rows = (
+        db.query(AuditLog)
+        .filter(AuditLog.entity_type == "complaint", AuditLog.entity_id == complaint.id)
+        .all()
+    )
+    extended = [r for r in rows if (r.description or "").startswith("SLA deadline extended")]
+    assert len(extended) == 1, [r.description for r in rows]
+    row = extended[0]
+    assert row.action == "UPDATE"
+    assert str(row.user_id) == str(magen.id)
+    assert row.description == (
+        f"SLA deadline extended to {_fmt_due(tracker.due_at_resolution)} "
+        "(+30 working days, tier 1): Technician to attend and check"
+    )
+    assert row.new_values == {"sla_due_at_resolution": _fmt_due(tracker.due_at_resolution)}
