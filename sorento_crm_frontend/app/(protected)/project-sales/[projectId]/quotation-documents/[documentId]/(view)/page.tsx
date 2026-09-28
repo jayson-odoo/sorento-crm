@@ -1,15 +1,16 @@
 import { Metadata } from 'next';
-import { QuotationScopesTab } from '../components/QuotationScopesTab';
+import { QuotationHeaderTab } from '../components/QuotationDocumentTabPanels';
 
 export const metadata: Metadata = {
-  title: 'Quotation scopes',
-  description: 'The parts of the development priced under this quotation.',
+  title: 'Quotation header',
+  description: 'Who the quotation is to, its references, its date and its total.',
 };
 
 /**
- * The default tab: the scopes and their priced lines. The letterhead, the tab strip and the
- * actions come from the layout, so this route is only the panel under them.
+ * The default tab: Header, first of the five (#1341, owner: "i need this to be under 'Header' tab
+ * to align with our system design"). The tab strip and the actions come from the layout, so this
+ * route is only the panel under them.
  */
-export default function ProjectQuotationScopesPage() {
-  return <QuotationScopesTab />;
+export default function ProjectQuotationHeaderPage() {
+  return <QuotationHeaderTab />;
 }

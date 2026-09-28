@@ -213,7 +213,19 @@ export type QuotationDocumentBody = Partial<{
    * too. On a PATCH a saved scope carries its `id`, and a saved scope left out is not touched.
    */
   scopes: QuotationFormScopeBody[];
+  /**
+   * Saved scopes Edit quotation deletes (#1341, owner on Q2: "yes can"), PATCH only. The server
+   * refuses with 422 `quotation_scope_issued` for a scope any version of which was sent to the
+   * customer, and nothing in that save lands.
+   */
+  remove_scope_ids: string[];
 }>;
+
+/** The company's letter and terms as written, for the create form's own tabs (#1341). */
+export type QuotationLetterTemplates = {
+  cover_letter_html: string | null;
+  terms_html: string | null;
+};
 
 /**
  * One scope as the form sends it. `lines` is the FULL line set of the scope's current version
@@ -249,6 +261,17 @@ export async function getQuotationDocument(
   );
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load this quotation'));
+  return response.json();
+}
+
+export async function getQuotationLetterTemplates(
+  projectId: string,
+): Promise<QuotationLetterTemplates> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/letter-templates`,
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the letter templates'));
   return response.json();
 }
 
@@ -331,7 +354,7 @@ export async function issueQuotationDocument(
     { method: 'POST' },
   );
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to issue this quotation'));
+    throw new Error(await extractApiError(response, 'Failed to send this quotation to the customer'));
   return response.json();
 }
 

@@ -96,6 +96,7 @@ import { QuotationDocumentClient } from './QuotationDocumentClient';
 import { QuotationScopesTab } from './QuotationScopesTab';
 import {
   QuotationCoverLetterTab,
+  QuotationHeaderTab,
   QuotationSignaturesTab,
   QuotationTermsTab,
 } from './QuotationDocumentTabPanels';
@@ -159,14 +160,18 @@ function renderTab(route: string, tab: React.ReactNode) {
   );
 }
 
-/** Everything the letterhead owes the reader, wherever they are in the document. */
-async function expectHeaderOnScreen() {
-  // The ref is printed twice by design - once beside the Draft badge, once as Our Ref.
-  expect((await screen.findAllByText('SRT/Q/2026/0141')).length).toBeGreaterThan(0);
-  expect(screen.getByRole('heading', { name: 'CADANGAN MEMBINA PANGSAPURI' })).toBeInTheDocument();
+/**
+ * What stays above the tabs on every tab (#1341, owner: "i need this to be under 'Header' tab"):
+ * the title, the status pill, the project title and developer lines, and the header actions.
+ * The letterhead card itself (To, Our Ref, Your Ref, Date, Total) lives in the Header tab only.
+ */
+async function expectIdentityOnScreen() {
+  expect(
+    await screen.findByRole('heading', { name: 'CADANGAN MEMBINA PANGSAPURI' }),
+  ).toBeInTheDocument();
   expect(screen.getAllByText('Nadi Cergas Sdn Bhd').length).toBeGreaterThan(0);
-  expect(screen.getByText('RM 235,000.00')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Issue R1' })).toBeInTheDocument();
+  expect(screen.getByText('Draft')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Send to Customer R1' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Quotation actions' })).toBeInTheDocument();
 }
 
@@ -188,10 +193,19 @@ beforeEach(() => {
 });
 
 describe('the quotation document tab strip', () => {
-  it('offers all four parts as links to their own routes', async () => {
-    renderTab(BASE, <QuotationScopesTab />);
+  it('AC-QF050/053: reads Header, Lines, Cover letter, Terms, Signatures, each its own route', async () => {
+    renderTab(BASE, <QuotationHeaderTab />);
 
-    expect(await screen.findByRole('tab', { name: 'Scopes' })).toHaveAttribute('href', BASE);
+    const tabs = await screen.findAllByRole('tab');
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      'Header',
+      'Lines',
+      'Cover letter',
+      'Terms',
+      'Signatures',
+    ]);
+    expect(screen.getByRole('tab', { name: 'Header' })).toHaveAttribute('href', BASE);
+    expect(screen.getByRole('tab', { name: 'Lines' })).toHaveAttribute('href', `${BASE}/lines`);
     expect(screen.getByRole('tab', { name: 'Cover letter' })).toHaveAttribute(
       'href',
       `${BASE}/cover-letter`,
@@ -201,6 +215,8 @@ describe('the quotation document tab strip', () => {
       'href',
       `${BASE}/signatures`,
     );
+    // The owner struck "Scopes" out and wrote "Lines" over it.
+    expect(screen.queryByRole('tab', { name: 'Scopes' })).toBeNull();
   });
 
   it('takes the open tab from the URL, so a link can point straight at the terms', async () => {
@@ -210,13 +226,22 @@ describe('the quotation document tab strip', () => {
       'data-state',
       'active',
     );
-    expect(screen.getByRole('tab', { name: 'Scopes' })).toHaveAttribute('data-state', 'inactive');
+    expect(screen.getByRole('tab', { name: 'Header' })).toHaveAttribute('data-state', 'inactive');
   });
 
-  it('falls back to Scopes on the index route', async () => {
-    renderTab(BASE, <QuotationScopesTab />);
+  it('AC-QF050: opens on Header, the first tab, on the index route', async () => {
+    renderTab(BASE, <QuotationHeaderTab />);
 
-    expect(await screen.findByRole('tab', { name: 'Scopes' })).toHaveAttribute(
+    expect(await screen.findByRole('tab', { name: 'Header' })).toHaveAttribute(
+      'data-state',
+      'active',
+    );
+  });
+
+  it('marks Lines open on its own route', async () => {
+    renderTab(`${BASE}/lines`, <QuotationScopesTab />);
+
+    expect(await screen.findByRole('tab', { name: 'Lines' })).toHaveAttribute(
       'data-state',
       'active',
     );
@@ -224,15 +249,35 @@ describe('the quotation document tab strip', () => {
 });
 
 describe('what each quotation document tab renders', () => {
-  it('renders the scopes tab, and the header above it', async () => {
-    renderTab(BASE, <QuotationScopesTab />);
+  it('AC-QF051: the Header tab holds the letterhead card, below the identity lines', async () => {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({ your_ref: 'NC/18', recipient_address_snapshot: 'Level 8\nMenara' }),
+    );
+    renderTab(BASE, <QuotationHeaderTab />);
 
-    // No scopes yet is a real state on the way to a priced quotation, so it states itself.
-    expect(await screen.findByText('No scopes on this quotation yet')).toBeInTheDocument();
-    await expectHeaderOnScreen();
+    const card = await screen.findByTestId('quotation-header-card');
+    expect(card).toHaveTextContent('To');
+    expect(card).toHaveTextContent('Level 8');
+    expect(card).toHaveTextContent('Attn:');
+    expect(card).toHaveTextContent('Our Ref');
+    expect(card).toHaveTextContent('SRT/Q/2026/0141');
+    expect(card).toHaveTextContent('NC/18');
+    expect(card).toHaveTextContent('Date');
+    expect(card).toHaveTextContent('RM 235,000.00');
+    await expectIdentityOnScreen();
   });
 
-  it('renders the cover letter tab, and the header above it', async () => {
+  it('AC-QF051: the letterhead card is not above the tabs, so Lines does not repeat it', async () => {
+    renderTab(`${BASE}/lines`, <QuotationScopesTab />);
+
+    expect(await screen.findByText('No lines on this quotation yet')).toBeInTheDocument();
+    expect(screen.queryByTestId('quotation-header-card')).toBeNull();
+    expect(screen.queryByText('Our Ref')).toBeNull();
+    expect(screen.queryByText('RM 235,000.00')).toBeNull();
+    await expectIdentityOnScreen();
+  });
+
+  it('renders the cover letter tab, and the identity above it', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({ cover_letter_html: '<p>Dear Kelly</p>' }),
     );
@@ -240,19 +285,19 @@ describe('what each quotation document tab renders', () => {
 
     expect(await screen.findByText('Dear Kelly')).toBeInTheDocument();
     expect(panelTitle('Cover letter')).toBeInTheDocument();
-    await expectHeaderOnScreen();
+    await expectIdentityOnScreen();
   });
 
-  it('renders the terms tab, and the header above it', async () => {
+  it('renders the terms tab, and the identity above it', async () => {
     getQuotationDocument.mockResolvedValue(quotationDocument({ terms_html: '<p>30 days</p>' }));
     renderTab(`${BASE}/terms`, <QuotationTermsTab />);
 
     expect(await screen.findByText('30 days')).toBeInTheDocument();
     expect(panelTitle('Terms and conditions')).toBeInTheDocument();
-    await expectHeaderOnScreen();
+    await expectIdentityOnScreen();
   });
 
-  it('renders the signatures tab, and the header above it', async () => {
+  it('renders the signatures tab, and the identity above it', async () => {
     renderTab(`${BASE}/signatures`, <QuotationSignaturesTab />);
 
     // Both halves render even with no ink on either, which is AC-H8's whole point.
@@ -261,9 +306,9 @@ describe('what each quotation document tab renders', () => {
     ).toBeInTheDocument();
     expect(panelTitle('Signatures')).toBeInTheDocument();
     expect(
-      screen.getByText(/Issue this quotation to send the customer a link/i),
+      screen.getByText(/Send this quotation to the customer to give them a link/i),
     ).toBeInTheDocument();
-    await expectHeaderOnScreen();
+    await expectIdentityOnScreen();
   });
 
   it('still renders an empty cover letter and an empty terms tab, with their empty states', async () => {

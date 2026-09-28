@@ -2,12 +2,13 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, Trash2 } from 'lucide-react';
+import { FileText, ListOrdered, Mail, Plus, ScrollText, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { projectCrumbs } from '../../../_shared/lib/crumbs';
@@ -21,6 +22,7 @@ import {
 import {
   useQuotationDocument,
   useQuotationDocumentMutations,
+  useQuotationLetterTemplates,
 } from '../../../_shared/hooks/useQuotationDocuments';
 import type {
   QuotationDocument,
@@ -38,7 +40,10 @@ import {
 } from '../../../_shared/lib/quotationLineDraft';
 import { sumMoney } from '../../../_shared/lib/money';
 import { QuotationLinesGrid } from '../../components/QuotationLinesGrid';
-import { QuotationDocumentHeader } from '../[documentId]/components/QuotationDocumentHeader';
+import {
+  QuotationDocumentHeader,
+  useQuotationHeaderDetails,
+} from '../[documentId]/components/QuotationDocumentHeader';
 import {
   QuotationCoverLetterPanel,
   QuotationTermsPanel,
@@ -60,7 +65,29 @@ type FormScope = {
   editable: boolean;
   /** A saved scope's lines have arrived from the server. A new scope starts seeded. */
   seeded: boolean;
+  /**
+   * Any version of it was sent to the customer. Such a scope cannot be removed (#1341, owner on
+   * Q2: "yes can", while nothing in it has been issued); the server refuses it too.
+   */
+  issued: boolean;
 };
+
+type FormTab = 'header' | 'lines' | 'cover-letter' | 'terms';
+
+/**
+ * The form's tabs, the read page's minus Signatures (#1341, owner: "header stays in header tab").
+ * Same order, same labels, same icons, so view and edit read as one layout.
+ */
+const FORM_TABS: {
+  key: FormTab;
+  title: string;
+  icon: React.ComponentType<{ className?: string }>;
+}[] = [
+  { key: 'header', title: 'Header', icon: FileText },
+  { key: 'lines', title: 'Lines', icon: ListOrdered },
+  { key: 'cover-letter', title: 'Cover letter', icon: Mail },
+  { key: 'terms', title: 'Terms', icon: ScrollText },
+];
 
 const HEADER_FIELDS = [
   'your_ref',
@@ -83,7 +110,16 @@ function newScope(): FormScope {
     lines: [],
     editable: true,
     seeded: true,
+    issued: false,
   };
+}
+
+/**
+ * A scope added on this form and never touched: no name, no line. Header-only is a real save
+ * (owner on Q3: "yes can, header only is fine"), so this one is left out rather than refused.
+ */
+function isUntouchedNewScope(scope: FormScope): boolean {
+  return !scope.id && !scope.scope_label.trim() && scope.lines.length === 0;
 }
 
 /** Today in the browser's own calendar, as the ISO date the API speaks. */
@@ -103,9 +139,11 @@ function todayIso(): string {
  * a POST that creates the quotation, its scopes and every line in one transaction, or, in edit
  * mode, one PATCH carrying the header and every scope. Cancel leaves exactly what was there.
  *
- * Edit is the same page with the same sections in the same order (view and edit share a layout),
- * plus the cover letter and terms, which have no other editor now that the quotation page is a
- * read. Status rules are the server's: a scope the customer holds shows its lines read-only.
+ * Edit is the same page with the same tabs in the same order (view and edit share a layout):
+ * Header, Lines, Cover letter, Terms, the read page's own tabs minus Signatures. The owner: "header
+ * stays in header tab", and the letter and terms "show them on create as well", prefilled from the
+ * company templates. Status rules are the server's: a scope the customer holds shows its lines
+ * read-only, and a scope any version of which was sent cannot be removed.
  */
 export function QuotationFormClient({
   projectId,
@@ -121,12 +159,23 @@ export function QuotationFormClient({
   const quotations = useQuotations(isEdit ? projectId : undefined);
   const series = useProjectSeries();
   const mutations = useQuotationDocumentMutations(projectId, documentId);
+  // The company's letter and terms, for the create form's own tabs. Edit reads the saved text.
+  const letterTemplates = useQuotationLetterTemplates(projectId, !isEdit);
+  const details = useQuotationHeaderDetails(
+    isEdit ? projectId : undefined,
+    saved.data?.scopes ?? [],
+  );
 
   const [header, setHeader] = React.useState<QuotationDocumentBody | null>(
     null,
   );
   const [letter, setLetter] = React.useState<QuotationDocumentBody>({});
+  /** The create form's letter tabs have taken the templates, once. */
+  const [letterSeeded, setLetterSeeded] = React.useState(false);
   const [scopes, setScopes] = React.useState<FormScope[] | null>(null);
+  /** Saved scopes removed on this form, deleted by the one PATCH (#1341, Q2). */
+  const [removedIds, setRemovedIds] = React.useState<string[]>([]);
+  const [tab, setTab] = React.useState<FormTab>('header');
   const [error, setError] = React.useState<string | null>(null);
   const [isSaving, setIsSaving] = React.useState(false);
   /** Anything typed since the page opened. Drives the warning on leaving the site. */
@@ -181,10 +230,22 @@ export function QuotationFormClient({
           lines: [],
           editable: false,
           seeded: false,
+          issued: false,
         })),
       );
     }
   }, [header, isEdit, project.data, quotations.data, saved.data]);
+
+  // Create: the letter and terms tabs start from the company templates, taken once so a late
+  // refetch cannot overwrite what was typed. No template leaves the tab empty and editable.
+  React.useEffect(() => {
+    if (isEdit || letterSeeded || !letterTemplates.isFetched) return;
+    setLetter({
+      cover_letter_html: letterTemplates.data?.cover_letter_html ?? '',
+      terms_html: letterTemplates.data?.terms_html ?? '',
+    });
+    setLetterSeeded(true);
+  }, [isEdit, letterSeeded, letterTemplates.isFetched, letterTemplates.data]);
 
   /** A saved scope's lines arriving from the server: a starting point, not an edit. */
   const seedScope = React.useCallback(
@@ -225,9 +286,15 @@ export function QuotationFormClient({
     ? (saved.data?.document_no ?? 'Edit quotation')
     : 'New quotation';
   const allSeeded = (scopes ?? []).every((scope) => scope.seeded);
+  const letterReady = isEdit || letterSeeded;
+
+  /** The scopes Save sends: an untouched new scope is not one (header-only save). */
+  function scopesToSave(): FormScope[] {
+    return (scopes ?? []).filter((scope) => !isUntouchedNewScope(scope));
+  }
 
   function validate(): string | null {
-    const list = scopes ?? [];
+    const list = scopesToSave();
     if (list.some((scope) => !scope.scope_label.trim())) {
       return 'Every scope needs a name, e.g. Townhouse or Guard House.';
     }
@@ -263,7 +330,7 @@ export function QuotationFormClient({
   }
 
   function scopesBody(): QuotationFormScopeBody[] {
-    return (scopes ?? []).map((scope) => {
+    return scopesToSave().map((scope) => {
       const item: QuotationFormScopeBody = {
         scope_label: scope.scope_label.trim(),
         series_id: scope.series_id || null,
@@ -276,16 +343,33 @@ export function QuotationFormClient({
     });
   }
 
+  /** Create: the letter tabs' text, when there is any. Empty lets the server render the template. */
+  function createLetterBody(): QuotationDocumentBody {
+    const body: QuotationDocumentBody = {};
+    if ((letter.cover_letter_html ?? '').trim()) body.cover_letter_html = letter.cover_letter_html;
+    if ((letter.terms_html ?? '').trim()) body.terms_html = letter.terms_html;
+    return body;
+  }
+
   async function save() {
     const problem = validate();
     setError(problem);
-    if (problem) return;
+    // Every refusal is about a scope or a line, so show the tab it is on.
+    if (problem) {
+      setTab('lines');
+      return;
+    }
     setIsSaving(true);
     try {
       if (isEdit && documentId) {
         await mutations.update.mutateAsync({
           id: documentId,
-          body: { ...headerBody(), ...letter, scopes: scopesBody() },
+          body: {
+            ...headerBody(),
+            ...letter,
+            scopes: scopesBody(),
+            ...(removedIds.length > 0 ? { remove_scope_ids: removedIds } : {}),
+          },
         });
         router.push(
           `/project-sales/${projectId}/quotation-documents/${documentId}`,
@@ -293,6 +377,7 @@ export function QuotationFormClient({
       } else {
         const created = await mutations.create.mutateAsync({
           ...headerBody(),
+          ...createLetterBody(),
           scopes: scopesBody(),
         });
         router.push(
@@ -363,75 +448,126 @@ export function QuotationFormClient({
           <Skeleton className="h-64 w-full" />
         </div>
       ) : (
-        <>
-          <QuotationDocumentHeader
-            document={shownDocument}
-            liveGrandTotal={liveTotal}
-            onChange={(patch) => {
-              setDirty(true);
-              setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
-            }}
-          />
-
-          <div className="space-y-4">
-            {(scopes ?? []).map((scope, index) => (
-              <ScopeSection
-                key={scope.key}
-                index={index + 1}
-                scope={scope}
-                seriesOptions={(series.data ?? [])
-                  .filter((row) => row.is_active || row.id === scope.series_id)
-                  .map((row) => ({ value: row.id, label: row.name }))}
-                onChange={(patch) => updateScope(scope.key, patch)}
-                onSeed={(patch) => seedScope(scope.key, patch)}
-                onRemove={
-                  scope.id
-                    ? undefined
-                    : () =>
-                        setScopes((previous) =>
-                          (previous ?? []).filter(
-                            (row) => row.key !== scope.key,
-                          ),
-                        )
-                }
-              />
-            ))}
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setDirty(true);
-                setScopes((previous) => [...(previous ?? []), newScope()]);
-              }}
-            >
-              <Plus className="size-4" aria-hidden />
-              Add a scope
-            </Button>
+        <Tabs value={tab} onValueChange={(value) => setTab(value as FormTab)} className="min-w-0">
+          {/* The strip scrolls in its own gutter so the page never drags sideways at 375px. */}
+          <div className="min-w-0 overflow-x-auto">
+            <TabsList variant="line" className="mb-4 w-max">
+              {FORM_TABS.map(({ key, title: tabTitle, icon: Icon }) => (
+                <TabsTrigger key={key} value={key}>
+                  <Icon className="size-4" aria-hidden />
+                  <span>{tabTitle}</span>
+                </TabsTrigger>
+              ))}
+            </TabsList>
           </div>
 
-          {isEdit && saved.data && (
-            <>
+          {/* Every panel stays mounted and is only hidden: a saved scope's lines load inside the
+              Lines tab, and Save must be able to wait for them without that tab being opened. */}
+          <FormPanel open={tab === 'header'} label="Header">
+            <QuotationDocumentHeader
+              document={shownDocument}
+              liveGrandTotal={liveTotal}
+              details={details}
+              onChange={(patch) => {
+                setDirty(true);
+                setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
+              }}
+            />
+          </FormPanel>
+
+          <FormPanel open={tab === 'lines'} label="Lines">
+            <div className="space-y-4">
+              {(scopes ?? []).map((scope, index) => (
+                <ScopeSection
+                  key={scope.key}
+                  index={index + 1}
+                  scope={scope}
+                  seriesOptions={(series.data ?? [])
+                    .filter((row) => row.is_active || row.id === scope.series_id)
+                    .map((row) => ({ value: row.id, label: row.name }))}
+                  onChange={(patch) => updateScope(scope.key, patch)}
+                  onSeed={(patch) => seedScope(scope.key, patch)}
+                  onRemove={
+                    // A saved scope goes only once its versions have answered and none was
+                    // ever sent to the customer; the server refuses the rest anyway.
+                    scope.id && (!scope.seeded || scope.issued)
+                      ? undefined
+                      : () => {
+                          setDirty(true);
+                          if (scope.id) {
+                            const savedId = scope.id;
+                            setRemovedIds((previous) => [...previous, savedId]);
+                          }
+                          setScopes((previous) =>
+                            (previous ?? []).filter((row) => row.key !== scope.key),
+                          );
+                        }
+                  }
+                />
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setDirty(true);
+                  setScopes((previous) => [...(previous ?? []), newScope()]);
+                }}
+              >
+                <Plus className="size-4" aria-hidden />
+                Add a scope
+              </Button>
+            </div>
+          </FormPanel>
+
+          <FormPanel open={tab === 'cover-letter'} label="Cover letter">
+            {letterReady ? (
               <QuotationCoverLetterPanel
-                html={letter.cover_letter_html ?? saved.data.cover_letter_html}
+                html={letter.cover_letter_html ?? saved.data?.cover_letter_html ?? ''}
                 onChange={(html) => {
                   setDirty(true);
-                  setLetter((previous) => ({
-                    ...previous,
-                    cover_letter_html: html,
-                  }));
+                  setLetter((previous) => ({ ...previous, cover_letter_html: html }));
                 }}
               />
+            ) : (
+              <Skeleton className="h-64 w-full" />
+            )}
+          </FormPanel>
+
+          <FormPanel open={tab === 'terms'} label="Terms">
+            {letterReady ? (
               <QuotationTermsPanel
-                html={letter.terms_html ?? saved.data.terms_html}
+                html={letter.terms_html ?? saved.data?.terms_html ?? ''}
                 onChange={(html) => {
                   setDirty(true);
                   setLetter((previous) => ({ ...previous, terms_html: html }));
                 }}
               />
-            </>
-          )}
-        </>
+            ) : (
+              <Skeleton className="h-64 w-full" />
+            )}
+          </FormPanel>
+        </Tabs>
       )}
+    </div>
+  );
+}
+
+/**
+ * One tab's body. Hidden rather than unmounted when another tab is open, so typed work, a saved
+ * scope's loading lines and the letter editors all survive a tab switch.
+ */
+function FormPanel({
+  open,
+  label,
+  children,
+}: {
+  open: boolean;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div role="tabpanel" aria-label={label} hidden={!open} className="min-w-0">
+      {children}
     </div>
   );
 }
@@ -576,7 +712,7 @@ function SavedScopeLines({
   React.useEffect(() => {
     // A scope with no version has nowhere to put a line: it is saved as named, lines untouched.
     if (noVersion) {
-      onSeed({ lines: [], editable: false, seeded: true });
+      onSeed({ lines: [], editable: false, seeded: true, issued: false });
       return;
     }
     if (!current || !lines.data) return;
@@ -587,8 +723,11 @@ function SavedScopeLines({
       lines: sorted.map(lineToFormLine),
       editable: Boolean(current.is_editable ?? current.is_current),
       seeded: true,
+      // ANY version, not only the open one: a revision opened since does not change what the
+      // customer holds, and the server refuses the delete on the same rule.
+      issued: (versions.data ?? []).some((version) => Boolean(version.is_issued)),
     });
-  }, [current, lines.data, noVersion, onSeed]);
+  }, [current, lines.data, noVersion, onSeed, versions.data]);
 
   if (versions.isError || lines.isError) {
     // Save stays off: sending this scope without its lines would be a guess about them.

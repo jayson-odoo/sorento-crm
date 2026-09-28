@@ -1,10 +1,9 @@
 'use client';
 
 import * as React from 'react';
-import { Lock, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   useQuotationLines,
   useQuotationRecomputeMutation,
@@ -123,27 +122,8 @@ export function QuotationVersionEditor({
         <RecomputeSummary result={recomputed} onDismiss={() => setRecomputed(null)} />
       )}
 
-      {selected && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-          {selected.issued_by_name && <span>Issued by {selected.issued_by_name}</span>}
-          {selected.created_at && (
-            <span>Opened {formatDateTimeInMalaysia(selected.created_at)}</span>
-          )}
-          {!selected.is_current && selected.frozen_at && (
-            <span className="flex items-center gap-1">
-              <Lock className="size-3" aria-hidden />
-              Frozen {formatDateTimeInMalaysia(selected.frozen_at)}
-            </span>
-          )}
-          {selected.is_issued && (
-            <span className="flex items-center gap-1">
-              <Lock className="size-3" aria-hidden />
-              Issued to the customer
-            </span>
-          )}
-        </div>
-      )}
-
+      {/* No "Issued by / Opened" strip above the table: the owner moved it into the Header tab's
+          details ("this one should be in header details", #1341). */}
       {selected?.is_issued && selected.is_current && (
         <p className="text-xs text-muted-foreground">
           {`The customer holds v${selected.version_no}. Edit quotation opens v${selected.version_no + 1} and leaves what was sent untouched.`}

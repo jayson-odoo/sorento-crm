@@ -14,6 +14,7 @@ import {
   deleteQuotationDocument,
   getQuotationApprovalGraph,
   getQuotationDocument,
+  getQuotationLetterTemplates,
   issueQuotationDocument,
   listQuotationDocuments,
   listQuotationIssues,
@@ -56,6 +57,16 @@ export function useQuotationDocument(
     queryKey: quotationDocumentKey(projectId ?? '', documentId ?? ''),
     queryFn: () => getQuotationDocument(projectId as string, documentId as string),
     enabled: Boolean(projectId && documentId),
+  });
+}
+
+/** The company's cover letter and terms for the create form (#1341). Read once per visit. */
+export function useQuotationLetterTemplates(projectId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['project-quotation-letter-templates', projectId ?? ''],
+    queryFn: () => getQuotationLetterTemplates(projectId as string),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 60_000,
   });
 }
 
@@ -165,7 +176,7 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     mutationFn: (id: string) => issueQuotationDocument(projectId, id),
     onSuccess: (record) => {
       invalidate();
-      toast.success(`Issued as ${record.our_ref_text ?? `R${record.issue_no}`}`);
+      toast.success(`Sent to the customer as ${record.our_ref_text ?? `R${record.issue_no}`}`);
     },
     onError: (error: Error) => toast.error(error.message),
   });

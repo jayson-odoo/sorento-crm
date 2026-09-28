@@ -32,7 +32,6 @@ import {
   isBlockedByApproval,
 } from './QuotationApprovalPanel';
 import { QuotationChangesRequestedPanel } from './QuotationChangesRequestedPanel';
-import { QuotationDocumentHeader } from './QuotationDocumentHeader';
 import { QuotationDocumentProvider } from './QuotationDocumentContext';
 import { QuotationDocumentTabs } from './QuotationDocumentTabs';
 import { QuotationSignDialog } from './QuotationSignDialog';
@@ -42,9 +41,9 @@ import { ReviseToEditDialog } from './ReviseToEditDialog';
 /**
  * One quotation DOCUMENT: the letterhead the customer receives, and the tabs it is read through.
  *
- * This is the shell every tab renders inside. The identity of the record - its ref, who it is to,
- * its total, the one CTA and the gear - sits ABOVE the tabs and stays on screen wherever the
- * reader goes, because it is what the record IS rather than one section of it.
+ * This is the shell every tab renders inside. The identity of the record - its status, the project
+ * title and developer lines, the one CTA and the gear - sits ABOVE the tabs and stays on screen
+ * wherever the reader goes. The letterhead card (refs, recipient, total) is the Header tab (#1341).
  *
  * The header follows the system's own rule and nothing else: ONE primary CTA, and every other
  * action behind the gear. Download is not a call to action, it is a thing you can also do;
@@ -81,8 +80,8 @@ export function QuotationDocumentClient({
   /**
    * Which scopes are still open for editing, straight from the server's own `is_editable`.
    *
-   * Read here rather than inside the Scopes panel because Edit sits in this header and is on
-   * screen from every tab. Both queries are the ones the Scopes panel and the line editor already
+   * Read here rather than inside the Lines tab because Edit sits in this header and is on
+   * screen from every tab. Both queries are the ones the Lines tab and the line editor already
    * use, so react-query answers them from cache on the usual path.
    */
   const quotations = useQuotations(projectId);
@@ -200,7 +199,7 @@ export function QuotationDocumentClient({
   /**
    * What pressing the change-request banner's button will actually do, said in its label.
    *
-   * Deliberately NOT "Revise to v3": the Scopes tab already carries a per-scope button by that
+   * Deliberately NOT "Revise to v3": the Lines tab already carries a per-scope button by that
    * exact name, and two controls reading the same words a few centimetres apart - one acting on
    * one scope, one on the whole document - is worse than a vaguer label. This one is the
    * DOCUMENT's act, and the prompt it opens names the scopes and the version it will mint.
@@ -307,8 +306,9 @@ export function QuotationDocumentClient({
     <div className="space-y-5">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
+          {/* No document number here: the page title above already is that number, and a
+              second copy under the breadcrumb is repeated information (#1335). */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm text-muted-foreground">{record.document_no}</span>
             {/* The SAME reading as the project's quotation list. This badge used to be its own
                 `is_issued ? Issued : Draft`, which is why a quotation the customer had accepted
                 read "Accepted" in the list and "Issued" here - the two surfaces answered the same
@@ -392,7 +392,7 @@ export function QuotationDocumentClient({
                   <span className="min-w-0">
                     Download PDF
                     <span className="block text-xs text-muted-foreground">
-                      {record.is_issued ? 'Prepared in My Downloads' : 'Issue it first'}
+                      {record.is_issued ? 'Prepared in My Downloads' : 'Send it to the customer first'}
                     </span>
                   </span>
                 </DropdownMenuItem>
@@ -404,7 +404,7 @@ export function QuotationDocumentClient({
                   <span className="min-w-0">
                     Download Excel
                     <span className="block text-xs text-muted-foreground">
-                      {record.is_issued ? 'Prepared in My Downloads' : 'Issue it first'}
+                      {record.is_issued ? 'Prepared in My Downloads' : 'Send it to the customer first'}
                     </span>
                   </span>
                 </DropdownMenuItem>
@@ -425,7 +425,7 @@ export function QuotationDocumentClient({
                       {signLinkCopied ? 'Copied' : 'Copy counter-sign link'}
                       {!record.is_issued && (
                         <span className="block text-xs text-muted-foreground">
-                          Issue it first
+                          Send it to the customer first
                         </span>
                       )}
                     </span>
@@ -469,12 +469,15 @@ export function QuotationDocumentClient({
                   }
                   onClick={() => mutations.issue.mutate(documentId)}
                 >
-                  {`Issue R${nextIssueNo}`}
+                  {/* The owner on "Issue R1": "call this Send to Customer" (#1341). The revision
+                      stays in the label, as it did, because R2 is a different paper from R1. The
+                      API and the status names keep "issue". */}
+                  {`Send to Customer R${nextIssueNo}`}
                 </Button>
               )}
               {/* Where a queued export is actually collected. Rendered only once something has
                   been issued, because a download of a revision that does not exist yet cannot: the
-                  gear already says "Issue it first", and a chip that can only ever read 0 is a
+                  gear already says "Send it to the customer first", and a chip that can only ever read 0 is a
                   control with nothing behind it.
 
                   Keyed to the LATEST revision, which is the one whose exports anybody is chasing.
@@ -545,8 +548,8 @@ export function QuotationDocumentClient({
         }}
       />
 
-      <QuotationDocumentHeader document={record} />
-
+      {/* The letterhead card lives in the Header tab now, first of the tabs (#1341): "i need this
+          to be under 'Header' tab to align with our system design". */}
       <QuotationDocumentTabs projectId={projectId} documentId={documentId} />
 
       <QuotationDocumentProvider

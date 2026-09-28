@@ -72,7 +72,7 @@ export function QuotationSignatureBlock({
           </Badge>
         ) : (
           <Badge variant="secondary" appearance="light">
-            {document.is_issued ? 'Awaiting counter-signature' : 'Not issued yet'}
+            {document.is_issued ? 'Awaiting counter-signature' : 'Not sent to the customer yet'}
           </Badge>
         )}
       </CardHeader>
@@ -107,7 +107,7 @@ export function QuotationSignatureBlock({
             </EmptyBox>
           ) : (
             <EmptyBox>
-              No signature captured on this quotation yet. Use Sign, above, before issuing it.
+              No signature captured on this quotation yet. Use Sign, above, before sending it to the customer.
             </EmptyBox>
           )}
         </section>
@@ -141,7 +141,7 @@ export function QuotationSignatureBlock({
             </EmptyBox>
           ) : (
             <EmptyBox>
-              Issue this quotation to send the customer a link they can counter-sign.
+              Send this quotation to the customer to give them a link they can counter-sign.
             </EmptyBox>
           )}
 

@@ -146,6 +146,8 @@ export async function createIssuedQuotation(
   // The form page (#1341): nothing exists until Save, so the scope and its line are entered
   // here and written in the one request Save sends.
   await page.waitForURL(/quotation-documents\/new/, { timeout: 30_000 });
+  // The form opens on its Header tab; the scopes are on Lines (#1341, fix round 2).
+  await selectTab(page, page.getByRole('tab', { name: /^lines$/i }));
   const scope = page.getByRole('region', { name: 'Scope 1' });
   await scope.getByLabel('Scope name').fill(scopeLabel);
 
@@ -159,7 +161,8 @@ export async function createIssuedQuotation(
   await press(page.getByRole('button', { name: /^save quotation$/i }));
   await page.waitForURL(/quotation-documents\/[0-9a-f-]{36}(\?|$)/, { timeout: 30_000 });
   const documentUrl = page.url();
-  await expect(page.getByTestId('quotation-scope-strip')).toBeVisible({ timeout: 20_000 });
+  // The quotation page opens on its Header tab, whose card carries the total.
+  await expect(page.getByTestId('quotation-header-card')).toBeVisible({ timeout: 20_000 });
   // The server's own arithmetic coming back, not the browser's: 2 x 1250.00. Waiting on this
   // rather than on a toast is what proves the line actually landed before we issue.
   await expect(page.getByText('RM 2,500.00').first()).toBeVisible({ timeout: 30_000 });
@@ -172,7 +175,7 @@ export async function createIssuedQuotation(
   await signDialog.getByLabel('Full name').fill('ZZT Signer');
   await press(signDialog.getByRole('button', { name: /apply signature/i }));
   // AC-H1: no signature, no issue. The CTA only goes live once the ink is stored.
-  const issue = page.getByRole('button', { name: /^issue r1$/i });
+  const issue = page.getByRole('button', { name: /^send to customer r1$/i });
   await expect(issue).toBeEnabled({ timeout: 30_000 });
   await press(issue);
 

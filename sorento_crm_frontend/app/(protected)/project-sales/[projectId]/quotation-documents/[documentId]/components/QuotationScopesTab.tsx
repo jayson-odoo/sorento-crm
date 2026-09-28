@@ -14,7 +14,8 @@ import { useQuotationDocumentScreen } from './QuotationDocumentContext';
 import { QuotationScopeTabs } from './QuotationScopeTabs';
 
 /**
- * The Scopes tab: the scope strip and the priced lines under whichever scope is open.
+ * The Lines tab (the owner renamed Scopes to Lines, #1341): the scope strip and the priced lines
+ * under whichever scope is open.
  *
  * A READ (#1341). The owner: "editing of scope should be done by 'Edit Quotation', not a separate
  * button like this, Edit quotation means I edit the whole quotation". So there is no per-scope
@@ -50,7 +51,7 @@ export function QuotationScopesTab() {
     return (
       <Card>
         <CardContent className="px-6 py-10 text-center">
-          <h3 className="text-sm font-semibold">No scopes on this quotation yet</h3>
+          <h3 className="text-sm font-semibold">No lines on this quotation yet</h3>
           {canEdit && (
             <Button asChild variant="outline" size="sm" className="mt-4">
               <Link href={`/project-sales/${projectId}/quotation-documents/${documentId}/edit`}>
