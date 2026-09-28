@@ -29,7 +29,6 @@ reply left open, a `replied` stage whose rendered facts are never read here).
 """
 from __future__ import annotations
 
-import re
 from datetime import timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -315,11 +314,48 @@ SMALL_TALK_SUMMARY = "Small talk only, nothing was asked."
 #: The stored summary before fix round 6: a date and turn-count header, then
 #: semicolon-chained `subject (outcome)` clauses. Read-time code never shows one
 #: (`readable_summary`); `scripts/backfill_chatbot_episodes.py` rewrites them.
-_LEGACY_SUMMARY_TAG = re.compile(r"\((answered|not found|asked back|escalated|declined|denied)\)")
-_LEGACY_SUMMARY = re.compile(
-    r"^(Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{1,2} [A-Z][a-z]{2}(, \d+ turns?)?: "
-    r"|\((answered|not found|asked back|escalated|declined|denied)\)"
-)
+#: (Plain string reads, no regex module: the turn package stays regex free, see
+#: `test_rearch_s2_apply_is_pure`.)
+_LEGACY_TAGS = ("answered", "not found", "asked back", "escalated", "declined", "denied")
+
+
+def _legacy_tags(summary: str) -> list[str]:
+    """The `(outcome)` tags of an old summary, in order."""
+    found: list[tuple[int, str]] = []
+    for tag in _LEGACY_TAGS:
+        start = summary.find(f"({tag})")
+        while start != -1:
+            found.append((start, tag))
+            start = summary.find(f"({tag})", start + 1)
+    return [tag for _pos, tag in sorted(found)]
+
+
+def _has_legacy_header(summary: str) -> bool:
+    """`Tue 8 Sep, 639 turns: ...` or `Thu 25 Sep: ...`."""
+    head, sep, _rest = summary.partition(": ")
+    if not sep:
+        return False
+    words = head.split(",")[0].split(" ")
+    if len(words) != 3 or words[0] not in _WEEKDAY_ABBR or words[2] not in _MONTH_ABBR or not words[1].isdigit():
+        return False
+    tail = head[len(" ".join(words)):].strip()
+    if not tail:
+        return True
+    count = tail.lstrip(",").strip().split(" ")
+    return len(count) == 2 and count[0].isdigit() and count[1] in ("turn", "turns")
+
+
+def _legacy_offers(summary: str) -> list[tuple[str, str]]:
+    """`offered warehouse team, no answer` -> `("warehouse", "no answer")`."""
+    out: list[tuple[str, str]] = []
+    for part in summary.split("offered ")[1:]:
+        team, sep, rest = part.partition(" team, ")
+        if not sep:
+            continue
+        answer = next((a for a in ("no answer", "declined", "accepted") if rest.startswith(a)), None)
+        if answer:
+            out.append((team, answer))
+    return out
 
 
 def domain_noun(domain: str | None) -> str:
@@ -483,7 +519,6 @@ _LEGACY_TAG_OUTCOME = {
     "declined": "declined",
     "denied": "denied",
 }
-_LEGACY_OFFER = re.compile(r"offered (.+?) team, (no answer|declined|accepted)")
 
 
 def summary_from_columns(domain: str | None, entities: Any, legacy: str | None = None) -> str:
@@ -498,10 +533,10 @@ def summary_from_columns(domain: str | None, entities: Any, legacy: str | None =
                 token = _entity_token(v)
                 if token and token not in codes:
                     codes.append(token)
-    tags = [_LEGACY_TAG_OUTCOME[t] for t in _LEGACY_SUMMARY_TAG.findall(legacy or "")]
+    tags = [_LEGACY_TAG_OUTCOME[t] for t in _legacy_tags(legacy or "")]
     offers = [
         {"team": team, "answer": None if answer == "no answer" else answer}
-        for team, answer in _LEGACY_OFFER.findall(legacy or "")
+        for team, answer in _legacy_offers(legacy or "")
     ]
     if not domain and not codes and not tags and not offers:
         return SMALL_TALK_SUMMARY
@@ -517,7 +552,9 @@ def summary_from_columns(domain: str | None, entities: Any, legacy: str | None =
 
 def is_legacy_summary(summary: str | None) -> bool:
     """True for a summary in the pre round 6 shape (header, bracket tags)."""
-    return bool(summary) and bool(_LEGACY_SUMMARY.search(summary or ""))
+    if not summary:
+        return False
+    return _has_legacy_header(summary) or bool(_legacy_tags(summary))
 
 
 def readable_summary(summary: str | None, domain: str | None, entities: Any) -> str:

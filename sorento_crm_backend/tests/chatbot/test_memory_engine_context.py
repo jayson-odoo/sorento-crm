@@ -408,7 +408,10 @@ class TestRecallDeleted:
 
         assert len(captured) == 2
         second_block = captured[1]
-        assert "stock SRTWB1455 (answered)" in second_block, second_block
+        # Fix round 6: an old-shape stored summary reaches the parser as the readable
+        # line (`readable_summary`), never its bracket tags.
+        assert "Stock: Asked about stock for SRTWB1455 and got an answer." in second_block, second_block
+        assert "(answered)" not in second_block, second_block
         assert "stock SRTWB1455" in second_block, (
             "the LIVE episode's earlier message (this same conversation's first turn) "
             f"must also reach the second parse: {second_block}"
