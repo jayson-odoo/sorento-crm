@@ -1,7 +1,7 @@
 # PLAN - Chatbot memory: contact profile, episodes and turn context under a token budget
 
 Status: lane A (S0 to S3) BUILT on PR #1304, 27 Sep 2026, awaiting review and the owner's S3T
-test; S4 is lane B, not started. Build rulings and deviations: `chatbot-memory-lane-a-contract.md`.
+test; S4 built on the same PR in fix lane round 4 (below). Build rulings and deviations: `chatbot-memory-lane-a-contract.md`.
 Merge-main round, 27 Sep 2026: main at 52b0ac24 merged in; `mem_0001_frames_level` now hangs off
 main's single merge revision `sales_s1_reports_module`, and the parser prompt chain ends
 `SALES_ANALYSIS_ADDENDUM + MEMORY_ADDENDUM`, so `mem_0002_parser_memory` publishes the memory
@@ -17,6 +17,18 @@ shows console episodes marked Console, the open conversation carries its current
 Topic, and a history question with memory on answers from memory (lane A's graceful fallback;
 the full S4 list stays lane B). Main at fcbfa379 merged; `mem_0001_frames_level` now hangs off
 `fin_0001_billing_documents`. No parser prompt words changed.
+Fix lane round 4, 28 Sep 2026 (owner go for S4, "yeah i want S4 for memory"; owner hand
+test round 3, "what do i normally ask about" got the clarify menu): S4 BUILT on PR #1304.
+Every `low_signal` reply is ack + memory_line + offer (section 7.2; ack guard, `.ms` / `.zh`
+templates, existing copy untouched), a `history_question` always routes to `low_signal` and
+answers with the numbered list plus the re-run offer, a business answer carried from memory
+opens with the carried line, a handover names the salesperson for a commercial ask and the
+comment carries the live conversation's summary, and the clarifier error path sends the
+apology. Parser words for the history question in any wording, the number re-run and
+`commercial_request` publish through `mem_0003_parser_history`, label unmoved. Main at
+cd220251 merged. Deviations recorded in the round 4 PR comment (example 4 reads the live CRM
+link so it is not red under ablation; example 10 names the team, per the Q13 rule;
+`escalation_declined` keeps its existing copy).
 Planning history: DRAFT round 3, 27 Sep 2026. Owner rulings of 26 Sep 23:45 MYT (grill questions 1, 2,
 7, 10) and 27 Sep 00:10 MYT (3, 6, 8) applied; the 27 Sep 00:45 and 00:50 MYT notes applied
 (final UI mockups, pictures in place of the flagged paragraphs); question 9's term named
