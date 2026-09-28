@@ -233,6 +233,10 @@ push switch (ruling Q5).
 
 ## 2. Data model (migration `ac_grn_do_0001_ingest`, one head)
 
+Chained on `merge_29sep_batch4`: main carried two heads (`sales_agent_aliases_r7` and
+`scm_reorder_run_scope_desc`, #1342), so this branch ports the schema-free merge point from
+#1358 verbatim; once #1358 is on main the file is identical and the merge is a no-op.
+
 ### 2.1 `branches` (new, company scoped)
 
 | Column | Source |
