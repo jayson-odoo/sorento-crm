@@ -148,16 +148,22 @@ export async function createIssuedQuotation(
   await page.waitForURL(/quotation-documents\/new/, { timeout: 30_000 });
   // The form opens on its Header tab; the scopes are on Lines (#1341, fix round 2).
   await selectTab(page, page.getByRole('tab', { name: /^lines$/i }));
-  const scope = page.getByRole('region', { name: 'Scope 1' });
-  await scope.getByLabel('Scope name').fill(scopeLabel);
+  // The quotation page's own scope handling, moved under the form's Lines tab (#1341, round 3):
+  // Edit scope names it. `issue` refuses a document with no scope (422
+  // quotation_document_no_scopes).
+  await press(page.getByRole('region', { name: 'Scope 1' }).getByRole('button', { name: /^edit scope$/i }));
+  const scopeDialog = page.getByRole('dialog');
+  await scopeDialog.locator('#quotation-scope').fill(scopeLabel);
+  await press(scopeDialog.getByRole('button', { name: /^save changes$/i }));
+  const scope = page.getByRole('region', { name: scopeLabel });
 
-  // One priced line. Off-catalog (no product), which is a real state the line editor supports
-  // and keeps the spec off the product catalog.
+  // One priced line, in the same line table the quotation page used. Off-catalog (no product),
+  // which is a real state the line editor supports and keeps the spec off the product catalog.
   await press(scope.getByRole('button', { name: /add a line/i }));
-  const lineEditor = scope.getByRole('group', { name: 'Line 1' });
-  await lineEditor.getByLabel('Description').fill('ZZT supply and install');
-  await lineEditor.getByLabel('Qty').fill('2');
-  await lineEditor.getByLabel('Unit price').fill('1250.00');
+  // `describeRow` names an unsaved row by its position, so the cells are "<column> on line 1".
+  await scope.getByLabel('Description on line 1').fill('ZZT supply and install');
+  await scope.getByLabel('Qty on line 1').fill('2');
+  await scope.getByLabel('Unit price on line 1').fill('1250.00');
   await press(page.getByRole('button', { name: /^save quotation$/i }));
   await page.waitForURL(/quotation-documents\/[0-9a-f-]{36}(\?|$)/, { timeout: 30_000 });
   const documentUrl = page.url();

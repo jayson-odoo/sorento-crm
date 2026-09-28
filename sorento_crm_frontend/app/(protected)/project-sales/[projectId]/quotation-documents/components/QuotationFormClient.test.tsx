@@ -1,9 +1,15 @@
 /**
- * #1341 - the quotation form page, create and edit (AC-QF010 to AC-QF024, AC-QF040/041).
+ * #1341 - the quotation form page, create and edit (AC-QF010 to AC-QF024, AC-QF040/041,
+ * AC-QF070 to AC-QF073).
  *
  * The owner: "I should be able to add product straight away and save when I am satisfied, if I
  * want to edit I can click on the gear button to edit". So create is a page that writes nothing
  * until Save, and Save is ONE request; edit is the same page, filled, and its Save is ONE PATCH.
+ *
+ * Round 3, the owner: "we shouldn't revamp the Lines tab, it was good, we should reuse that". So
+ * the Lines tab is the quotation page's lines editing from origin/main: `QuotationVersionEditor`
+ * (the `InlineLineTable` cells, Add a line, Add a section, strike-through Remove) driven by the
+ * same `useQuotationEditSession` handlers, with the same scope strip and scope dialogs.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -165,6 +171,54 @@ vi.mock('@/components/ui/rich-text-editor', () => ({
   ),
 }));
 
+/**
+ * The quotation page's own editor and edit session, spied rather than replaced: the real ones
+ * render, and the specs can prove the form's lines go through them and nowhere else.
+ */
+const editorProps = vi.fn();
+vi.mock('../../components/QuotationVersionEditor', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../components/QuotationVersionEditor')>();
+  const Real = actual.QuotationVersionEditor;
+  return {
+    ...actual,
+    QuotationVersionEditor: (props: Parameters<typeof Real>[0]) => {
+      editorProps(props);
+      return <Real {...props} />;
+    },
+  };
+});
+
+const stageScopeSpy = vi.fn();
+const toggleRemovedSpy = vi.fn();
+vi.mock('../[documentId]/components/useQuotationEditSession', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../[documentId]/components/useQuotationEditSession')>();
+  const ReactModule = await import('react');
+  return {
+    ...actual,
+    useQuotationEditSession: () => {
+      const session = actual.useQuotationEditSession();
+      const { stageScope, toggleRemoved } = session;
+      const stage = ReactModule.useCallback(
+        (...args: Parameters<typeof stageScope>) => {
+          stageScopeSpy(...args);
+          stageScope(...args);
+        },
+        [stageScope],
+      );
+      const toggle = ReactModule.useCallback(
+        (...args: Parameters<typeof toggleRemoved>) => {
+          toggleRemovedSpy(...args);
+          toggleRemoved(...args);
+        },
+        [toggleRemoved],
+      );
+      return { ...session, stageScope: stage, toggleRemoved: toggle };
+    },
+  };
+});
+
 import { QuotationFormClient } from './QuotationFormClient';
 
 function project(overrides: Partial<Project> = {}): Project {
@@ -288,8 +342,46 @@ async function openTab(name: 'Header' | 'Lines' | 'Cover letter' | 'Terms') {
   );
 }
 
-function scopeSection(index: number) {
-  return screen.getAllByRole('region', { name: /^Scope \d+$/ })[index];
+/** The open scope's card, by the name its strip tab carries. */
+function scopeCard(name: string) {
+  return screen.getByRole('region', { name });
+}
+
+/** The Lines tab, open, with the scope's line table drawn and ready to type into. */
+async function openLines(scope = 'Scope 1') {
+  await openTab('Lines');
+  const card = await waitFor(() => scopeCard(scope));
+  await within(card).findByRole('button', { name: 'Add a line' });
+  return card;
+}
+
+/** The quotation page's Edit scope dialog: name (and series, notes), staged by the form. */
+async function nameScope(card: HTMLElement, label: string) {
+  fireEvent.click(within(card).getByRole('button', { name: 'Edit scope' }));
+  const dialog = await screen.findByRole('dialog');
+  fireEvent.change(within(dialog).getByRole('textbox', { name: /^Scope/ }), {
+    target: { value: label },
+  });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+}
+
+/** The quotation page's Add a scope: the + at the end of the scope strip, then its name dialog. */
+async function addScope(label: string) {
+  fireEvent.click(screen.getByRole('button', { name: 'Add a scope' }));
+  const dialog = await screen.findByRole('dialog');
+  fireEvent.change(within(dialog).getByLabelText('Scope name'), { target: { value: label } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Add' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  const card = await waitFor(() => scopeCard(label));
+  await within(card).findByRole('button', { name: 'Add a line' });
+  return card;
+}
+
+/** Add a line on the open scope and wait for its cells. */
+async function addLine(card: HTMLElement, lineNo: number) {
+  fireEvent.click(within(card).getByRole('button', { name: 'Add a line' }));
+  return within(card).findByRole('textbox', { name: `Description on line ${lineNo}` });
 }
 
 beforeEach(() => {
@@ -330,27 +422,83 @@ describe('QuotationFormClient create', () => {
     await waitFor(() =>
       expect(screen.getByLabelText('Subject')).toHaveValue('Menara Test'),
     );
-    await openTab('Lines');
-    const scope = scopeSection(0);
-    expect(within(scope).getByLabelText('Scope name')).toHaveValue('');
-    expect(
-      within(scope).getByRole('combobox', { name: 'Series' }),
-    ).toBeInTheDocument();
-    expect(
-      within(scope).getByRole('button', { name: /Add a line/i }),
-    ).toBeInTheDocument();
+    const card = await openLines();
+    expect(within(card).getByRole('button', { name: 'Edit scope' })).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Add a section' })).toBeInTheDocument();
+  });
+
+  it('AC-QF070: the Lines tab is the quotation page\'s own lines editor, not a new one', async () => {
+    renderForm();
+    const card = await openLines();
+
+    // The same component the quotation page renders, in its staged edit mode.
+    expect(editorProps).toHaveBeenCalled();
+    const props = editorProps.mock.calls.at(-1)![0];
+    expect(props.edit).toEqual(
+      expect.objectContaining({
+        seed: expect.any(Function),
+        stage: expect.any(Function),
+        toggleRemoved: expect.any(Function),
+      }),
+    );
+    // A scope added here has no saved record yet.
+    expect(props.quotation).toBeNull();
+
+    // Its line table, whose lines ARE rows of cells, and the scope strip with Add a scope at its end.
+    expect(within(card).getByRole('table')).toBeInTheDocument();
+    expect(screen.getByTestId('quotation-scope-strip')).toBeInTheDocument();
+    await addLine(card, 1);
+    expect(within(card).getByRole('textbox', { name: 'Unit price on line 1' })).toBeInTheDocument();
+
+    // And not the round 2 inline editor: no per-line panel under the grid, no Edit line, no Done.
+    expect(screen.queryByRole('group', { name: 'Line 1' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit line 1' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Done' })).toBeNull();
+  });
+
+  it('AC-QF071: Add a line, Add a section and Remove go through the quotation page\'s session handlers', async () => {
+    renderForm();
+    const card = await openLines();
+
+    const description = await addLine(card, 1);
+    fireEvent.change(description, { target: { value: 'Grab bar' } });
+    await waitFor(() =>
+      expect(stageScopeSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/^new-scope:/),
+        [expect.objectContaining({ id: null, draft: expect.objectContaining({ description: 'Grab bar' }) })],
+      ),
+    );
+
+    fireEvent.click(within(card).getByRole('button', { name: 'Add a section' }));
+    const heading = await within(card).findByRole('textbox', { name: 'Section heading on line 2' });
+    fireEvent.change(heading, { target: { value: 'OPTIONAL ITEMS' } });
+    await waitFor(() =>
+      expect(stageScopeSpy).toHaveBeenLastCalledWith(
+        expect.stringMatching(/^new-scope:/),
+        [
+          expect.anything(),
+          expect.objectContaining({ draft: expect.objectContaining({ band_label: 'OPTIONAL ITEMS' }) }),
+        ],
+      ),
+    );
+
+    fireEvent.click(within(card).getByRole('button', { name: 'Remove line 1' }));
+    expect(toggleRemovedSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/^new-scope:/),
+      expect.any(String),
+    );
+    expect(await within(card).findByText('Removed on save')).toBeInTheDocument();
+    expect(createQuotationDocument).not.toHaveBeenCalled();
+    expect(replaceQuotationLines).not.toHaveBeenCalled();
   });
 
   it('AC-QF010: writes nothing while the form is being filled', async () => {
     renderForm();
-    await openTab('Lines');
-    const scope = await waitFor(() => scopeSection(0));
+    const card = await openLines();
 
-    fireEvent.change(within(scope).getByLabelText('Scope name'), {
-      target: { value: 'Townhouse' },
-    });
-    fireEvent.click(within(scope).getByRole('button', { name: /Add a line/i }));
-    fireEvent.click(screen.getByRole('button', { name: /Add a scope/i }));
+    await nameScope(card, 'Townhouse');
+    await addLine(scopeCard('Townhouse'), 1);
+    await addScope('Guard House');
 
     expect(createQuotationDocument).not.toHaveBeenCalled();
     expect(updateQuotationDocument).not.toHaveBeenCalled();
@@ -362,26 +510,15 @@ describe('QuotationFormClient create', () => {
     fireEvent.change(await screen.findByLabelText('Your Ref'), {
       target: { value: 'NC/19' },
     });
-    await openTab('Lines');
-    const first = await waitFor(() => scopeSection(0));
+    await nameScope(await openLines(), 'Townhouse');
+    const first = scopeCard('Townhouse');
 
-    fireEvent.change(within(first).getByLabelText('Scope name'), {
-      target: { value: 'Townhouse' },
-    });
-    fireEvent.click(within(first).getByRole('button', { name: /Add a line/i }));
-    const editor = await within(first).findByRole('group', { name: 'Line 1' });
-    fireEvent.change(within(editor).getByLabelText('Description'), {
-      target: { value: 'Bespoke vanity top' },
-    });
-    fireEvent.change(within(editor).getByLabelText('Unit price'), {
+    fireEvent.change(await addLine(first, 1), { target: { value: 'Bespoke vanity top' } });
+    fireEvent.change(within(first).getByRole('textbox', { name: 'Unit price on line 1' }), {
       target: { value: '120.00' },
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /Add a scope/i }));
-    const second = scopeSection(1);
-    fireEvent.change(within(second).getByLabelText('Scope name'), {
-      target: { value: 'Guard House' },
-    });
+    await addScope('Guard House');
 
     fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
 
@@ -417,10 +554,8 @@ describe('QuotationFormClient create', () => {
 
   it('AC-QF018: refuses a scope with no name and a line with nothing on it, before any request', async () => {
     renderForm();
-    await openTab('Lines');
-    const scope = await waitFor(() => scopeSection(0));
-    fireEvent.click(within(scope).getByRole('button', { name: /Add a line/i }));
-    await within(scope).findByRole('group', { name: 'Line 1' });
+    const card = await openLines();
+    await addLine(card, 1);
 
     fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
 
@@ -429,9 +564,7 @@ describe('QuotationFormClient create', () => {
     ).toBeInTheDocument();
     expect(createQuotationDocument).not.toHaveBeenCalled();
 
-    fireEvent.change(within(scope).getByLabelText('Scope name'), {
-      target: { value: 'Townhouse' },
-    });
+    await nameScope(card, 'Townhouse');
     fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
 
     expect(
@@ -444,26 +577,18 @@ describe('QuotationFormClient create', () => {
 
   it('AC-QF013: a scope added on the form can be removed before Save', async () => {
     renderForm();
-    await openTab('Lines');
-    await waitFor(() => scopeSection(0));
+    await openLines();
 
-    fireEvent.click(screen.getByRole('button', { name: /Add a scope/i }));
-    expect(screen.getAllByRole('region', { name: /^Scope \d+$/ })).toHaveLength(
-      2,
-    );
+    const added = await addScope('Guard House');
+    fireEvent.click(within(added).getByRole('button', { name: 'Remove scope' }));
 
-    fireEvent.click(
-      within(scopeSection(1)).getByRole('button', { name: 'Remove scope' }),
-    );
-    expect(screen.getAllByRole('region', { name: /^Scope \d+$/ })).toHaveLength(
-      1,
-    );
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Guard House' })).toBeNull());
+    expect(screen.getByRole('region', { name: 'Scope 1' })).toBeInTheDocument();
   });
 
   it('AC-QF016: Cancel goes back to the Quotations tab and writes nothing', async () => {
     renderForm();
-    await openTab('Lines');
-    await waitFor(() => scopeSection(0));
+    await openLines();
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
@@ -473,8 +598,7 @@ describe('QuotationFormClient create', () => {
 
   it('AC-QF040: one primary CTA and no subtitle under the title', async () => {
     renderForm();
-    await openTab('Lines');
-    await waitFor(() => scopeSection(0));
+    await openLines();
 
     expect(
       screen.getByRole('heading', { level: 1, name: 'New quotation' }),
@@ -493,6 +617,13 @@ describe('QuotationFormClient create', () => {
 });
 
 describe('QuotationFormClient edit', () => {
+  /** A saved scope's lines, seeded into the session and drawn as cells. */
+  async function openSavedLines() {
+    const card = await openLines('Townhouse');
+    await within(card).findByRole('textbox', { name: 'Qty on SRT-WC-01' });
+    return card;
+  }
+
   it('AC-QF020: opens filled from the saved quotation, with the same sections plus the letter', async () => {
     renderForm('d1');
 
@@ -500,10 +631,12 @@ describe('QuotationFormClient edit', () => {
       expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'),
     );
     expect(screen.getByLabelText('Attn')).toHaveValue('Kelly');
-    await openTab('Lines');
-    const scope = scopeSection(0);
-    expect(within(scope).getByLabelText('Scope name')).toHaveValue('Townhouse');
-    expect(await within(scope).findByText('Wall-hung WC')).toBeInTheDocument();
+    const card = await openSavedLines();
+    expect(within(card).getByRole('textbox', { name: 'Description on SRT-WC-01' })).toHaveValue(
+      'Wall-hung WC',
+    );
+    // The saved scope's own record reaches the editor, as on the quotation page.
+    expect(editorProps.mock.calls.at(-1)![0].quotation).toMatchObject({ id: 'q1' });
     expect(
       screen.getByRole('heading', { level: 1, name: 'PRJQ-2026-0002' }),
     ).toBeInTheDocument();
@@ -513,28 +646,17 @@ describe('QuotationFormClient edit', () => {
 
   it('AC-QF021: Save sends ONE PATCH with the header and every scope, lines included', async () => {
     renderForm('d1');
-    await openTab('Lines');
-    const scope = await waitFor(() => scopeSection(0));
-    await within(scope).findByText('Wall-hung WC');
-
-    await openTab('Header');
+    await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
     fireEvent.change(screen.getByLabelText('Your Ref'), {
       target: { value: 'NC/20' },
     });
-    await openTab('Lines');
-    fireEvent.change(within(scope).getByLabelText('Scope name'), {
-      target: { value: 'Townhouse Block A' },
-    });
-    fireEvent.click(within(scope).getByRole('button', { name: 'Edit line 1' }));
-    const editor = await within(scope).findByRole('group', { name: 'Line 1' });
-    fireEvent.change(within(editor).getByLabelText('Qty'), {
+    const card = await openSavedLines();
+    fireEvent.change(within(card).getByRole('textbox', { name: 'Qty on SRT-WC-01' }), {
       target: { value: '12' },
     });
+    await nameScope(card, 'Townhouse Block A');
 
-    fireEvent.click(screen.getByRole('button', { name: /Add a scope/i }));
-    fireEvent.change(within(scopeSection(1)).getByLabelText('Scope name'), {
-      target: { value: 'Reception' },
-    });
+    await addScope('Reception');
 
     fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
 
@@ -562,6 +684,22 @@ describe('QuotationFormClient edit', () => {
     );
   });
 
+  it('AC-QF071: a line removed on the form is struck through and left out of the PATCH', async () => {
+    renderForm('d1');
+    const card = await openSavedLines();
+
+    fireEvent.click(within(card).getByRole('button', { name: 'Remove SRT-WC-01' }));
+    expect(toggleRemovedSpy).toHaveBeenCalledWith('q1', 'l1');
+    expect(await within(card).findByText('Removed on save')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
+    expect(updateQuotationDocument.mock.calls[0][2].scopes[0]).toMatchObject({
+      id: 'q1',
+      lines: [],
+    });
+  });
+
   it('AC-QF022: Cancel goes back to the quotation page and writes nothing', async () => {
     renderForm('d1');
     await waitFor(() =>
@@ -583,15 +721,11 @@ describe('QuotationFormClient edit', () => {
     listQuotationVersions.mockResolvedValue([version({ is_editable: false })]);
     renderForm('d1');
     await openTab('Lines');
-    const scope = await waitFor(() => scopeSection(0));
-    await within(scope).findByText('Wall-hung WC');
+    const card = await waitFor(() => scopeCard('Townhouse'));
+    await within(card).findByText('Wall-hung WC');
 
-    expect(
-      within(scope).queryByRole('button', { name: /Add a line/i }),
-    ).toBeNull();
-    expect(
-      within(scope).queryByRole('button', { name: 'Edit line 1' }),
-    ).toBeNull();
+    expect(within(card).queryByRole('button', { name: 'Add a line' })).toBeNull();
+    expect(within(card).queryByRole('textbox', { name: 'Qty on SRT-WC-01' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
     await waitFor(() =>
@@ -601,14 +735,26 @@ describe('QuotationFormClient edit', () => {
     expect(body.scopes[0]).not.toHaveProperty('lines');
   });
 
+  it('AC-QF072: a saved scope nobody opened on the Lines tab is saved without its lines', async () => {
+    renderForm('d1');
+    await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
+    const body = updateQuotationDocument.mock.calls[0][2];
+    // The write replaces the WHOLE set, so a scope nobody touched is never re-sent.
+    expect(body.scopes).toEqual([{ id: 'q1', scope_label: 'Townhouse', series_id: null }]);
+  });
+
   it('AC-QF058: a saved scope nothing in which was sent can be removed, in the ONE PATCH', async () => {
     renderForm('d1');
-    await openTab('Lines');
-    const scope = await waitFor(() => scopeSection(0));
-    await within(scope).findByText('Wall-hung WC');
+    const card = await openSavedLines();
 
-    fireEvent.click(within(scope).getByRole('button', { name: 'Remove scope' }));
-    expect(screen.queryAllByRole('region', { name: /^Scope \d+$/ })).toHaveLength(0);
+    await waitFor(() =>
+      expect(within(card).getByRole('button', { name: 'Remove scope' })).toBeInTheDocument(),
+    );
+    fireEvent.click(within(card).getByRole('button', { name: 'Remove scope' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Townhouse' })).toBeNull());
     expect(updateQuotationDocument).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
@@ -624,67 +770,31 @@ describe('QuotationFormClient edit', () => {
       version({ id: 'v1', version_no: 1, is_current: false, is_editable: false, is_issued: true }),
     ]);
     renderForm('d1');
-    await openTab('Lines');
-    const scope = await waitFor(() => scopeSection(0));
-    await within(scope).findByText('Wall-hung WC');
+    const card = await openSavedLines();
 
-    expect(within(scope).queryByRole('button', { name: 'Remove scope' })).toBeNull();
+    expect(within(card).queryByRole('button', { name: 'Remove scope' })).toBeNull();
   });
 
   it('AC-QF060: a header-only edit saves the letterhead with no scope change', async () => {
     renderForm('d1');
     await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
     fireEvent.change(screen.getByLabelText('Attn'), { target: { value: 'Mr Tan' } });
-    // Save waits for the saved scope's lines, even when the Lines tab was never opened.
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Save quotation' })).toBeEnabled(),
-    );
 
     fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
     await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
     expect(updateQuotationDocument.mock.calls[0][2]).toMatchObject({ attn_name: 'Mr Tan' });
     expect(updateQuotationDocument.mock.calls[0][2]).not.toHaveProperty('remove_scope_ids');
   });
-
-  it('keeps Save off until a saved scope has its lines, so it never sends a guessed set', async () => {
-    let answer: (lines: QuotationLine[]) => void = () => {};
-    listQuotationLines.mockReturnValue(
-      new Promise<QuotationLine[]>((resolve) => {
-        answer = resolve;
-      }),
-    );
-    renderForm('d1');
-    await waitFor(() =>
-      expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'),
-    );
-
-    expect(
-      screen.getByRole('button', { name: 'Save quotation' }),
-    ).toBeDisabled();
-
-    answer([LINE]);
-    await openTab('Lines');
-    await within(scopeSection(0)).findByText('Wall-hung WC');
-    expect(
-      screen.getByRole('button', { name: 'Save quotation' }),
-    ).toBeEnabled();
-  });
 });
 
 describe('QuotationFormClient guards', () => {
   it('refuses a quantity that is not a number before any request', async () => {
     renderForm();
-    await openTab('Lines');
-    const scope = await waitFor(() => scopeSection(0));
-    fireEvent.change(within(scope).getByLabelText('Scope name'), {
-      target: { value: 'Townhouse' },
-    });
-    fireEvent.click(within(scope).getByRole('button', { name: /Add a line/i }));
-    const editor = await within(scope).findByRole('group', { name: 'Line 1' });
-    fireEvent.change(within(editor).getByLabelText('Description'), {
-      target: { value: 'Grab bar' },
-    });
-    fireEvent.change(within(editor).getByLabelText('Qty'), {
+    const card = await openLines();
+    await nameScope(card, 'Townhouse');
+    const named = scopeCard('Townhouse');
+    fireEvent.change(await addLine(named, 1), { target: { value: 'Grab bar' } });
+    fireEvent.change(within(named).getByRole('textbox', { name: 'Qty on line 1' }), {
       target: { value: 'two' },
     });
 
@@ -700,13 +810,13 @@ describe('QuotationFormClient guards', () => {
 
   it('warns before the browser throws typed work away, and not before anything is typed', async () => {
     renderForm();
-    await openTab('Lines');
-    await waitFor(() => scopeSection(0));
+    await openLines();
 
     const untouched = new Event('beforeunload', { cancelable: true });
     window.dispatchEvent(untouched);
     expect(untouched.defaultPrevented).toBe(false);
 
+    await openTab('Header');
     fireEvent.change(screen.getByLabelText('Your Ref'), {
       target: { value: 'NC/21' },
     });
@@ -734,10 +844,10 @@ describe('QuotationFormClient tabs (AC-QF055)', () => {
     expect(screen.getByRole('tab', { name: 'Header' })).toHaveAttribute('data-state', 'active');
     // Header is open: its fields are on screen and the scopes are not.
     expect(await screen.findByRole('textbox', { name: 'Your Ref' })).toBeInTheDocument();
-    expect(screen.queryAllByRole('region', { name: /^Scope \d+$/ })).toHaveLength(0);
+    expect(screen.queryByRole('region', { name: 'Scope 1' })).toBeNull();
 
-    await openTab('Lines');
-    expect(scopeSection(0)).toBeInTheDocument();
+    await openLines();
+    expect(scopeCard('Scope 1')).toBeInTheDocument();
     expect(screen.queryByRole('textbox', { name: 'Your Ref' })).toBeNull();
   });
 
@@ -819,13 +929,8 @@ describe('QuotationFormClient header-only save (AC-QF060)', () => {
 
   it('still refuses a scope that has lines but no name, and opens Lines to show it', async () => {
     renderForm();
-    await openTab('Lines');
-    const scope = await waitFor(() => scopeSection(0));
-    fireEvent.click(within(scope).getByRole('button', { name: /Add a line/i }));
-    const editor = await within(scope).findByRole('group', { name: 'Line 1' });
-    fireEvent.change(within(editor).getByLabelText('Description'), {
-      target: { value: 'Grab bar' },
-    });
+    const card = await openLines();
+    fireEvent.change(await addLine(card, 1), { target: { value: 'Grab bar' } });
     await openTab('Header');
 
     fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
@@ -856,28 +961,23 @@ describe('QuotationFormClient review round (fix round 2)', () => {
   it('AC-QF058: without the delete grant a saved scope offers no Remove; a new one still does', async () => {
     granted = new Set(['projects.projects.view', 'projects.projects.edit']);
     renderForm('d1');
-    await openTab('Lines');
-    const scope = await waitFor(() => scopeSection(0));
-    await within(scope).findByText('Wall-hung WC');
+    const card = await openLines('Townhouse');
+    await within(card).findByRole('textbox', { name: 'Qty on SRT-WC-01' });
 
-    expect(within(scope).queryByRole('button', { name: 'Remove scope' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /Add a scope/i }));
-    expect(
-      within(scopeSection(1)).getByRole('button', { name: 'Remove scope' }),
-    ).toBeInTheDocument();
+    expect(within(card).queryByRole('button', { name: 'Remove scope' })).toBeNull();
+    const added = await addScope('Reception');
+    expect(within(added).getByRole('button', { name: 'Remove scope' })).toBeInTheDocument();
   });
 
   it('AC-QF052: a scope removed on the form leaves the Header details too', async () => {
     listQuotationVersions.mockResolvedValue([version({ issued_by_name: 'Baser Ramli' })]);
     renderForm('d1');
-    await openTab('Lines');
-    const scope = await waitFor(() => scopeSection(0));
-    await within(scope).findByText('Wall-hung WC');
     await openTab('Header');
     expect(await screen.findByText('Baser Ramli')).toBeInTheDocument();
 
-    await openTab('Lines');
-    fireEvent.click(within(scopeSection(0)).getByRole('button', { name: 'Remove scope' }));
+    const card = await openLines('Townhouse');
+    const remove = await within(card).findByRole('button', { name: 'Remove scope' });
+    fireEvent.click(remove);
     await openTab('Header');
     expect(screen.queryByText('Baser Ramli')).toBeNull();
   });

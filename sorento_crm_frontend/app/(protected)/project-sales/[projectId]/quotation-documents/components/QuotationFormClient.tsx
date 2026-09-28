@@ -5,18 +5,14 @@ import { useRouter } from 'next/navigation';
 import { FileText, ListOrdered, Mail, Plus, ScrollText, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/common/PageHeader';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { projectCrumbs } from '../../../_shared/lib/crumbs';
 import {
   useProject,
   useProjectSeries,
-  useQuotationLines,
   useQuotations,
   useQuotationVersions,
 } from '../../../_shared/hooks/useProjects';
@@ -29,18 +25,26 @@ import type {
   QuotationDocument,
   QuotationDocumentBody,
   QuotationFormScopeBody,
+  QuotationScope,
 } from '../../../_shared/services/quotationDocumentService';
-import type { QuotationLine } from '../../../_shared/types/project.types';
+import type {
+  Project,
+  ProjectQuotation,
+  StagedQuotationLine,
+} from '../../../_shared/types/project.types';
+import { OutcomePill } from '../../../_shared/components/OutcomePill';
+import { isDecimalString, sumMoney } from '../../../_shared/lib/money';
+import { QuotationDialog } from '../../components/QuotationDialog';
 import {
-  formLinesToBody,
-  formLinesTotal,
-  lineToFormLine,
-  invalidNumberLines,
-  unfinishedLines,
-  type QuotationFormLine,
-} from '../../../_shared/lib/quotationLineDraft';
-import { sumMoney } from '../../../_shared/lib/money';
-import { QuotationLinesGrid } from '../../components/QuotationLinesGrid';
+  QuotationVersionEditor,
+  stagedLinesToBody,
+  stagedScopeTotal,
+  unfinishedStagedLines,
+  type QuotationScopeEditing,
+} from '../../components/QuotationVersionEditor';
+import { QuotationNameDialog } from '../[documentId]/components/QuotationNameDialog';
+import { QuotationScopeTabs } from '../[documentId]/components/QuotationScopeTabs';
+import { useQuotationEditSession } from '../[documentId]/components/useQuotationEditSession';
 import {
   QuotationDocumentHeader,
   useQuotationHeaderDetails,
@@ -50,27 +54,21 @@ import {
   QuotationTermsPanel,
 } from '../[documentId]/components/QuotationLetterPanels';
 
-/** One scope as the form holds it until Save. */
+/**
+ * One scope as the form holds it until Save: its name, series and notes. Its LINES are not held
+ * here. They live in the same staged edit session the quotation page used on origin/main
+ * (`useQuotationEditSession`), keyed by `key`, and are edited by the same editor
+ * (`QuotationVersionEditor`), so the Lines tab is the quotation page's lines editing moved under
+ * the form (#1341, round 3: "we shouldn't revamp the Lines tab, it was good, we should reuse that").
+ */
 type FormScope = {
   key: string;
   /** The saved scope's id, or null for one added on this form. */
   id: string | null;
   scope_label: string;
   series_id: string;
-  lines: QuotationFormLine[];
-  /**
-   * Whether its lines may change: the server's `is_editable` on the current version. A version
-   * the customer holds (or a superseded one) is read here and never sent back, the same rule the
-   * server enforces with its 422.
-   */
-  editable: boolean;
-  /** A saved scope's lines have arrived from the server. A new scope starts seeded. */
-  seeded: boolean;
-  /**
-   * Any version of it was sent to the customer. Such a scope cannot be removed (#1341, owner on
-   * Q2: "yes can", while nothing in it has been issued); the server refuses it too.
-   */
-  issued: boolean;
+  /** Undefined until the Edit scope dialog sets it, so an untouched saved note is not sent. */
+  notes?: string | null;
 };
 
 type FormTab = 'header' | 'lines' | 'cover-letter' | 'terms';
@@ -108,10 +106,6 @@ function newScope(): FormScope {
     id: null,
     scope_label: '',
     series_id: '',
-    lines: [],
-    editable: true,
-    seeded: true,
-    issued: false,
   };
 }
 
@@ -119,10 +113,24 @@ function newScope(): FormScope {
  * A scope added on this form and never touched: no name, no line. Header-only is a real save
  * (owner on Q3: "yes can, header only is fine"), so this one is left out rather than refused.
  */
-function isUntouchedNewScope(scope: FormScope): boolean {
-  return (
-    !scope.id && !scope.scope_label.trim() && !scope.series_id && scope.lines.length === 0
-  );
+function isUntouchedNewScope(scope: FormScope, lines: StagedQuotationLine[]): boolean {
+  return !scope.id && !scope.scope_label.trim() && !scope.series_id && lines.length === 0;
+}
+
+/** Staged lines whose quantity or unit price is typed but is not a number: the server would 422. */
+function badNumberLines(lines: StagedQuotationLine[]): number {
+  return lines.filter(
+    (line) =>
+      !line.removed &&
+      [line.draft.quantity, line.draft.unit_price].some(
+        (value) => (value ?? '').trim() !== '' && !isDecimalString((value ?? '').trim()),
+      ),
+  ).length;
+}
+
+/** What the strip calls a scope that has no name yet. */
+function scopeTitle(scope: FormScope, index: number): string {
+  return scope.scope_label.trim() || `Scope ${index + 1}`;
 }
 
 /** Today in the browser's own calendar, as the ISO date the API speaks. */
@@ -174,6 +182,11 @@ export function QuotationFormClient({
   /** The create form's letter tabs have taken the templates, once. */
   const [letterSeeded, setLetterSeeded] = React.useState(false);
   const [scopes, setScopes] = React.useState<FormScope[] | null>(null);
+  /** The staged lines of every scope opened on this form: the quotation page's own session. */
+  const edit = useQuotationEditSession();
+  const [activeKey, setActiveKey] = React.useState<string | null>(null);
+  const [addingScope, setAddingScope] = React.useState(false);
+  const [editingScopeKey, setEditingScopeKey] = React.useState<string | null>(null);
   /** Saved scopes removed on this form, deleted by the one PATCH (#1341, Q2). */
   const [removedIds, setRemovedIds] = React.useState<string[]>([]);
   const [tab, setTab] = React.useState<FormTab>('header');
@@ -190,15 +203,16 @@ export function QuotationFormClient({
 
   // Everything on this page lives only in the browser until Save, so a refresh or a closed tab
   // would lose it silently. Warn while there is something to lose.
+  const isDirty = dirty || edit.changedScopes.length > 0;
   React.useEffect(() => {
-    if (!dirty || isSaving) return;
+    if (!isDirty || isSaving) return;
     const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = '';
     };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty, isSaving]);
+  }, [isDirty, isSaving]);
 
   // The starting point, taken ONCE: a refetch landing mid-edit must not overwrite what somebody
   // is typing.
@@ -234,10 +248,6 @@ export function QuotationFormClient({
           series_id:
             (quotations.data ?? []).find((row) => row.id === scope.id)
               ?.series_id ?? '',
-          lines: [],
-          editable: false,
-          seeded: false,
-          issued: false,
         })),
       );
     }
@@ -254,18 +264,6 @@ export function QuotationFormClient({
     setLetterSeeded(true);
   }, [isEdit, letterSeeded, letterTemplates.isFetched, letterTemplates.data]);
 
-  /** A saved scope's lines arriving from the server: a starting point, not an edit. */
-  const seedScope = React.useCallback(
-    (key: string, patch: Partial<FormScope>) => {
-      setScopes((previous) =>
-        (previous ?? []).map((scope) =>
-          scope.key === key ? { ...scope, ...patch } : scope,
-        ),
-      );
-    },
-    [],
-  );
-
   const updateScope = React.useCallback(
     (key: string, patch: Partial<FormScope>) => {
       setDirty(true);
@@ -278,12 +276,28 @@ export function QuotationFormClient({
     [],
   );
 
+  /** The lines staged for a scope, or none while it has not been opened on the Lines tab. */
+  const stagedScopes = edit.scopes;
+  const stagedLinesOf = React.useCallback(
+    (key: string): StagedQuotationLine[] => stagedScopes[key]?.lines ?? [],
+    [stagedScopes],
+  );
+
+  /**
+   * Each scope's figure: its staged lines once opened, the server's own total until then. The
+   * same rule the quotation page's header used for its live total.
+   */
+  const scopeTotal = React.useCallback(
+    (scope: FormScope): string =>
+      (stagedScopes[scope.key] ? stagedScopeTotal(stagedScopes[scope.key].lines) : null) ??
+      savedScopes?.find((row) => row.id === scope.id)?.scope_total ??
+      '0',
+    [savedScopes, stagedScopes],
+  );
+
   const liveTotal = React.useMemo(
-    () =>
-      sumMoney(
-        (scopes ?? []).map((scope) => formLinesTotal(scope.lines) ?? '0'),
-      ),
-    [scopes],
+    () => sumMoney((scopes ?? []).map(scopeTotal)),
+    [scopeTotal, scopes],
   );
 
   const backPath = isEdit
@@ -292,12 +306,13 @@ export function QuotationFormClient({
   const title = isEdit
     ? (saved.data?.document_no ?? 'Edit quotation')
     : 'New quotation';
-  const allSeeded = (scopes ?? []).every((scope) => scope.seeded);
   const letterReady = isEdit || letterSeeded;
 
   /** The scopes Save sends: an untouched new scope is not one (header-only save). */
   function scopesToSave(): FormScope[] {
-    return (scopes ?? []).filter((scope) => !isUntouchedNewScope(scope));
+    return (scopes ?? []).filter(
+      (scope) => !isUntouchedNewScope(scope, stagedLinesOf(scope.key)),
+    );
   }
 
   function validate(): string | null {
@@ -305,18 +320,20 @@ export function QuotationFormClient({
     if (list.some((scope) => !scope.scope_label.trim())) {
       return 'Every scope needs a name, e.g. Townhouse or Guard House.';
     }
-    const unfinished = list
-      .filter((scope) => scope.editable)
-      .reduce((total, scope) => total + unfinishedLines(scope.lines), 0);
+    const unfinished = list.reduce(
+      (total, scope) => total + unfinishedStagedLines(stagedLinesOf(scope.key)),
+      0,
+    );
     if (unfinished > 0) {
       return unfinished === 1
         ? 'One line still needs a product or a description.'
         : `${unfinished} lines still need a product or a description.`;
     }
     // Caught here rather than as a 422 toast: the field already says "Must be a number".
-    const badNumbers = list
-      .filter((scope) => scope.editable)
-      .reduce((total, scope) => total + invalidNumberLines(scope.lines), 0);
+    const badNumbers = list.reduce(
+      (total, scope) => total + badNumberLines(stagedLinesOf(scope.key)),
+      0,
+    );
     if (badNumbers > 0) {
       return badNumbers === 1
         ? 'One line has a quantity or unit price that is not a number.'
@@ -337,15 +354,19 @@ export function QuotationFormClient({
   }
 
   function scopesBody(): QuotationFormScopeBody[] {
+    const changed = new Set(edit.changedScopes.map((scope) => scope.scopeId));
     return scopesToSave().map((scope) => {
       const item: QuotationFormScopeBody = {
         scope_label: scope.scope_label.trim(),
         series_id: scope.series_id || null,
       };
       if (scope.id) item.id = scope.id;
-      // A version the customer holds is never sent: the server would refuse the whole save.
-      if (scope.editable && scope.seeded)
-        item.lines = formLinesToBody(scope.lines);
+      if (scope.notes !== undefined) item.notes = scope.notes;
+      // A new scope carries whatever was staged under it. A saved one carries its lines only when
+      // they moved, the rule the quotation page's Save kept: the write replaces the WHOLE set, and
+      // a scope the customer holds is never staged, so it is never sent.
+      if (!scope.id) item.lines = stagedLinesToBody(stagedLinesOf(scope.key));
+      else if (changed.has(scope.key)) item.lines = stagedLinesToBody(stagedLinesOf(scope.key));
       return item;
     });
   }
@@ -425,7 +446,7 @@ export function QuotationFormClient({
             </Button>
             <Button
               type="button"
-              disabled={isSaving || loading || failed || !allSeeded || !letterReady}
+              disabled={isSaving || loading || failed || !letterReady}
               onClick={() => void save()}
             >
               {isSaving ? 'Saving...' : 'Save quotation'}
@@ -483,47 +504,84 @@ export function QuotationFormClient({
           </FormPanel>
 
           <FormPanel open={tab === 'lines'} label="Lines">
-            <div className="space-y-4">
-              {(scopes ?? []).map((scope, index) => (
-                <ScopeSection
-                  key={scope.key}
-                  index={index + 1}
-                  scope={scope}
-                  seriesOptions={(series.data ?? [])
-                    .filter((row) => row.is_active || row.id === scope.series_id)
-                    .map((row) => ({ value: row.id, label: row.name }))}
-                  onChange={(patch) => updateScope(scope.key, patch)}
-                  onSeed={(patch) => seedScope(scope.key, patch)}
-                  onRemove={
-                    // A saved scope goes only once its versions have answered and none was
-                    // ever sent to the customer; the server refuses the rest anyway.
-                    scope.id && (!canRemoveSaved || !scope.seeded || scope.issued)
-                      ? undefined
-                      : () => {
-                          setDirty(true);
-                          if (scope.id) {
-                            const savedId = scope.id;
-                            setRemovedIds((previous) => [...previous, savedId]);
-                          }
-                          setScopes((previous) =>
-                            (previous ?? []).filter((row) => row.key !== scope.key),
-                          );
-                        }
-                  }
-                />
-              ))}
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
+            {project.data && (
+              <FormLines
+                project={project.data}
+                scopes={scopes ?? []}
+                savedScopes={savedScopes ?? []}
+                quotations={quotations.data ?? []}
+                seriesNames={
+                  new Map((series.data ?? []).map((row) => [row.id, row.name] as const))
+                }
+                activeKey={activeKey}
+                onSelect={setActiveKey}
+                scopeTotal={scopeTotal}
+                edit={edit}
+                canRemoveSaved={canRemoveSaved}
+                onAddScope={() => setAddingScope(true)}
+                onEditScope={setEditingScopeKey}
+                onRemove={(scope) => {
                   setDirty(true);
-                  setScopes((previous) => [...(previous ?? []), newScope()]);
+                  if (scope.id) {
+                    const savedId = scope.id;
+                    setRemovedIds((previous) => [...previous, savedId]);
+                  }
+                  setScopes((previous) =>
+                    (previous ?? []).filter((row) => row.key !== scope.key),
+                  );
+                  setActiveKey(null);
                 }}
-              >
-                <Plus className="size-4" aria-hidden />
-                Add a scope
-              </Button>
-            </div>
+              />
+            )}
+
+            {/* The quotation page's own Add a scope dialog. It names the scope, which is staged
+                and created by Save, not at once. */}
+            <QuotationNameDialog
+              open={addingScope}
+              onOpenChange={setAddingScope}
+              initialLabel={null}
+              addTitle="Add a scope"
+              renameTitle="Rename scope"
+              fieldLabel="Scope name"
+              placeholder="e.g. Townhouse, Guard house"
+              hint="A part of the development priced on its own."
+              onSave={(label) => {
+                const scope = { ...newScope(), scope_label: label };
+                setDirty(true);
+                setScopes((previous) => [...(previous ?? []), scope]);
+                setActiveKey(scope.key);
+                setAddingScope(false);
+              }}
+            />
+
+            {/* The quotation page's own Edit scope dialog: name, series and notes, staged. */}
+            {editingScopeKey && project.data && (() => {
+              const scope = (scopes ?? []).find((row) => row.key === editingScopeKey);
+              if (!scope) return null;
+              const savedRow = (quotations.data ?? []).find((row) => row.id === scope.id);
+              return (
+                <QuotationDialog
+                  project={project.data}
+                  quotation={
+                    {
+                      ...(savedRow ?? {}),
+                      id: scope.id ?? '',
+                      scope_label: scope.scope_label,
+                      series_id: scope.series_id || null,
+                      notes: scope.notes !== undefined ? scope.notes : (savedRow?.notes ?? null),
+                    } as ProjectQuotation
+                  }
+                  onSubmit={(body) =>
+                    updateScope(scope.key, {
+                      scope_label: body.scope_label,
+                      series_id: body.series_id ?? '',
+                      notes: body.notes,
+                    })
+                  }
+                  onDone={() => setEditingScopeKey(null)}
+                />
+              );
+            })()}
           </FormPanel>
 
           <FormPanel open={tab === 'cover-letter'} label="Cover letter">
@@ -608,142 +666,151 @@ function placeholderDocument(projectId: string): QuotationDocument {
   };
 }
 
-function ScopeSection({
-  index,
-  scope,
-  seriesOptions,
-  onChange,
-  onSeed,
+/**
+ * The Lines tab of the form: the quotation page's Lines tab from origin/main, moved here (#1341,
+ * round 3). The same scope strip (`QuotationScopeTabs`, with Add a scope at its end), the same
+ * scope card (name, outcome, series, Edit scope), and under it the same `QuotationVersionEditor`
+ * in its staged edit mode, bound to the same `useQuotationEditSession` handlers the quotation
+ * page's Edit used. Only one scope's editor is mounted at a time, exactly as there; the staged
+ * lines live in the session, so switching scope or tab loses nothing.
+ */
+function FormLines({
+  project,
+  scopes,
+  savedScopes,
+  quotations,
+  seriesNames,
+  activeKey,
+  onSelect,
+  scopeTotal,
+  edit,
+  canRemoveSaved,
+  onAddScope,
+  onEditScope,
   onRemove,
 }: {
-  index: number;
-  scope: FormScope;
-  seriesOptions: { value: string; label: string }[];
-  onChange: (patch: Partial<FormScope>) => void;
-  onSeed: (patch: Partial<FormScope>) => void;
-  onRemove?: () => void;
+  project: Project;
+  scopes: FormScope[];
+  savedScopes: QuotationScope[];
+  quotations: ProjectQuotation[];
+  seriesNames: Map<string, string>;
+  activeKey: string | null;
+  onSelect: (key: string) => void;
+  scopeTotal: (scope: FormScope) => string;
+  edit: ReturnType<typeof useQuotationEditSession>;
+  canRemoveSaved: boolean;
+  onAddScope: () => void;
+  onEditScope: (key: string) => void;
+  onRemove: (scope: FormScope) => void;
 }) {
-  const nameId = `quotation-scope-${scope.key}-name`;
-  const seriesId = `quotation-scope-${scope.key}-series`;
+  const active = scopes.find((scope) => scope.key === activeKey) ?? scopes[0] ?? null;
+  const savedRow = active?.id ? (quotations.find((row) => row.id === active.id) ?? null) : null;
 
-  return (
-    <section aria-label={`Scope ${index}`}>
+  // Whether any version of the open scope was sent: such a scope cannot be removed (#1341, owner
+  // on Q2: "yes can", while nothing in it has been issued). The same cached query its editor uses.
+  const versions = useQuotationVersions(active?.id ?? undefined);
+  const issued = (versions.data ?? []).some((version) => Boolean(version.is_issued));
+  const canRemove =
+    active !== null &&
+    (!active.id || (canRemoveSaved && Boolean(versions.data) && !issued));
+
+  /** The open scope's edit handles, bound to its key, exactly as the quotation page bound them. */
+  const { scopes: stagedScopes, seedScope, stageScope, toggleRemoved } = edit;
+  const activeKeyForEdit = active?.key ?? null;
+  const scopeEditing = React.useMemo<QuotationScopeEditing | null>(() => {
+    if (!activeKeyForEdit) return null;
+    const key = activeKeyForEdit;
+    return {
+      staged: stagedScopes[key]?.lines ?? null,
+      seed: (versionId, lines) => seedScope(key, versionId, lines),
+      stage: (lines) => stageScope(key, lines),
+      toggleRemoved: (lineKey) => toggleRemoved(key, lineKey),
+    };
+  }, [activeKeyForEdit, seedScope, stageScope, stagedScopes, toggleRemoved]);
+
+  if (!active) {
+    return (
       <Card>
-        <CardHeader className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle className="text-sm">
-            {scope.scope_label.trim() || `Scope ${index}`}
-          </CardTitle>
-          {onRemove && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={onRemove}
-            >
-              <Trash2 className="size-4" aria-hidden />
-              Remove scope
-            </Button>
-          )}
-        </CardHeader>
-        <CardContent className="min-w-0 space-y-4 py-5">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="min-w-0 space-y-1.5">
-              <Label htmlFor={nameId}>Scope name</Label>
-              <Input
-                id={nameId}
-                value={scope.scope_label}
-                maxLength={150}
-                placeholder="e.g. Townhouse, Guard house"
-                onChange={(event) =>
-                  onChange({ scope_label: event.target.value })
-                }
-              />
-            </div>
-            <div className="min-w-0 space-y-1.5">
-              <Label htmlFor={seriesId}>Series</Label>
-              <SearchableSelect
-                id={seriesId}
-                value={scope.series_id}
-                onChange={(value) => onChange({ series_id: value })}
-                options={seriesOptions}
-                clearable
-                placeholder="No series"
-                emptyMessage="No series configured yet"
-              />
-            </div>
-          </div>
-
-          {scope.id && !scope.seeded ? (
-            <SavedScopeLines scope={scope} onSeed={onSeed} />
-          ) : (
-            <>
-              {!scope.editable && (
-                <p className="text-xs text-muted-foreground">
-                  The customer holds this version, so its lines stay as issued.
-                </p>
-              )}
-              <QuotationLinesGrid
-                lines={scope.lines}
-                onChange={
-                  scope.editable ? (lines) => onChange({ lines }) : undefined
-                }
-                quotationId={scope.id}
-                seriesId={scope.series_id || null}
-                listingKey="projects.projects.view::project-quotation-lines"
-              />
-            </>
-          )}
+        <CardContent className="px-6 py-10 text-center">
+          <h3 className="text-sm font-semibold">No scopes on this quotation yet</h3>
+          <Button type="button" variant="outline" size="sm" className="mt-4" onClick={onAddScope}>
+            <Plus className="size-4" aria-hidden />
+            Add a scope
+          </Button>
         </CardContent>
       </Card>
-    </section>
-  );
-}
-
-/**
- * A saved scope's lines and whether they may change, read once from the server and handed to the
- * form. The version's own `is_editable` decides, never a local guess from its number.
- */
-function SavedScopeLines({
-  scope,
-  onSeed,
-}: {
-  scope: FormScope;
-  onSeed: (patch: Partial<FormScope>) => void;
-}) {
-  const versions = useQuotationVersions(scope.id ?? undefined);
-  const current =
-    (versions.data ?? []).find((version) => version.is_current) ?? null;
-  const lines = useQuotationLines(current?.id);
-
-  const noVersion = !versions.isLoading && !versions.isError && !current;
-  React.useEffect(() => {
-    // A scope with no version has nowhere to put a line: it is saved as named, lines untouched.
-    if (noVersion) {
-      onSeed({ lines: [], editable: false, seeded: true, issued: false });
-      return;
-    }
-    if (!current || !lines.data) return;
-    const sorted: QuotationLine[] = [...lines.data].sort(
-      (a, b) => a.sort_order - b.sort_order,
-    );
-    onSeed({
-      lines: sorted.map(lineToFormLine),
-      editable: Boolean(current.is_editable ?? current.is_current),
-      seeded: true,
-      // ANY version, not only the open one: a revision opened since does not change what the
-      // customer holds, and the server refuses the delete on the same rule.
-      issued: (versions.data ?? []).some((version) => Boolean(version.is_issued)),
-    });
-  }, [current, lines.data, noVersion, onSeed, versions.data]);
-
-  if (versions.isError || lines.isError) {
-    // Save stays off: sending this scope without its lines would be a guess about them.
-    return (
-      <p role="alert" className="text-sm text-destructive">
-        This scope&apos;s lines could not be loaded. Reload the page to try
-        again.
-      </p>
     );
   }
-  return <Skeleton className="h-32 w-full" />;
+
+  const strip: QuotationScope[] = scopes.map((scope, index) => {
+    const saved = savedScopes.find((row) => row.id === scope.id);
+    return {
+      id: scope.key,
+      scope_label: scopeTitle(scope, index),
+      sort_order: index,
+      outcome: saved?.outcome ?? 'open',
+      current_version_id: saved?.current_version_id ?? null,
+      current_version_no: saved?.current_version_no ?? null,
+      line_count: saved?.line_count ?? 0,
+      scope_total: scopeTotal(scope),
+    };
+  });
+  const seriesName = active.series_id ? seriesNames.get(active.series_id) : null;
+
+  return (
+    <div className="space-y-5">
+      <QuotationScopeTabs
+        scopes={strip}
+        activeScopeId={active.key}
+        onSelect={onSelect}
+        canEdit={project.can_edit}
+        onAddScope={onAddScope}
+      />
+
+      <section aria-label={scopeTitle(active, scopes.indexOf(active))}>
+        <Card>
+          <CardHeader className="flex flex-col items-start gap-3 border-b border-border sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <CardTitle className="min-w-0 break-words text-sm">
+                {scopeTitle(active, scopes.indexOf(active))}
+              </CardTitle>
+              {savedRow && <OutcomePill outcome={savedRow.outcome} />}
+              <span className="text-xs text-muted-foreground">{seriesName || 'No series'}</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => onEditScope(active.key)}
+              >
+                Edit scope
+              </Button>
+              {canRemove && (
+                <Button type="button" size="sm" variant="outline" onClick={() => onRemove(active)}>
+                  <Trash2 className="size-4" aria-hidden />
+                  Remove scope
+                </Button>
+              )}
+            </div>
+          </CardHeader>
+          {/* min-w-0 is load-bearing: CardContent is a flex item, and without it the line table
+              stretches the Card and the whole PAGE scrolls sideways at phone width. */}
+          <CardContent className="min-w-0 py-5">
+            {active.id && !savedRow ? (
+              <Skeleton className="h-64 w-full" />
+            ) : (
+              <QuotationVersionEditor
+                key={active.key}
+                project={project}
+                quotation={savedRow}
+                seriesId={active.series_id || null}
+                edit={scopeEditing}
+              />
+            )}
+          </CardContent>
+        </Card>
+      </section>
+    </div>
+  );
 }

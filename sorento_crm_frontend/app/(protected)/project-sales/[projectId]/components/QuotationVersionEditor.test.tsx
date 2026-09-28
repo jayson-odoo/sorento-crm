@@ -1,5 +1,5 @@
 /**
- * S3 + #1341 - QuotationVersionEditor (AC-E2, AC-E3, AC-E4, AC-E7), now a READ.
+ * S3 + S11 - QuotationVersionEditor (AC-E2, AC-E3, AC-E4, AC-E7).
  *
  * Two rules are pinned here.
  *
@@ -8,14 +8,15 @@
  * the customer already holds, so it renders read-only WITH the reason, not merely with its
  * buttons missing.
  *
- * The second is #1341's: the editor is a read, always. Editing a scope's lines happens in the
- * quotation form page ("Edit quotation means I edit the whole quotation"), whose line editor is
- * pinned in `QuotationLinesGrid.test.tsx` and `QuotationFormClient.test.tsx`. The lines here are
- * the system DataGrid.
+ * The second is S11's, and it replaces the per-row saving these specs used to assert. The editor
+ * no longer writes ANYTHING: without an edit session it is a clean read, and with one it stages.
+ * So every claim that used to end in "and it called updateQuotationLine" now ends in "and this is
+ * the body the one bulk write will carry", which is the same guarantee one level up. The write
+ * itself is the document screen's, and is pinned in `QuotationDocumentClient.test.tsx`.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   Project,
@@ -23,6 +24,11 @@ import type {
   QuotationLine,
   QuotationVersion,
 } from '../../_shared/types/project.types';
+import {
+  useQuotationEditSession,
+  type QuotationEditSession,
+} from '../quotation-documents/[documentId]/components/useQuotationEditSession';
+
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
     matches: false,
@@ -61,10 +67,6 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
   };
 });
 
-vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
-}));
-
 // The product picker hits the shared products `/select` endpoint when it opens. The rows it
 // returns are the ones a pick has to fill the line from, so the fetch is stubbed rather than
 // the component replaced.
@@ -101,7 +103,12 @@ vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-uom-select-qu
   }),
 }));
 
-import { QuotationVersionEditor, describeRecompute } from './QuotationVersionEditor';
+import {
+  QuotationVersionEditor,
+  describeRecompute,
+  stagedLinesToBody,
+  stagedScopeTotal,
+} from './QuotationVersionEditor';
 
 function project(overrides: Partial<Project> = {}): Project {
   return {
@@ -167,30 +174,122 @@ const VERSIONS = [
   version({ id: 'v2', version_no: 2, is_current: true, total_amount: '9000.00' }),
 ];
 
-function renderEditor(overrides: Partial<Project> = {}) {
+/**
+ * The document screen, reduced to the one thing the editor depends on: a real edit session,
+ * living OUTSIDE the editor.
+ *
+ * The real hook rather than a hand-rolled stub, because the round trip is the thing under test -
+ * the table reports, the session holds, and the editor is re-seeded from what the session holds.
+ * A stub that simply echoed would prove none of that.
+ */
+let session: QuotationEditSession | null = null;
+
+function Harness({
+  projectOverrides,
+  editing,
+  unsaved = false,
+}: {
+  projectOverrides: Partial<Project>;
+  editing: boolean;
+  /** A scope added on the quotation form and not saved yet (#1341, round 3). */
+  unsaved?: boolean;
+}) {
+  const held = useQuotationEditSession();
+  session = held;
+  const { begin, isEditing, scopes, seedScope, stageScope, toggleRemoved } = held;
+
+  React.useEffect(() => {
+    if (editing) begin();
+  }, [begin, editing]);
+
+  const edit = React.useMemo(
+    () =>
+      isEditing
+        ? {
+            staged: scopes[QUOTATION.id]?.lines ?? null,
+            seed: (versionId: string, lines: Parameters<typeof seedScope>[2]) =>
+              seedScope(QUOTATION.id, versionId, lines),
+            stage: (lines: Parameters<typeof stageScope>[1]) =>
+              stageScope(QUOTATION.id, lines),
+            toggleRemoved: (key: string) => toggleRemoved(QUOTATION.id, key),
+          }
+        : null,
+    [isEditing, scopes, seedScope, stageScope, toggleRemoved],
+  );
+
+  return (
+    <QuotationVersionEditor
+      project={project(projectOverrides)}
+      quotation={unsaved ? null : QUOTATION}
+      edit={edit}
+    />
+  );
+}
+
+function renderEditor(overrides: Partial<Project> = {}, editing = false, unsaved = false) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <QuotationVersionEditor project={project(overrides)} quotation={QUOTATION} />
+      <Harness projectOverrides={overrides} editing={editing} unsaved={unsaved} />
     </QueryClientProvider>,
   );
 }
 
-function footerText(): string {
-  return document.querySelector('tfoot')?.textContent ?? '';
+/**
+ * The screen in an open edit session, which is the only place cells exist.
+ *
+ * WAITING ON `Add a line` IS NOT ENOUGH, and that is what made this file the deploy gate's
+ * flakiest: the button belongs to the table's CHROME, which renders a commit BEFORE the rows do.
+ * `InlineLineTable` mirrors its `rows` prop into internal per-row state in an effect and skips
+ * any row that state has not reached yet, so on the commit where the lines query lands there is
+ * a real intermediate DOM with the toolbar, the header, the footer and NOT ONE line row - and no
+ * empty-state row either, because the table does have rows, it just cannot draw them yet. On an
+ * idle machine the next commit follows too fast to observe. On a loaded CI runner it does not,
+ * and whichever spec queried a cell first lost, which is why a DIFFERENT one failed each time.
+ *
+ * So wait for a line ROW. Every caller here opens a version that has at least one.
+ */
+async function renderEditing(overrides: Partial<Project> = {}) {
+  const result = renderEditor(overrides, true);
+  await screen.findByRole('button', { name: /Add a line/i });
+  await waitFor(() => expect(itemNumbers().length).toBeGreaterThan(0));
+  // The rows being drawn and the session holding them are two different things: staging a scope
+  // the session has not seeded yet is a no-op, so a keystroke landing in that gap is silently
+  // dropped. Specs here type immediately, so the seed is part of "ready", not an extra.
+  await waitFor(() => expect(session?.scopes[QUOTATION.id]?.lines ?? null).not.toBeNull());
+  return result;
 }
 
-/** The ITEM cell of every LINE row, skipping the section bands that span the table. */
+/** What the one bulk write would carry if Save were pressed right now. */
+function stagedBody() {
+  return stagedLinesToBody(session?.scopes[QUOTATION.id]?.lines ?? []);
+}
+
+/** What the table's footer says right now, add buttons and all. */
+function footerText(): string {
+  return screen.getByRole('table').querySelector('tfoot')?.textContent ?? '';
+}
+
+/** The ITEM cell of every LINE row, skipping the section headings that span the table. */
 function itemNumbers(): (string | null | undefined)[] {
-  return Array.from(document.querySelectorAll('tbody tr'))
+  return Array.from(screen.getByRole('table').querySelectorAll('tbody tr'))
     .filter((tr) => !tr.querySelector('td[colspan]'))
     .map((tr) => tr.querySelector('td')?.textContent);
 }
 
+/** Nothing left the browser. Every write path the editor used to own is asserted silent. */
+function expectNothingWritten() {
+  expect(createQuotationLine).not.toHaveBeenCalled();
+  expect(updateQuotationLine).not.toHaveBeenCalled();
+  expect(deleteQuotationLine).not.toHaveBeenCalled();
+  expect(replaceQuotationLines).not.toHaveBeenCalled();
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  session = null;
   listQuotationVersions.mockResolvedValue(VERSIONS);
   listQuotationLines.mockResolvedValue([line()]);
   reviseQuotation.mockResolvedValue(version({ id: 'v3', version_no: 3, is_current: true }));
@@ -215,25 +314,41 @@ describe('QuotationVersionEditor', () => {
     expect(listQuotationLines).toHaveBeenCalledWith('v2');
   });
 
-  it('is a read: nothing to type into and nothing to press on a line (#1341)', async () => {
+  it('reads as a document until somebody opens an edit session', async () => {
+    // The client's complaint in one assertion: a screen you are reading must not be a screen
+    // that saves under you. There is nothing to type into and nothing to press by accident.
     renderEditor();
 
     expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
     expect(screen.getByText('RM 900.00')).toBeInTheDocument();
-    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Qty on SRT-WC-01' })).toBeNull();
     expect(screen.queryByRole('button', { name: /Add a line/i })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Edit line/i })).toBeNull();
-    // The system DataGrid, not the hand-written line table.
-    expect(screen.getByRole('table').className).toMatch(/table-fixed/);
+    expect(screen.queryByRole('button', { name: /Remove SRT-WC-01/i })).toBeNull();
+  });
+
+  it('lets the current version be edited in place, without a dialog', async () => {
+    await renderEditing();
+
+    // The line IS the row: every field is a cell, so there is nothing to open.
+    expect(screen.getByRole('textbox', { name: 'Description on SRT-WC-01' })).toHaveValue(
+      'Wall-hung WC',
+    );
+    expect(screen.getByRole('textbox', { name: 'Qty on SRT-WC-01' })).toHaveValue('10.00');
+    expect(screen.queryByRole('button', { name: /Edit SRT-WC-01/i })).toBeNull();
+    // And no per-row save affordance, because there is one Save for the whole document now.
+    expect(screen.queryByRole('button', { name: /^Save SRT-WC-01$/ })).toBeNull();
   });
 
   it('turns a superseded version read-only and says where to edit instead', async () => {
-    renderEditor();
-    await screen.findByText('Wall-hung WC');
+    await renderEditing();
 
     fireEvent.click(screen.getByRole('button', { name: 'v1 (frozen)' }));
 
+    // One line, not a paragraph on why versions freeze: the consequence is the useful part.
     expect(await screen.findByText(/Frozen\. Make changes on v2\./i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Add a line/i })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Qty on SRT-WC-01' })).toBeNull();
+    // Frozen lines still read as money and quantities, not as raw API strings.
     expect(await screen.findByText('RM 900.00')).toBeInTheDocument();
   });
 
@@ -312,12 +427,98 @@ describe('QuotationVersionEditor', () => {
    * dropdown and the line kept insisting it was off-catalog, and non-standard, until the
    * save and the refetch. Both badges were being read off the stored line.
    */
+  it('clears Off-catalog the moment a product is picked, before any save', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({ product_code: null, product_id: null, description: 'BT009', is_non_standard: true }),
+    ]);
+    await renderEditing();
+
+    expect(screen.getByText('Off-catalog')).toBeInTheDocument();
+
+    // Pick a product on the line. `Off-catalog` means "no product is linked" and nothing
+    // else, so it is a fact about the draft and can be answered here.
+    fireEvent.click(screen.getByRole('combobox', { name: /^Product on / }));
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+
+    await waitFor(() => expect(screen.queryByText('Off-catalog')).not.toBeInTheDocument());
+  });
+
+  it('asks the server for a fresh verdict the moment the product changes - on the spot, not at save', async () => {
+    // The client's requirement verbatim: "cannot wait until I save then only compute". The
+    // verdicts still come from the SERVER (series membership counts nominated categories the
+    // browser never fetched), but they are asked for per settled draft, debounced, with the
+    // same functions the save runs. Here the picked product is outside the series, so the
+    // flag must appear BEFORE any save - the BM107 case.
+    listQuotationLines.mockResolvedValue([
+      line({
+        product_id: 'p-old',
+        product_code: 'SRTWC8608-SC',
+        is_non_standard: false,
+        is_below_floor: false,
+      }),
+    ]);
+    judgeQuotationLine.mockResolvedValue({
+      is_non_standard: true,
+      is_below_floor: false,
+      floor_value: null,
+      floor_level: null,
+    });
+    await renderEditing();
+
+    expect(screen.queryByText('Non-standard')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('combobox', { name: /^Product on / }));
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+
+    // Debounced 400ms, then judged. NOTHING was saved on the way to the badge.
+    expect(await screen.findByText('Non-standard', {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(judgeQuotationLine).toHaveBeenCalledWith(
+      QUOTATION.id,
+      expect.objectContaining({ product_id: 'p9' }),
+    );
+    expect(replaceQuotationLines).not.toHaveBeenCalled();
+    expect(updateQuotationLine).not.toHaveBeenCalled();
+  });
+
+  it('flags a price below the floor as it is typed, with the floor named', async () => {
+    listQuotationLines.mockResolvedValue([line({ unit_price: '900.00' })]);
+    judgeQuotationLine.mockResolvedValue({
+      is_non_standard: false,
+      is_below_floor: true,
+      floor_value: '94.00',
+      floor_level: 'series',
+    });
+    await renderEditing();
+
+    expect(screen.queryByText('Below floor')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Unit price on SRT-WC-01' }), {
+      target: { value: '90.00' },
+    });
+
+    expect(await screen.findByText('Below floor', {}, { timeout: 5000 })).toBeInTheDocument();
+    // The floor is NAMED, so the refusal can be argued with rather than merely obeyed.
+    expect(screen.getByText(/Floor is RM ?94\.00/)).toBeInTheDocument();
+    expect(judgeQuotationLine).toHaveBeenCalledWith(
+      QUOTATION.id,
+      expect.objectContaining({ unit_price: '90.00' }),
+    );
+  });
+
+
+  /**
+   * Search over the lines - a 59-line version cannot be found in by eye, and Ctrl-F only
+   * finds what is scrolled into the DOM.
+   *
+   * The design claim under test: a hidden row is HIDDEN, not removed. Item numbers hold and
+   * the footer total does not move, because "item 12" on the customer's paper must not
+   * become "item 3", and a total that shrank with the view would read as lines lost.
+   */
   it('filters the lines by search without renumbering items or changing the total', async () => {
     listQuotationLines.mockResolvedValue([
       line({ id: 'l1', product_code: 'SRT-WC-01', description: 'Wall-hung WC', sort_order: 0 }),
       line({
         id: 'l2',
-        product_id: 'p2',
         product_code: 'BM107',
         description: 'Basin tap body',
         unit_price: '100.00',
@@ -329,24 +530,43 @@ describe('QuotationVersionEditor', () => {
     renderEditor();
 
     await screen.findByText('Wall-hung WC');
-    const total = footerText();
+    const total = screen.getByRole('table').querySelector('tfoot')?.textContent ?? '';
 
-    fireEvent.change(screen.getByRole('searchbox', { name: /search lines/i }), {
+    fireEvent.change(screen.getByLabelText(/search lines/i), {
       target: { value: 'bm107' },
     });
 
     await waitFor(() => expect(screen.queryByText('Wall-hung WC')).not.toBeInTheDocument());
     expect(screen.getByText('Basin tap body')).toBeInTheDocument();
+    // The surviving row keeps its own item number: it is still line 2.
     expect(itemNumbers()).toEqual(['2']);
-    expect(footerText()).toBe(total);
+    // And the money did not move - the hidden line is hidden, not gone.
+    expect(screen.getByRole('table').querySelector('tfoot')?.textContent).toBe(total);
+  });
+
+  it('says the search found nothing rather than looking like an empty version', async () => {
+    listQuotationLines.mockResolvedValue([line()]);
+    renderEditor();
+
+    await screen.findByText('Wall-hung WC');
+    fireEvent.change(screen.getByLabelText(/search lines/i), {
+      target: { value: 'zzt-no-such-line' },
+    });
+
+    expect(
+      await screen.findByText(/no line matches "zzt-no-such-line"/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/frozen without any lines|nothing quoted yet/i)).not.toBeInTheDocument();
   });
 
   it('lays every field of a line out as a column, in the printed order', async () => {
-    renderEditor();
-    await screen.findByText('Wall-hung WC');
+    await renderEditing();
 
+    // The order matters: the row is filled in reading left to right the way the customer
+    // reads the printed quotation back.
     const printed = [
       'Item',
+      // Column B of the client's own issued quotation, immediately after ITEM (S21).
       'Photo',
       'Product',
       'Description',
@@ -360,9 +580,54 @@ describe('QuotationVersionEditor', () => {
       'Rate only',
       'Total',
     ];
+    for (const header of printed) {
+      expect(await screen.findByRole('columnheader', { name: header })).toBeInTheDocument();
+    }
     expect(
       screen.getAllByRole('columnheader').map((cell) => cell.textContent?.trim()),
-    ).toEqual(printed);
+    ).toEqual([...printed, 'Row actions']);
+    // Notes is a paragraph, so it keeps a home off the row rather than a six-character cell.
+    expect(screen.getByRole('button', { name: 'Notes on SRT-WC-01' })).toBeInTheDocument();
+  });
+
+  it('holds the printed columns as cells, and stages every one of them', async () => {
+    listQuotationLines.mockResolvedValue([
+      line({
+        brand: 'SORENTO',
+        technical_spec: 'Rimless, 4/2.6L dual flush',
+        complete_set: 'c/w seat cover',
+      }),
+    ]);
+
+    await renderEditing();
+
+    // What the server sent is on screen, under the name the RESPONSE uses for it.
+    expect(screen.getByRole('textbox', { name: 'Brand on SRT-WC-01' })).toHaveValue('SORENTO');
+    expect(screen.getByRole('textbox', { name: 'Tech spec on SRT-WC-01' })).toHaveValue(
+      'Rimless, 4/2.6L dual flush',
+    );
+    expect(screen.getByRole('textbox', { name: 'Complete set on SRT-WC-01' })).toHaveValue(
+      'c/w seat cover',
+    );
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Brand on SRT-WC-01' }), {
+      target: { value: 'MOCHA' },
+    });
+
+    // The REQUEST calls the brand `brand_snapshot` while the response calls it `brand`. The
+    // asymmetry is the API's, and the editor honours it rather than sending its own name.
+    await waitFor(() =>
+      expect(stagedBody()[0]).toMatchObject({
+        id: 'l1',
+        brand_snapshot: 'MOCHA',
+        technical_spec: 'Rimless, 4/2.6L dual flush',
+        complete_set: 'c/w seat cover',
+      }),
+    );
+    // The item number is the row's position, so there is nothing to send: a stored label
+    // could only ever disagree with what is printed.
+    expect(stagedBody()[0]).not.toHaveProperty('item_label');
+    expectNothingWritten();
   });
 
   it('prints the words on a rate-only line, and leaves it out of the footer sum', async () => {
@@ -373,31 +638,394 @@ describe('QuotationVersionEditor', () => {
         product_code: 'SRT-BIDET-09',
         unit_price: '500.00',
         quantity: '1.00',
+        // Stored and printed, because the customer IS being shown a rate. It just does not
+        // count: adding the sample's five alternates would have overstated it by RM 235,000.
         line_total: '500.00',
         is_rate_only: true,
-        sort_order: 1,
       }),
     ]);
-    renderEditor();
 
-    expect(await screen.findByText('rate only')).toBeInTheDocument();
+    await renderEditing();
+
+    expect(screen.getByText('rate only')).toBeInTheDocument();
+    // Never RM 0.00, which reads as free, and never blank, which reads as a fault.
+    expect(screen.queryByText('RM 0.00')).toBeNull();
+    expect(screen.queryByText('RM 500.00')).toBeNull();
+    // The footer under the money column is the other line alone, not RM 9,500.00.
     expect(footerText()).toContain('RM 9,000.00');
     expect(footerText()).not.toContain('9,500');
+    expect(
+      screen.getByRole('checkbox', { name: 'Rate only on SRT-BIDET-09' }),
+    ).toBeChecked();
   });
 
-  it('draws a section heading once, as a band above the line that carries it', async () => {
+  it('marks a line rate-only from its own row, and says so in the total column', async () => {
+    await renderEditing();
+
+    const toggle = screen.getByRole('checkbox', { name: 'Rate only on SRT-WC-01' });
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+
+    // The total column answers immediately, off the draft, before anything is saved.
+    expect(screen.getByText('rate only')).toBeInTheDocument();
+
+    await waitFor(() => expect(stagedBody()[0]).toMatchObject({ is_rate_only: true }));
+    expectNothingWritten();
+  });
+
+  it('opens a section with one heading above the line that carries it', async () => {
     listQuotationLines.mockResolvedValue([
       line({ band_label: 'BILL NO 3 PAGE 15/4' }),
       line({ id: 'l2', product_code: 'SRT-BIDET-09', sort_order: 10 }),
     ]);
-    renderEditor();
 
-    const bands = await screen.findAllByTestId('data-grid-group-header');
-    expect(bands).toHaveLength(1);
-    expect(bands[0]).toHaveTextContent('BILL NO 3 PAGE 15/4');
-    expect(itemNumbers()).toEqual(['1', '2']);
+    await renderEditing();
+
+    const heading = screen.getByRole('textbox', { name: 'Section heading on SRT-WC-01' });
+    expect(heading).toHaveValue('BILL NO 3 PAGE 15/4');
+    // ONCE, and only for the line that carries it: the line below is inside the section, it
+    // does not repeat the heading.
+    expect(screen.getAllByDisplayValue('BILL NO 3 PAGE 15/4')).toHaveLength(1);
+    expect(
+      screen.queryByRole('textbox', { name: 'Section heading on SRT-BIDET-09' }),
+    ).toBeNull();
+
+    // Directly above its own line, inside the same table, so the two cannot drift apart.
+    const bandRow = heading.closest('tr');
+    const lineRow = screen.getByRole('textbox', { name: 'Qty on SRT-WC-01' }).closest('tr');
+    expect(bandRow?.nextElementSibling).toBe(lineRow);
   });
 
+  it('opens a section from the footer, beside adding a line', async () => {
+    await renderEditing();
+
+    // Two buttons, side by side, where "Add a line" already was. The per-row icon that used to
+    // turn a line into a heading is gone: the client called it counterintuitive.
+    expect(screen.getByRole('button', { name: 'Add a line' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Add a section' }));
+
+    const heading = await screen.findByRole('textbox', {
+      name: 'Section heading on line 2',
+    });
+    await waitFor(() => expect(document.activeElement).toBe(heading));
+    fireEvent.change(heading, { target: { value: 'OPTIONAL ITEMS FOR OKU TOILET' } });
+    // The line under the heading is ready to fill in: a section IS a line.
+    fireEvent.change(screen.getByRole('textbox', { name: 'Description on line 2' }), {
+      target: { value: 'Grab bar' },
+    });
+
+    await waitFor(() =>
+      expect(stagedBody()[1]).toMatchObject({
+        band_label: 'OPTIONAL ITEMS FOR OKU TOILET',
+        description_snapshot: 'Grab bar',
+      }),
+    );
+    expectNothingWritten();
+  });
+
+  it('clears a band by emptying its heading', async () => {
+    listQuotationLines.mockResolvedValue([line({ band_label: 'OPTION' })]);
+
+    await renderEditing();
+
+    const heading = screen.getByRole('textbox', { name: 'Section heading on SRT-WC-01' });
+    fireEvent.change(heading, { target: { value: '' } });
+
+    // Null, not an empty string: the column is nullable and a blank heading is no heading.
+    await waitFor(() => expect(stagedBody()[0]).toMatchObject({ band_label: null }));
+  });
+
+  it("reads a frozen version's bands and rate-only lines without offering an editor", async () => {
+    listQuotationLines.mockResolvedValue([
+      line({
+        version_id: 'v1',
+        band_label: 'BILL NO 3 PAGE 15/4',
+        is_rate_only: true,
+      }),
+    ]);
+
+    await renderEditing();
+    fireEvent.click(screen.getByRole('button', { name: 'v1 (frozen)' }));
+
+    expect(await screen.findByText('BILL NO 3 PAGE 15/4')).toBeInTheDocument();
+    expect(screen.getByText('rate only')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('textbox', { name: 'Section heading on SRT-WC-01' }),
+    ).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: 'Rate only on SRT-WC-01' })).toBeNull();
+  });
+
+  it('moves the line total while the quantity is typed, before anything is saved', async () => {
+    await renderEditing();
+
+    const qty = screen.getByRole('textbox', { name: 'Qty on SRT-WC-01' });
+    fireEvent.change(qty, { target: { value: '3' } });
+
+    // In the ROW's own Total cell. The footer says the same figure now that it tracks the
+    // drafts too, so this pins where the number is rather than that it exists somewhere.
+    const body = screen.getByRole('table').querySelector('tbody') as HTMLElement;
+    expect(within(body).getByText('RM 2,700.00')).toBeInTheDocument();
+    expectNothingWritten();
+  });
+
+  it('stages an edited line with the body the bulk write will carry', async () => {
+    await renderEditing();
+
+    const qty = screen.getByRole('textbox', { name: 'Qty on SRT-WC-01' });
+    fireEvent.change(qty, { target: { value: '12' } });
+
+    await waitFor(() =>
+      expect(stagedBody()).toEqual([
+        {
+          // The id is what tells the whole-set write this line already exists. Without it the
+          // server would insert a second copy and delete the original.
+          id: 'l1',
+          product_id: null,
+          description_snapshot: 'Wall-hung WC',
+          unit_price: '900.00',
+          quantity: '12',
+          uom: null,
+          unit_type: null,
+          notes: null,
+          // Every printed column travels with the save, whether or not it was typed into: a body
+          // that omitted them would leave the document's own fields behind on an unrelated edit.
+          brand_snapshot: null,
+          technical_spec: null,
+          complete_set: null,
+          band_label: null,
+          is_rate_only: false,
+        },
+      ]),
+    );
+    expectNothingWritten();
+  });
+
+  it('stages an added line with no id, so the write reads it as new', async () => {
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
+    const description = await screen.findByRole('textbox', {
+      name: 'Description on line 2',
+    });
+    fireEvent.change(description, { target: { value: 'Bespoke vanity top' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Unit price on line 2' }), {
+      target: { value: '1250.00' },
+    });
+
+    await waitFor(() => expect(stagedBody()).toHaveLength(2));
+    expect(stagedBody()[1]).toEqual({
+      product_id: null,
+      description_snapshot: 'Bespoke vanity top',
+      unit_price: '1250.00',
+      quantity: '1',
+      uom: null,
+      unit_type: null,
+      notes: null,
+      brand_snapshot: null,
+      technical_spec: null,
+      complete_set: null,
+      band_label: null,
+      is_rate_only: false,
+    });
+    // Position in the array is the order, so there is no sort_order to disagree with it.
+    expect(stagedBody()[1]).not.toHaveProperty('sort_order');
+    expect(stagedBody()[1]).not.toHaveProperty('id');
+    expectNothingWritten();
+  });
+
+  it('marks the cell that stops an off-catalog line from being saved', async () => {
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
+    const description = await screen.findByRole('textbox', {
+      name: 'Description on line 2',
+    });
+    // Typed into, so it is real data rather than a mis-click, but it has neither a product
+    // nor a description to stand in for one. Marked as it is typed, not held back until Save:
+    // hunting for the bad row afterwards, in a scope of fifty, is the worse of the two.
+    fireEvent.change(screen.getByRole('textbox', { name: 'Qty on line 2' }), {
+      target: { value: '4' },
+    });
+
+    expect(await screen.findByText('Needed on an off-catalog line')).toBeInTheDocument();
+    expect(description).toHaveAttribute('aria-invalid', 'true');
+    expectNothingWritten();
+  });
+
+  it('leaves an added row nobody has typed into unmarked', async () => {
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add a line' }));
+    await screen.findByRole('textbox', { name: 'Description on line 2' });
+
+    // Empty is not wrong. Marking a row red the instant it appears would be the screen
+    // shouting at somebody for pressing the button it offered them.
+    expect(screen.queryByText('Needed on an off-catalog line')).toBeNull();
+  });
+
+  it('fills the line from the product that was picked', async () => {
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Product on SRT-WC-01' }));
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+
+    // One decision answers the rest of the row, off the product record rather than off memory.
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: 'Description on SRT-WC-01' })).toHaveValue(
+        'Vitreous china counter basin',
+      ),
+    );
+    expect(screen.getByRole('textbox', { name: 'Brand on SRT-WC-01' })).toHaveValue('SORENTO');
+    expect(screen.getByRole('combobox', { name: 'UOM on SRT-WC-01' })).toHaveTextContent('PCS');
+    // And the list price beside the unit price is the picked product's, at once: reading the
+    // saved row instead is what left "List RM 0.00" next to a real product.
+    expect(screen.getByText('List RM 560.00')).toBeInTheDocument();
+    // The trigger names the product that was PICKED. Nothing refetches during an edit session,
+    // so resolving it from the stored line would leave the old code on screen until Save.
+    expect(screen.getByRole('combobox', { name: 'Product on SRT-WC-01' })).toHaveTextContent(
+      'SRT-BASIN-02',
+    );
+    expectNothingWritten();
+  });
+
+  it("lets the picked product overwrite a description somebody typed", async () => {
+    // The client chose predictability: one product means one set of fields, every time,
+    // including over an edit made before the re-pick. The cost was stated and accepted.
+    await renderEditing();
+
+    const description = screen.getByRole('textbox', { name: 'Description on SRT-WC-01' });
+    fireEvent.change(description, { target: { value: 'Wording agreed with the QS' } });
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Product on SRT-WC-01' }));
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: 'Description on SRT-WC-01' })).toHaveValue(
+        'Vitreous china counter basin',
+      ),
+    );
+  });
+
+  it('numbers the items 1, 2, 3, 4 straight through the sections', async () => {
+    // Continuous within the SCOPE, not restarted per heading: that is how the customer's own
+    // bill of quantities reads, and a per-section restart is the easy thing to write by
+    // accident. Two sections of two lines read 1, 2 then 3, 4.
+    listQuotationLines.mockResolvedValue([
+      line({ id: 'l1', product_code: 'A-1', band_label: 'BILL NO 3', sort_order: 0 }),
+      line({ id: 'l2', product_code: 'A-2', sort_order: 10 }),
+      line({ id: 'l3', product_code: 'B-1', band_label: 'OPTIONAL ITEMS', sort_order: 20 }),
+      line({ id: 'l4', product_code: 'B-2', sort_order: 30 }),
+    ]);
+
+    await renderEditing();
+
+    expect(itemNumbers()).toEqual(['1', '2', '3', '4']);
+    // Nothing to type into: the number is the row's position, not a field.
+    expect(screen.queryByRole('textbox', { name: 'Item on A-1' })).toBeNull();
+  });
+
+  it('moves the footer total while a quantity is typed, before anything is saved', async () => {
+    await renderEditing();
+
+    const qty = screen.getByRole('textbox', { name: 'Qty on SRT-WC-01' });
+    expect(footerText()).toContain('RM 9,000.00');
+
+    fireEvent.change(qty, { target: { value: '3' } });
+
+    // The bottom line follows the cells above it. Off the STRINGS, to the cent.
+    expect(footerText()).toContain('RM 2,700.00');
+    expectNothingWritten();
+  });
+
+  it('drops a line out of the live total the moment it is marked rate only', async () => {
+    listQuotationLines.mockResolvedValue([
+      line(),
+      line({
+        id: 'l2',
+        product_code: 'SRT-BIDET-09',
+        unit_price: '500.00',
+        quantity: '1.00',
+        line_total: '500.00',
+      }),
+    ]);
+
+    await renderEditing();
+
+    expect(footerText()).toContain('RM 9,500.00');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Rate only on SRT-BIDET-09' }));
+
+    // The customer is still shown the rate; nobody adds it up. Same rule as the PDF.
+    expect(footerText()).toContain('RM 9,000.00');
+    expectNothingWritten();
+  });
+
+  it('leaves the staged set and the footer summing to the same figure', async () => {
+    // The header outside this editor sums the STAGED lines itself now, instead of being told a
+    // figure on the way in and having it cleared on the way out. One mechanism, so the claim
+    // worth pinning is that the two readings of the same drafts agree.
+    await renderEditing();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Qty on SRT-WC-01' }), {
+      target: { value: '3' },
+    });
+
+    await waitFor(() =>
+      expect(stagedScopeTotal(session?.scopes[QUOTATION.id]?.lines ?? [])).toBe('2700.00'),
+    );
+    expect(footerText()).toContain('RM 2,700.00');
+  });
+
+  it('strikes a removed line through instead of asking, and puts it back on request', async () => {
+    // Removing inside an edit session destroys nothing, so it asks nothing. The row stays where
+    // it is, struck through, because a removal that is invisible cannot be taken back.
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove SRT-WC-01' }));
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(await screen.findByText('Removed on save')).toBeInTheDocument();
+    expect(screen.getByText('Wall-hung WC')).toBeInTheDocument();
+    // Out of the money the moment it is marked: the footer states what will actually be charged.
+    expect(footerText()).toContain('RM 0.00');
+    // And out of the body the write would carry.
+    await waitFor(() => expect(stagedBody()).toEqual([]));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore SRT-WC-01' }));
+
+    await waitFor(() => expect(stagedBody()).toHaveLength(1));
+    expect(footerText()).toContain('RM 9,000.00');
+    expectNothingWritten();
+  });
+
+  it('offers no write affordance to a reader', async () => {
+    renderEditor({ can_edit: false });
+
+    expect(await screen.findByRole('button', { name: 'v2' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Revise/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Add a line/i })).toBeNull();
+  });
+
+  it('keeps a version the server froze read-only even inside an edit session', async () => {
+    // Edit is a screen state; `is_editable` is the server's answer. The screen state never wins.
+    listQuotationVersions.mockResolvedValue([
+      version({ id: 'v2', version_no: 2, is_current: true, is_issued: true, is_editable: false }),
+    ]);
+
+    renderEditor({}, true);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Qty on SRT-WC-01' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Add a line/i })).toBeNull();
+  });
+
+  /**
+   * S19 - the recompute control.
+   *
+   * The point is not that a request goes out; it is that the ANSWER is on screen. The
+   * client's own words were "a refresh button that recompute this", and a silent success
+   * toast over 46 corrected flags tells them nothing about what moved.
+   */
   it('re-checks the open version against today\'s master data and says what moved', async () => {
     recomputeQuotationVersion.mockResolvedValue({
       version_id: 'v2',
@@ -469,6 +1097,12 @@ describe('QuotationVersionEditor', () => {
 
     expect(await screen.findByRole('button', { name: 'v2' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Recheck alerts/i })).toBeNull();
+  });
+
+  it('disables the recheck while an edit session is open, so staged rows cannot go stale', async () => {
+    await renderEditing();
+
+    expect(screen.getByRole('button', { name: /Recheck alerts/i })).toBeDisabled();
   });
 
   it('explains the lines that stayed flagged because their product is unreadable here', async () => {
@@ -544,5 +1178,38 @@ describe('describeRecompute', () => {
     expect(describeRecompute({ ...base, changed_count: 2, floor_changed: 2 })).toBe(
       '2 lines picked up a different floor.',
     );
+  });
+});
+
+/**
+ * #1341 round 3: the quotation form's Lines tab reuses this editor, and a scope added on the form
+ * has no saved record yet. The one adaptation: it starts seeded with no lines and edits exactly
+ * like a saved scope, asking the server for nothing it cannot answer.
+ */
+describe('QuotationVersionEditor on a scope not saved yet (AC-QF073)', () => {
+  it('starts with no lines, stages an added line, and reads no version or verdict', async () => {
+    renderEditor({}, true, true);
+
+    await waitFor(() => expect(session?.scopes[QUOTATION.id]?.lines).toEqual([]));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add a line' }));
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Description on line 1' }), {
+      target: { value: 'Grab bar' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Unit price on line 1' }), {
+      target: { value: '80.00' },
+    });
+
+    await waitFor(() =>
+      expect(stagedBody()).toEqual([
+        expect.objectContaining({ description_snapshot: 'Grab bar', unit_price: '80.00' }),
+      ]),
+    );
+    expect(screen.getByText('Off-catalog')).toBeInTheDocument();
+    expect(listQuotationVersions).not.toHaveBeenCalled();
+    expect(listQuotationLines).not.toHaveBeenCalled();
+    expect(judgeQuotationLine).not.toHaveBeenCalled();
+    // A revise would write at once; the form never offers it.
+    expect(screen.queryByRole('button', { name: /Revise to/ })).toBeNull();
+    expectNothingWritten();
   });
 });
