@@ -19,6 +19,8 @@ export interface StockAsk {
   notified_agent: boolean;
   notify_skip_reason: string | null;
   state: StockAskState | string;
+  /** `console`: written by a chat console hand test (owner ruling 28 Sep 2026), not a dealer. */
+  source?: 'live' | 'console' | string;
   note: string | null;
   created_at: string;
   updated_at: string | null;

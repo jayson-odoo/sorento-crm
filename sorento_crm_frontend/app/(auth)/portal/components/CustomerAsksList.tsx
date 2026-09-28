@@ -11,9 +11,8 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
-import { AskNoteCell, AskStateCell } from '@/components/stock-asks/AskEditCells';
+import { AskedAtCell, AskNoteCell, AskStateCell } from '@/components/stock-asks/AskEditCells';
 import { SEARCH_DEBOUNCE_MS } from '@/hooks/useDebouncedSearch';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { toast } from '@/lib/toast';
 import {
   BRANCH_LABEL,
@@ -91,8 +90,8 @@ export function CustomerAsksList({ slug }: { slug?: string | null }) {
       {
         id: 'created_at',
         header: 'Asked at',
-        size: 175,
-        cell: ({ row }) => formatDateTimeInMalaysia(row.original.created_at),
+        size: 215,
+        cell: ({ row }) => <AskedAtCell ask={row.original} />,
       },
       {
         id: 'customer_name',

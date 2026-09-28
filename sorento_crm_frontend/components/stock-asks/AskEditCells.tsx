@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { STATE_OPTIONS, stateLabel, type StockAsk, type StockAskPatch, type StockAskState } from '@/lib/stock-asks';
 
 /**
@@ -80,5 +82,22 @@ export function AskNoteCell({
         className="h-8"
       />
     </>
+  );
+}
+
+/**
+ * When the ask was made. A chat console hand test (`source = console`) also carries a
+ * "Console" badge, so staff never mistake it for a dealer's real ask.
+ */
+export function AskedAtCell({ ask }: { ask: StockAsk }) {
+  const when = formatDateTimeInMalaysia(ask.created_at);
+  if (ask.source !== 'console') return <>{when}</>;
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="truncate">{when}</span>
+      <Badge variant="secondary" appearance="light" title="Written by a chat console hand test, not by a dealer">
+        Console
+      </Badge>
+    </span>
   );
 }

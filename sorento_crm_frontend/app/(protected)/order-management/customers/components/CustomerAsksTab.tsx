@@ -12,9 +12,8 @@ import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
-import { AskNoteCell, AskStateCell } from '@/components/stock-asks/AskEditCells';
+import { AskedAtCell, AskNoteCell, AskStateCell } from '@/components/stock-asks/AskEditCells';
 import { useHasPermission } from '@/hooks/usePermissions';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { BRANCH_LABEL, BRANCH_VARIANT, notifiedLabel, type StockAsk } from '@/lib/stock-asks';
 import { useCustomerAsksQuery, useUpdateAskMutation } from '../hooks/useCustomerAsks';
 
@@ -36,8 +35,8 @@ export function CustomerAsksTab({ customerId }: { customerId: string }) {
       {
         id: 'created_at',
         header: 'Asked at',
-        size: 175,
-        cell: ({ row }) => formatDateTimeInMalaysia(row.original.created_at),
+        size: 215,
+        cell: ({ row }) => <AskedAtCell ask={row.original} />,
       },
       {
         id: 'contact_name',

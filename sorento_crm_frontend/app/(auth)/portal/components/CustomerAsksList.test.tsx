@@ -99,6 +99,23 @@ describe('CustomerAsksList', () => {
     expect(screen.queryByText('ask-1')).not.toBeInTheDocument();
   });
 
+  // Owner ruling 28 Sep 2026: a chat console hand test writes asks rows too; they carry
+  // a "Console" badge so they are never mistaken for a dealer's real ask.
+  it('marks a console ask with a Console badge and a live ask with none', async () => {
+    listCustomerAsks.mockResolvedValue({
+      data: [
+        { ...ROW, source: 'console' },
+        { ...ROW, id: 'ask-2', product_code: 'SRT9999', source: 'live' },
+      ],
+      pagination: { total: 2, page: 1, limit: 20 },
+    });
+    render(<CustomerAsksList slug="ah-lim" />);
+    await waitFor(() => expect(screen.getByText('SRT9999')).toBeInTheDocument());
+    const badges = screen.getAllByText('Console');
+    expect(badges).toHaveLength(1);
+    expect(badges[0]).toHaveAttribute('title', 'Written by a chat console hand test, not by a dealer');
+  });
+
   it('shows an explicit empty state', async () => {
     listCustomerAsks.mockResolvedValue({ data: [], pagination: { total: 0, page: 1, limit: 20 } });
     render(<CustomerAsksList slug="ah-lim" />);
