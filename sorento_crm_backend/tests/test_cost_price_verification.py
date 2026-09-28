@@ -58,7 +58,7 @@ def test_setting_column_defaults_false_and_reaches_both_serialisers(cost_price_e
     updated = e.put_settings({"cost_price_verification_enabled": True})
     assert updated.status_code == 200, updated.text
 
-    assert e.db.query(AuditLog).filter(AuditLog.action == "COST_VERIFICATION_SETTING").count() == 1
+    assert e.db.query(AuditLog).filter(AuditLog.new_values["event"].astext == "COST_VERIFICATION_SETTING").count() == 1
 
     no_perm = e.user()
     e.as_user(no_perm)

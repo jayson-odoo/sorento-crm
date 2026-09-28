@@ -135,7 +135,7 @@ def test_impersonated_verifier_cannot_apply_own_upload(cost_price_env):
     uploaded = _upload_one_line(e, supplier, "ZZCPC-IMP-001", 120)
     set_id = uploaded["id"]
 
-    upload_audit = e.db.query(AuditLog).filter(AuditLog.action == "COST_SET_UPLOAD").one()
+    upload_audit = e.db.query(AuditLog).filter(AuditLog.new_values["event"].astext == "COST_SET_UPLOAD").one()
     assert upload_audit.user_id == admin["id"]
 
     submitted = e.submit(set_id)

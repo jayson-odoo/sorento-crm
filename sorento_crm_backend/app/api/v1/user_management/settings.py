@@ -840,8 +840,11 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         actor = get_actor(db)
         real_user_id = (actor.real_user_id or actor.user_id) if actor else None
         log_audit(
-            db, "system_settings", str(settings.id), "COST_VERIFICATION_SETTING",
-            new_values={"cost_price_verification_enabled": update_data["cost_price_verification_enabled"]},
+            db, "system_settings", str(settings.id), "UPDATE",
+            new_values={
+                "event": "COST_VERIFICATION_SETTING",
+                "cost_price_verification_enabled": update_data["cost_price_verification_enabled"],
+            },
             user_id=real_user_id,
         )
 

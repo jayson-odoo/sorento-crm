@@ -240,12 +240,12 @@ def test_daily_tick_updates_links_and_writes_one_audit_row(cost_price_env):
 
     from app.models.audit import AuditLog
 
-    tick_rows = e.db.query(AuditLog).filter(AuditLog.action == "SUPPLIER_COST_TICK").all()
+    tick_rows = e.db.query(AuditLog).filter(AuditLog.new_values["event"].astext == "SUPPLIER_COST_TICK").all()
     assert len(tick_rows) == 1, tick_rows
 
     again = refresh_prices_in_force(e.db, TODAY)
     assert again == 0
-    assert e.db.query(AuditLog).filter(AuditLog.action == "SUPPLIER_COST_TICK").count() == 1
+    assert e.db.query(AuditLog).filter(AuditLog.new_values["event"].astext == "SUPPLIER_COST_TICK").count() == 1
 
 
 def test_daily_tick_is_scheduled():
@@ -355,7 +355,7 @@ def test_hand_edit_add_change_delete_audited_and_gated(cost_price_env):
     deleted = e.delete_cost(link.id, cost_id)
     assert deleted.status_code == 200, deleted.text
 
-    edit_rows = e.db.query(AuditLog).filter(AuditLog.action == "SUPPLIER_COST_LIST_EDIT").count()
+    edit_rows = e.db.query(AuditLog).filter(AuditLog.new_values["event"].astext == "SUPPLIER_COST_LIST_EDIT").count()
     assert edit_rows == 3, edit_rows  # add, change, delete
 
 

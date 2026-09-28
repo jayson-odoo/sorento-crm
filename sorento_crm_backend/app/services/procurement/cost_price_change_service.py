@@ -436,8 +436,8 @@ def upload(
     from app.services.audit_service import log_audit
 
     log_audit(
-        db, "cost_price_change_sets", _u(cs.id), "COST_SET_UPLOAD",
-        new_values={"file_name": filename, "rows": parsed.total_rows},
+        db, "cost_price_change_sets", _u(cs.id), "IMPORT",
+        new_values={"event": "COST_SET_UPLOAD", "file_name": filename, "rows": parsed.total_rows},
         user_id=actor_id,
     )
     db.commit()
@@ -917,7 +917,8 @@ def patch_line(
             # J14/AC-AU-04: a manual map is a decision about WHICH product gets the
             # new price - the set's History tab must be able to say who chose it.
             log_audit(
-                db, "cost_price_change_sets", _u(cs.id), "COST_LINE_MAP",
+                db, "cost_price_change_sets", _u(cs.id), "UPDATE",
+                new_values={"event": "COST_LINE_MAP"},
                 description=f"{line.supplier_code} mapped to {product.product_code}",
                 user_id=actor_id,
             )
@@ -935,7 +936,8 @@ def patch_line(
         if line.skipped:
             reason = body.get("skip_reason") or line.skip_reason
             log_audit(
-                db, "cost_price_change_sets", _u(cs.id), "COST_LINE_SKIP",
+                db, "cost_price_change_sets", _u(cs.id), "UPDATE",
+                new_values={"event": "COST_LINE_SKIP"},
                 description=f"{line.supplier_code} skipped" + (f": {reason}" if reason else ""),
                 user_id=actor_id,
             )
@@ -1033,7 +1035,10 @@ def submit(db: Session, set_id: str, current_user: dict, *, request: Optional[Re
     cs.status = "pending_verification"
     cs.submitted_by_user_id = actor_id
     cs.submitted_at = datetime.utcnow()
-    log_audit(db, "cost_price_change_sets", _u(cs.id), "COST_SET_SUBMIT", user_id=actor_id)
+    log_audit(
+        db, "cost_price_change_sets", _u(cs.id), "UPDATE",
+        new_values={"event": "COST_SET_SUBMIT"}, user_id=actor_id,
+    )
     db.commit()
 
     _notify_users(
@@ -1083,7 +1088,8 @@ def decide(
         # the line row itself only carries the LATEST decision, not who made an
         # earlier one a return then re-decide overwrote.
         log_audit(
-            db, "cost_price_change_sets", _u(cs.id), "COST_LINE_DECISION",
+            db, "cost_price_change_sets", _u(cs.id), "UPDATE",
+            new_values={"event": "COST_LINE_DECISION"},
             description=f"{line.supplier_code}: {decision}" + (f" - {reason}" if reason else ""),
             user_id=actor_id,
         )
@@ -1131,7 +1137,8 @@ def decide_all(
         # J14/AC-AU-04: one row per line it decides - the same event `decide()`
         # writes for a single line, so "decide all" leaves the same trail.
         log_audit(
-            db, "cost_price_change_sets", _u(cs.id), "COST_LINE_DECISION",
+            db, "cost_price_change_sets", _u(cs.id), "UPDATE",
+            new_values={"event": "COST_LINE_DECISION"},
             description=f"{ln.supplier_code}: {decision}",
             user_id=actor_id,
         )
@@ -1167,7 +1174,10 @@ def return_set(
         {"decision": None, "decision_reason": None, "decided_by_user_id": None, "decided_at": None},
         synchronize_session=False,
     )
-    log_audit(db, "cost_price_change_sets", _u(cs.id), "COST_SET_RETURN", user_id=actor_id)
+    log_audit(
+        db, "cost_price_change_sets", _u(cs.id), "UPDATE",
+        new_values={"event": "COST_SET_RETURN"}, user_id=actor_id,
+    )
     db.commit()
 
     if cs.submitted_by_user_id:
@@ -1376,8 +1386,8 @@ def apply(db: Session, set_id: str, current_user: dict, *, request: Optional[Req
     db.flush()
 
     log_audit(
-        db, "cost_price_change_sets", _u(cs.id), "COST_SET_APPLY",
-        new_values={"verified": verified, "changes": changes_summary},
+        db, "cost_price_change_sets", _u(cs.id), "UPDATE",
+        new_values={"event": "COST_SET_APPLY", "verified": verified, "changes": changes_summary},
         user_id=actor_id,
     )
     db.commit()
@@ -1407,7 +1417,8 @@ def refresh_prices(
         line.stale_live_unit_cost = None
         line.stale_live_currency = None
     log_audit(
-        db, "cost_price_change_sets", _u(cs.id), "COST_SET_REFRESH_PRICES",
+        db, "cost_price_change_sets", _u(cs.id), "UPDATE",
+        new_values={"event": "COST_SET_REFRESH_PRICES"},
         user_id=_actor_id(request, current_user),
     )
     db.commit()
@@ -1445,7 +1456,9 @@ def get_history(db: Session, set_id: str) -> dict:
     return {
         "data": [
             {
-                "action": row.action,
+                # The named event rides in new_values (audit_logs_action_check admits
+                # only CREATE/READ/UPDATE/DELETE/IMPORT); older rows fall back to action.
+                "action": (row.new_values or {}).get("event") or row.action,
                 "actor_name": _display_name(db, row.user_id),
                 "at": row.changed_at.isoformat() if row.changed_at else None,
                 "summary": row.description,

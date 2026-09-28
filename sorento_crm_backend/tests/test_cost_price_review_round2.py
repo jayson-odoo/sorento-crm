@@ -571,7 +571,9 @@ def test_n2_apply_audit_names_the_product_and_the_dates(cost_price_env):
     ).json()["id"]
     assert e.apply(set_id).status_code == 200
 
-    row = e.db.query(AuditLog).filter_by(entity_id=set_id, action="COST_SET_APPLY").one()
+    row = e.db.query(AuditLog).filter(
+        AuditLog.entity_id == set_id, AuditLog.new_values["event"].astext == "COST_SET_APPLY"
+    ).one()
     change = row.new_values["changes"][0]
     assert change["product_code"] == "ZZCPC-AUD-1"
     assert (change["start_date"], change["end_date"]) == ("2099-01-01", "2099-12-31")

@@ -57,7 +57,7 @@ def test_named_events_written_for_upload_apply_submit_return(cost_price_env):
     set_id = upload.json()["id"]
 
     def _count(action):
-        return e.db.query(AuditLog).filter(AuditLog.action == action).count()
+        return e.db.query(AuditLog).filter(AuditLog.new_values["event"].astext == action).count()
 
     assert _count("COST_SET_UPLOAD") == 1
 
@@ -83,7 +83,7 @@ def test_named_events_written_for_upload_apply_submit_return(cost_price_env):
 
     applied = e.apply(set_id)
     assert applied.status_code == 200, applied.text
-    apply_row = e.db.query(AuditLog).filter(AuditLog.action == "COST_SET_APPLY").one()
+    apply_row = e.db.query(AuditLog).filter(AuditLog.new_values["event"].astext == "COST_SET_APPLY").one()
     new_values = apply_row.new_values or {}
     assert new_values.get("verified") is True
     assert new_values.get("changes") or new_values.get("lines")
@@ -102,7 +102,7 @@ def test_named_event_written_for_hand_edit(cost_price_env):
     r = e.post_cost(link.id, {"unit_cost": 90.0, "currency": "CNY", "start_date": None, "end_date": None})
     assert r.status_code == 201, r.text
 
-    assert e.db.query(AuditLog).filter(AuditLog.action == "SUPPLIER_COST_LIST_EDIT").count() == 1
+    assert e.db.query(AuditLog).filter(AuditLog.new_values["event"].astext == "SUPPLIER_COST_LIST_EDIT").count() == 1
 
 
 # --------------------------------------------------------------------------------- AC-AU-03
@@ -126,7 +126,7 @@ def test_apply_audit_rows_share_one_trace_id(cost_price_env):
     applied = e.apply(set_id)
     assert applied.status_code == 200, applied.text
 
-    apply_row = e.db.query(AuditLog).filter(AuditLog.action == "COST_SET_APPLY").one()
+    apply_row = e.db.query(AuditLog).filter(AuditLog.new_values["event"].astext == "COST_SET_APPLY").one()
     trace_id = apply_row.trace_id
     assert trace_id
 

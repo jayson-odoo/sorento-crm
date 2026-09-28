@@ -120,8 +120,8 @@ def refresh_prices_in_force(db: Session, day: Optional[date] = None) -> int:
 
     if changed_summary:
         log_audit(
-            db, "product_suppliers", "tick", "SUPPLIER_COST_TICK",
-            new_values={"day": day.isoformat(), "changes": changed_summary},
+            db, "product_suppliers", "tick", "UPDATE",
+            new_values={"event": "SUPPLIER_COST_TICK", "day": day.isoformat(), "changes": changed_summary},
         )
         db.commit()
     return len(changed_summary)
@@ -197,8 +197,11 @@ def create_cost(db: Session, link_id: str, body: dict, current_user: dict):
     db.flush()
     refresh_link(db, link)
     log_audit(
-        db, "product_supplier_costs", str(row.id), "SUPPLIER_COST_LIST_EDIT",
-        new_values={"unit_cost": float(unit_cost) if unit_cost is not None else None, "currency": row.currency},
+        db, "product_supplier_costs", str(row.id), "CREATE",
+        new_values={
+            "event": "SUPPLIER_COST_LIST_EDIT",
+            "unit_cost": float(unit_cost) if unit_cost is not None else None, "currency": row.currency,
+        },
         user_id=current_user.get("id"),
     )
     db.commit()
@@ -229,8 +232,11 @@ def update_cost(db: Session, link_id: str, cost_id: str, body: dict, current_use
     db.flush()
     refresh_link(db, link)
     log_audit(
-        db, "product_supplier_costs", str(row.id), "SUPPLIER_COST_LIST_EDIT",
-        new_values={"unit_cost": float(unit_cost) if unit_cost is not None else None, "currency": currency},
+        db, "product_supplier_costs", str(row.id), "UPDATE",
+        new_values={
+            "event": "SUPPLIER_COST_LIST_EDIT",
+            "unit_cost": float(unit_cost) if unit_cost is not None else None, "currency": currency,
+        },
         user_id=current_user.get("id"),
     )
     db.commit()
@@ -247,8 +253,8 @@ def delete_cost(db: Session, link_id: str, cost_id: str, current_user: dict) -> 
     db.flush()
     refresh_link(db, link)
     log_audit(
-        db, "product_supplier_costs", cost_id, "SUPPLIER_COST_LIST_EDIT",
-        new_values={"deleted": True}, user_id=current_user.get("id"),
+        db, "product_supplier_costs", cost_id, "DELETE",
+        new_values={"event": "SUPPLIER_COST_LIST_EDIT", "deleted": True}, user_id=current_user.get("id"),
     )
     db.commit()
 
