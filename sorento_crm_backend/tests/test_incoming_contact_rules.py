@@ -2,7 +2,8 @@
 quantity, and the packing list gate on the incoming routes.
 
 Plan: `documentation/plans/chatbot/PLAN-chatbot-eta-offset-per-contact-28sep.md`.
-UAC: `chatbot-eta-offset-per-contact-28sep-acceptance-criteria.md` (AC-EO1 to AC-EO9).
+UAC: `chatbot-eta-offset-per-contact-28sep-acceptance-criteria.md` (AC-EO1 to AC-EO9; the
+dealer view is AC-EO13 to AC-EO15).
 
 Postgres only, blank schema, every row seeded here (CI's database has none).
 """
@@ -43,7 +44,7 @@ from app.services.incoming_stock_service import CLEARANCE_KEYS
 from app.services.inventory_service import StockService
 from app.services.user_service import UserPermissionService
 
-from tests._mc_lookup_seed import product, stock
+from tests._mc_lookup_seed import customer, product, stock
 from tests._pg_fixture import blank_session, unique_code
 from tests.test_stock_availability_block import (
     _attachment,
@@ -720,3 +721,101 @@ def test_the_stock_ask_reads_the_switch_of_a_contact_asked_by_respond_io_id(db):
         requested_quantities={p.id: 150},
     )
     assert _entry(result, p.id)["eta"] == "28/10/2026"
+
+
+# ============================================================== dealer view (PR #1329 fix round)
+#
+# Owner hand test, 28 Sep 2026: a contact on the "Availability only" stock policy (a
+# dealer) is told the product code once, its distinct ETAs sorted, and who to ask. No
+# container, no quantity, no allocation, no packing list, no repeated rows.
+
+
+def _dealer(db, *, offset_applied=True, salesperson=None):
+    contact = _contact(db, offset_applied=offset_applied)
+    _policy_row(db, mode="availability", contact=contact)
+    if salesperson is not None:
+        from app.models.access import RespondContactCustomer
+        from app.models.sales_agent import SalesAgent
+
+        agent = SalesAgent(
+            id=str(uuid.uuid4()), sales_agent=unique_code("ZZTSA")[:30], person_label=salesperson
+        )
+        db.add(agent)
+        db.flush()
+        cust = customer(db, company_id=DEFAULT_COMPANY_ID)
+        cust.sales_agent_id = agent.id
+        db.add(
+            RespondContactCustomer(
+                contact_id=contact.id,
+                customer_id=cust.id,
+                company_id=DEFAULT_COMPANY_ID,
+                is_primary=True,
+            )
+        )
+    db.flush()
+    return contact
+
+
+def _second_shipment(db, p, *, eta=SHIP_ETA):
+    shipment = _incoming_shipment(db, eta=eta, attachment_id=_attachment(db).id)
+    shipment.shipping_container_number = unique_code("CONT")[:30]
+    _incoming_line(db, shipment_id=shipment.id, product_id=p.id, shipped=25)
+    db.flush()
+    return shipment
+
+
+def test_dealer_list_is_one_row_per_product_with_deduped_padded_etas(client, db):
+    p, _ = _seed(db)
+    _second_shipment(db, p)  # same ETA, another container: the owner's duplicate
+    _second_shipment(db, p, eta=date(2026, 12, 1))
+    body = _list(client, p, _dealer(db, salesperson="ZZT Sean"))
+    assert body["dealer_view"] is True
+    assert body["data"] == [{"product_code": p.product_code, "etas": [PADDED, "2026-12-06"]}]
+    assert body["salesperson_name"] == "ZZT Sean"
+
+
+def test_dealer_list_carries_no_container_quantity_allocation_or_file(client, db):
+    p, _ = _seed(db)
+    _second_shipment(db, p)
+    body = _list(client, p, _dealer(db))
+    keys = set(_walk_keys(body["data"]))
+    assert keys == {"product_code", "etas"}
+    assert "attachment" not in set(_walk_keys(body))
+
+
+def test_dealer_list_with_the_offset_off_reads_the_exact_date(client, db):
+    p, _ = _seed(db)
+    body = _list(client, p, _dealer(db, offset_applied=False))
+    assert body["data"][0]["etas"] == [EXACT]
+
+
+def test_dealer_with_no_salesperson_has_a_null_name(client, db):
+    p, _ = _seed(db)
+    body = _list(client, p, _dealer(db))
+    assert body["salesperson_name"] is None
+
+
+def test_dealer_by_product_is_the_same_view(client, db):
+    p, _ = _seed(db)
+    _second_shipment(db, p)
+    body = _by_product(client, p, _dealer(db, salesperson="ZZT Sean"))
+    assert body["dealer_view"] is True
+    assert body["data"] == [{"product_code": p.product_code, "etas": [PADDED]}]
+
+
+def test_a_non_dealer_contact_keeps_the_full_rows(client, db):
+    p, _ = _seed(db)
+    _second_shipment(db, p)
+    params = {"product_ids": p.product_code, "contact_id": _contact(db).id}
+    body = client.get("/api/v1/incoming-stock/list", params=params).json()
+    assert "dealer_view" not in body
+    assert len(body["data"]) == 2
+    assert all(row["lines"] for row in body["data"])
+
+
+def test_staff_without_a_contact_keep_the_full_rows(client, db):
+    p, _ = _seed(db)
+    _second_shipment(db, p)
+    body = client.get("/api/v1/incoming-stock/list", params={"product_ids": p.product_code}).json()
+    assert "dealer_view" not in body
+    assert len(body["data"]) == 2
