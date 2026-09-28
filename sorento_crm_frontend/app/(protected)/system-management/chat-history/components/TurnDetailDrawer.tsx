@@ -503,7 +503,13 @@ function MemorySection({ memory }: { memory: TurnDetail['memory'] }) {
       <dt className="text-muted-foreground">Current subject</dt>
       <dd className="text-muted-foreground">{subject ?? 'Not recorded on this turn.'}</dd>
       <dt className="text-muted-foreground">Conversation closed</dt>
-      <dd className="text-muted-foreground">{written ? written.summary : 'none this turn'}</dd>
+      <dd className="text-muted-foreground">
+        {written
+          ? written.domain
+            ? `${written.domain[0].toUpperCase()}${written.domain.slice(1)}: ${written.summary}`
+            : written.summary
+          : 'none this turn'}
+      </dd>
       <dt className="text-muted-foreground">Facts saved</dt>
       <dd className="text-muted-foreground">
         {factsSaved.length === 0 ? 'none this turn' : factsSaved.map(factSavedLabel).join(', ')}

@@ -41,6 +41,7 @@ import {
   searchUsualSiteOptions,
   type ChatbotFactSource,
   type ChatbotMemoryLevel,
+  type ContactChatbotEpisodeCurrent,
   type ContactChatbotFact,
   type ContactChatbotMemory,
   type ContactChatbotVocabularyEntry,
@@ -597,22 +598,28 @@ function ConversationsCard({
 }) {
   const episodes = memory?.episodes;
   const rows = useMemo(() => {
-    const currentRow = episodes?.current
-      ? [
-          {
-            id: '__current__',
-            date: episodes.current.started_at,
-            domains: episodes.current.domains,
-            summary: episodes.current.summary,
-            turn_count: episodes.current.turn_count,
-            close_reason: null as string | null,
-            first_turn_id: episodes.current.first_turn_id,
-            isCurrent: true,
-          },
-        ]
-      : [];
-    const closedRows = (episodes?.rows ?? []).map((row) => ({ ...row, isCurrent: false }));
-    return [...currentRow, ...closedRows];
+    const openRow = (current: ContactChatbotEpisodeCurrent | null | undefined, console: boolean) =>
+      current
+        ? [
+            {
+              id: console ? '__console_current__' : '__current__',
+              date: current.started_at,
+              domains: current.domains,
+              summary: current.summary,
+              turn_count: current.turn_count,
+              close_reason: null as string | null,
+              first_turn_id: current.first_turn_id,
+              console,
+              isCurrent: true,
+            },
+          ]
+        : [];
+    const closedRows = (episodes?.rows ?? []).map((row) => ({
+      ...row,
+      console: row.console === true,
+      isCurrent: false,
+    }));
+    return [...openRow(episodes?.current, false), ...openRow(episodes?.console_current, true), ...closedRows];
   }, [episodes]);
 
   const columns = useMemo<ColumnDef<(typeof rows)[number]>[]>(
@@ -621,16 +628,24 @@ function ConversationsCard({
         id: 'when',
         header: 'When',
         cell: ({ row }) =>
-          row.original.isCurrent ? (
-            <Badge variant="primary" appearance="light" size="sm">
-              Now
-            </Badge>
-          ) : (
-            <span className="truncate" title={formatDateTimeInMalaysia(row.original.date)}>
-              {formatDateTimeInMalaysia(row.original.date)}
-            </span>
-          ),
-        size: 150,
+          <span className="flex min-w-0 items-center gap-1.5">
+            {row.original.isCurrent ? (
+              <Badge variant="primary" appearance="light" size="sm">
+                Now
+              </Badge>
+            ) : (
+              <span className="truncate" title={formatDateTimeInMalaysia(row.original.date)}>
+                {formatDateTimeInMalaysia(row.original.date)}
+              </span>
+            )}
+            {row.original.console && (
+              <Badge variant="secondary" appearance="light" size="sm">
+                Console
+              </Badge>
+            )}
+          </span>
+        ),
+        size: 190,
       },
       {
         id: 'topic',
@@ -722,6 +737,7 @@ function ConversationsCard({
           {episodes && (
             <span className="text-xs text-muted-foreground">
               {episodes.kept} kept of {episodes.limit}
+              {episodes.console_kept ? `, ${episodes.console_kept} console` : ''}
             </span>
           )}
         </CardHeader>

@@ -448,14 +448,20 @@ class ContactService:
     _OPEN_TURNS_LIMIT = 50
 
     def _chatbot_episodes_summary(self, contact: RespondContact) -> dict:
-        from sqlalchemy import String, cast
-        from app.models.chatbot_turn import ChatbotTurn
         from app.models.conversation_frame import ConversationFrame
         from app.services.chatbot.turn.memory import KEEP_EPISODES
 
+        empty = {
+            "kept": 0,
+            "console_kept": 0,
+            "limit": KEEP_EPISODES,
+            "current": None,
+            "console_current": None,
+            "rows": [],
+        }
         respond_id = contact.respond_io_id
         if not respond_id:
-            return {"kept": 0, "limit": KEEP_EPISODES, "current": None, "rows": []}
+            return empty
         # Security review 26 Sep 2026 (B1): a `respond_io_id` shared by more than
         # one contact is not this contact's alone to read - refuse rather than
         # showing a namesake's conversations.
@@ -466,15 +472,30 @@ class ContactService:
                 respond_id,
                 contact.id,
             )
-            return {"kept": 0, "limit": KEEP_EPISODES, "current": None, "rows": []}
-        base_filter = (
-            ConversationFrame.contact_respond_id == respond_id,
-            ConversationFrame.is_test.is_(False),
+            return empty
+        # Fix lane round 3 (R1): both worlds. A console turn writes its own test
+        # frames (D14's third exception, Q15), and the owner hand-tests from the
+        # console, so the staff screen shows them too, each row marked `console`.
+        # The bot itself still never reads across worlds (`_memory_intake`).
+        kept = (
+            self.db.query(ConversationFrame)
+            .filter(
+                ConversationFrame.contact_respond_id == respond_id,
+                ConversationFrame.is_test.is_(False),
+            )
+            .count()
         )
-        kept = self.db.query(ConversationFrame).filter(*base_filter).count()
+        console_kept = (
+            self.db.query(ConversationFrame)
+            .filter(
+                ConversationFrame.contact_respond_id == respond_id,
+                ConversationFrame.is_test.is_(True),
+            )
+            .count()
+        )
         frames = (
             self.db.query(ConversationFrame)
-            .filter(*base_filter)
+            .filter(ConversationFrame.contact_respond_id == respond_id)
             .order_by(ConversationFrame.last_activity_at.desc())
             .limit(self._EPISODE_ROWS_LIMIT)
             .all()
@@ -488,36 +509,51 @@ class ContactService:
                 "turn_count": len(f.turn_ids or []),
                 "close_reason": f.close_reason,
                 "first_turn_id": (f.turn_ids or [None])[0],
+                "console": bool(f.is_test),
             }
             for f in frames
         ]
-        # N3: bounded by the newest `_EPISODE_ROWS_LIMIT` frames' own turn ids, not
-        # every closed frame ever written for this contact - the same trade-off the
-        # review named explicitly ("newest 10 frames... open turns limited").
-        already_closed_ids = [tid for f in frames for tid in (f.turn_ids or [])]
-        turn_filters = [
-            ChatbotTurn.contact_respond_id == respond_id,
-            ChatbotTurn.is_test.is_(False),
-        ]
-        if already_closed_ids:
-            turn_filters.append(~cast(ChatbotTurn.id, String).in_(already_closed_ids))
-        open_turns = (
-            self.db.query(ChatbotTurn)
-            .filter(*turn_filters)
-            .order_by(ChatbotTurn.created_at.asc())
-            .limit(self._OPEN_TURNS_LIMIT)
-            .all()
+        return {
+            "kept": kept,
+            "console_kept": console_kept,
+            "limit": KEEP_EPISODES,
+            "current": self._chatbot_open_conversation(respond_id, is_test=False),
+            "console_current": self._chatbot_open_conversation(respond_id, is_test=True),
+            "rows": rows,
+        }
+
+    def _chatbot_open_conversation(self, respond_id: str, *, is_test: bool) -> dict | None:
+        """The open conversation of one world: this contact's turns in no frame yet
+        (`memory.open_turns_newest`, the same reading the switch detector uses). R2
+        (fix lane round 3): `domains` is the current domain, the newest one a turn
+        planned, never an empty list while one exists."""
+        from app.models.chatbot_turn import ChatbotTurn
+        from app.services.chatbot.turn import memory as memory_mod
+        from app.services.chatbot.turn.episode_digest import digest, topic_domain
+
+        query = memory_mod._open_turns_query(
+            self.db, contact_respond_id=respond_id, is_test=is_test, exclude_turn_id=None
         )
-        current = None
-        if open_turns:
-            current = {
-                "turn_count": len(open_turns),
-                "first_turn_id": open_turns[0].id,
-                "started_at": open_turns[0].created_at.isoformat() if open_turns[0].created_at else None,
-                "summary": "",
-                "domains": [],
-            }
-        return {"kept": kept, "limit": KEEP_EPISODES, "current": current, "rows": rows}
+        turn_count = query.count()
+        if not turn_count:
+            return None
+        first = query.order_by(ChatbotTurn.created_at.asc()).first()
+        # N3: bounded, the newest turns only (their `trace` is the heavy column).
+        newest = memory_mod.open_turns_newest(
+            self.db, contact_respond_id=respond_id, is_test=is_test, limit=self._OPEN_TURNS_LIMIT
+        )
+        turn_dicts = [memory_mod._turn_to_digest_dict(r) for r in reversed(newest)]
+        domain = next(
+            (d for d in (topic_domain(t) for t in reversed(turn_dicts)) if d),
+            None,
+        )
+        return {
+            "turn_count": turn_count,
+            "first_turn_id": first.id if first is not None else None,
+            "started_at": first.created_at.isoformat() if first is not None and first.created_at else None,
+            "summary": digest(turn_dicts)["summary"] if turn_dicts else "",
+            "domains": [domain] if domain else [],
+        }
 
     def _chatbot_open_orders(self, contact: RespondContact) -> dict:
         from app.models.access import RespondContactCustomer

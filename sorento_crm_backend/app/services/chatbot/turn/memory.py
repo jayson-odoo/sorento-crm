@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.models.chatbot_turn import ChatbotTurn
 from app.models.conversation_frame import ConversationFrame
-from app.services.chatbot.turn.episode_digest import digest
+from app.services.chatbot.turn.episode_digest import digest, topic_domain
 from app.services.chatbot.turn.state import Profile
 
 #: Contract section 2 / PLAN 6.0 (round 3, AC-MEM051): the four values a context level
@@ -264,6 +264,128 @@ def write_episode_for_reset(
     db.commit()
 
     return db.query(ConversationFrame).filter(ConversationFrame.id == inserted_id).first()
+
+
+#: How many of the open conversation's newest turns the switch detector and the
+#: staff screen read (their `trace` documents are the heavy column). A run of more
+#: small-talk turns than this after the last business turn reads as no open domain,
+#: so it switches nothing - the safe side.
+OPEN_TOPIC_SCAN = 20
+
+
+def _open_turns_query(
+    db: Session, *, contact_respond_id: str, is_test: bool, exclude_turn_id: str | None
+) -> Any:
+    """This contact-and-world's turns in no frame yet: the open conversation. The same
+    world rules `write_episode_for_reset` applies (console turns only on the test side,
+    S15)."""
+    already_closed = (
+        select(func.unnest(ConversationFrame.turn_ids))
+        .where(
+            ConversationFrame.contact_respond_id == contact_respond_id,
+            ConversationFrame.is_test.is_(is_test),
+        )
+        .scalar_subquery()
+    )
+    query = db.query(ChatbotTurn).filter(
+        ChatbotTurn.contact_respond_id == contact_respond_id,
+        ChatbotTurn.is_test.is_(is_test),
+        ~cast(ChatbotTurn.id, String).in_(already_closed),
+    )
+    if exclude_turn_id is not None:
+        query = query.filter(ChatbotTurn.id != exclude_turn_id)
+    if is_test:
+        query = query.filter(ChatbotTurn.ingress == "console")
+    return query
+
+
+def open_turns_newest(
+    db: Session,
+    *,
+    contact_respond_id: str,
+    is_test: bool,
+    exclude_turn_id: str | None = None,
+    limit: int = OPEN_TOPIC_SCAN,
+) -> list[ChatbotTurn]:
+    """The open conversation's newest `limit` turns, newest first."""
+    return (
+        _open_turns_query(
+            db, contact_respond_id=contact_respond_id, is_test=is_test, exclude_turn_id=exclude_turn_id
+        )
+        .order_by(ChatbotTurn.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def open_topic_domain(
+    db: Session, *, contact_respond_id: str, is_test: bool, exclude_turn_id: str | None = None
+) -> str | None:
+    """The open conversation's current domain: its newest turn that planned one (fix
+    lane round 3, R1 and R2). None when the open turns planned no domain at all."""
+    for row in open_turns_newest(
+        db, contact_respond_id=contact_respond_id, is_test=is_test, exclude_turn_id=exclude_turn_id
+    ):
+        domain = topic_domain(_turn_to_digest_dict(row))
+        if domain:
+            return domain
+    return None
+
+
+#: R3 (fix lane round 3): lane A's graceful fallback for a history question with
+#: memory on. It names what memory holds; the full list reply is S4 (lane B).
+HISTORY_REPLY_LEAD = "Here is what I remember of our chats:"
+HISTORY_REPLY_NOW = "- Now: {summary}"
+HISTORY_REPLY_EARLIER = "- Earlier: {summary}"
+HISTORY_REPLY_TAIL = "Tell me which one to pick up and I will continue from there."
+HISTORY_REPLY_NOTHING = (
+    "I do not have any earlier conversation with you on record yet. "
+    "What would you like to check?"
+)
+#: Closed episodes named in the fallback, newest first (the same three the parser's
+#: L4 layer reads).
+HISTORY_REPLY_EPISODES = 3
+
+
+def history_reply(
+    db: Session, *, contact_respond_id: str, is_test: bool, current_turn_id: str | None
+) -> str:
+    """The fallback text: the open conversation (a digest of its turns, the current one
+    excluded) and the newest closed episodes of this contact and world."""
+    open_rows = list(
+        reversed(
+            open_turns_newest(
+                db,
+                contact_respond_id=contact_respond_id,
+                is_test=is_test,
+                exclude_turn_id=current_turn_id,
+            )
+        )
+    )
+    open_summary = None
+    if open_rows:
+        open_digest = digest([_turn_to_digest_dict(r) for r in open_rows])
+        # Only when it names something: a digest of pure small talk says nothing.
+        if open_digest.get("asks") and any(
+            a.get("domain") or a.get("entities") for a in open_digest["asks"]
+        ):
+            open_summary = open_digest.get("summary")
+    frames = (
+        db.query(ConversationFrame)
+        .filter(
+            ConversationFrame.contact_respond_id == contact_respond_id,
+            ConversationFrame.is_test.is_(is_test),
+            ConversationFrame.status == "closed",
+        )
+        .order_by(ConversationFrame.last_activity_at.desc())
+        .limit(HISTORY_REPLY_EPISODES)
+        .all()
+    )
+    lines = [HISTORY_REPLY_NOW.format(summary=open_summary)] if open_summary else []
+    lines.extend(HISTORY_REPLY_EARLIER.format(summary=f.summary) for f in frames if f.summary)
+    if not lines:
+        return HISTORY_REPLY_NOTHING
+    return "\n".join([HISTORY_REPLY_LEAD, *lines, "", HISTORY_REPLY_TAIL])
 
 
 # `recall`, `_by_recency`, `_similarity_of_frame`, `_frame_out` and `episodes_block`

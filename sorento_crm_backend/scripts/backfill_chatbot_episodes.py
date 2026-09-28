@@ -2,7 +2,9 @@
 lane A, contract section 3 / PLAN-chatbot-memory-26sep.md section 5.3).
 
 For each contact, walks all `is_test = false` turns in order and closes an episode at
-every turn whose `apply` verdict carries `topic_reset: true` - the SAME writer the live
+every turn that switches topic (`episode_digest.close_trigger`: `topic_reset: true`, or a
+planned domain other than the open conversation's newest one, fix lane round 3) - the
+SAME rule and the SAME writer the live
 engine calls (`app.services.chatbot.turn.memory.write_episode_for_reset`), so the
 backfill and the live path can never disagree on a summary, entities or turn_ids for
 the identical range (AC-MEM029): there is only one writer, and only one `digest()` it
@@ -29,6 +31,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models.chatbot_turn import ChatbotTurn
 from app.models.conversation_frame import ConversationFrame
+from app.services.chatbot.turn import episode_digest
 from app.services.chatbot.turn import memory as memory_mod
 
 #: The old placeholder writer's summary (`engine.py::_write_episode`, retired by this
@@ -45,21 +48,26 @@ def _live_contacts(db: Session) -> list[str]:
     return [r[0] for r in rows if r[0]]
 
 
-def _has_topic_reset(turn: ChatbotTurn) -> bool:
-    """A reset the live engine would close an episode at: `topic_reset: true`, and not
-    while a human has the chat (`engine.py`'s same guard; reviewer pass at d89110c0,
-    S16)."""
-    envelope = turn.envelope if isinstance(turn.envelope, dict) else {}
-    if memory_mod.contact_is_human_intervened(envelope.get("contact")):
-        return False
-    trace = turn.trace if isinstance(turn.trace, list) else []
-    for record in trace:
-        if not isinstance(record, dict) or record.get("kind") != "apply":
-            continue
-        verdict = record.get("verdict")
-        if isinstance(verdict, dict) and verdict.get("topic_reset") is True:
-            return True
-    return False
+def _topic_switches(turns: list[ChatbotTurn]) -> list[ChatbotTurn]:
+    """The turns the live engine would close an episode at, oldest first: the same
+    `episode_digest.close_trigger` over each turn's `apply` record, with the open
+    domain carried the way the engine reads it (the newest planned domain since the
+    last switch, the switching turn's own included), and never while a human has the
+    chat (`engine.py`'s same guard; reviewer pass at d89110c0, S16)."""
+    switches: list[ChatbotTurn] = []
+    open_domain: str | None = None
+    for turn in turns:
+        as_dict = memory_mod._turn_to_digest_dict(turn)
+        domain = episode_digest.topic_domain(as_dict)
+        envelope = turn.envelope if isinstance(turn.envelope, dict) else {}
+        human = memory_mod.contact_is_human_intervened(envelope.get("contact"))
+        trigger = episode_digest.close_trigger(episode_digest.turn_verdict(as_dict), domain, open_domain)
+        if trigger is not None and not human:
+            switches.append(turn)
+            open_domain = domain
+        elif domain:
+            open_domain = domain
+    return switches
 
 
 def _delete_placeholders(db: Session, contact_respond_id: str) -> int:
@@ -120,7 +128,7 @@ def backfill(db: Session) -> dict[str, int]:
             .order_by(ChatbotTurn.created_at.asc())
             .all()
         )
-        resets = [turn for turn in turns if _has_topic_reset(turn)]
+        resets = _topic_switches(turns)
         frames_rebuilt += _drop_frames_spanning_a_reset(
             db, contact_respond_id, {str(turn.id) for turn in resets}
         )

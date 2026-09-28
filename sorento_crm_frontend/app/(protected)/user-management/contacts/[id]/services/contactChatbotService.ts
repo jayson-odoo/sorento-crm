@@ -99,6 +99,8 @@ export interface ContactChatbotEpisodeRow {
   turn_count: number;
   close_reason: string;
   first_turn_id: string;
+  /** A console (test) conversation, written by the Chatbot Console, never read by live turns. */
+  console?: boolean;
 }
 
 export interface ContactChatbotOpenOrderRow {
@@ -125,8 +127,12 @@ export interface ContactChatbotMemory {
   // empty list (which would read as "no conversations" rather than "no access").
   episodes: {
     kept: number;
+    /** Closed console conversations kept (their own newest 20). */
+    console_kept?: number;
     limit: number;
     current: ContactChatbotEpisodeCurrent | null;
+    /** The console's own open conversation, when the console has turns in no episode yet. */
+    console_current?: ContactChatbotEpisodeCurrent | null;
     rows: ContactChatbotEpisodeRow[];
   } | null;
   open_orders: {

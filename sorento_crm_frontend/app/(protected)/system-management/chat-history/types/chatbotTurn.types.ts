@@ -396,6 +396,10 @@ export interface TurnDetailMemoryEpisodeWritten {
   turn_count: number;
   close_reason: string;
   summary: string;
+  /** The closed conversation's topic (its first planned domain); absent on older turns. */
+  domain?: string | null;
+  /** `topic_reset` (the parser's) or `domain_switch` (a new domain); absent on older turns. */
+  trigger?: string | null;
 }
 
 export interface TurnDetailMemoryEpisodes {

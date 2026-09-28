@@ -123,6 +123,40 @@ def _turn_domain(turn: dict[str, Any]) -> str | None:
     return domains[0] if domains else None
 
 
+def turn_verdict(turn: dict[str, Any]) -> dict[str, Any]:
+    """The parser verdict a turn's `apply` record carries (`{}` when it has none)."""
+    return _verdict(turn)
+
+
+def topic_domain(turn: dict[str, Any]) -> str | None:
+    """The domain a turn's PLAN acted on, off its `apply` record: the reading the
+    topic-switch detector compares (fix lane round 3, R1). The plan, not the parser's
+    `domain_hint`: a history question or small talk can carry a hint ("product") while
+    planning no domain at all, and must never read as a switch."""
+    domains = _plan(turn).get("domains") or []
+    return str(domains[0]) if domains else None
+
+
+def close_trigger(verdict: dict[str, Any], domain: str | None, open_domain: str | None) -> str | None:
+    """Why this turn closes the open conversation, or None when it does not (Q2 ruling:
+    a conversation ends on a topic switch only). Two readings of a switch, one rule for
+    the live engine and the backfill:
+
+    * `topic_reset`: the parser says the message drops the subject ("never mind").
+    * `domain_switch`: the turn plans a domain and the open conversation's newest
+      planned domain is a different one ("check stock X" then "incoming X"). The
+      parser's `topic_reset` stays false there, because the product is the same
+      (owner hand test, 28 Sep 2026), so the flag alone never closed it.
+
+    A turn that plans no domain (small talk, a history question, a menu) never
+    switches; neither does one with no open domain to switch from."""
+    if verdict.get("topic_reset") is True:
+        return "topic_reset"
+    if domain and open_domain and domain != open_domain:
+        return "domain_switch"
+    return None
+
+
 def _entity_token(value: Any) -> str:
     """Whitespace-collapsed and capped at `_ENTITY_TOKEN_CHAR_CAP` (S2) - a
     `canonical_code` is already a short catalog code, but `raw` is whatever the
@@ -273,6 +307,10 @@ def _summary(turns: list[dict[str, Any]], asks: list[dict[str, Any]], offers: li
         entities_words = ", ".join(ask["entities"])
         domain_words = ask["domain"] or ""
         subject = " ".join(w for w in (domain_words, entities_words) if w)
+        if not subject and ask["outcome"] in ("answered", "asked_back"):
+            # A menu or a history question names nothing: a bare "(asked back)" says
+            # nothing a staff reader or the parser can use (fix lane round 3).
+            continue
         outcome_word = _OUTCOME_WORDS.get(ask["outcome"], ask["outcome"])
         clauses.append(f"{subject} ({outcome_word})".strip())
 

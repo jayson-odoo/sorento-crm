@@ -2188,6 +2188,28 @@ def _run_stages(  # noqa: PLR0915
             branch_kind = "demand_qty" if _demand_qty_missing(verdict) else "stock_denied"
         else:
             branch_kind = turn_route(plan)
+
+        # Fix lane round 3 (R3): with memory on, a history question ("what did I
+        # ask") gets lane A's graceful fallback naming what memory holds, never the
+        # clarifier's small talk or the domain menu. The full list reply is S4.
+        history_reply_text: str | None = None
+        if (
+            verdict.get("message_type") == "history_question"
+            and memory_intake["effective_level"] != "off"
+            and branch_kind in ("low_signal", "clarify_menu")
+            and plan.ask is None
+        ):
+            try:
+                history_reply_text = memory_mod.history_reply(
+                    db,
+                    contact_respond_id=contact_respond_id,
+                    is_test=dry_run,
+                    current_turn_id=turn_id,
+                )
+            except Exception:  # noqa: BLE001 - the clarifier still answers
+                logger.warning("chatbot: the history reply did not build", exc_info=True)
+            if history_reply_text is not None:
+                branch_kind = "low_signal"
         item = _stamp_item(access, branch_kind, {})
 
         # Owner ruling, hand pass 10 (21 Sep 2026, `test_rearch_r10_handpass10_
@@ -2214,11 +2236,26 @@ def _run_stages(  # noqa: PLR0915
         # world; every other dry run (clone/replay/harness) writes nothing.
         is_console_dry_run = dry_run and envelope.ingress == "console"
         written_frame = None
-        if (
-            verdict.get("topic_reset") is True
-            and (not dry_run or is_console_dry_run)
-            and not _is_human_intervened(envelope)
-        ):
+        # Fix lane round 3 (R1, owner hand test 28 Sep 2026): the parser's
+        # `topic_reset` alone never closed "check stock X" then "incoming X" (same
+        # product, so it reads as a follow-up). A turn whose plan names a different
+        # domain from the open conversation's newest one is the other switch
+        # (`episode_digest.close_trigger`, the backfill's same rule).
+        this_domain = str(plan.domains[0]) if plan.domains else None
+        may_write_episode = (not dry_run or is_console_dry_run) and not _is_human_intervened(envelope)
+        open_domain = None
+        if may_write_episode and this_domain and verdict.get("topic_reset") is not True:
+            try:
+                open_domain = memory_mod.open_topic_domain(
+                    db,
+                    contact_respond_id=contact_respond_id,
+                    is_test=dry_run,
+                    exclude_turn_id=turn_id,
+                )
+            except Exception:  # noqa: BLE001 - a lost episode is never a lost turn
+                logger.warning("chatbot: the open topic read did not run", exc_info=True)
+        close_trigger = episode_digest_mod.close_trigger(verdict, this_domain, open_domain)
+        if close_trigger is not None and may_write_episode:
             try:
                 written_frame = memory_mod.write_episode_for_reset(
                     db,
@@ -2239,6 +2276,8 @@ def _run_stages(  # noqa: PLR0915
                 "turn_count": len(written_frame.turn_ids or []),
                 "close_reason": written_frame.close_reason,
                 "summary": written_frame.summary,
+                "trigger": close_trigger,
+                "domain": written_frame.domain,
             }
             if written_frame is not None
             else None
@@ -2346,7 +2385,7 @@ def _run_stages(  # noqa: PLR0915
         clarifier_prompt: dict[str, Any] | None = None
         clarifier_config: Any = None
         clarifier_setup_error: str | None = None
-        if branch_kind == "low_signal" and completes_here:
+        if branch_kind == "low_signal" and completes_here and history_reply_text is None:
             try:
                 resolved_for_prompt = casual.resolve_for_prompt(db, ctx=ctx)
                 clarifier_prompt = casual.construct_user_prompt(ctx, resolved_for_prompt)
@@ -3207,6 +3246,7 @@ def _run_stages(  # noqa: PLR0915
             remembered_before=remembered_before,
             contact_respond_id=contact_respond_id,
             recalled=recalled,
+            fixed_reply=history_reply_text,
         )
 
     return TurnResult(
@@ -4046,8 +4086,12 @@ def _run_casual_lane(
     remembered_before: dict[str, Any] | None = None,
     contact_respond_id: str | None = None,
     recalled: list[dict[str, Any]] | None = None,
+    fixed_reply: str | None = None,
 ) -> TurnResult:
     """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
+
+    `fixed_reply` (fix lane round 3, R3) is a history question's memory fallback,
+    already built off the database: the clarifier is not called at all.
 
     Split out of `_run_stages` so the "no DB session across LLM I/O" rule is visible in the
     signature rather than in a comment: this function takes a `session_factory`, never a
@@ -4070,7 +4114,10 @@ def _run_casual_lane(
     # a success, close the row `done`, and leave `error` as "" - a turn that failed,
     # recorded as fine, with nothing on the trace screen to say otherwise.
     failed: str | None = setup_error
-    if failed is not None:
+    if fixed_reply is not None:
+        failed = None
+        text = fixed_reply
+    elif failed is not None:
         # SETUP failure (the resolver, the registry, the AI config, the API key). The
         # customer gets a FIXED sentence, never `str(exc)`: these messages carry provider
         # detail and configuration names, and none of that belongs in a WhatsApp reply.
@@ -4114,10 +4161,15 @@ def _run_casual_lane(
         summary=(
             _casual_failure_summary(failed, setup_error)
             if failed is not None
+            else "The history question was answered from memory."
+            if fixed_reply is not None
             else "The clarifier wrote small talk or one clarifying question."
         ),
         why=(
-            "The turn carried no business question to look up, so the clarifier writes "
+            "A history question with memory on is answered from the contact's open and "
+            "closed conversations."
+            if fixed_reply is not None
+            else "The turn carried no business question to look up, so the clarifier writes "
             "the reply."
         ),
         facts={
