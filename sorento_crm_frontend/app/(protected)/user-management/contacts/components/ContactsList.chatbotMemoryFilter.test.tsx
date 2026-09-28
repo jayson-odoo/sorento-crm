@@ -25,6 +25,17 @@ vi.mock('@/hooks/useRespondContactOutbound', () => ({
   }),
 }));
 
+// main's #1306 made ContactsList read `users.view` / `users.add` and mount the
+// "Add user" dialog, which reads the session even while closed; stubbed the same
+// way ContactsList.test.tsx does, so no SessionProvider is needed here.
+vi.mock('next-auth/react', () => ({
+  useSession: () => ({ data: { user: { email: 'admin@zzt.test' } } }),
+}));
+vi.mock('@/lib/is-superadmin', () => ({ isSuperadminUser: () => false }));
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => false,
+}));
+
 vi.mock('@/components/contacts/PortalLinkButton', () => ({ default: () => null }));
 vi.mock('@/services/contactImpersonationService', () => ({
   startContactImpersonation: vi.fn(),
