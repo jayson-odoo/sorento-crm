@@ -1,0 +1,42 @@
+{
+  "rank_by": "quantity",
+  "basis": "delivered",
+  "group": "item",
+  "n": 3,
+  "date_from": "2026-01-01",
+  "date_to": "2026-12-31",
+  "filters": {
+    "customer_name": null,
+    "category_name": "KITCHEN SINK",
+    "sales_agent": null,
+    "channel": null,
+    "dealer_scoped": false
+  },
+  "total_count": 42,
+  "rows": [
+    {
+      "rank": 1,
+      "code": "SRTWT7445",
+      "quantity": 1240,
+      "amount": 86400.0
+    },
+    {
+      "rank": 2,
+      "code": "SRTWT7446",
+      "quantity": 760,
+      "amount": 41800.0
+    },
+    {
+      "rank": 3,
+      "code": "SRTWT8120",
+      "quantity": 315,
+      "amount": 28350.0
+    }
+  ],
+  "totals": {
+    "quantity": 2315,
+    "amount": 156550.0
+  },
+  "sales_agent_fill_rate": null,
+  "detail": null
+}

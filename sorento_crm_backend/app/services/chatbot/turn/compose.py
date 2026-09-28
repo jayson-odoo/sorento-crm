@@ -13,7 +13,12 @@ from typing import Any
 from app.services.chatbot.turn.decide import OUTSTANDING_KINDS
 from app.services.chatbot.turn.fetch import envelope_missed
 from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
-from app.services.chatbot.turn.pending import ask as pending_ask, is_roster, quick_replies_suppressed
+from app.services.chatbot.turn.pending import (
+    ask as pending_ask,
+    is_roster,
+    quick_replies as pending_quick_replies,
+    top_selling_pick,
+)
 from app.services.chatbot.turn.policy import Policy
 from app.services.chatbot.turn.state import (
     KIND_FIELD_MAP,
@@ -167,6 +172,16 @@ def _lane_question(envelopes: list[dict[str, Any]], turn_no: int | None = None):
             continue
         rows = [r for r in (ask.get("last_result_set") or []) if isinstance(r, dict)]
         kind = str(ask.get("kind"))
+        if kind == "top_selling_pick":
+            # PLAN-chatbot-top-x-hot-selling-24sep.md S4: the ranked list's own roster
+            # builder (`turn/pending.top_selling_pick`, S1): options carry the printed
+            # code and grain, and the payload sends a pick back to the ranking.
+            question = top_selling_pick(
+                rows, asked_at_turn=turn_no, filters=dict(ask.get("filters") or {})
+            )
+            if question is not None:
+                return question
+            continue
         # The OUTSTANDING kinds keep their own `entity_type` (their options are a scope,
         # never a row to pick's own `uuid` - `apply._answer_outstanding` owns the whole
         # answering turn before the generic roster path ever reads `entity_type`). A
@@ -668,6 +683,23 @@ def _subject_line(state: State | None, asked_kind: str) -> str:
     return "\n".join(lines)
 
 
+#: R8 (owner retest of top selling round 4): the longest menu a ranking conversation prints.
+MAX_MENU_OPTIONS = 5
+
+
+def _in_ranking(state: State | None) -> bool:
+    focus = getattr(state, "focus", None)
+    return bool(focus is not None and (focus.status == "top_selling" or focus.top_selling))
+
+
+def _short_question(pending: Any) -> str:
+    count = len(pending.options)
+    if pending.kind == "top_selling_pick":
+        return f"Which item do you mean? Reply with a rank number from 1 to {count}."
+    header = _ASK_HEADERS.get(pending.kind, "Which one do you mean?")
+    return f"{header} I found {count}, please type a little more of the name."
+
+
 def compose_question(pending: Any, state: State | None = None) -> Answer:
     """The ask, as an Answer: the subject line, the header, the numbered roster, and the
     same pending back.
@@ -699,15 +731,20 @@ def compose_question(pending: Any, state: State | None = None) -> Answer:
     verbatim = str(offered.get("offer_text") or "").strip() if isinstance(offered, dict) else ""
     if verbatim:
         body = verbatim
+    elif len(labels) > MAX_MENU_OPTIONS and _in_ranking(state):
+        # Owner retest of top selling round 4 (27 Sep 2026, R8): inside a ranking no
+        # menu lists more than five options (it listed all 100 ranked codes under
+        # "2025?"); the bot asks one short question in words and a typed number or
+        # name still picks, off the same stored options.
+        body = _short_question(pending)
+        labels = []
     action: dict[str, Any] = {
         "kind": "send_message",
         "text": body,
         # AC-1866: a `member_offer` re-print keeps its numbered text list but not the
         # names as quick-reply buttons (owner ruling 23 Sep 2026) - `result_set` below
         # still carries the roster, so a numbered reply still resolves.
-        "quick_replies": None if quick_replies_suppressed(pending.kind) else (
-            ", ".join(labels) if labels else None
-        ),
+        "quick_replies": pending_quick_replies(pending.kind, labels),
         "result_set": list(pending.options),
     }
     return Answer(sections=[], question=pending, offer=None, canned=[], files=[], actions=[action], text=body)

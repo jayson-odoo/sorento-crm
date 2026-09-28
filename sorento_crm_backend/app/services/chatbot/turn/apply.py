@@ -685,6 +685,10 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
         if answered is not None:
             return answered
 
+    if pending.kind == "top_selling_pick":
+        answered = _answer_top_selling_pick(pending, decision, focus, trace)
+        if answered is not None:
+            return answered
     if _stock_pick(pending):
         # Owner ruling 26 Sep 2026 (hand test F1): "Couldn't find ELP3753. Did you mean
         # ELP3754?" is a yes/no over its one option. A yes picks it (the carried quantity
@@ -1074,6 +1078,9 @@ def _focus_rules(
 
     document = verdict.get("document")
     status = verdict.get("status")
+    # Read before the v3 `status` overwrites it: "outstanding" in that key alone left a
+    # ranking with no hop and no carried filters (PR #1273 round 7).
+    was_ranking = focus.status == TOP_SELLING_STATUS
     if not domain_locked and domain_in_message(verdict) is True:
         # #1262 fix lane round 5, R2 (owner hand test, 27 Sep 2026): a message with a
         # domain or status word of its OWN states its own document and status, or none.
@@ -1103,7 +1110,423 @@ def _focus_rules(
         }
         trace.rules_fired.append("date_restated_only")
 
+    _top_selling_rules(focus, verdict, decision, trace, was_ranking=was_ranking)
     return focus
+
+
+#: The ask word the top selling ranking goes out under (`order_status`, projected by
+#: `turn_runtime.lane_parse_output`, read by `lanes/business.run_fetch`'s override).
+TOP_SELLING_STATUS = "top_selling"
+#: The parser keys a top selling ask carries (`head/parser.py`), plus `top_n`.
+TOP_SELLING_KEYS = ("rank_by", "basis", "rank_group", "rank_direction", "top_n")
+#: A picked row's own key: the detail is ONE answer, so it never outlives the turn that
+#: picked (`_without_top_selling_pick`), while a category pick's filter does.
+TOP_SELLING_ONE_SHOT = ("detail_code",)
+
+
+#: The clarify questions the lane asks (`lanes/business._top_selling_question`'s axis)
+#: and the parser key that answers each. The how-many question is not here: its answer
+#: is a bare count, which never names the ranking, so a message that does name it is a
+#: new ask (reviewer B2 (b), PR #1273).
+TOP_SELLING_CLARIFY_AXES = {
+    "group": "rank_group",
+    "metric": "rank_by",
+    "basis": "basis",
+    "category": "category_words",
+}
+
+
+#: The metric question lists quantity first and amount second ("By quantity or by
+#: amount?"), so a bare "1" or "2" under it is that option (owner retest, 27 Sep 2026).
+TOP_SELLING_METRIC_ORDER = ("quantity", "amount")
+
+#: The narrowing words a top selling ask resolves itself (`engine._top_selling_narrowing`
+#: and `lanes/business`), never through the generic resolver: a message naming only
+#: these narrows the ranking on screen, it does not leave it.
+TOP_SELLING_NARROWING_HINTS = frozenset({"category", "brand", "sales_agent"})
+
+#: A slot filter a correction's `broaden_axis` clears (`broaden_to: "all"`), by axis.
+#: `customer` also clears the focus customers (the generic `_broaden` rule does that).
+TOP_SELLING_BROADEN_KEYS = {
+    "customer": ("customer_ids",),
+    "sales_agent": ("agent_ids",),
+    "brand": ("brand_ids",),
+    "category": ("category_words", "category_code"),
+}
+
+
+def _narrows_the_ranking(verdict: dict[str, Any]) -> bool:
+    """Is this message only narrowing the ranking on screen, whatever the parser said
+    about `domain_in_message`? True when it carries a top selling key of its own, or
+    names only category / brand / sales agent words, or only widens an axis, and asks
+    no other order question (owner retest, 27 Sep 2026: "water closet only" fell out
+    of the ranking into "Could not find order")."""
+    status = verdict.get("order_status")
+    if status not in (None, "", TOP_SELLING_STATUS):
+        return False
+    if verdict.get("domain_hint") not in (None, "", "order"):
+        return False
+    if any(verdict.get(k) is not None for k in ("rank_by", "basis", "rank_group", "rank_direction")):
+        return True
+    hints = [e.get("hint") for e in (verdict.get("entities") or []) if isinstance(e, dict)]
+    if hints:
+        return all(h in TOP_SELLING_NARROWING_HINTS for h in hints)
+    return broaden_level(verdict) == EVERYTHING
+
+
+def _top_selling_waiting(asked: Any, own: dict[str, Any]) -> bool:
+    """Is this message the answer to the question the LAST reply asked? `asked` is what
+    that reply recorded (`record_top_selling_asked`), never inferred from which axes
+    happen to be empty: a single row sent as is, or a how-many left unanswered, leaves a
+    carried slot with no count, and reading that as "still waiting" let a fresh ask
+    inherit the old category, customer and metric (reviewer B2, PR #1273). A message
+    that restates the ranking while answering the clarify ("top 5 by amount" under "By
+    quantity or by amount?") completes the asked ask."""
+    axis = TOP_SELLING_CLARIFY_AXES.get(asked) if isinstance(asked, str) else None
+    return axis is not None and own.get(axis) not in (None, "unclear")
+
+
+def record_top_selling_asked(focus: Focus, envelopes: list[dict[str, Any]]) -> None:
+    """After the lane ran: record on `focus.top_selling` which top selling question the
+    reply asked (`asked`), or clear it when the reply asked nothing (a list, a single
+    row, a detail, a miss, a refusal). `_top_selling_rules` reads it next turn."""
+    slot = focus.top_selling
+    if not isinstance(slot, dict):
+        return
+    asked = next(
+        (e.get("top_selling_asked") for e in envelopes or [] if isinstance(e, dict) and e.get("top_selling_asked")),
+        None,
+    )
+    if asked:
+        slot["asked"] = asked
+    else:
+        slot.pop("asked", None)
+    # A category word the reply said it does not know is dropped, so the next turn
+    # neither repeats the line nor filters by it (owner retest, 27 Sep 2026).
+    for e in envelopes or []:
+        if isinstance(e, dict):
+            for key in e.get("top_selling_drop") or ():
+                slot.pop(key, None)
+    # The item codes the reply listed: an outstanding ask after the ranking asks about
+    # these (fix lane round 8, `_hop_to_report`). A reply that listed none forgets them;
+    # a detail or a refusal (None) leaves the listed ranking's codes standing.
+    for e in envelopes or []:
+        codes = e.get("top_selling_codes") if isinstance(e, dict) else None
+        if isinstance(codes, list):
+            if codes:
+                slot["ranked_codes"] = list(codes)
+            else:
+                slot.pop("ranked_codes", None)
+
+
+def _top_selling_rules(
+    focus: Focus, verdict: dict[str, Any], decision: Decision, trace: Trace, *, was_ranking: bool = False
+) -> None:
+    """PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 8: the top
+    selling ask's axes live on `focus.top_selling` while `focus.status` says so.
+
+    * A verdict naming the ask (`order_status: "top_selling"`) sets the status. Its own
+      non-null axes always win. Carried ones fill the rest unless this is a FRESH ask
+      (the parser's `domain_in_message`: the message names the ask itself, "top 10
+      selling items") that does not answer the clarify the last reply asked
+      (`_top_selling_waiting`); a fresh ask states its own metric, grain, count and
+      filters (owner: no default metric, never assume), while "by amount" or "ordered"
+      under a ranking changes only the axis it names.
+    * A new ask about anything else (`domain_in_message` without the word) leaves
+      the ranking: the status and the slot go, so a later order list is not re-read as
+      a ranking.
+    * The parser can read a bare "6" under the how-many question as a position; with
+      no pick this turn, the how-many asked last and one position, the position IS the count
+      (the parser's own field, never the text).
+    * Category words the message names ride on the slot, because the lane resolves
+      them itself (the generic resolver re-types a category under `order` as a
+      customer, `entity_resolver._DOMAIN_HINT_EXPANSIONS`).
+    """
+    order_status = verdict.get("order_status")
+    asked = isinstance(order_status, str) and order_status.strip() == TOP_SELLING_STATUS
+    names_its_ask = decision.starts_fresh or domain_in_message(verdict) is True
+    hopped = isinstance(focus.top_selling, dict) and bool(focus.top_selling.get("hop"))
+    if was_ranking and not asked:
+        # `_focus_rules` overwrote the status before this ran: the v3 `status` key
+        # ("outstanding"), and #1262's rule that a message with a domain word of its own
+        # states its own status or none ("can show me the DO" cleared it to None). The
+        # ranking decides below whether this message hops to a report, narrows it or
+        # leaves it (`new_ask_leaves_top_selling` writes the new status itself).
+        focus.status = TOP_SELLING_STATUS
+    if asked:
+        focus.status = TOP_SELLING_STATUS
+    elif (focus.status == TOP_SELLING_STATUS or hopped) and _is_report_hop(verdict):
+        _hop_to_report(focus, verdict, trace)
+        return
+    elif focus.status == TOP_SELLING_STATUS and names_its_ask and not _narrows_the_ranking(verdict):
+        focus.status = verdict.get("status") or None
+        focus.top_selling = None
+        trace.rules_fired.append("new_ask_leaves_top_selling")
+        return
+    elif hopped and not names_its_ask:
+        # An answer inside the report the ranking handed over to ("2" to "Outstanding
+        # for which document?") keeps the carried filters and their header line.
+        return
+    if focus.status != TOP_SELLING_STATUS:
+        focus.top_selling = None
+        return
+    carried = dict(focus.top_selling or {})
+    carried.pop("hop", None)
+    # What the last reply asked lives one turn: this turn's reply records its own.
+    asked_last = carried.pop("asked", None)
+    # A word the last reply said it does not know is said once (owner retest, 27 Sep).
+    carried.pop("unknown", None)
+    own = {k: verdict.get(k) for k in TOP_SELLING_KEYS if verdict.get(k) is not None}
+    positions = [p for p in (verdict.get("reference_positions") or []) if isinstance(p, (int, float))]
+    if (
+        "top_n" not in own
+        and "answer_top_selling_pick" not in trace.rules_fired
+        and asked_last == "how_many"
+        and carried.get("rank_by")
+        and carried.get("top_n") is None
+        and len(positions) == 1
+    ):
+        own["top_n"] = int(positions[0])
+        trace.rules_fired.append("top_selling_position_is_the_count")
+    picked = "answer_top_selling_pick" in trace.rules_fired
+    if (
+        "rank_by" not in own
+        and not picked
+        and asked_last == "metric"
+        and len(positions) == 1
+        and int(positions[0]) in (1, 2)
+    ):
+        # "1" / "2" under "By quantity or by amount?" (owner retest, 27 Sep 2026): the
+        # parser's own position, in the order the question lists the two.
+        own["rank_by"] = TOP_SELLING_METRIC_ORDER[int(positions[0]) - 1]
+        trace.rules_fired.append("top_selling_position_is_the_metric")
+    who = carried.pop("who", None)
+    # The engine binds an answer to "customer or sales agent?" before this runs
+    # (`engine._top_selling_verdict`: "2", "yeah sales agent", "fanny sales agent");
+    # a bare position the parser read is the same answer.
+    answer = verdict.get("top_selling_who")
+    if answer is None and not picked and len(positions) == 1:
+        answer = int(positions[0])
+    if isinstance(who, dict) and asked_last == "who" and answer in (0, 1, 2):
+        # Owner retest of round 4 (27 Sep 2026, R1): the answer binds to that question
+        # only. "1" the customer, "2" the sales agent, "neither" (0) neither; the other
+        # axis is cleared, every other filter of the ask stays.
+        focus.customers = []
+        carried.pop("customer_ids", None)
+        carried.pop("customer_names", None)
+        if answer == 1 and who.get("customer_ids"):
+            carried["customer_ids"] = list(who["customer_ids"])
+            if who.get("customer_label"):
+                carried["customer_names"] = [who["customer_label"]]
+            carried.pop("agent_ids", None)
+            trace.rules_fired.append("top_selling_who_is_the_customer")
+        elif answer == 2 and who.get("agent_ids"):
+            carried["agent_ids"] = list(who["agent_ids"])
+            trace.rules_fired.append("top_selling_who_is_the_agent")
+        else:
+            trace.rules_fired.append("top_selling_who_is_neither")
+    if verdict.get("top_selling_unclear"):
+        # A message inside a ranking the bot cannot place (the parser's out_of_scope):
+        # one short question, never the escalation (owner retest of round 4, R6/R8).
+        carried["unclear"] = True
+    else:
+        carried.pop("unclear", None)
+    leftovers = [w for w in (verdict.get("top_selling_leftover") or []) if isinstance(w, str) and w]
+    if leftovers:
+        # R4: the word left over from a split noisy token, said once above the ranking.
+        carried["unknown"] = [["", w] for w in leftovers]
+    if broaden_level(verdict) == EVERYTHING and not decision.answers:
+        # A correction widening an axis ("customer is everyone") clears that axis's
+        # filter on the ranking too; `broaden_axis: "all"` clears every one.
+        axis = broaden_kind(verdict)
+        for key in _top_selling_axis_keys(axis):
+            if carried.pop(key, None) is not None:
+                trace.rules_fired.append(f"top_selling_broaden_clears_{key}")
+    # A message stating no axis of its own and naming only narrowing words ("sold by
+    # fanny", "water closet only") narrows the ranking on screen even when the parser
+    # says it names the ask (owner retest, 27 Sep 2026): it never restarts it.
+    only_narrows = not own and _narrows_the_ranking(verdict)
+    categories = [
+        e.get("raw")
+        for e in (verdict.get("entities") or [])
+        if isinstance(e, dict) and e.get("hint") == "category" and e.get("raw")
+    ]
+    if categories:
+        own["category_words"] = categories
+        carried.pop("category_code", None)
+    if asked and names_its_ask and not only_narrows and not _top_selling_waiting(asked_last, own):
+        # A fresh ask names the ask ITSELF ("top 10 selling items": `domain_in_message`);
+        # "by amount" under a ranking names only the axis it changes. A fresh ask states
+        # its own filters too (owner: never assume): a customer, channel or date window
+        # it does not name is not carried from the last ask (reviewer B2, PR #1273).
+        carried = {}
+        _drop_unnamed_filters(focus, verdict)
+        trace.rules_fired.append("top_selling_fresh_ask")
+    carried.update(own)
+    focus.top_selling = carried
+
+
+def _top_selling_axis_keys(axis: str | None) -> tuple[str, ...]:
+    """The slot keys `broaden_axis` clears: that axis's, or every axis's for None."""
+    if axis is None:
+        return tuple(k for keys in TOP_SELLING_BROADEN_KEYS.values() for k in keys)
+    return TOP_SELLING_BROADEN_KEYS.get(axis, ())
+
+
+#: The order reports a ranking hands its filters to (owner retest of round 4, 27 Sep
+#: 2026, R5): "outstanding", "can show me the DO", "show me the orders". None is the
+#: plain order list.
+TOP_SELLING_REPORT_HOPS = frozenset(
+    {None, "", "outstanding", "so_outstanding", "do_outstanding", "outstanding_both", "delivered"}
+)
+
+#: The outstanding asks (`order_status`): after a ranking each is the ordinary
+#: outstanding ask with the ranked codes as its products (fix lane round 8).
+TOP_SELLING_OUTSTANDING_HOPS = frozenset({"outstanding", "so_outstanding", "do_outstanding", "outstanding_both"})
+
+
+def _is_report_hop(verdict: dict[str, Any]) -> bool:
+    """Is this message an order report ask naming no ranking of its own ("outstanding",
+    "can show me the DO", "show me the orders")?"""
+    if verdict.get("domain_hint") != "order":
+        return False
+    status = verdict.get("order_status") or verdict.get("status")
+    if status not in TOP_SELLING_REPORT_HOPS:
+        return False
+    if any(verdict.get(k) is not None for k in TOP_SELLING_KEYS) or _narrows_the_ranking(verdict):
+        return False
+    return bool(status) or bool(verdict.get("document")) or domain_in_message(verdict) is True
+
+
+def _report_name(verdict: dict[str, Any]) -> str:
+    status = verdict.get("order_status") or verdict.get("status")
+    documents = [str(d).upper() for d in (verdict.get("document") or [])]
+    if status == "so_outstanding" or documents == ["SO"]:
+        return "sales orders"
+    if status == "do_outstanding" or "DO" in documents:
+        return "delivery orders"
+    if status in ("outstanding", "outstanding_both"):
+        return "outstanding orders"
+    return "orders"
+
+
+def _hop_to_report(focus: Focus, verdict: dict[str, Any], trace: Trace) -> None:
+    """After a ranking, an order report ask runs that report with the ranking's filters
+    as its inputs (owner retest of round 4, R5; owner hand test of round 7, 28 Sep 2026).
+
+    * The customer and the period carry (the ranking's own window, or the current year
+      its route defaults to).
+    * An OUTSTANDING ask is the ordinary outstanding ask: its products are the item
+      codes the ranking listed (`ranked_codes`), unless the message names a product of
+      its own. It then prints the ordinary Product / Customer / Location / Order date
+      header and the "Outstanding for which document?" menu, and goes on exactly as a
+      direct outstanding ask does. Without them the ask carried no subject, missed the
+      outstanding report and fell into the order list, whose window is the actual
+      delivery date an outstanding order does not have yet: "No matching results found".
+    * The agent, category and brand filters are not the report's; they are simply not
+      carried, and their words never reach the order lookup (it answered "Couldn't find:
+      bathtub (category)"). Nothing is printed about them.
+
+    The slot stays, marked `hop`, so the next report ask carries the same filters and a
+    new ranking ask starts over."""
+    from datetime import datetime, timedelta, timezone
+
+    slot = dict(focus.top_selling or {})
+    for key in ("asked", "who", "unknown", "unclear", "detail_code"):
+        slot.pop(key, None)
+    for kind in ("category", "sales_agent", "brand"):
+        focus.extra.pop(kind, None)
+    focus.brands = []
+    focus.outstanding_brand_ids = []
+    named = [
+        e.get("hint")
+        for e in (verdict.get("entities") or [])
+        if isinstance(e, dict) and e.get("current_message") is not False
+    ]
+    ids = slot.get("dealer_customer_ids") or slot.get("customer_ids")
+    if ids and "customer" not in named:
+        labels = list(slot.get("customer_names") or [])
+        focus.customers = [
+            {"uuid": uid, "hint": "customer", "current_message": False, **({"name": labels[0]} if len(ids) == 1 and labels else {})}
+            for uid in ids
+        ]
+    if not (focus.date_window and (focus.date_window.get("start") or focus.date_window.get("end"))):
+        # The route's own default for the ranking: the current calendar year, Malaysia
+        # time (`fetch._current_myt_year`'s formula).
+        year = (datetime.now(timezone.utc) + timedelta(hours=8)).year
+        focus.date_window = {"mode": None, "start": f"{year}-01-01", "end": f"{year}-12-31"}
+    status = verdict.get("status") or verdict.get("order_status")
+    hop: dict[str, Any] = {"report": _report_name(verdict)}
+    outstanding = (verdict.get("order_status") or verdict.get("status")) in TOP_SELLING_OUTSTANDING_HOPS
+    if outstanding and "product" not in named and slot.get("ranked_codes"):
+        hop["product_codes"] = list(slot["ranked_codes"])
+        focus.products = []
+    slot["hop"] = hop
+    focus.top_selling = slot
+    focus.status = str(status) if status else None
+    trace.rules_fired.append("top_selling_hops_to_report")
+
+
+def _drop_unnamed_filters(focus: Focus, verdict: dict[str, Any]) -> None:
+    """A fresh top selling ask keeps only the filters THIS message named: its own
+    customer entities (the generic rules already wrote those), channel and dates."""
+    names_customer = any(
+        isinstance(e, dict) and e.get("hint") == "customer" and e.get("current_message") is not False
+        for e in (verdict.get("entities") or [])
+    )
+    if not names_customer:
+        focus.customers = []
+    if not verdict.get("sales_channel"):
+        focus.sales_channel = None
+    if not verdict.get("document"):
+        # A document picked for an earlier report ("1" to "Outstanding for which
+        # document?") is not this ranking's, nor the next report's (round 7).
+        focus.document = []
+    if not (verdict.get("date_mode") or verdict.get("date_filter_start") or verdict.get("date_filter_end")):
+        focus.date_window = None
+
+
+def _without_top_selling_pick(focus: Focus) -> Focus:
+    """A copy of `focus` without the one-shot key a pick wrote last turn (the detail is
+    one answer; the next message re-runs the ranking unless it picks again)."""
+    slot = focus.top_selling
+    if not slot or not any(k in slot for k in TOP_SELLING_ONE_SHOT):
+        return focus
+    return replace(focus, top_selling={k: v for k, v in slot.items() if k not in TOP_SELLING_ONE_SHOT})
+
+
+def _answer_top_selling_pick(pending: Pending, decision: Decision, focus: Focus, trace: Trace):
+    """The ranked list is a pick list (owner, PR #1258 05:32Z), answered the pickers' way
+    (`decide` settles the positions, a typed code matches a label) but it re-runs the
+    ASK rather than settling an entity: an item row opens that code's detail
+    (`detail_code`), a category row runs the item ranking inside that category. The rows
+    carry no uuid and must not land on `focus.products`, where the generic roster path
+    would put them and the resolver would re-open the product's whole family.
+
+    None when nothing on the list was picked: the generic rules settle it (an aside keeps
+    the list open, a number past the end re-prints it, a new ask closes it)."""
+    positions = list(decision.positions) if decision.answers else []
+    matched = [o for o in pending.options if o.get("position") in positions]
+    if not matched:
+        return None
+    option = matched[-1]
+    code = option.get("code") or option.get("label")
+    slot = dict(focus.top_selling or {})
+    if not slot:
+        stored = pending.payload.get("filters")
+        stored = stored if isinstance(stored, dict) else {}
+        slot = {k: stored.get(k) for k in TOP_SELLING_KEYS if stored.get(k) is not None}
+    if option.get("entity_type") == "category":
+        slot["rank_group"] = "item"
+        slot["category_code"] = code
+        slot.pop("category_words", None)
+    else:
+        slot["detail_code"] = code
+    focus.top_selling = slot
+    focus.status = TOP_SELLING_STATUS
+    focus.domains = ["order"]
+    trace.rules_fired.append("answer_top_selling_pick")
+    return focus, with_answered_positions(pending, positions), None, True
 
 
 def _broaden(
@@ -1357,6 +1780,11 @@ _IDLE_CHAT_DISQUALIFIERS = (
     "document",
     "status",
     "sales_channel",
+    # PLAN-chatbot-top-x-hot-selling-24sep.md S4: "amount", "ordered" and "the
+    # categories" answer the bot's own top selling question and name nothing else.
+    "rank_by",
+    "basis",
+    "rank_group",
     "broaden_axis",
     "group_by",
     "top_n",
@@ -2569,6 +2997,9 @@ def apply(
         # 36's own "closed once the answering turn's fetch ran" wording allows.
         state = replace(state, pending=None)
         trace.rules_fired.append("stale_roster_closed")
+
+    # PLAN-chatbot-top-x-hot-selling-24sep.md S4: a picked row's detail is one answer.
+    state = replace(state, focus=_without_top_selling_pick(state.focus))
 
     # F3 (contract 65): a `domain_hint` outside the declared enum must never reach a
     # reader - evidence turn b5b19cec-dccc-4eda-b766-1aeb1362957b emitted "purchasing"
