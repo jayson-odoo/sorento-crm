@@ -187,11 +187,29 @@ register(
     )
 )
 
+
+def _delete_sales_opportunity(db: Session, payload: dict):
+    from app.services.sales import opportunity_service
+
+    return opportunity_service.delete_opportunity_by_id(db, _entity_id(payload))
+
+
 def _delete_sales_target(db: Session, payload: dict):
     from app.services.sales import target_service
 
     return target_service.delete_target_by_id(db, _entity_id(payload))
 
+
+register(
+    FormAction(
+        key="sales_opportunity.delete",
+        entity_types=("sales_opportunity",),
+        execute=_delete_sales_opportunity,
+        window=WINDOW_DESTRUCTIVE,
+        permission="sales.opportunities.delete",
+        label="Delete sales opportunity",
+    )
+)
 
 register(
     FormAction(

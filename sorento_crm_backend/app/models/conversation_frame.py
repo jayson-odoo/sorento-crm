@@ -22,6 +22,7 @@ from app.database import Base
 
 class ConversationFrame(Base):
     __tablename__ = "conversation_frames"
+    __audit_skip__ = "chat conversation state"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
 

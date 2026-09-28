@@ -259,12 +259,13 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // Sales module S6 (PLAN-sales-targets-opportunities-26sep.md): `sales/teams` is a new
     // DataGrid list segment with its own `loading.tsx`, found by the walk itself - no
     // BODY_ONLY_SEGMENTS entry needed. Total: 144.
-    // Sales module S1: `sales/targets` is a new DataGrid list segment with its own
-    // `loading.tsx`, found by the walk itself - no BODY_ONLY_SEGMENTS entry needed. Total: 145.
+    // Sales module S1 and S2 (same plan): `sales/targets` and `sales/opportunities` are new
+    // DataGrid list segments with their own `loading.tsx`, found by the walk itself - no
+    // BODY_ONLY_SEGMENTS entry needed. Total: 146.
     // Chatbot memory lane A: `user-management/contacts/[id]/chatbot` is a new segment
     // with its own `loading.tsx`, found by the walk itself - no BODY_ONLY_SEGMENTS entry
-    // needed. Total: 146.
-    expect(requiredSegmentNames.length).toBe(146);
+    // needed. Total: 147.
+    expect(requiredSegmentNames.length).toBe(147);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);
