@@ -14,6 +14,7 @@ import { formatDate } from '@/lib/helpers';
 import DetailActions from '@/components/common/DetailActions';
 import { useCustomerActions } from '../actions';
 import { CustomerAsksTab } from './CustomerAsksTab';
+import CustomerOpportunitiesSection from './CustomerOpportunitiesSection';
 
 export type CustomerTab = 'details' | 'asks';
 
@@ -174,6 +175,11 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
               </CardContent>
             </Card>
           </div>
+
+          <CustomerOpportunitiesSection
+            customerId={customerId}
+            customerName={customer.customer_name}
+          />
         </TabsContent>
 
         <TabsContent value="asks">

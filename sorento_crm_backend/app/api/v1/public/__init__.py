@@ -11,6 +11,7 @@ from app.api.v1.public import (
     portal,
     portal_customer_asks,
     portal_price_tag,
+    portal_sales_opportunity,
     print as print_route,
     quotation_sign,
     supplier_request,
@@ -37,6 +38,12 @@ router.include_router(
 # generic portal router for the same reason as the price tag router above.
 router.include_router(
     portal_customer_asks.router, prefix="/portal", tags=["public-portal-customer-asks"]
+)
+# Same reasoning as portal_price_tag above (D49): declares only literal
+# `/sales-opportunities...` paths, mounted before the generic handler so it captures
+# exactly the requests meant for it.
+router.include_router(
+    portal_sales_opportunity.router, prefix="/portal", tags=["public-portal-sales-opportunity"]
 )
 router.include_router(portal.router, prefix="/portal", tags=["public-portal"])
 router.include_router(

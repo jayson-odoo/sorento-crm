@@ -118,27 +118,14 @@ def sales_agent_for_contact(db: Session, contact_id: str):
 
     Extracted from `PriceTagRequestService.lookup_debtors_for_agent` (chatbot stock ask
     v2 S6, AC-SA601): the debtor lookup and the portal's Customer asks page both call it.
-    """
-    from app.models.sales_agent import SalesAgent
 
-    agents = (
-        db.query(SalesAgent)
-        .filter(SalesAgent.contact_id == contact_id)
-        .order_by(SalesAgent.sales_agent, SalesAgent.id)
-        .all()
-    )
-    if not agents:
-        return None
-    agent = agents[0]
-    if len(agents) > 1:
-        logger.warning(
-            "Portal contact %s is linked to %s sales agents; answering for "
-            "%s. Only one link is meant to exist.",
-            contact_id,
-            len(agents),
-            agent.sales_agent,
-        )
-    return agent
+    Main's `app.services.sales.portal_agent.agent_for_contact` (sales plan 3.5) lifted
+    the same rule for the portal opportunity form; this delegates to it so there is one
+    copy of the rule, and stays as the module-level seam both S6 callers read at call time.
+    """
+    from app.services.sales.portal_agent import agent_for_contact
+
+    return agent_for_contact(db, contact_id)
 
 
 class PriceTagRequestService:
