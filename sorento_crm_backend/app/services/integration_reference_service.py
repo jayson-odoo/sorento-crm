@@ -20,7 +20,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import text
+from sqlalchemy import literal, select, text
 from sqlalchemy.orm import Session
 
 from app.models.integration_reference import IntegrationReference
@@ -74,6 +74,9 @@ SUPPORTED_ENTITY_TYPES = {
     "order_lines",
     # autocount-brands-ingest AC-15: brands joined the ingest surface.
     "brands",
+    # Finance S0 (#1309, contract 2.6): `finance.billing_documents`. The one entity type
+    # whose table is not in `public`; see `_module_table`.
+    "billing_documents",
 }
 
 # Tables where a row serves every company (`company_id` NULL). Moved here from
@@ -115,6 +118,17 @@ def is_unclaimed_or_same_source(origin: Optional[IntegrationReference]) -> bool:
     a key on `autocount` - not before.
     """
     return origin is None or origin.source_system == DEFAULT_SOURCE_SYSTEM
+
+
+def _module_table(entity_type: str):
+    """The Table of an entity type that lives in a module schema, else None (public)."""
+    if entity_type == "billing_documents":
+        # Imported here: the finance model has no business being loaded by every caller of
+        # this service, and nothing it imports reaches back here.
+        from app.models.finance import BillingDocument
+
+        return BillingDocument.__table__
+    return None
 
 
 def _require_supported(entity_type: str) -> str:
@@ -344,6 +358,19 @@ class IntegrationReferenceService:
         # entity_type is interpolated only after passing the allowlist; the id
         # is always a bound parameter.
         table = _require_supported(entity_type)
+        module_table = _module_table(entity_type)
+        if module_table is not None:
+            # Through the Table, never the bare name: the table lives in a module schema that
+            # is not on the production `search_path`, and a failed statement here would abort
+            # the caller's transaction (the `except` below cannot undo that). The Table is
+            # schema-qualified and honours a `schema_translate_map`.
+            found = self.db.execute(
+                select(literal(1))
+                .select_from(module_table)
+                .where(module_table.c.id == str(entity_id))
+                .limit(1)
+            ).first()
+            return found is not None
         try:
             found = self.db.execute(
                 # Unqualified on purpose, and it matters now that
