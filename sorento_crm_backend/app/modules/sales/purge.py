@@ -16,6 +16,8 @@ from typing import Dict, List, Type
 from sqlalchemy.orm import Session
 
 from app.models.sales import (
+    SalesOpportunity,
+    SalesOpportunityLine,
     SalesTarget,
     SalesTargetCommissionTier,
     SalesTargetPeriod,
@@ -28,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 #: Every module-owned table, children first.
 PURGE_ORDER: List[Type] = [
+    SalesOpportunityLine,
+    SalesOpportunity,
     SalesTargetCommissionTier,
     SalesTargetScope,
     SalesTargetPeriod,

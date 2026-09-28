@@ -485,6 +485,19 @@ async def startup_event():
 
     try:
         from app.database import SessionLocal
+        from app.services.sales import sales_seed_service
+        _db = SessionLocal()
+        try:
+            # Additive only, same rule as the Project Sales seed above: a renamed stage or
+            # a deactivated one survives every restart.
+            sales_seed_service.run(_db)
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.error(f"Sales module seed failed at startup: {str(e)}", exc_info=True)
+
+    try:
+        from app.database import SessionLocal
         from app.services import record_action_bootstrap
         _db = SessionLocal()
         try:

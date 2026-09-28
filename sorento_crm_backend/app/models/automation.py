@@ -82,6 +82,7 @@ class Automation(Base):
 
 class AutomationRun(Base):
     __tablename__ = "automation_runs"
+    __audit_skip__ = "automation run log, itself a trail"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     automation_id = Column(

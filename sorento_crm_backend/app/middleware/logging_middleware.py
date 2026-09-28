@@ -6,7 +6,7 @@ import logging
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.services.logging import log_api_request
-from app.audit_context import AuditActor, stamp_actor, set_trace_id
+from app.audit_context import AuditActor, stamp_actor, set_trace_id, start_request_context
 
 # An inbound X-Trace-Id is echoed in the response and written to every audit row, so
 # only a plain token is accepted; anything else gets a freshly minted id.
@@ -40,6 +40,13 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         inbound = request.headers.get("X-Trace-Id")
         trace_id = inbound if inbound and _TRACE_ID_RE.match(inbound) else uuid.uuid4().hex[:16]
         set_trace_id(trace_id)
+        # One fresh, MUTABLE business context per request (#1281 S0): event, reason, source,
+        # correlation id. An inbound X-Correlation-Id (the header api_call_log reads) is held
+        # aside and trusted only once an integration key authenticates.
+        inbound_correlation = request.headers.get("X-Correlation-Id")
+        start_request_context(
+            inbound_correlation if inbound_correlation and _TRACE_ID_RE.match(inbound_correlation) else None
+        )
 
         # Skip logging for health check and docs
         if request.url.path in ["/health", "/docs", "/redoc", "/openapi.json"]:
