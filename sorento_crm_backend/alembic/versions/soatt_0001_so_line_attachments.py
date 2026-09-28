@@ -23,7 +23,7 @@ literal this migration inserted) and deletes the seeded type row only when nothi
 uses it. No `alembic_version` touch, no edit of any migration main already carries.
 
 Revision ID: soatt_0001_so_line_attachments
-Revises: fin_0001_billing_documents
+Revises: chatbot_esc_confirm_1323, fin_0002_billing_demand_class
 Create Date: 2026-09-27
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "soatt_0001_so_line_attachments"
-down_revision = "fin_0001_billing_documents"
+down_revision = ("chatbot_esc_confirm_1323", "fin_0002_billing_demand_class")
 branch_labels = None
 depends_on = None
 
