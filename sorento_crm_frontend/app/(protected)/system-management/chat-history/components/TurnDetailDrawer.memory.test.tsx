@@ -89,3 +89,35 @@ describe('TurnDetailDrawer Memory section - pre-lane turns (B2)', () => {
     expect(within(panel).getAllByText('none this turn').length).toBeGreaterThan(0);
   });
 });
+
+describe('TurnDetailDrawer Memory section - a topic switch closes a conversation (fix lane round 3)', () => {
+  it('names the closed conversation with its Topic and summary', () => {
+    const detail = emptyDetail();
+    detail.memory = {
+      level: { own: 'full', effective: 'full' },
+      focus: { before: null, after: { domains: ['incoming'] }, writer: null },
+      profile: { before: {}, after: {}, writer: null },
+      episodes: {
+        read: [],
+        writer: 'engine',
+        written: {
+          id: 'f1',
+          turn_count: 4,
+          close_reason: 'topic_switch',
+          summary: 'Sun 28 Sep, 4 turns: inventory SRTWC286 (answered).',
+          domain: 'inventory',
+          trigger: 'domain_switch',
+        },
+      },
+      facts_saved: [],
+    };
+    turnState = { data: detailTurn(detail), isLoading: false, isError: false };
+
+    render(<TurnDetailDrawer turnId="ZZT-turn-pre-lane-1" onOpenChange={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('section-memory-trigger'));
+    const panel = screen.getByTestId('section-memory');
+    expect(
+      within(panel).getByText('Inventory: Sun 28 Sep, 4 turns: inventory SRTWC286 (answered).'),
+    ).toBeInTheDocument();
+  });
+});

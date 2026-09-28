@@ -627,7 +627,7 @@ function ConversationsCard({
       {
         id: 'when',
         header: 'When',
-        cell: ({ row }) =>
+        cell: ({ row }) => (
           <span className="flex min-w-0 items-center gap-1.5">
             {row.original.isCurrent ? (
               <Badge variant="primary" appearance="light" size="sm">
