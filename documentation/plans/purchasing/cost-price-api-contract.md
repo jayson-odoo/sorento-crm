@@ -115,14 +115,20 @@ filters, searches and counts on the client (AC-SR-02: counts follow the search).
   "line_state": "changed", "skipped": false, "skip_reason": null,
   "new_link_lead_time_days": null,
   "decision": null, "decision_reason": null, "decided_by_name": null,
-  "stale": null
+  "stale": null,
+  "duplicate_rows": [{"id": "...", "sheet": "19 series", "row_no": 8,
+                      "supplier_code": "SRTWT1900-BL-DIY", "code_note": "OPP", "new_unit_cost": 9.9}]
 }]}
 ```
 
+Round 6 (R6, owner 28 Sep 2026): rows of one supplier code (or one product) are ONE line - the
+row `choose_duplicate_row` picked (the first, in file order) - and the others ride on it as
+`duplicate_rows`; they are stored `skipped` with flag `duplicate_row` and are not in `data`.
+
 `match_outcome`: `exact | alias | ladder | manual | unmatched`. `line_state`: `changed |
 unchanged | new_link | needs_attention | skipped`. The review page's "Not found" filter is
-`match_outcome == unmatched` and not skipped; "Duplicate code" is `flags` contains
-`duplicate_code` and not skipped; "Needs attention" is `line_state == needs_attention`.
+`match_outcome == unmatched` and not skipped (round 6: there is no "Duplicate code" filter);
+"Needs attention" is `line_state == needs_attention`.
 `stale` is `{"live_unit_cost": 90.0, "live_currency": "CNY"}` after an Apply refused a line as
 stale (AC-S2-06), else null.
 
@@ -152,7 +158,7 @@ force, `new_link`) and the duplicate check for the whole set.
 Returns the set detail. 409 `stale_lines` with `{"lines": [{"line_id", "supplier_code",
 "recorded_unit_cost", "recorded_currency", "live_unit_cost", "live_currency"}]}`; 409
 `already_applied` / `wrong_status`; 409 `submit_first` (verification on, Draft staff set); 422
-`unresolved_lines` / `undecided_lines` / `lead_time_required`; 403 `SAME_PERSON_CANNOT_VERIFY`.
+`unresolved_lines` / `undecided_lines` (`lead_time_required` retired in round 6, AC-S2-05 as amended); 403 `SAME_PERSON_CANNOT_VERIFY`.
 
 ### 1.9 Discard - `upload`
 

@@ -64,7 +64,7 @@ function renderDialog() {
 describe('Nit 4: the dropzone accepts .xlsx only', () => {
   it('refuses a .xls file client-side and never probes it', () => {
     renderDialog();
-    const input = screen.getByLabelText('Supplier price list file') as HTMLInputElement;
+    const input = screen.getByLabelText('Supplier cost list file') as HTMLInputElement;
     const file = new File(['data'], 'price-list.xls', { type: 'application/vnd.ms-excel' });
     fireEvent.change(input, { target: { files: [file] } });
 

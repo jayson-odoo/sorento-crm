@@ -37,3 +37,13 @@ describe('Nit 7: no feature explanation inside the UI', () => {
     expect(screen.queryByText(/Leave both dates empty for a price that always applies/)).not.toBeInTheDocument();
   });
 });
+
+describe('Round 6 R5: cost, never price (owner, 28 Sep 2026)', () => {
+  it('titles the dialog Upload cost list and names the file a cost list', () => {
+    render(<UploadPriceListDialog open onOpenChange={() => {}} />);
+
+    expect(screen.getByRole('heading', { name: 'Upload cost list' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Supplier cost list file')).toBeInTheDocument();
+    expect(screen.queryByText(/price/i)).not.toBeInTheDocument();
+  });
+});

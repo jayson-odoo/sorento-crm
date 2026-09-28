@@ -146,7 +146,7 @@ the `tests/scm` route-test pattern (`as_company_user`, `_grant`).
 - **AC-S2-04** `test_verification_on_apply_draft_is_409_submit_first` and
   `test_submit_moves_to_pending_with_submitter`; `test_verification_off_submit_is_409`.
 - **AC-S2-05** `test_new_link_lead_time_is_the_suppliers_most_common` and
-  `test_new_link_without_default_needs_lead_time` (422 `lead_time_required` until PATCHed).
+  `test_new_link_without_default_applies_with_no_lead_time` (round 6: applies, lead time stays null; was 422 `lead_time_required`).
 - **AC-S2-06** `test_stale_line_blocks_apply_and_writes_nothing`: change the link's price in force
   after upload; Apply is 409 `stale_lines` listing recorded and live; no cost row written; the
   line's `stale` field is filled on the next GET lines.

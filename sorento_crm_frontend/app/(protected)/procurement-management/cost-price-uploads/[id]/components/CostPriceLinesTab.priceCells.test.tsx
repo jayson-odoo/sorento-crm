@@ -1,9 +1,8 @@
 /**
- * CostPriceLinesTab price cells at 1280 (#1288, Lane A): the mockup shows bare amounts in
- * Price now / New price ("86.00", "92.00") because the set's currency is already in the
- * header. Printing "100.00 CNY" in every cell truncated it to "100.00 C..." at 1280
- * (post-fix browser evidence, 23-applied-decisions-1280.png). A price in a DIFFERENT
- * currency from the set's still names its currency, since that difference is the point.
+ * CostPriceLinesTab cost cells at 1280 (#1288, Lane A). Round 5 showed bare amounts; the
+ * owner's hand test of 28 Sep 2026 overruled it: "show the currency at each line also". Round
+ * 6 R4: "CNY 10.50" beside both costs on every line, the currency first so the amount's
+ * digits are what truncates last in the 110px column. A cost in another currency names it.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -126,23 +125,22 @@ function renderTab(cs: CostPriceChangeSetDetail) {
 
 
 
-describe('price cells show the bare amount in the set currency', () => {
-  it('drops the currency code when it is the set currency, keeps the full value as a title', () => {
+describe('cost cells name the currency on every line (round 6 R4)', () => {
+  it('shows the set currency beside both costs, the full value as a title', () => {
     mobile = false;
     linesData = [line({ current_unit_cost: 100, current_currency: 'CNY', new_unit_cost: 114.3 })];
     renderTab(changeSet({ currency: 'CNY' }));
 
-    expect(screen.getByText('100.00')).toHaveAttribute('title', '100.00 CNY');
-    expect(screen.getByText('114.30')).toHaveAttribute('title', '114.30 CNY');
-    expect(screen.queryByText(/\bCNY\b/)).not.toBeInTheDocument();
+    expect(screen.getByText('CNY 100.00')).toHaveAttribute('title', 'CNY 100.00');
+    expect(screen.getByText('CNY 114.30')).toHaveAttribute('title', 'CNY 114.30');
   });
 
-  it('names the currency when the price now is in another currency', () => {
+  it('names the other currency when the cost now is in another currency', () => {
     mobile = false;
     linesData = [line({ current_unit_cost: 15, current_currency: 'USD', new_unit_cost: 114.3 })];
     renderTab(changeSet({ currency: 'CNY' }));
 
-    expect(screen.getByText('15.00 USD')).toBeInTheDocument();
-    expect(screen.getByText('114.30')).toBeInTheDocument();
+    expect(screen.getByText('USD 15.00')).toBeInTheDocument();
+    expect(screen.getByText('CNY 114.30')).toBeInTheDocument();
   });
 });

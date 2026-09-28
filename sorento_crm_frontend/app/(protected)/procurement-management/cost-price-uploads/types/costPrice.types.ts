@@ -54,6 +54,15 @@ export interface CostPriceChangeSetListItem {
   verified_by_name: string | null;
 }
 
+export interface CostPriceDuplicateRow {
+  id: string;
+  sheet: string;
+  row_no: number;
+  supplier_code: string;
+  code_note: string | null;
+  new_unit_cost: number | null;
+}
+
 export interface CostPriceChangeSetCounts {
   changed: number;
   unchanged: number;
@@ -140,6 +149,9 @@ export interface CostPriceChangeLine {
    *  recorded `current_unit_cost`/`current_currency` is what the line was built against,
    *  this is what the product-supplier link holds right now. */
   stale: { live_unit_cost: number | null; live_currency: string | null } | null;
+  /** Round 6 R6: the other rows of this line's supplier code (or product), in file order.
+   *  They are not applied; the line carries the row `choose_duplicate_row` picked. */
+  duplicate_rows?: CostPriceDuplicateRow[];
 }
 
 export interface CostPriceHistoryEvent {
@@ -159,7 +171,8 @@ export interface ProductSupplierCostRow {
   start_date: string | null;
   end_date: string | null;
   status: CostRowStatus;
-  source: { change_set_id: string; code: string } | null;
+  /** `sheet` + `row_no`: the row of the upload this cost came from (round 6, R6). */
+  source: { change_set_id: string; code: string; sheet?: string | null; row_no?: number | null } | null;
   created_at: string;
 }
 

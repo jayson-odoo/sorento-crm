@@ -146,17 +146,15 @@ describe('AC-S1-21: every filter renders an explicit empty state', () => {
     linesData = [line({ id: 'a', line_state: 'unchanged' })];
     renderTab(changeSet({ actions: { ...changeSet().actions, can_discard: true } }));
 
-    expect(await screen.findByText('Nothing changed against current prices')).toBeInTheDocument();
+    expect(await screen.findByText('Nothing changed against current costs')).toBeInTheDocument();
     expect(screen.getByText('Discard this set from the header above.')).toBeInTheDocument();
   });
 
-  it('shows "No duplicate codes" on the Duplicate code filter with none flagged', () => {
+  it('has no Duplicate code filter: a duplicate code is one line (round 6 R6)', () => {
     linesData = [line({ id: 'a', line_state: 'changed' })];
     renderTab(changeSet());
 
-    fireEvent.click(screen.getByRole('button', { name: /Duplicate code/i }));
-
-    expect(screen.getByText('No duplicate codes')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Duplicate code/i })).not.toBeInTheDocument();
   });
 
   it('shows "Nothing needs attention" on that filter with none needing it', () => {
@@ -178,13 +176,13 @@ describe('AC-SR-02: search combines with the active stat filter and sheet tab; c
     renderTab(changeSet());
 
     // Both rows counted before any search narrows them.
-    const changedCard = screen.getByRole('button', { name: /Price changed/i });
+    const changedCard = screen.getByRole('button', { name: /Cost changed/i });
     expect(within(changedCard).getByText('2')).toBeInTheDocument();
 
     const search = screen.getByPlaceholderText('Search code, configuration or product');
     fireEvent.change(search, { target: { value: 'alpha' } });
 
-    expect(within(screen.getByRole('button', { name: /Price changed/i })).getByText('1')).toBeInTheDocument();
+    expect(within(screen.getByRole('button', { name: /Cost changed/i })).getByText('1')).toBeInTheDocument();
     expect(screen.getByText('ALPHA-100')).toBeInTheDocument();
     expect(screen.queryByText('BETA-200')).not.toBeInTheDocument();
   });

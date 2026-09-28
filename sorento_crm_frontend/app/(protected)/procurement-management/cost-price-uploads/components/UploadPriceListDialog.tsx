@@ -126,7 +126,7 @@ export function UploadPriceListDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Upload price list</DialogTitle>
+          <DialogTitle>Upload cost list</DialogTitle>
         </DialogHeader>
         <DialogBody className="space-y-4">
           <FileDropzone
@@ -137,7 +137,7 @@ export function UploadPriceListDialog({
             onReject={(file, reason) =>
               toast.error(reason === 'size' ? `${file.name} is larger than 25 MB` : `${file.name} is not an Excel file`)
             }
-            aria-label="Supplier price list file"
+            aria-label="Supplier cost list file"
           />
 
           {openSet ? (

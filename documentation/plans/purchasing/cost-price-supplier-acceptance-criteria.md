@@ -12,6 +12,14 @@ Mockups: `mockups/cost-price-uploads.html` (J1, J2), `mockups/cost-price-review.
 verification off and on), `mockups/supplier-cost-lists.html` (J8, J15, J16, the setting),
 `mockups/supplier-price-page.html` (J10 to J13).
 
+Round 6 (owner hand test of 28 Sep 2026, PR #1305) amends the page and its words: the set
+page's call to action is "Apply N changes" top right with Download file and Discard in the gear;
+every line is exactly one line at 1280 with the currency beside both costs ("CNY 10.50"); there
+is no lead time input (AC-S2-05); a duplicate code is one line (AC-S1-10); and every
+user-facing "price" on this feature reads "cost" (Cost changed, Cost now, New cost, Upload cost
+list, the supplier's Costs tab). API field names stay as they are. Below, "price in force" and
+"new price" name the data the lines carry; on screen they read "Cost now" and "New cost".
+
 Tags: `[BE]` pytest, `[FE]` vitest, `[E2E]` agent-browser evidence run (no new Playwright spec),
 `[T]` a test that guards a rule rather than a screen. Every AC names the Journey step it serves.
 
@@ -39,20 +47,21 @@ Sorento person, same permissions), Mr Chen (sales at XIAMEN TAIYANG, no Sorento 
 **Staff upload, verification off (S1, the first rollout)**
 
 - **J1.** Mei Ling gets the supplier's Excel over WeChat. She opens Purchasing > Cost price
-  uploads, can search past uploads by code, supplier or file name, and clicks Upload price list.
+  uploads, can search past uploads by code, supplier or file name, and clicks Upload cost list.
 - **J2.** She drops the file. The system pre-selects the supplier from the letterhead and the
   currency from that supplier's prices. She may set Valid from and Valid to (both optional; empty
   means always). She clicks Upload.
 - **J3.** The system reads every sheet, finds the header row on each (序号 型号 产品配置 价格), fills
   merged configuration cells down, cleans a bracketed note off a code, and matches every code with
   the same engine the PI, packing list and loading plan uploads use. She lands on the review page.
-- **J4.** The review page opens filtered to "Price changed". She can search by code,
-  configuration or product, and switch sheets. Each line shows sheet and row, supplier code,
-  configuration, matched product, price in force, new price, change percent and currency. Codes
-  the engine could not match are listed under "Not found"; a code that appears twice under
-  "Duplicate code".
-- **J5.** She maps each Not found row from a product dropdown or skips it, and skips one of each
-  duplicate.
+- **J4.** The review page opens filtered to "Cost changed". She can search by code,
+  configuration or product, and switch sheets. Each line is exactly one line at 1280 and shows
+  sheet and row, supplier code with its note, configuration, matched product, cost now and new
+  cost each with its currency ("CNY 10.50"), and the change percent. Codes the engine could not
+  match are listed under "Not found"; a code that appears on two rows is one line, the other
+  row's note and cost inline on it (round 6, 28 Sep 2026).
+- **J5.** She maps each Not found row from a product dropdown or skips it (a small skip icon on
+  the line).
 - **J8.** She clicks Apply N changes. Each line becomes a new cost list on its product-supplier
   link with the chosen dates; the price in force updates at once (or on the start date, for a
   future start). The set is Applied, marked "not verified".
@@ -126,10 +135,15 @@ Sorento person, same permissions), Mr Chen (sales at XIAMEN TAIYANG, no Sorento 
 - **AC-S1-09** `[BE]` (J4) Given a bound product, then the line records the price in force of the
   (product, supplier) link at parse time, the new price, and the change percent (null when there
   is none); given no link exists, the line is `new_link`.
-- **AC-S1-10** `[BE]` (J4, J5) Given two lines that bind to one product, then both are flagged
-  `duplicate_code` and listed under "Duplicate code"; Apply is refused until one is skipped.
-  There is no packaging variant concept (Q9, round 3).
-- **AC-S1-11** `[BE]` (J5, J8) Given any `unmatched`, `needs_attention` or `duplicate_code` line not
+- **AC-S1-10** `[BE]` (J4, J5) Given two or more rows with the same supplier code (or bound to one
+  product) in one set, then they collapse into ONE line carrying the FIRST row's cost, with the
+  other rows' notes and costs shown inline on that line (for example "OPP 9.90"); there is no
+  "Duplicate code" filter and no manual skip for it, Apply is not blocked by it, and the applied
+  cost list records which sheet and row was used (`source.sheet`, `source.row_no`). The choice
+  lives in one function, `choose_duplicate_row`, so a later ruling (lower cost, last row, per-line
+  choice) is a one-function change. There is no packaging variant concept (Q9, round 3).
+  (Amended by the owner, 28 Sep 2026, round 6 R6.)
+- **AC-S1-11** `[BE]` (J5, J8) Given any `unmatched` or `needs_attention` line not
   mapped or skipped, when Apply (or, with verification on, Submit) is called, then 422 names the
   count.
 - **AC-S1-12** `[BE]` (J5, J8) Given an unmatched line mapped to a product from the dropdown, then
@@ -203,11 +217,11 @@ Sorento person, same permissions), Mr Chen (sales at XIAMEN TAIYANG, no Sorento 
   `SUPPLIER_COST_TICK` audit row lists them; a second run the same day changes nothing.
 - **AC-CL-06** `[BE]` (J16) Given `procurement.product_suppliers.edit`, then add, change and delete
   of a cost list row succeed and are audited; without it, 403. Delete is the 10 s deferred action.
-- **AC-CL-07** `[FE]` (J15) The supplier record's Prices tab lists each linked product with its cost
+- **AC-CL-07** `[FE]` (J15) The supplier record's Costs tab (named Prices before round 6) lists each linked product with its cost
   list rows (price, currency, Valid from, Valid to, status pill: In force, Scheduled, Ended,
   Always; source: set code or "Edited by hand"), with search (product code, description, supplier
   code) and a Status filter (`SearchableMultiSelect`); empty state "No prices recorded for this
-  supplier yet" with Upload price list as the next step.
+  supplier yet" with Upload cost list as the next step (round 6 wording: "No costs recorded").
 - **AC-CL-08** `[FE]` (J15) The product record's Suppliers tab shows, per supplier, the price in
   force and its cost lists (same columns as AC-CL-07), with search by supplier name or set code;
   the price renders in the link's own currency (fixes `ProductDetail.tsx` formatting every cost
@@ -244,8 +258,13 @@ Sorento person, same permissions), Mr Chen (sales at XIAMEN TAIYANG, no Sorento 
   `submitted_by_user_id`, `submitted_at`; given it is off, Submit returns 409 and Apply works
   (AC-S1-26).
 - **AC-S2-05** `[BE]` (J8) Given a `new_link` line applied, then the new link's
-  `standard_lead_time_days` is the most common value across this supplier's links; given none,
-  the line shows a lead time input and blocks Apply while empty.
+  `standard_lead_time_days` is the most common value across this supplier's links that have one;
+  given none, it stays empty (null). There is no lead time input on the page and Apply never
+  blocks on lead time. (Amended by the owner, 28 Sep 2026, round 6 R3: "don't need Lead time
+  (days)". Pinned by `test_new_link_lead_time_is_the_suppliers_most_common`,
+  `test_new_link_without_default_applies_with_no_lead_time`,
+  `test_new_link_with_no_supplier_links_applies_with_null_lead_time` and
+  `test_most_common_lead_time_ignores_links_without_one`; migration `cpc3_lead_time_nullable`.)
 - **AC-S2-06** `[BE]` `[T]` (J8) Given a line's recorded price in force no longer equals the live
   one at Apply, then 409 lists those lines as `stale`, nothing is written, and the lines show both
   values.

@@ -96,7 +96,7 @@ export async function uploadCostPriceFile(input: UploadCostPriceFileInput): Prom
         // Not a parseable open_set body - fall through to the generic message below.
       }
     }
-    throw new Error(await extractApiError(res, 'Failed to upload the price list'));
+    throw new Error(await extractApiError(res, 'Failed to upload the cost list'));
   }
   return (await res.json()) as CostPriceChangeSetDetail;
 }
@@ -220,7 +220,7 @@ export async function applyCostPriceChangeSet(id: string): Promise<CostPriceChan
 
 export async function refreshCostPricePrices(id: string): Promise<CostPriceChangeSetDetail> {
   const res = await apiFetch(`${BASE}/${id}/refresh-prices`, { method: 'POST' });
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to refresh prices'));
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to refresh costs'));
   return (await res.json()) as CostPriceChangeSetDetail;
 }
 
@@ -284,7 +284,7 @@ export async function getSupplierCostLists(
   if (params.status?.length) sp.set('status', params.status.join(','));
   const qs = sp.toString();
   const res = await apiFetch(`/api/v1/procurement/suppliers/${supplierId}/cost-lists${qs ? `?${qs}` : ''}`);
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load this supplier’s prices'));
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load this supplier’s costs'));
   return res.json();
 }
 
@@ -301,7 +301,7 @@ export async function createProductSupplierCost(linkId: string, input: CostRowIn
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   });
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the price'));
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the cost'));
   return (await res.json()) as ProductSupplierCostRow;
 }
 
@@ -315,6 +315,6 @@ export async function updateProductSupplierCost(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   });
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the price'));
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the cost'));
   return (await res.json()) as ProductSupplierCostRow;
 }

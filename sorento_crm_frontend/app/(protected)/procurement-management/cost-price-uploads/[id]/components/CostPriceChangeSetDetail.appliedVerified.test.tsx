@@ -34,6 +34,8 @@ let detail: CostPriceChangeSetDetailType;
 vi.mock('../../hooks/useCostPriceChangeSets', () => ({
   useCostPriceChangeSet: () => ({ data: detail, isLoading: false }),
   useRefreshCostPricePrices: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useApplyCostPriceChangeSet: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSubmitCostPriceChangeSet: () => ({ mutateAsync: vi.fn(), isPending: false }),
   costPriceChangeSetsPagerQuery: {
     listQueryKey: () => ['cost-price-change-sets-pager'],
     fetchPage: async () => ({ ids: ['set-1'], hasNextPage: false }),

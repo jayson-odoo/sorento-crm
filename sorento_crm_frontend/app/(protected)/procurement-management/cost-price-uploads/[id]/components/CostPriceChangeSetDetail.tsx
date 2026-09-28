@@ -1,11 +1,13 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
+import { Download, Trash2 } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/common/PageHeader';
-import ListPager from '@/components/common/ListPager';
+import DetailActions from '@/components/common/DetailActions';
+import type { RecordAction } from '@/components/common/recordActions';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -18,6 +20,7 @@ import {
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { downloadCostPriceSourceFile } from '../../services/costPriceService';
 import { formatPlainDate } from '../../lib/formatPlainDate';
+import { CostPriceApplyButton } from './CostPriceApplyButton';
 import { CostPriceHistoryTab } from './CostPriceHistoryTab';
 import { CostPriceLinesTab } from './CostPriceLinesTab';
 
@@ -63,6 +66,26 @@ export function CostPriceChangeSetDetail({ changeSetId }: { changeSetId: string 
 
   const refreshPrices = useRefreshCostPricePrices(changeSetId);
 
+  // Round 6 R1 (owner, 28 Sep 2026): Download file and Discard live in the gear, Discard last
+  // in red; Discard stays the deferred countdown it was (D7), never a confirm dialog.
+  const hasSourceFile = changeSet?.has_source_file ?? false;
+  const canDiscard = changeSet?.actions.can_discard ?? false;
+  const gearActions = useMemo<RecordAction[]>(() => {
+    const items: RecordAction[] = [
+      {
+        key: 'cost_price_change_set.download',
+        label: 'Download file',
+        icon: Download,
+        disabled: !hasSourceFile,
+        run: () => void downloadCostPriceSourceFile(changeSetId),
+      },
+    ];
+    if (canDiscard) {
+      items.push({ key: 'cost_price_change_set.discard', label: 'Discard', icon: Trash2, kind: 'destructive', run: () => discard.start() });
+    }
+    return items;
+  }, [canDiscard, changeSetId, discard, hasSourceFile]);
+
   if (isLoading || !changeSet) {
     return (
       <div className="space-y-4">
@@ -83,27 +106,22 @@ export function CostPriceChangeSetDetail({ changeSetId }: { changeSetId: string 
         }
         crumbTitle={changeSet.code}
         actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" onClick={() => void downloadCostPriceSourceFile(changeSetId)} disabled={!changeSet.has_source_file}>
-              Download file
-            </Button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {changeSet.actions.can_refresh_prices ? (
               <Button variant="outline" onClick={() => void refreshPrices.mutateAsync()} disabled={refreshPrices.isPending}>
-                Refresh prices
+                Refresh costs
               </Button>
             ) : null}
-            {changeSet.actions.can_discard ? (
-              discard.countdown ?? (
-                <Button variant="ghost" className="text-destructive" onClick={() => discard.start()}>
-                  Discard
-                </Button>
-              )
-            ) : null}
-            <ListPager
-              {...costPriceChangeSetsPagerQuery}
-              detailPath="/procurement-management/cost-price-uploads"
-              currentId={changeSetId}
-              ariaLabel="cost price upload"
+            <DetailActions
+              pager={{
+                ...costPriceChangeSetsPagerQuery,
+                detailPath: '/procurement-management/cost-price-uploads',
+                currentId: changeSetId,
+                ariaLabel: 'cost upload',
+              }}
+              actions={gearActions}
+              primary={<CostPriceApplyButton changeSet={changeSet} />}
+              pendingAction={discard.countdown}
             />
           </div>
         }

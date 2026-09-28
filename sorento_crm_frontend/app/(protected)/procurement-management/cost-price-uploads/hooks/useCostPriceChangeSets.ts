@@ -169,7 +169,7 @@ export function useRefreshCostPricePrices(setId: string) {
   return useMutation({
     mutationFn: () => costPriceService.refreshCostPricePrices(setId),
     onSuccess: () => {
-      toast.success('Prices refreshed.');
+      toast.success('Costs refreshed.');
       queryClient.invalidateQueries({ queryKey: ['cost-price-change-set', setId, 'lines'] });
       invalidateSet(queryClient, setId);
     },

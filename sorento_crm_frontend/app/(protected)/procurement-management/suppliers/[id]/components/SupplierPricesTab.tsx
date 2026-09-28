@@ -78,7 +78,7 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
     () => [
       {
         id: 'price',
-        header: 'Price',
+        header: 'Cost',
         size: 110,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
         cell: ({ row }) =>
@@ -118,11 +118,19 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
         cell: ({ row }) =>
           row.original.cost ? (
             row.original.cost.source ? (
+              // Round 6 R6: which row of the upload the cost came from, so a duplicate code's
+              // unused rows can be told apart from the one applied.
               <Link
-                className="text-primary hover:underline"
+                className="block truncate text-primary hover:underline"
                 href={`/procurement-management/cost-price-uploads/${row.original.cost.source.change_set_id}`}
+                title={
+                  row.original.cost.source.row_no != null
+                    ? `${row.original.cost.source.code}, ${row.original.cost.source.sheet ?? ''} row ${row.original.cost.source.row_no}`
+                    : row.original.cost.source.code
+                }
               >
                 {row.original.cost.source.code}
+                {row.original.cost.source.row_no != null ? ` row ${row.original.cost.source.row_no}` : ''}
               </Link>
             ) : (
               <span className="text-muted-foreground">Edited by hand</span>
@@ -141,7 +149,7 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
               </Button>
             ) : (
               <Button size="sm" variant="outline" onClick={() => setDialog({ entry: row.original.entry, cost: null })}>
-                <Plus className="size-3.5" /> Price
+                <Plus className="size-3.5" /> Cost
               </Button>
             )
           ) : null,
@@ -174,15 +182,15 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
       {isError ? (
         <Card>
           <div className="flex flex-col items-center gap-3 p-10 text-center">
-            <p className="text-sm font-medium">{error instanceof Error ? error.message : 'Failed to load this supplier’s prices'}</p>
+            <p className="text-sm font-medium">{error instanceof Error ? error.message : 'Failed to load this supplier’s costs'}</p>
           </div>
         </Card>
       ) : !isLoading && entries.length === 0 ? (
         <Card>
           <div className="flex flex-col items-center gap-3 p-10 text-center">
-            <p className="text-sm font-medium">No prices recorded for this supplier yet</p>
+            <p className="text-sm font-medium">No costs recorded for this supplier yet</p>
             <Button asChild>
-              <Link href="/procurement-management/cost-price-uploads">Upload price list</Link>
+              <Link href="/procurement-management/cost-price-uploads">Upload cost list</Link>
             </Button>
           </div>
         </Card>
@@ -206,7 +214,7 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
                   ) : null}
                 </div>
                 <span className="tabular-nums text-muted-foreground">
-                  {entry.unit_cost != null ? `${Number(entry.unit_cost).toFixed(2)} ${entry.currency ?? ''}` : 'no price'}
+                  {entry.unit_cost != null ? `${Number(entry.unit_cost).toFixed(2)} ${entry.currency ?? ''}` : 'no cost'}
                 </span>
               </div>
             );

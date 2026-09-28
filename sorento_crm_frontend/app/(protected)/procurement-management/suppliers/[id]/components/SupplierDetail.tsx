@@ -111,7 +111,7 @@ export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList variant="line" className="w-full justify-start">
           <TabsTrigger value="details">Details</TabsTrigger>
-          {canViewPrices ? <TabsTrigger value="prices">Prices</TabsTrigger> : null}
+          {canViewPrices ? <TabsTrigger value="prices">Costs</TabsTrigger> : null}
         </TabsList>
 
         <TabsContent value="details">

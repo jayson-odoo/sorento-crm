@@ -1,6 +1,7 @@
 /**
  * CostPriceChangeSetDetail (#1305 reviewer pass, Lane A FE rows, S6): a Draft set with
- * stale lines needs a way to re-capture current prices. "Refresh prices" renders in the
+ * stale lines needs a way to re-capture current costs. "Refresh costs" (round 6 R5: cost,
+ * never price) renders in the
  * header action area only when `actions.can_refresh_prices` is true, and calls the
  * refresh mutation.
  */
@@ -36,6 +37,8 @@ let detail: CostPriceChangeSetDetailType;
 vi.mock('../../hooks/useCostPriceChangeSets', () => ({
   useCostPriceChangeSet: () => ({ data: detail, isLoading: false }),
   useRefreshCostPricePrices: () => ({ mutateAsync: refreshMutateAsync, isPending: false }),
+  useApplyCostPriceChangeSet: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSubmitCostPriceChangeSet: () => ({ mutateAsync: vi.fn(), isPending: false }),
   costPriceChangeSetsPagerQuery: {
     listQueryKey: () => ['cost-price-change-sets-pager'],
     fetchPage: async () => ({ ids: ['set-1'], hasNextPage: false }),
@@ -93,14 +96,14 @@ function renderDetail() {
 }
 
 describe('S6: Refresh prices renders only when can_refresh_prices is true', () => {
-  it('renders no Refresh prices button when can_refresh_prices is false', () => {
+  it('renders no Refresh costs button when can_refresh_prices is false', () => {
     detail = makeDetail();
     renderDetail();
 
-    expect(screen.queryByRole('button', { name: 'Refresh prices' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Refresh costs' })).not.toBeInTheDocument();
   });
 
-  it('renders Refresh prices and calls the mutation when can_refresh_prices is true', () => {
+  it('renders Refresh costs and calls the mutation when can_refresh_prices is true', () => {
     detail = makeDetail({
       actions: {
         can_apply: true, apply_blocked_reason: null, apply_count: 0,
@@ -110,7 +113,7 @@ describe('S6: Refresh prices renders only when can_refresh_prices is true', () =
     });
     renderDetail();
 
-    const button = screen.getByRole('button', { name: 'Refresh prices' });
+    const button = screen.getByRole('button', { name: 'Refresh costs' });
     fireEvent.click(button);
 
     expect(refreshMutateAsync).toHaveBeenCalled();

@@ -61,20 +61,20 @@ function renderDetail() {
   );
 }
 
-describe('S1: the Prices tab is gated on procurement.product_suppliers.view', () => {
-  it('renders no Prices tab for a caller without the permission', () => {
+describe('S1: the Costs tab (Prices before round 6 R5) is gated on procurement.product_suppliers.view', () => {
+  it('renders no Costs tab for a caller without the permission', () => {
     grantedPerms.granted.clear();
     useSupplier.mockReturnValue({ data: SUPPLIER, isLoading: false });
     renderDetail();
 
-    expect(screen.queryByRole('tab', { name: 'Prices' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Costs' })).not.toBeInTheDocument();
   });
 
-  it('renders the Prices tab for a caller with the permission', () => {
+  it('renders the Costs tab for a caller with the permission', () => {
     grantedPerms.granted = new Set(['procurement.product_suppliers.view']);
     useSupplier.mockReturnValue({ data: SUPPLIER, isLoading: false });
     renderDetail();
 
-    expect(screen.getByRole('tab', { name: 'Prices' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Costs' })).toBeInTheDocument();
   });
 });

@@ -1,11 +1,12 @@
 # PLAN: Cost price from the supplier's price list, as dated cost lists, verified when suppliers submit (#1288)
 
-Status: Lane A (S1 + S2) built on PR #1305, fix lane round 4 (upload audit action admitted by
-audit_logs_action_check; every named event rides in new_values.event) done, fix lane round 5
-(Products page: Upload cost price in the primary spot opening the Purchasing upload dialog,
-Create product under Actions; owner ruling 28 Sep 2026) done, main 9d150067 merged (cpc1 on
-identity_0001_s0_model, single head cpc2_cost_price_tick_schedule), awaiting the orchestrator's
-review and the owner's hand test (28 Sep 2026); Lane B (S3, the supplier page) not started. Plan history:
+Status: Lane A (S1 + S2) built on PR #1305, fix lane round 6 done (owner hand test of 28 Sep
+2026: Apply N changes as the header call to action with Download file and Discard in the gear,
+one-line rows with the currency beside both costs, no lead time input and Apply never blocked on
+it, duplicate codes collapsed to the first row, every "price" label reads "cost"; migration
+`cpc3_lead_time_nullable`), main fcbfa379 merged (cpc1 on fin_0001_billing_documents, single
+head cpc3_lead_time_nullable), awaiting the orchestrator's review and the owner's hand test
+(28 Sep 2026); Lane B (S3, the supplier page) not started. Plan history:
 draft plan + UAC, round 3 (27 Sep 2026). Owner rulings of 26 Sep 23:45 MYT (Q1, Q2, Q5,
 Q6, Q7, Q9, Q10), 27 Sep 00:10 MYT (Q3, Q4), 27 Sep 15:31 MYT (Q16), 27 Sep 00:45 MYT (verification off for the first
 rollout, reuse the existing matching engine, search on every page, mockups) and 27 Sep 00:50 MYT
@@ -470,10 +471,15 @@ over-design. Both are applied by dropping the near-match layer entirely.
   alias with `source=manual`, `matched_by='cost_price_set'`. Nothing is remembered from a set
   that is discarded or never applied (AC-S1-12).
 - A bound product not yet linked to this supplier is `new_link` (AC-S1-09).
-- **Duplicate code** (AC-S1-10): two lines in one set that bind to the same product are both
-  flagged `duplicate_code` and the user skips one. This is the generic check any upload needs
-  (one link gets one new price per upload), not a packaging feature; pre-flight query 4 says
-  whether the owner's file triggers it at all.
+- **Duplicate code** (AC-S1-10, round 6 R6, owner 28 Sep 2026): rows in one set with the same
+  supplier code, or bound to the same product, collapse into ONE line carrying the FIRST row's
+  cost. The other rows are stored `skipped` with flag `duplicate_row` and ride on the line as
+  `duplicate_rows` (note + cost, shown inline); Apply is not blocked, and the cost list's
+  `source` records the sheet and row applied. `choose_duplicate_row` in
+  `cost_price_change_service.py` is the one place the rule lives (lower cost, last row or a
+  per-line choice is a later one-function change). A hand skip of the used row promotes the
+  next. This is the generic check any upload needs (one link gets one new cost per upload),
+  not a packaging feature; the owner's CPC-0002 file had 84 such rows.
 - A skipped unmatched code writes nothing. Trigger for "remember this skip" (a dismissal alias,
   which the ladder already honours): the same code is skipped on three consecutive sets for one
   supplier.
@@ -516,7 +522,7 @@ Pending set is finished by a verifier.
    its price in force to the line's captured values; a mismatch rolls back with 409 listing the
    stale lines (AC-S2-06).
 4. Insert one `product_supplier_costs` row per line (the set's currency, start and end dates;
-   `source_change_line_id` set), create missing links with the lead time rule (AC-S2-05), write
+   `source_change_line_id` set), create missing links with the lead time rule (AC-S2-05: the supplier's most common lead time, else empty; never blocks), write
    aliases (section 6), then recompute `unit_cost` and `currency` from `price_in_force(link,
    today)` through the ORM so the audit listener records old and new.
 5. One `COST_SET_APPLY` audit row with the full change list (section 9).

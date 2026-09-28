@@ -71,7 +71,7 @@ export function CostRowDialog({
     entityType: 'product_supplier_cost',
     entityId: cost?.id ?? null,
     verb: 'Deleting',
-    subject: `the ${link.product?.product_code ?? ''} price`.trim(),
+    subject: `the ${link.product?.product_code ?? ''} cost`.trim(),
     surface: 'inline',
     successMessage: 'Deleted.',
     onCommitted: () => {
@@ -98,7 +98,7 @@ export function CostRowDialog({
       onSaved();
       onOpenChange(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to save the price');
+      toast.error(error instanceof Error ? error.message : 'Failed to save the cost');
     } finally {
       setSaving(false);
     }
@@ -108,12 +108,12 @@ export function CostRowDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Price for {link.product?.product_code ?? 'this product'}</DialogTitle>
+          <DialogTitle>Cost for {link.product?.product_code ?? 'this product'}</DialogTitle>
         </DialogHeader>
         <DialogBody className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="cost-row-price">Price</Label>
+              <Label htmlFor="cost-row-price">Cost</Label>
               <Input
                 id="cost-row-price"
                 type="number"

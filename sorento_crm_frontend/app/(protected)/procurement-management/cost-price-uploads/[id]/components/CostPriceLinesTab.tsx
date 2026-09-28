@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { Ban } from 'lucide-react';
 import { getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -8,7 +9,6 @@ import { Card, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -16,27 +16,33 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useIsMobile } from '@/hooks/use-mobile';
 import {
-  useApplyCostPriceChangeSet,
   useCostPriceChangeLines,
   useDecideAllCostPriceLines,
   useDecideCostPriceLine,
   usePatchCostPriceChangeLine,
   useReturnCostPriceChangeSet,
-  useSubmitCostPriceChangeSet,
 } from '../../hooks/useCostPriceChangeSets';
 import { searchCostPriceProductOptions, type PatchLineInput } from '../../services/costPriceService';
 import type { CostPriceChangeLine, CostPriceChangeSetDetail } from '../../types/costPrice.types';
+import { CostPriceApplyButton } from './CostPriceApplyButton';
 
-type FilterKey = 'changed' | 'unchanged' | 'new_link' | 'unmatched' | 'duplicate_code' | 'needs_attention';
+// Round 6 R6: no Duplicate code filter - a duplicate code is one line now (the backend
+// collapses it and carries the other rows on it as `duplicate_rows`), nothing to resolve.
+type FilterKey = 'changed' | 'unchanged' | 'new_link' | 'unmatched' | 'needs_attention';
 
 const FILTERS: { key: FilterKey; label: string; predicate: (l: CostPriceChangeLine) => boolean }[] = [
-  { key: 'changed', label: 'Price changed', predicate: (l) => !l.skipped && l.line_state === 'changed' },
+  { key: 'changed', label: 'Cost changed', predicate: (l) => !l.skipped && l.line_state === 'changed' },
   { key: 'unchanged', label: 'Unchanged', predicate: (l) => !l.skipped && l.line_state === 'unchanged' },
   { key: 'new_link', label: 'New for this supplier', predicate: (l) => !l.skipped && l.line_state === 'new_link' },
   { key: 'unmatched', label: 'Not found', predicate: (l) => !l.skipped && l.match_outcome === 'unmatched' },
-  { key: 'duplicate_code', label: 'Duplicate code', predicate: (l) => !l.skipped && l.flags.includes('duplicate_code') },
   { key: 'needs_attention', label: 'Needs attention', predicate: (l) => !l.skipped && l.line_state === 'needs_attention' },
 ];
+
+/** A row that rode on another line of its code (R6). The backend already leaves these out. */
+const isDuplicateRow = (l: CostPriceChangeLine) => l.flags.includes('duplicate_row');
+
+/** Every grid cell is exactly one line (round 6 R2): one no-wrap row, nothing stacked. */
+const ONE_LINE = 'flex min-w-0 items-center gap-1.5 whitespace-nowrap';
 
 function searchTokens(query: string): string[] {
   return query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -63,37 +69,68 @@ function ChangeBadge({ line }: { line: CostPriceChangeLine }) {
   );
 }
 
-function money(value: number | null, currency: string | null): string {
+/**
+ * Round 6 R4 (owner, 28 Sep 2026: "show the currency at each line also"): "CNY 10.50" beside
+ * both costs on every line. A cost with no currency of its own is in the set's currency.
+ */
+function costText(value: number | null, currency: string | null): string {
   if (value == null) return 'none';
-  return `${value.toFixed(2)} ${currency ?? ''}`.trim();
+  return `${currency ? `${currency} ` : ''}${value.toFixed(2)}`;
 }
 
-/** AC-S2-06: recorded vs live, terse - no prose on why the two differ. */
-function StaleCell({ line }: { line: CostPriceChangeLine }) {
+/** AC-S2-06: recorded vs live, terse, on the same one line as the cost now. */
+function StaleCell({ line, setCurrency }: { line: CostPriceChangeLine; setCurrency: string }) {
   const stale = line.stale;
   if (!stale) return null;
-  const recorded = line.current_unit_cost != null ? line.current_unit_cost.toFixed(2) : 'none';
-  const live = stale.live_unit_cost != null ? stale.live_unit_cost.toFixed(2) : 'none';
+  const recorded = costText(line.current_unit_cost, line.current_currency ?? setCurrency);
+  const live = costText(stale.live_unit_cost, stale.live_currency ?? setCurrency);
   return (
-    <span className="block text-xs text-amber-700" title={`Recorded ${recorded}, now ${live}`}>
-      <span className="block truncate">Recorded {recorded}</span>
-      <span className="block truncate">now {live}</span>
+    <span className={`${ONE_LINE} justify-end text-amber-700`} title={`Recorded ${recorded}, now ${live}`}>
+      <span className="truncate tabular-nums">{recorded}</span>
+      <span className="shrink-0 text-xs">now {stale.live_unit_cost != null ? stale.live_unit_cost.toFixed(2) : 'none'}</span>
     </span>
   );
 }
 
-/**
- * Mockup: Price now / New price show bare amounts, the set's currency being in the header.
- * A price in another currency keeps its code, since the difference is what matters; the
- * full value is always the title.
- */
-function PriceCell({ value, currency, setCurrency }: { value: number | null; currency: string | null; setCurrency: string }) {
-  const full = money(value, currency);
-  const shown = value != null && (currency == null || currency === setCurrency) ? value.toFixed(2) : full;
+function CostCell({ value, currency }: { value: number | null; currency: string | null }) {
+  const text = costText(value, currency);
   return (
-    <span className="block truncate tabular-nums" title={full}>
-      {shown}
+    <span className={`${ONE_LINE} justify-end`}>
+      <span className="truncate tabular-nums" title={text}>
+        {text}
+      </span>
     </span>
+  );
+}
+
+/** R6: the other rows of this code, inline and small ("OPP 9.90 · 彩盒 11.00"). */
+function duplicateRowsText(line: CostPriceChangeLine): string | null {
+  const rows = line.duplicate_rows ?? [];
+  if (!rows.length) return null;
+  return rows
+    .map((d) => {
+      const label = [d.supplier_code !== line.supplier_code ? d.supplier_code : null, d.code_note].filter(Boolean).join(' ');
+      const cost = d.new_unit_cost != null ? d.new_unit_cost.toFixed(2) : 'none';
+      return label ? `${label} ${cost}` : cost;
+    })
+    .join(' · ');
+}
+
+/** Round 6 R2: skip is a small icon on the line, never a second line of its own. */
+function SkipIconButton({ onSkip }: { onSkip: () => void }) {
+  return (
+    <Button
+      type="button"
+      size="sm"
+      mode="icon"
+      variant="ghost"
+      className="size-7 shrink-0 text-muted-foreground"
+      aria-label="Skip this one"
+      title="Skip this one"
+      onClick={onSkip}
+    >
+      <Ban />
+    </Button>
   );
 }
 
@@ -109,8 +146,10 @@ function LineCard({
   isPendingForVerifier,
   onPatch,
   onDecide,
+  setCurrency,
 }: {
   line: CostPriceChangeLine;
+  setCurrency: string;
   showDecisionColumn: boolean;
   isPendingForVerifier: boolean;
   onPatch: (patch: PatchLineInput) => void;
@@ -123,7 +162,10 @@ function LineCard({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <span className="font-medium">{line.supplier_code}</span>
-          {line.code_note ? <div className="text-xs text-muted-foreground">note: {line.code_note}</div> : null}
+          {line.code_note ? <span className="ms-1.5 text-xs text-muted-foreground">{line.code_note}</span> : null}
+          {duplicateRowsText(line) ? (
+            <div className="truncate text-xs text-muted-foreground">{duplicateRowsText(line)}</div>
+          ) : null}
         </div>
         <ChangeBadge line={line} />
       </div>
@@ -135,7 +177,7 @@ function LineCard({
       </div>
 
       {line.match_outcome === 'unmatched' ? (
-        <div className="mt-2 flex flex-col gap-1.5">
+        <div className="mt-2 flex items-center gap-1.5">
           <SearchableSelect
             id={`map-mobile-${line.id}`}
             value=""
@@ -147,9 +189,7 @@ function LineCard({
             placeholder="Pick a product"
             triggerClassName="w-full"
           />
-          <Button type="button" size="sm" variant="ghost" className="self-start text-muted-foreground" onClick={() => onPatch({ skipped: true, skip_reason: 'Not found' })}>
-            Skip
-          </Button>
+          <SkipIconButton onSkip={() => onPatch({ skipped: true, skip_reason: 'Not found' })} />
         </div>
       ) : (
         <>
@@ -158,34 +198,23 @@ function LineCard({
             <span className="font-medium">{line.product?.product_code ?? '-'}</span>
           </div>
           <div className="mt-1 flex items-center justify-between text-sm">
-            <span className="text-xs text-muted-foreground">Price now to new</span>
+            <span className="text-xs text-muted-foreground">Cost now to new</span>
             <span className="tabular-nums">
-              {line.current_unit_cost != null ? <span className="text-muted-foreground line-through">{line.current_unit_cost.toFixed(2)}</span> : null}{' '}
-              {money(line.new_unit_cost, line.current_currency)}
+              {line.current_unit_cost != null ? (
+                <span className="text-muted-foreground line-through">{costText(line.current_unit_cost, line.current_currency ?? setCurrency)}</span>
+              ) : null}{' '}
+              {costText(line.new_unit_cost, setCurrency)}
             </span>
           </div>
           {line.stale ? (
-            <div className="mt-1 text-end">
-              <StaleCell line={line} />
+            <div className="mt-1 flex justify-end">
+              <StaleCell line={line} setCurrency={setCurrency} />
             </div>
           ) : null}
-          {line.flags.includes('duplicate_code') ? (
-            <Button type="button" size="sm" variant="ghost" className="mt-1 text-muted-foreground" onClick={() => onPatch({ skipped: true, skip_reason: 'Duplicate code' })}>
-              Skip this one
-            </Button>
-          ) : null}
-          {line.line_state === 'new_link' && line.new_link_lead_time_days == null ? (
-            <div className="mt-1 flex items-center gap-1.5">
-              <span className="text-xs text-muted-foreground">Lead time (days)</span>
-              <Input
-                type="number"
-                min={0}
-                className="h-7 w-20"
-                onBlur={(e) => {
-                  const v = e.target.value ? Number(e.target.value) : undefined;
-                  if (v !== undefined) onPatch({ new_link_lead_time_days: v });
-                }}
-              />
+          {line.line_state === 'needs_attention' ? (
+            <div className="mt-1 flex items-center justify-between gap-1.5">
+              <span className="text-xs text-destructive">{line.new_unit_cost == null ? 'No readable cost' : 'Needs attention'}</span>
+              <SkipIconButton onSkip={() => onPatch({ skipped: true, skip_reason: line.new_unit_cost == null ? 'No readable cost' : 'Needs attention' })} />
             </div>
           ) : null}
         </>
@@ -331,7 +360,7 @@ function ReturnDialog({ setId, onDone }: { setId: string; onDone: () => void }) 
 
 export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSetDetail }) {
   const { data } = useCostPriceChangeLines(changeSet.id);
-  const lines = React.useMemo(() => data?.data ?? [], [data]);
+  const lines = React.useMemo(() => (data?.data ?? []).filter((l) => !isDuplicateRow(l)), [data]);
   // Cards at 375 (mockup "At 375 wide"), the DataGrid at sm+ - a JS switch, not a CSS
   // one: `sm:hidden`/`hidden sm:block` render BOTH into the DOM regardless of viewport
   // (jsdom applies no CSS), which doubled every button `getByRole` sees in the existing
@@ -346,8 +375,6 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
   const patchLine = usePatchCostPriceChangeLine(changeSet.id);
   const decideLine = useDecideCostPriceLine(changeSet.id);
   const decideAll = useDecideAllCostPriceLines(changeSet.id);
-  const submit = useSubmitCostPriceChangeSet(changeSet.id);
-  const apply = useApplyCostPriceChangeSet(changeSet.id);
 
   const tokens = React.useMemo(() => searchTokens(search), [search]);
   const searchedLines = React.useMemo(() => lines.filter((l) => matchesSearch(l, tokens)), [lines, tokens]);
@@ -368,59 +395,51 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
   // decisions set gets no Decision column at all.
   const anyLineHasDecision = lines.some((l) => l.decision != null);
   const showDecisionColumn = isPendingForVerifier || anyLineHasDecision;
-  // With the setting on, a staff draft always goes through Submit, never straight to
-  // Apply (AC-S2-04) - driven by the set's own workflow, not by whether Submit
-  // happens to be enabled right now, so a blocked draft still shows Submit (disabled)
-  // rather than silently falling back to the Apply button verification-off sets use.
-  const isSubmitWorkflow =
-    changeSet.verification_enabled && changeSet.status === 'draft' && changeSet.channel === 'staff_upload';
 
   const columns = React.useMemo<ColumnDef<CostPriceChangeLine>[]>(() => {
+    const skip = (line: CostPriceChangeLine, reason: string) =>
+      void patchLine.mutateAsync({ lineId: line.id, patch: { skipped: true, skip_reason: reason } });
+    // Widths (1280, round 6 R2): every cell is one line, and a verifier's Decision column
+    // (150) still lands inside ~950px: 80 + 200 + 80 + 150 + 110 + 110 + 70 + 150 = 950.
     const base: ColumnDef<CostPriceChangeLine>[] = [
       {
-        // Sheet and Row merged into one column (column-width budget, 1280 breakpoint):
-        // the grid must reach the Decision column at ~950px of content width without
-        // horizontal scroll, and neither value is worth its own 60-110px slot.
+        // Sheet and Row merged into one column (column-width budget, 1280 breakpoint).
         id: 'sheet_row',
         header: 'Sheet / row',
-        size: 90,
+        size: 80,
         cell: ({ row }) => (
-          <div className="min-w-0 text-xs">
-            <span className="block truncate font-medium" title={row.original.sheet}>
-              {row.original.sheet}
-            </span>
-            <span className="text-muted-foreground">Row {row.original.row_no}</span>
+          <div className={`${ONE_LINE} text-xs`} title={`${row.original.sheet}, row ${row.original.row_no}`}>
+            <span className="truncate font-medium">{row.original.sheet}</span>
+            <span className="shrink-0 text-muted-foreground">{row.original.row_no}</span>
           </div>
         ),
       },
       {
         id: 'supplier_code',
         header: 'Supplier code',
-        size: 140,
-        cell: ({ row }) => (
-          <div className="min-w-0">
-            <span className="block truncate font-medium" title={row.original.supplier_code}>
-              {row.original.supplier_code}
-            </span>
-            {row.original.code_note ? (
-              <span className="block truncate text-xs text-muted-foreground" title={row.original.code_note}>
-                note: {row.original.code_note}
-              </span>
-            ) : null}
-          </div>
-        ),
+        size: 200,
+        cell: ({ row }) => {
+          const line = row.original;
+          const others = duplicateRowsText(line);
+          const title = [line.supplier_code, line.code_note, others].filter(Boolean).join(' · ');
+          return (
+            <div className={ONE_LINE} title={title}>
+              <span className="shrink-0 font-medium">{line.supplier_code}</span>
+              {line.code_note ? <span className="truncate text-xs text-muted-foreground">{line.code_note}</span> : null}
+              {others ? <span className="truncate text-xs text-muted-foreground">{others}</span> : null}
+            </div>
+          );
+        },
       },
       {
         id: 'configuration',
         header: 'Configuration',
-        size: 90,
+        size: 80,
         cell: ({ row }) => (
-          <div className="min-w-0">
-            <span className="block truncate" title={row.original.configuration ?? ''}>
-              {row.original.configuration ?? '-'}
-            </span>
+          <div className={ONE_LINE} title={row.original.configuration ?? ''}>
+            <span className="truncate">{row.original.configuration ?? '-'}</span>
             {row.original.flags.includes('configuration_from_merge') ? (
-              <span className="block text-xs text-muted-foreground">merged</span>
+              <span className="shrink-0 text-xs text-muted-foreground">merged</span>
             ) : null}
           </div>
         ),
@@ -428,123 +447,83 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
       {
         id: 'product',
         header: 'Our product',
-        size: 170,
+        size: 150,
         cell: ({ row }) => {
           const line = row.original;
           if (line.match_outcome === 'unmatched') {
             return (
-              <div className="flex min-w-0 flex-col gap-1.5">
-                <SearchableSelect
-                  id={`map-${line.id}`}
-                  value=""
-                  onChange={() => {}}
-                  onOptionChange={(opt) =>
-                    void patchLine.mutateAsync({ lineId: line.id, patch: { product_id: opt?.value ?? null } })
-                  }
-                  fetchOptions={searchCostPriceProductOptions}
-                  clearable
-                  size="sm"
-                  placeholder="Pick a product"
-                  triggerClassName="w-full"
-                />
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="self-start text-muted-foreground"
-                  onClick={() => void patchLine.mutateAsync({ lineId: line.id, patch: { skipped: true, skip_reason: 'Not found' } })}
-                >
-                  Skip
-                </Button>
+              <div className={ONE_LINE}>
+                <div className="min-w-0 flex-1">
+                  <SearchableSelect
+                    id={`map-${line.id}`}
+                    value=""
+                    onChange={() => {}}
+                    onOptionChange={(opt) =>
+                      void patchLine.mutateAsync({ lineId: line.id, patch: { product_id: opt?.value ?? null } })
+                    }
+                    fetchOptions={searchCostPriceProductOptions}
+                    clearable
+                    size="sm"
+                    placeholder="Pick a product"
+                    triggerClassName="w-full"
+                  />
+                </div>
+                <SkipIconButton onSkip={() => skip(line, 'Not found')} />
+              </div>
+            );
+          }
+          const matchNote =
+            line.match_rung || line.match_outcome !== 'exact'
+              ? `${line.match_outcome === 'manual' ? 'mapped by hand' : line.match_rung ? `supplier code rule: ${line.match_rung}` : line.match_outcome}${
+                  line.line_state === 'new_link' ? ', new for this supplier' : ''
+                }`
+              : null;
+          if (line.line_state === 'needs_attention') {
+            const reason = line.new_unit_cost == null ? 'No readable cost' : 'Needs attention';
+            return (
+              <div className={ONE_LINE} title={[line.product?.product_code, reason].filter(Boolean).join(' · ')}>
+                <span className="truncate font-medium">{line.product?.product_code ?? '-'}</span>
+                <span className="truncate text-xs text-destructive">{reason}</span>
+                <SkipIconButton onSkip={() => skip(line, reason)} />
               </div>
             );
           }
           return (
-            <div className="min-w-0">
-              <span className="block truncate font-medium" title={line.product?.product_code ?? ''}>
-                {line.product?.product_code ?? '-'}
-              </span>
-              {line.match_rung || line.match_outcome !== 'exact' ? (
-                <span className="block truncate text-xs text-muted-foreground">
-                  {line.match_outcome === 'manual' ? 'mapped by hand' : line.match_rung ? `supplier code rule: ${line.match_rung}` : line.match_outcome}
-                  {line.line_state === 'new_link' ? ', new for this supplier' : ''}
-                </span>
-              ) : null}
-              {line.flags.includes('duplicate_code') ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="mt-1 text-muted-foreground"
-                  onClick={() => void patchLine.mutateAsync({ lineId: line.id, patch: { skipped: true, skip_reason: 'Duplicate code' } })}
-                >
-                  Skip this one
-                </Button>
-              ) : null}
-              {line.line_state === 'needs_attention' && !line.flags.includes('duplicate_code') ? (
-                <div className="mt-1 flex items-center gap-1.5">
-                  <span className="text-xs text-destructive">
-                    {line.new_unit_cost == null ? 'No readable price' : 'Needs attention'}
-                  </span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="text-muted-foreground"
-                    onClick={() => void patchLine.mutateAsync({ lineId: line.id, patch: { skipped: true, skip_reason: 'No readable price' } })}
-                  >
-                    Skip
-                  </Button>
-                </div>
-              ) : null}
-              {line.line_state === 'new_link' && line.new_link_lead_time_days == null ? (
-                <div className="mt-1 flex items-center gap-1.5">
-                  <span className="text-xs text-muted-foreground">Lead time (days)</span>
-                  <Input
-                    type="number"
-                    min={0}
-                    className="h-7 w-20"
-                    defaultValue=""
-                    onBlur={(e) => {
-                      const v = e.target.value ? Number(e.target.value) : undefined;
-                      if (v !== undefined) void patchLine.mutateAsync({ lineId: line.id, patch: { new_link_lead_time_days: v } });
-                    }}
-                  />
-                </div>
-              ) : null}
+            <div className={ONE_LINE} title={[line.product?.product_code, matchNote].filter(Boolean).join(' · ')}>
+              <span className="truncate font-medium">{line.product?.product_code ?? '-'}</span>
+              {matchNote ? <span className="truncate text-xs text-muted-foreground">{matchNote}</span> : null}
             </div>
           );
         },
       },
       {
         id: 'current',
-        header: 'Price now',
-        // 110, not 90: "498.00 CNY" truncated to "498.0..." at 90px (Phase 1 evidence,
-        // review-verification-off-1280.png). A price in the set's own currency now shows
-        // the bare amount (PriceCell), so the code only takes room when it differs.
+        header: 'Cost now',
         size: 110,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
         cell: ({ row }) =>
           row.original.stale ? (
-            <StaleCell line={row.original} />
+            <StaleCell line={row.original} setCurrency={changeSet.currency} />
           ) : (
-            <PriceCell value={row.original.current_unit_cost} currency={row.original.current_currency} setCurrency={changeSet.currency} />
+            <CostCell value={row.original.current_unit_cost} currency={row.original.current_currency ?? changeSet.currency} />
           ),
       },
       {
         id: 'new',
-        header: 'New price',
+        header: 'New cost',
         size: 110,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
-        cell: ({ row }) => (
-          <PriceCell value={row.original.new_unit_cost} currency={changeSet.currency} setCurrency={changeSet.currency} />
-        ),
+        cell: ({ row }) => <CostCell value={row.original.new_unit_cost} currency={changeSet.currency} />,
       },
       {
         id: 'change',
         header: 'Change',
-        size: 90,
-        cell: ({ row }) => <ChangeBadge line={row.original} />,
+        size: 70,
+        cell: ({ row }) => (
+          <div className={ONE_LINE}>
+            <ChangeBadge line={row.original} />
+          </div>
+        ),
       },
     ];
 
@@ -557,10 +536,14 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
           const line = row.original;
           if (isPendingForVerifier) {
             if (line.skipped || (line.line_state !== 'changed' && line.line_state !== 'new_link')) {
-              return <span className="text-muted-foreground">-</span>;
+              return (
+                <div className={ONE_LINE}>
+                  <span className="text-muted-foreground">-</span>
+                </div>
+              );
             }
             return (
-              <div className="flex items-center gap-1.5">
+              <div className={ONE_LINE}>
                 <Button
                   type="button"
                   size="sm"
@@ -579,19 +562,30 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
           }
           // J14/AC-AU-04: the set has left Pending (or the caller isn't the verifier who
           // decided it) - a line's decision is now a FACT of the record, not something
-          // to re-decide, so it renders read-only. The reject reason travels with it
-          // (visible text AND `title`, so either a sighted skim or a hover/hit-test
-          // finds it) - a reviewer must not have to cross-reference the History tab to
-          // learn why a line was rejected.
-          if (!line.decision) return <span className="text-muted-foreground">-</span>;
-          if (line.decision === 'accepted') return <Badge variant="success">Accepted</Badge>;
+          // to re-decide, so it renders read-only. The reject reason travels with it on the
+          // same line (visible text AND `title`), so no reviewer has to cross-reference
+          // the History tab to learn why a line was rejected.
+          if (!line.decision) {
+            return (
+              <div className={ONE_LINE}>
+                <span className="text-muted-foreground">-</span>
+              </div>
+            );
+          }
+          if (line.decision === 'accepted') {
+            return (
+              <div className={ONE_LINE}>
+                <Badge variant="success">Accepted</Badge>
+              </div>
+            );
+          }
           return (
-            <div className="min-w-0">
+            <div className={ONE_LINE}>
               <Badge variant="destructive" title={line.decision_reason ?? undefined}>
                 Rejected
               </Badge>
               {line.decision_reason ? (
-                <span className="mt-0.5 block truncate text-xs text-muted-foreground" title={line.decision_reason}>
+                <span className="truncate text-xs text-muted-foreground" title={line.decision_reason}>
                   {line.decision_reason}
                 </span>
               ) : null}
@@ -613,11 +607,10 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
   });
 
   const emptyMessages: Record<FilterKey, string> = {
-    changed: 'Nothing changed against current prices',
+    changed: 'Nothing changed against current costs',
     unchanged: 'No unchanged rows',
     new_link: 'No new products from this supplier',
     unmatched: 'No codes need mapping',
-    duplicate_code: 'No duplicate codes',
     needs_attention: 'Nothing needs attention',
   };
 
@@ -626,7 +619,7 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
   return (
     <div className="space-y-4">
       {/* Stat cards as filters (search-scoped counts, AC-SR-02). */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         {FILTERS.map((f) => {
           const count = searchedLines.filter(f.predicate).length;
           return (
@@ -683,6 +676,7 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
               line={line}
               showDecisionColumn={showDecisionColumn}
               isPendingForVerifier={isPendingForVerifier}
+              setCurrency={changeSet.currency}
               onPatch={(patch) => void patchLine.mutateAsync({ lineId: line.id, patch })}
               onDecide={(decision, reason) => void decideLine.mutateAsync({ lineId: line.id, decision, reason })}
             />
@@ -699,7 +693,9 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
       )}
 
       {/* Sticky apply bar, driven only by `actions` from the detail (contract 1.4) - the FE
-          never re-derives the four-eyes rule. Nothing left to do on an applied set. */}
+          never re-derives the four-eyes rule. Nothing left to do on an applied set. Its
+          button is the header's call to action too (round 6 R1), one component for both;
+          "N row(s) still need you" only shows while the backend counts such rows. */}
       {changeSet.status !== 'applied' ? (
         <div className="sticky bottom-0 z-10 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-background p-3 shadow-sm">
           <span className="text-sm font-medium">
@@ -720,23 +716,7 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
               </Button>
             ) : null}
             {actions.can_return ? <ReturnDialog setId={changeSet.id} onDone={() => {}} /> : null}
-            {isSubmitWorkflow ? (
-              <Button
-                onClick={() => void submit.mutateAsync()}
-                disabled={!actions.can_submit || submit.isPending}
-                title={actions.apply_blocked_reason ?? undefined}
-              >
-                Submit for verification
-              </Button>
-            ) : (
-              <Button
-                onClick={() => void apply.mutateAsync()}
-                disabled={!actions.can_apply || apply.isPending}
-                title={actions.apply_blocked_reason ?? undefined}
-              >
-                Apply {actions.apply_count} {actions.apply_count === 1 ? 'change' : 'changes'}
-              </Button>
-            )}
+            <CostPriceApplyButton changeSet={changeSet} />
           </div>
         </div>
       ) : null}

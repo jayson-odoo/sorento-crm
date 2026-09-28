@@ -93,7 +93,7 @@ describe('Nit 5: an upload failure toasts exactly once', () => {
     renderDialog();
 
     const file = new File(['data'], 'list.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    fireEvent.change(screen.getByLabelText('Supplier price list file'), { target: { files: [file] } });
+    fireEvent.change(screen.getByLabelText('Supplier cost list file'), { target: { files: [file] } });
 
     fireEvent.change(screen.getByLabelText('Search suppliers'), { target: { value: 'sup-1' } });
     fireEvent.change(screen.getByLabelText('Select a currency'), { target: { value: 'CNY' } });
