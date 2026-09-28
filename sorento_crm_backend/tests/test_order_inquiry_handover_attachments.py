@@ -233,9 +233,9 @@ def test_handover_template_prints_attachments():
 
 def test_migration_idempotent_single_head():
     module = _load_soatt_migration()
-    # One head, and it is this lane's migration - read off the real revision graph
-    # rather than a pinned parent name, which every reparent onto a newer main head
-    # (scripts/alembic-reparent.sh) would otherwise break.
+    # Exactly one head, and this lane's migration is in its chain. Never the head's
+    # name: every later migration PR (or a merge revision) moves the head, and a
+    # pinned name turns this test red on a graph that is still correct.
     from pathlib import Path
 
     from alembic.config import Config
@@ -244,8 +244,11 @@ def test_migration_idempotent_single_head():
     backend_root = Path(__file__).resolve().parents[1]
     config = Config(str(backend_root / "alembic.ini"))
     config.set_main_option("script_location", str(backend_root / "alembic"))
-    heads = ScriptDirectory.from_config(config).get_heads()
-    assert heads == [module.revision], heads
+    script = ScriptDirectory.from_config(config)
+    heads = script.get_heads()
+    assert len(heads) == 1, heads
+    chain = {rev.revision for rev in script.walk_revisions(base="base", head=heads[0])}
+    assert module.revision in chain, (module.revision, heads)
 
     with blank_session() as db:
         template = _r2_template(db)
