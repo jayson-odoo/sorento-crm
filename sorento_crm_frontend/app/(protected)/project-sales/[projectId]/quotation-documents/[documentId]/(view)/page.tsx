@@ -1,5 +1,5 @@
 import { Metadata } from 'next';
-import { QuotationScopesTab } from './components/QuotationScopesTab';
+import { QuotationScopesTab } from '../components/QuotationScopesTab';
 
 export const metadata: Metadata = {
   title: 'Quotation scopes',

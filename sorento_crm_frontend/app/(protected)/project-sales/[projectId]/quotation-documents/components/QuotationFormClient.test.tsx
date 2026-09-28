@@ -7,7 +7,13 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuotationDocument } from '../../../_shared/services/quotationDocumentService';
 import type {
@@ -35,23 +41,33 @@ vi.mock('next/navigation', () => ({
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
+  useListingColumnPreferences: () => ({
+    resetToDefaults: async () => {},
+    isLoading: false,
+  }),
 }));
 
 const createQuotationDocument = vi.fn();
 const updateQuotationDocument = vi.fn();
 const getQuotationDocument = vi.fn();
-vi.mock('../../../_shared/services/quotationDocumentService', async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import('../../../_shared/services/quotationDocumentService')
-  >();
-  return {
-    ...actual,
-    createQuotationDocument: (...args: unknown[]) => createQuotationDocument(...args),
-    updateQuotationDocument: (...args: unknown[]) => updateQuotationDocument(...args),
-    getQuotationDocument: (...args: unknown[]) => getQuotationDocument(...args),
-  };
-});
+vi.mock(
+  '../../../_shared/services/quotationDocumentService',
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import('../../../_shared/services/quotationDocumentService')
+      >();
+    return {
+      ...actual,
+      createQuotationDocument: (...args: unknown[]) =>
+        createQuotationDocument(...args),
+      updateQuotationDocument: (...args: unknown[]) =>
+        updateQuotationDocument(...args),
+      getQuotationDocument: (...args: unknown[]) =>
+        getQuotationDocument(...args),
+    };
+  },
+);
 
 const getProject = vi.fn();
 const listQuotations = vi.fn();
@@ -60,17 +76,20 @@ const listQuotationLines = vi.fn();
 const listSeries = vi.fn();
 const replaceQuotationLines = vi.fn();
 vi.mock('../../../_shared/services/projectService', async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import('../../../_shared/services/projectService')
-  >();
+  const actual =
+    await importOriginal<
+      typeof import('../../../_shared/services/projectService')
+    >();
   return {
     ...actual,
     getProject: (...args: unknown[]) => getProject(...args),
     listQuotations: (...args: unknown[]) => listQuotations(...args),
-    listQuotationVersions: (...args: unknown[]) => listQuotationVersions(...args),
+    listQuotationVersions: (...args: unknown[]) =>
+      listQuotationVersions(...args),
     listQuotationLines: (...args: unknown[]) => listQuotationLines(...args),
     listSeries: (...args: unknown[]) => listSeries(...args),
-    replaceQuotationLines: (...args: unknown[]) => replaceQuotationLines(...args),
+    replaceQuotationLines: (...args: unknown[]) =>
+      replaceQuotationLines(...args),
     judgeQuotationLine: vi.fn(async () => ({
       is_non_standard: false,
       is_below_floor: false,
@@ -80,26 +99,39 @@ vi.mock('../../../_shared/services/projectService', async (importOriginal) => {
   };
 });
 
-vi.mock('@/app/(protected)/master-data-management/products/services/productService', () => ({
-  getProductsForLineSelect: vi.fn(async () => [
-    {
-      id: 'p9',
-      product_code: 'SRT-BASIN-02',
-      product_name: 'Counter basin',
-      description: 'Vitreous china counter basin',
-      brand_id: 'b1',
-      base_uom_id: 'u1',
-      list_price: '560.00',
-    },
-  ]),
-  getProductsForVariantSelect: vi.fn(async () => []),
-}));
-vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query', () => ({
-  useBrandSelectQuery: () => ({ data: [{ id: 'b1', brand_name: 'SORENTO' }] }),
-}));
-vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query', () => ({
-  useUOMSelectQuery: () => ({ data: [{ id: 'u1', uom_code: 'PCS', uom_name: 'Pieces' }] }),
-}));
+vi.mock(
+  '@/app/(protected)/master-data-management/products/services/productService',
+  () => ({
+    getProductsForLineSelect: vi.fn(async () => [
+      {
+        id: 'p9',
+        product_code: 'SRT-BASIN-02',
+        product_name: 'Counter basin',
+        description: 'Vitreous china counter basin',
+        brand_id: 'b1',
+        base_uom_id: 'u1',
+        list_price: '560.00',
+      },
+    ]),
+    getProductsForVariantSelect: vi.fn(async () => []),
+  }),
+);
+vi.mock(
+  '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query',
+  () => ({
+    useBrandSelectQuery: () => ({
+      data: [{ id: 'b1', brand_name: 'SORENTO' }],
+    }),
+  }),
+);
+vi.mock(
+  '@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query',
+  () => ({
+    useUOMSelectQuery: () => ({
+      data: [{ id: 'u1', uom_code: 'PCS', uom_name: 'Pieces' }],
+    }),
+  }),
+);
 
 import { QuotationFormClient } from './QuotationFormClient';
 
@@ -122,7 +154,9 @@ function project(overrides: Partial<Project> = {}): Project {
   };
 }
 
-function document(overrides: Partial<QuotationDocument> = {}): QuotationDocument {
+function document(
+  overrides: Partial<QuotationDocument> = {},
+): QuotationDocument {
   return {
     id: 'd1',
     project_id: 'p1',
@@ -222,7 +256,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   getProject.mockResolvedValue(project());
   listSeries.mockResolvedValue([
-    { id: 's1', name: 'Premium Series', is_active: true, category_ids: [], category_names: [] },
+    {
+      id: 's1',
+      name: 'Premium Series',
+      is_active: true,
+      category_ids: [],
+      category_names: [],
+    },
   ]);
   listQuotations.mockResolvedValue([SCOPE]);
   listQuotationVersions.mockResolvedValue([version()]);
@@ -238,13 +278,21 @@ describe('QuotationFormClient create', () => {
 
     expect(await screen.findByLabelText('Your Ref')).toBeInTheDocument();
     expect(screen.getByLabelText('Attn')).toBeInTheDocument();
-    expect(screen.getByLabelText('Date')).toHaveValue(new Date().toISOString().slice(0, 10));
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    expect(screen.getByLabelText('Date')).toHaveValue(today);
     // The subject arrives as the project's title, the same default the server would use.
-    await waitFor(() => expect(screen.getByLabelText('Subject')).toHaveValue('Menara Test'));
+    await waitFor(() =>
+      expect(screen.getByLabelText('Subject')).toHaveValue('Menara Test'),
+    );
     const scope = scopeSection(0);
     expect(within(scope).getByLabelText('Scope name')).toHaveValue('');
-    expect(within(scope).getByRole('combobox', { name: 'Series' })).toBeInTheDocument();
-    expect(within(scope).getByRole('button', { name: /Add a line/i })).toBeInTheDocument();
+    expect(
+      within(scope).getByRole('combobox', { name: 'Series' }),
+    ).toBeInTheDocument();
+    expect(
+      within(scope).getByRole('button', { name: /Add a line/i }),
+    ).toBeInTheDocument();
   });
 
   it('AC-QF010: writes nothing while the form is being filled', async () => {
@@ -266,7 +314,9 @@ describe('QuotationFormClient create', () => {
     renderForm();
     const first = await waitFor(() => scopeSection(0));
 
-    fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'NC/19' } });
+    fireEvent.change(screen.getByLabelText('Your Ref'), {
+      target: { value: 'NC/19' },
+    });
     fireEvent.change(within(first).getByLabelText('Scope name'), {
       target: { value: 'Townhouse' },
     });
@@ -287,7 +337,9 @@ describe('QuotationFormClient create', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
 
-    await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(createQuotationDocument).toHaveBeenCalledTimes(1),
+    );
     const [projectId, body] = createQuotationDocument.mock.calls[0];
     expect(projectId).toBe('p1');
     expect(body).toMatchObject({
@@ -309,7 +361,9 @@ describe('QuotationFormClient create', () => {
     });
     // Lands on the quotation the server just created.
     await waitFor(() =>
-      expect(push).toHaveBeenCalledWith('/project-sales/p1/quotation-documents/d-new'),
+      expect(push).toHaveBeenCalledWith(
+        '/project-sales/p1/quotation-documents/d-new',
+      ),
     );
   });
 
@@ -321,7 +375,9 @@ describe('QuotationFormClient create', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
 
-    expect(await screen.findByText(/Every scope needs a name/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Every scope needs a name/i),
+    ).toBeInTheDocument();
     expect(createQuotationDocument).not.toHaveBeenCalled();
 
     fireEvent.change(within(scope).getByLabelText('Scope name'), {
@@ -330,7 +386,9 @@ describe('QuotationFormClient create', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
 
     expect(
-      await screen.findByText(/One line still needs a product or a description/i),
+      await screen.findByText(
+        /One line still needs a product or a description/i,
+      ),
     ).toBeInTheDocument();
     expect(createQuotationDocument).not.toHaveBeenCalled();
   });
@@ -340,10 +398,16 @@ describe('QuotationFormClient create', () => {
     await waitFor(() => scopeSection(0));
 
     fireEvent.click(screen.getByRole('button', { name: /Add a scope/i }));
-    expect(screen.getAllByRole('region', { name: /^Scope \d+$/ })).toHaveLength(2);
+    expect(screen.getAllByRole('region', { name: /^Scope \d+$/ })).toHaveLength(
+      2,
+    );
 
-    fireEvent.click(within(scopeSection(1)).getByRole('button', { name: 'Remove scope' }));
-    expect(screen.getAllByRole('region', { name: /^Scope \d+$/ })).toHaveLength(1);
+    fireEvent.click(
+      within(scopeSection(1)).getByRole('button', { name: 'Remove scope' }),
+    );
+    expect(screen.getAllByRole('region', { name: /^Scope \d+$/ })).toHaveLength(
+      1,
+    );
   });
 
   it('AC-QF016: Cancel goes back to the Quotations tab and writes nothing', async () => {
@@ -360,13 +424,19 @@ describe('QuotationFormClient create', () => {
     renderForm();
     await waitFor(() => scopeSection(0));
 
-    expect(screen.getByRole('heading', { level: 1, name: 'New quotation' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'New quotation' }),
+    ).toBeInTheDocument();
     // Cancel is an outline button; Save is the only filled one.
     const save = screen.getByRole('button', { name: 'Save quotation' });
     const cancel = screen.getByRole('button', { name: 'Cancel' });
     expect(save.className).toMatch(/bg-primary/);
     expect(cancel.className).not.toMatch(/bg-primary/);
-    expect(screen.getAllByRole('button').filter((b) => /bg-primary /.test(b.className))).toHaveLength(1);
+    expect(
+      screen
+        .getAllByRole('button')
+        .filter((b) => /bg-primary /.test(b.className)),
+    ).toHaveLength(1);
   });
 });
 
@@ -374,14 +444,18 @@ describe('QuotationFormClient edit', () => {
   it('AC-QF020: opens filled from the saved quotation, with the same sections plus the letter', async () => {
     renderForm('d1');
 
-    await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
+    await waitFor(() =>
+      expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'),
+    );
     expect(screen.getByLabelText('Attn')).toHaveValue('Kelly');
     const scope = scopeSection(0);
     expect(within(scope).getByLabelText('Scope name')).toHaveValue('Townhouse');
     expect(await within(scope).findByText('Wall-hung WC')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { level: 1, name: 'PRJQ-2026-0002' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'PRJQ-2026-0002' }),
+    ).toBeInTheDocument();
     expect(screen.getByText('Cover letter')).toBeInTheDocument();
-    expect(screen.getByText('Terms')).toBeInTheDocument();
+    expect(screen.getByText('Terms and conditions')).toBeInTheDocument();
   });
 
   it('AC-QF021: Save sends ONE PATCH with the header and every scope, lines included', async () => {
@@ -389,13 +463,17 @@ describe('QuotationFormClient edit', () => {
     const scope = await waitFor(() => scopeSection(0));
     await within(scope).findByText('Wall-hung WC');
 
-    fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'NC/20' } });
+    fireEvent.change(screen.getByLabelText('Your Ref'), {
+      target: { value: 'NC/20' },
+    });
     fireEvent.change(within(scope).getByLabelText('Scope name'), {
       target: { value: 'Townhouse Block A' },
     });
     fireEvent.click(within(scope).getByRole('button', { name: 'Edit line 1' }));
     const editor = await within(scope).findByRole('group', { name: 'Line 1' });
-    fireEvent.change(within(editor).getByLabelText('Qty'), { target: { value: '12' } });
+    fireEvent.change(within(editor).getByLabelText('Qty'), {
+      target: { value: '12' },
+    });
 
     fireEvent.click(screen.getByRole('button', { name: /Add a scope/i }));
     fireEvent.change(within(scopeSection(1)).getByLabelText('Scope name'), {
@@ -404,7 +482,9 @@ describe('QuotationFormClient edit', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
 
-    await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(updateQuotationDocument).toHaveBeenCalledTimes(1),
+    );
     const [projectId, documentId, body] = updateQuotationDocument.mock.calls[0];
     expect([projectId, documentId]).toEqual(['p1', 'd1']);
     expect(body).toMatchObject({
@@ -420,18 +500,26 @@ describe('QuotationFormClient edit', () => {
     });
     expect(replaceQuotationLines).not.toHaveBeenCalled();
     await waitFor(() =>
-      expect(push).toHaveBeenCalledWith('/project-sales/p1/quotation-documents/d1'),
+      expect(push).toHaveBeenCalledWith(
+        '/project-sales/p1/quotation-documents/d1',
+      ),
     );
   });
 
   it('AC-QF022: Cancel goes back to the quotation page and writes nothing', async () => {
     renderForm('d1');
-    await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
+    await waitFor(() =>
+      expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'),
+    );
 
-    fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'changed' } });
+    fireEvent.change(screen.getByLabelText('Your Ref'), {
+      target: { value: 'changed' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    expect(push).toHaveBeenCalledWith('/project-sales/p1/quotation-documents/d1');
+    expect(push).toHaveBeenCalledWith(
+      '/project-sales/p1/quotation-documents/d1',
+    );
     expect(updateQuotationDocument).not.toHaveBeenCalled();
   });
 
@@ -441,11 +529,17 @@ describe('QuotationFormClient edit', () => {
     const scope = await waitFor(() => scopeSection(0));
     await within(scope).findByText('Wall-hung WC');
 
-    expect(within(scope).queryByRole('button', { name: /Add a line/i })).toBeNull();
-    expect(within(scope).queryByRole('button', { name: 'Edit line 1' })).toBeNull();
+    expect(
+      within(scope).queryByRole('button', { name: /Add a line/i }),
+    ).toBeNull();
+    expect(
+      within(scope).queryByRole('button', { name: 'Edit line 1' }),
+    ).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
-    await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(updateQuotationDocument).toHaveBeenCalledTimes(1),
+    );
     const body = updateQuotationDocument.mock.calls[0][2];
     expect(body.scopes[0]).not.toHaveProperty('lines');
   });
@@ -455,6 +549,8 @@ describe('QuotationFormClient edit', () => {
     const scope = await waitFor(() => scopeSection(0));
     await within(scope).findByText('Wall-hung WC');
 
-    expect(within(scope).queryByRole('button', { name: 'Remove scope' })).toBeNull();
+    expect(
+      within(scope).queryByRole('button', { name: 'Remove scope' }),
+    ).toBeNull();
   });
 });

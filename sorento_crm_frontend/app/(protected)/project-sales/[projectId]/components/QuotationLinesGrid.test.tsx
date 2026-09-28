@@ -10,7 +10,13 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuotationLine } from '../../_shared/types/project.types';
 import {
@@ -30,14 +36,18 @@ if (!window.matchMedia) {
 }
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
+  useListingColumnPreferences: () => ({
+    resetToDefaults: async () => {},
+    isLoading: false,
+  }),
 }));
 
 const judgeQuotationLine = vi.fn();
 vi.mock('../../_shared/services/projectService', async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import('../../_shared/services/projectService')
-  >();
+  const actual =
+    await importOriginal<
+      typeof import('../../_shared/services/projectService')
+    >();
   return {
     ...actual,
     judgeQuotationLine: (...args: unknown[]) => judgeQuotationLine(...args),
@@ -55,21 +65,32 @@ const PRODUCTS = [
     list_price: '560.00',
   },
 ];
-vi.mock('@/app/(protected)/master-data-management/products/services/productService', () => ({
-  getProductsForLineSelect: vi.fn(async () => PRODUCTS),
-  getProductsForVariantSelect: vi.fn(async () => []),
-}));
-vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query', () => ({
-  useBrandSelectQuery: () => ({ data: [{ id: 'b1', brand_name: 'SORENTO' }] }),
-}));
-vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query', () => ({
-  useUOMSelectQuery: () => ({
-    data: [
-      { id: 'u1', uom_code: 'PCS', uom_name: 'Pieces' },
-      { id: 'u2', uom_code: 'SET', uom_name: 'Sets' },
-    ],
+vi.mock(
+  '@/app/(protected)/master-data-management/products/services/productService',
+  () => ({
+    getProductsForLineSelect: vi.fn(async () => PRODUCTS),
+    getProductsForVariantSelect: vi.fn(async () => []),
   }),
-}));
+);
+vi.mock(
+  '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query',
+  () => ({
+    useBrandSelectQuery: () => ({
+      data: [{ id: 'b1', brand_name: 'SORENTO' }],
+    }),
+  }),
+);
+vi.mock(
+  '@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query',
+  () => ({
+    useUOMSelectQuery: () => ({
+      data: [
+        { id: 'u1', uom_code: 'PCS', uom_name: 'Pieces' },
+        { id: 'u2', uom_code: 'SET', uom_name: 'Sets' },
+      ],
+    }),
+  }),
+);
 
 import { QuotationLinesGrid } from './QuotationLinesGrid';
 
@@ -119,7 +140,9 @@ function Harness({
 }
 
 function renderGrid(lines: QuotationLine[], editable = false) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <Harness initial={lines.map(lineToFormLine)} editable={editable} />
@@ -162,7 +185,12 @@ describe('QuotationLinesGrid read', () => {
   it('AC-QF032: draws a section heading as a band over the line that opens it', async () => {
     renderGrid([
       line({ id: 'l1', band_label: 'BILL NO 3 PAGE 15/4' }),
-      line({ id: 'l2', product_code: 'BM107', description: 'Basin tap', sort_order: 1 }),
+      line({
+        id: 'l2',
+        product_code: 'BM107',
+        description: 'Basin tap',
+        sort_order: 1,
+      }),
     ]);
 
     const bands = await screen.findAllByTestId('data-grid-group-header');
@@ -174,7 +202,12 @@ describe('QuotationLinesGrid read', () => {
   it('AC-QF031: searches the lines and keeps each line its own item number', async () => {
     renderGrid([
       line({ id: 'l1' }),
-      line({ id: 'l2', product_code: 'BM107', description: 'Basin tap body', sort_order: 1 }),
+      line({
+        id: 'l2',
+        product_code: 'BM107',
+        description: 'Basin tap body',
+        sort_order: 1,
+      }),
     ]);
     await screen.findByText('Wall-hung WC');
 
@@ -182,14 +215,21 @@ describe('QuotationLinesGrid read', () => {
       target: { value: 'bm107' },
     });
 
-    await waitFor(() => expect(screen.queryByText('Wall-hung WC')).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByText('Wall-hung WC')).not.toBeInTheDocument(),
+    );
     expect(screen.getByText('Basin tap body')).toBeInTheDocument();
     expect(itemNumbers()).toEqual(['2']);
   });
 
   it('AC-QF035: totals the scope under the Total column, rate-only lines left out', async () => {
     renderGrid([
-      line({ id: 'l1', unit_price: '250.00', quantity: '4.00', line_total: '1000.00' }),
+      line({
+        id: 'l1',
+        unit_price: '250.00',
+        quantity: '4.00',
+        line_total: '1000.00',
+      }),
       line({
         id: 'l2',
         unit_price: '180.00',
@@ -216,7 +256,12 @@ describe('QuotationLinesGrid read', () => {
 
   it('marks an off-catalog line and names the floor under a below-floor one', async () => {
     renderGrid([
-      line({ id: 'l1', product_id: null, product_code: null, description: 'Bespoke top' }),
+      line({
+        id: 'l1',
+        product_id: null,
+        product_code: null,
+        description: 'Bespoke top',
+      }),
       line({
         id: 'l2',
         is_below_floor: true,
@@ -246,7 +291,9 @@ describe('QuotationLinesGrid edit', () => {
   it('AC-QF033: Add a section appends a line with its section heading open', async () => {
     renderGrid([line()], true);
 
-    fireEvent.click(await screen.findByRole('button', { name: /Add a section/i }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Add a section/i }),
+    );
 
     const editor = await screen.findByRole('group', { name: 'Line 2' });
     const heading = within(editor).getByLabelText('Section heading');
@@ -260,15 +307,27 @@ describe('QuotationLinesGrid edit', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Edit line 1' }));
     const editor = await screen.findByRole('group', { name: 'Line 1' });
-    fireEvent.change(within(editor).getByLabelText('Qty'), { target: { value: '12' } });
-    fireEvent.change(within(editor).getByLabelText('Unit price'), { target: { value: '950.00' } });
+    fireEvent.change(within(editor).getByLabelText('Qty'), {
+      target: { value: '12' },
+    });
+    fireEvent.change(within(editor).getByLabelText('Unit price'), {
+      target: { value: '950.00' },
+    });
 
     const body = formLinesToBody(latest);
     expect(body).toEqual([
-      expect.objectContaining({ id: 'l1', quantity: '12', unit_price: '950.00' }),
+      expect.objectContaining({
+        id: 'l1',
+        quantity: '12',
+        unit_price: '950.00',
+      }),
     ]);
     // The row's own cells follow the draft, so the Total moves before anything is saved.
-    await waitFor(() => expect(document.querySelector('tfoot')?.textContent).toMatch(/11,400\.00/));
+    await waitFor(() =>
+      expect(document.querySelector('tfoot')?.textContent).toMatch(
+        /11,400\.00/,
+      ),
+    );
   });
 
   it('AC-QF034: picking a product fills description, brand, UOM and list price', async () => {
@@ -277,7 +336,9 @@ describe('QuotationLinesGrid edit', () => {
     const editor = await screen.findByRole('group', { name: 'Line 1' });
 
     fireEvent.click(within(editor).getByRole('combobox', { name: 'Product' }));
-    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+    fireEvent.click(
+      await screen.findByRole('option', { name: /SRT-BASIN-02/ }),
+    );
 
     await waitFor(() => expect(latest[0].draft.product_id).toBe('p9'));
     expect(latest[0].draft.description).toBe('Vitreous china counter basin');
@@ -287,11 +348,19 @@ describe('QuotationLinesGrid edit', () => {
   });
 
   it('AC-QF034: Remove takes the line out of the set, and the others renumber', async () => {
-    renderGrid([line({ id: 'l1' }), line({ id: 'l2', description: 'Second', sort_order: 1 })], true);
+    renderGrid(
+      [
+        line({ id: 'l1' }),
+        line({ id: 'l2', description: 'Second', sort_order: 1 }),
+      ],
+      true,
+    );
 
     fireEvent.click(await screen.findByRole('button', { name: 'Edit line 1' }));
     const editor = await screen.findByRole('group', { name: 'Line 1' });
-    fireEvent.click(within(editor).getByRole('button', { name: 'Remove line' }));
+    fireEvent.click(
+      within(editor).getByRole('button', { name: 'Remove line' }),
+    );
 
     expect(latest.map((row) => row.id)).toEqual(['l2']);
     await waitFor(() => expect(itemNumbers()).toEqual(['1']));
@@ -300,7 +369,9 @@ describe('QuotationLinesGrid edit', () => {
   it('AC-QF017: an editable empty scope holds no line until one is added', async () => {
     renderGrid([], true);
 
-    expect(await screen.findByRole('button', { name: /Add a line/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: /Add a line/i }),
+    ).toBeInTheDocument();
     expect(itemNumbers()).toEqual([]);
     expect(latest).toEqual([]);
   });

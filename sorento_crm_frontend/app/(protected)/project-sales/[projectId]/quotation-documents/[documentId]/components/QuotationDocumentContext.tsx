@@ -7,7 +7,6 @@ import type {
   QuotationSignatureRecord,
 } from '../../../../_shared/services/quotationDocumentService';
 import type { Project } from '../../../../_shared/types/project.types';
-import type { QuotationEditSession } from './useQuotationEditSession';
 
 /**
  * Everything the tabs of one quotation document share.
@@ -18,7 +17,7 @@ import type { QuotationEditSession } from './useQuotationEditSession';
  *
  * This is also the home for state that must outlive a tab switch. Routing the tabs means the
  * panels unmount when the user leaves them, so anything held inside a panel dies with it: the open
- * scope, the signature just captured, and the edit view's staged lines all live here instead.
+ * scope and the signature just captured live here instead.
  */
 export type QuotationDocumentScreen = {
   projectId: string;
@@ -34,14 +33,6 @@ export type QuotationDocumentScreen = {
   /** The scope the Scopes tab has open. Held here so leaving the tab does not lose it. */
   activeScopeId: string | null;
   selectScope: (scopeId: string) => void;
-  /**
-   * The edit view's staged changes, held by the shell so a tab switch cannot lose them.
-   *
-   * It is also where the header's live total now comes from: the shell sums the staged drafts
-   * itself rather than being told a figure by whichever editor happens to be mounted, so there is
-   * ONE mechanism instead of a report on the way in and a cleanup on the way out.
-   */
-  edit: QuotationEditSession;
 };
 
 const QuotationDocumentContext = React.createContext<QuotationDocumentScreen | undefined>(

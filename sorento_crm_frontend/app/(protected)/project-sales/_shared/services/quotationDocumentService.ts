@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import type { QuotationLineBulkItem } from '../types/project.types';
 import type { StatusGraph } from '@/app/(protected)/system-management/status-graphs/types/statusGraph.types';
 
 /**
@@ -206,7 +207,26 @@ export type QuotationDocumentBody = Partial<{
   recipient_name_snapshot: string | null;
   recipient_address_snapshot: string | null;
   recipient_phone_snapshot: string | null;
+  /**
+   * The quotation form page's scopes (#1341), on the POST and the PATCH alike. The create writes
+   * the document, these scopes and their lines in ONE transaction; the edit applies them in one
+   * too. On a PATCH a saved scope carries its `id`, and a saved scope left out is not touched.
+   */
+  scopes: QuotationFormScopeBody[];
 }>;
+
+/**
+ * One scope as the form sends it. `lines` is the FULL line set of the scope's current version
+ * (whole-set: a stored line left out is deleted); leave it out to keep a scope's lines as they are,
+ * which is what the form does for a version the customer holds.
+ */
+export type QuotationFormScopeBody = {
+  id?: string;
+  scope_label?: string;
+  series_id?: string | null;
+  notes?: string | null;
+  lines?: QuotationLineBulkItem[];
+};
 
 type Envelope<T> = { data: T[]; pagination: { total: number }; empty: boolean };
 

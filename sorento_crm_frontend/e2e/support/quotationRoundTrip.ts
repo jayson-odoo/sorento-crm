@@ -110,8 +110,8 @@ export type IssuedQuotation = {
  * test residue rather than someone's work.
  *
  * Reached by clicking through: sidebar -> Pipeline -> Register project -> the project's own
- * Quotations tab -> Add a quotation. The router carries us to each new record, so nothing here
- * needs a deep URL either.
+ * Quotations tab -> Add a quotation -> the form page -> Save. The router carries us to each new
+ * record, so nothing here needs a deep URL either.
  */
 export async function createIssuedQuotation(
   page: Page,
@@ -143,27 +143,23 @@ export async function createIssuedQuotation(
 
   await press(page.getByRole('button', { name: /^quotations$/i }));
   await press(page.getByRole('button', { name: /add a quotation/i }));
-  await page.waitForURL(/quotation-documents\/[0-9a-f-]{36}/, { timeout: 30_000 });
+  // The form page (#1341): nothing exists until Save, so the scope and its line are entered
+  // here and written in the one request Save sends.
+  await page.waitForURL(/quotation-documents\/new/, { timeout: 30_000 });
+  const scope = page.getByRole('region', { name: 'Scope 1' });
+  await scope.getByLabel('Scope name').fill(scopeLabel);
+
+  // One priced line. Off-catalog (no product), which is a real state the line editor supports
+  // and keeps the spec off the product catalog.
+  await press(scope.getByRole('button', { name: /add a line/i }));
+  const lineEditor = scope.getByRole('group', { name: 'Line 1' });
+  await lineEditor.getByLabel('Description').fill('ZZT supply and install');
+  await lineEditor.getByLabel('Qty').fill('2');
+  await lineEditor.getByLabel('Unit price').fill('1250.00');
+  await press(page.getByRole('button', { name: /^save quotation$/i }));
+  await page.waitForURL(/quotation-documents\/[0-9a-f-]{36}(\?|$)/, { timeout: 30_000 });
   const documentUrl = page.url();
-
-  // A scope. `issue` refuses a document with none (422 quotation_document_no_scopes).
-  await press(page.getByRole('button', { name: /add a scope/i }).first());
-  const scopeDialog = page.getByRole('dialog');
-  await expect(scopeDialog.getByText('Add a scope')).toBeVisible({ timeout: 15_000 });
-  await scopeDialog.locator('#quotation-name-field').fill(scopeLabel);
-  await press(scopeDialog.getByRole('button', { name: /^add$/i }));
   await expect(page.getByTestId('quotation-scope-strip')).toBeVisible({ timeout: 20_000 });
-
-  // One priced line, through the edit session the salesperson uses. Off-catalog (no product),
-  // which is a real state the line editor supports and keeps the spec off the product catalog.
-  await openMenu(page, page.getByRole('button', { name: /quotation actions/i }));
-  await press(page.getByRole('menuitem', { name: /edit quotation/i }));
-  await press(page.getByRole('button', { name: /add a line/i }));
-  // `describeRow` names an unsaved row by its position, so the cells are "<column> on line 1".
-  await page.getByLabel('Description on line 1').fill('ZZT supply and install');
-  await page.getByLabel('Qty on line 1').fill('2');
-  await page.getByLabel('Unit price on line 1').fill('1250.00');
-  await press(page.getByRole('button', { name: /^save$/i }));
   // The server's own arithmetic coming back, not the browser's: 2 x 1250.00. Waiting on this
   // rather than on a toast is what proves the line actually landed before we issue.
   await expect(page.getByText('RM 2,500.00').first()).toBeVisible({ timeout: 30_000 });

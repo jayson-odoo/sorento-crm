@@ -1,8 +1,8 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import RequireAccess from '@/app/components/common/RequireAccess';
-import { QuotationDocumentClient } from './components/QuotationDocumentClient';
-import { QuotationDocumentPageHeader } from './components/QuotationDocumentPageHeader';
+import { QuotationDocumentClient } from '../components/QuotationDocumentClient';
+import { QuotationDocumentPageHeader } from '../components/QuotationDocumentPageHeader';
 
 export const metadata: Metadata = {
   title: 'Quotation document',
