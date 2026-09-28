@@ -51,6 +51,7 @@ class AIAssistantConfig(Base):
 
 class AIAssistantConversation(Base):
     __tablename__ = "ai_assistant_conversations"
+    __audit_skip__ = "assistant conversation log"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
@@ -72,6 +73,7 @@ class AIAssistantConversation(Base):
 
 class AIAssistantMessage(Base):
     __tablename__ = "ai_assistant_messages"
+    __audit_skip__ = "assistant conversation log"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     conversation_id: Mapped[str] = mapped_column(
@@ -98,6 +100,7 @@ class AIAssistantMessage(Base):
 
 class AIAssistantGovernanceEvent(Base):
     __tablename__ = "ai_assistant_governance_events"
+    __audit_skip__ = "assistant governance log, itself a trail"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -123,6 +126,7 @@ class AIAssistantUsageLog(Base):
     """
 
     __tablename__ = "ai_assistant_usage_logs"
+    __audit_skip__ = "assistant telemetry"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -163,6 +167,7 @@ class AIAssistantWishlistCluster(Base):
     """Cluster of unanswered user questions, populated by the nightly job."""
 
     __tablename__ = "ai_assistant_wishlist_clusters"
+    __audit_skip__ = "derived from assistant telemetry"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     representative_question: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
@@ -187,6 +192,7 @@ class AIAssistantUnansweredQuery(Base):
     """Per-message link from an unanswered turn to its assigned cluster."""
 
     __tablename__ = "ai_assistant_unanswered_queries"
+    __audit_skip__ = "assistant telemetry"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     message_id: Mapped[str] = mapped_column(
@@ -218,6 +224,7 @@ class AIAssistantTrace(Base):
     """
 
     __tablename__ = "ai_assistant_traces"
+    __audit_skip__ = "assistant telemetry"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     message_id: Mapped[str | None] = mapped_column(
@@ -252,6 +259,7 @@ class AIAssistantSpan(Base):
     """M2 - one span per pipeline node under a trace (tree via parent_id)."""
 
     __tablename__ = "ai_assistant_spans"
+    __audit_skip__ = "assistant telemetry"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     trace_id: Mapped[str] = mapped_column(

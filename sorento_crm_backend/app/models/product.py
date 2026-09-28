@@ -373,6 +373,7 @@ def chat_searchable_products():
 
 class ProductAttachment(Base, CompanyScopedMixin):
     __tablename__ = "product_attachments"
+    __audit_skip__ = "link table, 259 to 4,399 rows a day (measured 27 Sep 2026, review B3)"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)

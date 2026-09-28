@@ -192,6 +192,7 @@ class PriceTagRequestLine(Base):
     """
 
     __tablename__ = "price_tag_request_lines"
+    __audit_parent__ = "request_id"  # history rolls up to the header
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     request_id = Column(
