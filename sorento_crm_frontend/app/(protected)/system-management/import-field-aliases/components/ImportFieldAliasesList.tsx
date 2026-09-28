@@ -172,7 +172,6 @@ export default function ImportFieldAliasesList() {
         recordCount={groups?.length ?? 0}
         isLoading={isLoading}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
-        emptyAction={addButton}
       >
         <Card>
           <CardHeader className="block">

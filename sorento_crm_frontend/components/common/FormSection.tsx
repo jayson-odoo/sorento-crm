@@ -1,9 +1,11 @@
 'use client';
 
 /**
- * One collapsible card used four times by the price tag form (D-P1): Customer,
- * Sales Order & Lines, Price, Additional Information. A header button toggles
- * the body; a collapsed section with values shows a one-line summary (AC-P9).
+ * One collapsible card for a progressive form. The portal price tag form uses it
+ * four times (D-P1): Customer, Sales Order & Lines, Price, Additional Information.
+ * Register a project uses the same pattern for Who and what, then Details. A
+ * header button toggles the body; a collapsed section with values shows a
+ * one-line summary (AC-P9).
  *
  * Motion (AC-U1, D-M1, review round 2): section expand/collapse gets NO
  * animation at all - the body appears and disappears instantly, on tap and on

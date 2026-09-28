@@ -203,7 +203,6 @@ export default function UOMList() {
       rowHref={rowHref}
       rowPending={rowPending}
       tableLayout={{ columnsVisibility: true }}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

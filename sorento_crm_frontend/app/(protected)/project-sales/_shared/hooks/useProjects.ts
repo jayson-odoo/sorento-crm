@@ -245,28 +245,45 @@ export function useTakeoverRequests(projectId: string | undefined) {
 }
 
 /**
- * Live clash check as the title is typed.
+ * Duplicate check for a project title, run on demand (the Register dialog's Check
+ * button) rather than on every keystroke: the owner found the live check tiring
+ * (hand test, PR #1336).
  *
- * `enabled` on a minimum length, because two characters match half the pipeline and
- * a warning that fires on every keystroke is noise the user learns to ignore.
- *
- * `LIST_QUERY_OPTIONS`'s `placeholderData` keeps the previous answer on screen while the NEXT one loads, so the
- * panel does not flicker mid-typing - but only while the title is still long enough to ask
- * about. Returning it unconditionally left the candidate list on screen after the field was
- * cleared: an empty title showing "Similar projects" for a name nobody had typed.
+ * `title` is the value the user last asked about, not the live field. Below a
+ * minimum length nothing is asked, because two characters match half the pipeline.
  */
-const CLASH_MIN_CHARS = 4;
+export const CLASH_MIN_CHARS = 4;
+
+function clashKey(title: string, developerPartyId?: string | null): QueryKey {
+  return ['project-clash', title.trim().toLowerCase(), developerPartyId ?? null];
+}
 
 export function useClashPreview(title: string, developerPartyId?: string | null) {
   const trimmed = title.trim();
-  const askable = trimmed.length >= CLASH_MIN_CHARS;
   return useQuery({
-    queryKey: ['project-clash', trimmed.toLowerCase(), developerPartyId ?? null],
+    queryKey: clashKey(trimmed, developerPartyId),
     queryFn: () => previewClashes({ title: trimmed, developer_party_id: developerPartyId }),
-    enabled: askable,
-    placeholderData: (previous) => (askable ? previous : undefined),
+    enabled: trimmed.length >= CLASH_MIN_CHARS,
     staleTime: 30_000,
   });
+}
+
+/**
+ * The same check as `useClashPreview`, awaited: the one guard Register runs on
+ * submit. It fills the same cache entry, so the inline panel shows its answer.
+ */
+export function useFetchClashPreview() {
+  const queryClient = useQueryClient();
+  return React.useCallback(
+    (title: string, developerPartyId?: string | null) => {
+      const trimmed = title.trim();
+      return queryClient.fetchQuery({
+        queryKey: clashKey(trimmed, developerPartyId),
+        queryFn: () => previewClashes({ title: trimmed, developer_party_id: developerPartyId }),
+      });
+    },
+    [queryClient],
+  );
 }
 
 function useInvalidateProjects() {

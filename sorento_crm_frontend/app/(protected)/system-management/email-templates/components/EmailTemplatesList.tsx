@@ -227,7 +227,6 @@ export default function EmailTemplatesList() {
       onRowClick={(t) => t?.id && router.push(`/system-management/email-templates/${t.id}`)}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       rowPending={rowPending}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

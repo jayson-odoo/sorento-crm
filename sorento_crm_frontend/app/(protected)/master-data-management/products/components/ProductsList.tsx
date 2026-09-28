@@ -853,15 +853,6 @@ const ProductsList = () => {
 
   const openCreateProduct = () => router.push('/master-data-management/products/new');
 
-  // The empty state's next step (S5-06). In the toolbar, Create product lives in
-  // the Actions menu and Upload cost price holds the primary spot (#1288 round 5).
-  const emptyStateAction = (
-    <Button onClick={openCreateProduct}>
-      <Plus className="size-4" />
-      Create Product
-    </Button>
-  );
-
   return (
     <DataGrid
       table={table}
@@ -879,7 +870,6 @@ const ProductsList = () => {
       tableClassNames={{
         edgeCell: 'px-5',
       }}
-      emptyAction={emptyStateAction}
     >
       <Card>
         <CardHeader className="block">
