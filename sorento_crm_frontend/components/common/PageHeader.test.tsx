@@ -285,12 +285,9 @@ describe('PageHeader', () => {
 
   it('PR #1336: has no subtitle slot; a passed description line never renders', () => {
     pathname = '/order-management/orders';
-    render(
-      // @ts-expect-error the slot is gone: title, trail and actions only (CRM-wide rule)
-      <PageHeader title="Orders">
-        <p>Every order in the company</p>
-      </PageHeader>,
-    );
+    const smuggled = { title: 'Orders', children: <p>Every order in the company</p> };
+    // @ts-expect-error the slot is gone: title, trail and actions only (CRM-wide rule)
+    render(<PageHeader {...smuggled} />);
 
     expect(screen.getByRole('heading', { level: 1, name: 'Orders' })).toBeInTheDocument();
     expect(screen.queryByText('Every order in the company')).toBeNull();
