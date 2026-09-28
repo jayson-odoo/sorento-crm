@@ -359,7 +359,7 @@ class TestCardAndBackfill:
 class TestBudget:
     def test_the_longest_line_is_within_240_chars(self) -> None:
         heads = [episode_digest.episode_line(datetime(2026, 9, 30), d, "") for d in episode_digest._DOMAIN_NOUNS]
-        assert max(len(h) for h in heads) + 200 <= 240, max(heads, key=len)
+        assert max(len(h) for h in heads) + episode_digest._SUMMARY_CHAR_CAP <= 240, max(heads, key=len)
 
     def test_three_worst_case_lines_fit_the_l4_cap_undropped(self) -> None:
         worst = episode_digest.episode_line(
