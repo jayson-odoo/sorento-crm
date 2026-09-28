@@ -563,3 +563,20 @@ AC-1388 and the "I don't know ... I know ..." sentence of AC-1385 are superseded
 - AC-1394 A product ask naming a property ("kitchen sink 1.2mm thickness") lists only the products
   with it, every brand, under one intro line ("Here are kitchen sinks with thickness 1.2 mm (2).").
 - AC-1395 A category word alone never opens the "Which kind of file do you need?" menu.
+
+## Fix round 12 (owner retest of round 10, 28 Sep 2026: attribute-first by structure)
+
+- AC-1396 An ask that describes a product set (a product type, a category or a specification, no
+  code typed) is the attribute-first lane's whatever verb carries the leg. The leg is read from the
+  parser's intent, the routed domain, and any word of a requested attribute that the registry knows
+  (`_LEG_BY_ATTRIBUTE_WORD` plus each leg domain's `switch_words`). No phrase has an entry of its
+  own. The leg sets the turn's domain before APPLY, so the rows show the leg's figures and the offer
+  names the leg's team.
+- AC-1397 Every described-set answer, hit or miss, opens with "Here's what you want:", the set with
+  its leg and its count: "Here's what you want: gunmetal wash basins with stock (2)", then the
+  product-code rows. No set answer opens with a tool sentence ("Stock summary for ...", "Incoming
+  stock found for ...", "Certificates found for ...", "Here are ..."). Those stay only on a
+  product-code answer, which is not a set.
+- AC-1398 A generated test builds the phrasings from the registry and the owner's list (has stock,
+  have stock, got stock, in stock, still have, any left, incoming, arriving, on order, the bare
+  form) over several parser readings each, and asserts AC-1396 and AC-1397 for every one.

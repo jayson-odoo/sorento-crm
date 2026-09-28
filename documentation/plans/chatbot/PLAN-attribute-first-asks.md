@@ -1,6 +1,6 @@
 # PLAN: attribute-first asks, "which products have X", across every product and domain
 
-Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged, revive repairs R35 to R38 and owner ruling R39 (no paging) built, reviewer pass fix round done; owner hand test round 2 (W1 to W6: brand binding, plain-words header, readable rows, paging keeps the set, chatbot default brand, water basin) built tester first; owner hand test of round 2 (round 3, W1 to W6: vertical rows, a count after a page continues, a new class word starts a new set, no "(default)", brand scope proven) built red first; owner console test of round 3 (round 4, R1 to R7: brand weights, line-by-line header, two-line rows, a miss says what it searched, the clarify answer reruns the ask, unknown values said back, plain words) built red first; reviewer pass at d6fa2b31 (round 5: B1 R6 fires only on a value-position word, S1 list values in the near miss, S2 one display helper, S3 serial_ddl, N1 to N4) fixed red first; reviewer pass at 34cb4697 (round 6: B1-r5 whole-word product name match, N-r5-1 to N-r5-3) fixed red first; owner hand test of rounds 4 to 6 (round 7, items 1 to 7: ETA words and ETA row shape, a code's descriptor picks its variants, code then descriptor, the normal stock header, a brand from the offer narrows the set, certificates only in the attachment shape, plain words) fixed red first; main 11bf373ec merged 27 Sep 2026 (511_attribute_first_lookup_sets re-parented onto merge_27sep_three_heads); owner retest of round 7 (round 8, F1 the parser bounded by the specification registry with a deterministic grounding step, F2 one answer shape per domain) built red first; main fcbfa379 merged 28 Sep 2026 (511 re-parented onto fin_0001_billing_documents); owner hand test of 28 Sep (round 9, one reply structure for every attribute ask, AC-1389 to AC-1395) built red first, single alembic head spk_0002_colour_word_spec; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
+Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged, revive repairs R35 to R38 and owner ruling R39 (no paging) built, reviewer pass fix round done; owner hand test round 2 (W1 to W6: brand binding, plain-words header, readable rows, paging keeps the set, chatbot default brand, water basin) built tester first; owner hand test of round 2 (round 3, W1 to W6: vertical rows, a count after a page continues, a new class word starts a new set, no "(default)", brand scope proven) built red first; owner console test of round 3 (round 4, R1 to R7: brand weights, line-by-line header, two-line rows, a miss says what it searched, the clarify answer reruns the ask, unknown values said back, plain words) built red first; reviewer pass at d6fa2b31 (round 5: B1 R6 fires only on a value-position word, S1 list values in the near miss, S2 one display helper, S3 serial_ddl, N1 to N4) fixed red first; reviewer pass at 34cb4697 (round 6: B1-r5 whole-word product name match, N-r5-1 to N-r5-3) fixed red first; owner hand test of rounds 4 to 6 (round 7, items 1 to 7: ETA words and ETA row shape, a code's descriptor picks its variants, code then descriptor, the normal stock header, a brand from the offer narrows the set, certificates only in the attachment shape, plain words) fixed red first; main 11bf373ec merged 27 Sep 2026 (511_attribute_first_lookup_sets re-parented onto merge_27sep_three_heads); owner retest of round 7 (round 8, F1 the parser bounded by the specification registry with a deterministic grounding step, F2 one answer shape per domain) built red first; main fcbfa379 merged 28 Sep 2026 (511 re-parented onto fin_0001_billing_documents); owner hand test of 28 Sep (round 9, one reply structure for every attribute ask, AC-1389 to AC-1395) built red first, single alembic head spk_0002_colour_word_spec; owner retest of round 10 (round 12, attribute-first by structure, AC-1396 to AC-1398) built; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
 Test report: `attribute-first-asks-test-report.md`.
 UAC: `attribute-first-asks-acceptance-criteria.md`.
 Supersedes: `documentation/plans/_archive/chatbot/PLAN-spec-backward-search.md` (its backend half
@@ -587,6 +587,28 @@ incoming, do you want me to escalate..., I want that structure to stay, i don't 
   of file" menu (`head/grounding._category_word_under_documents`).
 - Parser: `SPECIFICATION_ADDENDUM` says a colour word on its own, misspelt or not on the list, is a
   finish specification; published unlabelled by `spk_0002_colour_word_spec`.
+
+## Owner retest of round 10, 28 Sep 2026 19:4x to 20:0x MYT (round 12, attribute-first by structure)
+
+Owner ruling: "what? i thought we are applying a general fix? why the fix that we applied for
+incoming cannot work for stock? this is too fragile, that means our solution is not right".
+
+Trace of `any gunmetal basin have stock` (reproduced in the harness with gunmetal wash basins in
+stock): the lane owned the turn. `derive_require` gave `{"stock": true}` off `check_stock`, the
+resolver counted 2, and `fetch.output_structurer` printed `answer.build_set_header`, which opened a
+qualifying set with the leg's tool sentence (`_SET_INTRO_BY_LEG["stock"]`, "Stock summary for
+..."). The incoming ask qualified 0 and went to `what_you_want_reply` ("Here's what you want:").
+So the shape followed the count, and the leg was a fixed word table read on the intent alone: a
+product ask requesting "in stock" or "arriving" had no leg, and one requesting "stock" got product
+rows under a stock header, because the tool follows the plan's domain.
+
+- AC-1396: `predicate._leg_in_words` reads a leg through any registry word of a requested attribute
+  (only on a product ask or the leg's own ask); `derive_require` also reads the routed domain;
+  `predicate.with_set_leg` sets the verdict's domain and intent from the leg in `engine.run_turn`
+  after grounding, before APPLY.
+- AC-1397: `build_set_header` opens every set with `SET_OPENER` ("Here's what you want:") and the
+  leg in the phrase; `_SET_INTRO_BY_LEG` and the tool intro argument are gone.
+- AC-1398: `tests/chatbot/test_attribute_asks_round12.py`.
 
 ## Definition of done
 
