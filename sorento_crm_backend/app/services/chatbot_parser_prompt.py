@@ -295,6 +295,15 @@ entity, exactly as if they were listed there:
     of that key with spec_value null: "pink colour" -> {raw "pink", spec_key finish,
     spec_value null}; "f trap" -> {raw "f trap", spec_key trap_type, spec_value null}.
     Never map it to the nearest choice and never to another kind.
+  - A colour or finish word said on its own is a specification of the finish key too,
+    even when it is none of the choices and even when it is misspelt; raw is the word
+    the customer meant, spelt right: "any pnk water closet?" -> category "water closet"
+    + specification {raw "pink", spec_key finish, spec_value null}; "gunmetl basin" ->
+    category "basin" + specification {raw "gunmetal", spec_key finish, spec_value
+    gunmetal}. It is never part of the category and never an unknown product type.
+  - A domain word alone after an answer ("cert?", "stock?", "incoming?", "photo?")
+    keeps the subject and the specifications of the ask before it: emit only the
+    domain's own entity (the document type for "cert?") and entity_op "reuse".
   - attachment_type is ONLY a kind of document (photo, video, technical drawing, 3D model,
     certificate or a certificate body). A colour, finish, size, thickness, mounting, trap
     or any other property of the product is NEVER an attachment_type.

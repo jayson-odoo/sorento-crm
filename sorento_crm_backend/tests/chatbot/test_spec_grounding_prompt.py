@@ -124,3 +124,53 @@ def test_the_migration_publishes_unlabelled_with_the_registry_block_and_is_idemp
         assert carrying[0].id not in labelled
         module.publish(bind)
         assert db.query(AIPromptVersion).filter(AIPromptVersion.name == "chatbot_semantic_parser").count() == len(rows)
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 9: a colour word on its own is a finish, misspelt or not             #
+# --------------------------------------------------------------------------- #
+
+_MIGRATION_9 = _MIGRATION.parent / "spk_0002_colour_word_spec.py"
+
+
+def _load_migration_9():
+    spec = importlib.util.spec_from_file_location("spk_0002_colour_word_spec", _MIGRATION_9)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_round9_the_prompt_says_a_misspelt_colour_word_is_a_finish():
+    from app.services.chatbot_parser_prompt import SPECIFICATION_ADDENDUM
+
+    assert '"any pnk water closet?" -> category "water closet"' in SPECIFICATION_ADDENDUM
+    assert '+ specification {raw "pink", spec_key finish, spec_value null}' in SPECIFICATION_ADDENDUM
+    assert "never an unknown product type" in SPECIFICATION_ADDENDUM
+
+
+def test_round9_migration_chains_onto_spk_0001_with_a_short_id():
+    module = _load_migration_9()
+    assert module.revision == "spk_0002_colour_word_spec" and len(module.revision) <= 32
+    assert module.down_revision == "spk_0001_specification_kind"
+
+
+def test_round9_migration_publishes_the_new_words_unlabelled_once():
+    from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
+    from app.services.product_spec_registry import seed_spec_registry
+
+    module = _load_migration_9()
+    with blank_session() as db:
+        seed_spec_registry(db)
+        db.flush()
+        bind = db.connection()
+        module.publish(bind)
+        rows = db.query(AIPromptVersion).filter(AIPromptVersion.name == "chatbot_semantic_parser").all()
+        newest = max(rows, key=lambda r: r.version)
+        assert '"any pnk water closet?"' in newest.template
+        labelled = {
+            row.version_id for row in db.query(AIPromptLabel).filter(AIPromptLabel.name == "chatbot_semantic_parser")
+        }
+        assert newest.id not in labelled
+        module.publish(bind)
+        _load_migration().publish(bind)
+        assert db.query(AIPromptVersion).filter(AIPromptVersion.name == "chatbot_semantic_parser").count() == len(rows)

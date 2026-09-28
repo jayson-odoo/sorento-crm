@@ -488,6 +488,13 @@ def ground(db: "Session", verdict: dict[str, Any], *, vocab: Vocabulary | None =
     if not touched:
         return verdict, []
     vocab = vocab or load_vocabulary(db)
+    moved = _category_word_under_documents(db, verdict, vocab)
+    if moved:
+        # Fix round 9 on PR #833 (owner, 28 Sep 2026): a category word never opens the
+        # "Which kind of file do you need?" menu. With no document word anywhere in the
+        # ask it is about the products themselves, exactly as a misfiled descriptor is.
+        verdict = {**verdict, "domain_hint": "master_products", "intent_hint": "check_product"}
+        entities = verdict.get("entities")
     out: list[Any] = []
     notes: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -544,6 +551,8 @@ def ground(db: "Session", verdict: dict[str, Any], *, vocab: Vocabulary | None =
             notes.append({"from": hint, "raw": raw, "to": [g.__dict__ for g in grounded]})
             continue
         out.append(entity)
+    if moved:
+        notes.append({"from": "domain", "raw": "product_attachment", "to": "master_products"})
     if not notes:
         return verdict, []
     grounded_verdict = {**verdict, "entities": out}
@@ -565,6 +574,29 @@ def ground(db: "Session", verdict: dict[str, Any], *, vocab: Vocabulary | None =
         grounded_verdict["intent_hint"] = "check_product"
         notes.append({"from": "domain", "raw": "product_attachment", "to": "master_products"})
     return grounded_verdict, notes
+
+
+def _category_word_under_documents(db: "Session", verdict: dict[str, Any], vocab: Vocabulary) -> bool:
+    """A document-domain ask that names what the products ARE (a category or a
+    specification) and no product, no document type and no document word anywhere: the
+    requested attributes, the parser's goal and the message itself carry none."""
+    if verdict.get("domain_hint") != "product_attachment":
+        return False
+    entities = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
+    hints = {str(e.get("hint") or "").strip().lower() for e in entities}
+    if not hints & (_CLASS_HINTS | _SPEC_HINTS) or hints - (_CLASS_HINTS | _SPEC_HINTS):
+        return False
+    from app.services.chatbot.lanes.business.predicate import _BARE_CERT_WORD_RE, _CERT_RE
+
+    said = [str(a) for a in verdict.get("requested_attributes") or [] if isinstance(a, str)]
+    said.append(str(verdict.get("user_goal") or ""))
+    for text in said:
+        if _BARE_CERT_WORD_RE.search(text) or _CERT_RE.search(text):
+            return False
+        words = [_singular(w) for w in _words(text)]
+        if any(w in {_singular(x) for p in PROMPT_DOCUMENT_KINDS for x in _words(p)} for w in words):
+            return False
+    return not any(isinstance(a, str) and a.strip() and _on_attachment_list(db, a, vocab) for a in verdict.get("requested_attributes") or [])
 
 
 def specification_entities(entities: Any) -> list[dict[str, Any]]:

@@ -222,3 +222,59 @@ def test_turn5_kitchen_sink_1_2mm_thickness_lists_every_brand(chat, world):
     _plain(text, world)
     for name in _brand_names(world):
         assert name not in text.split("\n")[0], text
+
+
+# --------------------------------------------------------------------------- #
+# The rulings the five turns stand for, pinned on their own                       #
+# --------------------------------------------------------------------------- #
+
+
+def test_too_many_is_the_full_count_and_a_breakdown_by_brand_never_a_paging_question(chat, world, monkeypatch):
+    """No brand named means every brand; a set longer than one reply gives its count and
+    the next attribute's breakdown (the brand, since none was named), one line each."""
+    from app.services.chatbot.lanes.business import answer as answer_mod
+
+    monkeypatch.setattr(answer_mod, "SET_LIST_MAX", 2)
+    message = "any water closet has stock"
+    text = chat.say(message, _ask("stock", "water closet", message))
+    print(text)
+    lines = text.split("\n")
+    total = int(re.match(r"Stock summary for water closets \((\d+)\)\.$", lines[0]).group(1))
+    rows = [re.fullmatch(r"• (\S+) water closets: (\d+)", line) for line in lines[1:]]
+    assert rows and all(rows), text
+    assert sum(int(m.group(2)) for m in rows) == total, text
+    assert {m.group(1) for m in rows} >= {world["sorento"].brand_name, world["cabana"].brand_name}, text
+    assert "*Product Code:*" not in text, text
+    _plain(text, world)
+
+
+def test_a_category_word_never_opens_the_which_kind_of_file_menu(chat, world):
+    text = chat.say(
+        "basin",
+        _code_ask("basin", _entity("basin", "category"), intent_hint="check_product_attachment", domain_hint="product_attachment"),
+    )
+    print(text)
+    assert "Which kind of file" not in text, text
+    assert "*Product Code:*" in text, text
+
+
+def test_a_document_word_still_asks_about_documents(chat, world):
+    """The guard is the category word ALONE: "any basin has cert" stays a certificate ask."""
+    message = "any gunmetal basin has cert"
+    text = chat.say(message, _ask("cert", "gunmetal basin", message))
+    assert text.startswith("Certificates found for gunmetal wash basins (2)."), text
+
+
+def test_the_five_turns_in_order(chat, world):
+    """The owner's test as typed, one conversation: each reply is the one structure."""
+    replies = [chat.say(T1, _v1()), chat.say(T2, _v2()), chat.say(T3, _v3()), chat.say(T4, _v4()), chat.say(T5, _v5())]
+    for text in replies:
+        print(text, end="\n\n=====\n\n")
+        _plain(text, world)
+    assert replies[0].startswith("Here's what you want: gunmetal wash basins (2)\n"), replies[0]
+    assert replies[0].endswith("But no incoming matched these. Would you like me to escalate to purchasing team?"), replies[0]
+    assert replies[1].startswith("Certificates found for gunmetal wash basins (2)."), replies[1]
+    assert replies[2].startswith("Here's what you want: pink water closets\n• White water closets: "), replies[2]
+    assert replies[3].startswith("Here's what you want: pink water closets\n• White water closets: "), replies[3]
+    assert replies[4].startswith("Here are kitchen sinks with thickness 1.2 mm (2)."), replies[4]
+    assert _codes(replies[4], world) == {p.product_code for p in world["thick12"]}, replies[4]
