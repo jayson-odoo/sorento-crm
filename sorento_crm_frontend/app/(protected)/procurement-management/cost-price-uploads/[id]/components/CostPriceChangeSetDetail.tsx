@@ -128,26 +128,25 @@ export function CostPriceChangeSetDetail({ changeSetId }: { changeSetId: string 
             />
           </div>
         }
-      >
-        <p className="text-sm text-muted-foreground">
-          {changeSet.supplier.supplier_name} &middot; {changeSet.currency} &middot; {validityLabel(changeSet.start_date, changeSet.end_date)}
-          {changeSet.uploaded_by_name ? <> &middot; uploaded by {changeSet.uploaded_by_name} {formatDateTimeInMalaysia(changeSet.created_at)}</> : null}
-          {changeSet.total_rows ? <> &middot; {sheetsAndRowsLabel(changeSet.sheets.length, changeSet.total_rows)}</> : null}
-          {changeSet.status === 'applied' ? (
-            <>
-              {' '}
-              &middot; applied by {changeSet.applied_by_name ?? 'a Sorento user'}
-              {changeSet.applied_at ? <> {formatDateTimeInMalaysia(changeSet.applied_at)}</> : null}
-              {changeSet.verified != null ? (
-                <>
-                  {' '}
-                  &middot; {changeSet.verified ? `Verified by ${changeSet.applied_by_name ?? 'a Sorento user'}` : 'Not verified'}
-                </>
-              ) : null}
-            </>
-          ) : null}
-        </p>
-      </PageHeader>
+      />
+      <p className="text-sm text-muted-foreground">
+        {changeSet.supplier.supplier_name} &middot; {changeSet.currency} &middot; {validityLabel(changeSet.start_date, changeSet.end_date)}
+        {changeSet.uploaded_by_name ? <> &middot; uploaded by {changeSet.uploaded_by_name} {formatDateTimeInMalaysia(changeSet.created_at)}</> : null}
+        {changeSet.total_rows ? <> &middot; {sheetsAndRowsLabel(changeSet.sheets.length, changeSet.total_rows)}</> : null}
+        {changeSet.status === 'applied' ? (
+          <>
+            {' '}
+            &middot; applied by {changeSet.applied_by_name ?? 'a Sorento user'}
+            {changeSet.applied_at ? <> {formatDateTimeInMalaysia(changeSet.applied_at)}</> : null}
+            {changeSet.verified != null ? (
+              <>
+                {' '}
+                &middot; {changeSet.verified ? `Verified by ${changeSet.applied_by_name ?? 'a Sorento user'}` : 'Not verified'}
+              </>
+            ) : null}
+          </>
+        ) : null}
+      </p>
 
       {changeSet.status === 'pending_verification' ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">

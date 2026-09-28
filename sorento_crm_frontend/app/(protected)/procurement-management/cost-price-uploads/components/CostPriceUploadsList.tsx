@@ -193,7 +193,6 @@ export default function CostPriceUploadsList() {
         rowHref={rowHref}
         listingKey="procurement.cost_price_changes.view"
         tableLayout={{ width: 'fixed', columnsResizable: true }}
-        emptyAction={primaryAction}
         emptyMessage="No uploads match your filters yet."
       >
         <Card className="hidden sm:block">
