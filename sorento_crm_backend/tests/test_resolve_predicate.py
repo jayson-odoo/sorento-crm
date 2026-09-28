@@ -634,6 +634,13 @@ def test_bound_spec_words_never_reach_the_described_sets_scope_term(client, db):
 # into a set answer with a header, and "which sorento bidet has cert" stayed a  #
 # picker because "sorento" resolved exact by CODE, not because it named a full  #
 # product.                                                                       #
+#                                                                               #
+# Fix round 13 on PR #833: `_has_exact_product_match` is gone. The gate is now  #
+# `references._code_matched` (code first: a token with a digit that a code tier #
+# matched inside a product code; spec search only when none did). The three     #
+# AC-1305 pins below hold under it unchanged: "zztwc286" is still a code match  #
+# at the prefix and AND tiers, "sorento" has no digit so it still runs HAS.     #
+# The RED notes name the helper as it stood when each pin was written.         #
 # --------------------------------------------------------------------------- #
 
 

@@ -1,0 +1,64 @@
+# Console case for the code-first rule (PR #1351 round 2, folded into PR #833 fix round 13;
+# owner, production WhatsApp 28 Sep 14:02).
+# The dealer wrote "7820 stock" and got "2 taps have stock." over the two MKT7820SS
+# products with on-hand above zero; the catalogue holds seven MKT7820SS products plus
+# SRT7820. Owner ruling: a typed code fragment is a PRODUCT-CODE ask, never a reverse
+# ask. It lists every product whose code contains the fragment with its figures (zero on
+# hand included, outstanding shown) and no "N taps have stock" header. The red test is
+# `tests/chatbot/test_hotfix_code_fragment_product_ask.py`; this case says the same thing
+# against a real backend, and is meant for the PRODUCTION run after the deploy (the
+# lane database has no MKT7820SS rows).
+#
+# NOT collected by pytest. Runs against a dealer contact whose stock visibility is
+# detailed (the owner's production contact):
+#
+#   cd sorento_crm_backend
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-28-code-fragment-product-ask.yaml \
+#       --base-url <production> --production --i-know
+#
+# MKT7820SS-GM-DIY sits at zero on hand in production (round 1's own case); before the
+# fix it was missing from the reply, which carried only the two products with stock.
+
+contact: "437264483"
+
+cases:
+  - name: "7820 stock lists every MKT7820SS product, zero on hand included"
+    cold: true
+    turns:
+      - text: "7820 stock"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "MKT7820SS-BL-DIY"
+            - "MKT7820SS-DIY"
+            - "MKT7820SS-GM-DIY"
+            - "Quantity On Hand"
+            - "Data last updated"
+          reply_not_contains:
+            - "have stock"
+            - "has stock"
+            - "Showing"
+          no_uuid: true
+
+  - name: "check stock 7820 reads the same"
+    cold: true
+    turns:
+      - text: "check stock 7820"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "MKT7820SS-BL-DIY"
+            - "MKT7820SS-GM-DIY"
+          reply_not_contains:
+            - "have stock"
+            - "Showing"
+
+  - name: "a described ask with no code keeps the counted set"
+    cold: true
+    turns:
+      - text: "which gunmetal basin has stock"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "basin"

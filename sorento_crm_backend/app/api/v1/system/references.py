@@ -1550,52 +1550,51 @@ class ResolveReferenceRequest(BaseModel):
         return v
 
 
-def _has_exact_product_match(result: dict[str, Any], tokens: list[str] | None = None) -> bool:
-    """AC-1305/R1 (console fix round 2, 11 Sep): did a CODE-SHAPED caller token
-    already resolve to a product match, at ANY tier?
-
-    The shape test is the TOKEN's own (this file's own `_is_code_shaped`, the
-    "mixed letters and digits" `_CODE_RE` test - NOT `answer.py`'s
-    same-named function, which exists for a different job: filtering a
-    did-you-mean candidate LIST of already-known codes, and is deliberately
-    loose there). A code-shaped token ("zztwc286") that resolves only by
-    PREFIX still means the customer typed a complete-enough code, so
-    `require`'s described-set machinery must not run over it - `tier` no
-    longer gates this at all (`exact`/`head_code` used to be the only tiers
-    checked, which let a PREFIX-tier code slip through and wrongly grow a
-    `predicate` block). A WORD token ("bidet", "sorento") never blocks HAS,
-    even when it happens to resolve at the "exact" tier (a product literally
-    coded "SORENTO") - the customer's own word is not thereby a code.
-
-    R1: the lane ALWAYS sends `match_mode: "and"`, and AND mode's own product
-    probe stamps EVERY row `match_tier="and"` - it never produces "exact" or
-    "head_code" - so the OLD tier-based `intersection` check could never fire
-    on the lane's real request shape (measured: `scripts/chatbot_replay_
-    resolve.py` on "check stock srtwc286"). `intersection` carries no per-row
-    token (AND mode blends every token into one list), so the shape test runs
-    against the CALLER's own `tokens` instead: a code-shaped token sent AT ALL,
-    with `intersection` carrying any product match, is the same "typed a
-    complete code" signal the OR-mode branch above reads per-resolution.
-    """
-    for resolution in result.get("resolutions") or []:
-        token = (resolution or {}).get("token")
-        if not _is_code_shaped(str(token or "")):
-            continue
-        for match in (resolution or {}).get("matches") or []:
-            if (match or {}).get("entity_type") == "product":
-                return True
-    intersection = result.get("intersection") or []
-    if intersection and any(_is_code_shaped(str(t or "")) for t in (tokens or [])):
-        for match in intersection:
-            if (match or {}).get("entity_type") == "product":
-                return True
-    return False
-
-
 #: The resolver tiers that match a product CODE (`entity_resolver`): the whole code, a
 #: code prefix, a code substring, a set's head code, the AND probe (code-only by design).
 #: Never `embedding`, `trgm` or `spec_search`: those are nearest-neighbour guesses.
 _CODE_MATCH_TIERS = frozenset({"exact", "prefix", "substring", "head_code", "and"})
+
+
+def _code_matched(result: dict[str, Any], tokens: list[str] | None = None) -> bool:
+    """Code first (fix round 13 on PR #833, owner 28 Sep 2026: "if found by product code
+    -> forward asking, if cannot find product code, fallback to spec search -> reverse
+    asking"): did the resolver match a caller token to a product BY ITS CODE?
+
+    A match by code is a code tier (`_CODE_MATCH_TIERS`, at any of them) whose own code
+    contains the token, case and separators ignored: "srtwc286" by prefix, "7820" as a
+    substring of all seven MKT7820SS codes. Such a token makes the turn a forward ask
+    over every code match, so `require` (the HAS / counted-set branch) never runs for
+    it and zero on hand stays in the answer. Only a token with a digit in it can be a
+    code: a word ("basin", "gunmetal", "sorento" even where a product is literally
+    coded SORENTO) describes a set and keeps the counted-set path.
+
+    `resolutions` carry their token; AND mode's `intersection` blends every token into
+    one list, so the caller's own `tokens` are tested against it instead.
+    """
+
+    def _fold(value: Any) -> str:
+        return re.sub(r"[^0-9a-z]", "", str(value or "").lower())
+
+    def _hit(token: Any, match: Any) -> bool:
+        fragment = _fold(token)
+        return (
+            any(ch.isdigit() for ch in fragment)
+            and isinstance(match, dict)
+            and match.get("entity_type") == "product"
+            and match.get("match_tier") in _CODE_MATCH_TIERS
+            and fragment in _fold(match.get("canonical_code"))
+        )
+
+    for resolution in result.get("resolutions") or []:
+        token = (resolution or {}).get("token")
+        if any(_hit(token, m) for m in (resolution or {}).get("matches") or []):
+            return True
+    return any(
+        _hit(token, match)
+        for token in tokens or []
+        for match in result.get("intersection") or []
+    )
 
 
 def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
@@ -2817,10 +2816,10 @@ def resolve_reference_post(
     # Shape B: a domain predicate over the described set. This is NOT a fallback -
     # "what faucets have certs" is a different question from "find me a faucet",
     # and it runs whenever the parser asked it, whatever the normal probes found -
-    # UNLESS a caller token already resolved to a full product code (AC-1305): the
-    # customer typed a complete code, so the response stays byte-identical to the
-    # same request without `require`.
-    if payload.require and not _has_exact_product_match(result, payload.tokens):
+    # UNLESS a caller token matched a product by code (`_code_matched`: code first,
+    # spec search only when no code matched), so the response stays byte-identical to
+    # the same request without `require`.
+    if payload.require and not _code_matched(result, payload.tokens):
         from app.services.product_predicate_service import (
             recover_certificate_scheme,
             resolve_product_set,
