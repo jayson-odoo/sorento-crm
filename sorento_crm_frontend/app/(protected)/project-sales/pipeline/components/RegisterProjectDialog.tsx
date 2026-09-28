@@ -164,8 +164,10 @@ export function RegisterProjectDialog({
     if (checkable) {
       const trimmed = title.trim();
       setCheckedTitle(trimmed);
-      const preview = await fetchClash(trimmed, developerId || null);
-      if (preview.would_block) return;
+      // A failed check does not stop the user: the server refuses a blocked title
+      // with a 409 of its own, which the register mutation toasts.
+      const preview = await fetchClash(trimmed, developerId || null).catch(() => null);
+      if (preview?.would_block) return;
     }
     const project = await register.mutateAsync({
       title: title.trim(),

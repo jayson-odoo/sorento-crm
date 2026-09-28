@@ -330,4 +330,12 @@ describe('RegisterProjectDialog: one duplicate check on submit, the guard', () =
     expect(previewClashes).toHaveBeenCalledTimes(1);
     expect(registerProject).not.toHaveBeenCalled();
   });
+
+  it('a failed check does not strand the user: register runs and the server guards', async () => {
+    previewClashes.mockRejectedValue(new Error('network'));
+    renderDialog();
+    fireEvent.change(titleInput(), { target: { value: 'Setia Alam Phase 3B' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
+    await waitFor(() => expect(registerProject).toHaveBeenCalledTimes(1));
+  });
 });
