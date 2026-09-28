@@ -32,7 +32,19 @@ _INDEX = "uq_integration_log_ideation_status_event"
 
 
 def _has_table() -> bool:
-    return sa.inspect(op.get_bind()).has_table(_TABLE)
+    """Checked in current_schema(), like the index below: the inspector reads the
+    connection's cached default schema, which can differ from the search_path."""
+    return bool(
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT count(*) FROM information_schema.tables "
+                "WHERE table_schema = current_schema() AND table_name = :t"
+            ),
+            {"t": _TABLE},
+        )
+        .scalar()
+    )
 
 
 def _index_valid(bind):
