@@ -240,7 +240,8 @@ def test_input_shape_and_extraction_passthrough(wired):
     assert p["submitter_contact_id"] == "+60123456789"
     assert "submitter" not in p
     assert p["message_text"] == "module is procurement, forget who"
-    assert p["fields"] == {"module": "procurement"}
+    # #1279 round 2 (W2): values are normalised (first letter capitalised).
+    assert p["fields"] == {"module": "Procurement"}
     assert p["remove"] == ["who"]
     assert p["confirm"] is False
 
@@ -543,7 +544,8 @@ def test_department_passthrough_as_typed_free_text(wired):
         {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
     )
     _turn(message_text="i have an idea, our warehouse team needs stock alerts")
-    assert wired.payloads[0]["fields"]["department"] == "warehouse team"
+    # Free text, no lookup - only normalised to a Title Case name (#1279 round 2, W2).
+    assert wired.payloads[0]["fields"]["department"] == "Warehouse Team"
 
 
 # --------------------------------------------------------------------------- #
@@ -628,7 +630,7 @@ def test_change_request_in_review_does_not_confirm(wired):
     )
     _turn(message_text="change the impact to faster checkout")
     assert wired.payloads[0]["confirm"] is False
-    assert wired.payloads[0]["fields"]["impact"] == "faster checkout"
+    assert wired.payloads[0]["fields"]["impact"] == "Faster checkout"  # normalised (#1279 round 2, W2)
 
 
 # --------------------------------------------------------------------------- #
@@ -1458,3 +1460,447 @@ def test_seen_media_not_reoffered(wired):
     )
     assert "pending_media" not in out["session_vars"]["ideation"]
     assert "which relate" not in out["reply_text"]
+
+
+# --------------------------------------------------------------------------- #
+# #1277 (issue) - W1+W3 at the turn level: the exact recap shape from the    #
+# owner's console transcript, reply LLM unavailable (db=None -> config read  #
+# fails -> _call_ideate_reply_llm returns None -> the shared-service         #
+# TEMPLATE fallback is what handle_turn's reply_text formats).               #
+# --------------------------------------------------------------------------- #
+def test_1277_recap_replay_bolds_labels_and_drops_title(wired):
+    wired.set_session_vars({"ideation": {"draft_id": "d1", "status": "collecting", "missing": ["department"]}})
+    fallback_reply = (
+        '"sales order KPI tracking"\n'
+        "Problem: track sales order kpi\n"
+        "Solution: dashboard widget\n"
+        "Impact: faster visibility\n"
+        "Department: sales\n"
+        "Is that right?"
+    )
+    wired.set_create_idea(
+        {
+            "draft_id": "d1",
+            "status": "review",
+            "title": "sales order KPI tracking",
+            "captured": {
+                "problem": "track sales order kpi",
+                "proposed_solution": "dashboard widget",
+                "impact": "faster visibility",
+                "department": "sales",
+            },
+            "missing": [],
+            "reply_text": fallback_reply,
+        }
+    )
+    out = _turn(message_text="yes that's right")
+    assert out["reply_text"] == (
+        "*Problem:* track sales order kpi\n"
+        "*Solution:* dashboard widget\n"
+        "*Impact:* faster visibility\n"
+        "*Department:* sales\n"
+        # #1279 round 2 (W3): review asks the owner's confirm question.
+        "Submit this idea? Reply yes to submit, or tell me what to change."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# #1277 - W4: `offered_media` on the turn that builds a media menu.          #
+# --------------------------------------------------------------------------- #
+def test_offered_media_lists_images_in_menu_order(wired):
+    wired.set_session_vars({})
+    wired.set_create_idea(
+        {"draft_id": "d1", "status": "collecting", "missing": ["impact"], "reply_text": "Got it. What's the impact?"}
+    )
+    out = _turn(
+        message_text="I have an idea about exporting orders",
+        fetch_recent_messages=lambda: _respond_payload(
+            _media_item("m1", "image", "https://respond/1.jpg", filename="mockup.jpg", ts=2000),
+            _media_item("m2", "image", "https://respond/2.jpg", filename="sketch.jpg", ts=1000),
+        ),
+        media_clients=_stub_media_clients(),
+    )
+    assert out["offered_media"] == [
+        {"position": 1, "kind": "image", "url": "https://respond/1.jpg", "filename": "mockup.jpg"},
+        {"position": 2, "kind": "image", "url": "https://respond/2.jpg", "filename": "sketch.jpg"},
+    ]
+
+
+def test_offered_media_empty_when_no_candidates(wired):
+    wired.set_session_vars({})
+    wired.set_create_idea({"draft_id": "d1", "status": "collecting", "missing": ["impact"], "reply_text": "ok"})
+    out = _turn(
+        message_text="idea: dark mode",
+        fetch_recent_messages=lambda: _respond_payload(),
+        media_clients=_stub_media_clients(),
+    )
+    assert out["offered_media"] == []
+
+
+def test_offered_media_empty_on_selection_turn(wired):
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d1",
+                "status": "collecting",
+                "missing": ["impact"],
+                "pending_media": [
+                    {"source_msg_id": "m1", "kind": "image", "url": "u", "filename": None, "received_at": None}
+                ],
+            }
+        }
+    )
+    wired.set_create_idea({"draft_id": "d1", "status": "collecting", "missing": [], "reply_text": "attached."})
+    out = _turn(message_text="1", media_selection="1", media_clients=_stub_media_clients())
+    assert out["offered_media"] == []
+
+
+def test_ideation_turn_response_schema_keeps_offered_media():
+    """`response_model` silently drops undeclared fields (repo lesson) - the
+    schema must declare `offered_media` or it never reaches n8n/the console."""
+    from app.schemas.external.ideation import IdeationTurnResponse
+
+    result = {
+        "status": "collecting",
+        "reply_text": "x",
+        "session_vars": {},
+        "offered_media": [{"position": 1, "kind": "image", "url": "u", "filename": "f"}],
+    }
+    dumped = IdeationTurnResponse(**result).model_dump()
+    assert dumped.get("offered_media") == result["offered_media"]
+
+
+# --------------------------------------------------------------------------- #
+# #1279 round 2 - owner console test 26 Sep 14:09Z (W1 to W3).                #
+# UAC: ideation-chat-reply-format-acceptance-criteria.md AC-9 to AC-12.       #
+# --------------------------------------------------------------------------- #
+_OWNER_OPENING = "i have an idea, i think we should implemnt production line"
+_CONFIRM_LINE = "Submit this idea? Reply yes to submit, or tell me what to change."
+_STILL_WORKING = "still being worked out"
+
+
+def test_first_capture_never_echoes_the_raw_message_seeded_by_the_intake(wired):
+    """W1 root cause: turn 1's extractor emitted proposed_solution but no problem
+    (the message reads as a solution), and the intake seeded its required
+    `problem` from `message_text`. The recap must not echo that raw text."""
+    wired.set_session_vars({})
+    wired.set_extraction(fields={"proposed_solution": "Implement a production line."})
+    wired.set_create_idea(
+        {
+            "draft_id": "d-1",
+            "status": "collecting",
+            "captured": {"problem": _OWNER_OPENING, "proposed_solution": "Implement a production line."},
+            "missing": [],
+            "next_field": "impact",
+            "reply_text": (
+                f"Problem: {_OWNER_OPENING}\nSolution: Implement a production line.\n"
+                "What impact would this have?"
+            ),
+        }
+    )
+    out = _turn(message_text=_OWNER_OPENING)
+    assert "implemnt" not in out["reply_text"]
+    assert "i have an idea" not in out["reply_text"]
+    assert f"*Problem:* {_STILL_WORKING}" in out["reply_text"]
+    assert "*Solution:* Implement a production line." in out["reply_text"]
+
+
+def test_first_capture_shows_the_extractor_problem_from_turn_one(wired):
+    wired.set_session_vars({})
+    wired.set_extraction(
+        fields={
+            "problem": "We need our own production line.",
+            "proposed_solution": "Implement a production line.",
+        }
+    )
+    wired.set_create_idea(
+        {
+            "draft_id": "d-1",
+            "status": "collecting",
+            "captured": {
+                "problem": "We need our own production line.",
+                "proposed_solution": "Implement a production line.",
+            },
+            "missing": [],
+            "next_field": "impact",
+            "reply_text": (
+                "Problem: We need our own production line.\n"
+                "Solution: Implement a production line.\nWhat impact would this have?"
+            ),
+        }
+    )
+    out = _turn(message_text=_OWNER_OPENING)
+    assert "*Problem:* We need our own production line." in out["reply_text"]
+    assert out["session_vars"]["ideation"]["clean_fields"] == {
+        "problem": "We need our own production line.",
+        "proposed_solution": "Implement a production line.",
+    }
+
+
+def test_seeded_raw_problem_stays_hidden_on_later_turns_until_the_extractor_cleans_it(wired):
+    """Turns 2 and 3 of the owner's session: the stored problem is still the raw
+    seed, so it keeps showing as being worked out, never as the raw text."""
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d-1",
+                "status": "collecting",
+                "missing": [],
+                "captured": {"problem": _OWNER_OPENING, "proposed_solution": "Implement a production line."},
+                "clean_fields": {"proposed_solution": "Implement a production line."},
+                "updated_at": "t",
+            }
+        }
+    )
+    wired.set_extraction(fields={"impact": "It will reduce our supply chain constraints."})
+    wired.set_create_idea(
+        {
+            "draft_id": "d-1",
+            "status": "collecting",
+            "captured": {
+                "problem": _OWNER_OPENING,
+                "proposed_solution": "Implement a production line.",
+                "impact": "It will reduce our supply chain constraints.",
+            },
+            "missing": [],
+            "reply_text": (
+                f"Problem: {_OWNER_OPENING}\nSolution: Implement a production line.\n"
+                "Impact: It will reduce our supply chain constraints.\nAnything else?"
+            ),
+        }
+    )
+    out = _turn(message_text="it will reduce our supply chain constraints")
+    assert "implemnt" not in out["reply_text"]
+    assert f"*Problem:* {_STILL_WORKING}" in out["reply_text"]
+
+    # The next turn's extractor rewrites the problem: from then on it shows.
+    wired.set_extraction(fields={"problem": "We need our own production line."})
+    wired.set_create_idea(
+        {
+            "draft_id": "d-1",
+            "status": "collecting",
+            "captured": {
+                "problem": "We need our own production line.",
+                "proposed_solution": "Implement a production line.",
+                "impact": "It will reduce our supply chain constraints.",
+            },
+            "missing": [],
+            "reply_text": "Problem: We need our own production line.\nAnything else?",
+        }
+    )
+    out = _turn(message_text="we have no production line today")
+    assert "*Problem:* We need our own production line." in out["reply_text"]
+
+
+def test_legacy_pointer_without_clean_fields_trusts_its_captured_values(wired):
+    """A draft opened before this change carries no `clean_fields`: its
+    captured values are shown as they are rather than all hidden."""
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d-1",
+                "status": "collecting",
+                "missing": [],
+                "captured": {"problem": "Sales performance is not tracked."},
+                "updated_at": "t",
+            }
+        }
+    )
+    wired.set_extraction(fields={"impact": "More sales."})
+    wired.set_create_idea(
+        {
+            "draft_id": "d-1",
+            "status": "collecting",
+            "captured": {"problem": "Sales performance is not tracked.", "impact": "More sales."},
+            "missing": [],
+            "reply_text": "Problem: Sales performance is not tracked.\nImpact: More sales.\nAnything else?",
+        }
+    )
+    out = _turn(message_text="more sales")
+    assert "*Problem:* Sales performance is not tracked." in out["reply_text"]
+    assert _STILL_WORKING not in out["reply_text"]
+
+
+def test_payload_values_are_normalised_before_they_reach_the_intake(wired):
+    """W2: the owner's typed '?' and a leading 'the' never become part of a
+    stored value, whatever the extractor emitted."""
+    wired.set_session_vars({})
+    wired.set_extraction(
+        fields={"problem": "we need a production line", "department": "the manufacturing?"},
+        title='"Implement manufacturing production line?"',
+    )
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok?"}
+    )
+    _turn(message_text="the manufacturing?")
+    payload = wired.payloads[0]
+    assert payload["fields"]["department"] == "Manufacturing"
+    assert payload["fields"]["problem"] == "We need a production line"
+    assert payload["title"] == "Implement manufacturing production line"
+
+
+def _review_result(department: str = "Manufacturing") -> dict:
+    return {
+        "draft_id": "d-1",
+        "status": "review",
+        "title": "Implement manufacturing production line",
+        "captured": {
+            "problem": "We need our own manufacturing production line.",
+            "proposed_solution": "Implement a production line.",
+            "impact": "It will reduce our supply chain constraints.",
+            "department": department,
+        },
+        "missing": [],
+        "next_field": None,
+        "reply_text": (
+            '"Implement manufacturing production line"\n'
+            "Problem: We need our own manufacturing production line.\n"
+            "Solution: Implement a production line.\n"
+            "Impact: It will reduce our supply chain constraints.\n"
+            f"Department: {department}\n"
+            "What department should own this?"
+        ),
+    }
+
+
+def _review_pointer() -> dict:
+    captured = _review_result()["captured"]
+    return {
+        "ideation": {
+            "draft_id": "d-1",
+            "status": "review",
+            "missing": [],
+            "captured": captured,
+            "clean_fields": dict(captured),
+            "updated_at": "t",
+        }
+    }
+
+
+def test_review_reply_is_the_recap_then_the_confirm_question(wired):
+    """W3: once the four fields are filled the bot shows the recap (bold
+    labels, no title line) and asks the owner's confirm question last."""
+    wired.set_session_vars(_review_pointer())
+    wired.set_extraction(fields={"department": "Manufacturing"}, review_action="change")
+    wired.set_create_idea(_review_result())
+    out = _turn(message_text="manufacturing?")
+    lines = out["reply_text"].splitlines()
+    assert lines == [
+        "*Problem:* We need our own manufacturing production line.",
+        "*Solution:* Implement a production line.",
+        "*Impact:* It will reduce our supply chain constraints.",
+        "*Department:* Manufacturing",
+        _CONFIRM_LINE,
+    ]
+    assert wired.payloads[0]["confirm"] is False
+
+
+@pytest.mark.parametrize("word", ["yes", "ok", "ya", "boleh", "好", "可以", "Yes!", "ok lah"])
+def test_a_plain_yes_in_review_submits_even_when_the_extractor_failed(wired, word):
+    """Only a yes creates the idea; an extractor outage (empty extraction)
+    must not stop a plain yes from submitting."""
+    wired.set_session_vars(_review_pointer())
+    wired.set_extraction()  # empty: the extractor degraded
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "complete", "captured": {}, "missing": [], "reply_text": "done"}
+    )
+    _turn(message_text=word)
+    assert wired.payloads[0]["confirm"] is True
+
+
+@pytest.mark.parametrize(
+    "message,review_action,fields",
+    [
+        ("manufacturing?", "submit", {}),
+        ("maybe, what does impact mean?", "none", {}),
+        ("sure", "submit", {}),
+        ("yes but change the impact to faster delivery", "submit", {"impact": "Faster delivery"}),
+        ("yes cancel it", "cancel", {}),
+    ],
+)
+def test_anything_but_a_yes_in_review_does_not_create(wired, message, review_action, fields):
+    wired.set_session_vars(_review_pointer())
+    wired.set_extraction(fields=fields, review_action=review_action)
+    wired.set_create_idea(_review_result())
+    out = _turn(message_text=message)
+    assert wired.payloads[0]["confirm"] is False
+    if review_action != "cancel":
+        assert out["reply_text"].endswith(_CONFIRM_LINE)
+
+
+def test_a_yes_outside_review_does_not_create(wired):
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "d-1", "status": "collecting", "missing": [], "updated_at": "t"}}
+    )
+    wired.set_extraction(review_action="submit")
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok?"}
+    )
+    _turn(message_text="yes")
+    assert wired.payloads[0]["confirm"] is False
+
+
+def test_owner_console_session_26_sep_1409z_replays_with_the_confirmation(wired):
+    """The owner's 14:09Z session, turn by turn, with the intake's own seeding
+    of `problem` from the raw message (the W1 root cause) in the fake. No turn
+    shows a preamble, a typo or a typed '?' in a value; the department answer
+    lands in review and asks to confirm; only the final 'ok' creates."""
+    wired.set_session_vars({})
+    seeded = {"problem": _OWNER_OPENING, "proposed_solution": "Implement a production line."}
+
+    # Turn 1: the extractor misses problem; the intake seeds it from the message.
+    wired.set_extraction(fields={"proposed_solution": "Implement a production line."})
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": dict(seeded), "missing": [],
+         "next_field": "impact",
+         "reply_text": f"Problem: {_OWNER_OPENING}\nSolution: Implement a production line.\nWhat impact would this have?"}
+    )
+    t1 = _turn(message_text=_OWNER_OPENING)
+
+    # Turn 2: the owner answers the impact.
+    seeded["impact"] = "It will reduce our supply chain constraints."
+    wired.set_extraction(fields={"impact": "It will reduce our supply chain constraints."})
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "review", "captured": dict(seeded), "missing": [],
+         "reply_text": (f"Problem: {_OWNER_OPENING}\nSolution: Implement a production line.\n"
+                        "Impact: It will reduce our supply chain constraints.\nSubmit it?")}
+    )
+    t2 = _turn(message_text="it will reduce our supply chain constraints")
+
+    # Turn 3: the department, typo and '?' included. The extractor (new prompt)
+    # corrects the spelling and cleans the problem, but echoes the owner's "the"
+    # and "?" - the deterministic normaliser strips those.
+    seeded["problem"] = "We need our own manufacturing production line."
+    seeded["department"] = "Manufacturing"
+    wired.set_extraction(
+        fields={"problem": "We need our own manufacturing production line.", "department": "the manufacturing?"},
+    )
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "review", "captured": dict(seeded), "missing": [],
+         "reply_text": "Department: the manufactuirng?"}
+    )
+    t3 = _turn(message_text="the manufactuirng?")
+    assert wired.payloads[-1]["fields"]["department"] == "Manufacturing"
+
+    # Turn 4: the owner says ok - only now is the idea created.
+    wired.set_extraction(review_action="submit")
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "complete", "title": "Implement manufacturing production line",
+         "idea_number": "IDEA-0003", "link": "http://localhost:3001/public/ideas/t", "captured": dict(seeded),
+         "missing": [],
+         "reply_text": ("Implement manufacturing production line\nIDEA-0003 - we'll update you on WhatsApp\n"
+                        "Track it here: http://localhost:3001/public/ideas/t")}
+    )
+    t4 = _turn(message_text="ok")
+
+    for out in (t1, t2, t3):
+        assert "implemnt" not in out["reply_text"]
+        assert "i have an idea" not in out["reply_text"]
+        assert "manufactuirng" not in out["reply_text"]
+    assert [p["confirm"] for p in wired.payloads] == [False, False, False, True]
+    assert t2["reply_text"].endswith(_CONFIRM_LINE)
+    assert t3["reply_text"].endswith(_CONFIRM_LINE)
+    assert "*Department:* Manufacturing" in t3["reply_text"]
+    assert "*Problem:* We need our own manufacturing production line." in t3["reply_text"]
+    assert t4["status"] == "complete"
+    assert t4["reply_text"].startswith("Implement manufacturing production line\nIDEA-0003")

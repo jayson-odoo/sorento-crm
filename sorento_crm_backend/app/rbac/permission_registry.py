@@ -819,6 +819,9 @@ PERMISSION_REGISTRY.extend([
 # them to admin and superadmin; declared here as well so a database built with create_all +
 # sync_permissions (CI, `scripts/bootstrap_env`) has them.
 PERMISSION_REGISTRY.extend(_crud("sales", "teams", "Sales Teams"))
+# Slice S1: `sales_0003_targets` creates and grants these the same way. `.edit` also gates a
+# period's figure, Duplicate and Add figure (plan 3.7).
+PERMISSION_REGISTRY.extend(_crud("sales", "targets", "Sales Targets"))
 
 
 def sync_permissions(db: Session, created_by_user_id: Optional[str] = None) -> int:
@@ -844,3 +847,16 @@ def sync_permissions(db: Session, created_by_user_id: Optional[str] = None) -> i
     if created:
         db.commit()
     return created
+
+
+# Sales module (PLAN-retail-sales-reports-26sep, S1). One slug covers the Yearly
+# comparison and the Sales report screens, their Excel export and the chatbot route
+# (G10 (a)). Granted to admin and superadmin by `sales_s1_reports_module`; everyone else
+# through the role editor.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "sales.reports.view",
+        "name": "View sales reports",
+        "description": "Open the sales reports (Yearly comparison, Sales report), export them and ask for them on WhatsApp.",
+    },
+])

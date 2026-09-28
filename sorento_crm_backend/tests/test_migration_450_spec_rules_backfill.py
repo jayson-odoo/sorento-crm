@@ -36,8 +36,15 @@ from pathlib import Path
 import pytest
 from sqlalchemy import inspect, text
 
-from app.services.product_spec_derivation import shipped_rules
 from tests._pg_fixture import pg_session
+
+# The shipped rules as they stood when this migration ran, frozen (#1286): the live
+# shipped list is builders now, and migration 450 wrote the old rule shape.
+_LEGACY_SHIPPED = Path(__file__).resolve().parent / "fixtures" / "legacy_shipped_rules.json"
+
+
+def shipped_rules() -> dict:
+    return json.loads(_LEGACY_SHIPPED.read_text())
 
 _MIGRATION_PATH = (
     Path(__file__).resolve().parent.parent / "alembic" / "versions" / "450_spec_rules_readable.py"

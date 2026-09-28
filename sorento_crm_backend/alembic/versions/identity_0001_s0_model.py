@@ -30,14 +30,14 @@ migration's transaction, so they sit in an autocommit block. `_upgrade(concurren
 is the same logic inside one transaction, which is what the migration test runs.
 
 Revision ID: identity_0001_s0_model
-Revises: sales_0002_team_leader
+Revises: sales_0005_commission_tiers
 Create Date: 2026-09-26
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "identity_0001_s0_model"
-down_revision = "sales_0002_team_leader"
+down_revision = "sales_0005_commission_tiers"
 branch_labels = None
 depends_on = None
 

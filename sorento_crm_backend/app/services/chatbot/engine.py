@@ -36,7 +36,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.base import set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
-from app.services.chatbot import dispatch, jsc, media_intake, trace as trace_mod
+from app.services.chatbot import dispatch, jsc, llm_call, media_intake, trace as trace_mod
 from app.services.chatbot.contracts import (
     BUSINESS_BRANCH_KINDS,
     CRM_COMPLETED_BRANCH_KINDS,
@@ -50,7 +50,7 @@ from app.services.chatbot.head import parser
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
-from app.services.chatbot.lanes.escalation import run as run_escalation_lane
+from app.services.chatbot.lanes.escalation import run as run_escalation_lane, routing_line as escalation_routing_line
 from app.services.chatbot.lanes.business import resolve_gate, services as business_services
 from app.services.chatbot.usage import record_parser_usage
 # Stages C to G (PLAN-chatbot-turn-rearch.md "Turn order"). `turn/` is the pure core -
@@ -58,11 +58,13 @@ from app.services.chatbot.usage import record_parser_usage
 # is everything that has to touch a database or a tool on its behalf.
 from app.services.chatbot import session_state, turn_runtime
 from app.services.chatbot.turn import pending as turn_pending
+from app.services.chatbot.turn import question as turn_question
 from app.services.chatbot.turn import state as turn_state
 from app.services.chatbot.turn import compose as turn_compose
 from app.services.chatbot.turn import fetch as run_fetch_mod
 from app.services.chatbot.turn import memory as memory_mod
 from app.services.chatbot.turn import tail as turn_tail
+from app.services.chatbot.turn import task as turn_task
 from app.services.chatbot.turn.apply import apply as turn_apply
 from app.services.chatbot.turn.apply import is_product_shaped_entity
 from app.services.chatbot.turn.policy import load_policy
@@ -1258,6 +1260,14 @@ def _run_stages(  # noqa: PLR0915
             ingress=envelope.ingress,
             is_test=bool(dry_run),
         )
+        # PR #1247 round 8: the last three exchanges, so a short reply is read against
+        # what was asked. Same rows, same scopes, same session as the line above.
+        recent = turn_runtime.recent_exchanges(
+            db,
+            contact_respond_id=contact_respond_id,
+            ingress=envelope.ingress,
+            is_test=bool(dry_run),
+        )
         # `parser_config` is resolved AFTER media intake, not here: AC-1810's "no
         # parser call" means no parser SETUP either - a media-denied turn (no API
         # key required to check a gate/quota/burst decision) must not fail because
@@ -1420,6 +1430,10 @@ def _run_stages(  # noqa: PLR0915
     stage[0] = "understood"
     profile_words = memory_mod.profile_block(state_in.profile)
     pending_options = _pending_option_labels(state_in.pending)
+    # PR #1247 rounds 8 and 9: the ONE question on the table, as a structured object the
+    # parser answers in `open_question_answer` - the open pick or offer when there is
+    # one (it is what the message answers), else the stock question (issue #1293).
+    open_question = turn_question.open_question(state_in.pending, state_in.focus.tasks)
     user_block = parser.build_user_block(
         previous_response=previous_reply,
         latest_user_message=latest_user_message,
@@ -1427,6 +1441,8 @@ def _run_stages(  # noqa: PLR0915
         pending_options=pending_options,
         profile_block=profile_words,
         focus=state_in.focus,
+        open_question=open_question,
+        recent_exchanges=recent,
     )
     # G6: a dry run may supply the emission instead of paying for it.
     parser_bypassed = dry_run and "mock_reformulator_output" in harness_present
@@ -1481,7 +1497,18 @@ def _run_stages(  # noqa: PLR0915
                 error=message,
                 records=turn_trace.persisted(),
             )
-        return _failed_result(turn_id, "understood", message, actions, dry_run)
+        return _failed_result(
+            turn_id,
+            "understood",
+            message,
+            actions,
+            dry_run,
+            reply_text=(
+                llm_call.RATE_LIMITED_REPLY
+                if getattr(exc, "rate_limited", False)
+                else GENERIC_ERROR_REPLY
+            ),
+        )
 
     # -- recall: ONE re-parse, behind two flags (AC-1547) ------------------- #
     # `anaphora.backward_reference` is the parser's own signal that the message points at
@@ -1501,6 +1528,8 @@ def _run_stages(  # noqa: PLR0915
                 profile_block=profile_words,
                 episodes_block=memory_mod.episodes_block(recalled),
                 focus=state_in.focus,
+                open_question=open_question,
+                recent_exchanges=recent,
             )
             try:
                 parser_raw = parser.parse(parser_config, user_block)
@@ -1556,6 +1585,15 @@ def _run_stages(  # noqa: PLR0915
     # below is made against the CARRIED agent, not the default. No `session=` (reviewer
     # round 1, SHOULD-4): no writer ever produces a prior-turn agent nest to read.
     verdict = turn_runtime.with_routing_agent_default(verdict, pending=state_in.pending)
+    # #865 round 5 (R1): an escalate word plus a named team, in the parser's own reading
+    # of the message, is a help request whatever product words follow.
+    verdict = turn_runtime.with_named_team_escalation(verdict)
+    # #865 round 6 (R3): a reply naming one of the companies an open escalation offer
+    # showed ("mocha", "srt", "yes please escalate to sorento team") picks it - n8n's
+    # deterministic company-pick tier, with the parser's own pick as the validated fallback.
+    verdict = turn_runtime.with_company_pick(
+        verdict, pending=state_in.pending, message=latest_user_message
+    )
 
     # -- access, C APPLY, D ROUTE ------------------------------------------- #
     stage[0] = "access"
@@ -1638,6 +1676,12 @@ def _run_stages(  # noqa: PLR0915
             accepted_lane=plan.trace.lane,
             accepted_rules=plan.trace.rules_fired,
         )
+        if plan.trace.lane == "offer_hold":
+            # #865 round 6 (R5): the held offer's own pool is what the re-asked clarify
+            # names (`lanes/canned.fragments_for` reads it off the same field).
+            roster_plan = [
+                {"plan_idx": i, **row} for i, row in enumerate(turn_pending.offered_companies(state_in.pending))
+            ] or None
         # Security SF-1 (hand pass 11 final): the plan is minted from a PERSISTED offer,
         # which can be turns old, so a row's company must still be in the contact's
         # CURRENT scope before it drives routing - a revoked membership must not keep
@@ -1661,6 +1705,19 @@ def _run_stages(  # noqa: PLR0915
                     "variables": {
                         **prior_variables,
                         "routing_roster_plan": roster_plan,
+                        # #865 round 6 (R4): whether the offer showed a member picker,
+                        # the key n8n's clarify copy branches on ("reply a number, a name,
+                        # or the company" only when numbers were shown), and the picker
+                        # itself, which a clarify keeps open (n8n re-persists the offer) so
+                        # a member number still picks after it.
+                        **(
+                            {
+                                "selection_context": "member_offer",
+                                "held_offer": turn_pending.to_wire(state_in.pending),
+                            }
+                            if state_in.pending is not None and state_in.pending.kind == "member_offer"
+                            else {}
+                        ),
                         # MERGE, never replace (reviewer N-c): `variables.routing` is a
                         # whole routing block on a session n8n wrote, and this needs
                         # exactly one key of it - the team, so `escalation_context`'s own
@@ -1706,7 +1763,8 @@ def _run_stages(  # noqa: PLR0915
         from app.services.chatbot.lanes.business import _SALES_REPORT_GRANT
 
         sales_report_grant_refused = (
-            jsc.js_string(parsed_output.get("order_status") or "").strip() == "sales_report"
+            jsc.js_string(parsed_output.get("order_status") or "").strip()
+            in ("sales_report", "sales_analysis")
             and _SALES_REPORT_GRANT not in set(access.get("attributes") or [])
         )
         if sales_report_grant_refused:
@@ -2006,8 +2064,22 @@ def _run_stages(  # noqa: PLR0915
         # the time the ASK section runs.
         bridge_answered = False
         lane_error_text: str | None = None
+
+        # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+        # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3. -- the OPEN TASK's own
+        # re-ask: nothing to fetch, nothing to roster -- #
+        # A task RESUMED with nothing new ("back to the stock check") asks only what is
+        # still owed and calls no tool at all; so does a bare number the task could not
+        # attribute to one of its slots. Composed the same way the stock refusal below
+        # is - a text Answer, the whole reply, taking the same tail every composed
+        # answer takes.
+        if plan.trace.task_question and completes_here:
+            stage[0] = "replied"
+            answer = turn_compose.Answer(text=plan.trace.task_question)
+
         if (
-            branch_kind in ("business_query", "check_promotion")
+            answer is None
+            and branch_kind in ("business_query", "check_promotion")
             and completes_here
             and not sales_report_grant_refused
             # AC-1708 (captain's ruling, 20 Sep 2026): an `offer` / `access_ask` exit is
@@ -2173,6 +2245,15 @@ def _run_stages(  # noqa: PLR0915
                     resolver_payload.get("gate") if isinstance(resolver_payload, dict) else None,
                     "routing_brand",
                 ),
+                # No resolver ran at all (the focus product is settled, so it is not
+                # re-resolved): `_team_pick_question` still takes the focus product's
+                # brand (#865 sibling), the same read `_focus_brand_payload` makes. A
+                # thunk, so the read runs only when compose mints (fix round 2, N2).
+                focus_brand=(
+                    (lambda: _focus_brand(db, state_out.focus))
+                    if not isinstance(resolver_payload, dict)
+                    else None
+                ),
             )
             # Will `answer_bridge.answer_for` (R4/R5) answer this turn's miss? ONE
             # rule, computed once, read TWICE below: it gates that call, and it is
@@ -2290,7 +2371,17 @@ def _run_stages(  # noqa: PLR0915
                     from app.services.chatbot import copy as copy_mod
 
                     answer = answer_bridge.answer_for(
-                        resolver_payload or {},
+                        # No resolver ran (the focus product is settled, so "eta" after
+                        # a product answer re-resolves nothing): the miss still mints its
+                        # offer with the focus product's brand (#865 sibling).
+                        # Read only when the bridge will answer a miss, so a hit never
+                        # pays for it (fix round 2, N2).
+                        resolver_payload
+                        or (
+                            _focus_brand_payload(db, state_out.focus)
+                            if answer_bridge.answers_a_miss({}, envelopes[0])
+                            else {}
+                        ),
                         envelope=envelopes[0],
                         parser=answer_parse_output,
                         ctx=ctx,
@@ -2316,6 +2407,7 @@ def _run_stages(  # noqa: PLR0915
                         # than replacing it - the same rule `turn_compose.compose`
                         # already applies on its own miss arm below.
                         carried_pending=state_out.pending,
+                        dealer_stock_ask=_dealer_stock_ask(state_out, plan),
                     )
                     if answer is not None:
                         bridge_answered = True
@@ -2445,6 +2537,9 @@ def _run_stages(  # noqa: PLR0915
                             ),
                             asked_at_turn=turn_no,
                             turn_id=turn_id,
+                            # #865 round 6 (R1): the miss company's CS roster read.
+                            db=db,
+                            ctx=ctx,
                         )
             except Exception as fetch_error:  # noqa: BLE001 - a lane failure, not a crash
                 logger.exception("chatbot turn %s: fetch or compose failed", turn_id)
@@ -2487,6 +2582,29 @@ def _run_stages(  # noqa: PLR0915
                     # An answer that is not a counted set closes the page: the customer
                     # has moved on, and "more" must not resume a set they left.
                     state_out.focus.set_page = None
+                # Ported from PR #1118 (not merged), D25: the open stock task is
+                # whatever the REPLY says is still owed - opened, updated and closed
+                # by one rule, read off the backend's own `needs_quantity` per
+                # product. The engine never decides who must state a quantity; it
+                # reads what the reply stated about it. Owner hand test 26 Sep, slice
+                # 2: the same read narrows to an exact code and turns a family into a
+                # which-one pick (`_stock_ask_reply`).
+                answer = _stock_ask_reply(
+                    answer,
+                    state_out,
+                    envelopes,
+                    fetch_plan,
+                    verdict,
+                    turn_no=turn_no,
+                )
+                # Chatbot stock ask v2 S3, AC-SA314: an `incoming` entry answered
+                # with its own packing list attaches it to THIS reply. `answer.files`
+                # is the same seam every other domain's attachment already flows
+                # through (`turn_runtime.envelope_of`'s own "files" -> here -> the
+                # existing `send_attachments` action, `_send_actions`) - reused
+                # rather than a new action kind, so B3 needs nothing new from the
+                # executor.
+                answer.files.extend(_stock_ask_packing_list_files(envelopes))
                 turn_trace.record(
                     "looked_up",
                     summary="Looked the answer up.",
@@ -2574,6 +2692,10 @@ def _run_stages(  # noqa: PLR0915
             answer = turn_compose.Answer(text=SALES_REPORT_NOT_ENABLED_MESSAGE)
 
     if answer is not None and lane_error_text is None:
+        if _dealer_stock_ask(state_out, plan):
+            # Owner ruling 26 Sep 2026 (hand test F1): whatever composed this stock
+            # reply, a dealer is referred to their salesman, never offered a team.
+            answer = _dealer_refers_to_salesman(answer)
         return _run_answer(
             turn_id=turn_id,
             ctx=ctx,
@@ -2786,6 +2908,85 @@ def _contact_block(envelope: Envelope, known_phone: str | None) -> dict[str, Any
     if not jsc.truthy(contact.get("phone")) and known_phone:
         contact["phone"] = known_phone
     return contact
+
+
+def _dealer_stock_ask(state_out: Any, plan: Any) -> bool:
+    """Is this turn a stock ask by a dealer (an availability-only contact, hand test F1)?"""
+    profile = getattr(state_out, "profile", None)
+    if not getattr(profile, "stock_availability_only", False):
+        return False
+    domains = list(getattr(plan, "domains", None) or []) or list(
+        getattr(state_out.focus, "domains", None) or []
+    )
+    return "inventory" in domains
+
+
+def _dealer_refers_to_salesman(answer: Any) -> Any:
+    from app.services.chatbot import dealer_stock as dealer_mod
+
+    if getattr(answer, "question", None) is not None and (
+        (answer.question.payload or {}).get("stock_pick") is True
+    ):
+        return answer
+    text, question = dealer_mod.without_escalation(
+        getattr(answer, "text", "") or "", getattr(answer, "question", None)
+    )
+    if text == (getattr(answer, "text", "") or "") and question is getattr(answer, "question", None):
+        return answer
+    return dataclasses_replace(answer, text=text, question=question)
+
+
+def _stock_ask_reply(
+    answer: Any,
+    state_out: Any,
+    envelopes: list[dict[str, Any]],
+    fetch_plan: Any,
+    verdict: dict[str, Any],
+    *,
+    turn_no: int,
+) -> Any:
+    """The stock task after the tool's reply, and the reply itself when it is a
+    question (owner hand test 26 Sep, slice 2).
+
+    `turn/task.py::after_reply` owns the rule; this writes its tasks onto the focus and,
+    for a single-domain stock turn whose reply still needs a quantity, says the task's
+    own named question (or the family pick) instead of the presenter's bare "How many
+    units do you need?". The pick is minted as the turn's open question, so the tail
+    persists it and the next turn's `decide()` reads a typed code against its options.
+    """
+    reply = turn_task.after_reply(
+        tuple(state_out.focus.tasks or ()),
+        envelopes,
+        turn_no=turn_no,
+        # SEC-S2: did this ask name a product at all? A bare "what stock do you have?"
+        # fetches a page of the catalogue, and a task must not be opened to collect a
+        # quantity for every row of it. Scoped to the INVENTORY spec only (review
+        # round 2): a multi-domain ask like "promo for X, and what stock do we have?"
+        # names X on the promotion spec, not on the inventory one.
+        named_products=any(
+            spec.entities for spec in fetch_plan.fetch if spec.domain == "inventory"
+        ),
+        asked=[
+            e
+            for e in (verdict.get("entities") or [])
+            if isinstance(e, dict) and e.get("current_message") is True
+        ],
+        demand_qty=verdict.get("demand_qty"),
+    )
+    state_out.focus.tasks = reply.tasks
+    if not reply.text or [spec.domain for spec in fetch_plan.fetch] != ["inventory"]:
+        return answer
+    question = (
+        turn_pending.ask(
+            "product_pick",
+            reply.pick["options"],
+            asked_at_turn=turn_no,
+            payload=reply.pick["payload"],
+        )
+        if reply.pick
+        else None
+    )
+    return turn_compose.Answer(text=reply.text, question=question)
 
 
 def _run_answer(
@@ -3427,6 +3628,11 @@ def _run_casual_lane(
         try:
             raw = casual.call_clarifier(clarifier_config, user_message)
             text = casual.reply_text(casual.central_exchange({"text": raw}))
+        except casual.ClarifierRateLimited as exc:
+            # PR #1247 round 6, ruling 3: a rate limit that never cleared is one plain
+            # sentence, never the provider's text. The row keeps the real reason.
+            failed = f"{type(exc).__name__}: {exc}"
+            text = llm_call.RATE_LIMITED_REPLY
         except casual.ClarifierError as exc:
             failed = f"{type(exc).__name__}: {exc}"
             # The CALL arm keeps today's `sub-error-logger` text, which interpolates the
@@ -3593,6 +3799,11 @@ def _run_escalation_arm(
     any of it, so "assigned but no SLA row" is not a state this can produce.
     """
     stage[0] = "looked_up"
+    # #865: the product this escalation is about, from THIS turn's applied focus (this
+    # turn's named product, else the one the previous turn left in focus; a topic reset
+    # or a newer product already replaced it). The lane reads its brand off the product
+    # row. On the lane's item only: the row keeps the route-turn item it always had.
+    lane_item = {**item, "focus_products": _focus_products(state)}
     try:
         # The lane opens its OWN session (its writes are a unit of work of their own), and
         # it opens it off THIS factory rather than `SessionLocal`, so the contact's company
@@ -3600,7 +3811,7 @@ def _run_escalation_arm(
         # scope before it reads `Team` / `AgentTeam`, so the draw was not failing; the
         # pre-pin reads and the lane's unit of work were the unscoped half.
         fragment = run_escalation_lane(
-            ctx, item, dry_run=dry_run, session_factory=session_factory
+            ctx, lane_item, dry_run=dry_run, session_factory=session_factory
         )
     except Exception as exc:  # noqa: BLE001 - a failed lane is recorded, never dropped
         message = f"{type(exc).__name__}: {exc}"
@@ -3634,12 +3845,15 @@ def _run_escalation_arm(
 
     # Only `looked_up` is recorded here. `replied` and `remembered` are the TAIL's, and
     # recording a `replied` of our own would put two of them on the trace.
+    routed_to = escalation_routing_line(fragment.get("routing"))
     turn_trace.record(
         "looked_up",
         summary=(
-            "Asked which company should take it."
+            "Asked which product the escalation is about."
+            if arm == "clarify" and jsc.truthy(jsc.get(clarify, "clarify_product"))
+            else "Asked which company should take it."
             if arm == "clarify"
-            else "Handed the conversation to a person."
+            else " ".join(filter(None, ("Handed the conversation to a person.", routed_to)))
         ),
         why=(
             "More than one company was offered and nobody picked one, so assigning would "
@@ -3652,6 +3866,10 @@ def _run_escalation_arm(
             "arm": arm,
             "actions": [a.get("kind") for a in lane_actions],
             "dry_run": dry_run,
+            # #865 observability: the next-assignee body's routing axes, the rung that
+            # chose the brand, and the round-robin cursor key the draw used. Before this
+            # the brand a lane sent was visible only by joining the SLA row by time.
+            "routing": fragment.get("routing"),
         },
         raw={"clarify": clarify, "pending": pending},
     )
@@ -3786,6 +4004,45 @@ def _casual_failure_summary(failed: str, setup_error: str | None) -> str:
     return "Could not prepare the clarifier call."
 
 
+def _focus_products(state: Any) -> list[dict[str, Any]]:
+    """The product entries of a turn's applied focus, or `[]` (#865)."""
+    focus = getattr(state, "focus", None)
+    products = getattr(focus, "products", None)
+    return [p for p in products if isinstance(p, dict)] if isinstance(products, list) else []
+
+
+def _focus_brand(db: Session, focus: Any) -> str | None:
+    """The brand of the focus product, off the product row, or None (#865).
+
+    `escalation_services.focus_product_brand` is the one read, shared with the escalation
+    lane's `product_brand` seam so the offer and the draw cannot disagree about a brand.
+    Fails soft: a brand nobody could read leaves the offer exactly as it was before.
+    """
+    products = getattr(focus, "products", None)
+    if not products:
+        return None
+    from app.services.chatbot.lanes.escalation_services import focus_product_brand
+
+    try:
+        return focus_product_brand(db, products)
+    except Exception:  # noqa: BLE001 - a missing brand is not a failed turn
+        logger.warning("chatbot: the focus product's brand could not be read", exc_info=True)
+        return None
+
+
+def _focus_brand_payload(db: Session, focus: Any) -> dict[str, Any]:
+    """A resolver-shaped payload carrying only the focus product's brand, or `{}` (#865).
+
+    For a turn whose resolver never ran: the bridge's miss arm reads the brand off
+    `payload["gate"]["routing_brand"]` like every other mint site, and a gate holding
+    nothing else reads as `{}` for every other key.
+    """
+    brand = _focus_brand(db, focus)
+    if not brand:
+        return {}
+    return {"gate": {"routing_brand": brand, "routing_brand_source": "focus_product"}}
+
+
 def _stamp_item(access: dict, branch_kind: str, tier_stamp: dict) -> dict[str, Any]:
     """`route-turn`'s output item, byte-equal to today (AC-101).
 
@@ -3815,8 +4072,12 @@ def _failed_result(
     ctx: dict[str, Any] | None = None,
     item: dict[str, Any] | None = None,
     branch_kind: str | None = None,
+    reply_text: str = GENERIC_ERROR_REPLY,
 ) -> TurnResult:
     """A failed turn still hands the caller today's error reply to send (AC-105, AC-107).
+
+    `reply_text` is that reply unless the caller knows better: a parser call refused by
+    a rate limit on every attempt says `llm_call.RATE_LIMITED_REPLY` (PR #1247 round 6).
 
     `quick_replies` is null, never `[]`: AC-507's contract is `quick_reply` is n8n's
     comma-joined string or null, and a failed turn offered none.
@@ -3833,12 +4094,12 @@ def _failed_result(
         item=item,
         branch_kind=branch_kind,
         delegate=None,
-        reply={"text": GENERIC_ERROR_REPLY, "quick_replies": None},
+        reply={"text": reply_text, "quick_replies": None},
         actions=[
             *actions,
             {
                 "kind": "send_message",
-                "text": GENERIC_ERROR_REPLY,
+                "text": reply_text,
                 "quick_replies": None,
                 "dry_run": dry_run,
             },
@@ -4117,6 +4378,38 @@ class CompleteResult:
 
 def _load_turn(db: Session, turn_id: str) -> ChatbotTurn | None:
     return db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+
+
+def _stock_ask_packing_list_files(envelopes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Chatbot stock ask v2 S3, AC-SA314: one file per `incoming` entry that carries
+    a `packing_list` (gated server-side, `StockService._apply_stock_visibility` only
+    ever sets it for a contact whose `packing_list_allowed` is on - this reads that
+    decision, it does not re-make it). The canonical file shape every other domain's
+    attachment already carries into `answer.files` (`url`/`filename`/`mimeType`,
+    `sorento_crm_mcp.presenters._Builder.attach`'s own normalisation, unreachable
+    from this package so re-stated here rather than imported across the process
+    boundary)."""
+    files: list[dict[str, Any]] = []
+    for envelope in envelopes or []:
+        if not isinstance(envelope, dict):
+            continue
+        for entry in envelope.get("stock_availability") or []:
+            if not isinstance(entry, dict) or entry.get("branch") != "incoming":
+                continue
+            packing_list = entry.get("packing_list")
+            if not isinstance(packing_list, dict):
+                continue
+            url = packing_list.get("file_path")
+            if not url:
+                continue
+            files.append(
+                {
+                    "url": url,
+                    "filename": packing_list.get("filename"),
+                    "mimeType": packing_list.get("mime_type"),
+                }
+            )
+    return files
 
 
 def _attachments_src(answer: Any) -> Any:
@@ -4503,11 +4796,47 @@ def _question_offered(
 
     clarify = values.get("clarify")
     if jsc.truthy(clarify):
+        if jsc.truthy(jsc.get(clarify, "clarify_product")):
+            # #865 round 5: the escalation's own product did-you-mean. Each option is a
+            # product and the team the escalation goes to, so the number the customer
+            # replies with is an ACCEPTANCE (`turn/apply.py::_answer_offer`) that settles
+            # that product onto the focus. `uuid` stays empty: an option is not a person
+            # (`preferred_assignee_id`) and not a row to fetch with.
+            routing = jsc.get(jsc.get(jsc.get(ctx, "parse"), "output") or {}, "routing") or {}
+            return turn_pending.ask(
+                "team_pick",
+                [
+                    {
+                        "position": jsc.get(row, "position") or index + 1,
+                        "label": jsc.get(row, "label"),
+                        "uuid": None,
+                        "uuids": [],
+                        "entity_type": "product",
+                        "payload": {
+                            "team": jsc.get(row, "team"),
+                            "product_code": jsc.get(row, "product_code"),
+                            "agent": jsc.get(routing, "suggested_agent"),
+                        },
+                    }
+                    for index, row in enumerate(jsc.array(jsc.get(clarify, "clarify_product_options")))
+                    if jsc.truthy(row)
+                ],
+                team=jsc.get(clarify, "team"),
+                expects="pick",
+            )
         if jsc.truthy(jsc.get(clarify, "clarify_team")):
             return turn_pending.ask(
                 "team_pick", _options(jsc.get(clarify, "clarify_team_options"), "team"), expects="pick"
             )
         if jsc.truthy(jsc.get(clarify, "clarify_text")):
+            held = turn_pending.from_wire(
+                jsc.get(jsc.get(jsc.get(jsc.get(ctx, "session"), "session_vars"), "variables"), "held_offer")
+            )
+            if held is not None and turn_pending.offered_companies(held):
+                # #865 round 6 (R4): a bare "yes" over the member picker asked which
+                # company; the picker stays the open question (n8n re-persists the
+                # offer), so a member number, a member name or a company word answers it.
+                return held
             # The clarify's OWN pool first (`escalation.clarify_company_reply`'s
             # `clarify_company_options`): the companies it just printed, carrying the ids
             # that route. `result_set` stays the fallback for a clarify composed by a
@@ -4534,10 +4863,22 @@ def _question_offered(
 
     member = outcome.get("build-cs-member-offer")
     if jsc.truthy(member):
+        from app.services.chatbot import answer_bridge
+
         routing = jsc.get(jsc.get(jsc.get(ctx, "parse"), "output") or {}, "routing") or {}
         return turn_pending.ask(
             "member_offer",
-            _options(jsc.get(member, "cs_last_result_set"), "member"),
+            [
+                option
+                for option in (
+                    answer_bridge.member_option(row, i + 1)
+                    for i, row in enumerate(jsc.array(jsc.get(member, "cs_last_result_set")))
+                )
+                if option
+            ],
+            # #865 round 6: the team and the companies the picker was built for
+            # (`answer_bridge._miss_question`'s own member arm, the same shape).
+            team=jsc.get(routing, "suggested_team"),
             expects="pick",
             # SRTSC07 review round 1, SHOULD-2: picking a member option IS an
             # escalation acceptance (`turn/apply.py:546`). `brand_code` (round 4) is
@@ -4545,6 +4886,7 @@ def _question_offered(
             payload={
                 "agent": jsc.get(routing, "suggested_agent"),
                 "brand_code": jsc.get(values.get("gate"), "routing_brand"),
+                "roster_plan": answer_bridge.roster_plan_of(member),
             },
         )
 

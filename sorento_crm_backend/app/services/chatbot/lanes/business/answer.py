@@ -478,6 +478,19 @@ def crossdomain_zeroset(
         out["_xd"] = {"active": False, "why": why}
         return out
 
+    # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+    # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3, D17, review round 9 (finding
+    # 7): a DEALER availability reply answers in the dealer's own terms and the
+    # verdict line is the whole answer for that product, so the ladder does not run
+    # at all when the reply carries an availability block - it must never state OUR
+    # stock/incoming/PO figures beside the dealer's own yes/no.
+    env_probe: Any = passthrough
+    if jsc.truthy(env_probe) and isinstance(jsc.get(env_probe, "output"), dict):
+        env_probe = env_probe["output"]
+    availability = jsc.get(env_probe, "stock_availability")
+    if isinstance(availability, list) and availability:
+        return off("stock_availability")
+
     qf = parser if isinstance(parser, dict) else {}
     dh = qf.get("domain_hint")
     if dh != "inventory" and dh != "incoming":

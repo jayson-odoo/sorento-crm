@@ -278,6 +278,10 @@ def _crm_client(db, monkeypatch, *, allow: set[str], company_id: str) -> TestCli
         lambda self, uid, slug: slug in allow,
     )
     monkeypatch.setattr(UserPermissionService, "get_user_role_slugs", lambda self, uid: set())
+    # The either-grant dependency reads the whole slug set rather than asking per slug.
+    monkeypatch.setattr(
+        UserPermissionService, "get_user_permission_slugs", lambda self, uid: set(allow)
+    )
     return TestClient(app)
 
 
@@ -750,6 +754,20 @@ def test_class_labels_gated_on_settings_view(db, monkeypatch):
     response = allowed.get(_CLASS_LABELS)
     assert response.status_code == 200, response.text
     assert "Bathroom Furniture" in str(response.json())
+
+
+def test_ac_s3_3_class_labels_readable_by_a_spec_or_product_reader(db, monkeypatch):
+    """#1286 AC-S3.3: the Product Specifications list counts Product class's choices
+    from this list, so a spec or product reader without the settings grant gets it
+    too. A category-only reader is still refused (the test above)."""
+    _product(db, "SRTBF11834", class_label="Bathroom Furniture")
+
+    for grant in ("master_data.spec_registry.view", PRODUCTS_VIEW):
+        client = _crm_client(db, monkeypatch, allow={grant}, company_id=SORENTO)
+        response = client.get(_CLASS_LABELS)
+        assert response.status_code == 200, (grant, response.text)
+        assert "Bathroom Furniture" in str(response.json())
+        app.dependency_overrides.clear()
 
 
 # --------------------------------------------------------------------------- review B1 (quantity)

@@ -26,6 +26,7 @@ from io import BytesIO
 from typing import Dict, List, Optional, Sequence
 
 from openpyxl import Workbook
+from openpyxl.chart import LineChart, Reference
 from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
@@ -78,6 +79,23 @@ _FIRST_DATA_ROW = 8
 _TITLE_HEIGHTS = {_COMPANY_ROW: 35.25, _REPORT_ROW: 30.75, _PERIOD_ROW: 29.25, _DEPARTMENT_ROW: 19.5}
 
 
+#: A text cell Excel would read as a formula. Escaped with a leading apostrophe, so a
+#: customer or agent named "=HYPERLINK(...)" is text in the file, never a formula.
+_FORMULA_LEAD = ("=", "+", "-", "@")
+
+
+def _mark_text(cell) -> None:
+    """A text cell starting with a formula lead is kept as that text. openpyxl turns only
+    a leading "=" into a formula, but the other leads are escaped too, the way a
+    spreadsheet's own import would: with Excel's quote prefix, never a visible apostrophe
+    in the value. The kernel's own "-" placeholder is left alone: Excel reads a lone "-"
+    as text anyway, and the existing workbooks stay byte-for-byte as they were."""
+    value = cell.value
+    if isinstance(value, str) and value != NO_VALUE and value.startswith(_FORMULA_LEAD):
+        cell.data_type = "s"
+        cell.quotePrefix = True
+
+
 def _header_text(spec: WorkbookSpec, key: str, label: str) -> str:
     """The word the client's own sheet prints over this column.
 
@@ -95,12 +113,27 @@ def _decimal(value: Optional[str]) -> Optional[Decimal]:
     return Decimal(value) if value not in (None, "") else None
 
 
-def _write_money(sheet: Worksheet, row: int, column: int, value: Optional[str], *, bold=False):
-    """A money cell: the number when there is one, the client's own "-" when there is not."""
+def _write_money(
+    sheet: Worksheet,
+    row: int,
+    column: int,
+    value: Optional[str],
+    *,
+    bold=False,
+    spec: Optional[WorkbookSpec] = None,
+):
+    """A money cell: the number when there is one, the client's own "-" when there is not.
+
+    A definition may name its own format and its own "no value" (an empty cell, which a
+    chart skips instead of plotting a zero)."""
     cell = sheet.cell(row=row, column=column)
     amount = _decimal(value)
-    cell.value = NO_VALUE if amount is None else amount
-    cell.number_format = MONEY_FORMAT
+    blank = spec.no_value if spec is not None else NO_VALUE
+    if amount is None:
+        cell.value = blank if blank != "" else None
+    else:
+        cell.value = amount
+    cell.number_format = (spec.money_format if spec is not None and spec.money_format else MONEY_FORMAT)
     if bold:
         cell.font = _TOTAL_FONT
     return cell
@@ -124,6 +157,7 @@ def _title_block(
     width: int,
     period_text: Optional[str],
     period_date: Optional[date],
+    note: Optional[str] = None,
 ) -> None:
     """The four lines every sheet opens with, merged across the table (AC-G7)."""
     spec = definition.workbook
@@ -142,6 +176,19 @@ def _title_block(
             sheet.cell(row=row, column=column).border = _BOX
         if width > 1:
             sheet.merge_cells(start_row=row, start_column=1, end_row=row, end_column=width)
+
+    if note:
+        # A report with a stated basis prints it where the department line sits.
+        cell = sheet.cell(row=_DEPARTMENT_ROW, column=1, value=note)
+        cell.font = _DEPARTMENT_FONT
+        cell.alignment = _LEFT
+        if width > 1:
+            sheet.merge_cells(
+                start_row=_DEPARTMENT_ROW, start_column=1, end_row=_DEPARTMENT_ROW, end_column=width
+            )
+        for row, height in _TITLE_HEIGHTS.items():
+            sheet.row_dimensions[row].height = height
+        return
 
     label = sheet.cell(row=_DEPARTMENT_ROW, column=1, value="DEPARTMENT:")
     label.font = _DEPARTMENT_FONT
@@ -310,34 +357,43 @@ def _render_summary(
     company: str,
     period_label: str,
     period_compact: str,
+    note: Optional[str] = None,
 ) -> None:
     """The client's SUMMARY: salesman by month, a TOTAL SALES line, then the year totals."""
+    width = _pivot_width(pivot)
+    _title_block(sheet, definition, company, width, period_label, None, note)
+    row = _pivot_table(sheet, definition, pivot, _GROUP_ROW)
+    if pivot.variance_row is None and pivot.show_column_totals:
+        _closing_totals(sheet, definition, pivot, period_compact, row + 1)
+
+
+def _pivot_width(pivot: ReportPivotLayout) -> int:
+    span = max(len(pivot.measures), 1)
+    return 1 + span * (len(pivot.col_dim.values) + 1)
+
+
+def _pivot_table(
+    sheet: Worksheet, definition: ReportDefinition, pivot: ReportPivotLayout, top: int
+) -> int:
+    """One pivot, header on rows `top` and `top + 1`. Returns the row after its last row."""
     spec = definition.workbook
     measures = pivot.measures
     span = max(len(measures), 1)
-    width = 1 + span * (len(pivot.col_dim.values) + 1)
+    width = _pivot_width(pivot)
+    header = top + 1
 
-    _title_block(sheet, definition, company, width, period_label, None)
-
-    sheet.cell(
-        row=_GROUP_ROW, column=1, value=_header_text(spec, pivot.row_dim.key, pivot.row_dim.label)
-    )
-    sheet.merge_cells(start_row=_GROUP_ROW, start_column=1, end_row=_HEADER_ROW, end_column=1)
+    sheet.cell(row=top, column=1, value=_header_text(spec, pivot.row_dim.key, pivot.row_dim.label))
+    sheet.merge_cells(start_row=top, start_column=1, end_row=header, end_column=1)
 
     def _group(column: int, label: str) -> None:
-        sheet.cell(row=_GROUP_ROW, column=column, value=label)
+        sheet.cell(row=top, column=column, value=label)
         if span > 1:
             sheet.merge_cells(
-                start_row=_GROUP_ROW,
-                start_column=column,
-                end_row=_GROUP_ROW,
-                end_column=column + span - 1,
+                start_row=top, start_column=column, end_row=top, end_column=column + span - 1
             )
         for offset, measure in enumerate(measures):
             sheet.cell(
-                row=_HEADER_ROW,
-                column=column + offset,
-                value=_header_text(spec, measure.key, measure.label),
+                row=header, column=column + offset, value=_header_text(spec, measure.key, measure.label)
             )
             sheet.column_dimensions[get_column_letter(column + offset)].width = _width(
                 spec, measure.key
@@ -349,50 +405,82 @@ def _render_summary(
         column += span
     total_column = column
     _group(total_column, spec.summary_row_total_label)
-    _style_header_cells(sheet, width)
+    for header_row in (top, header):
+        for index in range(1, width + 1):
+            cell = sheet.cell(row=header_row, column=index)
+            cell.font = _HEADER_FONT
+            cell.alignment = _CENTRE_WRAP
+            cell.border = _BOX
+    sheet.row_dimensions[top].height = 32.25
     sheet.column_dimensions["A"].width = _width(spec, pivot.row_dim.key)
 
-    row = _FIRST_DATA_ROW
-    for row_value in pivot.row_values:
-        # As stored: the register is read by the people named in it.
-        sheet.cell(row=row, column=1, value=row_value).alignment = _LEFT
+    def _line(row: int, label: str, per_col: Dict, total: Dict, *, bold=False) -> None:
+        cell = sheet.cell(row=row, column=1, value=label)
+        cell.alignment = _LEFT
+        if bold:
+            cell.font = _TOTAL_FONT
         column = 2
         for col_value in pivot.col_dim.values:
-            cell_measures = pivot.cells.get(row_value, {}).get(col_value, {})
+            cell_measures = per_col.get(col_value, {}) or {}
             for offset, measure in enumerate(measures):
-                _write_money(sheet, row, column + offset, cell_measures.get(measure.key))
+                _write_money(sheet, row, column + offset, cell_measures.get(measure.key), bold=bold, spec=spec)
             column += span
         for offset, measure in enumerate(measures):
-            _write_money(
-                sheet,
-                row,
-                total_column + offset,
-                pivot.row_totals.get(row_value, {}).get(measure.key),
-            )
+            _write_money(sheet, row, total_column + offset, (total or {}).get(measure.key), bold=bold, spec=spec)
         for index in range(1, width + 1):
             sheet.cell(row=row, column=index).border = _BOX
+
+    row = header + 1
+    first_data = row
+    row_labels = pivot.row_value_labels or {}
+    for row_value in pivot.row_values:
+        # As stored (the register is read by the people named in it), unless the axis
+        # names its values ("01" is JAN).
+        _line(
+            row,
+            row_labels.get(row_value, row_value),
+            pivot.cells.get(row_value, {}),
+            pivot.row_totals.get(row_value, {}),
+        )
+        row += 1
+    last_data = row - 1
+
+    if pivot.show_column_totals:
+        # The label bold and centred, the amounts as values in plain weight: the client's
+        # own TOTAL SALES line, unchanged from before the pivot was split into blocks.
+        _line(row, spec.summary_total_row_label, pivot.col_totals, pivot.grand_total)
+        label = sheet.cell(row=row, column=1)
+        label.font = _TOTAL_FONT
+        label.alignment = _CENTRE
+        row += 1
+    if pivot.variance_row is not None:
+        _line(row, pivot.variance_label or "VARIANCE", pivot.variance_row,
+              pivot.variance_total or {}, bold=True)
         row += 1
 
-    total_row = row
-    label = sheet.cell(row=total_row, column=1, value=spec.summary_total_row_label)
-    label.font = _TOTAL_FONT
-    label.alignment = _CENTRE
-    column = 2
-    for col_value in pivot.col_dim.values:
-        for offset, measure in enumerate(measures):
-            _write_money(
-                sheet, total_row, column + offset, pivot.col_totals.get(col_value, {}).get(measure.key)
-            )
-        column += span
-    for offset, measure in enumerate(measures):
-        _write_money(sheet, total_row, total_column + offset, pivot.grand_total.get(measure.key))
-    for index in range(1, width + 1):
-        sheet.cell(row=total_row, column=index).border = _BOX
+    if pivot.chart == "line" and pivot.row_values and len(measures) == 1:
+        # One line per row value, the columns (months) along x; data only, no totals.
+        chart = LineChart()
+        chart.height = 7.5
+        chart.width = max(16.0, 1.6 * len(pivot.col_dim.values))
+        chart.y_axis.numFmt = spec.money_format or MONEY_FORMAT
+        last_col = 1 + len(pivot.col_dim.values)
+        data = Reference(sheet, min_col=1, max_col=last_col, min_row=first_data, max_row=last_data)
+        chart.add_data(data, from_rows=True, titles_from_data=True)
+        chart.set_categories(Reference(sheet, min_col=2, max_col=last_col, min_row=top, max_row=top))
+        sheet.add_chart(chart, f"A{row + 1}")
+        row += 16
+    return row
 
+
+def _closing_totals(
+    sheet: Worksheet, definition: ReportDefinition, pivot: ReportPivotLayout, period_compact: str, row: int
+) -> None:
     # One labelled line per measure, the way the client closes their own sheet: the two
     # numbers the whole register is kept for, spelled out rather than read off a corner.
-    row = total_row + 2
-    for measure in measures:
+    spec = definition.workbook
+    width = _pivot_width(pivot)
+    for measure in pivot.measures:
         title = " ".join(
             part
             for part in ("GRAND TOTAL", _header_text(spec, measure.key, measure.label), period_compact)
@@ -403,8 +491,25 @@ def _render_summary(
         cell.alignment = _CENTRE
         if width > 1:
             sheet.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
-        _write_money(sheet, row, 3, pivot.grand_total.get(measure.key), bold=True)
+        _write_money(sheet, row, 3, pivot.grand_total.get(measure.key), bold=True, spec=spec)
         row += 1
+
+
+def _render_blocks(
+    sheet: Worksheet, definition: ReportDefinition, data: WorkbookData, company: str, period_text: str
+) -> None:
+    """One block per value of the split param, one under the other on the one sheet."""
+    blocks = data.blocks or []
+    width = max((_pivot_width(b.summary) for b in blocks), default=1)
+    _title_block(sheet, definition, company, width, period_text, None, data.note)
+    row = _GROUP_ROW
+    for block in blocks:
+        cell = sheet.cell(row=row, column=1, value=block.title)
+        cell.font = _HEADER_FONT
+        cell.alignment = _LEFT
+        if width > 1:
+            sheet.merge_cells(start_row=row, start_column=1, end_row=row, end_column=width)
+        row = _pivot_table(sheet, definition, block.summary, row + 1) + 1
 
 
 def render_workbook(definition: ReportDefinition, data: WorkbookData) -> bytes:
@@ -413,14 +518,21 @@ def render_workbook(definition: ReportDefinition, data: WorkbookData) -> bytes:
     summary_sheet = workbook.active
     summary_sheet.title = "SUMMARY"
     company = data.company_name or definition.workbook.company_name
-    _render_summary(
-        summary_sheet,
-        definition,
-        data.summary,
-        company,
-        data.period_label,
-        data.period_compact_label,
-    )
+    period_text = data.period_label
+    if definition.workbook.period_as_at and data.period_end is not None:
+        period_text = f"AS AT {data.period_end.strftime('%d/%m/%Y')}"
+    if data.blocks:
+        _render_blocks(summary_sheet, definition, data, company, period_text)
+    else:
+        _render_summary(
+            summary_sheet,
+            definition,
+            data.summary,
+            company,
+            period_text,
+            data.period_compact_label,
+            data.note,
+        )
 
     for sheet in data.sheets:
         # Excel refuses a tab name over 31 characters; a month never is, but a report whose
@@ -433,6 +545,11 @@ def render_workbook(definition: ReportDefinition, data: WorkbookData) -> bytes:
             sheet.label,
             sheet.month_start,
         )
+
+    for worksheet in workbook.worksheets:
+        for row in worksheet.iter_rows():
+            for cell in row:
+                _mark_text(cell)
 
     stream = BytesIO()
     workbook.save(stream)

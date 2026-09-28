@@ -35,13 +35,18 @@ const SOURCE_PILL_KEY: Record<string, string> = {
   category: 'ai',
 };
 
-/** Named the way the person reading it would name it, not the way it is stored. */
+/**
+ * Named the way the person reading it would name it, not the way it is stored.
+ * A value read off the product's own record (its category, its brand field)
+ * never says "Description" - that word claims the description text was read,
+ * and it was not (AC-S2.7, review T12).
+ */
 export const SOURCE_LABEL: Record<string, string> = {
   derived: 'Description',
   rule: 'Description',
   flyer: 'Flyer',
   code: 'Product code',
-  category: 'Category',
+  category: "Product's category",
   human: 'Set by hand',
   supplier: 'Supplier',
 };

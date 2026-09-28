@@ -12,9 +12,14 @@ Email / Phone toggle, and no email is ever sent by creating or linking a user (s
 Track: full (migration, auth, RBAC, portal ingest). S0 built on PR #1303 (27 Sep 2026, owner ruling
 of 27 Sep 01:04 MYT to build without further alignment); the orchestrator's review at 03d3b474
 (needs work) is addressed by fix lane round 2 on the same PR, which records rulings 4, 10, 12 and
-13 in the PR body. The plan rides in that PR. S3 built on PR #1306 (stacked on S0; no migration);
-the reviewer pass at 6a7f0bcd (needs work: B1, S1 to S5, N1 to N6) is addressed by S3 fix lane
-round 2 on the same PR (27 Sep 2026), ready for the orchestrator's review. S1 and S2 per their own lanes.
+13 in the PR body. The plan rides in that PR. Main 52b0ac24 merged into it (27 Sep 2026):
+`identity_0001_s0_model` now chains on main's single head `sales_s1_reports_module` instead of
+merging 527 and spec_0003 itself. Main af86bcfd merged into it (27 Sep 2026, round 2): it now
+chains on main's single head `sales_0005_commission_tiers`. S0 merged to main (#1303).
+S3 built on PR #1306 (stacked on S0; no migration); the reviewer pass at 6a7f0bcd (needs work:
+B1, S1 to S5, N1 to N6) is addressed by S3 fix lane round 2 on the same PR (27 Sep 2026), ready
+for the orchestrator's review; the retarget round (28 Sep 2026) merged main 9d150067 into it and
+moved its base to main. S1 and S2 per their own lanes.
 UAC: `identity-unified-login-acceptance-criteria.md` (same folder; the Journey is there, and every
 AC traces to a step in it).
 Classification: CORE (auth and users are base-platform), tables stay in `public`.

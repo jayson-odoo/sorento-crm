@@ -3,8 +3,8 @@
 /**
  * The Sales Teams action set (D15): Delete.
  *
- * Edit is the team page's primary button and the list's row click opens the team, so
- * neither belongs in this menu. Delete asks nothing (D7): it parks `sales_team.delete` on the
+ * The team record adds Edit ahead of this in its gear (the S1 hand test of 27 Sep, F2); the
+ * list's row click opens the team, so the row menu carries Delete only. Delete asks nothing (D7): it parks `sales_team.delete` on the
  * server for the hard-delete window and the countdown takes over the primary button, or a
  * toast over the list. The agents themselves are never deleted with a team (UAC S6-3).
  */

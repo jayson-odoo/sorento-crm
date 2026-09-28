@@ -6,6 +6,30 @@ from app.database import Base
 import uuid
 
 
+# Keys that never enter audit_logs, whichever model or caller produced the payload
+# (issue #1281). `users.password` (a bcrypt hash) and `project_quotation_issues.sign_token`
+# (a bearer link token) were both written verbatim before it. log_audit drops them at
+# any depth; a new secret column on an audited model belongs here.
+AUDIT_SECRET_KEYS = frozenset({
+    "password",
+    "password_hash",
+    "hashed_password",
+    "sign_token",
+    "token",
+    "access_token",
+    "refresh_token",
+    "api_key",
+    "key_hash",
+    "secret",
+    "client_secret",
+})
+
+
+def audit_columns_excluding_secrets(table) -> list[str]:
+    """Every column of ``table`` except the deny-listed ones, for ``__audit_columns__``."""
+    return [c.key for c in table.columns if c.key not in AUDIT_SECRET_KEYS]
+
+
 class AuditLog(Base):
     """Records INSERT/UPDATE/DELETE on audited entities with old/new values and actor."""
     __tablename__ = "audit_logs"

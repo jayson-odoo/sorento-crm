@@ -800,13 +800,14 @@ def test_renaming_a_value_in_one_save_is_not_refused_as_its_own_synonym(api):
 
 
 # --------------------------------------------------------------------------- #
-# AC-A.7 - a rule built from a sentence round trips through the save
+# #1286 (D5, contract section 3) - a rule is its builder
 #
-# The editor compiles the sentence to `match`/`pattern`/`capture` in the browser and
-# sends both halves. The server compiles it again and refuses a disagreement, so the
-# pattern the engine runs is never something the screen did not say.
+# The screen sends the picks (`builder`) and, where it compiled one, the pattern it
+# showed. The server stores `{"builder": cleaned}` and nothing else, and refuses a
+# disagreement between the two compilers, so the engine never runs something the screen
+# did not show.
 # --------------------------------------------------------------------------- #
-def test_a_sentence_rule_is_compiled_server_side(api):
+def test_a_builder_rule_is_stored_as_its_builder(api):
     db, _as = api
     _as(_REGISTRY_ADMIN)
     client = TestClient(app)
@@ -814,18 +815,14 @@ def test_a_sentence_rule_is_compiled_server_side(api):
 
     response = client.patch(
         f"{_BASE}/zzt_length",
-        json={"derivation_rules": [{"builder": {"kind": "number_after", "word": "L"}}]},
+        json={"derivation_rules": [{"builder": {"kind": "number", "after": ["l"]}}]},
     )
 
     assert response.status_code == 200, response.text
-    rule = response.json()["derivation_rules"][0]
-    assert rule["match"] == "regex"
-    assert rule["pattern"] == r"\bL\s*(\d+(?:\.\d+)?)"
-    assert rule["capture"] == 1
-    assert rule["builder"] == {"kind": "number_after", "word": "L"}
+    assert response.json()["derivation_rules"] == [{"builder": {"kind": "number", "after": ["L"]}}]
 
 
-def test_a_pattern_rule_without_a_sentence_stays_a_pattern_rule(api):
+def test_a_pattern_rule_without_a_builder_is_refused(api):
     db, _as = api
     _as(_REGISTRY_ADMIN)
     client = TestClient(app)
@@ -833,20 +830,14 @@ def test_a_pattern_rule_without_a_sentence_stays_a_pattern_rule(api):
 
     response = client.patch(
         f"{_BASE}/zzt_length2",
-        json={
-            "derivation_rules": [
-                {"match": "regex", "pattern": r"(\d+)\s*MM", "capture": 1}
-            ]
-        },
+        json={"derivation_rules": [{"match": "regex", "pattern": r"(\d+)\s*MM", "capture": 1}]},
     )
 
-    assert response.status_code == 200, response.text
-    rule = response.json()["derivation_rules"][0]
-    assert rule["pattern"] == r"(\d+)\s*MM"
-    assert "builder" not in rule
+    assert response.status_code == 400, response.text
+    assert response.json()["message"] == "Rule 1 has no parts. Open it and pick what it reads."
 
 
-def test_a_sentence_that_disagrees_with_its_pattern_is_refused(api):
+def test_a_builder_that_disagrees_with_its_pattern_is_refused(api):
     """The two compilers must agree or the row is a lie on one of the two screens."""
     db, _as = api
     _as(_REGISTRY_ADMIN)
@@ -857,26 +848,19 @@ def test_a_sentence_that_disagrees_with_its_pattern_is_refused(api):
         f"{_BASE}/zzt_length3",
         json={
             "derivation_rules": [
-                {
-                    "match": "regex",
-                    "pattern": r"\bW\s*(\d+)",
-                    "capture": 1,
-                    "builder": {"kind": "number_after", "word": "L"},
-                }
+                {"pattern": r"\bW\s*(\d+)", "builder": {"kind": "number", "after": ["L"]}}
             ]
         },
     )
 
     assert response.status_code == 422, response.text
     assert response.json()["code"] == "spec_rule_builder_mismatch"
+    assert "_" not in response.json()["message"]
 
 
-def test_a_stale_value_from_a_previous_kind_does_not_survive_a_kind_change(api):
-    """B2: changing a rule's sentence kind - Text contains to Number after a word -
-    used to leave the old kind's `value` sitting on the row, because only the FIELDS
-    the sender happened to include were compared/merged. A save carrying `value` from
-    the row's previous life, alongside a `number_after` builder that produces none,
-    is accepted and the stale field is dropped rather than stored."""
+def test_a_part_the_kind_does_not_use_does_not_survive_a_kind_change(api):
+    """B2: a `value` left over from when the row was a Words rule, sent beside a Number
+    builder that sets what it finds, is dropped rather than stored."""
     db, _as = api
     _as(_REGISTRY_ADMIN)
     client = TestClient(app)
@@ -886,31 +870,16 @@ def test_a_stale_value_from_a_previous_kind_does_not_survive_a_kind_change(api):
         f"{_BASE}/zzt_length5",
         json={
             "derivation_rules": [
-                {
-                    "builder": {"kind": "number_after", "word": "L"},
-                    "match": "regex",
-                    "pattern": r"\bL\s*(\d+(?:\.\d+)?)",
-                    "capture": 1,
-                    # Left over from when this row was `text_contains` - the compare
-                    # must not 422 on it, and the merge must not keep it.
-                    "value": "PP",
-                }
+                {"builder": {"kind": "number", "after": ["L"], "value": "PP", "words": ["X"]}}
             ]
         },
     )
 
     assert response.status_code == 200, response.text
-    rule = response.json()["derivation_rules"][0]
-    assert rule["match"] == "regex"
-    assert rule["pattern"] == r"\bL\s*(\d+(?:\.\d+)?)"
-    assert rule["capture"] == 1
-    assert "value" not in rule
+    assert response.json()["derivation_rules"] == [{"builder": {"kind": "number", "after": ["L"]}}]
 
 
-# --------------------------------------------------------------------------- #
-# B3 - `from_field column:<name>` is refused off a text column
-# --------------------------------------------------------------------------- #
-def test_a_from_field_rule_naming_a_text_column_is_refused(api):
+def test_a_product_rule_naming_an_unknown_fact_is_refused(api):
     db, _as = api
     _as(_REGISTRY_ADMIN)
     client = TestClient(app)
@@ -918,18 +887,14 @@ def test_a_from_field_rule_naming_a_text_column_is_refused(api):
 
     response = client.patch(
         f"{_BASE}/zzt_length6",
-        json={
-            "derivation_rules": [
-                {"match": "from_field", "pattern": "column:currency"}
-            ]
-        },
+        json={"derivation_rules": [{"builder": {"kind": "product", "fact": "currency"}}]},
     )
 
     assert response.status_code == 400, response.text
-    assert "Rule 1" in response.json()["message"]
+    assert response.json()["message"] == "Rule 1: pick which fact about the product to read."
 
 
-def test_a_from_field_rule_naming_a_numeric_column_is_accepted(api):
+def test_a_product_rule_naming_a_known_fact_is_accepted(api):
     db, _as = api
     _as(_REGISTRY_ADMIN)
     client = TestClient(app)
@@ -937,15 +902,11 @@ def test_a_from_field_rule_naming_a_numeric_column_is_accepted(api):
 
     response = client.patch(
         f"{_BASE}/zzt_length7",
-        json={
-            "derivation_rules": [
-                {"match": "from_field", "pattern": "column:weight"}
-            ]
-        },
+        json={"derivation_rules": [{"builder": {"kind": "product", "fact": "length"}}]},
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["derivation_rules"][0]["pattern"] == "column:weight"
+    assert response.json()["derivation_rules"][0]["builder"] == {"kind": "product", "fact": "length"}
 
 
 def test_the_ignore_above_value_round_trips(api):
@@ -974,8 +935,9 @@ def test_the_ignore_above_value_round_trips(api):
     assert response.json()["max_value"] is None
 
 
-def test_a_shipped_row_says_so_on_the_way_out(api):
-    """The rows that ship carry a tag; the stored column never does."""
+def test_the_shipped_rules_read_as_builders_with_no_tag(api):
+    """A person sees rules, not where they came from (D8): no `shipped` tag, no
+    `rules_are_default`, and each effective rule is its builder and nothing else."""
     db, _as = api
     _as(_MERCHANDISER)
     client = TestClient(app)
@@ -985,41 +947,36 @@ def test_a_shipped_row_says_so_on_the_way_out(api):
     effective = listed["dim_length"]["effective_rules"]
 
     assert effective, "the shipped rules are what this key actually runs"
-    assert all(rule.get("shipped") is True for rule in effective)
+    assert all(set(rule) == {"builder"} for rule in effective)
     assert effective[0]["builder"] == {
-        "kind": "from_field",
-        "field": "column:dimensions_length",
+        "kind": "product",
+        "fact": "length",
+        "only_when": {"spec": "shape", "is": False, "values": ["round", "square"]},
     }
+    assert "rules_are_default" not in listed["dim_length"]
     assert listed["dim_length"]["derivation_rules"] == []
 
 
-def test_saving_the_shipped_list_back_keeps_every_field_the_engine_reads(api):
+def test_saving_the_shipped_list_back_keeps_every_part(api):
     """Open Length, press Save, change nothing: the list must still read the same.
 
-    The save path rebuilds each rule from the fields it knows, so a field it does not
-    know is silently deleted. That is how the round/square condition would disappear off
-    the size rows - and 407 would go back to being a length on every round basin - by
-    somebody opening the screen and saving it untouched.
+    That is how the round/square condition would disappear off the size rows - and 407
+    would go back to being a length on every round basin - by somebody opening the
+    screen and saving it untouched.
     """
-    from app.services.product_spec_derivation import shipped_rules
-
     db, _as = api
-    _as(_REGISTRY_ADMIN)
+    _as(_MERCHANDISER)
     client = TestClient(app)
     _key(db, "dim_length", label="Length", data_type="numeric", unit="mm")
+    effective = {key["spec_key"]: key for key in client.get(_BASE).json()["keys"]}[
+        "dim_length"
+    ]["effective_rules"]
 
-    effective = [dict(rule, shipped=True) for rule in shipped_rules()["dim_length"]]
+    _as(_REGISTRY_ADMIN)
     response = client.patch(f"{_BASE}/dim_length", json={"derivation_rules": effective})
 
     assert response.status_code == 200, response.text
-    saved = response.json()["derivation_rules"]
-    assert len(saved) == len(effective)
-    for stored, shipped in zip(saved, effective):
-        for field in ("match", "pattern", "capture", "source", "applies_when", "unless"):
-            assert stored.get(field) == shipped.get(field), field
-        assert stored.get("builder") == shipped.get("builder")
-        # The tag is the API's, not the database's: a saved list belongs to the business.
-        assert "shipped" not in stored
+    assert response.json()["derivation_rules"] == effective
 
 
 # --------------------------------------------------------------------------- #

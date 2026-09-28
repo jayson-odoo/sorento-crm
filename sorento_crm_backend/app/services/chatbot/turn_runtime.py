@@ -34,7 +34,13 @@ from sqlalchemy.orm import Session
 from app.services.chatbot import jsc
 from app.services.chatbot.contracts import DEFAULT_SUGGESTED_AGENT, DEFAULT_SUGGESTED_TEAM
 from app.services.chatbot.turn.decide import picked_positions
-from app.services.chatbot.turn.pending import OFFER_KINDS, Pending, from_wire, tick as tick_pending
+from app.services.chatbot.turn.pending import (
+    OFFER_KINDS,
+    Pending,
+    from_wire,
+    offered_companies,
+    tick as tick_pending,
+)
 from app.services.chatbot.turn.plan import FetchSpec
 from app.services.chatbot.turn import policy_rows
 from app.services.chatbot.turn.reconcile import hits_for_token
@@ -96,6 +102,11 @@ class TurnContext:
     # `turn/compose.py::compose` so a freshly minted `team_pick`/roster re-arm can
     # stamp `payload["brand_code"]` beside the agent it already stamps.
     routing_brand: str | None = None
+    # #865 (fix round 2, N2): the focus product's brand, as a thunk, for a turn whose
+    # resolver never ran (a SETTLED focus product is not re-resolved). A thunk so the
+    # products x brands read runs only when compose actually mints a `team_pick`; read
+    # through `turn/compose.py::_routing_brand`, never directly.
+    focus_brand: Callable[[], str | None] | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -253,6 +264,68 @@ def previous_reply_text(
     return str(text_value) if text_value else None
 
 
+def _envelope_text(envelope: Any) -> str | None:
+    """The message text a stored envelope carries (the respond.io payload,
+    `message.message.message.text`), else an attachment's description."""
+    inner = envelope
+    for key in ("message", "message", "message"):
+        inner = inner.get(key) if isinstance(inner, dict) else None
+    if not isinstance(inner, dict):
+        return None
+    text = inner.get("text")
+    if not (isinstance(text, str) and text.strip()):
+        attachment = inner.get("attachment")
+        text = attachment.get("description") if isinstance(attachment, dict) else None
+    return text if isinstance(text, str) and text.strip() else None
+
+
+def recent_exchanges(
+    db: Session,
+    *,
+    contact_respond_id: str,
+    ingress: str | None,
+    is_test: bool,
+    limit: int = 3,
+) -> list[tuple[str, str]]:
+    """The last `limit` completed exchanges with this contact, oldest first, as (what
+    the contact said, what the bot answered) - the parser's "Recent exchanges" lines
+    (PR #1247 round 8: the owner's "is the context too less already?").
+
+    Read from the same rows and under the same three scopes as `previous_reply_text`,
+    so the newest pair's answer IS the Previous response. A row with no reply text is
+    skipped; a row whose envelope carries no text (a photo or voice note) is "(media)".
+    A lookup failure is no exchanges, never a failed turn.
+    """
+    from app.models.chatbot_turn import ChatbotTurn
+
+    try:
+        query = db.query(ChatbotTurn.envelope, ChatbotTurn.response).filter(
+            ChatbotTurn.contact_respond_id == str(contact_respond_id),
+            ChatbotTurn.status == "done",
+            ChatbotTurn.is_test.is_(bool(is_test)),
+        )
+        if str(ingress or "") == _CONSOLE_INGRESS:
+            query = query.filter(ChatbotTurn.ingress == _CONSOLE_INGRESS)
+        else:
+            query = query.filter(ChatbotTurn.ingress != _CONSOLE_INGRESS)
+        rows = query.order_by(ChatbotTurn.created_at.desc()).limit(limit * 2).all()
+    except Exception:  # noqa: BLE001 - no history is no lines, never a failure
+        logger.warning(
+            "chatbot: recent exchanges lookup failed for %s", contact_respond_id, exc_info=True
+        )
+        return []
+    pairs: list[tuple[str, str]] = []
+    for envelope, response in rows:
+        reply = response.get("reply") if isinstance(response, dict) else None
+        answer = reply.get("text") if isinstance(reply, dict) else None
+        if not (isinstance(answer, str) and answer.strip()):
+            continue
+        pairs.append((_envelope_text(envelope) or "(media)", answer))
+        if len(pairs) == limit:
+            break
+    return list(reversed(pairs))
+
+
 def load_profile(
     db: Session, contact_respond_id: str, *, space_id: str | None = None
 ) -> tuple[Profile, bool]:
@@ -310,9 +383,31 @@ def load_profile(
             # somehow did, matching these two columns' default-OFF rule.
             notify_salesman=row[3] is True,
             packing_list_allowed=row[4] is True,
+            stock_availability_only=_stock_availability_only(
+                db, contact_respond_id, space_id
+            ),
         ),
         bool(row[1]),
     )
+
+
+def _stock_availability_only(db: Session, contact_respond_id: str, space_id: str | None) -> bool:
+    """Is this contact's stock visibility policy "Availability only" (hand test F1)?
+
+    The same resolution the stock balance read applies (`stock_visibility.
+    resolve_policy`: the contact override, else the merged access types, else the
+    default), so the engine and the tool can never disagree about who is a dealer. A
+    read that fails is not a dealer: today's behaviour, never a silent refusal."""
+    try:
+        from app.services.stock_visibility import resolve_policy
+
+        # A savepoint, so a failed read cannot leave the turn's session aborted.
+        with db.begin_nested():
+            policy = resolve_policy(db, contact_respond_id, space_id)
+    except Exception:  # noqa: BLE001 - a policy read is a profile fact, not the turn
+        logger.warning("chatbot: stock visibility policy unreadable for %s", contact_respond_id)
+        return False
+    return policy is not None and policy.mode == "availability"
 
 
 def load_state(session_block: Any, *, profile: Profile, turn_no: int) -> State:
@@ -373,11 +468,12 @@ def _prior_suggested_team(session_block: Any) -> str | None:
         return None
 
 
-#: The two offer kinds whose options can name a COMPANY - the escalate offer this engine
-#: mints itself (`answer_bridge`) and the company clarify the escalation lane asks back
-#: (`engine._question_offered`). `member_offer`'s options name a PERSON, so it carries no
-#: roster of its own and is not listed.
-_COMPANY_OFFER_KINDS: frozenset[str] = frozenset({"team_pick", "company_pick"})
+#: The offer kinds that can name a COMPANY - the escalate offer this engine mints itself
+#: (`answer_bridge`), the company clarify the escalation lane asks back
+#: (`engine._question_offered`), and (#865 round 6) the CS member picker, whose options
+#: name a PERSON but whose payload names the companies whose rosters it printed
+#: (`turn.pending.offered_companies`).
+_COMPANY_OFFER_KINDS: frozenset[str] = frozenset({"team_pick", "company_pick", "member_offer"})
 
 
 def escalation_roster_plan(
@@ -420,23 +516,9 @@ def escalation_roster_plan(
         or pending.kind not in _COMPANY_OFFER_KINDS
     ):
         return None
-    plan: list[dict[str, Any]] = []
-    for opt in pending.options:
-        # Mapping guard (reviewer N-b): a persisted option that is not a dict must not
-        # take the turn down on its way through a roster read.
-        payload = opt.get("payload") if isinstance(opt, Mapping) else None
-        payload = payload if isinstance(payload, Mapping) else {}
-        company = payload.get("company")
-        if not company:
-            continue
-        plan.append(
-            {
-                "plan_idx": len(plan),
-                "company_id": payload.get("company_id") or None,
-                "company_name": company,
-                "brand_code": payload.get("brand_code") or None,
-            }
-        )
+    # One reader of the offered pool (`offered_companies`), which also carries reviewer
+    # N-b's Mapping guard: a persisted option that is not a dict never takes the turn down.
+    plan = [{"plan_idx": i, **row} for i, row in enumerate(offered_companies(pending))]
     return plan or None
 
 
@@ -584,6 +666,183 @@ def _accepted_pending_brand(pending: Pending | None, verdict: Mapping[str, Any])
     / `company_pick` already use. See `_accepted_pending_field`'s own docstring for
     the shared gate/accept-check/fall-through."""
     return _accepted_pending_field(pending, verdict, "brand_code")
+
+
+#: The domains whose help requests are answered rather than escalated (contract 21, 22):
+#: the same pair `turn/apply._HELP_EXEMPT_DOMAINS` keeps.
+_NAMED_TEAM_EXEMPT_DOMAINS = frozenset({"portal_link", "ideate"})
+
+
+def with_named_team_escalation(verdict: dict[str, Any]) -> dict[str, Any]:
+    """An escalate word plus a named team is a help request, whatever else the message
+    carries (#865 round 5, R1).
+
+    The parser prompt's MESSAGE TYPE rule 1 already says it: asking for a specific team or
+    to escalate is `request_for_help`, and it "takes priority over business_query,
+    clarification, and casual ... even if they also mention a product or order". The
+    owner's "pelase escalate to marketing team MWc-SC8609-)PP water closet" came back a
+    master_products business query and was answered with a spec sheet; its `user_goal`
+    still read "escalate ... to the marketing team". This makes the prompt's rule hold on
+    the verdict, from the parser's own reading of the message
+    (`lanes/escalation.asks_for_a_named_team`, the reader round 4's `_named_teams` uses;
+    never the raw text, D11).
+
+    Stamps `escalation.named_teams`, the catalogue teams the customer named, the one
+    structured fact `turn/apply.py` acts on: such a turn plans no fetch, asks no narrowing
+    or kind question, and accepts no open offer made for a different team (an explicit
+    team beats a pending offer, #706). Its product words stay on the verdict as the
+    escalation's focus.
+    """
+    from app.services.chatbot.lanes.escalation import _named_teams, asks_for_a_named_team
+
+    if verdict.get("domain_hint") in _NAMED_TEAM_EXEMPT_DOMAINS or not asks_for_a_named_team(verdict):
+        return verdict
+    escalation = verdict.get("escalation") if isinstance(verdict.get("escalation"), dict) else {}
+    return {
+        **verdict,
+        "message_type": "request_for_help",
+        "escalation": {**escalation, "named_teams": _named_teams(verdict)},
+    }
+
+
+# n8n `output_exchange` rev-5 (`_coFillers` / `_coNegators`), byte-identical word lists:
+# the company-pick tier strips confirmation and request words before matching, and a
+# negator anywhere refuses the pick ("not mocha" is never a pick for Mocha).
+_CO_FILLERS = frozenset(
+    "yes ya yeah yep yup ok okay okie oki k sure please pls plz pl kindly team the a an to for "
+    "of on at in route assign escalate escalation pass send forward transfer connect pick "
+    "choose select prefer handle help one lah la leh lor ah go with it that this then can "
+    "could would like want need you me my us i ill id company side instead guys ppl people "
+    "staff department dept group thanks thank ty tq".split()
+)
+_CO_NEGATORS = frozenset(
+    "no not nope nah never dont neither nor none without except cancel stop".split()
+)
+# (C) a product-code-like token ("MUB6201", "MWCX7608-SH-S10") refuses the pick.
+_CO_PRODUCT_TOKEN = re.compile(r"^[a-z]{2,}[a-z0-9-]*\d", re.IGNORECASE)
+
+
+def _co_token(word: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", word.lower())
+
+
+def company_pick(verdict: Mapping[str, Any], pending: Pending | None, message: Any) -> str | None:
+    """Which OFFERED company this reply names, or None (#865 round 6, R3).
+
+    The port of the n8n parser fork's `_coCompanyPick` (sorento-crm-n8n PR #23, rev-5),
+    which the #952 re-architecture deleted with `head/output_exchange` and never
+    replaced, so a reply of "mocha" or "srt" to a two-company offer reached routing only
+    when the model happened to fill `escalation.company_pick`. The rules, as n8n has
+    them:
+
+    * (A) the pool is the companies the offer SHOWED (`offered_companies`), never the
+      union: "yes mocha" over a Sorento-only offer picks nothing.
+    * (B) a company matches by name, code or alias (`lanes/escalation.CO_ALIASES`), on a
+      word boundary, and exactly one company may match.
+    * (C) the reply counts only when it is short (up to four words, and a remainder of
+      two or more words also needs no entity of its own and no domain question), or
+      longer with at most six words left once the filler words are stripped and no
+      entity or domain question of its own; a product-code-like token refuses it.
+    * (D) a negator anywhere ("not mocha", "no") refuses it.
+    * The parser's own `escalation.company_pick` is the semantic fallback, accepted only
+      when it names exactly one offered company, the reply is not a bare confirmation
+      (it strips to nothing), carries no negator and is not a domain question.
+
+    `message` is the customer's own text: this tier reads it, as n8n's does
+    (D11-reproduced: `output_exchange` `_coCompanyPick`, `latest_user_message`).
+    """
+    from app.services.chatbot.lanes.escalation import CO_ALIASES
+
+    pool: dict[str, set[str]] = {}
+    for row in offered_companies(pending):
+        name = str(row["company_name"])
+        key = name.lower().strip()
+        keys = pool.setdefault(name, {key})
+        keys.update(CO_ALIASES.get(key, []))
+    if not pool:
+        return None
+
+    raw_reply = re.split(r"\s*reply to:", str(message or ""), flags=re.IGNORECASE)[0].strip()
+    words = raw_reply.split()
+    kept = [w for w in words if _co_token(w) not in _CO_FILLERS]
+    has_negator = any(_co_token(w) in _CO_NEGATORS for w in words)
+    product_token = any(_CO_PRODUCT_TOKEN.match(re.sub(r"[^a-z0-9-]", "", w, flags=re.IGNORECASE)) for w in words)
+    current_entity = any(
+        isinstance(e, Mapping) and e.get("current_message") is True for e in (verdict.get("entities") or [])
+    )
+    domain_question = (
+        bool(verdict.get("domain_hint")) or verdict.get("message_type") in ("business_query", "clarification")
+    ) and verdict.get("is_affirmative") is not True
+    short_ok = 0 < len(words) <= 4 and (len(kept) < 2 or not (current_entity or domain_question))
+    long_ok = len(words) > 4 and 0 < len(kept) <= 6 and not current_entity and not domain_question
+
+    def hits(texts: list[str]) -> str | None:
+        found = {
+            name
+            for name, keys in pool.items()
+            if any(re.search(rf"(^|[^a-z0-9]){re.escape(k)}([^a-z0-9]|$)", t) for k in keys for t in texts)
+        }
+        return next(iter(found)) if len(found) == 1 else None
+
+    if has_negator:
+        return None
+    if not product_token:
+        texts = [" ".join(kept).lower()] if (short_ok or long_ok) and kept else []
+        mention = verdict.get("person_mention")
+        if isinstance(mention, str) and mention.strip():
+            texts.append(mention.strip().lower())
+        picked = hits(texts) if texts else None
+        if picked is not None:
+            return picked
+    if not kept or domain_question:
+        return None
+    raw_pick = (verdict.get("escalation") or {}).get("company_pick") if isinstance(verdict.get("escalation"), Mapping) else None
+    if not isinstance(raw_pick, str) or not raw_pick.strip():
+        return None
+    wanted = raw_pick.lower().strip()
+    direct = [name for name, keys in pool.items() if wanted in keys]
+    if len(direct) == 1:
+        return direct[0]
+    return None if direct else hits([wanted])
+
+
+def with_company_pick(verdict: dict[str, Any], *, pending: Pending | None, message: Any) -> dict[str, Any]:
+    """The verdict with the company this reply picked off an open escalation offer
+    (#865 round 6, R3), or with the parser's unvalidated pick removed.
+
+    A pick IS the acceptance (n8n Tier 2.5: `{is_escalation_confirmation: true,
+    company_pick}`), so `apply()` accepts the offer and `escalation_context` routes by
+    the picked row. The parser's own `company_pick` survives only when it validates
+    against the offered pool; over an offer that names no company it is left untouched.
+    A numbered pick, or a request for a team the offer was not made for (#706), is not
+    this tier's to read.
+    """
+    offered = offered_companies(pending)
+    if not offered or verdict.get("reference_positions"):
+        return verdict
+    escalation = dict(verdict.get("escalation") or {})
+    named = escalation.get("named_teams")
+    if named and pending is not None and pending.team not in named:
+        return verdict
+    picked = company_pick(verdict, pending, message)
+    if picked is None:
+        if escalation.get("company_pick"):
+            escalation["company_pick"] = None
+            return {**verdict, "escalation": escalation}
+        return verdict
+    return {
+        **verdict,
+        "domain_hint": None,
+        "entities": [],
+        "is_affirmative": True,
+        "escalation": {
+            **escalation,
+            "is_escalation_confirmation": True,
+            "escalation_declined": False,
+            "company_pick": picked,
+            "company_pick_by": "reply",
+        },
+    }
 
 
 def with_routing_agent_default(
@@ -1448,6 +1707,86 @@ def _spec_window(out: dict[str, Any], spec: FetchSpec) -> dict[str, Any]:
     return out
 
 
+# Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner ruling
+# 24 Sep 2026) for chatbot-stock-ask-v2 S3.
+def _int(value: Any) -> int | None:
+    """A quantity as an int, or None for anything that is not one.
+
+    SEC-N4 (#1118 security review, round 1): a digit STRING counts, because a value
+    read back off a session row written by an older build (or by hand) is whatever
+    JSON carried - and `requested_quantities` is validated at the route, where one
+    bad value is a 400 that kills the whole fetch rather than one product. `bool` is
+    not a number here: `True` is 1 in Python and a quantity of one is not what a
+    boolean meant.
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _spec_quantities(
+    out: dict[str, Any], spec: FetchSpec, entities: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """`{product uuid: quantity}` for this fetch, as the lane's own key (D13, D20,
+    ported from PR #1118, not merged).
+
+    Two sources, one shape, and this is the one seam where both halves exist. The
+    OPEN TASK's own slots win where a task drove the fetch (`turn/task.py::
+    StockQtyTask.to_fetch` stamps them on the spec) - they carry quantities this
+    message never repeated, which is the whole point of the task. Otherwise it is
+    the quantities THIS message stated per entity, joined by CODE to the uuid the
+    resolver placed: the first turn of a stock ask has no task yet, because nothing
+    has told the engine a quantity is required until the reply says so (D25).
+    """
+    carried = spec.filters.get("requested_quantities")
+    if isinstance(carried, dict) and carried:
+        # SEC-N4: coerced here too, not only in `StockQtyTask.to_fetch` - this is the
+        # LAST seam before the value becomes a query param, and a caller that built
+        # the spec by hand must not be able to 400 the whole fetch with one bad slot.
+        coerced = {
+            str(key): _int(value)
+            for key, value in carried.items()
+            if _int(value) is not None
+        }
+        return {**out, "requested_quantities": coerced} if coerced else out
+    by_code: dict[str, int] = {}
+    for e in jsc.array(out.get("entities")):
+        if not isinstance(e, dict):
+            continue
+        quantity = _int(e.get("quantity"))
+        if quantity is None:
+            continue
+        for name in ("canonical_code", "raw"):
+            code = e.get(name)
+            if isinstance(code, str) and code.strip():
+                by_code[code.strip().casefold()] = quantity
+    if not by_code:
+        # D13 lives in ONE place (review round 9, finding 5): `turn/apply.py::
+        # _normalise_demand_qty` writes a single named code's top-level `demand_qty`
+        # onto the entity itself, before the task step, the narrowing or this seam
+        # read anything - so by the time a fetch is built the quantity is always per
+        # entity, whichever field the parser happened to fill.
+        return out
+    quantities: dict[str, int] = {}
+    for e in entities:
+        uuid = e.get("uuid") if isinstance(e, dict) else None
+        if not isinstance(uuid, str) or not uuid:
+            continue
+        for name in ("code", "canonical_code", "raw"):
+            code = e.get(name)
+            if not isinstance(code, str) or not code.strip():
+                continue
+            quantity = by_code.get(code.strip().casefold())
+            if quantity is not None:
+                quantities[uuid] = quantity
+                break
+    return {**out, "requested_quantities": quantities} if quantities else out
+
+
 def outstanding_carry(
     out: dict[str, Any], focus: Focus, answered: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1743,14 +2082,22 @@ def make_tool_runner(
             **ctx,
             "parse": {**(ctx.get("parse") or {}), "output": lane_out},
         }
-        entities = (
-            [
+        if page_predicate is not None:
+            entities = [
                 {"uuid": pid, "entity_type": "product", "canonical_code": None}
                 for pid in page_ids
             ]
-            if page_predicate is not None
-            else _entities_for(spec, compatible_entities)
-        )
+        elif spec.filters.get("task"):
+            # Ported from PR #1118 (not merged): an OPEN TASK's own fetch is about the
+            # TASK's subjects, all of them (`turn/task.py::StockQtyTask.to_fetch`): a
+            # turn answering two of four products resolves only those two, and
+            # `_entities_for` below would keep exactly the resolver's two - so the
+            # answer would silently drop the two the dealer had already given a
+            # quantity for. The task is the only honest record of what the question is
+            # about.
+            entities = [_spec_row(e) for e in spec.entities]
+        else:
+            entities = _entities_for(spec, compatible_entities)
         # Hand pass 12, Group F: a multi-ledger customer pick's own entities carry no
         # `display_name` at all (`turn/apply.py::_answer_pending` leaves it off on
         # purpose for an option covering several uuids) - filled in here, the same
@@ -1758,6 +2105,11 @@ def make_tool_runner(
         # (line ~906 above), so the miss header can name each ledger rather than
         # falling back to the option's own rollup code.
         fill_customer_names(db, entities)
+        # Ported from PR #1118 (not merged), D13/D20: the dealer's own quantity per
+        # product, resolved to uuids here - `lanes/business/fetch.py` reads it
+        # straight off the lane input.
+        lane_out = _spec_quantities(lane_out, spec, entities)
+        lane_ctx = {**lane_ctx, "parse": {**(lane_ctx.get("parse") or {}), "output": lane_out}}
         # R2: start from the resolver's own gate (gate_reason, require_specific,
         # customer_probe_entities, company_team, gate_debug, ...) - `compatible_entities`
         # and `predicate` are still set exactly as today, below, overriding whatever
@@ -2715,6 +3067,22 @@ def envelope_of(
         # sections, stock rows included (turn d5128c67). A code is not a class, so its
         # answer keeps the domain's own header.
         "header_override": fetched.get("set_header") if counted_set else None,
+        # Ported from PR #1118 (not merged), D25: what the stock reply said about a
+        # quantity being required, per product. The composer never reads it (the
+        # sentence is the presenter's); `engine.py` rebuilds the open stock task from
+        # it (`turn/task.py::tasks_after_reply`).
+        "stock_availability": (
+            fetched.get("stock_availability")
+            if isinstance(fetched.get("stock_availability"), list)
+            else []
+        ),
+        # Ported from PR #1118 (not merged), D15: the products a "just proceed"
+        # dropped, named by the reply so the dealer can see what was not checked.
+        # Stamped on the spec by the task, carried here because the composer prints
+        # it under the section it belongs to.
+        "not_checked": [
+            name for name in (spec.filters.get("not_checked") or []) if isinstance(name, str)
+        ],
         # The lane's OWN question, when the fetch asked one instead of (or beside)
         # answering: contract 38's "which document?" and contract 39's detail offer both
         # come back as `outstanding_ask` = `{kind, last_result_set, filters}`. The
@@ -2739,7 +3107,8 @@ def envelope_of(
         # and its own order (the report's four header lines, and the same four above
         # the scope question). The composer's generic `*orders* for <code>:` line would
         # say it a second time, differently, above the answer.
-        "own_header": bool(fetched.get("outstanding_report")),
+        # The sales analysis prints its own header too (company, channel, basis, period).
+        "own_header": bool(fetched.get("outstanding_report") or fetched.get("own_header")),
         "outcome": fragment.get("outcome"),
         "tool": (fetched.get("tool") or {}).get("name") if isinstance(fetched.get("tool"), dict) else None,
         # The window this fetch ran with, already in the words the scope question uses

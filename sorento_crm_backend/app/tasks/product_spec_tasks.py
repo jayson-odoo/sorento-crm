@@ -62,3 +62,16 @@ def derive_specs_for_class(class_label: str, chunk_size: int = 500) -> dict:
                 .all()
             ]
     return derive_product_specs(codes=codes, chunk_size=chunk_size, run_label=f"class:{class_label}")
+
+
+def reread_catalogue(run_label: str | None = None) -> dict:
+    """Re-read the whole catalogue and store the rules fingerprint it read with.
+
+    What the worker queues on start when a deploy changed the shipped rules
+    (`product_spec_rederive.catch_up_on_worker_start`, #1286 D10), so nobody has to
+    press a re-read button. Storing the fingerprint when it finishes is what makes the
+    next start queue nothing.
+    """
+    from app.services.product_spec_rederive import reread_catalogue_and_store
+
+    return reread_catalogue_and_store(run_label=run_label)

@@ -225,6 +225,17 @@ def _header_subjects(entities: list[Any]) -> list[str]:
     return out
 
 
+def _routing_brand(ctx: Any) -> Any:
+    """The brand a freshly minted `team_pick` stamps: this turn's resolved brand, else the
+    focus product's, read only now, at the mint (#865, fix round 2 N2: the read used to run
+    on every such turn whether or not anything was minted)."""
+    brand = getattr(ctx, "routing_brand", None)
+    if brand:
+        return brand
+    thunk = getattr(ctx, "focus_brand", None)
+    return thunk() if callable(thunk) else None
+
+
 def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: Any) -> Answer:
     sections: list[Section] = []
     seen_rows: set[tuple] = set()
@@ -341,6 +352,16 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                 for r in rungs_tried
             ]
             block = block + "\n" + f"Nothing on {_join_words(names)} either."
+        # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+        # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3, D15: "just proceed"
+        # answered the products that had a quantity and dropped the rest, so the
+        # reply names the ones it did not check - a dealer must never have to work
+        # out which of the products they asked about are missing from the answer.
+        # LAST, under the rungs line: it is the closing note on this section, and it
+        # read as part of the ladder sentence when it sat above one.
+        not_checked = [n for n in (env.get("not_checked") or []) if isinstance(n, str)]
+        if not_checked:
+            block = block + "\n" + f"Not checked: {', '.join(not_checked)}."
         text_parts.append(block)
 
         for f in env_files:
@@ -439,7 +460,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                         "brand_code": (
                             carried.payload.get("brand_code")
                             if carried.team
-                            else getattr(ctx, "routing_brand", None)
+                            else _routing_brand(ctx)
                         ),
                     },
                 )
@@ -455,7 +476,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
                     missed_domains,
                     policy,
                     agent=getattr(ctx, "suggested_agent", None),
-                    brand=getattr(ctx, "routing_brand", None),
+                    brand=_routing_brand(ctx),
                 )
 
     actions: list[dict[str, Any]] = []
