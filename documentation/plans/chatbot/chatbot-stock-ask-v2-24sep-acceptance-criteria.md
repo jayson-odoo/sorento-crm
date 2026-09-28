@@ -1,6 +1,6 @@
 # UAC - Chatbot stock ask v2: four-branch answer, X cap, Y ETA offset, contact toggles, salesman notification, asks record
 
-Status: grilled 24 Sep 2026, ready for tickets. Plan: `PLAN-chatbot-stock-ask-v2-24sep.md`. Issue #1168. Rulings R1 to R11 (quoted in the plan) are binding.
+Status: grilled 24 Sep 2026, ready for tickets. S4 (AC-SA401 to AC-SA409) and S5 + S6 (AC-SA501 to AC-SA512, AC-SA601 to AC-SA607) built 28 Sep 2026 in PR #1333; AC-SA410 and AC-SA511 name a console turn, but the console is always a dry run (AC-SA401/AC-SA501), so their hand test is a live WhatsApp turn (question open on PR #1333). Plan: `PLAN-chatbot-stock-ask-v2-24sep.md`. Issue #1168. Rulings R1 to R11 (quoted in the plan) are binding.
 Numbering: AC-SA<slice><nn>, slices S0 to S6. Tags: [BE] pytest (Postgres), [FE] vitest, [E2E] recorded agent-browser or console evidence, [T] a test that exists only to pin a rule. The `tester` writes every [BE]/[FE] test red before the `coder` starts the slice.
 
 ## Journey

@@ -91,7 +91,7 @@ export function CustomerAsksList({ slug }: { slug?: string | null }) {
       {
         id: 'created_at',
         header: 'Asked at',
-        size: 140,
+        size: 175,
         cell: ({ row }) => formatDateTimeInMalaysia(row.original.created_at),
       },
       {
@@ -133,7 +133,7 @@ export function CustomerAsksList({ slug }: { slug?: string | null }) {
       {
         id: 'branch',
         header: 'Branch',
-        size: 160,
+        size: 185,
         cell: ({ row }) => (
           <Badge variant={BRANCH_VARIANT[row.original.branch] ?? 'secondary'} appearance="light">
             {BRANCH_LABEL[row.original.branch] ?? row.original.branch}

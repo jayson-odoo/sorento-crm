@@ -36,7 +36,7 @@ export function CustomerAsksTab({ customerId }: { customerId: string }) {
       {
         id: 'created_at',
         header: 'Asked at',
-        size: 150,
+        size: 175,
         cell: ({ row }) => formatDateTimeInMalaysia(row.original.created_at),
       },
       {
@@ -68,7 +68,7 @@ export function CustomerAsksTab({ customerId }: { customerId: string }) {
       {
         id: 'branch',
         header: 'Branch',
-        size: 170,
+        size: 185,
         cell: ({ row }) => (
           <Badge variant={BRANCH_VARIANT[row.original.branch] ?? 'secondary'} appearance="light">
             {BRANCH_LABEL[row.original.branch] ?? row.original.branch}
