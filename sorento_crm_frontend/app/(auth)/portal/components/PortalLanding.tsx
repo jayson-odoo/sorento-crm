@@ -75,6 +75,7 @@ import {
 import { useRevisionPolicy } from '../hooks/useRevisions';
 import { ReviseAction } from './ReviseAction';
 import { LandingToolbar } from './LandingToolbar';
+import { CustomerAsksLink } from './CustomerAsksLink';
 import {
   DEFAULT_LANDING_SORT,
   activeLandingFilterCount,
@@ -516,6 +517,10 @@ export function PortalLanding({ slug }: { slug?: string }) {
           <LogOut className="h-4 w-4" />
         </Button>
       </div>
+
+      {/* Chatbot stock ask v2 S6 (AC-SA606): only a contact linked to a sales agent
+          sees this; for everyone else it renders nothing. */}
+      <CustomerAsksLink slug={slug} />
 
       {landingKinds.length === 0 ? (
         // AC-L3/AC-L5: no picker, toolbar, list or search box - just the one

@@ -490,3 +490,61 @@ def update_for_customer(db: Session, customer_id: str, ask_id: str, data: dict[s
     if ask is None:
         raise handle_not_found("Stock ask", ask_id)
     return serialize(db, [_apply_update(db, ask, data)])[0]
+
+
+def _agent_scope(db: Session, agent_id: str) -> Any:
+    """S6 (R9): asks of customers assigned to this agent NOW (`customers.sales_agent_id`).
+    An ask with no customer belongs to nobody's list."""
+    from app.models.order import Customer
+    from app.models.stock_ask import StockAsk
+
+    return db.query(StockAsk).join(Customer, Customer.id == StockAsk.customer_id).filter(
+        Customer.sales_agent_id == agent_id
+    )
+
+
+def list_for_agent(
+    db: Session,
+    agent_id: str,
+    *,
+    page: int,
+    limit: int,
+    q: Optional[str] = None,
+    state: Optional[str] = None,
+) -> dict[str, Any]:
+    """The portal's Customer asks page, newest first. `q` matches the customer name or
+    code, or the product code."""
+    from sqlalchemy import or_
+
+    from app.models.order import Customer
+    from app.models.stock_ask import StockAsk
+
+    query = _agent_scope(db, agent_id)
+    if state:
+        query = query.filter(StockAsk.state == state)
+    term = (q or "").strip()
+    if term:
+        like = f"%{term}%"
+        query = query.filter(
+            or_(
+                Customer.customer_name.ilike(like),
+                Customer.customer_code.ilike(like),
+                StockAsk.product_code.ilike(like),
+            )
+        )
+    rows, total = _page(query, page, limit)
+    return {
+        "data": serialize(db, rows),
+        "pagination": {"total": total, "page": page, "limit": limit},
+        "empty": total == 0,
+    }
+
+
+def update_for_agent(db: Session, agent_id: str, ask_id: str, data: dict[str, Any]) -> Any:
+    from app.models.stock_ask import StockAsk
+    from app.services.error_handler import handle_not_found
+
+    ask = _agent_scope(db, agent_id).filter(StockAsk.id == ask_id).first()
+    if ask is None:
+        raise handle_not_found("Stock ask", ask_id)
+    return serialize(db, [_apply_update(db, ask, data)])[0]

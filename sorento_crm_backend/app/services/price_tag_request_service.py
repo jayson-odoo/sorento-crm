@@ -106,6 +106,41 @@ _DOC_NUMBER_ATTEMPTS = 5
 _DEFAULT_GUARDED_CLASSES = ("Bathroom Furniture", "Kitchen Sink")
 
 
+def sales_agent_for_contact(db: Session, contact_id: str):
+    """The SalesAgent a portal contact is linked to, or None.
+
+    `sales_agents.contact_id` carries no unique constraint, so an unordered `.first()`
+    let Postgres return either row: the same salesperson could open the form twice and
+    be offered two different debtor books with nothing on screen to explain it. Ordered
+    by the agent code and then the id, so the answer is the same every time, and a
+    second link is logged rather than hidden - linking one contact to two agents is a
+    data problem for a human, not something to guess at here.
+
+    Extracted from `PriceTagRequestService.lookup_debtors_for_agent` (chatbot stock ask
+    v2 S6, AC-SA601): the debtor lookup and the portal's Customer asks page both call it.
+    """
+    from app.models.sales_agent import SalesAgent
+
+    agents = (
+        db.query(SalesAgent)
+        .filter(SalesAgent.contact_id == contact_id)
+        .order_by(SalesAgent.sales_agent, SalesAgent.id)
+        .all()
+    )
+    if not agents:
+        return None
+    agent = agents[0]
+    if len(agents) > 1:
+        logger.warning(
+            "Portal contact %s is linked to %s sales agents; answering for "
+            "%s. Only one link is meant to exist.",
+            contact_id,
+            len(agents),
+            agent.sales_agent,
+        )
+    return agent
+
+
 class PriceTagRequestService:
     """Stateless helpers for price tag requests."""
 
@@ -2375,33 +2410,13 @@ Marketing's own work is not part of the form's payload, so it is captured
         Returns an empty list if the contact has no linked agent.
         """
         from app.models.order import Customer, Order
-        from app.models.sales_agent import SalesAgent
 
-        # The SalesAgent linked to this contact. `sales_agents.contact_id` carries
-        # no unique constraint, so an unordered `.first()` let Postgres return
-        # either row: the same salesperson could open the form twice and be
-        # offered two different debtor books with nothing on screen to explain
-        # it. Ordered by the agent code and then the id, so the answer is the
-        # same every time, and a second link is logged rather than hidden -
-        # linking one contact to two agents is a data problem for a human, not
-        # something to guess at here.
-        agents = (
-            db.query(SalesAgent)
-            .filter(SalesAgent.contact_id == contact_id)
-            .order_by(SalesAgent.sales_agent, SalesAgent.id)
-            .all()
-        )
-        if not agents:
+        # Chatbot stock ask v2 S6 (AC-SA601): the one agent resolution, shared with the
+        # portal's Customer asks page. Module-level lookup so both callers read the same
+        # function at call time.
+        agent = sales_agent_for_contact(db, contact_id)
+        if agent is None:
             return []
-        agent = agents[0]
-        if len(agents) > 1:
-            logger.warning(
-                "Portal contact %s is linked to %s sales agents; answering for "
-                "%s. Only one link is meant to exist.",
-                contact_id,
-                len(agents),
-                agent.sales_agent,
-            )
 
         debtors: dict[str, dict] = {}
 

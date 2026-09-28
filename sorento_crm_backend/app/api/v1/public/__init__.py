@@ -9,6 +9,7 @@ from app.api.v1.public import (
     geo,
     onboarding,
     portal,
+    portal_customer_asks,
     portal_price_tag,
     print as print_route,
     quotation_sign,
@@ -31,6 +32,11 @@ router.include_router(view.router, prefix="/view", tags=["public-view"])
 # captures exactly the requests meant for it and leaves the legacy kinds alone.
 router.include_router(
     portal_price_tag.router, prefix="/portal", tags=["public-portal-price-tag"]
+)
+# Chatbot stock ask v2 S6: literal `/customer-asks` paths only, mounted before the
+# generic portal router for the same reason as the price tag router above.
+router.include_router(
+    portal_customer_asks.router, prefix="/portal", tags=["public-portal-customer-asks"]
 )
 router.include_router(portal.router, prefix="/portal", tags=["public-portal"])
 router.include_router(

@@ -159,6 +159,7 @@ export function CustomerAsksTab({ customerId }: { customerId: string }) {
       recordCount={total}
       isLoading={isLoading}
       isPlaceholderData={isPlaceholderData}
+      listingKey="order_management.customers.view::stock_asks"
       tableLayout={{ width: 'fixed', columnsResizable: true }}
     >
       <Card>
