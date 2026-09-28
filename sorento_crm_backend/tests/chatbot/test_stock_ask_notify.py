@@ -108,9 +108,10 @@ class LiveDealer:
             db.execute(
                 text(
                     "INSERT INTO respond_contact_customers (id, contact_id, customer_id, "
-                    "is_primary, source) VALUES (gen_random_uuid(), :c, :cu, true, 'manual')"
+                    "is_primary, source, company_id) "
+                    "VALUES (gen_random_uuid(), :c, :cu, true, 'manual', :co)"
                 ),
-                {"c": self.contact_id, "cu": self.customer_id},
+                {"c": self.contact_id, "cu": self.customer_id, "co": SORENTO},
             )
         db.commit()
         self.codes = _seed_products(session_factory, list(BRANCH_OF))
@@ -372,9 +373,9 @@ def _chain(
         db.execute(
             text(
                 "INSERT INTO respond_contact_customers (id, contact_id, customer_id, is_primary, "
-                "source) VALUES (gen_random_uuid(), :c, :cu, true, 'manual')"
+                "source, company_id) VALUES (gen_random_uuid(), :c, :cu, true, 'manual', :co)"
             ),
-            {"c": dealer_contact, "cu": customer.id},
+            {"c": dealer_contact, "cu": customer.id, "co": SORENTO},
         )
     db.commit()
     return {

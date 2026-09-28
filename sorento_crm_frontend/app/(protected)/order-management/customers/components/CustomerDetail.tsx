@@ -1,16 +1,26 @@
 'use client';
 
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit } from 'lucide-react';
+import { Edit, Info, MessageSquareText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useBackToListHref, useHrefWithListState } from '@/components/common/BackToList';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useCustomer, customersPagerQuery } from '../hooks/useCustomers';
 import { formatDate } from '@/lib/helpers';
 import DetailActions from '@/components/common/DetailActions';
 import { useCustomerActions } from '../actions';
+import { CustomerAsksTab } from './CustomerAsksTab';
+
+type CustomerTab = 'details' | 'asks';
+
+const CUSTOMER_TABS: { value: CustomerTab; label: string; icon: typeof Info }[] = [
+  { value: 'details', label: 'Details', icon: Info },
+  { value: 'asks', label: 'Asks', icon: MessageSquareText },
+];
 
 interface CustomerDetailProps {
   customerId: string;
@@ -24,6 +34,7 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
     `/order-management/customers/${customerId}/edit`,
   );
   const { data: customer, isLoading } = useCustomer(customerId);
+  const [tab, setTab] = useState<CustomerTab>('details');
   const { actions, dialogs } = useCustomerActions(customer, {
     onDeleted: () => router.push(backHref),
   });
@@ -87,68 +98,87 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Contact Information</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <p className="text-sm text-muted-foreground">Email</p>
-              <p className="font-medium">{customer.email || '-'}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Phone</p>
-              <p className="font-medium">{customer.phone_number || '-'}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Sales Agent</p>
-              <p className="font-medium">
-                {customer.sales_agent_code
-                  ? customer.sales_agent_name
-                    ? `${customer.sales_agent_code} - ${customer.sales_agent_name}`
-                    : customer.sales_agent_code
-                  : 'No sales agent assigned'}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+      {/* Chatbot stock ask v2 S5 (AC-SA508): line tabs, Details first (the two cards,
+          unchanged), then the customer's stock asks. */}
+      <Tabs value={tab} onValueChange={(v) => setTab(v as CustomerTab)}>
+        <TabsList variant="line" className="mb-5">
+          {CUSTOMER_TABS.map((t) => (
+            <TabsTrigger key={t.value} value={t.value} onClick={() => setTab(t.value)}>
+              <t.icon className="size-4" />
+              <span>{t.label}</span>
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Additional Information</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <p className="text-sm text-muted-foreground">Status</p>
-              <Badge variant={customer.is_active ? 'success' : 'secondary'}>
-                <BadgeDot />
-                {customer.is_active ? 'Active' : 'Inactive'}
-              </Badge>
-            </div>
-            {customer.orders_count !== undefined && (
-              <div>
-                <p className="text-sm text-muted-foreground">Total Delivery Orders</p>
-                <p className="font-medium">{customer.orders_count}</p>
-              </div>
-            )}
-            <div>
-              <p className="text-sm text-muted-foreground">Created</p>
-              <p className="font-medium text-sm">
-                {formatDate(new Date(customer.created_at))}
-              </p>
-            </div>
-            {customer.updated_at && (
-              <div>
-                <p className="text-sm text-muted-foreground">Last Updated</p>
-                <p className="font-medium text-sm">
-                  {formatDate(new Date(customer.updated_at))}
-                </p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+        <TabsContent value="details">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <CardTitle>Contact Information</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <p className="text-sm text-muted-foreground">Email</p>
+                  <p className="font-medium">{customer.email || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Phone</p>
+                  <p className="font-medium">{customer.phone_number || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Sales Agent</p>
+                  <p className="font-medium">
+                    {customer.sales_agent_code
+                      ? customer.sales_agent_name
+                        ? `${customer.sales_agent_code} - ${customer.sales_agent_name}`
+                        : customer.sales_agent_code
+                      : 'No sales agent assigned'}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Additional Information</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <p className="text-sm text-muted-foreground">Status</p>
+                  <Badge variant={customer.is_active ? 'success' : 'secondary'}>
+                    <BadgeDot />
+                    {customer.is_active ? 'Active' : 'Inactive'}
+                  </Badge>
+                </div>
+                {customer.orders_count !== undefined && (
+                  <div>
+                    <p className="text-sm text-muted-foreground">Total Delivery Orders</p>
+                    <p className="font-medium">{customer.orders_count}</p>
+                  </div>
+                )}
+                <div>
+                  <p className="text-sm text-muted-foreground">Created</p>
+                  <p className="font-medium text-sm">
+                    {formatDate(new Date(customer.created_at))}
+                  </p>
+                </div>
+                {customer.updated_at && (
+                  <div>
+                    <p className="text-sm text-muted-foreground">Last Updated</p>
+                    <p className="font-medium text-sm">
+                      {formatDate(new Date(customer.updated_at))}
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="asks">
+          {tab === 'asks' && <CustomerAsksTab customerId={customerId} />}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

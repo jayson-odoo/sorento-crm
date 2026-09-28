@@ -77,6 +77,28 @@ def answered_entries(entries: Iterable[Any]) -> list[dict[str, Any]]:
     return out
 
 
+def answer_line(reply_text: str, entry: dict[str, Any]) -> str:
+    """The exact line the dealer was sent for this entry: R14 starts every answer line
+    with "<code> x <Q>:", so the line is found by that prefix in the reply."""
+    label = entry.get("product_code") or entry.get("product_name") or ""
+    prefix = f"{label} x {entry.get('requested_qty')}:"
+    for line in (reply_text or "").splitlines():
+        if line.strip().startswith(prefix):
+            return line.strip()
+    return prefix
+
+
+def _write_company_id(db: Session, customer: Any) -> Optional[str]:
+    """The ask belongs to its customer's company; an ask with no customer takes the
+    turn's own company scope (the asking contact's company)."""
+    if customer is not None:
+        return customer.company_id
+    from app.models.base import get_company_scope
+    from app.services.company_scope import DEFAULT_COMPANY_ID, resolve_write_company_id
+
+    return resolve_write_company_id(get_company_scope(db), ambiguous=DEFAULT_COMPANY_ID)
+
+
 def after_answered_turn(
     db: Session,
     *,
@@ -84,29 +106,71 @@ def after_answered_turn(
     contact_id: Optional[str],
     notify_salesman: bool,
     entries: Iterable[Any],
+    reply_text: str = "",
     now: Optional[datetime] = None,
 ) -> list[dict[str, Any]]:
     """Run once a LIVE turn's row is closed (the engine never calls this on a dry run).
 
-    Enqueues one `notify_salesman` job per answered B1 / B2 / B4 entry when the contact's
-    toggle is on, and returns the facts it enqueued. The dealer's reply has already been
-    handed back by then, so nothing here can hold it up.
+    S5: one `stock_asks` row per answered entry, state open, with the exact line the dealer
+    was sent. S4: one `notify_salesman` job per B1 / B2 / B4 row when the contact's toggle
+    is on and a customer is known; every other row records why it was not sent. Returns the
+    facts it enqueued. The dealer's reply has already been handed back by then.
     """
-    if not notify_salesman:
+    from app.models.order import Customer
+    from app.models.stock_ask import StockAsk
+    from app.services.contact_customer_service import resolve_customer
+
+    answered = answered_entries(entries)
+    if not answered:
         return []
     moment = now or datetime.now(timezone.utc)
+    customer_id = resolve_customer(db, contact_id) if contact_id else None
+    customer = (
+        db.query(Customer).filter(Customer.id == customer_id).first() if customer_id else None
+    )
+    company_id = _write_company_id(db, customer)
+
+    rows: list[tuple[StockAsk, dict[str, Any], bool]] = []
+    for entry in answered:
+        branch = entry["branch"]
+        if branch not in NOTIFIED_BRANCHES:
+            reason: Optional[str] = "not_notified_branch"
+        elif not notify_salesman:
+            reason = "toggle_off"
+        elif customer is None:
+            reason = "no_customer"
+        else:
+            reason = None
+        ask = StockAsk(
+            company_id=company_id,
+            customer_id=customer.id if customer is not None else None,
+            contact_id=contact_id,
+            product_id=entry.get("product_id"),
+            product_code=(entry.get("product_code") or entry.get("product_name") or "")[:100],
+            quantity=entry["requested_qty"],
+            branch=branch,
+            answer_summary=answer_line(reply_text, entry),
+            notified_agent=False,
+            notify_skip_reason=reason,
+            state="open",
+        )
+        db.add(ask)
+        rows.append((ask, entry, reason is None))
+    db.commit()
+
     enqueued = []
-    for entry in answered_entries(entries):
-        if entry["branch"] not in NOTIFIED_BRANCHES:
+    for ask, entry, notify in rows:
+        if not notify:
             continue
         facts = {
+            "ask_id": ask.id,
             "turn_id": turn_id,
             "contact_id": contact_id,
             "product_id": entry.get("product_id"),
-            "product_code": entry.get("product_code") or entry.get("product_name") or "",
+            "product_code": ask.product_code,
             "product_name": entry.get("product_name"),
-            "quantity": entry["requested_qty"],
-            "branch": entry["branch"],
+            "quantity": ask.quantity,
+            "branch": ask.branch,
             "cap_unset": bool(entry.get("cap_unset")),
             "category_name": entry.get("category_name"),
             "asked_at": moment.isoformat(),
@@ -116,6 +180,24 @@ def after_answered_turn(
         enqueue_job(notify_job, facts, queue_name="respond_io", job_timeout=180)
         enqueued.append(facts)
     return enqueued
+
+
+def _record_outcome(db: Session, facts: dict[str, Any], *, sent: bool, reason: Optional[str]) -> None:
+    """S5: the job's outcome on the ask row (`notified_agent`, or why not)."""
+    ask_id = facts.get("ask_id")
+    if not ask_id:
+        return
+    from app.models.stock_ask import StockAsk
+
+    try:
+        db.query(StockAsk).filter(StockAsk.id == ask_id).update(
+            {"notified_agent": sent, "notify_skip_reason": None if sent else reason},
+            synchronize_session=False,
+        )
+        db.commit()
+    except Exception:  # noqa: BLE001 - the send already happened or was logged
+        db.rollback()
+        logger.warning("stock ask %s: could not record the notification outcome", ask_id)
 
 
 def _contact_label(contact: Any) -> str:
@@ -181,8 +263,9 @@ def _log(
     IntegrationLogService(db).create_integration_log(
         IntegrationLogCreate(
             integration_channel="respond_io",
-            business_table="chatbot_turns",
-            business_id=facts["turn_id"],
+            # S5: the ask row, once there is one; a job enqueued before S5 names the turn.
+            business_table="stock_asks" if facts.get("ask_id") else "chatbot_turns",
+            business_id=facts.get("ask_id") or facts["turn_id"],
             external_reference=identifier,
             direction="outbound",
             endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
@@ -206,6 +289,8 @@ def notify_salesman(db: Session, facts: dict[str, Any]) -> dict[str, Any]:
         dealer, customer, agent_contact, reason = _recipient(db, facts.get("contact_id"))
     except Exception as exc:  # noqa: BLE001 - a broken read is a failed attempt, not a crash
         logger.warning("stock ask %s: recipient lookup failed: %s", facts.get("turn_id"), exc)
+        db.rollback()
+        _record_outcome(db, facts, sent=False, reason="send_failed")
         return {"status": "failed", "error": str(exc)}
     if reason is not None:
         logger.warning(
@@ -215,6 +300,7 @@ def notify_salesman(db: Session, facts: dict[str, Any]) -> dict[str, Any]:
             facts.get("quantity"),
             reason,
         )
+        _record_outcome(db, facts, sent=False, reason=reason)
         return {"status": "skipped", "reason": reason}
 
     name = facts.get("product_name")
@@ -269,6 +355,7 @@ def notify_salesman(db: Session, facts: dict[str, Any]) -> dict[str, Any]:
             logger.warning("stock ask %s: could not write the failed send log", facts.get("turn_id"))
             db.rollback()
         logger.warning("stock ask %s: salesman send failed: %s", facts.get("turn_id"), exc)
+        _record_outcome(db, facts, sent=False, reason="send_failed")
         return {"status": "failed", "error": str(exc)}
 
     response = result.get("response")
@@ -280,4 +367,126 @@ def notify_salesman(db: Session, facts: dict[str, Any]) -> dict[str, Any]:
         request_payload=result.get("request_payload") or attempted,
         response_payload=str(response)[:50000] if response else None,
     )
+    _record_outcome(db, facts, sent=True, reason=None)
     return {"status": "sent", "sent_as": result.get("sent_as")}
+
+
+# --------------------------------------------------------------------------------------- #
+# S5 / S6: the asks record, read and worked by the office and by the sales agent
+# --------------------------------------------------------------------------------------- #
+
+
+def serialize(db: Session, rows: list[Any]) -> list[Any]:
+    """Rows as `StockAskResponse`: the contact, customer and product NAMED, never their ids."""
+    from app.models.access import RespondContact
+    from app.models.order import Customer
+    from app.models.product import Product
+    from app.schemas.stock_ask import StockAskResponse
+
+    rows = list(rows)
+    contact_ids = {r.contact_id for r in rows if r.contact_id}
+    customer_ids = {r.customer_id for r in rows if r.customer_id}
+    product_ids = {r.product_id for r in rows if r.product_id}
+    contacts = (
+        {c.id: _contact_label(c) for c in db.query(RespondContact).filter(RespondContact.id.in_(contact_ids))}
+        if contact_ids
+        else {}
+    )
+    customers = (
+        {
+            c.id: c.customer_name
+            for c in db.query(Customer.id, Customer.customer_name).filter(Customer.id.in_(customer_ids))
+        }
+        if customer_ids
+        else {}
+    )
+    products = (
+        {
+            p.id: p.product_name
+            for p in db.query(Product.id, Product.product_name).filter(Product.id.in_(product_ids))
+        }
+        if product_ids
+        else {}
+    )
+    return [
+        StockAskResponse(
+            id=str(r.id),
+            customer_name=customers.get(r.customer_id),
+            contact_name=contacts.get(r.contact_id),
+            product_code=r.product_code,
+            product_name=products.get(r.product_id),
+            quantity=r.quantity,
+            branch=r.branch,
+            answer_summary=r.answer_summary,
+            notified_agent=bool(r.notified_agent),
+            notify_skip_reason=r.notify_skip_reason,
+            state=r.state,
+            note=r.note,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+        )
+        for r in rows
+    ]
+
+
+def _page(query: Any, page: int, limit: int) -> tuple[list[Any], int]:
+    from app.models.stock_ask import StockAsk
+
+    total = query.count()
+    rows = (
+        query.order_by(StockAsk.created_at.desc(), StockAsk.id)
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+    return rows, total
+
+
+def _apply_update(db: Session, ask: Any, data: dict[str, Any]) -> Any:
+    if "state" in data and data["state"] is not None:
+        ask.state = data["state"]
+    if "note" in data:
+        note = (data["note"] or "").strip()
+        ask.note = note or None
+    db.commit()
+    db.refresh(ask)
+    return ask
+
+
+def _customer_or_404(db: Session, customer_id: str) -> Any:
+    from app.models.order import Customer
+    from app.services.error_handler import handle_not_found
+
+    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    if customer is None:
+        raise handle_not_found("Customer", customer_id)
+    return customer
+
+
+def list_for_customer(db: Session, customer_id: str, *, page: int, limit: int) -> dict[str, Any]:
+    """The CRM Asks tab: one customer's asks, newest first. A customer outside the caller's
+    company scope is a 404, so another company's asks never show."""
+    from app.models.stock_ask import StockAsk
+
+    _customer_or_404(db, customer_id)
+    rows, total = _page(db.query(StockAsk).filter(StockAsk.customer_id == customer_id), page, limit)
+    return {
+        "data": serialize(db, rows),
+        "pagination": {"total": total, "page": page, "limit": limit},
+        "empty": total == 0,
+    }
+
+
+def update_for_customer(db: Session, customer_id: str, ask_id: str, data: dict[str, Any]) -> Any:
+    from app.models.stock_ask import StockAsk
+    from app.services.error_handler import handle_not_found
+
+    _customer_or_404(db, customer_id)
+    ask = (
+        db.query(StockAsk)
+        .filter(StockAsk.id == ask_id, StockAsk.customer_id == customer_id)
+        .first()
+    )
+    if ask is None:
+        raise handle_not_found("Stock ask", ask_id)
+    return serialize(db, [_apply_update(db, ask, data)])[0]

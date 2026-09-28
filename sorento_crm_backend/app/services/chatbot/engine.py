@@ -4765,6 +4765,7 @@ def _after_stock_ask_turn(
                 contact_id=contact_id,
                 notify_salesman=bool(getattr(profile, "notify_salesman", False)),
                 entries=entries,
+                reply_text=reply_text,
             )
     except Exception:  # noqa: BLE001 - the dealer's answer is already recorded
         logger.exception("chatbot turn %s: stock ask follow-up failed", turn_id)

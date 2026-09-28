@@ -9,6 +9,7 @@ from app.models.marketing import Promotion
 from app.models.order import Order
 from app.models.product import Product
 from app.models.procurement import Supplier
+from app.models.stock_ask import StockAsk
 from app.models.tickets import Ticket
 from app.models.workflow_forms import WorkflowFormDefinition, WorkflowSubmission
 from app.schemas.certificate import CertificateResponse
@@ -53,6 +54,19 @@ def _serialize_workflow_submissions(rows: Iterable[Any]) -> list[Any]:
 
 def _serialize_tickets(rows: Iterable[Any]) -> list[Any]:
     return [TicketResponse.model_validate(x) for x in rows]
+
+
+def _serialize_stock_asks(rows: Iterable[Any]) -> list[Any]:
+    """Stock asks name their contact, customer and product, so the serializer needs the
+    row's own session to look the names up."""
+    rows = list(rows)
+    if not rows:
+        return []
+    from sqlalchemy.orm import object_session
+
+    from app.services.stock_ask_service import serialize
+
+    return serialize(object_session(rows[0]), rows)
 
 
 def _serialize_certificates(rows: Iterable[Any]) -> list[Any]:
@@ -171,6 +185,18 @@ ADAPTERS: Dict[str, ListQueryResourceAdapter] = {
         compile_prefix="ticket",
         display_name="Tickets",
         description="Ticket list filter/export metadata",
+    ),
+    # Chatbot stock ask v2 S5: the customer detail page's Asks tab (column config is keyed
+    # by `order_management.customers.view::stock_asks`). No export slug of its own.
+    "stock_asks": ListQueryResourceAdapter(
+        resource_key="stock_asks",
+        view_slug="order_management.customers.view",
+        export_slug="order_management.customers.view",
+        serializer=_serialize_stock_asks,
+        model=StockAsk,
+        compile_prefix="stock_ask",
+        display_name="Stock Asks",
+        description="Chatbot stock asks per customer",
     ),
 }
 

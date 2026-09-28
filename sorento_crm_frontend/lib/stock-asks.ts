@@ -1,0 +1,82 @@
+/**
+ * Chatbot stock ask v2 (S5 CRM Asks tab, S6 portal Customer asks): the shared words for an
+ * ask's branch, notification outcome and state, so the office and the sales agent read the
+ * same labels.
+ */
+
+export type StockAskBranch = 'too_big' | 'in_stock' | 'incoming' | 'no_incoming';
+export type StockAskState = 'open' | 'done';
+
+export interface StockAsk {
+  id: string;
+  customer_name: string | null;
+  contact_name: string | null;
+  product_code: string;
+  product_name: string | null;
+  quantity: number;
+  branch: StockAskBranch | string;
+  answer_summary: string;
+  notified_agent: boolean;
+  notify_skip_reason: string | null;
+  state: StockAskState | string;
+  note: string | null;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface StockAskPage {
+  data: StockAsk[];
+  pagination: { total: number; page: number; limit: number };
+}
+
+export type StockAskPatch = { state?: StockAskState; note?: string };
+
+export const BRANCH_LABEL: Record<string, string> = {
+  too_big: 'Too big',
+  in_stock: 'In stock',
+  incoming: 'Incoming',
+  no_incoming: 'No stock, no incoming',
+};
+
+export const BRANCH_VARIANT: Record<string, 'success' | 'warning' | 'info' | 'destructive' | 'secondary'> = {
+  too_big: 'warning',
+  in_stock: 'success',
+  incoming: 'info',
+  no_incoming: 'destructive',
+};
+
+export const SKIP_REASON_LABEL: Record<string, string> = {
+  toggle_off: 'Notify salesman is off for this contact',
+  not_notified_branch: 'Incoming answers do not notify the salesman',
+  no_customer: 'The contact is not linked to one customer',
+  no_sales_agent: 'The customer has no sales agent',
+  agent_has_no_contact: 'The sales agent has no contact',
+  agent_contact_has_no_respond_id: 'The sales agent contact is not on WhatsApp',
+  send_failed: 'The WhatsApp message failed to send',
+};
+
+export const STATE_OPTIONS: { value: StockAskState; label: string }[] = [
+  { value: 'open', label: 'Open' },
+  { value: 'done', label: 'Done' },
+];
+
+export function stateLabel(state: string): string {
+  return STATE_OPTIONS.find((o) => o.value === state)?.label ?? state;
+}
+
+/** "Sent", "Pending" (the job has not reported yet) or "Not sent", with the reason. */
+export function notifiedLabel(ask: Pick<StockAsk, 'notified_agent' | 'notify_skip_reason'>): {
+  label: string;
+  title: string;
+  variant: 'success' | 'secondary' | 'outline';
+} {
+  if (ask.notified_agent) return { label: 'Sent', title: 'The salesman was notified', variant: 'success' };
+  if (!ask.notify_skip_reason) {
+    return { label: 'Pending', title: 'The salesman notification is on its way', variant: 'outline' };
+  }
+  return {
+    label: 'Not sent',
+    title: SKIP_REASON_LABEL[ask.notify_skip_reason] ?? ask.notify_skip_reason,
+    variant: 'secondary',
+  };
+}

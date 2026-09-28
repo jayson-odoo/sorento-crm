@@ -11,6 +11,8 @@ from app.services.order_service import CustomerService
 from app.services.queue_service import enqueue_job
 from app.schemas.order import CustomerCreate, CustomerUpdate, CustomerResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
+from app.schemas.stock_ask import StockAskResponse, StockAskUpdate
+from app.services import stock_ask_service
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -138,6 +140,35 @@ async def get_customer(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.get("/{customer_id}/asks", response_model=ListResponse[StockAskResponse])
+def list_customer_asks(
+    customer_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=MAX_PAGE_LIMIT),
+    current_user: dict = Depends(require_permission("order_management.customers.view")),
+    db: Session = Depends(get_db),
+):
+    """Chatbot stock ask v2 S5 (R9): the customer's stock asks, newest first."""
+    validate_uuid_path(customer_id, resource="Customer")
+    return stock_ask_service.list_for_customer(db, customer_id, page=page, limit=limit)
+
+
+@router.patch("/{customer_id}/asks/{ask_id}", response_model=StockAskResponse)
+def update_customer_ask(
+    customer_id: str,
+    ask_id: str,
+    body: StockAskUpdate,
+    current_user: dict = Depends(require_permission("order_management.customers.edit")),
+    db: Session = Depends(get_db),
+):
+    """Chatbot stock ask v2 S5 (R9): the office works an ask - state and note only."""
+    validate_uuid_path(customer_id, resource="Customer")
+    validate_uuid_path(ask_id, resource="Stock ask")
+    return stock_ask_service.update_for_customer(
+        db, customer_id, ask_id, body.model_dump(exclude_unset=True)
+    )
 
 
 @router.post("/", response_model=CustomerResponse, status_code=status.HTTP_201_CREATED)
