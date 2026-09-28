@@ -499,8 +499,17 @@ class AutocountDocIngestService(MasterRefResolver):
                 else:
                     result.records.append(self._ingest_one(entity_type, raw))
             if not dry_run and entity_type in AUTOCOUNT_DOC_ENTITIES:
-                with company_scope(self.db, frozenset({self.company_id})):
-                    self._fill_waiting_links(entity_type)
+                # Best effort in its own savepoint: a failure here must not roll back the
+                # records that already landed; the next batch retries it.
+                savepoint = self.db.begin_nested()
+                try:
+                    with company_scope(self.db, frozenset({self.company_id})):
+                        self._fill_waiting_links(entity_type)
+                    savepoint.commit()
+                except Exception as exc:  # noqa: BLE001
+                    savepoint.rollback()
+                    logger.warning("ingest.waiting_links_failed entity=%s error=%s",
+                                   entity_type, _safe_error(exc))
         finally:
             if dry_run:
                 self.db.rollback()
@@ -785,6 +794,15 @@ class AutocountDocIngestService(MasterRefResolver):
         if header["ref_doc_no"] and header["sales_order_id"] is None:
             warnings.append(WARN_SALES_ORDER_UNRESOLVED)
 
+        # A line with no Seq takes a sequence past every explicit one, so it cannot collide
+        # with (order_id, line_sequence).
+        top = max((l.seq for l in doc.lines if l.seq is not None and l.item_code), default=0)
+        default_seq = {}
+        for line in doc.lines:
+            if line.seq is None and line.item_code is not None:
+                top += 1
+                default_seq[line.index] = top
+
         lines: list[dict[str, Any]] = []
         for line in doc.lines:
             if line.item_code is None:
@@ -792,7 +810,7 @@ class AutocountDocIngestService(MasterRefResolver):
             product_id, warehouse_id = resolved[line.index]
             values = dict(line.values)
             values.update(
-                line_sequence=line.seq if line.seq is not None else line.index + 1,
+                line_sequence=line.seq if line.seq is not None else default_seq[line.index],
                 product_id=product_id,
                 warehouse_id=warehouse_id,
                 from_doc_type=line.from_doc_type,
@@ -1085,7 +1103,10 @@ class AutocountDocIngestService(MasterRefResolver):
                         PickingLine.dtl_key.isnot(None),
                         PickingLine.purchase_order_id.is_(None),
                         PickingLine.from_dtl_key.is_(None),
-                        PickingLine.our_po_no.isnot(None))
+                        PickingLine.our_po_no.isnot(None),
+                        # A line received against an SPO has no purchase order to wait for.
+                        or_(PickingLine.from_doc_type.is_(None),
+                            PickingLine.from_doc_type != "SPO"))
                 .order_by(PickingLine.created_at.desc())
                 .limit(MAX_WAITING_LINKS)
                 .all()
@@ -1201,7 +1222,7 @@ class AutocountDocIngestService(MasterRefResolver):
                     row.last_synced_at = datetime.utcnow()
                     outcome = IngestOutcome.UPDATED
                 self.db.flush()
-                self._refresh_branch_names(acc_no, code, values["branch_name"])
+                self._refresh_branch_names(code)
             savepoint.commit()
             return RecordResult(source_ref=source_ref, outcome=outcome, entity_id=str(row.id))
         except Exception as exc:  # noqa: BLE001 - one record's failure, not the batch's
@@ -1211,28 +1232,23 @@ class AutocountDocIngestService(MasterRefResolver):
             return RecordResult(source_ref=source_ref, outcome=IngestOutcome.FAILED,
                                 errors={"_": INTERNAL_ERROR_MESSAGE})
 
-    def _refresh_branch_names(self, acc_no: str, code: str, name: Optional[str]) -> None:
-        """Every AutoCount DO of this branch carries its current name (plan Q10)."""
+    def _refresh_branch_names(self, code: str) -> None:
+        """Every AutoCount DO of this branch carries the name `_branch_name` now resolves
+        (plan Q10), by the SAME rule the DO push uses, so a replayed DO never disagrees
+        with a branch push and flips the column back."""
         query = self.db.query(Order).filter(
             Order.company_id == self.company_id, Order.source_book == self.book,
             Order.doc_key.isnot(None), Order.branch_code == code,
-            or_(Order.branch_name.is_(None), Order.branch_name != name),
         )
-        exact_debtors: set[str] = set()
-        if acc_no:
-            query = query.filter(Order.debtor_code == acc_no)
-        else:
-            # A branch row with no AccNo never overrides a debtor's own exact branch row.
-            exact_debtors = {
-                acc for (acc,) in self.db.query(Branch.acc_no).filter(
-                    Branch.company_id == self.company_id, Branch.source_book == self.book,
-                    Branch.branch_code == code, Branch.acc_no != "",
-                )
-            }
+        # Every DO of the code, not only this AccNo's: a new row can change how another
+        # debtor's DO resolves (a lone code-only match becomes ambiguous).
+        by_debtor: dict[Optional[str], Optional[str]] = {}
         for order in query.all():
-            if order.debtor_code in exact_debtors:
-                continue
-            order.branch_name = name
+            if order.debtor_code not in by_debtor:
+                by_debtor[order.debtor_code] = self._branch_name(order.debtor_code, code, [])
+            resolved = by_debtor[order.debtor_code]
+            if order.branch_name != resolved:
+                order.branch_name = resolved
         self.db.flush()
 
 

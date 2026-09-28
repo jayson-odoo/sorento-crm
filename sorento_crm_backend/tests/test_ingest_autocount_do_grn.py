@@ -961,3 +961,54 @@ def test_oversized_branch_and_doc_key_are_refused_per_record(env):
     res = env.delete(DO_DELETE, [10 ** 30])
     assert res.status_code == 200
     assert res.json()["records"][0]["outcome"] == "failed"
+
+
+# ======================================================================= review round
+def test_branch_refresh_agrees_with_do_replay(env):
+    """AC-AG085: a DO whose branch code is ambiguous stays unresolved after a branch push,
+    so its identical replay answers `unchanged`."""
+    env.post(BR_INGEST, [_branch(acc="", name="A"), _branch(acc="300-OTHER", name="B")])
+    rec = copy.deepcopy(do_records()[0])
+    rec["BranchCode"] = "KL01"
+    r = _records(env.push_do([rec]))["db1:DO:900001"]
+    assert "branch_unresolved" in r["warnings"] and env.order(900001).branch_name is None
+    env.post(BR_INGEST, [_branch(acc="", name="RENAMED")])
+    assert env.order(900001).branch_name is None
+    assert _outcomes(env.push_do([rec]))["db1:DO:900001"] == "unchanged"
+
+
+def test_seq_swap_between_lines(env):
+    """AC-AG086: two lines swapping Seq on an update land without a unique conflict."""
+    env.push_do([do_records()[0]])
+    rec = copy.deepcopy(do_records()[0])
+    rec["LastModified"] = "2026-09-28T08:00:00.000"
+    rec["Details"][0]["Seq"], rec["Details"][1]["Seq"] = 32, 16
+    assert _outcomes(env.push_do([rec]))["db1:DO:900001"] == "updated"
+    lines = {l.dtl_key: l.line_sequence for l in env.order_lines(env.order(900001).id)}
+    assert lines == {910001: 32, 910002: 16}
+
+
+def test_line_without_seq_gets_a_free_sequence(env):
+    """AC-AG087: a line with no Seq never collides with an explicit Seq."""
+    rec = copy.deepcopy(do_records()[0])
+    rec["Details"][0]["Seq"] = None
+    rec["Details"][1]["Seq"] = 1
+    assert _outcomes(env.push_do([rec]))["db1:DO:900001"] == "created"
+    seqs = sorted(l.line_sequence for l in env.order_lines(env.order(900001).id))
+    assert seqs == [1, 2]
+
+
+def test_grn_receipt_follows_the_exact_spo_link_and_the_cancel(env):
+    """AC-AG088: an AutoCount GRN line linked to an SPO allocation counts as its receipt;
+    cancelling the GRN by the deletion sweep gives the receipt back."""
+    spo = SPOAllocation(spo_number="SPO-ZZ-0101", product_id=env.p2, allocated_quantity=20,
+                        source_ref="SRT_DB:7002:7301", company_id=env.company)
+    env.db.add(spo)
+    env.db.commit()
+    rec = _with_from(copy.deepcopy(grn_records()[0]), 1, "PO", "SPO-ZZ-0101", 7301)
+    assert _outcomes(env.push_grn([rec]))["db1:GRN:800001"] == "created"
+    env.db.expire_all()
+    assert env.db.get(SPOAllocation, spo.id).quantity_received == 20
+    env.delete(GRN_DELETE, [800001], "2026-07-01", "2026-07-31")
+    env.db.expire_all()
+    assert env.db.get(SPOAllocation, spo.id).quantity_received == 0

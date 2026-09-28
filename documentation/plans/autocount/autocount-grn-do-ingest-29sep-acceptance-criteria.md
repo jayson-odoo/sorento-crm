@@ -135,6 +135,15 @@ payloads' field lists (issue #1354, orchestrator comment) with anonymised values
 - **AC-AG084** A branch row over 32 KB fails alone; a DocKey beyond BIGINT on `/deletions` is a
   per-key `failed`, never a 500.
 
+## Review round (correctness)
+
+- **AC-AG085** A branch push resolves each DO's branch name by the same rule the DO push uses, so
+  an identical DO replay after a branch push answers `unchanged`.
+- **AC-AG086** Two lines swapping `Seq` on an update land without a unique conflict.
+- **AC-AG087** A line with no `Seq` takes a sequence past every explicit one.
+- **AC-AG088** An AutoCount GRN line linked to an SPO allocation counts as its receipt; the
+  deletion sweep's cancel gives the receipt back.
+
 ## Migration
 
 - **AC-AG070** The migration creates `branches`, adds every column in plan 2.2 to 2.5 (nullable)
