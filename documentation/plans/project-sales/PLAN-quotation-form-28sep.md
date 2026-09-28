@@ -1,7 +1,9 @@
 # PLAN: Project Sales quotation form page (add and edit), save creates it with its lines
 
-Status: in review on PR #1343 (build lane, issue #1341, branch `feat/project-sales-quotation-form`). Track:
-full lane (diff expected well over 300 lines; no migration; no auth or RBAC change).
+Status: fix round 2 in review on PR #1343 (build lane, issue #1341, branch
+`feat/project-sales-quotation-form`): the owner's rulings below (Header and Lines tabs, Send to
+Customer, delete scope, header-only save, letter on create) built on top of the original scope.
+Track: full lane (diff well over 300 lines; no migration; no auth or RBAC change).
 
 UAC: `quotation-form-28sep-acceptance-criteria.md` (beside this file).
 
@@ -19,6 +21,57 @@ already exists.
 
 Addendum: "editing of scope should be done by 'Edit Quotation', not a separate button like this,
 Edit quotation means I edit the whole quotation"
+
+## Owner rulings after the plan commit (fix round 2)
+
+Issue #1341 addenda 2 to 4 (28 Sep 18:4x to 18:5x MYT, verbatim):
+
+> "i need this to be under 'Header' tab to align with our system design" (the TO / Our Ref /
+> Your Ref / Date / Total card)
+
+> "Lines" written over the struck-out "Scopes" tab label
+
+> "this one should be in header details" (the "Issued by <user> Opened <date>" strip)
+
+Alignment notes on this PR (28 Sep 19:2x MYT, verbatim per note):
+
+> On "Issue R1": "call this Send to Customer"
+> On the form's header section: "header stays in header tab"
+> Q2, delete a saved scope: "yes can"
+> Q3, header-only save: "yes can, header only is fine"
+> Cover letter and terms on create: "show them on create as well"
+
+Orchestrator note (28 Sep 21:3x MYT): the Overview's primary button becomes "Create Quotation"
+and goes straight to `/new` (PR #1345 owns the button); `/new` must open cleanly for a project
+with no quotation, and its Cancel returns to the Quotations tab.
+
+What was built for them (AC-QF050 onward in the UAC):
+
+- Quotation page tabs are Header, Lines, Cover letter, Terms, Signatures, each a route. Header is
+  the index route and holds the letterhead card; Lines is `/lines`. Above the tabs stay the page
+  title, the status pill, the project title and developer lines, and the header actions. The
+  Header / Lines pair and icons reuse the SPO document page's Header tab pattern.
+- Issued by and Opened join the Header details. They are per scope version and genuinely differ
+  (each scope's current version is opened on its own, by whoever opened it), so one scope shows a
+  plain pair of fields and several scopes are grouped by scope ("Townhouse v2"). The strip above
+  the lines table is gone.
+- The #1336 removal of the repeated document number and subject line is carried here in the same
+  code, so the merge with #1336 is a no-op on those lines.
+- The CTA reads "Send to Customer R<n>": the revision stays in the label, as it did, because R2 is
+  a different paper from R1. "Issue it first" hints read "Send it to the customer first". API
+  routes, the `is_issued` field and the Issued status pill are unchanged.
+- The form page is four tabs (Header, Lines, Cover letter, Terms), not stacked sections, in create
+  and edit. Panels stay mounted and are only hidden, so Save can wait on a saved scope's lines
+  without the Lines tab being opened. A refused Save opens the Lines tab.
+- Create reads the company templates from `GET .../quotation-documents/letter-templates` (raw, with
+  merge fields) into the Cover letter and Terms tabs. Typed text is sent with the POST, and the
+  server renders its merge fields against the saved document after its scopes exist.
+- Header-only save: an untouched new scope (no name, no line) is not sent, so a create that only
+  filled the Header saves with no scope. A scope with lines and no name is still refused.
+- Edit may remove a saved scope once its versions have loaded and none was ever sent to the
+  customer. The PATCH carries `remove_scope_ids`; the server refuses with 422
+  `quotation_scope_issued` (naming the scope) if ANY version of it is in an issue, and nothing in
+  that save lands.
 
 ## Journey
 
@@ -101,19 +154,20 @@ Edit quotation means I edit the whole quotation"
    back. The form shows such a scope's lines read-only and never sends them. Edit on a quotation
    the customer holds still asks first and opens the next revision (the existing
    `ReviseToEditDialog`), then opens the form.
-4. **Scopes missing from an edit PATCH are left alone.** The form cannot delete a saved scope
-   (today's page cannot either); a scope added in the form and not yet saved can be removed
-   before Save. See Q2.
+4. **Scopes missing from an edit PATCH are left alone.** Deleting a saved scope is explicit, via
+   `remove_scope_ids` (owner on Q2, fix round 2).
 5. **Recipient on create.** The server still snapshots the recipient off the developer party
    (AC-A3). A recipient value typed in create mode is applied on top of that snapshot in the same
    transaction, the same result as create then edit today. Blank keeps the snapshot.
-6. **Cover letter and terms in edit mode only.** On create they are rendered from the company
-   templates by the server, as today; the form carries them in edit mode because removing the
-   in-place session would otherwise leave them with no editor.
+6. **Cover letter and terms on create and edit** (superseded in fix round 2: "show them on
+   create as well"). See the rulings section.
 7. **Empty scope in read view** shows the empty datagrid, no hint and no button (addendum).
    A quotation with no scopes keeps its empty state, whose next step is Edit quotation.
 
-## Open questions (for the owner; building continues on the decisions above)
+## Open questions (answered)
+
+Q1 confirmed by the orchestrator (11:10Z); Q2 "yes can" and Q3 "yes can, header only is fine"
+by the owner (11:33Z).
 
 - **Q1** Route: confirm `/project-sales/[projectId]/quotation-documents/new` and `.../edit` in
   place of the issue's `/project-sales/pipeline/[projectId]/quotations/...`.
