@@ -33,7 +33,11 @@ ranked codes as its products, and the "Filters from the ranking" header and drop
 lines are gone; no parser words change ("As built (fix lane round 8)"). Fix lane
 round 9 (28 Sep, owner hand test after round 8): word answers to the customer or sales
 agent question ("salesman", "saleman", "client", the agent code) bind like 1 or 2; no
-parser words change, no migration ("As built (fix lane round 9)"). S5 (sales
+parser words change, no migration ("As built (fix lane round 9)"). Main merge fix round
+(28 Sep, CI red after main d79b46c5): #1262's domain word rule cleared the ranking status
+before `_top_selling_rules` read it, and #1262's order brand carry kept the ranking's brand
+past the ranking; both fixed in `turn/apply.py` and `turn_runtime.py`, no test expectation
+changed. S5 (sales
 agent) is built by round 4 as a lane-side resolver; S6 (review + live console) and S7 (per-month breakdown) open. Track: full track (new route + MCP tool = a new external
 ingest surface, one policy-row migration, one prompt migration, one entity-kind migration;
 the diff will pass 300 lines).
