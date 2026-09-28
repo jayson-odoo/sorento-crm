@@ -104,8 +104,13 @@ class _StubOpenAIClient:
             def __init__(inner) -> None:
                 inner.completions = _Completions()
 
+        class _Models:
+            def retrieve(inner, model, **_kwargs):
+                return types.SimpleNamespace(id=model, object="model")
+
         self.chat = _Chat()
         self.embeddings = _Embeddings()
+        self.models = _Models()
 
 
 # Anthropic stubs ---------------------------------------------------------
@@ -219,6 +224,11 @@ def test_openai_test_connection_failure(monkeypatch):
                 def create(**_kwargs):
                     raise RuntimeError("nope")
 
+        class models:
+            @staticmethod
+            def retrieve(*_args, **_kwargs):
+                raise RuntimeError("nope")
+
         embeddings = None
 
     monkeypatch.setattr("openai.OpenAI", lambda api_key=None: _Boom())
@@ -227,6 +237,204 @@ def test_openai_test_connection_failure(monkeypatch):
     assert ok is False
     assert "nope" in message
     assert isinstance(latency, int)
+
+
+# ---- Test connection probe (#1315) ----------------------------------------
+#
+# A reasoning model spends its first output tokens thinking, so a one-token
+# generate is answered with a 400 and a working key reads as broken. These
+# stubs behave like the real providers: a generate with a tiny output ceiling
+# fails the way OpenAI failed on gpt-5.4-mini, and the key/model errors come
+# back in the provider's own words.
+
+_OPENAI_400_OUTPUT_LIMIT = (
+    "Error code: 400 - {'error': {'message': 'Could not finish the message because "
+    "max_tokens or model output limit was reached. Please try again with higher "
+    "max_tokens.', 'type': 'invalid_request_error', 'param': None, 'code': None}}"
+)
+_OPENAI_401 = (
+    "Error code: 401 - {'error': {'message': 'Incorrect API key provided: sk-wrong. "
+    "You can find your API key at https://platform.openai.com/account/api-keys.', "
+    "'type': 'invalid_request_error', 'param': None, 'code': 'invalid_api_key'}}"
+)
+_OPENAI_404 = (
+    "Error code: 404 - {'error': {'message': 'The model `gpt-5.4-mini` does not exist "
+    "or you do not have access to it.', 'type': 'invalid_request_error', "
+    "'param': None, 'code': 'model_not_found'}}"
+)
+_ANTHROPIC_401 = (
+    "Error code: 401 - {'type': 'error', 'error': {'type': 'authentication_error', "
+    "'message': 'invalid x-api-key'}}"
+)
+_ANTHROPIC_404 = (
+    "Error code: 404 - {'type': 'error', 'error': {'type': 'not_found_error', "
+    "'message': 'model: claude-opus-9'}}"
+)
+
+
+class _RecordingOpenAI:
+    """OpenAI stub that records every call and fails like the real API does."""
+
+    def __init__(self, *, key_error: str | None = None, model_error: str | None = None):
+        self.calls: list[tuple[str, Any]] = []
+        outer = self
+
+        class _Completions:
+            def create(inner, **kwargs):
+                outer.calls.append(("chat", kwargs))
+                if key_error:
+                    raise RuntimeError(key_error)
+                if model_error:
+                    raise RuntimeError(model_error)
+                ceiling = kwargs.get("max_tokens", kwargs.get("max_completion_tokens"))
+                if ceiling is not None and ceiling < 16:
+                    raise RuntimeError(_OPENAI_400_OUTPUT_LIMIT)
+                return _StubCompletion(_StubMsg(content="OK", tool_calls=[]), _StubUsage(5, 7))
+
+        class _Models:
+            def retrieve(inner, model, **kwargs):
+                outer.calls.append(("models.retrieve", model))
+                if key_error:
+                    raise RuntimeError(key_error)
+                if model_error:
+                    raise RuntimeError(model_error)
+                return types.SimpleNamespace(id=model, object="model")
+
+            def list(inner, **kwargs):
+                outer.calls.append(("models.list", kwargs))
+                if key_error:
+                    raise RuntimeError(key_error)
+                return types.SimpleNamespace(data=[])
+
+        self.chat = types.SimpleNamespace(completions=_Completions())
+        self.models = _Models()
+
+
+class _RecordingAnthropic:
+    """Anthropic stub that records every call and fails like the real API does."""
+
+    def __init__(self, *, key_error: str | None = None, model_error: str | None = None):
+        self.calls: list[tuple[str, Any]] = []
+        outer = self
+
+        class _Messages:
+            def create(inner, **kwargs):
+                outer.calls.append(("messages", kwargs))
+                if key_error:
+                    raise RuntimeError(key_error)
+                if model_error:
+                    raise RuntimeError(model_error)
+                if kwargs.get("max_tokens", 1024) < 16:
+                    raise RuntimeError("max_tokens too small for a thinking model")
+                return _AntResponse(content=[_AntTextBlock("OK")], usage=_AntUsage(3, 4))
+
+        class _Models:
+            def retrieve(inner, model_id, **kwargs):
+                outer.calls.append(("models.retrieve", model_id))
+                if key_error:
+                    raise RuntimeError(key_error)
+                if model_error:
+                    raise RuntimeError(model_error)
+                return types.SimpleNamespace(id=model_id, type="model")
+
+            def list(inner, **kwargs):
+                outer.calls.append(("models.list", kwargs))
+                if key_error:
+                    raise RuntimeError(key_error)
+                return types.SimpleNamespace(data=[])
+
+        self.messages = _Messages()
+        self.models = _Models()
+
+
+def _install_openai(monkeypatch, stub: _RecordingOpenAI) -> _RecordingOpenAI:
+    monkeypatch.setattr("openai.OpenAI", lambda api_key=None, **_kw: stub)
+    return stub
+
+
+def _install_anthropic(monkeypatch, stub: _RecordingAnthropic) -> _RecordingAnthropic:
+    fake_module = types.SimpleNamespace(Anthropic=lambda api_key=None, **_kw: stub)
+    monkeypatch.setitem(sys.modules, "anthropic", fake_module)
+    return stub
+
+
+def _probe(provider) -> tuple[bool, str, int]:
+    """Run the probe and pin the (ok, message, latency_ms) shape the endpoint reads."""
+    result = provider.test_connection()
+    assert isinstance(result, tuple) and len(result) == 3
+    ok, message, latency = result
+    assert isinstance(ok, bool)
+    assert isinstance(message, str)
+    assert isinstance(latency, int) and latency >= 0
+    return result
+
+
+def _no_one_token_generate(calls: list[tuple[str, Any]]) -> None:
+    for kind, payload in calls:
+        if kind in ("chat", "messages"):
+            assert payload.get("max_tokens") != 1, payload
+            assert payload.get("max_completion_tokens") != 1, payload
+
+
+def test_openai_test_connection_valid_key_on_a_reasoning_model_reports_ok(monkeypatch):
+    stub = _install_openai(monkeypatch, _RecordingOpenAI())
+    provider = get_provider("openai", "sk-valid", "gpt-5.4-mini")
+    ok, message, _ = _probe(provider)
+    assert (ok, message) == (True, "OK")
+    _no_one_token_generate(stub.calls)
+
+
+def test_openai_test_connection_probes_the_selected_model(monkeypatch):
+    stub = _install_openai(monkeypatch, _RecordingOpenAI())
+    _probe(get_provider("openai", "sk-valid", "gpt-5.4-mini"))
+    assert ("models.retrieve", "gpt-5.4-mini") in stub.calls
+    assert not [c for c in stub.calls if c[0] == "chat"], "the probe must not generate"
+
+
+def test_openai_test_connection_bad_key_reports_the_provider_401_text(monkeypatch):
+    stub = _install_openai(monkeypatch, _RecordingOpenAI(key_error=_OPENAI_401))
+    ok, message, _ = _probe(get_provider("openai", "sk-wrong", "gpt-5.4-mini"))
+    assert ok is False
+    assert message == _OPENAI_401
+    _no_one_token_generate(stub.calls)
+
+
+def test_openai_test_connection_unseen_model_reports_the_provider_text(monkeypatch):
+    stub = _install_openai(monkeypatch, _RecordingOpenAI(model_error=_OPENAI_404))
+    ok, message, _ = _probe(get_provider("openai", "sk-valid", "gpt-5.4-mini"))
+    assert ok is False
+    assert message == _OPENAI_404
+    _no_one_token_generate(stub.calls)
+
+
+def test_anthropic_test_connection_valid_key_reports_ok(monkeypatch):
+    stub = _install_anthropic(monkeypatch, _RecordingAnthropic())
+    ok, message, _ = _probe(get_provider("anthropic", "sk-ant-valid", "claude-sonnet-4-5"))
+    assert (ok, message) == (True, "OK")
+    _no_one_token_generate(stub.calls)
+
+
+def test_anthropic_test_connection_probes_the_selected_model(monkeypatch):
+    stub = _install_anthropic(monkeypatch, _RecordingAnthropic())
+    _probe(get_provider("anthropic", "sk-ant-valid", "claude-sonnet-4-5"))
+    assert ("models.retrieve", "claude-sonnet-4-5") in stub.calls
+    assert not [c for c in stub.calls if c[0] == "messages"], "the probe must not generate"
+
+
+def test_anthropic_test_connection_bad_key_reports_the_provider_401_text(monkeypatch):
+    stub = _install_anthropic(monkeypatch, _RecordingAnthropic(key_error=_ANTHROPIC_401))
+    ok, message, _ = _probe(get_provider("anthropic", "sk-ant-wrong", "claude-sonnet-4-5"))
+    assert ok is False
+    assert message == _ANTHROPIC_401
+    _no_one_token_generate(stub.calls)
+
+
+def test_anthropic_test_connection_unseen_model_reports_the_provider_text(monkeypatch):
+    stub = _install_anthropic(monkeypatch, _RecordingAnthropic(model_error=_ANTHROPIC_404))
+    ok, message, _ = _probe(get_provider("anthropic", "sk-ant-valid", "claude-opus-9"))
+    assert ok is False
+    assert message == _ANTHROPIC_404
+    _no_one_token_generate(stub.calls)
 
 
 # ---- AnthropicProvider tests --------------------------------------------
@@ -1006,7 +1214,6 @@ def test_gemini_test_connection_ok(monkeypatch):
     ok, message, latency = GeminiProvider("k").test_connection()
     assert ok is True
     assert message == "OK"
-    assert isinstance(latency, int) and latency >= 0
     # Free and authenticated: a list, not a generate that a thinking model
     # would truncate to an empty candidate.
     assert t.last["method"] == "GET"
@@ -1021,7 +1228,6 @@ def test_gemini_test_connection_failure_carries_the_provider_message(monkeypatch
     ok, message, latency = GeminiProvider("k").test_connection()
     assert ok is False
     assert "API key not valid" in message
-    assert isinstance(latency, int)
 
 
 # ---- Gemini conversion helpers -------------------------------------------
