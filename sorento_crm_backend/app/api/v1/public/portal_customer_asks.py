@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.api.v1.public.portal import get_portal_token
 from app.database import get_db
 from app.models.portal import PortalToken
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.stock_ask import StockAskResponse, StockAskUpdate
 from app.services import price_tag_request_service, stock_ask_service
 from app.services.error_handler import AppException
@@ -41,7 +41,7 @@ def _agent_id(db: Session, token: PortalToken) -> str:
 @router.get("/customer-asks", response_model=ListResponse[StockAskResponse])
 def portal_list_customer_asks(
     page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=MAX_PAGE_LIMIT),
     q: Optional[str] = Query(None, max_length=100),
     state: Optional[Literal["open", "done"]] = Query(None),
     token: PortalToken = Depends(get_portal_token),
