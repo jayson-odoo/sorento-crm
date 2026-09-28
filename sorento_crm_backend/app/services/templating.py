@@ -105,6 +105,22 @@ def render_text(source: str, context: dict[str, Any]) -> str:
     return _render(_text_env, source, context)
 
 
+def _render_strict(env: SandboxedEnvironment, source: str, context: dict[str, Any]) -> str:
+    template = env.from_string(_unescape_jinja_tags(source or ""))
+    return template.render(**(context or {}))
+
+
+def render_html_strict(source: str, context: dict[str, Any]) -> str:
+    """Like `render_html`, but a template error RAISES instead of rendering
+    ``[template-error:...]`` - the email layout (email_layout.py) catches it and sends
+    its safe fallback, so the marker can never reach a recipient."""
+    return _render_strict(_html_env, source, context)
+
+
+def render_text_strict(source: str, context: dict[str, Any]) -> str:
+    return _render_strict(_text_env, source, context)
+
+
 _MARKDOWN_INLINE_LINK_RE = None
 
 
