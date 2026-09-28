@@ -911,4 +911,75 @@ describe('StockDebtCellDialog', () => {
     // Parked on its delivery date, the PO has no separate "bought for" to state.
     expect(within(row).queryByText(/bought for/)).not.toBeInTheDocument();
   });
+
+  it('reads a fully pinned order as Short 0, each row covered by its own PO line, Supply listing both (R43, #1346)', async () => {
+    // The owner's production case after #1332: SO419208 x CSK14A-NL, a 4 row and a 1,305
+    // row, PO 202609-S0029 line 2 (4) and line 3 (1,305) naming SO419208, past its date.
+    const poEntry = (line: number, lineId: string, qty: number) => ({
+      kind: 'po', ref: `PO 202609-S0029 line ${line}`, spo_number: null,
+      spo_line_number: null, qty, oi_number: null, oi_id: null,
+      po_number: '202609-S0029', po_line_number: line,
+      po_id: 'po-202609-S0029', po_line_id: lineId,
+    });
+    const demandRow = (qty: number, ordered: number, delivered: number, entry: object) =>
+      ({
+        so_number: 'SO419208',
+        agent_code: 'ERIC NG',
+        warehouse_code: 'BRW-BB',
+        required_date: '2026-09-14',
+        open_qty: qty,
+        qty_ordered: ordered,
+        qty_delivered: delivered,
+        assigned_qty: qty,
+        assigned_source: null,
+        status: 'pinned',
+        short_qty: 0,
+        sales_order_id: 'so-419208',
+        assigned_from: [entry],
+      }) as StockDebtDemandLine;
+    const supplyRow = (line: number, lineId: string, qty: number, soLine: number) =>
+      ({
+        kind: 'po', ref: `PO 202609-S0029 line ${line}`, spo_number: null,
+        spo_line_number: null, po_number: '202609-S0029', po_line_number: line,
+        po_id: 'po-202609-S0029', po_line_id: lineId, warehouse_code: 'BRW-BB',
+        date: '2026-09-10', stated_date: null, days_late: 0, bought_for: null, qty,
+        received_qty: 0, outstanding_qty: qty, free_qty: 0, overdue: true,
+        assigned_to: [{ so_number: 'SO419208', line_no: soLine, qty }],
+      }) as StockDebtSupplyEvent;
+    renderDialog({
+      demand: [
+        demandRow(4, 135, 131, poEntry(2, 'pol-2', 4)),
+        demandRow(1305, 1305, 0, poEntry(3, 'pol-3', 1305)),
+      ],
+      supply: [supplyRow(2, 'pol-2', 4, 1), supplyRow(3, 'pol-3', 1305, 2)],
+      demand_total_qty: 1309,
+      supply_total_qty: 1309,
+    } as StockDebtCell);
+
+    await screen.findByText('Short 0');
+    const rows = screen
+      .getAllByText('SO419208')
+      .map((cell) => cell.closest('tr') as HTMLElement);
+    expect(rows).toHaveLength(2);
+    const byOutstanding = (qty: string) =>
+      rows.find((row) => within(row).queryAllByText(qty).length > 0) as HTMLElement;
+    const row4 = byOutstanding('131');
+    const row1305 = rows.find((row) => row !== row4) as HTMLElement;
+    // Covered by: exactly the one PO line that gave the row its quantity.
+    expect(within(row4).getAllByTestId('document-detail-trigger-202609-S0029')).toHaveLength(1);
+    expect(within(row4).getByText('line 2')).toBeInTheDocument();
+    expect(within(row4).queryByText('line 3')).not.toBeInTheDocument();
+    expect(within(row1305).getAllByTestId('document-detail-trigger-202609-S0029')).toHaveLength(1);
+    expect(within(row1305).getByText('line 3')).toBeInTheDocument();
+    expect(within(row1305).queryByText('line 2')).not.toBeInTheDocument();
+    for (const row of rows) {
+      expect(within(row).getByText('pinned')).toBeInTheDocument();
+    }
+    // The Total row: Outstanding 1,309 and Assigned 1,309, beside Short 0 above.
+    expect(screen.getAllByText('1,309').length).toBeGreaterThanOrEqual(2);
+
+    switchTab('Supply (1,309)');
+    expect(await screen.findByText('SO419208 line 1 (4)')).toBeInTheDocument();
+    expect(screen.getByText('SO419208 line 2 (1,305)')).toBeInTheDocument();
+  });
 });
