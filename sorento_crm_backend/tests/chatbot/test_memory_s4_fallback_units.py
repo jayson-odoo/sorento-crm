@@ -252,10 +252,27 @@ class TestLevelsDecideWhatTheReplyReads:
 
 class TestHistoryRerun:
     def test_a_number_after_the_list_reruns_that_line_with_a_fresh_fetch(
-        self, session_factory, stub_access, lane
+        self, session_factory, stub_access, lane, monkeypatch
     ) -> None:
         """AC-MEM082, two turns: the list fetches nothing; "1" (the parser resolving the
-        line from the Previous response, recorded here) runs the stock lane fresh."""
+        line from the Previous response, recorded here) runs the stock lane fresh.
+
+        The resolver places SRTWC286 (integration round 5, merge of main b299bf6e):
+        #1301 slice 3 (F5) withholds the stock fetch for a code the resolver cannot
+        place, so the unplaced code this test used to send no longer reaches the tool on
+        either turn. Only the resolver is faked; the MCP stub the test grades is the
+        `lane` fixture's own."""
+        import uuid as uuid_mod
+
+        from app.services.chatbot import engine as engine_mod
+        from tests.chatbot.test_outstanding_lane import _resolve_services
+
+        match = {"uuid": str(uuid_mod.uuid4()), "entity_type": "product", "canonical_code": "SRTWC286"}
+        monkeypatch.setattr(
+            engine_mod.business_services,
+            "production_services",
+            lambda db, *, space_id=None: _resolve_services({"SRTWC286": match}),
+        )
         _seed_contact(session_factory, {}, level="full")
         _turn(session_factory, stub_access, "check stock srtwc286", STOCK, 0)
         lane.tool_calls.clear()
