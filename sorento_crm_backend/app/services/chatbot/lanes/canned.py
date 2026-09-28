@@ -120,6 +120,7 @@ def offer_hold_clarify_text(
     routing_roster_plan: Any,
     routing_companies: Any,
     copy: CannedCopy | None = None,
+    picker_shown: bool = True,
 ) -> str:
     """`offer-hold-reply.js` - the clarify ask, composed from the PERSISTED pool.
 
@@ -160,6 +161,11 @@ def offer_hold_clarify_text(
     else:
         lead = "More than one team is listed"
 
+    if names and not picker_shown:
+        # #865 round 6 (R4), n8n rev-3 copy branch: no numbered member list was shown, so
+        # the ask invites the company alone (the same sentence `escalation.
+        # clarify_company_reply` composes for this case).
+        return lead + f" - reply with the company ({' / '.join(jsc.js_string(n) for n in names)}) and I'll assign automatically."
     if names:
         return lead + canned.render("offer_hold", companies=" / ".join(bold))
     return lead + canned.render("offer_hold_no_companies")
@@ -198,6 +204,7 @@ def fragments_for(
                 routing_roster_plan=prev_variables.get("routing_roster_plan"),
                 routing_companies=prev_variables.get("routing_companies"),
                 copy=copy,
+                picker_shown=prev_variables.get("selection_context") == "member_offer",
             ),
         }
     return fragments
