@@ -766,7 +766,7 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
         ) : null}
         {sheets.length > 1 ? (
           <Tabs value={activeSheet} onValueChange={setActiveSheet} className="min-w-0 flex-1">
-            <TabsList variant="line" className="w-full justify-start overflow-x-auto">
+            <TabsList variant="line" className="w-full justify-start">
               <TabsTrigger value="all">{sheetTabLabel('All sheets', cardLines.length)}</TabsTrigger>
               {sheets.map((sheet) => (
                 <TabsTrigger key={sheet} value={sheet}>
