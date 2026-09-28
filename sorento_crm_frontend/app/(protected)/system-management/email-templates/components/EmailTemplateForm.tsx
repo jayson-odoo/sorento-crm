@@ -16,26 +16,27 @@ import { Label } from '@/components/ui/label';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  useCreateEmailTemplate,
-  useTemplateVariableCatalog,
-  useUpdateEmailTemplate,
-} from '../hooks/useEmailTemplates';
+import { useCreateEmailTemplate, useTemplateVariableCatalog } from '../hooks/useEmailTemplates';
 import type { EmailTemplate } from '../types/emailTemplate.types';
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  template?: EmailTemplate | null;
-  onSaved?: () => void;
+  onSaved?: (created: EmailTemplate) => void;
 }
 
-export default function EmailTemplateForm({ open, onOpenChange, template, onSaved }: Props) {
-  const isEdit = !!template;
+/**
+ * Create-only (S8): editing a template now happens in place on its own
+ * detail page (view/edit are the same layout there), so this dialog no
+ * longer takes a `template` prop to edit. Block-level authoring (order,
+ * per-block settings) also lives on the detail page after creation.
+ */
+export default function EmailTemplateForm({ open, onOpenChange, onSaved }: Props) {
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [subject, setSubject] = useState('');
+  const [preheader, setPreheader] = useState('');
   const [bodyHtml, setBodyHtml] = useState('');
   const [bodyText, setBodyText] = useState('');
   const [isActive, setIsActive] = useState(true);
@@ -43,29 +44,19 @@ export default function EmailTemplateForm({ open, onOpenChange, template, onSave
 
   const variables = useTemplateVariableCatalog();
   const createMut = useCreateEmailTemplate();
-  const updateMut = useUpdateEmailTemplate(template?.id ?? '');
-  const saving = createMut.isPending || updateMut.isPending;
+  const saving = createMut.isPending;
 
   useEffect(() => {
     if (!open) return;
-    if (template) {
-      setCode(template.code);
-      setName(template.name);
-      setDescription(template.description ?? '');
-      setSubject(template.subject);
-      setBodyHtml(template.body_html);
-      setBodyText(template.body_text ?? '');
-      setIsActive(template.is_active);
-    } else {
-      setCode('');
-      setName('');
-      setDescription('');
-      setSubject('');
-      setBodyHtml('');
-      setBodyText('');
-      setIsActive(true);
-    }
-  }, [open, template]);
+    setCode('');
+    setName('');
+    setDescription('');
+    setSubject('');
+    setPreheader('');
+    setBodyHtml('');
+    setBodyText('');
+    setIsActive(true);
+  }, [open]);
 
   const variableList = useMemo(() => variables.data?.variables ?? [], [variables.data]);
 
@@ -88,19 +79,15 @@ export default function EmailTemplateForm({ open, onOpenChange, template, onSave
       name: name.trim(),
       description: description.trim() || null,
       subject: subject.trim(),
+      preheader: preheader.trim() || null,
       body_html: bodyHtml,
       body_text: bodyText.trim() ? bodyText : null,
       is_active: isActive,
     };
     try {
-      if (isEdit && template) {
-        await updateMut.mutateAsync(payload);
-        toast.success('Email template updated');
-      } else {
-        await createMut.mutateAsync(payload);
-        toast.success('Email template created');
-      }
-      onSaved?.();
+      const created = await createMut.mutateAsync(payload);
+      toast.success('Email template created');
+      onSaved?.(created);
       onOpenChange(false);
     } catch (err) {
       toast.error((err as Error).message || 'Save failed');
@@ -111,7 +98,7 @@ export default function EmailTemplateForm({ open, onOpenChange, template, onSave
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl">
         <DialogHeader>
-          <DialogTitle>{isEdit ? 'Edit email template' : 'New email template'}</DialogTitle>
+          <DialogTitle>New email template</DialogTitle>
         </DialogHeader>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -122,7 +109,6 @@ export default function EmailTemplateForm({ open, onOpenChange, template, onSave
                 <Input
                   id="et-code"
                   value={code}
-                  disabled={isEdit}
                   onChange={(e) => setCode(e.target.value)}
                   placeholder="promo-expiry-reminder"
                 />
@@ -153,6 +139,15 @@ export default function EmailTemplateForm({ open, onOpenChange, template, onSave
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
                 placeholder="Promo {{ promotion.code }} expires on {{ promotion.end_date }}"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="et-preheader">Preheader</Label>
+              <Input
+                id="et-preheader"
+                value={preheader}
+                onChange={(e) => setPreheader(e.target.value)}
+                placeholder="Shown in the inbox list, under the subject"
               />
             </div>
             <div className="space-y-1">
@@ -207,7 +202,7 @@ export default function EmailTemplateForm({ open, onOpenChange, template, onSave
             Cancel
           </Button>
           <Button onClick={onSubmit} disabled={saving}>
-            {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create template'}
+            {saving ? 'Saving…' : 'Create template'}
           </Button>
         </DialogFooter>
       </DialogContent>
