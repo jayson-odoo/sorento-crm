@@ -2277,7 +2277,7 @@ def _run_stages(  # noqa: PLR0915
                 "close_reason": written_frame.close_reason,
                 "summary": written_frame.summary,
                 "trigger": close_trigger,
-                "domain": written_frame.domain,
+                "domain": getattr(written_frame, "domain", None),
             }
             if written_frame is not None
             else None

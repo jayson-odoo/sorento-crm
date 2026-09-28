@@ -337,7 +337,7 @@ def open_topic_domain(
 HISTORY_REPLY_LEAD = "Here is what I remember of our chats:"
 HISTORY_REPLY_NOW = "- Now: {summary}"
 HISTORY_REPLY_EARLIER = "- Earlier: {summary}"
-HISTORY_REPLY_TAIL = "Tell me which one to pick up and I will continue from there."
+HISTORY_REPLY_TAIL = "Tell me which one to pick up and I will carry on with it."
 HISTORY_REPLY_NOTHING = (
     "I do not have any earlier conversation with you on record yet. "
     "What would you like to check?"

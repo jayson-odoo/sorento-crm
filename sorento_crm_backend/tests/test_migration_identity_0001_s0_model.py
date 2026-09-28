@@ -98,7 +98,9 @@ def test_placement_check_survives_a_later_migration_stacked_on_top(tmp_path):
         "def downgrade():\n    pass\n"
     )
     script = _script(tmp_path)
-    assert script.get_heads() == ["zzt_0001_on_top_of_identity"]
+    # A head, not THE head: main's own chain above this migration (fin_0001 of
+    # #1314, a lane's memory chain) is a second head in this synthetic graph.
+    assert "zzt_0001_on_top_of_identity" in script.get_heads()
     _assert_placement(_load(), script)
 
 
