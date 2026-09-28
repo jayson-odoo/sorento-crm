@@ -2378,7 +2378,12 @@ def make_tool_runner(
         if isinstance(answered, dict):
             lane_out = outstanding_carry(lane_out, focus, answered)
         brand_names: list[str] = []
-        if domain == "order":
+        ranking = jsc.js_string(lane_out.get("order_status") or "").strip() == "top_selling"
+        if domain == "order" and not ranking:
+            # A top selling ranking narrows by its own brand (`focus.top_selling`'s
+            # `brand_ids`, `engine._top_selling_narrowing`); written onto this carry it
+            # outlived the ranking and filtered the next report by it (PR #1273, main
+            # merge: "sorento brand" in the ranking sent `brand_ids` to "can show me the DO").
             # #1262 fix lane round 3, B1-r2: the brand is a carried axis like the
             # customer. Resolved once here, sent as is (`run_fetch` takes these ids),
             # written back onto the focus so the next turn carries it, and named on

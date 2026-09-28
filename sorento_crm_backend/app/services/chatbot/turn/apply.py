@@ -1246,7 +1246,12 @@ def _top_selling_rules(
     asked = isinstance(order_status, str) and order_status.strip() == TOP_SELLING_STATUS
     names_its_ask = decision.starts_fresh or domain_in_message(verdict) is True
     hopped = isinstance(focus.top_selling, dict) and bool(focus.top_selling.get("hop"))
-    if was_ranking and not asked and verdict.get("status"):
+    if was_ranking and not asked:
+        # `_focus_rules` overwrote the status before this ran: the v3 `status` key
+        # ("outstanding"), and #1262's rule that a message with a domain word of its own
+        # states its own status or none ("can show me the DO" cleared it to None). The
+        # ranking decides below whether this message hops to a report, narrows it or
+        # leaves it (`new_ask_leaves_top_selling` writes the new status itself).
         focus.status = TOP_SELLING_STATUS
     if asked:
         focus.status = TOP_SELLING_STATUS
@@ -1432,6 +1437,7 @@ def _hop_to_report(focus: Focus, verdict: dict[str, Any], trace: Trace) -> None:
     for kind in ("category", "sales_agent", "brand"):
         focus.extra.pop(kind, None)
     focus.brands = []
+    focus.outstanding_brand_ids = []
     named = [
         e.get("hint")
         for e in (verdict.get("entities") or [])
