@@ -215,10 +215,12 @@ async def get_supplier_cost_lists(
     supplier_id: str,
     query: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    packaging: Optional[str] = Query(None),
     current_user: dict = Depends(require_permission("procurement.product_suppliers.view")),
     db: Session = Depends(get_db),
 ):
-    """Every linked product's dated cost lists for this supplier (#1288, contract 2.1)."""
+    """Every linked product's dated cost lists for this supplier, one entry per product and
+    packaging method (#1288, contract 2.1; round 8)."""
     from app.services.procurement.supplier_cost_service import list_cost_lists_for_supplier
 
-    return list_cost_lists_for_supplier(db, supplier_id, query=query, status=status)
+    return list_cost_lists_for_supplier(db, supplier_id, query=query, status=status, packaging=packaging)

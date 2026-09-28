@@ -135,7 +135,7 @@ def test_reader_keeps_the_verbatim_cell_alongside_the_cleaned_code():
     row = next(r for r in sheet.rows if r.supplier_code == "CB2500SS-BL")
 
     assert row.supplier_code_raw.strip() == CB2500_CODE_RAW
-    assert row.code_note == "彩盒"
+    assert row.packaging_method == "彩盒"  # round 8: the bracket is the packaging method
 
 
 # --------------------------------------------------------------------------------- AC-S1-05

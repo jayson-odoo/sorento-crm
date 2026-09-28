@@ -72,6 +72,11 @@ class ProductSupplierCost(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("cost_price_change_lines.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Round 8 (owner, 28 Sep 2026): a cost is per packaging method. `packaging_method` is the
+    # supplier's own words ("彩盒", "OPP"), `standard` for a plain code; `packaging_key` is it
+    # folded (`supplier_cost_service.packaging_key`), and `price_in_force` runs per key.
+    packaging_method = Column(String(255), nullable=False, server_default=text("'standard'"))
+    packaging_key = Column(String(255), nullable=False, server_default=text("'standard'"))
     created_by_user_id = Column(String, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
@@ -84,7 +89,10 @@ class ProductSupplierCost(Base, CompanyScopedMixin):
             "end_date IS NULL OR start_date IS NULL OR end_date >= start_date",
             name="ck_product_supplier_costs_end_after_start",
         ),
-        Index("ix_product_supplier_costs_link_start", "product_supplier_id", "start_date"),
+        Index(
+            "ix_product_supplier_costs_link_packaging",
+            "product_supplier_id", "packaging_key", "start_date",
+        ),
     )
 
 
@@ -187,7 +195,9 @@ class CostPriceChangeLine(Base):
 
     supplier_code_raw = Column(String(255), nullable=False)
     supplier_code = Column(String(255), nullable=False)
-    code_note = Column(String(255), nullable=True)
+    # The code's bracket text, as written (round 8; was `code_note`): part of the line's key.
+    packaging_method = Column(String(255), nullable=False, server_default=text("'standard'"))
+    packaging_key = Column(String(255), nullable=False, server_default=text("'standard'"))
     configuration = Column(Text, nullable=True)
 
     #: `configuration_from_merge`, `price_from_merge`, `duplicate_code`.

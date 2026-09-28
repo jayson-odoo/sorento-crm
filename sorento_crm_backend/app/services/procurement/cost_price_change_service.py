@@ -22,6 +22,11 @@ import app.services.scm.proforma_invoice_service as pi_service
 import app.services.scm.supplier_code_matcher as matcher
 from app.services.error_handler import AppException
 from app.services.pdf_render import today_in_malaysia
+from app.services.procurement.supplier_cost_service import (
+    STANDARD_PACKAGING,
+    current_cost,
+    packaging_key,
+)
 from app.services.procurement.supplier_price_list_reader import read_supplier_price_list
 from app.services.scm.currency_resolution import supplier_price_list_currency
 
@@ -205,21 +210,51 @@ def _match_codes(db: Session, supplier_id: Optional[str], codes: set[str]) -> di
     return out
 
 
-def _line_state_for(link, set_currency: str, new_price: Optional[Decimal], has_dates: bool) -> tuple[str, Optional[Decimal], Optional[str]]:
-    """`(line_state, current_unit_cost, current_currency)` for a MATCHED, priced code."""
+def _price_now(link, cost_rows: list, key: str) -> tuple[Optional[Decimal], Optional[str]]:
+    """The live price of ONE packaging on a link (round 8), as a line records it (AC-S1-09)
+    and as Apply re-checks it (AC-S2-06). A link with no cost list rows at all only has the
+    price some other writer set: that is its `standard` price, and no other packaging has one.
+    """
+    if link is None:
+        return None, None
+    if not cost_rows:
+        if key == STANDARD_PACKAGING:
+            return link.unit_cost, link.currency
+        return None, None
+    winner = current_cost(cost_rows, today_in_malaysia(), key)
+    return (winner.unit_cost, winner.currency) if winner is not None else (None, None)
+
+
+def _cost_rows_by_link(db: Session, link_ids) -> dict[str, list]:
+    from app.models.cost_price import ProductSupplierCost
+
+    out: dict[str, list] = {}
+    ids = [i for i in link_ids if i]
+    if not ids:
+        return out
+    for row in db.query(ProductSupplierCost).filter(ProductSupplierCost.product_supplier_id.in_(ids)).all():
+        out.setdefault(str(row.product_supplier_id), []).append(row)
+    return out
+
+
+def _line_state_for(
+    link, set_currency: str, new_price: Optional[Decimal], has_dates: bool,
+    current: tuple[Optional[Decimal], Optional[str]] = (None, None),
+) -> tuple[str, Optional[Decimal], Optional[str]]:
+    """`(line_state, current_unit_cost, current_currency)` for a MATCHED, priced code;
+    `current` is that line's packaging's live price (`_price_now`)."""
     if link is None:
         return "new_link", None, None
-    current_cost = link.unit_cost
-    current_currency = link.currency
+    current_cost_, current_currency = current
     if (
-        current_cost is not None
+        current_cost_ is not None
         and new_price is not None
-        and current_cost == new_price
+        and current_cost_ == new_price
         and (current_currency or None) == set_currency
         and not has_dates
     ):
-        return "unchanged", current_cost, current_currency
-    return "changed", current_cost, current_currency
+        return "unchanged", current_cost_, current_currency
+    return "changed", current_cost_, current_currency
 
 
 def _change_pct(current: Optional[Decimal], new: Optional[Decimal]) -> Optional[float]:
@@ -248,6 +283,7 @@ def _build_lines(db: Session, parsed, *, supplier_id: str, set_currency: str, ha
             .all()
         ):
             links_by_product[str(link.product_id)] = link
+    cost_rows = _cost_rows_by_link(db, [link.id for link in links_by_product.values()])
 
     lines: list[dict] = []
     for sheet_name, row in all_rows:
@@ -256,7 +292,8 @@ def _build_lines(db: Session, parsed, *, supplier_id: str, set_currency: str, ha
         match_outcome = match["outcome"] if match else "unmatched"
         match_rung = match["rung"] if match else None
 
-        current_cost = current_currency = None
+        key = packaging_key(row.packaging_method)
+        current_cost_ = current_currency = None
         line_state = "needs_attention"
         if row.price is None:
             line_state = "needs_attention"
@@ -264,8 +301,9 @@ def _build_lines(db: Session, parsed, *, supplier_id: str, set_currency: str, ha
             line_state = "needs_attention"
         else:
             link = links_by_product.get(str(product_id))
-            line_state, current_cost, current_currency = _line_state_for(
-                link, set_currency, row.price, has_dates
+            now = _price_now(link, cost_rows.get(str(link.id), []) if link else [], key)
+            line_state, current_cost_, current_currency = _line_state_for(
+                link, set_currency, row.price, has_dates, now
             )
 
         line = {
@@ -274,13 +312,14 @@ def _build_lines(db: Session, parsed, *, supplier_id: str, set_currency: str, ha
             "line_no": row.line_no,
             "supplier_code_raw": row.supplier_code_raw,
             "supplier_code": row.supplier_code,
-            "code_note": row.code_note,
+            "packaging_method": row.packaging_method,
+            "packaging_key": key,
             "configuration": row.configuration,
             "flags": set(row.flags),
             "match_outcome": match_outcome,
             "match_rung": match_rung,
             "product_id": product_id,
-            "current_unit_cost": current_cost,
+            "current_unit_cost": current_cost_,
             "current_currency": current_currency,
             "new_unit_cost": row.price,
             "line_state": line_state,
@@ -288,7 +327,8 @@ def _build_lines(db: Session, parsed, *, supplier_id: str, set_currency: str, ha
         lines.append(line)
 
     for group in _duplicate_groups(
-        lines, code=lambda ln: ln["supplier_code"], product=lambda ln: ln["product_id"]
+        lines, code=lambda ln: ln["supplier_code"], product=lambda ln: ln["product_id"],
+        packaging=lambda ln: ln["packaging_key"],
     ):
         used = choose_duplicate_row(group)
         for ln in group:
@@ -303,8 +343,9 @@ def _build_lines(db: Session, parsed, *, supplier_id: str, set_currency: str, ha
 
 # ------------------------------------------------------------------ duplicate codes (round 6)
 
-# A row that lost to another row of the same code: stored skipped, shown inline on the line
-# that was used (owner ruling of 28 Sep 2026, R6 of the round 6 work list on PR #1305).
+# A row that lost to another row of the same code AND packaging: stored skipped, shown inline
+# on the line that was used (owner ruling of 28 Sep 2026, R6 of the round 6 work list on PR
+# #1305, as amended in round 8: a different packaging is a different line, never a duplicate).
 DUPLICATE_ROW_FLAG = "duplicate_row"
 DUPLICATE_SKIP_REASON = "Duplicate code"
 
@@ -317,10 +358,12 @@ def choose_duplicate_row(rows: list):
     return rows[0]
 
 
-def _duplicate_groups(items: list, *, code, product) -> list[list]:
+def _duplicate_groups(items: list, *, code, product, packaging) -> list[list]:
     """Groups (each in the order of `items`, which is file order) of 2+ rows that land on
-    the same supplier code or the same product - the CRM keeps one cost per product per
-    set, so two codes bound to one product collapse the same way (AC-S1-10)."""
+    the same supplier code or the same product WITH THE SAME PACKAGING - the CRM keeps one
+    cost per product and packaging per set, so two codes bound to one product collapse the
+    same way (AC-S1-10 as amended in round 8). A plain code is the `standard` packaging, so
+    it never groups with a bracketed row of the same code."""
     parent = list(range(len(items)))
 
     def find(i: int) -> int:
@@ -332,12 +375,13 @@ def _duplicate_groups(items: list, *, code, product) -> list[list]:
     first_by_key: dict[tuple, int] = {}
     for i, item in enumerate(items):
         keys = []
+        pk = packaging(item) or STANDARD_PACKAGING
         c = code(item)
         if c:
-            keys.append(("code", c.upper()))
+            keys.append(("code", c.upper(), pk))
         p = product(item)
         if p:
-            keys.append(("product", str(p)))
+            keys.append(("product", str(p), pk))
         for key in keys:
             if key in first_by_key:
                 a, b = find(first_by_key[key]), find(i)
@@ -482,7 +526,8 @@ def upload(
             change_set_id=cs.id,
             sheet=line["sheet"], row_no=line["row_no"], line_no=line["line_no"],
             supplier_code_raw=line["supplier_code_raw"], supplier_code=line["supplier_code"],
-            code_note=line["code_note"], configuration=line["configuration"],
+            packaging_method=line["packaging_method"], packaging_key=line["packaging_key"],
+            configuration=line["configuration"],
             flags=sorted(line["flags"]),
             match_outcome=line["match_outcome"], match_rung=line["match_rung"],
             product_id=line["product_id"],
@@ -855,7 +900,7 @@ def list_sets(db: Session, *, page: int, limit: int, sort: str, dir: str, query:
 def _serialize_duplicate_row(line) -> dict:
     return {
         "id": _u(line.id), "sheet": line.sheet, "row_no": line.row_no,
-        "supplier_code": line.supplier_code, "code_note": line.code_note,
+        "supplier_code": line.supplier_code, "packaging_method": line.packaging_method,
         "new_unit_cost": float(line.new_unit_cost) if line.new_unit_cost is not None else None,
     }
 
@@ -867,7 +912,7 @@ def _serialize_line(db: Session, line, duplicate_rows: Optional[list] = None) ->
     return {
         "id": _u(line.id), "sheet": line.sheet, "row_no": line.row_no, "line_no": line.line_no,
         "supplier_code_raw": line.supplier_code_raw, "supplier_code": line.supplier_code,
-        "code_note": line.code_note, "configuration": line.configuration,
+        "packaging_method": line.packaging_method, "configuration": line.configuration,
         "flags": list(line.flags or []),
         "match_outcome": line.match_outcome, "match_rung": line.match_rung,
         "product": _serialize_product(product),
@@ -877,7 +922,7 @@ def _serialize_line(db: Session, line, duplicate_rows: Optional[list] = None) ->
         "change_pct": _change_pct(line.current_unit_cost, line.new_unit_cost),
         "line_state": line.line_state, "skipped": line.skipped, "skip_reason": line.skip_reason,
         "new_link_lead_time_days": line.new_link_lead_time_days,
-        # R6: the other rows of this line's code, shown inline on it ("吊卡 9.40 · OPP 9.90").
+        # R6: the other rows of this line's code and packaging, shown inline on it ("9.90").
         "duplicate_rows": [_serialize_duplicate_row(d) for d in (duplicate_rows or [])],
         "decision": line.decision, "decision_reason": line.decision_reason,
         "decided_by_name": _display_name(db, line.decided_by_user_id),
@@ -901,6 +946,7 @@ def get_lines(db: Session, set_id: str) -> dict:
     for group in _duplicate_groups(
         [ln for ln in lines if _in_duplicate_pool(ln)],
         code=lambda ln: ln.supplier_code, product=lambda ln: ln.product_id,
+        packaging=lambda ln: ln.packaging_key,
     ):
         used = next((ln for ln in group if DUPLICATE_ROW_FLAG not in (ln.flags or [])), group[0])
         rows_of[str(used.id)] = [ln for ln in group if ln is not used]
@@ -931,7 +977,10 @@ def _recompute_duplicates(db: Session, set_id: str) -> None:
     )
     pool = [ln for ln in lines if _in_duplicate_pool(ln)]
     grouped: dict[str, bool] = {}
-    for group in _duplicate_groups(pool, code=lambda ln: ln.supplier_code, product=lambda ln: ln.product_id):
+    for group in _duplicate_groups(
+        pool, code=lambda ln: ln.supplier_code, product=lambda ln: ln.product_id,
+        packaging=lambda ln: ln.packaging_key,
+    ):
         used = choose_duplicate_row(group)
         for ln in group:
             grouped[str(ln.id)] = ln is used
@@ -964,13 +1013,14 @@ def _recompute_line_price(db: Session, line, cs) -> None:
         .filter(ProductSupplier.supplier_id == cs.supplier_id, ProductSupplier.product_id == line.product_id)
         .first()
     )
+    rows = _cost_rows_by_link(db, [link.id]).get(str(link.id), []) if link else []
+    now = _price_now(link, rows, line.packaging_key)
     if line.new_unit_cost is None:
         line.line_state = "needs_attention"
-        line.current_unit_cost = link.unit_cost if link else None
-        line.current_currency = link.currency if link else None
+        line.current_unit_cost, line.current_currency = now
         return
     has_dates = bool(cs.start_date or cs.end_date)
-    state, cur_cost, cur_ccy = _line_state_for(link, cs.currency, line.new_unit_cost, has_dates)
+    state, cur_cost, cur_ccy = _line_state_for(link, cs.currency, line.new_unit_cost, has_dates, now)
     line.line_state = state
     line.current_unit_cost = cur_cost
     line.current_currency = cur_ccy
@@ -1390,7 +1440,10 @@ def apply(db: Session, set_id: str, current_user: dict, *, request: Optional[Req
         )
         links_by_line[str(ln.id)] = link
         if link is not None:
-            live_cost, live_currency = link.unit_cost, link.currency
+            # Round 8: the live price of THIS line's packaging, the same reader the line used.
+            live_cost, live_currency = _price_now(
+                link, _cost_rows_by_link(db, [link.id]).get(str(link.id), []), ln.packaging_key
+            )
             recorded_cost, recorded_currency = ln.current_unit_cost, ln.current_currency
             if live_cost != recorded_cost or (live_currency or None) != (recorded_currency or None):
                 stale.append((ln, live_cost, live_currency, recorded_cost, recorded_currency))
@@ -1407,6 +1460,7 @@ def apply(db: Session, set_id: str, current_user: dict, *, request: Optional[Req
                 "lines": [
                     {
                         "line_id": _u(ln.id), "supplier_code": ln.supplier_code,
+                        "packaging_method": ln.packaging_method,
                         "recorded_unit_cost": float(rc) if rc is not None else None,
                         "recorded_currency": rcc,
                         "live_unit_cost": float(lc) if lc is not None else None,
@@ -1428,8 +1482,14 @@ def apply(db: Session, set_id: str, current_user: dict, *, request: Optional[Req
         .all()
     } if lines else {}
     changes_summary = []
+    # Round 8: two packagings of one product new to this supplier share ONE new link
+    # (`uq_product_suppliers_product_id_supplier_id`).
+    created_links: dict[str, "ProductSupplier"] = {}
+    # Each link's price is refreshed once, after ALL its packagings are written: refreshed per
+    # line, a link would follow its first packaging while it was still the only one.
+    touched_links: dict[str, "ProductSupplier"] = {}
     for ln in lines:
-        link = links_by_line.get(str(ln.id))
+        link = links_by_line.get(str(ln.id)) or created_links.get(str(ln.product_id))
         if link is None:
             # R3: never blocks; a lead time an API caller set on the line still wins.
             lead_time = (
@@ -1443,14 +1503,16 @@ def apply(db: Session, set_id: str, current_user: dict, *, request: Optional[Req
             )
             db.add(link)
             db.flush()
+            created_links[str(ln.product_id)] = link
 
         db.add(ProductSupplierCost(
             product_supplier_id=link.id, unit_cost=ln.new_unit_cost, currency=cs.currency,
             start_date=cs.start_date, end_date=cs.end_date,
             source_change_line_id=ln.id, created_by_user_id=actor_id,
+            packaging_method=ln.packaging_method, packaging_key=ln.packaging_key,
         ))
         db.flush()
-        refresh_link(db, link)
+        touched_links[str(link.id)] = link
 
         if ln.match_outcome == "manual":
             # Nits (security review): UPSERT the manual alias - a line remapped by
@@ -1479,6 +1541,7 @@ def apply(db: Session, set_id: str, current_user: dict, *, request: Optional[Req
             # R6: which row of the file this cost came from.
             "sheet": ln.sheet, "row_no": ln.row_no,
             "supplier_code": ln.supplier_code,
+            "packaging_method": ln.packaging_method,
             "product_code": product_codes.get(str(ln.product_id)),
             "start_date": cs.start_date.isoformat() if cs.start_date else None,
             "end_date": cs.end_date.isoformat() if cs.end_date else None,
@@ -1486,6 +1549,9 @@ def apply(db: Session, set_id: str, current_user: dict, *, request: Optional[Req
             "new_unit_cost": float(ln.new_unit_cost) if ln.new_unit_cost is not None else None,
             "currency": cs.currency,
         })
+
+    for link in touched_links.values():
+        refresh_link(db, link)
 
     # The ladder-bound codes are remembered NOW, exactly as the PI apply does (plan section 6).
     ladder_codes = {ln.supplier_code for ln in lines if ln.match_outcome == "ladder"}

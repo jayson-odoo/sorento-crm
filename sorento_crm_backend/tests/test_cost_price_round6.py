@@ -6,7 +6,9 @@ Owner rulings of 28 Sep 2026 (the round 6 work list on PR #1305):
   most common value across its links, else null; Apply never blocks on lead time (AC-S2-05 as
   amended).
 - R6: rows with the same supplier code in one set collapse into ONE line carrying the FIRST
-  row's cost, the other rows' notes and costs riding on that line; Apply is not blocked by
+  row's cost, the other rows' costs riding on that line (round 8, owner 28 Sep 2026: only rows
+  of the same code AND the same packaging method; a different packaging is its own line, see
+  `test_cost_price_round8_packaging.py`); Apply is not blocked by
   duplicates, and the applied cost list records which row was used (AC-S1-10 as amended).
   The choice lives in one function, `choose_duplicate_row`, so a later ruling (lower cost,
   last row, per-line choice) is a one-function change.
@@ -39,17 +41,17 @@ def test_two_row_duplicate_collapses_to_the_first_row(cost_price_env):
     e = cost_price_env
     _, _, uploaded = _setup(
         e, "ZZCPC-R6-TWO",
-        [("ZZCPC-R6-TWO(吊卡)", "cfg", 9.40), ("ZZCPC-R6-TWO(OPP)", "cfg", 9.90)],
+        [("ZZCPC-R6-TWO(吊卡)", "cfg", 9.40), ("ZZCPC-R6-TWO(吊卡)", "cfg", 9.90)],
     )
     set_id = uploaded["id"]
 
     lines = e.lines(set_id).json()["data"]
     assert len(lines) == 1, lines
     (line,) = lines
-    assert line["code_note"] == "吊卡"
+    assert line["packaging_method"] == "吊卡"
     assert line["new_unit_cost"] == 9.40
     assert line["skipped"] is False
-    assert [(d["code_note"], d["new_unit_cost"]) for d in line["duplicate_rows"]] == [("OPP", 9.90)]
+    assert [(d["packaging_method"], d["new_unit_cost"]) for d in line["duplicate_rows"]] == [("吊卡", 9.90)]
     assert line["duplicate_rows"][0]["row_no"] == line["row_no"] + 1
 
     detail = e.detail(set_id).json()
@@ -66,7 +68,7 @@ def test_two_row_duplicate_applies_the_first_rows_cost_and_records_the_row(cost_
     e = cost_price_env
     supplier, product, uploaded = _setup(
         e, "ZZCPC-R6-APPLY",
-        [("ZZCPC-R6-APPLY(吊卡)", "cfg", 9.40), ("ZZCPC-R6-APPLY(OPP)", "cfg", 9.90)],
+        [("ZZCPC-R6-APPLY(吊卡)", "cfg", 9.40), ("ZZCPC-R6-APPLY(吊卡)", "cfg", 9.90)],
     )
     set_id = uploaded["id"]
     (line,) = e.lines(set_id).json()["data"]
@@ -112,8 +114,8 @@ def test_three_row_duplicate_collapses_to_the_first_row(cost_price_env):
         e, "ZZCPC-R6-THREE",
         [
             ("ZZCPC-R6-THREE(OPP)", "cfg", 9.90),
-            ("ZZCPC-R6-THREE(吊卡)", "cfg", 9.40),
-            ("ZZCPC-R6-THREE(彩盒)", "cfg", 11.00),
+            ("ZZCPC-R6-THREE(OPP)", "cfg", 9.40),
+            ("ZZCPC-R6-THREE(opp)", "cfg", 11.00),
         ],
     )
     set_id = uploaded["id"]
@@ -122,10 +124,10 @@ def test_three_row_duplicate_collapses_to_the_first_row(cost_price_env):
     assert len(lines) == 1, lines
     (line,) = lines
     first_row = line["row_no"]
-    assert (line["code_note"], line["new_unit_cost"]) == ("OPP", 9.90)
-    assert [(d["row_no"], d["code_note"], d["new_unit_cost"]) for d in line["duplicate_rows"]] == [
-        (first_row + 1, "吊卡", 9.40),
-        (first_row + 2, "彩盒", 11.00),
+    assert (line["packaging_method"], line["new_unit_cost"]) == ("OPP", 9.90)
+    assert [(d["row_no"], d["packaging_method"], d["new_unit_cost"]) for d in line["duplicate_rows"]] == [
+        (first_row + 1, "OPP", 9.40),
+        (first_row + 2, "opp", 11.00),
     ]
 
     r = e.apply(set_id)
@@ -140,8 +142,8 @@ def test_skipping_the_used_row_promotes_the_next_one(cost_price_env):
         e, "ZZCPC-R6-PROMOTE",
         [
             ("ZZCPC-R6-PROMOTE(A)", "cfg", 1.00),
-            ("ZZCPC-R6-PROMOTE(B)", "cfg", 2.00),
-            ("ZZCPC-R6-PROMOTE(C)", "cfg", 3.00),
+            ("ZZCPC-R6-PROMOTE(A)", "cfg", 2.00),
+            ("ZZCPC-R6-PROMOTE(A)", "cfg", 3.00),
         ],
     )
     set_id = uploaded["id"]
@@ -151,8 +153,8 @@ def test_skipping_the_used_row_promotes_the_next_one(cost_price_env):
 
     shown = [ln for ln in e.lines(set_id).json()["data"] if not ln["skipped"]]
     assert len(shown) == 1
-    assert (shown[0]["code_note"], shown[0]["new_unit_cost"]) == ("B", 2.00)
-    assert [d["code_note"] for d in shown[0]["duplicate_rows"]] == ["C"]
+    assert (shown[0]["row_no"], shown[0]["new_unit_cost"]) == (first["row_no"] + 1, 2.00)
+    assert [d["new_unit_cost"] for d in shown[0]["duplicate_rows"]] == [3.00]
 
 
 def test_the_choice_lives_in_one_function(cost_price_env, monkeypatch):
@@ -163,11 +165,11 @@ def test_the_choice_lives_in_one_function(cost_price_env, monkeypatch):
     e = cost_price_env
     _, _, uploaded = _setup(
         e, "ZZCPC-R6-LAST",
-        [("ZZCPC-R6-LAST(吊卡)", "cfg", 9.40), ("ZZCPC-R6-LAST(OPP)", "cfg", 9.90)],
+        [("ZZCPC-R6-LAST(吊卡)", "cfg", 9.40), ("ZZCPC-R6-LAST(吊卡)", "cfg", 9.90)],
     )
     (line,) = e.lines(uploaded["id"]).json()["data"]
-    assert (line["code_note"], line["new_unit_cost"]) == ("OPP", 9.90)
-    assert [d["code_note"] for d in line["duplicate_rows"]] == ["吊卡"]
+    assert line["new_unit_cost"] == 9.90
+    assert [d["new_unit_cost"] for d in line["duplicate_rows"]] == [9.40]
 
 
 # --------------------------------------------------------------------- R3, lead time

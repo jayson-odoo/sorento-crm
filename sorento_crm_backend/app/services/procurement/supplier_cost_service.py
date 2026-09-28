@@ -1,12 +1,16 @@
 """Cost lists: the price-in-force rule, hand edits and the daily tick (#1288, Lane A).
 
 `price_in_force` is the ONE definition of "which cost list row is live today" (plan section
-4.1) - nothing else re-spells the date rule. `product_suppliers.unit_cost`/`currency` are kept
+4.1) - nothing else re-spells the date rule. Round 8 (owner, 28 Sep 2026): a cost is per
+packaging method, so the rule runs over the rows of one packaging; `current_cost` is the
+reader every page uses, keyed by packaging. `product_suppliers.unit_cost`/`currency` are kept
 equal to its answer by this module alone, in the SAME transaction as whatever changed the cost
 lists (an apply, a hand edit, or the daily tick) - never computed by a reader.
 """
 from __future__ import annotations
 
+import re
+import unicodedata
 from datetime import date, datetime
 from typing import Iterable, Optional, Sequence
 
@@ -20,6 +24,49 @@ STATUS_IN_FORCE = "in_force"
 STATUS_SCHEDULED = "scheduled"
 STATUS_ENDED = "ended"
 STATUS_OVERRIDDEN = "overridden"
+
+#: The packaging of a code with no bracket (owner, 28 Sep 2026: "a code with no bracket yeah
+#: correct"). Stored as the method AND the key, so it never collides with a bracketed row.
+STANDARD_PACKAGING = "standard"
+
+
+def packaging_label(method: Optional[str]) -> str:
+    """The packaging as the supplier wrote it, trimmed; `standard` when there is none."""
+    text = re.sub(r"\s+", " ", str(method or "")).strip()
+    return text or STANDARD_PACKAGING
+
+
+def packaging_key(method: Optional[str]) -> str:
+    """The folded key a packaging is grouped by: NFKC, trimmed, inner whitespace collapsed,
+    case folded ("OPP", " opp " and fullwidth "ＯＰＰ" are one packaging). Migration
+    `cpc4_cost_packaging_method` carries a frozen copy of this rule."""
+    text = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", str(method or ""))).strip()
+    return text.casefold() or STANDARD_PACKAGING
+
+
+def _row_key(row) -> str:
+    return getattr(row, "packaging_key", None) or STANDARD_PACKAGING
+
+
+def current_cost(rows: Sequence, day: date, packaging: Optional[str] = None):
+    """THE current-cost reader (round 8, contract section 2.1): the row in force on `day` for
+    one packaging of one link. `rows` are the link's cost list rows.
+
+    - `packaging` given: that packaging's row in force (folded with `packaging_key`), else None.
+    - `packaging` None (a caller that has no packaging, such as the link's own `unit_cost`):
+      the `standard` line; when the link has no standard row at all but every row is in ONE
+      other packaging, that packaging (a supplier that only ever quotes "彩盒" still moves the
+      link's price); several packagings and no standard row: None, the caller keeps its price.
+    """
+    if packaging is not None:
+        key = packaging_key(packaging)
+        return price_in_force([r for r in rows if _row_key(r) == key], day)
+    standard = [r for r in rows if _row_key(r) == STANDARD_PACKAGING]
+    if standard:
+        return price_in_force(standard, day)
+    if len({_row_key(r) for r in rows}) == 1:
+        return price_in_force(rows, day)
+    return None
 
 
 def price_in_force(rows: Sequence, day: date):
@@ -42,7 +89,9 @@ def price_in_force(rows: Sequence, day: date):
 
 
 def cost_status(row, rows: Sequence, day: date) -> str:
-    """Which of the five statuses one row shows, given its siblings (contract section 2.1)."""
+    """Which of the five statuses one row shows, given its siblings (contract section 2.1).
+    Only siblings of the same packaging compete with it (round 8)."""
+    rows = [r for r in rows if _row_key(r) == _row_key(row)]
     if row.start_date is None and row.end_date is None:
         winner = price_in_force(rows, day)
         return STATUS_ALWAYS if winner is row else STATUS_OVERRIDDEN
@@ -72,7 +121,8 @@ def refresh_link(db: Session, link, day: Optional[date] = None) -> bool:
     if not rows:
         return False
 
-    winner = price_in_force(rows, day)
+    # Round 8: the link's own price is the standard line (see `current_cost`).
+    winner = current_cost(rows, day)
     if winner is None:
         return False
     new_cost = winner.unit_cost
@@ -189,9 +239,11 @@ def create_cost(db: Session, link_id: str, body: dict, current_user: dict):
     end_date = _parse_date_or_422(body.get("end_date"), field="end date")
     _validate_cost_body(unit_cost, body.get("currency"), start_date, end_date)
 
+    packaging = packaging_label(body.get("packaging_method"))
     row = ProductSupplierCost(
         product_supplier_id=link.id, unit_cost=unit_cost, currency=body.get("currency"),
         start_date=start_date, end_date=end_date, created_by_user_id=current_user.get("id"),
+        packaging_method=packaging, packaging_key=packaging_key(packaging),
     )
     db.add(row)
     db.flush()
@@ -201,6 +253,7 @@ def create_cost(db: Session, link_id: str, body: dict, current_user: dict):
         new_values={
             "event": "SUPPLIER_COST_LIST_EDIT",
             "unit_cost": float(unit_cost) if unit_cost is not None else None, "currency": row.currency,
+            "packaging_method": row.packaging_method,
         },
         user_id=current_user.get("id"),
     )
@@ -266,6 +319,7 @@ def _serialize_cost_row(row, siblings: Sequence, today: date, sources: Optional[
         sources = _sources_for(object_session(row), [row])
     return {
         "id": str(row.id),
+        "packaging_method": getattr(row, "packaging_method", None) or STANDARD_PACKAGING,
         "unit_cost": float(row.unit_cost) if row.unit_cost is not None else None,
         "currency": row.currency,
         "start_date": row.start_date.isoformat() if row.start_date else None,
@@ -308,7 +362,7 @@ def costs_for_link(db: Session, link_id: str, *, today: Optional[date] = None) -
     rows = (
         db.query(ProductSupplierCost)
         .filter(ProductSupplierCost.product_supplier_id == link_id)
-        .order_by(ProductSupplierCost.start_date.asc().nullsfirst())
+        .order_by(ProductSupplierCost.packaging_key.asc(), ProductSupplierCost.start_date.asc().nullsfirst())
         .all()
     )
     sources = _sources_for(db, rows)
@@ -316,11 +370,16 @@ def costs_for_link(db: Session, link_id: str, *, today: Optional[date] = None) -
 
 
 def list_cost_lists_for_supplier(
-    db: Session, supplier_id: str, *, query: Optional[str] = None, status: Optional[str] = None
+    db: Session, supplier_id: str, *, query: Optional[str] = None, status: Optional[str] = None,
+    packaging: Optional[str] = None,
 ) -> dict:
-    """The supplier's Prices tab. A fixed handful of queries whatever the link count (Nit 3
+    """The supplier's Costs tab. A fixed handful of queries whatever the link count (Nit 3
     of the review at 232e5706: it used to run three per link). `query` matches the product
-    code, the description or this supplier's own code for the product (AC-CL-07)."""
+    code, the description or this supplier's own code for the product (AC-CL-07).
+
+    Round 8: one entry per link AND packaging method (a link with no cost rows is one
+    `standard` entry); `packaging` is a comma list matched on the folded key, and
+    `packaging_options` lists every packaging this supplier's cost lists carry, unfiltered."""
     from sqlalchemy import or_
 
     from app.models.cost_price import ProductSupplierCost
@@ -330,6 +389,18 @@ def list_cost_lists_for_supplier(
 
     today = today_in_malaysia()
     statuses = {s.strip() for s in (status or "").split(",") if s.strip()}
+    packaging_keys = {packaging_key(p) for p in (packaging or "").split(",") if p.strip()}
+
+    options: dict[str, str] = {}
+    for method, key in (
+        db.query(ProductSupplierCost.packaging_method, ProductSupplierCost.packaging_key)
+        .join(ProductSupplier, ProductSupplier.id == ProductSupplierCost.product_supplier_id)
+        .filter(ProductSupplier.supplier_id == supplier_id)
+        .order_by(ProductSupplierCost.created_at.desc())
+        .all()
+    ):
+        options.setdefault(key, method)  # newest spelling wins
+    packaging_options = sorted(options.values(), key=lambda m: (packaging_key(m) != STANDARD_PACKAGING, m))
 
     q = (
         db.query(ProductSupplier, Product)
@@ -352,7 +423,7 @@ def list_cost_lists_for_supplier(
         ))
     pairs = q.all()
     if not pairs:
-        return {"data": [], "today": today.isoformat()}
+        return {"data": [], "today": today.isoformat(), "packaging_options": packaging_options}
 
     link_ids = [link.id for link, _ in pairs]
     rows_by_link: dict[str, list] = {}
@@ -380,18 +451,38 @@ def list_cost_lists_for_supplier(
     data = []
     for link, product in pairs:
         rows = rows_by_link.get(str(link.id), [])
-        costs = [_serialize_cost_row(r, rows, today, sources) for r in rows]
-        if statuses and not any(c["status"] in statuses for c in costs):
-            continue
-        data.append({
-            "product_supplier_id": str(link.id),
-            "product": {
-                "id": str(product.id), "product_code": product.product_code,
-                "description": product.product_name,
-            },
-            "supplier_code": alias_by_product.get(str(product.id)),
-            "unit_cost": float(link.unit_cost) if link.unit_cost is not None else None,
-            "currency": link.currency,
-            "costs": costs,
-        })
-    return {"data": data, "today": today.isoformat()}
+        groups: dict[str, list] = {}
+        for r in rows:
+            groups.setdefault(_row_key(r), []).append(r)
+        if not groups:
+            groups[STANDARD_PACKAGING] = []
+        # Standard first, then the supplier's own words in order.
+        for key in sorted(groups, key=lambda k: (k != STANDARD_PACKAGING, k)):
+            if packaging_keys and key not in packaging_keys:
+                continue
+            group = groups[key]
+            costs = [_serialize_cost_row(r, rows, today, sources) for r in group]
+            if statuses and not any(c["status"] in statuses for c in costs):
+                continue
+            if group:
+                live = current_cost(group, today, key)
+                unit_cost = live.unit_cost if live is not None else None
+                currency = live.currency if live is not None else group[-1].currency
+                method = max(group, key=lambda r: r.created_at or datetime.min).packaging_method
+            else:
+                # A link with no cost rows: its price is whatever a non-cost-list writer set.
+                unit_cost, currency, method = link.unit_cost, link.currency, STANDARD_PACKAGING
+            data.append({
+                "product_supplier_id": str(link.id),
+                "packaging_method": method,
+                "packaging_key": key,
+                "product": {
+                    "id": str(product.id), "product_code": product.product_code,
+                    "description": product.product_name,
+                },
+                "supplier_code": alias_by_product.get(str(product.id)),
+                "unit_cost": float(unit_cost) if unit_cost is not None else None,
+                "currency": currency,
+                "costs": costs,
+            })
+    return {"data": data, "today": today.isoformat(), "packaging_options": packaging_options}

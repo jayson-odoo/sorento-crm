@@ -21,6 +21,7 @@ from typing import Optional
 import openpyxl
 
 from app.services.error_handler import AppException
+from app.services.procurement.supplier_cost_service import packaging_label
 from app.services.scm.currency_resolution import currency_from_text
 
 _MAX_FILE_BYTES = 25 * 1024 * 1024
@@ -70,7 +71,8 @@ class PriceListRow:
     line_no: Optional[str]
     supplier_code_raw: str
     supplier_code: str
-    code_note: Optional[str]
+    #: The code's bracket text as written ("彩盒"), `standard` for a plain code (round 8).
+    packaging_method: str
     configuration: Optional[str]
     price: Optional[Decimal]
     flags: set[str] = field(default_factory=set)
@@ -115,8 +117,9 @@ def _header_field(value) -> Optional[str]:
 
 
 def clean_code(raw) -> tuple[str, Optional[str]]:
-    """NFKC-fold, trim, collapse inner whitespace, split one trailing bracket group off as
-    `code_note` (AC-S1-04). The bracket is shown, never matched."""
+    """NFKC-fold, trim, collapse inner whitespace, split one trailing bracket group off
+    (AC-S1-04). The bracket text is the row's packaging method (round 8): part of the line's
+    key, never used to match the product."""
     if raw is None:
         return "", None
     text = unicodedata.normalize("NFKC", str(raw)).strip()
@@ -333,7 +336,7 @@ def read_supplier_price_list(data: bytes, filename: str) -> PriceListRead:
                 if price_source is not None:
                     flags.add("price_from_merge")
 
-            supplier_code, code_note = clean_code(code_raw)
+            supplier_code, bracket = clean_code(code_raw)
             price = clean_price(price_source)
 
             if not supplier_code and price is None:
@@ -354,7 +357,7 @@ def read_supplier_price_list(data: bytes, filename: str) -> PriceListRead:
                     line_no=(str(line_no_raw).strip() if line_no_raw not in (None, "") else None),
                     supplier_code_raw=str(code_raw) if code_raw is not None else "",
                     supplier_code=supplier_code,
-                    code_note=code_note,
+                    packaging_method=packaging_label(bracket),
                     configuration=(str(desc_raw).strip() if desc_raw not in (None, "") else None),
                     price=price,
                     flags=flags,

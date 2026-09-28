@@ -180,6 +180,8 @@ class ProductSupplierCostCreate(BaseModel):
     currency: str = Field(min_length=3, max_length=3)
     start_date: Optional[date] = None
     end_date: Optional[date] = None
+    # Round 8: the packaging this cost is for, free text; empty or absent is `standard`.
+    packaging_method: Optional[str] = Field(default=None, max_length=255)
 
 
 class ProductSupplierCostUpdate(BaseModel):
