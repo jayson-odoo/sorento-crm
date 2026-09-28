@@ -284,7 +284,8 @@ class TestContractAC1:
         res = env.client.get(CONTRACT_URL)
         assert res.status_code == 200, res.text
         body = res.json()
-        assert body["version"] == "2.5", body["version"]
+        # Bumped again (finance S0, #1309): "2.6" adds `billing_documents`.
+        assert body["version"] == "2.6", body["version"]
         assert "stock_balances" in body["entities"]
         assert "warehouse_inactive" in body["warnings"]
         assert "stock_balances" in body["fields_added"]
@@ -1932,7 +1933,13 @@ class TestFixturesAC20:
         res = env.client.get(CONTRACT_URL)
         assert res.status_code == 200, res.text
         body = res.json()
-        assert body["version"] == expected["version"]
+        # The fixture is a recording of 2.5 and stays one; a later point release is additive
+        # (finance S0 made it "2.6"), so what the recording pins is that 2.5's surface below
+        # still holds, on 2.5 or on anything after it.
+        def _version(value: str) -> tuple[int, ...]:
+            return tuple(int(part) for part in value.split("."))
+
+        assert _version(body["version"]) >= _version(expected["version"])
         assert "stock_balances" in body["entities"]
         assert "warehouse_inactive" in body["warnings"]
         # Set comparison, not exact list equality (`fields_added` order
