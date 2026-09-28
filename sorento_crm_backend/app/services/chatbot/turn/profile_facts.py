@@ -244,20 +244,35 @@ def _write_fact(
 # --------------------------------------------------------------------------- #
 
 
-def crm_view(db: Session, contact: Any) -> list[dict[str, Any]]:
-    """`customer`, `segment`, `salesperson` off the primary linked customer, read
-    fresh every call - a changed salesperson shows up on the very next read, and
-    none of these three is ever written into `chatbot_profile.facts`."""
-    row = (
+def primary_customer(db: Session, contact_pk: str) -> tuple[Any, Any] | None:
+    """`(Customer, SalesAgent | None)` off the contact's primary customer link, read
+    live, or None when the contact is linked to no customer. The graceful fallback
+    names both (S4: example 6's offer, a commercial handover's salesperson)."""
+    return (
         db.query(Customer, SalesAgent)
         .join(RespondContactCustomer, RespondContactCustomer.customer_id == Customer.id)
         .outerjoin(SalesAgent, SalesAgent.id == Customer.sales_agent_id)
         .filter(
-            RespondContactCustomer.contact_id == contact.id,
+            RespondContactCustomer.contact_id == contact_pk,
             RespondContactCustomer.is_primary.is_(True),
         )
         .first()
     )
+
+
+def salesperson_name(agent: Any) -> str | None:
+    """The name a dealer knows the salesperson by: the person label, else the
+    AutoCount agent code. None for an inactive or missing agent."""
+    if agent is None or getattr(agent, "is_active", True) is False:
+        return None
+    return (getattr(agent, "person_label", None) or getattr(agent, "sales_agent", None) or "").strip() or None
+
+
+def crm_view(db: Session, contact: Any) -> list[dict[str, Any]]:
+    """`customer`, `segment`, `salesperson` off the primary linked customer, read
+    fresh every call - a changed salesperson shows up on the very next read, and
+    none of these three is ever written into `chatbot_profile.facts`."""
+    row = primary_customer(db, contact.id)
     if row is None:
         return []
     customer, agent = row

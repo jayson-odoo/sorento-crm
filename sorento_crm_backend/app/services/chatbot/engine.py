@@ -50,6 +50,7 @@ from app.services.chatbot.head import parser
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
+from app.services.chatbot.lanes import fallback as fallback_mod
 from app.services.chatbot.lanes.escalation import run as run_escalation_lane, routing_line as escalation_routing_line
 from app.services.chatbot.lanes.business import resolve_gate, services as business_services
 from app.services.chatbot.usage import record_parser_usage
@@ -1402,6 +1403,229 @@ def _memory_intake_resolved(
     }
 
 
+def _fact_value(facts: list[dict[str, Any]] | None, key: str) -> Any:
+    for fact in facts or []:
+        if isinstance(fact, dict) and fact.get("key") == key:
+            return fact.get("value")
+    return None
+
+
+def _as_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _live_customer(db: Session, contact_pk: str | None) -> tuple[str | None, str | None]:
+    """The contact's primary customer name and its salesperson, read live off the CRM
+    link (never memory, so every level reads it; plan 7.3 examples 4 and 6)."""
+    if not contact_pk:
+        return None, None
+    row = profile_facts_mod.primary_customer(db, contact_pk)
+    if row is None:
+        return None, None
+    customer, agent = row
+    return (customer.customer_name or None), profile_facts_mod.salesperson_name(agent)
+
+
+def _clarifier_memory_slice(memory_intake: dict[str, Any]) -> str:
+    """The clarifier's view of memory (plan S4): the profile slice (Full only) and the
+    conversation summaries (Past conversations and Full), under
+    `fallback.CLARIFIER_MEMORY_TOKENS`, oldest summaries dropped first. Empty at
+    Off and at "This conversation"."""
+    from app.services.chatbot.lanes import fallback as fallback_mod
+
+    lines: list[str] = []
+    facts = memory_intake.get("profile_facts") or []
+    if facts:
+        lines.append(
+            "About this contact: "
+            + "; ".join(f"{f.get('key', '').replace('_', ' ')} {f.get('value')}" for f in facts if isinstance(f, dict))
+        )
+    summaries = list(memory_intake.get("summaries") or [])
+    while True:
+        block = lines + ([f"Recent conversations: {' | '.join(summaries)}"] if summaries else [])
+        text_value = "\n".join(block)
+        if context_mod.est_tokens(text_value) <= fallback_mod.CLARIFIER_MEMORY_TOKENS or not (summaries or lines):
+            return text_value
+        if summaries:
+            summaries.pop()  # newest-first, so the oldest goes first
+        else:
+            lines = []
+
+
+def _fallback_context(
+    db: Session,
+    *,
+    verdict: dict[str, Any],
+    memory_intake: dict[str, Any],
+    contact_respond_id: str,
+    dry_run: bool,
+    turn_id: str,
+    policy: Any,
+) -> Any:
+    """Everything the graceful fallback reply needs from the database, read while the
+    routing session is still open (S4, plan 7.1 and 7.2). Each memory field is filled
+    only when the contact's level grants its layer (plan 6.0): the open conversation at
+    "This conversation" and above, closed conversations at "Past conversations" and
+    above, profile facts (usual products and site, saved language) at Full only. The
+    CRM link (customer, the order team) is live data, read at every level."""
+    from app.models.access import RespondContact
+    from app.services.chatbot import copy as copy_mod
+    from app.services.chatbot.lanes import fallback as fallback_mod
+    from app.services.chatbot.tail.outcome import pretty_team
+
+    level = memory_intake.get("effective_level") or "off"
+    message_type = verdict.get("message_type")
+    if message_type == "history_question" and level != "off":
+        kind = "history"
+    elif message_type == "unknown":
+        kind = "unknown"
+    else:
+        kind = "small_talk"
+
+    history = memory_mod.history_items(
+        db,
+        contact_respond_id=contact_respond_id,
+        is_test=dry_run,
+        current_turn_id=turn_id,
+        level=level,
+    )
+    facts = memory_intake.get("profile_facts") if level == "full" else None
+    usual_sites = _as_list(_fact_value(facts, "usual_sites"))
+
+    contact_pk = memory_intake.get("contact_pk")
+    customer, _salesperson = _live_customer(db, contact_pk)
+    first_name = None
+    if contact_pk:
+        first_name = db.query(RespondContact.first_name).filter(RespondContact.id == contact_pk).scalar()
+    order_domain = policy.domain("order") if policy is not None else None
+    team_code = getattr(order_domain, "escalation_team_code", None)
+
+    statements = verdict.get("profile_statements")
+    noted = [
+        s
+        for s in (statements[:3] if isinstance(statements, list) else [])
+        if isinstance(s, dict) and s.get("key") in profile_facts_mod.VOCABULARY
+    ]
+    saved_language = _fact_value(facts, "language")
+
+    return fallback_mod.FallbackContext(
+        kind=kind,
+        level=level,
+        history=history if kind == "history" else [],
+        last_time=history[0] if history else None,
+        usual_products=_as_list(_fact_value(facts, "usual_products")),
+        usual_site=usual_sites[0] if usual_sites else None,
+        customer=customer,
+        team=pretty_team(team_code).title() if team_code else None,
+        noted=noted,
+        saved_language=saved_language if isinstance(saved_language, str) else None,
+        first_name=(first_name or "").strip() or None,
+        memory_slice=_clarifier_memory_slice(memory_intake) if level in ("episodes", "full") else "",
+        copy=copy_mod.resolve(db),
+    )
+
+
+def _carried_line(
+    db: Session,
+    *,
+    verdict: dict[str, Any],
+    memory_intake: dict[str, Any],
+    contact_respond_id: str,
+    dry_run: bool,
+) -> str | None:
+    """AC-MEM083: a business answer whose subject the parser carried from memory (every
+    entity `current_message: false`, none in the live conversation) opens with one line
+    naming what was carried - from a closed conversation ("Carrying on from Tue 23 Sep:
+    outstanding DO for CC001 Chin Chun Trading."), else from the usual products ("Your
+    usual: SRTWB1455, M486-75-BL."). None when nothing came from memory."""
+    from app.models.conversation_frame import ConversationFrame
+    from app.services.chatbot import copy as copy_mod
+
+    level = memory_intake.get("effective_level") or "off"
+    if level not in ("episodes", "full"):
+        return None
+    entities = [e for e in (verdict.get("entities") or []) if isinstance(e, dict)]
+    if not entities or any(e.get("current_message") is not False for e in entities):
+        return None
+    codes = [str(e.get("canonical_code") or e.get("raw") or "").strip() for e in entities]
+    codes = [c for c in codes if c]
+    if not codes:
+        return None
+    earlier = " ".join(str(m.get("text") or "") for m in memory_intake.get("earlier_messages") or []).upper()
+    if all(c.upper() in earlier for c in codes):
+        return None  # carried from THIS conversation, not from memory
+
+    facts = memory_intake.get("profile_facts") if level == "full" else None
+    language = _fact_value(facts, "language")
+    canned = copy_mod.resolve(db)
+
+    # "The usual" first: a code set the profile names as usual is carried from there
+    # even when an older conversation also named it.
+    usual = [p.upper() for p in _as_list(_fact_value(facts, "usual_products"))]
+    if usual and all(c.upper() in usual for c in codes):
+        return canned.render_in("carried_usual", language, products=", ".join(codes))
+    frames = (
+        db.query(ConversationFrame)
+        .filter(
+            ConversationFrame.contact_respond_id == contact_respond_id,
+            ConversationFrame.is_test.is_(dry_run),
+            ConversationFrame.status == "closed",
+        )
+        .order_by(ConversationFrame.last_activity_at.desc())
+        .limit(3)
+        .all()
+    )
+    for frame in frames:
+        summary = frame.summary or ""
+        if not all(c.upper() in summary.upper() for c in codes):
+            continue
+        head, _, body = summary.partition(": ")
+        clause = next((part for part in body.split("; ") if codes[0].upper() in part.upper()), body)
+        subject = clause.split(" (")[0].strip().rstrip(".")
+        day = head.split(",")[0].strip() if body else _short_day_time(frame.last_activity_at)
+        if subject:
+            return canned.render_in("carried_episode", language, day=day, subject=subject)
+
+    return None
+
+
+def _handover_context(
+    db: Session,
+    *,
+    verdict: dict[str, Any],
+    memory_intake: dict[str, Any],
+    contact_respond_id: str,
+    dry_run: bool,
+    turn_id: str,
+) -> dict[str, Any]:
+    """What a handover adds to the escalation lane's own actions (AC-MEM087/088): the
+    linked salesperson for a commercial ask (the parser's `intent_hint:
+    commercial_request`), and the live conversation's summary line for the person who
+    picks it up (at "This conversation" and above)."""
+    level = memory_intake.get("effective_level") or "off"
+    salesperson = None
+    if verdict.get("intent_hint") == "commercial_request":
+        _customer, salesperson = _live_customer(db, memory_intake.get("contact_pk"))
+    summary = None
+    if level != "off":
+        summary = memory_mod.open_summary(
+            db, contact_respond_id=contact_respond_id, is_test=dry_run, current_turn_id=turn_id
+        )
+    facts = memory_intake.get("profile_facts") if level == "full" else None
+    from app.services.chatbot import copy as copy_mod
+
+    return {
+        "salesperson": salesperson,
+        "summary": summary,
+        "language": _fact_value(facts, "language"),
+        "copy": copy_mod.resolve(db) if salesperson else None,
+    }
+
+
 def _profile_snapshot(contact_row: Any) -> dict[str, Any] | None:
     """What the `memory` event shows of the contact's profile: the saved fact count,
     tier and language, off one `respond_contacts` row."""
@@ -2189,27 +2413,49 @@ def _run_stages(  # noqa: PLR0915
         else:
             branch_kind = turn_route(plan)
 
-        # Fix lane round 3 (R3): with memory on, a history question ("what did I
-        # ask") gets lane A's graceful fallback naming what memory holds, never the
-        # clarifier's small talk or the domain menu. The full list reply is S4.
-        history_reply_text: str | None = None
-        if (
-            verdict.get("message_type") == "history_question"
-            and memory_intake["effective_level"] != "off"
-            and branch_kind in ("low_signal", "clarify_menu")
-            and plan.ask is None
-        ):
+        # S4 graceful fallback (plan 7.1 and 7.2): every `low_signal` reply is
+        # `ack + memory_line + offer`, and a history question is one of them (routed
+        # here by `apply._lane`). Everything the reply reads from the database is read
+        # now, while this session is open; the clarifier call runs without one.
+        fallback_ctx: Any = None
+        if branch_kind == "low_signal":
             try:
-                history_reply_text = memory_mod.history_reply(
+                fallback_ctx = _fallback_context(
                     db,
+                    verdict=verdict,
+                    memory_intake=memory_intake,
                     contact_respond_id=contact_respond_id,
-                    is_test=dry_run,
-                    current_turn_id=turn_id,
+                    dry_run=dry_run,
+                    turn_id=turn_id,
+                    policy=policy,
                 )
-            except Exception:  # noqa: BLE001 - the clarifier still answers
-                logger.warning("chatbot: the history reply did not build", exc_info=True)
-            if history_reply_text is not None:
-                branch_kind = "low_signal"
+            except Exception:  # noqa: BLE001 - the clarifier still answers, memory-less
+                logger.warning("chatbot: the fallback context did not build", exc_info=True)
+        # AC-MEM083: a business answer carried from memory names what it carried.
+        if branch_kind in ("business_query", "check_promotion"):
+            try:
+                remembered_before["_carried_line"] = _carried_line(
+                    db,
+                    verdict=verdict,
+                    memory_intake=memory_intake,
+                    contact_respond_id=contact_respond_id,
+                    dry_run=dry_run,
+                )
+            except Exception:  # noqa: BLE001 - the answer stands without the line
+                logger.warning("chatbot: the carried line did not build", exc_info=True)
+        # AC-MEM087/088: who a handover names, and what it carries to them.
+        if branch_kind == "out_of_scope":
+            try:
+                remembered_before["_handover"] = _handover_context(
+                    db,
+                    verdict=verdict,
+                    memory_intake=memory_intake,
+                    contact_respond_id=contact_respond_id,
+                    dry_run=dry_run,
+                    turn_id=turn_id,
+                )
+            except Exception:  # noqa: BLE001 - the lane's own handover stands
+                logger.warning("chatbot: the handover context did not build", exc_info=True)
         item = _stamp_item(access, branch_kind, {})
 
         # Owner ruling, hand pass 10 (21 Sep 2026, `test_rearch_r10_handpass10_
@@ -2385,7 +2631,7 @@ def _run_stages(  # noqa: PLR0915
         clarifier_prompt: dict[str, Any] | None = None
         clarifier_config: Any = None
         clarifier_setup_error: str | None = None
-        if branch_kind == "low_signal" and completes_here and history_reply_text is None:
+        if branch_kind == "low_signal" and completes_here:
             try:
                 resolved_for_prompt = casual.resolve_for_prompt(db, ctx=ctx)
                 clarifier_prompt = casual.construct_user_prompt(ctx, resolved_for_prompt)
@@ -3246,7 +3492,7 @@ def _run_stages(  # noqa: PLR0915
             remembered_before=remembered_before,
             contact_respond_id=contact_respond_id,
             recalled=recalled,
-            fixed_reply=history_reply_text,
+            fallback=fallback_ctx,
         )
 
     return TurnResult(
@@ -3379,6 +3625,11 @@ def _run_answer(
     turn's memory must not depend on which of them ran - the `Answer` carries the text,
     the actions and the question, and this writes exactly that.
     """
+    # AC-MEM083 (S4): an answer whose subject was carried from memory opens with the
+    # one line naming what was carried, built in `_carried_line` before the fetch.
+    carried = remembered_before.get("_carried_line")
+    if carried and (getattr(answer, "text", "") or "").strip():
+        answer = dataclasses_replace(answer, text=f"{carried}\n\n{answer.text}")
     stage[0] = "replied"
     reply = {
         **_reply_of(answer),
@@ -4086,12 +4337,15 @@ def _run_casual_lane(
     remembered_before: dict[str, Any] | None = None,
     contact_respond_id: str | None = None,
     recalled: list[dict[str, Any]] | None = None,
-    fixed_reply: str | None = None,
+    fallback: Any = None,
 ) -> TurnResult:
     """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
 
-    `fixed_reply` (fix lane round 3, R3) is a history question's memory fallback,
-    already built off the database: the clarifier is not called at all.
+    `fallback` (S4, plan 7.2) is the graceful fallback's context, read off the database
+    before this runs: the clarifier writes the ack only, and the reply is `ack +
+    memory_line + offer`. A clarifier that still answers in the older `{"response"}`
+    shape is the whole reply, as before. A history question whose clarifier failed
+    still gets its list, behind the canned ack: the list needs no model.
 
     Split out of `_run_stages` so the "no DB session across LLM I/O" rule is visible in the
     signature rather than in a comment: this function takes a `session_factory`, never a
@@ -4106,6 +4360,8 @@ def _run_casual_lane(
     user_message = (
         casual.render_user_message(clarifier_prompt) if clarifier_prompt is not None else ""
     )
+    if fallback is not None and user_message:
+        user_message = f"{user_message}\n{fallback_mod.clarifier_tail(fallback)}"
 
     # -- NO DB SESSION IS OPEN HERE ---------------------------------------- #
     # Every failure string here is TYPE-PREFIXED, and every test against it is
@@ -4114,10 +4370,10 @@ def _run_casual_lane(
     # a success, close the row `done`, and leave `error` as "" - a turn that failed,
     # recorded as fine, with nothing on the trace screen to say otherwise.
     failed: str | None = setup_error
-    if fixed_reply is not None:
-        failed = None
-        text = fixed_reply
-    elif failed is not None:
+    answer_shape: str | None = None
+    ack_replaced = False
+    reply_language: str | None = None
+    if failed is not None:
         # SETUP failure (the resolver, the registry, the AI config, the API key). The
         # customer gets a FIXED sentence, never `str(exc)`: these messages carry provider
         # detail and configuration names, and none of that belongs in a WhatsApp reply.
@@ -4126,25 +4382,44 @@ def _run_casual_lane(
     else:
         try:
             raw = casual.call_clarifier(clarifier_config, user_message)
-            text = casual.reply_text(casual.central_exchange({"text": raw}))
+            said = fallback_mod.read_clarifier(casual.central_exchange({"text": raw}))
+            if said is None:
+                raise casual.ClarifierAnswerEmpty("the clarifier returned nothing to say")
+            answer_shape = said.shape
+            text = said.text
+            if fallback is not None and (said.shape == "ack" or fallback.kind == "history"):
+                noted_language = next(
+                    (s.get("value") for s in fallback.noted if s.get("key") == "language"), None
+                )
+                reply_language = fallback_mod.pick_language(
+                    fallback.saved_language, noted_language, said.language
+                )
+                ack = said.text.strip()
+                # AC-MEM081: an ack stating a figure, code, price or date its own
+                # input never had is replaced by the canned one for the language.
+                if not fallback_mod.ack_is_safe(ack, user_message):
+                    ack = fallback.copy.render_in("fallback_ack", reply_language)
+                    ack_replaced = True
+                text = fallback_mod.compose(ack, fallback, fallback.copy, reply_language)
         except casual.ClarifierRateLimited as exc:
             # PR #1247 round 6, ruling 3: a rate limit that never cleared is one plain
             # sentence, never the provider's text. The row keeps the real reason.
             failed = f"{type(exc).__name__}: {exc}"
             text = llm_call.RATE_LIMITED_REPLY
-        except casual.ClarifierError as exc:
+        except Exception as exc:  # noqa: BLE001 - a provider error or an unreadable answer
+            # AC-MEM086 (owner ruling Q10): the dealer never reads exception text. The
+            # row and the trace keep the real reason; the dealer gets the turn's own
+            # apology. n8n's `sub-error-logger` interpolation is retired here.
             failed = f"{type(exc).__name__}: {exc}"
-            # The CALL arm keeps today's `sub-error-logger` text, which interpolates the
-            # error and has been what a customer sees on this path since it was written.
-            # Parity, and the reason the two arms differ (divergences.py, H32).
-            text = casual.CLARIFIER_ERROR_PREFIX + str(exc)
-        except Exception as exc:  # noqa: BLE001 - a malformed answer is the same failure
-            # The model answered but the answer was not usable (invalid JSON out of
-            # `central_exchange`). Same lane, same stage, same reply: from the customer's
-            # side there is no difference between "no answer" and "an answer I cannot read".
-            failed = f"{type(exc).__name__}: {exc}"
-            text = casual.CLARIFIER_ERROR_PREFIX + str(exc)
-
+            text = GENERIC_ERROR_REPLY
+    if failed is not None and fallback is not None and fallback.kind == "history" and fallback.copy is not None:
+        # The history list needs no model: behind the canned ack it still answers.
+        reply_language = fallback_mod.pick_language(fallback.saved_language)
+        text = fallback_mod.compose(
+            fallback.copy.render_in("fallback_ack", reply_language), fallback, fallback.copy, reply_language
+        )
+        answer_shape = "canned"
+        failed = None
     actions = [
         *actions,
         # AC-507: `quick_replies` is n8n's comma-joined string or null, never a list -
@@ -4162,13 +4437,15 @@ def _run_casual_lane(
             _casual_failure_summary(failed, setup_error)
             if failed is not None
             else "The history question was answered from memory."
-            if fixed_reply is not None
+            if fallback is not None and fallback.kind == "history"
+            else "The clarifier wrote the acknowledgement; the reply adds what memory holds and an offer."
+            if answer_shape == "ack"
             else "The clarifier wrote small talk or one clarifying question."
         ),
         why=(
             "A history question with memory on is answered from the contact's open and "
             "closed conversations."
-            if fixed_reply is not None
+            if fallback is not None and fallback.kind == "history"
             else "The turn carried no business question to look up, so the clarifier writes "
             "the reply."
         ),
@@ -4177,6 +4454,13 @@ def _run_casual_lane(
             "model": getattr(clarifier_config, "model", None),
             "prompt_version": getattr(clarifier_config, "prompt_version", None),
             "resolved_entities": len((clarifier_prompt or {}).get("entities") or []),
+            # S4: which shape answered, the fallback kind and level, the reply's
+            # language, and whether the guard replaced the ack (AC-MEM081).
+            "answer_shape": answer_shape,
+            "fallback_kind": getattr(fallback, "kind", None),
+            "memory_level": getattr(fallback, "level", None),
+            "language": reply_language,
+            "ack_replaced": ack_replaced,
         },
         error=failed,
         raw={"user_prompt": user_message},
@@ -4290,6 +4574,57 @@ def _run_casual_lane(
     )
 
 
+def _with_handover_context(
+    actions: list[dict[str, Any]], handover: dict[str, Any] | None, ctx: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """S4 (AC-MEM087/088) over the escalation lane's own actions, which it leaves in
+    place: routing, the assignment, the SLA row and the comment's own lines are the
+    lane's. What this adds:
+
+    * the comment gains `Salesperson: <name>` for a commercial ask and `Conversation so
+      far: <summary>` when the live conversation named something, so the person picking
+      it up sees who looks after the account and what was being discussed;
+    * for a commercial ask with a linked salesperson, the dealer's "routed to the
+      respective person-in-charge" line (the send after the comment) names the
+      salesperson instead.
+    """
+    if not handover:
+        return actions
+    salesperson = handover.get("salesperson")
+    summary = handover.get("summary")
+    if not (salesperson or summary):
+        return actions
+    extra = []
+    if salesperson:
+        extra.append(f"Salesperson: {salesperson}")
+    if summary:
+        extra.append(f"Conversation so far: {summary}")
+    out: list[dict[str, Any]] = []
+    seen_comment = False
+    team = None
+    for action in actions:
+        if action.get("kind") == "add_comment" and not seen_comment:
+            seen_comment = True
+            body = str(action.get("text") or "")
+            first = body.split("\n", 1)[0]
+            if first.startswith("Team: "):
+                team = first[len("Team: ") :].strip()
+            out.append({**action, "text": "\n".join([body, *extra])})
+            continue
+        if salesperson and seen_comment and action.get("kind") == "send_message" and team:
+            from app.services.chatbot import copy as copy_mod
+            from app.services.chatbot.tail.outcome import pretty_team
+
+            line = (handover.get("copy") or copy_mod.fallback_copy()).render_in(
+                "handover_salesperson", handover.get("language"), salesperson=salesperson, team=pretty_team(team)
+            )
+            out.append({**action, "text": line})
+            salesperson = None  # once
+            continue
+        out.append(action)
+    return out
+
+
 def _run_escalation_arm(
     *,
     turn_id: str,
@@ -4359,7 +4694,9 @@ def _run_escalation_arm(
 
     arm = fragment.get("arm")
     clarify = fragment.get("clarify")
-    lane_actions = list(fragment.get("actions") or [])
+    lane_actions = _with_handover_context(
+        list(fragment.get("actions") or []), (remembered_before or {}).get("_handover"), ctx
+    )
     pending = fragment.get("pending")
 
     # Only `looked_up` is recorded here. `replied` and `remembered` are the TAIL's, and

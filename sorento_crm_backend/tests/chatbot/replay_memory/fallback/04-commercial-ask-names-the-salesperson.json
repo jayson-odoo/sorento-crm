@@ -1,7 +1,7 @@
 {
   "name": "04-commercial-ask-names-the-salesperson",
-  "about": "Plan 7.3 example 4, AC-MEM087: a commercial ask (discount) is handed over naming the linked salesperson; routing is the existing escalation lane.",
-  "needs_memory": true,
+  "about": "Plan 7.3 example 4, AC-MEM087: a commercial ask (discount) is handed over naming the linked salesperson; routing is the existing escalation lane. The salesperson is read live off the CRM link, not from memory, so this case is NOT red under ablation (plan 7.3 lists 4 as memory-reading; it names who from the CRM at every level).",
+  "needs_memory": false,
   "console": true,
   "given": {
     "memory_level": "full",

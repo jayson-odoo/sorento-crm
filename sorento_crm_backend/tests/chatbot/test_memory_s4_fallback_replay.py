@@ -39,6 +39,7 @@ CASES_DIR = Path(__file__).parent / "replay_memory" / "fallback"
 CASE_FILES = sorted(CASES_DIR.glob("*.json"))
 
 DEFAULT_CLARIFIER = {"ack": "Sure.", "language": "en"}
+SPACE_ID = "364817"
 
 
 def _load_case(path: Path) -> dict[str, Any]:
@@ -135,6 +136,10 @@ def _seed_customer(session_factory, contact_pk: str, customer: dict[str, Any]) -
     from app.models.access import RespondContactCustomer
     from app.models.order import Customer
     from app.models.sales_agent import SalesAgent
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    # Stamped explicitly: all three are company-scoped, and a scoped read never matches
+    # a NULL company (`test_memory_profile_facts.py::_seed_customer_link`).
 
     db = session_factory()
     agent_id = None
@@ -143,6 +148,7 @@ def _seed_customer(session_factory, contact_pk: str, customer: dict[str, Any]) -
             sales_agent=f"ZZT-{uuid.uuid4().hex[:6]}".upper(),
             person_label=customer["salesperson"],
             is_active=True,
+            company_id=DEFAULT_COMPANY_ID,
         )
         db.add(agent)
         db.flush()
@@ -151,10 +157,39 @@ def _seed_customer(session_factory, contact_pk: str, customer: dict[str, Any]) -
         customer_code=f"{customer['code']}-{uuid.uuid4().hex[:4]}",
         customer_name=customer["name"],
         sales_agent_id=agent_id,
+        company_id=DEFAULT_COMPANY_ID,
     )
     db.add(row)
     db.flush()
-    db.add(RespondContactCustomer(contact_id=contact_pk, customer_id=row.id, is_primary=True))
+    # The contact's workspace and company membership: the turn's sessions are scoped
+    # to it (`engine._contact_company_scope`), and a contact with none sees no customer
+    # (`test_outstanding_lane.py::_seed_contact`, same shape).
+    db.execute(
+        text(
+            "INSERT INTO respond_workspaces (id, space_id, name, api_key_ciphertext) "
+            "VALUES (gen_random_uuid(), :sid, 'ZZT S4 workspace', 'ZZT-cipher') ON CONFLICT DO NOTHING"
+        ),
+        {"sid": SPACE_ID},
+    )
+    db.execute(
+        text(
+            "UPDATE respond_contacts SET workspace_id = "
+            "(SELECT id FROM respond_workspaces WHERE space_id = :sid LIMIT 1) WHERE id = :pk"
+        ),
+        {"sid": SPACE_ID, "pk": contact_pk},
+    )
+    db.execute(
+        text(
+            "INSERT INTO respond_contact_companies (id, respond_contact_id, company_id) "
+            "VALUES (gen_random_uuid(), :pk, :company)"
+        ),
+        {"pk": contact_pk, "company": DEFAULT_COMPANY_ID},
+    )
+    db.add(
+        RespondContactCustomer(
+            contact_id=contact_pk, customer_id=row.id, is_primary=True, company_id=DEFAULT_COMPANY_ID
+        )
+    )
     db.commit()
 
 

@@ -83,7 +83,7 @@
   "expected": {
     "branch_kind": "out_of_scope",
     "reply_contains": [
-      "Customer Service team"
+      "customer service team"
     ],
     "comment_contains": [
       "Conversation so far:",

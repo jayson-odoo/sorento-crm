@@ -33,6 +33,7 @@ from app.models.conversation_frame import ConversationFrame
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.turn import episode_digest
 from app.services.chatbot.turn import memory as memory_mod
+from app.services.chatbot_reply_copy import CHATBOT_REPLY_HISTORY_LEAD, CHATBOT_REPLY_HISTORY_NOTHING
 from tests.chatbot._turn_helpers import entity, verdict
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, stub_access, stub_parser  # noqa: F401
 
@@ -197,8 +198,11 @@ class TestOwnerHandTestReplay:
         text_value = _reply_text(history)
         assert history.branch_kind == "low_signal"
         assert text_value != CLARIFIER_TEXT
-        assert text_value.startswith(memory_mod.HISTORY_REPLY_LEAD), text_value
-        assert "- Now:" in text_value and "inventory SRTWC286" in text_value, text_value
+        # Round 4 (S4) replaced this round's "Here is what I remember" block with the
+        # numbered list and its re-run offer; what is pinned is unchanged: memory names
+        # the open inventory conversation, not the clarifier.
+        assert CHATBOT_REPLY_HISTORY_LEAD["en"] in text_value, text_value
+        assert "1. " in text_value and "inventory SRTWC286" in text_value, text_value
         assert "SRTWC287" in text_value, text_value
 
 
@@ -232,7 +236,7 @@ class TestHistoryFallbackGates:
     def test_nothing_held_says_so(self, session_factory, stub_parser, stub_access, memory_on) -> None:
         _seed_contact(session_factory)
         result = _say(session_factory, stub_parser, stub_access, *FIVE[3], n=0, console=True)
-        assert _reply_text(result) == memory_mod.HISTORY_REPLY_NOTHING
+        assert CHATBOT_REPLY_HISTORY_NOTHING["en"] in _reply_text(result)
 
     def test_closed_episodes_are_named_as_earlier(
         self, session_factory, stub_parser, stub_access, memory_on
@@ -242,8 +246,11 @@ class TestHistoryFallbackGates:
             _say(session_factory, stub_parser, stub_access, msg, v, n=i, console=True)
         result = _say(session_factory, stub_parser, stub_access, *FIVE[3], n=9, console=True)
         text_value = _reply_text(result)
-        assert "- Earlier:" in text_value and "inventory SRTWC286" in text_value, text_value
-        assert "- Now:" in text_value and "incoming SRTWC286" in text_value, text_value
+        # Round 4 (S4): numbered newest first, the open incoming conversation, then
+        # the closed inventory one.
+        assert "1. " in text_value and "2. " in text_value, text_value
+        assert "incoming SRTWC286" in text_value and "inventory SRTWC286" in text_value, text_value
+        assert text_value.index("incoming SRTWC286") < text_value.index("inventory SRTWC286"), text_value
 
 
 class TestCloseTrigger:

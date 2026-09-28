@@ -332,60 +332,76 @@ def open_topic_domain(
     return None
 
 
-#: R3 (fix lane round 3): lane A's graceful fallback for a history question with
-#: memory on. It names what memory holds; the full list reply is S4 (lane B).
-HISTORY_REPLY_LEAD = "Here is what I remember of our chats:"
-HISTORY_REPLY_NOW = "- Now: {summary}"
-HISTORY_REPLY_EARLIER = "- Earlier: {summary}"
-HISTORY_REPLY_TAIL = "Tell me which one to pick up and I will carry on with it."
-HISTORY_REPLY_NOTHING = (
-    "I do not have any earlier conversation with you on record yet. "
-    "What would you like to check?"
-)
-#: Closed episodes named in the fallback, newest first (the same three the parser's
-#: L4 layer reads).
-HISTORY_REPLY_EPISODES = 3
+#: S4 (plan 7.1, AC-MEM082): a history question is answered from what memory holds,
+#: numbered. The open conversation needs level `conversation` or above; closed ones
+#: need `episodes` or above (plan 6.0). Up to 5, newest first.
+HISTORY_ITEMS = 5
+_OPEN_LEVELS = ("conversation", "episodes", "full")
+_CLOSED_LEVELS = ("episodes", "full")
 
 
-def history_reply(
-    db: Session, *, contact_respond_id: str, is_test: bool, current_turn_id: str | None
-) -> str:
-    """The fallback text: the open conversation (a digest of its turns, the current one
-    excluded) and the newest closed episodes of this contact and world."""
-    open_rows = list(
-        reversed(
-            open_turns_newest(
-                db,
-                contact_respond_id=contact_respond_id,
-                is_test=is_test,
-                exclude_turn_id=current_turn_id,
+def _item_text(summary: str) -> str:
+    return summary.strip().rstrip(".").strip()
+
+
+def history_items(
+    db: Session,
+    *,
+    contact_respond_id: str,
+    is_test: bool,
+    current_turn_id: str | None,
+    level: str,
+) -> list[str]:
+    """What this contact asked, newest first, as deterministic summaries: the open
+    conversation (a digest of its turns, the current one excluded) and the newest
+    closed conversations of this contact and world. No figure is ever in a summary
+    (`episode_digest`), so a list built from these can never quote a stale number."""
+    items: list[str] = []
+    if level in _OPEN_LEVELS:
+        open_rows = list(
+            reversed(
+                open_turns_newest(
+                    db,
+                    contact_respond_id=contact_respond_id,
+                    is_test=is_test,
+                    exclude_turn_id=current_turn_id,
+                )
             )
         )
-    )
-    open_summary = None
-    if open_rows:
-        open_digest = digest([_turn_to_digest_dict(r) for r in open_rows])
-        # Only when it names something: a digest of pure small talk says nothing.
-        if open_digest.get("asks") and any(
-            a.get("domain") or a.get("entities") for a in open_digest["asks"]
-        ):
-            open_summary = open_digest.get("summary")
-    frames = (
-        db.query(ConversationFrame)
-        .filter(
-            ConversationFrame.contact_respond_id == contact_respond_id,
-            ConversationFrame.is_test.is_(is_test),
-            ConversationFrame.status == "closed",
+        if open_rows:
+            open_digest = digest([_turn_to_digest_dict(r) for r in open_rows])
+            # Only when it names something: a digest of pure small talk says nothing.
+            if open_digest.get("summary") and any(
+                a.get("domain") or a.get("entities") for a in (open_digest.get("asks") or [])
+            ):
+                items.append(_item_text(open_digest["summary"]))
+    if level in _CLOSED_LEVELS:
+        frames = (
+            db.query(ConversationFrame)
+            .filter(
+                ConversationFrame.contact_respond_id == contact_respond_id,
+                ConversationFrame.is_test.is_(is_test),
+                ConversationFrame.status == "closed",
+            )
+            .order_by(ConversationFrame.last_activity_at.desc())
+            .limit(HISTORY_ITEMS)
+            .all()
         )
-        .order_by(ConversationFrame.last_activity_at.desc())
-        .limit(HISTORY_REPLY_EPISODES)
-        .all()
+        items.extend(_item_text(f.summary) for f in frames if f.summary)
+    return items[:HISTORY_ITEMS]
+
+
+def open_summary(db: Session, *, contact_respond_id: str, is_test: bool, current_turn_id: str | None) -> str | None:
+    """The live conversation's summary line (AC-MEM088: what a handover carries), or
+    None when its turns named nothing."""
+    items = history_items(
+        db,
+        contact_respond_id=contact_respond_id,
+        is_test=is_test,
+        current_turn_id=current_turn_id,
+        level="conversation",
     )
-    lines = [HISTORY_REPLY_NOW.format(summary=open_summary)] if open_summary else []
-    lines.extend(HISTORY_REPLY_EARLIER.format(summary=f.summary) for f in frames if f.summary)
-    if not lines:
-        return HISTORY_REPLY_NOTHING
-    return "\n".join([HISTORY_REPLY_LEAD, *lines, "", HISTORY_REPLY_TAIL])
+    return items[0] if items else None
 
 
 # `recall`, `_by_recency`, `_similarity_of_frame`, `_frame_out` and `episodes_block`

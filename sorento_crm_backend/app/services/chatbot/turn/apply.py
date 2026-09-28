@@ -1340,6 +1340,12 @@ def _lane(verdict: dict[str, Any], domains: list[str], policy: Policy) -> str | 
         if not domains and _names_an_unresolved_product(verdict):
             return "clarification"
         return "escalation"
+    if message_type == "history_question":
+        # S4 (plan 7.1, AC-MEM082): a question about the dealer's own past is answered
+        # in the `low_signal` lane from memory, whatever domain or code it mentions
+        # ("what stock did I check last week") - the parser's hint names the past ask,
+        # not a live one, so it never narrows into a fetch.
+        return "casual"
     if (
         message_type == "request_for_help"
         and verdict.get("domain_hint") not in _HELP_EXEMPT_DOMAINS
