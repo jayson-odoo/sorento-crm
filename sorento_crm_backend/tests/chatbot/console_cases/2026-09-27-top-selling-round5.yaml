@@ -1,0 +1,112 @@
+# Console cases for the owner's retest of top selling round 4 (27 Sep 2026, PR #1273, fix
+# lane round 5). The owner's own messages, in the order of the five transcripts; each
+# expectation is what the bot must do now (R1 to R9 in
+# `documentation/plans/chatbot/PLAN-chatbot-top-x-hot-selling-24sep.md`, "As built (fix
+# lane round 5)"). `tests/chatbot/test_top_selling_round5.py` pins the same turns with the
+# parser faked; this file grades the LIVE parser on them.
+#
+# NOT collected by pytest. Run against the lane stack with the REAL parser:
+#
+#   cd sorento_crm_backend
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-27-top-selling-round5.yaml \
+#       --base-url http://127.0.0.1:<lane backend port> --sleep-seconds 8 \
+#       --prompt-version <id of the chatbot_semantic_parser version migration
+#                         chatbot_top_selling_vocab_r5 published>
+#
+# PREREQUISITES: the same as `2026-09-27-top-selling-retest.yaml`, plus the sales agents
+# FANNY I / III / IV and SEAN I / III / IV, the customer SAMPLE - FANNY NG, and product
+# categories whose class label is Water Closet and Bathtub, all on the prod copy.
+# Migrations up to `chatbot_top_selling_vocab_r5` have run.
+
+contact: "437264483"
+
+cases:
+  - name: Transcript 1 - the agent, "2", then outstanding with the filters
+    cold: true
+    turns:
+      - text: "top 100 hot selling item"
+        expect:
+          reply_contains: ["By quantity or by amount?"]
+      - text: "qty"
+        expect:
+          reply_contains: ["*Top 100 selling items*"]
+      - text: "product category is water closet, product is everything, agent is fanny"
+        expect:
+          reply_contains: ["\nCustomer: all\n", "\nCategory: Water Closet\n", "\nSales agent: FANNY"]
+          reply_not_contains: ["Reply 1 for the customer", "Could not find", "Couldn't", "escalate"]
+      - text: "2"
+        expect:
+          reply_contains: [": customers and months*", "\nSales agent: FANNY"]
+          reply_not_contains: ["promotion", "Couldn't", "escalate"]
+      - text: "outstanding"
+        expect:
+          reply_contains: ["Filters from the ranking: Customer: all / Period:", "Category is not a filter for"]
+          reply_not_contains: ["Couldn't", "escalate", "Please choose who to route to"]
+
+  - name: Transcript 1 bis - "2" answers "customer or sales agent?"
+    cold: true
+    turns:
+      - text: "top 100 hot selling water closet by fanny by amount"
+        expect:
+          reply_contains: ["Reply 1 for the customer, 2 for the sales agent."]
+      - text: "2"
+        expect:
+          reply_contains: ["\nCustomer: all\n", "\nCategory: Water Closet\n", "\nSales agent: FANNY"]
+          reply_not_contains: ["promotion", "Couldn't", "escalate", "Reply 1 for the customer"]
+
+  - name: Transcript 2 - answers in words
+    cold: true
+    turns:
+      - text: "top 100 hot selling bathtub by sean"
+        expect:
+          reply_contains: ["Reply 1 for the customer, 2 for the sales agent."]
+      - text: "yeah sales agent"
+        expect:
+          reply_contains: ["By quantity or by amount?"]
+          reply_not_contains: ["Hi! How can I help", "Reply 1 for the customer"]
+      - text: "top 100 hot selling bathtub by sean salea agent"
+        expect:
+          reply_contains: ["By quantity or by amount?"]
+          reply_not_contains: ["Reply 1 for the customer"]
+      - text: "amount"
+        expect:
+          reply_contains: ["\nCustomer: all\n", "\nCategory: Bathtub\n", "\nSales agent: SEAN"]
+
+  - name: Transcripts 3 and 4 - corrections, the DO, worst selling
+    cold: true
+    turns:
+      - text: "top 100 hot selling bathtub by quantity"
+        expect:
+          reply_contains: ["*Top 100 selling items*"]
+      - text: "neither, i mean sales agent sean"
+        expect:
+          reply_contains: ["\nCustomer: all\n", "\nSales agent: SEAN"]
+      - text: "customer is everyone"
+        expect:
+          reply_contains: ["\nCustomer: all\n", "\nSales agent: SEAN"]
+      - text: "can show me the DO"
+        expect:
+          reply_contains: ["Filters from the ranking: Customer: all / Period:", "Category is not a filter for delivery orders, showing all categories"]
+          reply_not_contains: ["Couldn't find", "escalate", "Please choose who to route to"]
+      - text: "worsr 100 hot selling bathtub"
+        expect:
+          parser: {order_status: top_selling, rank_direction: bottom}
+          reply_not_contains: ["out of the scope", "routed to the respective person-in-charge"]
+
+  - name: Transcript 5 - the year is not a rank
+    cold: true
+    turns:
+      - text: "worst 100 hot selling water closet"
+        expect:
+          reply_contains: ["By quantity or by amount?"]
+      - text: "amount"
+        expect:
+          reply_contains: ["*Bottom 100 selling items*", "\nCategory: Water Closet\n"]
+      - text: "2025?"
+        expect:
+          reply_contains: ["*Bottom 100 selling items*", "Delivery date: 01/01/2025 to 31/12/2025"]
+          reply_not_contains: ["Which one do you mean?"]
+      - text: "i mena in year 2025"
+        expect:
+          reply_contains: ["*Bottom 100 selling items*", "Delivery date: 01/01/2025 to 31/12/2025"]

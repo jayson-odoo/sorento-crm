@@ -447,6 +447,10 @@ DATE_PARAMS: dict[str, tuple[str, str]] = {
     # PLAN-chatbot-sales-report.md S4 wiring point 5: the report's own contract, on
     # the bucket date (required_date, else order_date) - never actual_delivery_date.
     "crm_sales_report": ("date_from", "date_to"),
+    # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 6: the same bucket date. No date
+    # sends none: the ROUTE defaults to the current calendar year and echoes it (as
+    # built on PR #1263, superseding the plan's lane-side default).
+    "crm_top_selling_report": ("date_from", "date_to"),
     # AC-71: the low stock report's window narrows which sales orders the fresh plan
     # counts as demand - the run's own "plan until" pair, under the route's names.
     "crm_low_stock_report": ("date_from", "date_to"),
@@ -745,6 +749,67 @@ def entity_ids_transformer(
             if isinstance(semantic_input, dict):
                 semantic_input["date_filter_start"] = out["date_from"]
                 semantic_input["date_filter_end"] = out["date_to"]
+
+    # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 7:
+    # `crm_top_selling_report`'s own contract. Everything comes off the parser's own
+    # fields, carried on the focus slot `semantic_input["top_selling"]`
+    # (`turn/apply._top_selling_rules`), never the message text.
+    if tool_name == "crm_top_selling_report":
+        out.pop("product_ids", None)
+        out.pop("warehouse_ids", None)
+        slot = jsc.get(semantic_input, "top_selling")
+        slot = slot if isinstance(slot, dict) else {}
+        out["rank_by"] = jsc.js_string(slot.get("rank_by"))
+        if slot.get("basis") in ("delivered", "ordered"):
+            out["basis"] = slot["basis"]
+        category_grain = slot.get("rank_group") == "category"
+        if category_grain:
+            out["group"] = "category"
+        # A category grain ranks categories against each other, so a category FILTER
+        # has nothing to narrow (plan, filters matrix: ignored, the header prints all).
+        category_ids = jsc.get(semantic_input, "top_selling_category_ids")
+        if isinstance(category_ids, list) and category_ids and not category_grain:
+            out["category_ids"] = category_ids
+        chosen = slot.get("customer_ids")
+        if isinstance(chosen, list) and chosen:
+            # "1" to "customer or sales agent?" (owner retest, 27 Sep 2026).
+            out["customer_ids"] = [jsc.js_string(i) for i in chosen]
+        dealer_ids = slot.get("dealer_customer_ids")
+        if isinstance(dealer_ids, list) and dealer_ids:
+            # A linked dealer's own ledgers its words named (`engine._top_selling_dealer_scope`).
+            out["customer_ids"] = [jsc.js_string(i) for i in dealer_ids]
+        # The agent and brand the ranking is narrowed by (`engine._top_selling_narrowing`,
+        # owner retest 27 Sep 2026), never a customer.
+        agent_ids = [jsc.js_string(i) for i in (slot.get("agent_ids") or []) if jsc.truthy(i)]
+        agent_ids += [
+            jsc.get(e, "uuid")
+            for e in jsc.array(entities)
+            if isinstance(e, dict) and e.get("entity_type") == "sales_agent" and e.get("uuid")
+        ]
+        if agent_ids:
+            out["sales_agent_ids"] = list(dict.fromkeys(agent_ids))
+        brand_ids = [jsc.js_string(i) for i in (slot.get("brand_ids") or []) if jsc.truthy(i)]
+        if brand_ids:
+            out["brand_ids"] = brand_ids
+        if slot.get("rank_direction") == "bottom":
+            # "cold selling", "least sold": the least sold first.
+            out["direction"] = "bottom"
+        channel = jsc.get(semantic_input, "sales_channel")
+        if jsc.truthy(channel):
+            out["channel"] = jsc.js_string(channel)
+        detail_code = jsc.js_string(slot.get("detail_code") or "").strip()
+        top_n = slot.get("top_n")
+        if detail_code:
+            # A picked row: that code's customers and months, same filters and basis.
+            out["detail_code"] = detail_code
+        elif isinstance(top_n, (int, float)) and not isinstance(top_n, bool) and top_n >= 1:
+            # Owner ruling 26 Sep: a named N is 1 to 100 ("top 100").
+            out["n"] = min(int(top_n), 100)
+        else:
+            # No N named: the full count and no rows, so the reply states the total
+            # and asks how many (owner, PR #1258 05:32Z) without the whole book being
+            # sent to be counted (review N1). One row comes back as is.
+            out["count_only"] = True
 
     # PLAN-low-stock-report S6 (AC-66/AC-71): this tool's own contract is CODES too - the
     # route resolves warehouse and product CODES, and a UUID would silently match nothing.
@@ -2237,6 +2302,85 @@ def _forms_browse_ask(e: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any] 
     }
 
 
+def _top_selling_output(result: Any, ctx: dict[str, Any]) -> dict[str, Any]:
+    """PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 9. The
+    presenter's minimal envelope (`presenters._top_selling_envelope`) is the reply
+    verbatim, beside the two sibling reports: the ranking carries its own header, so
+    the generic search-scope header is skipped (`outstanding_report`, AC-1958).
+
+    * A ranking hit arms its printed rows as a sticky `top_selling_pick` roster (owner,
+      PR #1258 05:32Z: the list behaves like the customer and product pickers), through
+      the same `outstanding_ask` hand-off the detail offers use; `compose._lane_question`
+      builds it with `turn/pending.top_selling_pick`.
+    * The how-many reply, the detail reply and a refusal arm nothing (`result_set` is
+      empty on all three), so an open list stays open across a detail.
+    * `has_result: false` is the miss (AC-1957): the not-found path, escalate offer and
+      all."""
+    envelope = result if isinstance(result, dict) else {}
+    semantic_input = ctx.get("semantic_input") if isinstance(ctx.get("semantic_input"), dict) else {}
+    if "response" in envelope:
+        text = jsc.js_string(envelope.get("response") or "")
+        # Owner retest (27 Sep 2026): a ranking with no sales is an ANSWER ("No sales
+        # found." under its own header), never "Could not find order" and never the
+        # escalation offer with its routing picker.
+        has_result = envelope.get("has_result") is True or (
+            envelope.get("result_type") == "top_selling" and bool(text.strip())
+        )
+    else:
+        text = result if isinstance(result, str) else jsc.js_string(result)
+        has_result = bool(text.strip())
+    notes = [jsc.js_string(n) for n in jsc.array(semantic_input.get("top_selling_notes")) if jsc.truthy(n)]
+    if notes and text.strip():
+        text = "\n".join(notes) + "\n\n" + text
+    rows = [r for r in jsc.array(envelope.get("result_set")) if isinstance(r, dict)]
+    slot = semantic_input.get("top_selling") if isinstance(semantic_input.get("top_selling"), dict) else {}
+    outstanding_ask = (
+        {
+            "kind": "top_selling_pick",
+            "last_result_set": rows,
+            "filters": {"tool": "crm_top_selling_report", **{k: v for k, v in slot.items() if k != "detail_code"}},
+        }
+        if rows and envelope.get("result_type") == "top_selling"
+        else None
+    )
+    return {
+        "response": text,
+        "response_intro": None,
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": has_result,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        "outstanding_ask": outstanding_ask,
+        "outstanding_report": True,
+        # The how-many reply ASKS (reviewer B2, PR #1273): recorded on the slot so the
+        # next bare number is its count, while a list or a single row asks nothing and
+        # the next ask naming the ranking starts fresh.
+        "top_selling_asked": "how_many" if envelope.get("result_type") == "top_selling_how_many" else None,
+        # The item codes the ranking listed, in rank order: an outstanding ask after it
+        # asks about exactly these (fix lane round 8, `apply._hop_to_report`). An empty
+        # list on a ranking that listed none (how many, no sales, a category ranking),
+        # None on a detail or a refusal, which leave the listed ranking standing.
+        "top_selling_codes": (
+            [jsc.js_string(r.get("code")) for r in rows if r.get("entity_type") == "product" and jsc.truthy(r.get("code"))]
+            if envelope.get("result_type") in ("top_selling", "top_selling_how_many")
+            else None
+        ),
+        "top_selling_drop": list(semantic_input.get("top_selling_drop") or []) or None,
+    }
+
+
+def _dmy(value: Any) -> str:
+    text = jsc.js_string(value or "")[:10]
+    parts = text.split("-")
+    return f"{parts[2]}/{parts[1]}/{parts[0]}" if len(parts) == 3 else text
+
+
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
     """The MCP render envelope becomes a WhatsApp message. Deterministic, no LLM (H7).
 
@@ -2251,6 +2395,8 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         return _sales_report_output(result, ctx)
     if jsc.js_string(ctx.get("tool") or "") == "crm_low_stock_report":
         return _low_stock_report_output(result)
+    if jsc.js_string(ctx.get("tool") or "") == "crm_top_selling_report":
+        return _top_selling_output(result, ctx)
     if jsc.js_string(ctx.get("tool") or "") == "crm_sales_analysis":
         # The same envelope: the presenter's text and, when there is one, the Excel. It
         # states its own scope (company, channel, basis, period), so the order domain's

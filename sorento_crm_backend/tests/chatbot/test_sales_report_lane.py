@@ -1172,10 +1172,11 @@ class TestParserPromptAndContractsTeachSalesReport:
         body ships now, `SEMANTIC_PARSER_PROMPT`) - main's own edit to the SLIM body
         is deliberately dropped, so the original "both texts ship" premise (dev vs
         prod split) no longer applies. `STOCK_TASK_ADDENDUM`, `SALES_ANALYSIS_ADDENDUM`
-        (#1267 S1), `QUANTITY_ADDENDUM` (issue #1262 slice 5, 26 Sep 2026) then
-        `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep 2026) now stack after it,
-        newest outermost, so it is checked by `.removesuffix` rather than a bare
-        `.endswith`."""
+        (#1267 S1), `QUANTITY_ADDENDUM` (issue #1262 slice 5, 26 Sep 2026),
+        `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep 2026) then
+        `TOP_SELLING_ADDENDUM` (PLAN-chatbot-top-x-hot-selling-24sep.md S4) now stack
+        after it, newest outermost, so it is checked by `.removesuffix` rather than a
+        bare `.endswith`."""
         from app.services.chatbot_parser_prompt import (
             ESCALATION_CONFIRMATION_ADDENDUM,
             KNOWN_BRANDS_ADDENDUM,
@@ -1184,15 +1185,17 @@ class TestParserPromptAndContractsTeachSalesReport:
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
             STOCK_TASK_ADDENDUM,
+            TOP_SELLING_ADDENDUM,
         )
 
         # `STOCK_TASK_ADDENDUM` (ported from PR #1118, not merged, chatbot-stock-ask-v2
-        # S3), `SALES_ANALYSIS_ADDENDUM` (#1267 S1), the #1262 pair and then
-        # `ESCALATION_CONFIRMATION_ADDENDUM` (#1323) stacked after this one,
-        # newest outermost, so they come off first.
+        # S3), `SALES_ANALYSIS_ADDENDUM` (#1267 S1), the #1262 pair, `TOP_SELLING_ADDENDUM`
+        # and then `ESCALATION_CONFIRMATION_ADDENDUM` (#1323, always the tail) stacked
+        # after this one, newest outermost, so they come off first.
         assert SEMANTIC_PARSER_PROMPT.endswith(ESCALATION_CONFIRMATION_ADDENDUM)
         assert (
             SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+            .removesuffix(TOP_SELLING_ADDENDUM)
             .removesuffix(KNOWN_BRANDS_ADDENDUM)
             .removesuffix(QUANTITY_ADDENDUM)
             .removesuffix(SALES_ANALYSIS_ADDENDUM)
@@ -1200,7 +1203,7 @@ class TestParserPromptAndContractsTeachSalesReport:
             .endswith(SALES_REPORT_ADDENDUM)
         ), (
             "SEMANTIC_PARSER_PROMPT does not end with SALES_REPORT_ADDENDUM once the "
-            "newer KNOWN_BRANDS_ADDENDUM/QUANTITY_ADDENDUM/SALES_ANALYSIS_ADDENDUM/"
+            "newer TOP_SELLING_ADDENDUM/KNOWN_BRANDS_ADDENDUM/QUANTITY_ADDENDUM/SALES_ANALYSIS_ADDENDUM/"
             "STOCK_TASK_ADDENDUM are stripped - SALES_REPORT_ADDENDUM must stay the tail "
             "beneath them"
         )
@@ -1221,10 +1224,12 @@ class TestParserPromptAndContractsTeachSalesReport:
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
             STOCK_TASK_ADDENDUM,
+            TOP_SELLING_ADDENDUM,
         )
 
         assert (
             SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+            .removesuffix(TOP_SELLING_ADDENDUM)
             .removesuffix(KNOWN_BRANDS_ADDENDUM)
             .removesuffix(QUANTITY_ADDENDUM)
             .removesuffix(SALES_ANALYSIS_ADDENDUM)

@@ -1222,6 +1222,27 @@ def lane_parse_output(
     # than a second session key the two could disagree about.
     if not out.get("sales_channel") and focus is not None and focus.sales_channel:
         out["sales_channel"] = focus.sales_channel
+    # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 8: the top
+    # selling ask's axes, off the FOCUS (`turn/apply._top_selling_rules` already laid
+    # this turn's own values over the carried ones). One key, read by
+    # `lanes/business._fetch_semantic_input`.
+    if (
+        jsc.js_string(out.get("order_status") or "").strip() == "top_selling"
+        and focus is not None
+        and focus.top_selling
+    ):
+        out["top_selling"] = dict(focus.top_selling)
+    # Fix lane round 8 (owner hand test, 28 Sep 2026): an outstanding ask after a ranking
+    # is the ORDINARY outstanding ask with the ranked codes as its products
+    # (`apply._hop_to_report` wrote them on the hop). The same carried keys an answering
+    # turn sends (`outstanding_carry`), so the lane's outstanding override, its scope
+    # question and its header read them the way they read any carried subject.
+    hop = focus.top_selling.get("hop") if focus is not None and isinstance(focus.top_selling, dict) else None
+    hop_codes = [c for c in (hop.get("product_codes") or []) if c] if isinstance(hop, dict) else []
+    if hop_codes and not out.get("outstanding_carried_product_code"):
+        out["outstanding_carried_product_code"] = hop_codes[0]
+        if len(hop_codes) > 1:
+            out["outstanding_carried_product_codes"] = list(hop_codes)
 
     routing = dict(out.get("routing") or {})
     if accepted_team:
@@ -2357,7 +2378,12 @@ def make_tool_runner(
         if isinstance(answered, dict):
             lane_out = outstanding_carry(lane_out, focus, answered)
         brand_names: list[str] = []
-        if domain == "order":
+        ranking = jsc.js_string(lane_out.get("order_status") or "").strip() == "top_selling"
+        if domain == "order" and not ranking:
+            # A top selling ranking narrows by its own brand (`focus.top_selling`'s
+            # `brand_ids`, `engine._top_selling_narrowing`); written onto this carry it
+            # outlived the ranking and filtered the next report by it (PR #1273, main
+            # merge: "sorento brand" in the ranking sent `brand_ids` to "can show me the DO").
             # #1262 fix lane round 3, B1-r2: the brand is a carried axis like the
             # customer. Resolved once here, sent as is (`run_fetch` takes these ids),
             # written back onto the focus so the next turn carries it, and named on
@@ -3456,6 +3482,17 @@ def envelope_of(
         # "more" recounts the set under the SAME entitlement rather than under the
         # parser's own, empty, list. `None` on every arm that never called the tool.
         "access_levels_used": fetched.get("access_levels"),
+        # The top selling question this reply asked (`group` / `metric` / `basis` /
+        # `how_many`), or None when it asked nothing. `engine.py` records it on
+        # `focus.top_selling` (`turn/apply.record_top_selling_asked`), reviewer B2 on
+        # PR #1273.
+        "top_selling_asked": fetched.get("top_selling_asked"),
+        # The item codes a listed ranking printed, recorded on the slot by the same
+        # `record_top_selling_asked` (fix lane round 8).
+        "top_selling_codes": fetched.get("top_selling_codes"),
+        # Slot keys the reply asks to forget (a category word it said it does not
+        # know), applied by the same `record_top_selling_asked`.
+        "top_selling_drop": fetched.get("top_selling_drop"),
     }
     if raw_fragment is not None:
         # R4 (PLAN-chatbot-answer-half-reattach.md): the UNTOUCHED `business.run_fetch`
