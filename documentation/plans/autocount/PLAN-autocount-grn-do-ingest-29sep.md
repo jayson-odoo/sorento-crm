@@ -1,8 +1,9 @@
 # PLAN: AutoCount Delivery Order and Goods Receive Note ingest, branch table, PO/SO line links (#1354, S2)
 
-Status: **S2 in build** (full track: migration, new external ingest surface). Branch
-`claude/autocount-grn-do-ingest-yi1w42` (the session's designated branch; the brief named
-`feat/autocount-grn-do-ingest`), cut from `origin/main` `b9552578e2649440931a3cf5a5ce998c8c640300`.
+Status: **S2 built, in review on PR #1356** (full track: migration, new external ingest surface;
+reviewer and security-reviewer rounds folded in). Branch `claude/autocount-grn-do-ingest-yi1w42`
+(the session's designated branch; the brief named `feat/autocount-grn-do-ingest`), cut from
+`origin/main` `b9552578e2649440931a3cf5a5ce998c8c640300`, merged with `0709a3f8`.
 UAC: `autocount-grn-do-ingest-29sep-acceptance-criteria.md` (AC-AG001 onward).
 
 Sources: issue #1354 (owner ask, vendor API list), the scout report
