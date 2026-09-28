@@ -45,8 +45,14 @@ def scheduler_session(name: str = "scheduler"):
 
     db = SessionLocal()
     set_company_scope(db, None)
+    # One correlation id per tick (#1281 S0), so one tick's changes read as one action.
+    import uuid as _uuid
+
+    from app.audit_context import audit_context_scope
+
     try:
-        with actor_scope(AuditActor(actor_type="scheduler", job_id=name), db=db):
+        with actor_scope(AuditActor(actor_type="scheduler", job_id=name), db=db), \
+                audit_context_scope(correlation_id=_uuid.uuid4().hex[:16]):
             yield db
     finally:
         db.close()

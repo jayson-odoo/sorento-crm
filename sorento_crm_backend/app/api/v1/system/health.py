@@ -103,6 +103,10 @@ class AuditTrendPoint(BaseModel):
 class AuditActivityHealth(BaseModel):
     count_last_24h: int = 0
     daily_trend: list[AuditTrendPoint] = []
+    # Records saved without their audit trail: the capture failed and the write went ahead
+    # (open ``audit_trail_gaps`` rows, not yet backfilled). The error for each is on the
+    # ``audit`` channel's integration_log rows. Point-in-time, not windowed.
+    missing_trail: int = 0
 
 
 class HealthSummaryResponse(BaseModel):
@@ -307,9 +311,19 @@ def _audit_activity_health(db: Session, cutoff: datetime, now: datetime) -> Opti
         for offset in range(7, -1, -1):
             day = (now - timedelta(days=offset)).strftime("%Y-%m-%d")
             trend.append(AuditTrendPoint(date=day, count=by_day.get(day, 0)))
-        return AuditActivityHealth(count_last_24h=int(count_24h), daily_trend=trend)
+        return AuditActivityHealth(
+            count_last_24h=int(count_24h), daily_trend=trend, missing_trail=_missing_trail(db)
+        )
     except Exception:  # noqa: BLE001
         return None
+
+
+def _missing_trail(db: Session) -> int:
+    from app.models.audit import AuditTrailGap
+
+    return int(
+        db.query(func.count(AuditTrailGap.id)).filter(AuditTrailGap.backfilled_at.is_(None)).scalar() or 0
+    )
 
 
 @router.get("/health/summary", response_model=HealthSummaryResponse)

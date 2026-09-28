@@ -69,7 +69,7 @@ from app.models.job import ImportJob, ImportJobRow
 from app.models.download import UserDownload, DownloadStatus
 from app.models.report_view import ReportView
 from app.models.saved_view import SavedView
-from app.models.audit import AuditLog
+from app.models.audit import AuditLog, AuditTrailGap
 from app.models.notification import Notification, NotificationDelivery, PushSubscription
 from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
 from app.models.health_alert_state import HealthAlertState
@@ -298,6 +298,7 @@ __all__ = [
     "PublicHoliday",
     "WorkCalendarConfig",
     "AuditLog",
+    "AuditTrailGap",
     "Notification",
     "NotificationDelivery",
     "PushSubscription",

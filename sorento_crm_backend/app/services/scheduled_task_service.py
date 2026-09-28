@@ -454,8 +454,23 @@ def run_task_now(db: Session, task_id: str, requested_by_user_id: Optional[str] 
     task_key = _task_key(task)
     task_id_str = _task_id(task)
 
+    def _run_as_requester(*args):
+        # A new thread starts with an empty context: the `scheduler` actor names its task
+        # (identity plan 8.1) and, for Run now, the user who pressed it (#1281 S0).
+        from app.audit_context import AuditActor, actor_scope, audit_context_scope
+
+        with actor_scope(
+            AuditActor(
+                actor_type="scheduler",
+                user_id=requested_by_user_id,
+                real_user_id=requested_by_user_id,
+                job_id=task_key,
+            )
+        ), audit_context_scope(correlation_id=run_id):
+            _execute_task_run(*args)
+
     thread = threading.Thread(
-        target=_execute_task_run,
+        target=_run_as_requester,
         args=(task_id_str, run_id, task_key, requested_by_user_id),
         name=f"scheduled-task-run-{task_key}-{run_id[:8]}",
         daemon=True,
