@@ -1697,7 +1697,16 @@ def test_detail_query_stays_fast_at_scale(api):
     """Regression guard for quadratic growth in the delivered-by-DO-date achievement query
     (reviewer measured 0.78s at 500 lines on the old query, on this machine's DB). 12 monthly
     periods, 300 SO lines and 2 linked, non-residual DO lines each: GET /sales/targets/{id}
-    must return well inside a generous budget, not scale like O(n^2) with the line count."""
+    must return well inside a generous budget, not scale like O(n^2) with the line count.
+
+    The request is timed twice and the faster run is asserted, against 3.0 s. It is a stopwatch
+    on a shared CI runner: under the xdist shard the 1.5 s budget failed on main twice at 1.60 s
+    and passed once, with no product change between. Locally, under `-n auto --dist loadfile`
+    over tests/test_sales_*.py, the two runs took 0.72 and 0.72 s, 0.74 and 0.92 s, 0.79 and
+    0.83 s. The faster of two drops a one-off stall on a neighbouring worker, and 3.0 s leaves
+    CI's 1.60 s about 2x margin. The guard still holds: the quadratic query measured 0.78 s at
+    500 lines, so it would take tens of seconds here. It stays in the xdist pool rather than
+    the serial step, which is kept for migration and DDL tests (`serial_ddl`)."""
     import time
 
     client, db, company_id = api
@@ -1724,11 +1733,14 @@ def test_detail_query_stays_fast_at_scale(api):
         "split_every": 1, "split_unit": "month", "target_value": 0,
     }).json()
 
-    started = time.monotonic()
-    res = client.get(f"{BASE}/{target['id']}")
-    elapsed = time.monotonic() - started
-    assert res.status_code == 200, res.text
-    assert elapsed < 1.5, f"detail took {elapsed:.2f}s for 3,600 SO lines / 7,200 DO lines"
+    runs = []
+    for _ in range(2):
+        started = time.monotonic()
+        res = client.get(f"{BASE}/{target['id']}")
+        runs.append(time.monotonic() - started)
+        assert res.status_code == 200, res.text
+    took = ", ".join(f"{r:.2f}s" for r in runs)
+    assert min(runs) < 3.0, f"detail took {took} for 3,600 SO lines / 7,200 DO lines"
 
 
 # --------------------------------------------------------------------------------------- #

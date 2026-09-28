@@ -10,7 +10,10 @@ import { TurnAttachments } from '@/components/chatbot/TurnAttachments';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
+import MessageBubbleActions from '@/components/common/conversation/MessageBubbleActions';
+import QuotedContextBlock from '@/components/common/conversation/QuotedContextBlock';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { splitQuotedPrefix } from '@/lib/respondIoChatRender';
 import type { ChatMessageRow } from '../types/chatHistory.types';
 import type { ChatbotTurn, ChatbotTurnMedia } from '../types/chatbotTurn.types';
 import { isMediaDenied, mediaReadCount, turnAttachments } from '../turnPresentation';
@@ -229,10 +232,15 @@ export function ChatTranscript({
             // Voice notes carry no caption on WhatsApp - the transcript is shown instead,
             // never alongside an already-identical caption (plan S1, "never duplicate the
             // caption").
+            // #1317: our own reply-to carries its quote as a leading ">" line;
+            // only OUTGOING text is ours to split (a contact's ">" is theirs).
+            const { quoted, body } = outgoing
+              ? splitQuotedPrefix(m.message)
+              : { quoted: null, body: m.message };
             const bubbleText =
-              media?.modality === 'voice' && !m.message.trim()
+              media?.modality === 'voice' && !body.trim()
                 ? (media.transcript_or_rendered_text ?? '')
-                : m.message;
+                : body;
             return (
               <div
                 key={m.id}
@@ -243,7 +251,11 @@ export function ChatTranscript({
                 className="space-y-1.5"
               >
                 <div className={`flex ${outgoing ? 'justify-end' : 'justify-start'}`}>
-                <div
+                {/* #1317: the same bubble menu as every thread surface. Read-only
+                    here (no message box), so Copy only and no swipe. */}
+                <MessageBubbleActions
+                  enabled
+                  copyText={bubbleText}
                   className={[
                     'max-w-[85%] rounded-lg px-3 py-2 text-sm',
                     outgoing ? 'bg-primary/10' : 'bg-muted',
@@ -260,6 +272,12 @@ export function ChatTranscript({
                       </Badge>
                     )}
                   </div>
+                  {quoted && (
+                    <QuotedContextBlock
+                      context={{ messageId: null, excerpt: quoted, sender: null }}
+                      agentLabel="Sorento"
+                    />
+                  )}
                   {media && <MediaBlock media={media} onOpenImage={setPreviewItem} />}
                   <p className="whitespace-pre-wrap break-words">
                     {highlight(bubbleText, term.trim()).map((seg, i) =>
@@ -275,7 +293,7 @@ export function ChatTranscript({
                   {m.delivery_status && (
                     <span className="text-[11px] text-muted-foreground">{m.delivery_status}</span>
                   )}
-                </div>
+                </MessageBubbleActions>
                 </div>
                 {/* Diagnosis surface, FULL WIDTH under the bubble rather than inside it:
                     the timeline needs the room, and at 375 a panel squeezed into 85% of

@@ -284,3 +284,106 @@ def test_json_body_without_files_still_takes_the_text_path(client, db):
     assert body["sent_as"] == "text"
     assert body["attachments"] is None
     assert text_client.send_message_calls == [("10025531", "just words")]
+
+
+# ---- #1317: quoted reply (AC-RT-18) ------------------------------------------
+# The composer writes the recovered ">" convention INTO the text; Respond has no
+# reply-to parameter, so the backend must deliver that text verbatim and keep
+# reply_to_* for the audit trail only. The route already did this before #1317;
+# these tests pin the contract the frontend now relies on again.
+
+QUOTED_TEXT = "> Is the sink in stock?\nYes, 3 units."
+
+
+def _spy_mark_responded():
+    reasons: list[str] = []
+    original = ConversationSLATrackingService.mark_ticket_responded
+
+    def spy(self, tracking, **kwargs):
+        reasons.append(kwargs.get("reason", ""))
+        return original(self, tracking, **kwargs)
+
+    return reasons, spy
+
+
+def test_quoted_reply_json_text_reaches_respond_verbatim_and_is_audited(client, db):
+    seed = _seed(db)
+    tracking = _create_ticket(db, seed)
+    _act_as(seed["assignee_id"])
+
+    text_client = _FakeTextClient()
+    reasons, spy = _spy_mark_responded()
+    with patch(
+        "app.services.respond_messaging_service.get_window_state", _open_window
+    ), patch(
+        "app.services.integration_service.RespondClient",
+        _respond_client_mock(text_client, _FakeAttachmentClient()),
+    ), patch.object(ConversationSLATrackingService, "mark_ticket_responded", spy):
+        resp = client.post(
+            f"{BASE}/{tracking.id}/ticket/send",
+            json={
+                "text": QUOTED_TEXT,
+                "reply_to_message_id": "1786000001000000",
+                "reply_to_excerpt": "Is the sink in stock?",
+            },
+        )
+
+    assert resp.status_code == 200, resp.text
+    # Exactly one Respond text turn, the quote line and the answer as ONE message.
+    assert text_client.send_message_calls == [("10025531", QUOTED_TEXT)]
+    assert resp.json()["rendered_text"] == QUOTED_TEXT
+    assert len(reasons) == 1
+    assert "reply_to_message_id=1786000001000000" in reasons[0]
+    assert "quoted_reply=true" in reasons[0]
+
+
+def test_quoted_reply_multipart_caption_keeps_the_quote_and_is_audited(client, db):
+    seed = _seed(db)
+    tracking = _create_ticket(db, seed)
+    _act_as(seed["assignee_id"])
+
+    text_client = _FakeTextClient()
+    reasons, spy = _spy_mark_responded()
+    with patch(
+        "app.services.respond_messaging_service.get_window_state", _open_window
+    ), patch(
+        "app.services.respond_chat_template_service.upload_chat_attachment",
+        _fake_upload_chat_attachment,
+    ), patch(
+        "app.services.integration_service.RespondClient",
+        _respond_client_mock(text_client, _FakeAttachmentClient()),
+    ), patch.object(ConversationSLATrackingService, "mark_ticket_responded", spy):
+        resp = client.post(
+            f"{BASE}/{tracking.id}/ticket/send",
+            data={
+                "text": QUOTED_TEXT,
+                "reply_to_message_id": "1786000001000000",
+                "reply_to_excerpt": "Is the sink in stock?",
+            },
+            files=[("files", ("sink.jpg", b"\xff\xd8\xff-not-really", "image/jpeg"))],
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert text_client.send_message_calls == [("10025531", QUOTED_TEXT)]
+    assert len(reasons) == 1
+    assert "reply_to_message_id=1786000001000000" in reasons[0]
+    assert "quoted_reply=true" in reasons[0]
+
+
+def test_plain_reply_carries_no_quote_audit(client, db):
+    seed = _seed(db)
+    tracking = _create_ticket(db, seed)
+    _act_as(seed["assignee_id"])
+
+    reasons, spy = _spy_mark_responded()
+    with patch(
+        "app.services.respond_messaging_service.get_window_state", _open_window
+    ), patch(
+        "app.services.integration_service.RespondClient",
+        _respond_client_mock(_FakeTextClient(), _FakeAttachmentClient()),
+    ), patch.object(ConversationSLATrackingService, "mark_ticket_responded", spy):
+        resp = client.post(f"{BASE}/{tracking.id}/ticket/send", json={"text": "just words"})
+
+    assert resp.status_code == 200, resp.text
+    assert "reply_to_message_id" not in reasons[0]
+    assert "quoted_reply" not in reasons[0]
