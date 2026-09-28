@@ -213,14 +213,13 @@ class TestAC1865TheRuleIsKindAgnosticOverATierPickToo:
         assert plan.domains == ["promotion"], plan.domains
         assert "domain_locked_by_pick" not in plan.trace.rules_fired, plan.trace.rules_fired
         # The tier landed on the focus as THIS message's own entity, never as a pick of
-        # the roster. The roster itself closes here (`new_ask_closes_stale_roster`),
-        # because `_roster_is_about` only matches a roster option against a dict-shaped
-        # focus row and a tier lands on `focus.tier` as a plain string - a separate,
-        # unmeasured seam, out of scope here, so this pins what actually happens rather
-        # than a survival the plan does not name for this kind.
+        # the roster. PR #1353 fix round 1 closed the seam this pin used to record:
+        # `_roster_is_about` now reads the code-only tier axis, so the roster is still
+        # about the subject ("Dealer" is one of its options) and stays stored underneath,
+        # as a product roster does when a new ask names one of its options (AC-PK015).
         assert "Dealer" in state2.focus.tier, state2.focus.tier
-        assert state2.pending is None
-        assert "new_ask_closes_stale_roster" in plan.trace.rules_fired, plan.trace.rules_fired
+        assert state2.pending is not None and state2.pending.kind == "tier_pick"
+        assert "new_ask_closes_stale_roster" not in plan.trace.rules_fired, plan.trace.rules_fired
 
     def test_bare_dealer_still_picks_position_2(self) -> None:
         pending = self._tier_pick_roster()
