@@ -341,7 +341,8 @@ It applies to every shape of offer the assistant asks:
 TRUE when the message, read against that offer, agrees to the handover: a plain yes,
 an okay, the escalate word, a thumbs up, "boleh", "ok escalate", "please do", "go
 ahead and pass it on", "yes please escalate to srt team", a number or a name that picks
-one of the offered teams, or a reply naming an offered company. The examples show the
+one of the offered teams, or an offered company's name given AS the answer (see
+COMPANY-NAME REPLY below for when a company name is not the answer). The examples show the
 meaning, they are not a list to match: any reply that means "yes, hand me to a person"
 is true. A request for the handover itself is agreement too, even when it names the
 product or the team it is about: "please escalate MWC-SC8609-PP to the marketing team"
@@ -360,12 +361,32 @@ FALSE for a decline ("no thanks", "tak apa", "it's okay"), which is is_affirmati
 as the AFFIRMATION rule says. With NO offer open there is nothing to confirm: false, and
 a message that asks for a person is request_for_help as MESSAGE TYPE says.
 
-COMPANY-NAME REPLY ON AN ESCALATION OFFER still holds inside this verdict: naming
-exactly one of the companies the offer listed, by name or code, bare or with filler
-("mocha", "yes mocha", "srt", "route to mch") is agreement: is_escalation_confirmation
-true and company_pick the canonical company name as listed. A company the offer did not
-list, or a value of its own (a customer, a product code, an order number), is not a
-pick: company_pick null, and the message is read as its own question, false.
+COMPANY-NAME REPLY ON AN ESCALATION OFFER, narrowed. This OUTRANKS the earlier section
+of that name, including its "whatever the message_type" line. A company name is the pick
+ONLY when the message IS the answer to the offer: exactly one of the companies the offer
+listed, by name or code, ALONE or with nothing but confirmation, filler or request words
+around it ("mocha", "Mocha", "yes mocha", "the mocha one", "srt", "route to mch",
+"escalate to mocha team"), or the offered option's number, or a plain yes. Then
+is_escalation_confirmation true and company_pick the canonical company name as listed.
+
+When the company name arrives WITH anything else, it is NOT the pick: a filter, a
+product, a document, a brand word, a question or any other subject ("mocha brand",
+"brand mocha", "how about mocha", "mocha water closet", "any mocha incoming", "mocha
+DO", "mocha items") makes the message a NEW ask that uses the company as its brand or
+filter. Then is_escalation_confirmation false and company_pick null; extract the name as
+the entity the message means (a brand filter is an entity with hint "brand"), with the
+domain_hint and intent_hint of the ask (the question on screen when the message only
+narrows it). The message does not answer the offer. Worked example: after "Mocha: no
+orders records found for customer CHENG HUAT HARDWARE (SENTUL) SDN BHD. Would you like me
+to escalate to Mocha customer service team?", the reply "mocha brand" is the delivery
+order ask again with Brand MOCHA: is_escalation_confirmation false, company_pick null,
+one entity "mocha" with hint "brand", domain_hint "order", domain_in_message false (it
+names no document of its own, so the customer on screen carries). Over the same offer, "mocha"
+alone, "1" or "yes" is true, company_pick "Mocha" for the first two.
+
+A company the offer did not list, or a value of its own (a customer, a product code, an
+order number), is not a pick either: company_pick null, and the message is read as its
+own question, false.
 
 is_affirmative stays the AFFIRMATION rule, unchanged: a bare yes, an okay, the escalate
 word in reply to an offer are still is_affirmative true, a bare no is false, a message

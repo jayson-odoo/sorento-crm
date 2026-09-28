@@ -150,6 +150,24 @@ def _names_a_subject(verdict: dict[str, Any]) -> bool:
     )
 
 
+def names_its_own_ask(verdict: dict[str, Any]) -> bool:
+    """Did the parser read THIS message as an ask of its own: an intent, a domain, an
+    entity it named or a brand filter?
+
+    #1323 case 2 (owner hand test, 28 Sep 2026, contact 487555417): "mocha brand" over
+    "Would you like me to escalate to Mocha customer service team?" handed the person to
+    customer service. A company name is the pick only when it is the whole answer; one
+    that arrives beside any of these is that ask's brand or filter, so a `company_pick`
+    is refused with its flag (`_confirmation_defused`, `turn_runtime.with_company_pick`).
+    """
+    return bool(
+        verdict.get("intent_hint")
+        or verdict.get("domain_hint")
+        or verdict.get("query_brands")
+        or _names_a_subject(verdict)
+    )
+
+
 def _named_teams(verdict: dict[str, Any]) -> list[str]:
     """The teams an escalate-to-a-named-team message named (#865 round 5), as
     `turn_runtime.with_named_team_escalation` stamped them; `[]` for any other turn."""
@@ -210,6 +228,13 @@ def _confirmation_defused(verdict: dict[str, Any], trace: Trace) -> dict[str, An
         # names beside it; the product it names is the escalation's focus, not a question.
         return verdict
     decisive = verdict.get("intent_hint") or verdict.get("domain_hint")
+    if escalation.get("company_pick") and names_its_own_ask(verdict):
+        trace.rules_fired.append("company_pick_refused_by_a_named_ask")
+        return {
+            **verdict,
+            "escalation": {**escalation, "is_escalation_confirmation": False, "company_pick": None},
+            "message_type": "business_query",
+        }
     if not decisive or not _names_a_subject(verdict):
         return verdict
     trace.rules_fired.append("confirmation_defused_by_a_named_ask")
