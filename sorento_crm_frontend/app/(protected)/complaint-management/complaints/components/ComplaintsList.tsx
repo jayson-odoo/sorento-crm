@@ -400,7 +400,6 @@ export default function ComplaintsList() {
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

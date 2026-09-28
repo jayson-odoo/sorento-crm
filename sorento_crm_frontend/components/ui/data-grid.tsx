@@ -123,15 +123,13 @@ export interface DataGridProps<TData extends object> {
   isPlaceholderData?: boolean;
   loadingMode?: 'skeleton' | 'spinner';
   loadingMessage?: ReactNode | string;
-  emptyMessage?: ReactNode | string;
   /**
-   * The next step an empty listing offers: the list's own Add button, usually.
-   *
-   * "No data available" tells the reader the grid worked and says nothing about
-   * what to do, and on a list whose Add sits in a card header above a long
-   * filter row that button is not where the eye is (S5-06).
+   * Heading and hint only. An empty state carries no button or link: the page's
+   * one primary CTA lives in its header (owner ruling, PR #1336, CRM-wide), so
+   * the grid has no slot for one.
    */
-  emptyAction?: ReactNode;
+  emptyMessage?: ReactNode | string;
+  emptyAction?: never;
   /**
    * Optional row grouping. Return a label when `row` starts a new group, or
    * null/undefined otherwise; the grid draws a divider row above it.

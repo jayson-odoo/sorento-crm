@@ -296,9 +296,8 @@ export function IntegrationDetailView({ id }: { id: string }) {
             </Button>
           </>
         }
-      >
-        <p className="text-sm text-muted-foreground">{integration.type}</p>
-      </PageHeader>
+      />
+      <p className="text-sm text-muted-foreground">{integration.type}</p>
 
       <Card>
         <CardHeader>
