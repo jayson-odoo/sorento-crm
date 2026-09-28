@@ -72,3 +72,26 @@ def test_upgrade_is_rerunnable_then_downgrade():
             assert _constraint(conn) is None
         finally:
             outer.rollback()
+
+
+def test_upgrade_adds_constraint_despite_same_name_in_another_schema():
+    """CI round 3: an earlier migration test's `zzs_blank_*` scratch schema carries its own
+    `stock_asks.ck_stock_asks_source`; a database-wide name check saw it and skipped the ADD."""
+    module = _load("sa2_0005_stock_ask_source")
+    with engine.connect() as conn:
+        outer = conn.begin()
+        try:
+            conn.execute(sa.text("CREATE SCHEMA zzt_sa2_0005_sibling"))
+            conn.execute(
+                sa.text(
+                    "CREATE TABLE zzt_sa2_0005_sibling.stock_asks (source VARCHAR(10), "
+                    "CONSTRAINT ck_stock_asks_source CHECK (source IN ('live', 'console')))"
+                )
+            )
+            _run(conn, module.downgrade)
+            assert _constraint(conn) is None
+
+            _run(conn, module.upgrade)
+            assert _constraint(conn) is not None
+        finally:
+            outer.rollback()

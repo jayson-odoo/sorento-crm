@@ -34,8 +34,13 @@ def upgrade() -> None:
             """
             DO $$
             BEGIN
+                -- Scoped to THIS stock_asks: a constraint name is only unique per table,
+                -- and a same-named one on another schema's stock_asks (a test scratch
+                -- schema) must not make this skip the ADD.
                 IF NOT EXISTS (
-                    SELECT 1 FROM pg_constraint WHERE conname = 'ck_stock_asks_source'
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'ck_stock_asks_source'
+                      AND conrelid = 'stock_asks'::regclass
                 ) THEN
                     ALTER TABLE stock_asks ADD CONSTRAINT ck_stock_asks_source
                         CHECK (source IN ('live', 'console'));
