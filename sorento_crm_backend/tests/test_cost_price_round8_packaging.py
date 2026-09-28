@@ -296,3 +296,30 @@ def test_hand_added_cost_takes_a_packaging_and_defaults_to_standard(cost_price_e
     assert r.json()["packaging_method"] == "standard"
     e.db.refresh(link)
     assert link.unit_cost == Decimal("7.00")
+
+
+# ------------------------------------------------------- a Draft set from before round 8
+
+
+def test_refresh_prices_undoes_the_round_6_collapse_on_an_older_draft(cost_price_env):
+    """A Draft set uploaded before `cpc4_cost_packaging_method` had its other-packaging rows
+    skipped as duplicates. The migration moves the notes into `packaging_method`; Refresh
+    prices then regroups by code AND packaging, so the 2500 series is three lines again."""
+    from app.models.cost_price import CostPriceChangeLine
+
+    e = cost_price_env
+    _, _, set_id = _upload(e, SERIES_2500, products={"CB2500SS-BL": 9.00, "CB2500SS-BL-DIY": 9.00})
+    # Put the set back the way round 6 stored it: 吊卡 skipped as a duplicate of OPP.
+    card = e.db.query(CostPriceChangeLine).filter_by(change_set_id=set_id, packaging_method="吊卡").one()
+    opp = e.db.query(CostPriceChangeLine).filter_by(change_set_id=set_id, packaging_method="OPP").one()
+    card.flags, card.skipped, card.skip_reason = ["duplicate_code", "duplicate_row"], True, "Duplicate code"
+    opp.flags = ["duplicate_code"]
+    e.db.commit()
+    assert len(e.lines(set_id).json()["data"]) == 2
+
+    r = e.client.post(f"/api/v1/procurement/cost-price-changes/{set_id}/refresh-prices")
+    assert r.status_code == 200, r.text
+    lines = e.lines(set_id).json()["data"]
+    assert [(ln["packaging_method"], ln["skipped"], ln["flags"]) for ln in lines] == [
+        ("彩盒", False, []), ("OPP", False, []), ("吊卡", False, []),
+    ]

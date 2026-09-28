@@ -1595,6 +1595,11 @@ def refresh_prices(
         _recompute_line_price(db, line, cs)
         line.stale_live_unit_cost = None
         line.stale_live_currency = None
+    # Round 8: a Draft set uploaded before migration `cpc4_cost_packaging_method` still carries
+    # the round 6 collapse (rows of other packagings skipped as duplicates); regroup it by
+    # code AND packaging so those rows come back as lines of their own.
+    db.flush()
+    _recompute_duplicates(db, set_id)
     log_audit(
         db, "cost_price_change_sets", _u(cs.id), "UPDATE",
         new_values={"event": "COST_SET_REFRESH_PRICES"},
