@@ -802,6 +802,15 @@ class TestR5Continuity:
         assert not any(bad in text for bad in NEVER), text
         assert _open_question(session_factory).get("kind") not in ("member_offer", "team_pick")
 
+    def test_the_ranking_brand_is_not_the_order_brand_carry(self, session_factory, monkeypatch, cat) -> None:
+        # Main merge (#1262 brand carry): the ranking's "sorento brand" narrows the
+        # ranking only (`top_selling.brand_ids`); it never lands on the outstanding
+        # report's own brand carry, where it outlived the ranking.
+        _ranked_with_filters(session_factory, monkeypatch, cat)
+        focus = _session_of(session_factory).get("focus") or {}
+        assert (focus.get("top_selling") or {}).get("brand_ids"), focus
+        assert not focus.get("outstanding_brand_ids"), focus
+
     def test_the_customer_carries(self, session_factory, monkeypatch, cat) -> None:
         _asked_who(session_factory, monkeypatch)
         _turn(session_factory, monkeypatch, _position(1), "1")
