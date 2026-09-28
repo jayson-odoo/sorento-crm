@@ -130,6 +130,7 @@ function turnBubbles(result: ConsoleTurnResponse, fallbackId: string): ChatbotCo
     turnId: result.turn_id,
     branchKind: index === 0 ? result.branch_kind : undefined,
     promptVersion: result.prompt_version ?? null,
+    routingLine: index === 0 ? (result.trace_summary?.routing_line ?? null) : undefined,
     quickReplies: index === bodies.length - 1 ? result.quick_replies : undefined,
     attachments: index === bodies.length - 1 && attachments.length > 0 ? attachments : undefined,
   }));

@@ -51,6 +51,7 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.models.user import SystemSetting
 from app.services.chatbot import run_turn
 from app.services.chatbot.contracts import BRANCH_KINDS, TurnRequest
+from app.services.chatbot.lanes.escalation import routing_line
 from app.services.error_handler import AppException
 
 # S8a's own key (`ai_prompt_versions.name` for the chatbot's semantic parser), restated
@@ -309,13 +310,25 @@ def _trace_summary(db: Session, turn_id: str | None) -> dict[str, Any]:
         "args_short": None,
         "crossdomain_rungs": [],
         "reveals_dropped": [],
+        "routing_line": None,
     }
     if not turn_id:
         return empty
     # Through the ORM model, not raw SQL - see `_borrow_envelope`'s docstring for why a
     # schema-qualified `chatbot.turns` string is wrong under a test's translated schema.
     row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
-    events = [e for e in ((row.trace if row else None) or []) if isinstance(e, dict) and e.get("kind")]
+    records = [e for e in ((row.trace if row else None) or []) if isinstance(e, dict)]
+    events = [e for e in records if e.get("kind")]
+    # Fix round 3 (the owner's 27 Sep retest): an escalation's draw, one readable line off
+    # its `looked_up` stage, so the console turn says where it went without the trace.
+    routing = next(
+        (
+            (r.get("facts") or {}).get("routing")
+            for r in reversed(records)
+            if r.get("stage") == "looked_up" and isinstance(r.get("facts"), dict)
+        ),
+        None,
+    )
     tool: str | None = None
     args_short: dict[str, Any] | None = None
     crossdomain_rungs: list[str] = []
@@ -336,11 +349,18 @@ def _trace_summary(db: Session, turn_id: str | None) -> dict[str, Any]:
         "args_short": args_short,
         "crossdomain_rungs": [r for r in crossdomain_rungs if r],
         "reveals_dropped": reveals_dropped,
+        "routing_line": routing_line(routing),
     }
 
 
 def _empty_trace_summary() -> dict[str, Any]:
-    return {"tool": None, "args_short": None, "crossdomain_rungs": [], "reveals_dropped": []}
+    return {
+        "tool": None,
+        "args_short": None,
+        "crossdomain_rungs": [],
+        "reveals_dropped": [],
+        "routing_line": None,
+    }
 
 
 def trace_prompt_version(trace: Any) -> int | None:
