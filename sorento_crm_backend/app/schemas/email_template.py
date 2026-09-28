@@ -83,10 +83,18 @@ class EmailTemplateDraftPreviewRequest(BaseModel):
     subject: str = Field("", max_length=512)
     preheader: Optional[str] = Field(None, max_length=255)
     layout_json: Optional[EmailDocument] = None
-    body_html: Optional[str] = None
-    body_text: Optional[str] = None
+    body_html: Optional[str] = Field(None, max_length=200_000)
+    body_text: Optional[str] = Field(None, max_length=50_000)
     code: Optional[str] = Field(None, max_length=80)
     context: Optional[dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def _context_size(self) -> "EmailTemplateDraftPreviewRequest":
+        import json
+
+        if self.context is not None and len(json.dumps(self.context, default=str)) > 100_000:
+            raise ValueError("context is too large")
+        return self
 
 
 class EmailThemeFont(BaseModel):

@@ -114,7 +114,7 @@ def test_system_codes_inserted_once_and_never_overwrite():  # AC-EM096
         db.execute(
             sa.text(
                 "INSERT INTO email_templates (id, code, name, subject, body_html, is_active, created_at, updated_at) "
-                "VALUES (gen_random_uuid(), 'auth_password_reset', 'Mine', 'Admin subject', '<p>x</p>', true, now(), now())"
+                "VALUES (gen_random_uuid(), 'account_email_changed', 'Mine', 'Admin subject', '<p>x</p>', true, now(), now())"
             )
         )
         _run(mods["eml_0002_seed_layouts"], db)
@@ -122,18 +122,22 @@ def test_system_codes_inserted_once_and_never_overwrite():  # AC-EM096
         for code in mig.SYSTEM:
             n = db.execute(sa.text("SELECT count(*) FROM email_templates WHERE code = :c"), {"c": code}).scalar()
             assert n == 1, code
-        assert db.execute(sa.text("SELECT subject FROM email_templates WHERE code = 'auth_password_reset'")).scalar() == "Admin subject"
-        inv = _row(db, "user_invitation")
+        assert db.execute(sa.text("SELECT subject FROM email_templates WHERE code = 'account_email_changed'")).scalar() == "Admin subject"
+        assert _row(db, "auth_password_reset") is None  # credential mail: no editable row
+        inv = _row(db, "complaint_created")
         assert inv[2]["blocks"][0]["type"] == "brand_header"
 
 
 def test_frozen_documents_match_registry():
     """The migration carries a frozen copy; at this revision it equals the registry."""
-    from app.services.email_system_templates import SYSTEM_TEMPLATES
+    from app.services.email_system_templates import CREDENTIAL_CODES, SYSTEM_TEMPLATES
 
     mig = _scripts()["eml_0002_seed_layouts"]
-    assert set(mig.SYSTEM) == set(SYSTEM_TEMPLATES)
+    # credential mails are never seeded as editable rows (PLAN D11)
+    assert set(mig.SYSTEM) == set(SYSTEM_TEMPLATES) - CREDENTIAL_CODES
     for code, t in SYSTEM_TEMPLATES.items():
+        if code in CREDENTIAL_CODES:
+            continue
         assert mig.SYSTEM[code]["layout"] == t.document(), code
         assert mig.SYSTEM[code]["subject"] == t.subject, code
 

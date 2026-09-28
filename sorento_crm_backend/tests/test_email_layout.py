@@ -353,3 +353,23 @@ def test_broken_theme_sends_bare_html(monkeypatch):
 def test_block_document_validation_rejects_unknown_type():
     with pytest.raises(Exception):
         EmailDocument.model_validate({"version": 1, "blocks": [{"type": "hero_image"}]})
+
+
+def test_protocol_relative_urls_dropped():  # security review N1
+    r = _render(_doc({"type": "button", "label": "x", "url": "//evil.example/x"}, {"type": "link", "url": "/\\evil.example"}))
+    assert "evil.example" not in r.body_html
+
+
+def test_help_email_must_be_an_address():  # N4
+    with pytest.raises(Exception):
+        EmailTheme.model_validate({"help_email": "a@b.co?bcc=x@y.z"})
+    assert EmailTheme.model_validate({"help_email": "help@acme.example"}).help_email == "help@acme.example"
+
+
+def test_render_budget_stops_runaway_template_quickly():  # B2 / S1
+    import time
+
+    started = time.monotonic()
+    r = _render(_doc({"type": "heading", "text": "{% for i in range(1000) %}{% for j in range(1000) %}{% for k in range(1000) %}{% endfor %}{% endfor %}{% endfor %}"}, {"type": "intro", "text": "Still sent"}))
+    assert time.monotonic() - started < 6
+    assert r.fallback_used and "Still sent" in r.body_text

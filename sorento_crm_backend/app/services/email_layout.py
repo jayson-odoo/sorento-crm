@@ -30,7 +30,7 @@ from jinja2.sandbox import SandboxedEnvironment
 from markupsafe import Markup
 from pydantic import BaseModel, Field, field_validator
 
-from app.services.templating import html_to_text, render_html_strict, render_text_strict
+from app.services.templating import html_to_text, render_budget, render_html_strict, render_text_strict
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,7 @@ FONT_STACKS: dict[str, str] = {
 }
 
 _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_EMAIL_RE = re.compile(r"^[^@\s?&#/:]+@[^@\s?&#/:]+\.[^@\s?&#/:]+$")
 
 DEFAULT_PRIMARY = "#2563EB"
 DEFAULT_FOOTER_NOTE = (
@@ -90,6 +91,8 @@ def _safe_url(value: Optional[str]) -> Optional[str]:
     if not v:
         return None
     lowered = v.lower()
+    if lowered.startswith(("//", "/\\")):
+        return None  # protocol-relative: another host, not this site
     if lowered.startswith(("http://", "https://", "mailto:", "/")):
         return v
     return None
@@ -154,6 +157,13 @@ class EmailTheme(BaseModel):
             return None
         v = str(v).strip()
         return v or None
+
+    @field_validator("help_email")
+    @classmethod
+    def _email(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not _EMAIL_RE.match(v):
+            raise ValueError("must be an email address")
+        return v
 
 
 class ResolvedTheme(BaseModel):
@@ -589,38 +599,54 @@ def render_document(
     """Render subject + blocks + layout. On ANY failure: log it and return the plain safe
     layout built from whatever still renders (subject, text) - never an error marker."""
     try:
-        rendered_subject = _one_line(render_text_strict(subject or "", context))
-        blocks = []
-        for block in doc.blocks:
-            r = _render_block(block, context, theme)
-            if r is not None:
-                blocks.append(r)
-        pre = _one_line(render_text_strict(preheader, context)) if preheader else _derive_preheader(blocks)
-        if body_text and body_text.strip():
-            text = render_text_strict(body_text, context).strip()
-        else:
-            button_urls = {b["url"] for b in blocks if b["type"] == "button"}
-            text = "\n\n".join(
-                s
-                for s in (
-                    _block_text(b, theme)
-                    for b in blocks
-                    # The secondary link repeats the button's URL for HTML readers whose
-                    # client hides the button; in plain text it would print twice.
-                    if not (b["type"] == "link" and b["url"] in button_urls)
-                )
-                if s
-            ).strip()
-        html = _layout(subject=rendered_subject, preheader=pre, blocks=blocks, theme=theme)
-        return RenderedEmail(subject=rendered_subject, body_html=html, body_text=text)
+        with render_budget(3.0):
+            return _render_document_inner(doc, subject=subject, context=context, theme=theme, preheader=preheader, body_text=body_text)
     except Exception as exc:  # noqa: BLE001 - a recipient never sees this
         logger.error("email render failed, sending the safe layout: %s", exc, exc_info=True)
         return _fallback(doc, subject=subject, context=context, theme=theme, body_text=body_text, error=str(exc))
 
 
+def _render_document_inner(
+    doc: EmailDocument,
+    *,
+    subject: str,
+    context: dict[str, Any],
+    theme: ResolvedTheme,
+    preheader: Optional[str],
+    body_text: Optional[str],
+) -> RenderedEmail:
+    rendered_subject = _one_line(render_text_strict(subject or "", context))
+    blocks = []
+    for block in doc.blocks:
+        r = _render_block(block, context, theme)
+        if r is not None:
+            blocks.append(r)
+    pre = _one_line(render_text_strict(preheader, context)) if preheader else _derive_preheader(blocks)
+    if body_text and body_text.strip():
+        text = render_text_strict(body_text, context).strip()
+    else:
+        button_urls = {b["url"] for b in blocks if b["type"] == "button"}
+        text = "\n\n".join(
+            s
+            for s in (
+                _block_text(b, theme)
+                for b in blocks
+                # The secondary link repeats the button's URL for HTML readers whose
+                # client hides the button; in plain text it would print twice.
+                if not (b["type"] == "link" and b["url"] in button_urls)
+            )
+            if s
+        ).strip()
+    html = _layout(subject=rendered_subject, preheader=pre, blocks=blocks, theme=theme)
+    return RenderedEmail(subject=rendered_subject, body_html=html, body_text=text)
+
+
 def _lenient(fn, *args) -> Optional[Any]:
+    """Best effort under its own small budget: in the fallback one runaway block must not
+    starve the others of the time they need to put their text in the mail."""
     try:
-        return fn(*args)
+        with render_budget(0.1):
+            return fn(*args)
     except Exception:  # noqa: BLE001
         return None
 

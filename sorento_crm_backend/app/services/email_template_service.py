@@ -21,7 +21,7 @@ from app.services.email_layout import (
     resolve_theme,
     theme_defaults,
 )
-from app.services.email_system_templates import SYSTEM_TEMPLATES, get_system_template
+from app.services.email_system_templates import CREDENTIAL_CODES, SYSTEM_TEMPLATES, get_system_template
 from app.services.error_handler import AppException
 from app.services.templating import html_to_text
 
@@ -286,7 +286,16 @@ class EmailTemplateService:
             .first()
         )
 
+    @staticmethod
+    def _refuse_credential_code(code: Optional[str]) -> None:
+        if code and code in CREDENTIAL_CODES:
+            raise AppException(
+                status_code=422,
+                message=f"'{code}' is a built-in security email and cannot be edited",
+            )
+
     def create(self, payload: dict[str, Any], user_id: Optional[str]) -> EmailTemplate:
+        self._refuse_credential_code(payload.get("code"))
         if self.get_by_code(payload["code"]):
             raise AppException(status_code=409, message=f"Email template with code '{payload['code']}' already exists")
         layout = payload.get("layout_json")
@@ -318,6 +327,7 @@ class EmailTemplateService:
         row = self.get(template_id)
         if not row:
             raise AppException(status_code=404, message="Email template not found")
+        self._refuse_credential_code(payload.get("code") or row.code)
         if "code" in payload and payload["code"] and payload["code"] != row.code:
             existing = self.get_by_code(payload["code"])
             if existing and str(existing.id) != str(row.id):
@@ -412,7 +422,7 @@ class EmailTemplateService:
     def render_code(self, code: str, context: dict[str, Any]) -> dict[str, str]:
         """Render the system mail `code`: the admin's row when present and active, else the
         built-in document (email_system_templates.py). Producers pass context, never HTML."""
-        row = self.get_by_code(code)
+        row = None if code in CREDENTIAL_CODES else self.get_by_code(code)
         if row is not None and bool(row.is_active):
             return self.render(row, context)
         st = get_system_template(code)

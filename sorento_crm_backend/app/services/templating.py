@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import html as _html
 import logging
+import operator
 import re
-from typing import Any
+import time
+from contextvars import ContextVar
+from typing import Any, Optional
 
 from jinja2 import Undefined
 from jinja2.exceptions import TemplateError
@@ -55,16 +58,107 @@ class _MarkerUndefined(Undefined):
         return id(self)
 
 
-_html_env = SandboxedEnvironment(
+class TemplateBudgetExceeded(Exception):
+    """A template tried to spend more time, loop steps or memory than any real mail needs."""
+
+
+# Render budget (#1349 security review B2/S1). Admin-authored Jinja now renders on public
+# paths (password reset, onboarding submit) and in the editor's live preview, and the stock
+# sandbox blocks attribute escapes but not work: nested `range(100000)` loops or
+# `'a' * 2000000000` stall a worker. These caps are far above anything a mail uses.
+RENDER_MAX_RANGE = 1000
+RENDER_MAX_SECONDS = 2.0
+RENDER_MAX_OUTPUT_CHARS = 1_000_000
+RENDER_MAX_SEQUENCE = 100_000
+
+_deadline: ContextVar[Optional[float]] = ContextVar("templating_deadline", default=None)
+
+
+def _check_deadline() -> None:
+    deadline = _deadline.get()
+    if deadline is not None and time.monotonic() > deadline:
+        raise TemplateBudgetExceeded("template render took too long")
+
+
+def _budget_range(*args: int):
+    rng = range(*args)
+    if len(rng) > RENDER_MAX_RANGE:
+        raise TemplateBudgetExceeded(f"range larger than {RENDER_MAX_RANGE}")
+
+    def _gen():
+        for i in rng:
+            _check_deadline()
+            yield i
+
+    return _gen()
+
+
+class _BudgetSandbox(SandboxedEnvironment):
+    """The stock sandbox plus a work budget: a capped, deadline-checked `range`, and `*` /
+    `**` refused when the result would be huge."""
+
+    intercepted_binops = frozenset(["*", "**"])
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.globals["range"] = _budget_range
+
+    def call_binop(self, context: Any, op: str, left: Any, right: Any) -> Any:
+        _check_deadline()
+        if op == "**":
+            if isinstance(right, (int, float)) and abs(right) > 64:
+                raise TemplateBudgetExceeded("exponent too large")
+            return operator.pow(left, right)
+        # "*": repeating a sequence is where memory goes.
+        for seq, n in ((left, right), (right, left)):
+            if isinstance(seq, (str, bytes, list, tuple)) and isinstance(n, int):
+                if len(seq) * max(n, 0) > RENDER_MAX_SEQUENCE:
+                    raise TemplateBudgetExceeded("repeated sequence too large")
+        return operator.mul(left, right)
+
+
+_html_env = _BudgetSandbox(
     autoescape=True,
     undefined=_MarkerUndefined,
     keep_trailing_newline=True,
 )
-_text_env = SandboxedEnvironment(
+_text_env = _BudgetSandbox(
     autoescape=False,
     undefined=_MarkerUndefined,
     keep_trailing_newline=True,
 )
+
+
+class render_budget:
+    """Share one deadline across several renders (one email = many block fields). An
+    enclosing budget is never extended by an inner one."""
+
+    def __init__(self, seconds: float = RENDER_MAX_SECONDS) -> None:
+        self.seconds = seconds
+        self._token = None
+
+    def __enter__(self) -> "render_budget":
+        new = time.monotonic() + self.seconds
+        current = _deadline.get()
+        self._token = _deadline.set(min(current, new) if current is not None else new)
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        _deadline.reset(self._token)
+
+
+def _render_budgeted(env: SandboxedEnvironment, source: str, context: dict[str, Any]) -> str:
+    template = env.from_string(_unescape_jinja_tags(source or ""))
+    with render_budget():
+        out: list[str] = []
+        size = 0
+        for chunk in template.generate(**(context or {})):
+            _check_deadline()
+            size += len(chunk)
+            if size > RENDER_MAX_OUTPUT_CHARS:
+                raise TemplateBudgetExceeded("template output too large")
+            out.append(chunk)
+        return "".join(out)
 
 
 # Matches Jinja statement/expression blocks so we can repair their contents.
@@ -90,11 +184,13 @@ def _unescape_jinja_tags(source: str) -> str:
 
 def _render(env: SandboxedEnvironment, source: str, context: dict[str, Any]) -> str:
     try:
-        template = env.from_string(_unescape_jinja_tags(source or ""))
-        return template.render(**(context or {}))
+        return _render_budgeted(env, source, context)
     except TemplateError as exc:
         logger.warning("Template render error: %s", exc)
         return f"[template-error:{exc.message}]"
+    except TemplateBudgetExceeded as exc:
+        logger.warning("Template render budget exceeded: %s", exc)
+        return f"[template-error:{exc}]"
 
 
 def render_html(source: str, context: dict[str, Any]) -> str:
@@ -106,8 +202,7 @@ def render_text(source: str, context: dict[str, Any]) -> str:
 
 
 def _render_strict(env: SandboxedEnvironment, source: str, context: dict[str, Any]) -> str:
-    template = env.from_string(_unescape_jinja_tags(source or ""))
-    return template.render(**(context or {}))
+    return _render_budgeted(env, source, context)
 
 
 def render_html_strict(source: str, context: dict[str, Any]) -> str:

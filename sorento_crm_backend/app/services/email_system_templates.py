@@ -255,5 +255,20 @@ for _t in (*_procurement.TEMPLATES, *_operations.TEMPLATES):
     _register(_t)
 
 
+# Mails that carry a one-time credential in their context (reset / invite / intake token,
+# approver link). They ALWAYS render the built-in document above: no email_templates row
+# may override them, no row is seeded for them, and the API refuses the codes. Otherwise
+# anyone with email_templates.templates.edit could rewrite the reset mail to send its
+# token to their own server (security review B1, PLAN D11). The theme still applies.
+CREDENTIAL_CODES: frozenset[str] = frozenset(
+    {
+        "auth_password_reset",
+        "user_invitation",
+        "onboarding_intake_link",
+        "purchase_request_approval_link",
+    }
+)
+
+
 def get_system_template(code: str) -> Optional[SystemTemplate]:
     return SYSTEM_TEMPLATES.get(code)

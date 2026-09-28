@@ -378,47 +378,6 @@ SYSTEM = json.loads(r'''{
   "preheader": null,
   "subject": "{{ title }}"
  },
- "auth_password_reset": {
-  "body_text": null,
-  "description": "Sent when someone asks to reset their password from the sign-in page.",
-  "layout": {
-   "blocks": [
-    {
-     "type": "brand_header"
-    },
-    {
-     "text": "Reset your password",
-     "type": "heading"
-    },
-    {
-     "text": "Hi{% if recipient.name %} {{ recipient.name }}{% endif %},\n\nWe received a request to reset the password for your {{ company.name }} account. The button below is valid for 1 hour.",
-     "type": "intro"
-    },
-    {
-     "label": "Reset password",
-     "type": "button",
-     "url": "{{ reset_link }}"
-    },
-    {
-     "label": "Or paste this link into your browser:",
-     "type": "link",
-     "url": "{{ reset_link }}"
-    },
-    {
-     "html": "<p>If you did not ask for this, you can ignore this email. Your password stays the same.</p>",
-     "type": "custom_text"
-    },
-    {
-     "note": "This is a system-generated email. Please do not reply.",
-     "type": "footer"
-    }
-   ],
-   "version": 1
-  },
-  "name": "Password reset",
-  "preheader": "Use this link within 1 hour to choose a new password.",
-  "subject": "Reset your password"
- },
  "complaint_created": {
   "body_text": "Dear Complaint Team,\n\n{{ sentence }}\n\n{{ view_url }}\n\nThis is a system-generated email. Please do not reply.",
   "description": "Notifies the Complaint team when a new complaint is created externally, or a previously rejected one is resubmitted.",
@@ -572,47 +531,6 @@ SYSTEM = json.loads(r'''{
   "preheader": null,
   "subject": "Onboarding complete: {{ request_title }}"
  },
- "onboarding_intake_link": {
-  "body_text": null,
-  "description": "Sent to the requester with the link to submit their team for onboarding.",
-  "layout": {
-   "blocks": [
-    {
-     "type": "brand_header"
-    },
-    {
-     "text": "Submit your team for onboarding",
-     "type": "heading"
-    },
-    {
-     "text": "Hello {{ requester_name }},\n\nSorento asks you to submit your team for onboarding. Open the link below, type the names in, and submit it once.",
-     "type": "intro"
-    },
-    {
-     "label": "Open onboarding intake",
-     "type": "button",
-     "url": "{{ intake_url }}"
-    },
-    {
-     "label": "Or paste this link into your browser:",
-     "type": "link",
-     "url": "{{ intake_url }}"
-    },
-    {
-     "html": "<p>The link works until {{ expires_date }} and you can come back to it as often as you like until you submit.</p>",
-     "type": "custom_text"
-    },
-    {
-     "note": "This is a system-generated email. Please do not reply.",
-     "type": "footer"
-    }
-   ],
-   "version": 1
-  },
-  "name": "Onboarding intake link",
-  "preheader": null,
-  "subject": "Submit your team for onboarding: {{ request_title }}"
- },
  "onboarding_submitted": {
   "body_text": null,
   "description": "Confirms to the requester that their onboarding batch was received.",
@@ -675,55 +593,6 @@ SYSTEM = json.loads(r'''{
   "name": "Promotion created (external)",
   "preheader": null,
   "subject": "{{ title }}"
- },
- "purchase_request_approval_link": {
-  "body_text": null,
-  "description": "Sent to an approver with a one-time link to review and approve or reject a purchase request or sponsorship form.",
-  "layout": {
-   "blocks": [
-    {
-     "type": "brand_header"
-    },
-    {
-     "text": "Review and approve",
-     "type": "heading"
-    },
-    {
-     "text": "You have been sent a one-time approval link for a {{ purchase_request.type_label|lower }}. Open the button below to approve or reject it (the link expires after use or after the expiry time).",
-     "type": "intro"
-    },
-    {
-     "rows": [
-      {
-       "label": "Reference",
-       "value": "{{ purchase_request.request_number }}"
-      },
-      {
-       "label": "Project",
-       "value": "{{ purchase_request.project_title }}"
-      }
-     ],
-     "type": "facts"
-    },
-    {
-     "label": "Review and approve",
-     "type": "button",
-     "url": "{{ approval_url }}"
-    },
-    {
-     "label": "Or paste this link into your browser:",
-     "type": "link",
-     "url": "{{ approval_url }}"
-    },
-    {
-     "type": "footer"
-    }
-   ],
-   "version": 1
-  },
-  "name": "Purchase request / sponsorship form approval link",
-  "preheader": "Review and approve {{ purchase_request.request_number }}.",
-  "subject": "{{ purchase_request.type_label }} - Approval link"
  },
  "purchase_request_requester_approved": {
   "body_text": null,
@@ -957,47 +826,6 @@ SYSTEM = json.loads(r'''{
   "name": "Stock inquiry team notice",
   "preheader": "{{ intro }}",
   "subject": "{{ heading }}"
- },
- "user_invitation": {
-  "body_text": null,
-  "description": "Sent when an admin invites a user or resends the invitation.",
-  "layout": {
-   "blocks": [
-    {
-     "type": "brand_header"
-    },
-    {
-     "text": "You're invited to {{ company.name }}",
-     "type": "heading"
-    },
-    {
-     "text": "Hello{% if recipient.name %} {{ recipient.name }}{% endif %},\n\nAn administrator has created an account for you. Set your password to get started. This link is valid for 7 days.",
-     "type": "intro"
-    },
-    {
-     "label": "Set your password",
-     "type": "button",
-     "url": "{{ invite_link }}"
-    },
-    {
-     "label": "Or paste this link into your browser:",
-     "type": "link",
-     "url": "{{ invite_link }}"
-    },
-    {
-     "html": "<p>After setting your password, sign in with your email address and the new password.</p>",
-     "type": "custom_text"
-    },
-    {
-     "note": "This is a system-generated email. Please do not reply.",
-     "type": "footer"
-    }
-   ],
-   "version": 1
-  },
-  "name": "User invitation",
-  "preheader": "Set your password to start using {{ company.name }}. The link is valid for 7 days.",
-  "subject": "You're invited to join {{ company.name }}"
  }
 }''')
 

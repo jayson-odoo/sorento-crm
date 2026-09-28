@@ -75,6 +75,8 @@ Hand-built mails (now `render_code(code, ctx)`, producers pass context):
 ## Permissions and navigation
 
 - **AC-EM090** Theme GET and both preview endpoints need `email_templates.templates.view`; theme PUT needs `email_templates.templates.edit`; a user without them gets 403.
+- **AC-EM092** The four credential mails (`auth_password_reset`, `user_invitation`, `onboarding_intake_link`, `purchase_request_approval_link`) always render their built-in document; an `email_templates` row with one of those codes is ignored, and creating or renaming a template to one of them returns 422 (security review B1).
+- **AC-EM093** A template that loops or allocates without bound (nested `range`, huge `*`/`**`) stops within seconds and the mail still sends via the safe layout; draft preview requires `email_templates.templates.edit` and rejects bodies over 200k characters and contexts over 100k (security review B2/S1/S2).
 - **AC-EM091** "Email Theme" appears in System Management next to "Email Templates" in both menu trees, gated by `email_templates.templates.view`; the page has one primary CTA (Save), no subtitle, and every select is the system dropdown component.
 
 ## Migrations
