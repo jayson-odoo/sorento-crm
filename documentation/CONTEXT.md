@@ -548,3 +548,22 @@ the accurate thing, until a real model exists.
 ### Render
 The saleable image. Produced by AI from the scene, not by the 3D engine. The 3D
 scene carries *layout truth*; the Render carries *beauty*.
+
+---
+
+## Finance (module: `finance`)
+
+### Billing document
+A document AutoCount raises that bills or adjusts what a customer is charged: an invoice, a
+cash sale, a credit note or a debit note. Mirrored from AutoCount, never created or edited in
+the CRM. A cancelled billing document stays visible and counts in no total. Not a payment: a
+billing document says what was charged, never what was paid.
+
+### Document type
+Which of the four a billing document is: invoice, cash sale, credit note, debit note. Part of a
+billing document's identity, because AutoCount numbers each type separately.
+
+### Invoiced basis
+Sales measured by what was billed rather than what was ordered: invoices plus cash sales plus
+debit notes minus credit notes, excluding tax, in ringgit, dated by the document date. The
+alternative to the ordered basis (sales orders) on the sales reports.

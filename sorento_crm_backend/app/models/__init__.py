@@ -14,6 +14,7 @@ from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, 
 from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine, SalesOrder, SalesOrderLine
 from app.models.sales_agent import SalesAgent
 from app.models.sales import SalesTeam, SalesTeamMember
+from app.models.finance import BillingDocument, BillingDocumentLine
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine, PurchaseOrder, PurchaseOrderLine
 from app.models.cost_price import ProductSupplierCost, CostPriceChangeSet, CostPriceChangeLine, SupplierPriceLink
@@ -372,6 +373,9 @@ __all__ = [
     # Sales (schema: sales)
     "SalesTeam",
     "SalesTeamMember",
+    # Finance (schema: finance)
+    "BillingDocument",
+    "BillingDocumentLine",
     # Dealer Kit (schema: dealer_kit)
     "Page",
     "PageVersion",

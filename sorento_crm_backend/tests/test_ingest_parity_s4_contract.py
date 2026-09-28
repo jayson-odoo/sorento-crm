@@ -79,7 +79,8 @@ class TestAcP43ContractV21:
         shift for an unrelated slice."""
         res = env.client.get(CONTRACT_URL)
         assert res.status_code == 200, res.text
-        assert res.json()["version"] == "2.5"
+        # Bumped again (finance S0, #1309): "2.6" adds `billing_documents`.
+        assert res.json()["version"] == "2.6"
 
     def test_contract_lists_fields_added_per_entity(self, env):
         body = env.client.get(CONTRACT_URL).json()
