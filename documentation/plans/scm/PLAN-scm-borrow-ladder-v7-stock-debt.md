@@ -209,8 +209,11 @@ VIEW. The board and the ladder do not change.
 
 #### R43: a pinned PO line fulfils its sales order (owner, 28 Sep 2026, issue #1346)
 
-Status: built on PR #1347 (branch `fix/scm-stock-debt-pinned-po-fulfils`), small fix track (no
-migration, no auth/RBAC change, no new ingest surface).
+Status: built on PR #1347 (branch `fix/scm-stock-debt-pinned-po-fulfils`), reviewed (one review
+round folded in: the outstanding cap on a past-due PO pin, the exact-quantity gate) and
+browser-verified at 1280 and 375 on the production case; awaiting CI and the owner's hand test.
+Small fix track (no migration of its own, no auth/RBAC change, no new ingest surface; the branch
+carries #1348's `merge_28sep_batch3` byte for byte because main had two heads).
 
 **The owner's words, verbatim (28 Sep 2026, 20:5x MYT), after #1332 deployed:** "i just
 deployed the stock debt and it is successful, but why this one still not assigned to the PO
