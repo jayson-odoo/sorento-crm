@@ -20,6 +20,7 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Label } from '@/components/ui/label';
@@ -60,10 +61,20 @@ function searchTokens(query: string): string[] {
 
 function matchesSearch(line: CostPriceChangeLine, tokens: string[]): boolean {
   if (!tokens.length) return true;
-  const haystack = [line.supplier_code, line.configuration, line.product?.product_code, line.product?.description, line.sheet]
+  const haystack = [line.supplier_code, line.packaging_method, line.configuration, line.product?.product_code, line.product?.description, line.sheet]
     .filter(Boolean)
     .map((s) => (s as string).toLowerCase());
   return tokens.every((t) => haystack.some((h) => h.includes(t)));
+}
+
+/**
+ * Round 8 (owner, 28 Sep 2026: "cost per packaging method"): the packaging's folded key, the
+ * same rule as the backend's `packaging_key` (NFKC, trimmed, case folded), so "OPP" and "opp"
+ * are one filter option.
+ */
+export function packagingKey(method: string | null | undefined): string {
+  const text = (method ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+  return text || 'standard';
 }
 
 /** Round 7 R2 (owner, 28 Sep 2026: "this table better show the number"): "19系列 (48)". */
@@ -118,13 +129,18 @@ function CostCell({ value, currency }: { value: number | null; currency: string 
   );
 }
 
-/** R6: the other rows of this code, inline and small ("OPP 9.90 · 彩盒 11.00"). */
+/** R6: the other rows of this code and packaging, inline and small ("9.95 · 10.10"). */
 function duplicateRowsText(line: CostPriceChangeLine): string | null {
   const rows = line.duplicate_rows ?? [];
   if (!rows.length) return null;
   return rows
     .map((d) => {
-      const label = [d.supplier_code !== line.supplier_code ? d.supplier_code : null, d.code_note].filter(Boolean).join(' ');
+      const label = [
+        d.supplier_code !== line.supplier_code ? d.supplier_code : null,
+        d.packaging_method !== line.packaging_method ? d.packaging_method : null,
+      ]
+        .filter(Boolean)
+        .join(' ');
       const cost = d.new_unit_cost != null ? d.new_unit_cost.toFixed(2) : 'none';
       return label ? `${label} ${cost}` : cost;
     })
@@ -177,7 +193,9 @@ function LineCard({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <span className="font-medium">{line.supplier_code}</span>
-          {line.code_note ? <span className="ms-1.5 text-xs text-muted-foreground">{line.code_note}</span> : null}
+          <span className="ms-1.5 text-xs text-muted-foreground" data-testid="line-card-packaging">
+            {line.packaging_method}
+          </span>
           {duplicateRowsText(line) ? (
             <div className="truncate text-xs text-muted-foreground">{duplicateRowsText(line)}</div>
           ) : null}
@@ -386,18 +404,32 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
   const [activeFilter, setActiveFilter] = React.useState<FilterKey>('changed');
   const [search, setSearch] = React.useState('');
   const [activeSheet, setActiveSheet] = React.useState('all');
+  const [packagings, setPackagings] = React.useState<string[]>([]);
   // Round 7 R2: the list views' own paging and sorting, client side - the lines endpoint
   // already returns the whole set, so no server paging is needed.
   const [pagination, setPagination] = React.useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = React.useState<SortingState>([]);
-  useResetPageOnFilterChange(setPagination, [activeFilter, activeSheet, search]);
+  useResetPageOnFilterChange(setPagination, [activeFilter, activeSheet, search, packagings]);
 
   const patchLine = usePatchCostPriceChangeLine(changeSet.id);
   const decideLine = useDecideCostPriceLine(changeSet.id);
   const decideAll = useDecideAllCostPriceLines(changeSet.id);
 
   const tokens = React.useMemo(() => searchTokens(search), [search]);
-  const searchedLines = React.useMemo(() => lines.filter((l) => matchesSearch(l, tokens)), [lines, tokens]);
+  // Round 8: the Packaging filter narrows like the search does, so the cards and sheet tabs
+  // count what it leaves. One option per folded key, shown as the set first wrote it.
+  const packagingOptions = React.useMemo(() => {
+    const byKey = new Map<string, string>();
+    for (const l of lines) if (!byKey.has(packagingKey(l.packaging_method))) byKey.set(packagingKey(l.packaging_method), l.packaging_method);
+    return Array.from(byKey, ([value, label]) => ({ value, label }));
+  }, [lines]);
+  const searchedLines = React.useMemo(
+    () =>
+      lines.filter(
+        (l) => matchesSearch(l, tokens) && (packagings.length === 0 || packagings.includes(packagingKey(l.packaging_method))),
+      ),
+    [lines, tokens, packagings],
+  );
 
   const sheets = React.useMemo(() => Array.from(new Set(lines.map((l) => l.sheet))), [lines]);
 
@@ -434,9 +466,9 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
     const skip = (line: CostPriceChangeLine, reason: string) =>
       void patchLine.mutateAsync({ lineId: line.id, patch: { skipped: true, skip_reason: reason } });
     // Widths (1280, round 6 R2): every cell is one line, and a verifier's Decision column
-    // (150) still lands inside ~950px: 85 + 225 + 70 + 150 + 100 + 100 + 70 + 150 = 950.
+    // (150) still lands inside ~950px: 85 + 145 + 80 + 70 + 150 + 100 + 100 + 70 + 150 = 950.
     // Round 7: Sheet / row took 15 from Supplier code so its header fits beside the sort icon.
-    // The supplier code column is the widest: it carries the note and the duplicate rows.
+    // Round 8: Packaging (80) took its width from Supplier code, which keeps the duplicate rows.
     const base: ColumnDef<CostPriceChangeLine>[] = [
       {
         // Sheet and Row merged into one column (column-width budget, 1280 breakpoint).
@@ -458,19 +490,31 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
         id: 'supplier_code',
         accessorFn: (l) => l.supplier_code ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Supplier code" column={column} />,
-        size: 225,
+        size: 145,
         cell: ({ row }) => {
           const line = row.original;
           const others = duplicateRowsText(line);
-          const title = [line.supplier_code, line.code_note, others].filter(Boolean).join(' · ');
+          const title = [line.supplier_code, others].filter(Boolean).join(' · ');
           return (
             <div className={ONE_LINE} title={title}>
-              <span className="shrink-0 font-medium">{line.supplier_code}</span>
-              {line.code_note ? <span className="shrink-0 text-xs text-muted-foreground">{line.code_note}</span> : null}
+              <span className="truncate font-medium">{line.supplier_code}</span>
               {others ? <span className="min-w-0 truncate text-xs text-muted-foreground">· {others}</span> : null}
             </div>
           );
         },
+      },
+      {
+        // Round 8 (owner, 28 Sep 2026): a cost is per packaging method; the bracket text as
+        // the supplier wrote it ("彩盒", "OPP"), "standard" for a plain code.
+        id: 'packaging',
+        accessorFn: (l) => l.packaging_method,
+        header: ({ column }) => <DataGridColumnHeader title="Packaging" column={column} />,
+        size: 80,
+        cell: ({ row }) => (
+          <div className={ONE_LINE} title={row.original.packaging_method}>
+            <span className="truncate">{row.original.packaging_method}</span>
+          </div>
+        ),
       },
       {
         id: 'configuration',
@@ -711,6 +755,15 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
           placeholder="Search code, configuration or product"
           className="w-full sm:w-72"
         />
+        {packagingOptions.length > 1 ? (
+          <SearchableMultiSelect
+            value={packagings}
+            onChange={setPackagings}
+            options={packagingOptions}
+            placeholder="Packaging"
+            triggerClassName="w-full sm:w-48"
+          />
+        ) : null}
         {sheets.length > 1 ? (
           <Tabs value={activeSheet} onValueChange={setActiveSheet} className="min-w-0 flex-1">
             <TabsList variant="line" className="w-full justify-start overflow-x-auto">

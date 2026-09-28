@@ -156,6 +156,8 @@ export default function ProductSuppliersTab({ productId }: ProductSuppliersTabPr
                         <div className="mt-3 space-y-1 border-t pt-3">
                           {costs.map((cost) => (
                             <div key={cost.id} className="flex flex-wrap items-center gap-2 text-sm">
+                              {/* Round 8: a cost is per packaging method; say which. */}
+                              <span className="text-muted-foreground">{cost.packaging_method ?? 'standard'}</span>
                               <span className="tabular-nums font-medium">
                                 {cost.unit_cost.toFixed(2)} {cost.currency}
                               </span>

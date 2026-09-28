@@ -59,7 +59,7 @@ function line(overrides: Partial<CostPriceChangeLine> = {}): CostPriceChangeLine
     line_no: '1',
     supplier_code_raw: 'ZZT-001',
     supplier_code: 'ZZT-001',
-    code_note: null,
+    packaging_method: 'standard',
     configuration: 'a configuration',
     flags: [],
     match_outcome: 'exact',
@@ -136,8 +136,8 @@ function renderTab(cs: CostPriceChangeSetDetail) {
 function renderAllShapes() {
   mobile = false;
   linesData = [
-    line({ id: 'changed', code_note: '吊卡', duplicate_rows: [
-      { id: 'd1', sheet: '19 series', row_no: 8, supplier_code: 'ZZT-001', code_note: 'OPP', new_unit_cost: 9.9 },
+    line({ id: 'changed', packaging_method: '吊卡', duplicate_rows: [
+      { id: 'd1', sheet: '19 series', row_no: 8, supplier_code: 'ZZT-001', packaging_method: 'OPP', new_unit_cost: 9.9 },
     ] }),
     line({ id: 'unmatched', supplier_code: 'ZZT-NF', match_outcome: 'unmatched', product: null, line_state: 'needs_attention' }),
     line({ id: 'no-cost', supplier_code: 'ZZT-NC', new_unit_cost: null, change_pct: null, line_state: 'needs_attention' }),

@@ -56,7 +56,8 @@ export function CostRowDialog({
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
-  link: { id: string; product?: { product_code: string } | null; currency?: string | null };
+  /** `packaging`: the packaging method a new row is for (round 8); absent means `standard`. */
+  link: { id: string; product?: { product_code: string } | null; currency?: string | null; packaging?: string | null };
   cost: ProductSupplierCostRow | null;
   onSaved: () => void;
 }) {
@@ -94,7 +95,7 @@ export function CostRowDialog({
         end_date: toDateOnly(endDate),
       };
       if (cost) await updateProductSupplierCost(link.id, cost.id, input);
-      else await createProductSupplierCost(link.id, input);
+      else await createProductSupplierCost(link.id, link.packaging ? { ...input, packaging_method: link.packaging } : input);
       onSaved();
       onOpenChange(false);
     } catch (error) {
@@ -108,7 +109,10 @@ export function CostRowDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Cost for {link.product?.product_code ?? 'this product'}</DialogTitle>
+          <DialogTitle>
+            Cost for {link.product?.product_code ?? 'this product'}
+            {(cost?.packaging_method ?? link.packaging) ? ` · ${cost?.packaging_method ?? link.packaging}` : ''}
+          </DialogTitle>
         </DialogHeader>
         <DialogBody className="space-y-4">
           <div className="grid grid-cols-2 gap-3">

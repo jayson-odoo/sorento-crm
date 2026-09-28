@@ -277,11 +277,12 @@ export async function searchCostPriceProductOptions(query: string): Promise<Sear
 
 export async function getSupplierCostLists(
   supplierId: string,
-  params: { query?: string; status?: string[] } = {},
-): Promise<{ data: SupplierCostListEntry[]; today: string }> {
+  params: { query?: string; status?: string[]; packaging?: string[] } = {},
+): Promise<{ data: SupplierCostListEntry[]; today: string; packaging_options: string[] }> {
   const sp = new URLSearchParams();
   if (params.query) sp.set('query', params.query);
   if (params.status?.length) sp.set('status', params.status.join(','));
+  if (params.packaging?.length) sp.set('packaging', params.packaging.join(','));
   const qs = sp.toString();
   const res = await apiFetch(`/api/v1/procurement/suppliers/${supplierId}/cost-lists${qs ? `?${qs}` : ''}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load this supplier’s costs'));
@@ -293,6 +294,8 @@ export interface CostRowInput {
   currency: string;
   start_date: string | null;
   end_date: string | null;
+  /** Round 8: sent on a new row only; absent means `standard`. */
+  packaging_method?: string;
 }
 
 export async function createProductSupplierCost(linkId: string, input: CostRowInput): Promise<ProductSupplierCostRow> {

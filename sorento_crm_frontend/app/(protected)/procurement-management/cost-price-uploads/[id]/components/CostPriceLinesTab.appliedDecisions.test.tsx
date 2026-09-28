@@ -56,7 +56,7 @@ function line(overrides: Partial<CostPriceChangeLine> = {}): CostPriceChangeLine
     line_no: '1',
     supplier_code_raw: 'ZZT-001',
     supplier_code: 'ZZT-001',
-    code_note: null,
+    packaging_method: 'standard',
     configuration: 'a configuration',
     flags: [],
     match_outcome: 'exact',

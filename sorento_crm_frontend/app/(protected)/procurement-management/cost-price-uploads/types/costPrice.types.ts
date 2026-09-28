@@ -59,7 +59,7 @@ export interface CostPriceDuplicateRow {
   sheet: string;
   row_no: number;
   supplier_code: string;
-  code_note: string | null;
+  packaging_method: string;
   new_unit_cost: number | null;
 }
 
@@ -128,7 +128,9 @@ export interface CostPriceChangeLine {
   line_no: string | null;
   supplier_code_raw: string;
   supplier_code: string;
-  code_note: string | null;
+  /** Round 8 (owner, 28 Sep 2026): the code's bracket text as the supplier wrote it ("彩盒",
+   *  "OPP"), `standard` for a plain code. Part of the line's key with the code. */
+  packaging_method: string;
   configuration: string | null;
   flags: string[];
   match_outcome: MatchOutcome;
@@ -149,7 +151,7 @@ export interface CostPriceChangeLine {
    *  recorded `current_unit_cost`/`current_currency` is what the line was built against,
    *  this is what the product-supplier link holds right now. */
   stale: { live_unit_cost: number | null; live_currency: string | null } | null;
-  /** Round 6 R6: the other rows of this line's supplier code (or product), in file order.
+  /** Round 6 R6 (round 8: same code AND same packaging): the other rows, in file order.
    *  They are not applied; the line carries the row `choose_duplicate_row` picked. */
   duplicate_rows?: CostPriceDuplicateRow[];
 }
@@ -166,6 +168,8 @@ export type CostRowStatus = 'in_force' | 'scheduled' | 'ended' | 'always' | 'ove
 
 export interface ProductSupplierCostRow {
   id: string;
+  /** Round 8: the packaging this cost is for; `standard` for a plain code. */
+  packaging_method: string;
   unit_cost: number;
   currency: string;
   start_date: string | null;
@@ -176,8 +180,11 @@ export interface ProductSupplierCostRow {
   created_at: string;
 }
 
+/** One product AND packaging method of the supplier (round 8). */
 export interface SupplierCostListEntry {
   product_supplier_id: string;
+  packaging_method: string;
+  packaging_key: string;
   product: { id: string; product_code: string; description: string };
   supplier_code: string | null;
   unit_cost: number | null;

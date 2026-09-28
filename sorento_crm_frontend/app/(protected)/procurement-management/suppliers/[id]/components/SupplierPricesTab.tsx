@@ -3,12 +3,13 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
+import { getCoreRowModel, getSortedRowModel, useReactTable, type ColumnDef, type SortingState } from '@tanstack/react-table';
 import { Plus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
@@ -39,9 +40,9 @@ const STATUS_OPTIONS = (Object.keys(STATUS_LABELS) as CostRowStatus[]).map((valu
 
 type Row = { id: string; entry: SupplierCostListEntry; cost: ProductSupplierCostRow | null };
 
-/** A cost-list link, adapted to what `CostRowDialog` needs (contract 2.3). */
+/** A cost-list link and packaging, adapted to what `CostRowDialog` needs (contract 2.3). */
 function dialogLink(entry: SupplierCostListEntry) {
-  return { id: entry.product_supplier_id, product: entry.product, currency: entry.currency };
+  return { id: entry.product_supplier_id, product: entry.product, currency: entry.currency, packaging: entry.packaging_method };
 }
 
 export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
@@ -49,24 +50,39 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
   const queryClient = useQueryClient();
   const [search, setSearch] = React.useState('');
   const [statuses, setStatuses] = React.useState<CostRowStatus[]>([]);
+  // Round 8 (owner, 28 Sep 2026): a cost is per packaging method, so the grid filters by it.
+  const [packagings, setPackagings] = React.useState<string[]>([]);
+  const [sorting, setSorting] = React.useState<SortingState>([]);
   const [dialog, setDialog] = React.useState<{ entry: SupplierCostListEntry; cost: ProductSupplierCostRow | null } | null>(null);
 
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['supplier-cost-lists', supplierId, search, statuses],
-    queryFn: () => getSupplierCostLists(supplierId, { query: search || undefined, status: statuses.length ? statuses : undefined }),
+    queryKey: ['supplier-cost-lists', supplierId, search, statuses, packagings],
+    queryFn: () =>
+      getSupplierCostLists(supplierId, {
+        query: search || undefined,
+        status: statuses.length ? statuses : undefined,
+        packaging: packagings.length ? packagings : undefined,
+      }),
     enabled: !!supplierId,
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['supplier-cost-lists', supplierId] });
 
   const entries = React.useMemo(() => data?.data ?? [], [data]);
+  // Every packaging this supplier's cost lists carry, whatever the filters (the backend
+  // sends them unfiltered), plus any still selected, so a pick never vanishes from its list.
+  const packagingOptions = React.useMemo(
+    () =>
+      Array.from(new Set([...(data?.packaging_options ?? []), ...packagings])).map((value) => ({ value, label: value })),
+    [data, packagings],
+  );
 
   const rows: Row[] = React.useMemo(() => {
     const out: Row[] = [];
     for (const entry of entries) {
       const visibleCosts = statuses.length ? entry.costs.filter((c) => statuses.includes(c.status)) : entry.costs;
       if (visibleCosts.length === 0) {
-        out.push({ id: `${entry.product_supplier_id}-empty`, entry, cost: null });
+        out.push({ id: `${entry.product_supplier_id}-${entry.packaging_key}-empty`, entry, cost: null });
       } else {
         for (const cost of visibleCosts) out.push({ id: cost.id, entry, cost });
       }
@@ -77,8 +93,38 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
   const columns = React.useMemo<ColumnDef<Row>[]>(
     () => [
       {
+        id: 'product',
+        accessorFn: (r) => r.entry.product?.product_code ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
+        size: 170,
+        cell: ({ row }) => {
+          const { entry } = row.original;
+          const title = [entry.product?.product_code, entry.product?.description, entry.supplier_code].filter(Boolean).join(' · ');
+          return (
+            <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap" title={title}>
+              <span className="shrink-0 font-medium">{entry.product?.product_code ?? '-'}</span>
+              {entry.supplier_code ? <span className="truncate text-xs text-muted-foreground">{entry.supplier_code}</span> : null}
+            </div>
+          );
+        },
+      },
+      {
+        // Round 8: beside the code, as the supplier wrote it ("彩盒", "OPP"); "standard" for a plain code.
+        id: 'packaging',
+        accessorFn: (r) => r.entry.packaging_method,
+        header: ({ column }) => <DataGridColumnHeader title="Packaging" column={column} />,
+        size: 100,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.entry.packaging_method}>
+            {row.original.entry.packaging_method}
+          </span>
+        ),
+      },
+      {
         id: 'price',
-        header: 'Cost',
+        accessorFn: (r) => r.cost?.unit_cost ?? r.entry.unit_cost ?? undefined,
+        sortUndefined: 'last',
+        header: ({ column }) => <DataGridColumnHeader title="Cost" column={column} />,
         size: 110,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
         cell: ({ row }) =>
@@ -86,26 +132,35 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
             <span className="tabular-nums">
               {row.original.cost.unit_cost.toFixed(2)} {row.original.cost.currency}
             </span>
+          ) : row.original.entry.unit_cost != null ? (
+            // A link with no cost list rows yet: the cost some other writer set on it.
+            <span className="tabular-nums text-muted-foreground">
+              {Number(row.original.entry.unit_cost).toFixed(2)} {row.original.entry.currency ?? ''}
+            </span>
           ) : (
             <span className="text-muted-foreground">-</span>
           ),
       },
       {
         id: 'start',
-        header: 'Valid from',
+        accessorFn: (r) => r.cost?.start_date ?? undefined,
+        sortUndefined: 'last',
+        header: ({ column }) => <DataGridColumnHeader title="Valid from" column={column} />,
         size: 110,
         cell: ({ row }) => (row.original.cost ? (formatPlainDate(row.original.cost.start_date) ?? 'Always') : ''),
       },
       {
         id: 'end',
         header: 'Valid to',
-        size: 110,
+        enableSorting: false,
+        size: 100,
         cell: ({ row }) => (row.original.cost ? (formatPlainDate(row.original.cost.end_date) ?? 'No end') : ''),
       },
       {
         id: 'status',
         header: 'Status',
-        size: 110,
+        enableSorting: false,
+        size: 100,
         cell: ({ row }) =>
           row.original.cost ? (
             <Badge variant={STATUS_BADGE_VARIANT[row.original.cost.status]}>{STATUS_LABELS[row.original.cost.status]}</Badge>
@@ -114,6 +169,7 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
       {
         id: 'source',
         header: 'Source',
+        enableSorting: false,
         size: 130,
         cell: ({ row }) =>
           row.original.cost ? (
@@ -140,7 +196,8 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
       {
         id: 'actions',
         header: '',
-        size: 90,
+        enableSorting: false,
+        size: 80,
         cell: ({ row }) =>
           canEdit ? (
             row.original.cost ? (
@@ -162,7 +219,10 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
     columns,
     data: rows,
     getRowId: (row) => row.id,
+    state: { sorting },
+    onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
@@ -176,7 +236,8 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
           placeholder="Search product code, description or supplier code"
           className="w-full sm:w-80"
         />
-        <SearchableMultiSelect value={statuses} onChange={(v) => setStatuses(v as CostRowStatus[])} options={STATUS_OPTIONS} placeholder="Status" triggerClassName="w-56" />
+        <SearchableMultiSelect value={statuses} onChange={(v) => setStatuses(v as CostRowStatus[])} options={STATUS_OPTIONS} placeholder="Status" triggerClassName="w-full sm:w-56" />
+        <SearchableMultiSelect value={packagings} onChange={setPackagings} options={packagingOptions} placeholder="Packaging" triggerClassName="w-full sm:w-56" />
       </div>
 
       {isError ? (
@@ -185,7 +246,7 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
             <p className="text-sm font-medium">{error instanceof Error ? error.message : 'Failed to load this supplier’s costs'}</p>
           </div>
         </Card>
-      ) : !isLoading && entries.length === 0 ? (
+      ) : !isLoading && entries.length === 0 && !search && !statuses.length && !packagings.length ? (
         <Card>
           <div className="flex flex-col items-center gap-3 p-10 text-center">
             <p className="text-sm font-medium">No costs recorded for this supplier yet</p>
@@ -201,24 +262,6 @@ export function SupplierPricesTab({ supplierId }: { supplierId: string }) {
           isLoading={isLoading}
           listingKey=""
           tableLayout={{ width: 'fixed', columnsResizable: true }}
-          renderGroupHeader={(row: Row, previous: Row | null) => {
-            if (previous && previous.entry.product_supplier_id === row.entry.product_supplier_id) return null;
-            const { entry } = row;
-            return (
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <span className="font-medium">{entry.product?.product_code ?? '-'}</span>
-                  <span className="ms-2 text-muted-foreground">{entry.product?.description ?? ''}</span>
-                  {entry.supplier_code ? (
-                    <span className="ms-2 text-muted-foreground">&middot; {entry.supplier_code}</span>
-                  ) : null}
-                </div>
-                <span className="tabular-nums text-muted-foreground">
-                  {entry.unit_cost != null ? `${Number(entry.unit_cost).toFixed(2)} ${entry.currency ?? ''}` : 'no cost'}
-                </span>
-              </div>
-            );
-          }}
         >
           <Card>
             <CardTable>

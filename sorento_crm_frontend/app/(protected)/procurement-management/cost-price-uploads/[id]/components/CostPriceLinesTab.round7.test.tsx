@@ -62,7 +62,7 @@ function line(overrides: Partial<CostPriceChangeLine> = {}): CostPriceChangeLine
     line_no: '1',
     supplier_code_raw: 'ZZT-001',
     supplier_code: 'ZZT-001',
-    code_note: null,
+    packaging_method: 'standard',
     configuration: 'a configuration',
     flags: [],
     match_outcome: 'exact',
@@ -258,7 +258,7 @@ describe('Round 7 R2: the lines are the system DataGrid with the list views page
   });
 
   it('keeps every row on one line inside the grid (round 6 rule carried over)', () => {
-    linesData = sheetLines('19系列', 2, 'A', { duplicate_rows: [{ id: 'd', supplier_code: 'A-001', code_note: 'OPP', new_unit_cost: 9.9, sheet: '19系列', row_no: 99 }] });
+    linesData = sheetLines('19系列', 2, 'A', { duplicate_rows: [{ id: 'd', supplier_code: 'A-001', packaging_method: 'OPP', new_unit_cost: 9.9, sheet: '19系列', row_no: 99 }] });
     renderTab(changeSet());
     const first = screen.getAllByRole('row')[1];
     expect(within(first).getByText(/OPP 9.90/)).toBeInTheDocument();

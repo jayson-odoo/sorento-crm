@@ -106,7 +106,7 @@ filters, searches and counts on the client (AC-SR-02: counts follow the search).
 ```json
 {"data": [{
   "id": "...", "sheet": "19 series", "row_no": 7, "line_no": "1",
-  "supplier_code_raw": "SRTWT1900-BL-DIY", "supplier_code": "SRTWT1900-BL-DIY", "code_note": null,
+  "supplier_code_raw": "SRTWT1900-BL-DIY", "supplier_code": "SRTWT1900-BL-DIY", "packaging_method": "standard",
   "configuration": "304不锈钢 单把 冷热", "flags": ["configuration_from_merge"],
   "match_outcome": "exact", "match_rung": null,
   "product": {"id": "...", "product_code": "SRTWT1900-BL-DIY", "description": "ANGLE VALVE BLUE DIY"},
@@ -117,13 +117,23 @@ filters, searches and counts on the client (AC-SR-02: counts follow the search).
   "decision": null, "decision_reason": null, "decided_by_name": null,
   "stale": null,
   "duplicate_rows": [{"id": "...", "sheet": "19 series", "row_no": 8,
-                      "supplier_code": "SRTWT1900-BL-DIY", "code_note": "OPP", "new_unit_cost": 9.9}]
+                      "supplier_code": "SRTWT1900-BL-DIY", "packaging_method": "standard", "new_unit_cost": 9.9}]
 }]}
 ```
 
-Round 6 (R6, owner 28 Sep 2026): rows of one supplier code (or one product) are ONE line - the
-row `choose_duplicate_row` picked (the first, in file order) - and the others ride on it as
-`duplicate_rows`; they are stored `skipped` with flag `duplicate_row` and are not in `data`.
+Round 8 (owner 28 Sep 2026, "cost per packaging method"): `packaging_method` is the code's bracket
+text as the supplier wrote it (`CB2500SS-BL（彩盒）` gives `彩盒`), `standard` for a plain code (it
+replaces round 7's `code_note`). A line is keyed by (supplier code, packaging) and (product,
+packaging), the packaging folded with NFKC, trim and case fold, so the 2500 series rows
+`CB2500SS-BL（彩盒）`, `CB2500SS-BL-DIY（OPP）` and `CB2500SS-BL-DIY（吊卡）` are three lines, and
+`ZZ-1` beside `ZZ-1（彩盒）` is two. `current_unit_cost` is the price in force of THAT packaging
+on the link (`current_cost`, section 2.1); null when the packaging has no cost yet. On a link with
+no cost list rows at all, only `standard` has a current cost (the link's own `unit_cost`).
+
+Round 6 (R6) as amended in round 8: rows of one supplier code AND packaging (or one product and
+packaging) are ONE line - the row `choose_duplicate_row` picked (the first, in file order) - and
+the others ride on it as `duplicate_rows`; they are stored `skipped` with flag `duplicate_row`
+and are not in `data`. A different packaging is never a duplicate.
 
 `match_outcome`: `exact | alias | ladder | manual | unmatched`. `line_state`: `changed |
 unchanged | new_link | needs_attention | skipped`. The review page's "Not found" filter is
@@ -156,7 +166,8 @@ force, `new_link`) and the duplicate check for the whole set.
 ### 1.8 `POST /{id}/apply` - `upload` (verification off, staff Draft) or `verify` (Pending)
 
 Returns the set detail. 409 `stale_lines` with `{"lines": [{"line_id", "supplier_code",
-"recorded_unit_cost", "recorded_currency", "live_unit_cost", "live_currency"}]}`; 409
+"packaging_method", "recorded_unit_cost", "recorded_currency", "live_unit_cost", "live_currency"}]}`
+(round 8: `live_*` is the line's own packaging's price in force); 409
 `already_applied` / `wrong_status`; 409 `submit_first` (verification on, Draft staff set); 422
 `unresolved_lines` / `undecided_lines` (`lead_time_required` retired in round 6, AC-S2-05 as amended); 403 `SAME_PERSON_CANNOT_VERIFY`.
 
@@ -186,22 +197,41 @@ and "Decided a line"; an action it has no label for reads "Updated", never a raw
 ### 2.1 `GET /api/v1/procurement/suppliers/{supplier_id}/cost-lists` - `procurement.product_suppliers.view`
 
 Query: `query` (product code, description, supplier code), `status` (comma list of
-`in_force,scheduled,ended,always,overridden`; a product is kept when any of its rows matches).
+`in_force,scheduled,ended,always,overridden`; an entry is kept when any of its rows matches),
+`packaging` (round 8: comma list of packaging methods, matched on the folded key).
+
+Round 8: one entry per product AND packaging method. A link with rows in `彩盒` and `standard` is
+two entries; a link with no cost rows is one `standard` entry with `costs: []`.
+`packaging_options` lists every packaging the supplier's cost lists carry (newest spelling per
+folded key), unfiltered, for the Packaging filter.
 
 ```json
 {"data": [{
-  "product_supplier_id": "...", "product": {"id": "...", "product_code": "CB2500SS-BL", "description": "BASIN MIXER BLUE"},
+  "product_supplier_id": "...", "packaging_method": "彩盒", "packaging_key": "彩盒",
+  "product": {"id": "...", "product_code": "CB2500SS-BL", "description": "BASIN MIXER BLUE"},
   "supplier_code": "CB2500SS-BL（彩盒）",
   "unit_cost": 468.0, "currency": "CNY",
   "costs": [{
-    "id": "...", "unit_cost": 498.0, "currency": "CNY", "start_date": null, "end_date": null,
+    "id": "...", "packaging_method": "彩盒", "unit_cost": 498.0, "currency": "CNY", "start_date": null, "end_date": null,
     "status": "always", "source": {"change_set_id": "...", "code": "CPC-0004"},
     "created_at": "..."
   }]
-}], "today": "2026-09-27"}
+}], "today": "2026-09-27", "packaging_options": ["standard", "OPP", "吊卡", "彩盒"]}
 ```
 
-`unit_cost` / `currency` are `product_suppliers.unit_cost` / `currency` (the price in force).
+`unit_cost` / `currency` (round 8) are that packaging's price in force (`current_cost(rows, today,
+packaging)`); for a link with no cost rows, `product_suppliers.unit_cost` / `currency`.
+
+**The current-cost reader (round 8).** `supplier_cost_service.current_cost(rows, day, packaging)`
+is the one reader of "what does this link cost today", keyed by packaging; every page and the
+change set's lines use it. `packaging` given: that packaging's row in force (`price_in_force`
+over the rows of that folded key), else none. **A caller with no packaging** (`packaging=None`)
+gets the `standard` line; when the link has no standard row at all but every row is in ONE
+other packaging, it gets that packaging; several packagings and no standard row: none.
+`product_suppliers.unit_cost` / `currency`, which the reorder engine and every older reader use,
+are kept equal to that no-packaging answer (a link keeps its price when there is none). Purchase
+orders keep their own unit cost (Q16): no PO route reads or writes a packaging cost.
+`costs[].status` is decided among the rows of the same packaging.
 `supplier_code` is the last raw code seen for this product in this supplier's applied sets (null
 if none). `costs[].status`: `in_force` (the price in force today), `scheduled` (start after
 today), `ended` (end before today), `always` (no dates, not in force because a dated row
@@ -217,8 +247,9 @@ Suppliers tab searches it on the client (supplier name, set code).
 ### 2.3 Hand edits - `procurement.product_suppliers.edit`
 
 - `POST /api/v1/procurement/product-suppliers/{link_id}/costs` body `{"unit_cost": 468.0,
-  "currency": "CNY", "start_date": "2026-09-15" | null, "end_date": "2026-09-30" | null}` 201 the
-  cost row.
+  "currency": "CNY", "start_date": "2026-09-15" | null, "end_date": "2026-09-30" | null,
+  "packaging_method": "OPP" | null}` 201 the cost row (round 8: `packaging_method` absent or
+  empty is `standard`; it is set on create only, a PUT does not change it).
 - `PUT /api/v1/procurement/product-suppliers/{link_id}/costs/{cost_id}` same body, 200.
 - `DELETE /api/v1/procurement/product-suppliers/{link_id}/costs/{cost_id}` 200; the FE goes
   through the `FormAction` `product_supplier_cost.delete` (entity type `product_supplier_cost`,
