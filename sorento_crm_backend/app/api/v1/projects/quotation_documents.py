@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
+from app.api.v1.projects.quotations import _notify_breaches
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import ListResponse
@@ -130,12 +131,16 @@ async def create_quotation_document(
     """Arrives already filled in (AC-A2): reference, recipient and subject are all derived."""
     try:
         project = _editable_project(db, project_id, current_user)
-        document = svc.create_document(
+        # The quotation form page (#1341) sends the scopes and their lines with the letterhead;
+        # all of it lands in this one commit, or none of it does.
+        document, lines = svc.create_document_with_scopes(
             db,
             project=project,
             actor_user_id=current_user["id"],
             payload=payload.model_dump(exclude_unset=True),
         )
+        for line in lines:
+            _notify_breaches(db, line, current_user["id"])
         db.commit()
         db.refresh(document)
         return svc.serialize_document(db, document)
@@ -181,7 +186,17 @@ async def update_quotation_document(
         validate_uuid_path(document_id, resource="Quotation")
         _editable_project(db, project_id, current_user)
         document = svc.get_document_or_404(db, project_id, document_id)
-        svc.update_document(db, document=document, payload=payload.model_dump(exclude_unset=True))
+        body = payload.model_dump(exclude_unset=True)
+        scopes = body.pop("scopes", None)
+        svc.update_document(db, document=document, payload=body)
+        # The form's edit Save (#1341): header and scopes in ONE commit. A scope the customer
+        # holds refuses new lines with the existing 422, and the header change goes back too.
+        if scopes is not None:
+            lines = svc.apply_form_scopes(
+                db, document=document, actor_user_id=current_user["id"], scopes=scopes
+            )
+            for line in lines:
+                _notify_breaches(db, line, current_user["id"])
         db.commit()
         db.refresh(document)
         return svc.serialize_document(db, document)
