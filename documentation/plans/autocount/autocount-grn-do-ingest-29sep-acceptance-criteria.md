@@ -99,6 +99,7 @@ payloads' field lists (issue #1354, orchestrator comment) with anonymised values
   `spo_allocation_id`.
 - **AC-AG046** The DO detail import skips a row whose DO is AutoCount-owned, outcome
   `autocount_owned`.
+- **AC-AG047** The GRN Excel import leaves an AutoCount-owned GRN's header and lines untouched.
 
 ## Deletion rules
 
