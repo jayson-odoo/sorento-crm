@@ -210,7 +210,7 @@ describe('AC-SR-02: search combines with the active stat filter and sheet tab; c
 
     // Radix `TabsTrigger` activates on mousedown; `fireEvent.click` alone is not enough
     // in jsdom (see LoadingPlanView.test.tsx's `selectTab`).
-    const tab = screen.getByRole('tab', { name: '19 series' });
+    const tab = screen.getByRole('tab', { name: /^19 series \(\d+\)$/ });
     fireEvent.mouseDown(tab, { button: 0 });
     fireEvent.click(tab);
 

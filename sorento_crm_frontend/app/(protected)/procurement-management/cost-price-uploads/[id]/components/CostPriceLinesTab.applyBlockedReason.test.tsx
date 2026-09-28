@@ -42,6 +42,7 @@ vi.mock('../../hooks/useCostPriceChangeSets', () => ({
 }));
 
 import { CostPriceLinesTab } from './CostPriceLinesTab';
+import { CostPriceApplyButton } from './CostPriceApplyButton';
 
 function line(overrides: Partial<CostPriceChangeLine> = {}): CostPriceChangeLine {
   return {
@@ -116,6 +117,8 @@ function renderTab(cs: CostPriceChangeSetDetail) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
+      {/* Round 7 R1: the footer bar is gone; Apply / Submit is the header's button. */}
+      <CostPriceApplyButton changeSet={cs} />
       <CostPriceLinesTab changeSet={cs} />
     </QueryClientProvider>,
   );

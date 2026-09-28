@@ -2,11 +2,21 @@
 
 import * as React from 'react';
 import { Ban } from 'lucide-react';
-import { getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
+import {
+  getCoreRowModel,
+  getPaginationRowModel,
+  getSortedRowModel,
+  useReactTable,
+  type ColumnDef,
+  type PaginationState,
+  type SortingState,
+} from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardTable } from '@/components/ui/card';
+import { Card, CardFooter, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
@@ -15,6 +25,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import {
   useCostPriceChangeLines,
   useDecideAllCostPriceLines,
@@ -24,7 +35,6 @@ import {
 } from '../../hooks/useCostPriceChangeSets';
 import { searchCostPriceProductOptions, type PatchLineInput } from '../../services/costPriceService';
 import type { CostPriceChangeLine, CostPriceChangeSetDetail } from '../../types/costPrice.types';
-import { CostPriceApplyButton } from './CostPriceApplyButton';
 
 // Round 6 R6: no Duplicate code filter - a duplicate code is one line now (the backend
 // collapses it and carries the other rows on it as `duplicate_rows`), nothing to resolve.
@@ -54,6 +64,11 @@ function matchesSearch(line: CostPriceChangeLine, tokens: string[]): boolean {
     .filter(Boolean)
     .map((s) => (s as string).toLowerCase());
   return tokens.every((t) => haystack.some((h) => h.includes(t)));
+}
+
+/** Round 7 R2 (owner, 28 Sep 2026: "this table better show the number"): "19系列 (48)". */
+export function sheetTabLabel(sheet: string, count: number): string {
+  return `${sheet} (${count})`;
 }
 
 function ChangeBadge({ line }: { line: CostPriceChangeLine }) {
@@ -371,6 +386,11 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
   const [activeFilter, setActiveFilter] = React.useState<FilterKey>('changed');
   const [search, setSearch] = React.useState('');
   const [activeSheet, setActiveSheet] = React.useState('all');
+  // Round 7 R2: the list views' own paging and sorting, client side - the lines endpoint
+  // already returns the whole set, so no server paging is needed.
+  const [pagination, setPagination] = React.useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
+  const [sorting, setSorting] = React.useState<SortingState>([]);
+  useResetPageOnFilterChange(setPagination, [activeFilter, activeSheet, search]);
 
   const patchLine = usePatchCostPriceChangeLine(changeSet.id);
   const decideLine = useDecideCostPriceLine(changeSet.id);
@@ -381,10 +401,22 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
 
   const sheets = React.useMemo(() => Array.from(new Set(lines.map((l) => l.sheet))), [lines]);
 
-  const filteredLines = React.useMemo(() => {
+  // Round 7 R2: the lines under the active filter card, before the sheet tab narrows them,
+  // so each tab's count follows the card ("All sheets (228)", "19系列 (48)").
+  const cardLines = React.useMemo(() => {
     const predicate = FILTERS.find((f) => f.key === activeFilter)!.predicate;
-    return searchedLines.filter((l) => predicate(l) && (activeSheet === 'all' || l.sheet === activeSheet));
-  }, [searchedLines, activeFilter, activeSheet]);
+    return searchedLines.filter(predicate);
+  }, [searchedLines, activeFilter]);
+  const sheetCounts = React.useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const l of cardLines) counts.set(l.sheet, (counts.get(l.sheet) ?? 0) + 1);
+    return counts;
+  }, [cardLines]);
+
+  const filteredLines = React.useMemo(
+    () => (activeSheet === 'all' ? cardLines : cardLines.filter((l) => l.sheet === activeSheet)),
+    [cardLines, activeSheet],
+  );
 
   const isVerifier = changeSet.actions.can_decide || changeSet.actions.can_return;
   const isPendingForVerifier = isVerifier && changeSet.status === 'pending_verification';
@@ -397,6 +429,8 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
   const showDecisionColumn = isPendingForVerifier || anyLineHasDecision;
 
   const columns = React.useMemo<ColumnDef<CostPriceChangeLine>[]>(() => {
+    // Sheet / row sorts in the file's own order: sheet as read, then the row within it.
+    const sheetIndex = new Map(sheets.map((sheet, i) => [sheet, i]));
     const skip = (line: CostPriceChangeLine, reason: string) =>
       void patchLine.mutateAsync({ lineId: line.id, patch: { skipped: true, skip_reason: reason } });
     // Widths (1280, round 6 R2): every cell is one line, and a verifier's Decision column
@@ -406,7 +440,11 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
       {
         // Sheet and Row merged into one column (column-width budget, 1280 breakpoint).
         id: 'sheet_row',
-        header: 'Sheet / row',
+        accessorFn: (l) => l.row_no,
+        sortingFn: (a, b) =>
+          (sheetIndex.get(a.original.sheet) ?? 0) - (sheetIndex.get(b.original.sheet) ?? 0) ||
+          a.original.row_no - b.original.row_no,
+        header: ({ column }) => <DataGridColumnHeader title="Sheet / row" column={column} />,
         size: 70,
         cell: ({ row }) => (
           <div className={`${ONE_LINE} text-xs`} title={`${row.original.sheet}, row ${row.original.row_no}`}>
@@ -417,7 +455,8 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
       },
       {
         id: 'supplier_code',
-        header: 'Supplier code',
+        accessorFn: (l) => l.supplier_code ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Supplier code" column={column} />,
         size: 240,
         cell: ({ row }) => {
           const line = row.original;
@@ -434,7 +473,8 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
       },
       {
         id: 'configuration',
-        header: 'Configuration',
+        accessorFn: (l) => l.configuration ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Configuration" column={column} />,
         size: 70,
         cell: ({ row }) => (
           <div className={ONE_LINE} title={row.original.configuration ?? ''}>
@@ -447,7 +487,8 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
       },
       {
         id: 'product',
-        header: 'Our product',
+        accessorFn: (l) => l.product?.product_code ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Our product" column={column} />,
         size: 150,
         cell: ({ row }) => {
           const line = row.original;
@@ -499,7 +540,9 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
       },
       {
         id: 'current',
-        header: 'Cost now',
+        accessorFn: (l) => l.current_unit_cost ?? undefined,
+        sortUndefined: 'last',
+        header: ({ column }) => <DataGridColumnHeader title="Cost now" column={column} />,
         size: 100,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
         cell: ({ row }) =>
@@ -511,14 +554,18 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
       },
       {
         id: 'new',
-        header: 'New cost',
+        accessorFn: (l) => l.new_unit_cost ?? undefined,
+        sortUndefined: 'last',
+        header: ({ column }) => <DataGridColumnHeader title="New cost" column={column} />,
         size: 100,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
         cell: ({ row }) => <CostCell value={row.original.new_unit_cost} currency={changeSet.currency} />,
       },
       {
         id: 'change',
-        header: 'Change',
+        accessorFn: (l) => l.change_pct ?? undefined,
+        sortUndefined: 'last',
+        header: ({ column }) => <DataGridColumnHeader title="Change" column={column} />,
         size: 70,
         cell: ({ row }) => (
           <div className={ONE_LINE}>
@@ -531,7 +578,8 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
     if (showDecisionColumn) {
       base.push({
         id: 'decision',
-        header: 'Decision',
+        header: ({ column }) => <DataGridColumnHeader title="Decision" column={column} />,
+        enableSorting: false,
         size: isPendingForVerifier ? 150 : 130,
         cell: ({ row }) => {
           const line = row.original;
@@ -596,16 +644,32 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
       });
     }
     return base;
-  }, [changeSet.currency, decideLine, isPendingForVerifier, patchLine, showDecisionColumn]);
+  }, [changeSet.currency, decideLine, isPendingForVerifier, patchLine, sheets, showDecisionColumn]);
 
   const table = useReactTable({
     columns,
     data: filteredLines,
     getRowId: (row) => row.id,
+    state: { pagination, sorting },
+    onPaginationChange: setPagination,
+    onSortingChange: setSorting,
+    // Skipping or mapping a line refetches the lines; that must not throw the user back to
+    // page 1. A filter, sheet or search change resets the page (above) instead.
+    autoResetPageIndex: false,
     getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
+
+  // A skip that empties the last page would leave the grid on a page past the end.
+  const pageCount = table.getPageCount();
+  React.useEffect(() => {
+    if (pageCount > 0 && pagination.pageIndex >= pageCount) {
+      setPagination((p) => ({ ...p, pageIndex: pageCount - 1 }));
+    }
+  }, [pageCount, pagination.pageIndex]);
 
   const emptyMessages: Record<FilterKey, string> = {
     changed: 'Nothing changed against current costs',
@@ -648,15 +712,27 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
         />
         {sheets.length > 1 ? (
           <Tabs value={activeSheet} onValueChange={setActiveSheet} className="min-w-0 flex-1">
-            <TabsList variant="line" className="w-full justify-start">
-              <TabsTrigger value="all">All sheets</TabsTrigger>
+            <TabsList variant="line" className="w-full justify-start overflow-x-auto">
+              <TabsTrigger value="all">{sheetTabLabel('All sheets', cardLines.length)}</TabsTrigger>
               {sheets.map((sheet) => (
                 <TabsTrigger key={sheet} value={sheet}>
-                  {sheet}
+                  {sheetTabLabel(sheet, sheetCounts.get(sheet) ?? 0)}
                 </TabsTrigger>
               ))}
             </TabsList>
           </Tabs>
+        ) : null}
+        {/* Round 7 R1: the sticky footer bar is gone; the header's Apply is the one call to
+            action. A verifier's set-wide decisions stay here, beside the lines they act on. */}
+        {actions.can_decide || actions.can_return ? (
+          <div className="flex shrink-0 items-center gap-2 sm:ms-auto">
+            {actions.can_decide ? (
+              <Button type="button" variant="outline" size="sm" onClick={() => void decideAll.mutateAsync('accepted')}>
+                Accept all
+              </Button>
+            ) : null}
+            {actions.can_return ? <ReturnDialog setId={changeSet.id} onDone={() => {}} /> : null}
+          </div>
         ) : null}
       </div>
 
@@ -669,58 +745,43 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
             ) : null}
           </div>
         </Card>
-      ) : isMobile ? (
-        <div className="space-y-2">
-          {filteredLines.map((line) => (
-            <LineCard
-              key={line.id}
-              line={line}
-              showDecisionColumn={showDecisionColumn}
-              isPendingForVerifier={isPendingForVerifier}
-              setCurrency={changeSet.currency}
-              onPatch={(patch) => void patchLine.mutateAsync({ lineId: line.id, patch })}
-              onDecide={(decision, reason) => void decideLine.mutateAsync({ lineId: line.id, decision, reason })}
-            />
-          ))}
-        </div>
       ) : (
-        <DataGrid table={table} recordCount={filteredLines.length} listingKey="" tableLayout={{ width: 'fixed', columnsResizable: true }}>
-          <Card>
-            <CardTable>
-              <DataGridTable />
-            </CardTable>
-          </Card>
+        // Round 7 R2 (owner: "use datagrid table with pagination just like our list view"):
+        // the system DataGrid with column header menus, sorting and the list views' pager.
+        // At 375 the rows of the current page render as cards under the same pager.
+        <DataGrid
+          table={table}
+          recordCount={filteredLines.length}
+          listingKey="procurement.cost_price_changes.view::change-set-lines"
+          tableLayout={{ width: 'fixed', columnsResizable: true }}
+        >
+          {isMobile ? (
+            <div className="space-y-2">
+              {table.getRowModel().rows.map((row) => (
+                <LineCard
+                  key={row.id}
+                  line={row.original}
+                  showDecisionColumn={showDecisionColumn}
+                  isPendingForVerifier={isPendingForVerifier}
+                  setCurrency={changeSet.currency}
+                  onPatch={(patch) => void patchLine.mutateAsync({ lineId: row.original.id, patch })}
+                  onDecide={(decision, reason) => void decideLine.mutateAsync({ lineId: row.original.id, decision, reason })}
+                />
+              ))}
+              <DataGridPagination />
+            </div>
+          ) : (
+            <Card>
+              <CardTable>
+                <DataGridTable />
+              </CardTable>
+              <CardFooter>
+                <DataGridPagination />
+              </CardFooter>
+            </Card>
+          )}
         </DataGrid>
       )}
-
-      {/* Sticky apply bar, driven only by `actions` from the detail (contract 1.4) - the FE
-          never re-derives the four-eyes rule. Nothing left to do on an applied set. Its
-          button is the header's call to action too (round 6 R1), one component for both;
-          "N row(s) still need you" only shows while the backend counts such rows. */}
-      {changeSet.status !== 'applied' ? (
-        <div className="sticky bottom-0 z-10 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-background p-3 shadow-sm">
-          <span className="text-sm font-medium">
-            {actions.apply_count} {actions.apply_count === 1 ? 'change' : 'changes'} ready
-          </span>
-          {changeSet.largest_rise ? (
-            <span className="text-sm text-muted-foreground">
-              Largest rise: {changeSet.largest_rise.supplier_code} +{changeSet.largest_rise.change_pct.toFixed(1)}%
-            </span>
-          ) : null}
-          {actions.apply_blocked_reason ? (
-            <span className="text-sm text-muted-foreground">{actions.apply_blocked_reason}</span>
-          ) : null}
-          <div className="ms-auto flex flex-wrap items-center gap-2">
-            {actions.can_decide ? (
-              <Button type="button" variant="outline" size="sm" onClick={() => void decideAll.mutateAsync('accepted')}>
-                Accept all
-              </Button>
-            ) : null}
-            {actions.can_return ? <ReturnDialog setId={changeSet.id} onDone={() => {}} /> : null}
-            <CostPriceApplyButton changeSet={changeSet} />
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

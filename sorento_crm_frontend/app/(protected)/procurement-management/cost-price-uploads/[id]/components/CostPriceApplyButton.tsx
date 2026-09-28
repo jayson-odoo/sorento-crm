@@ -17,8 +17,8 @@ export function isSubmitWorkflow(changeSet: CostPriceChangeSetDetail): boolean {
 /**
  * The set's one call to action: "Apply N changes", or "Submit for verification" on the
  * submit workflow. Driven only by `actions` from the detail (contract 1.4) - the FE never
- * re-derives the four-eyes rule. The page header (round 6 R1, primary top right) and the
- * sticky footer bar render this same button, so both run the same action.
+ * re-derives the four-eyes rule. The page header (round 6 R1, primary top right) renders
+ * it; round 7 R1 removed the sticky footer bar, so this is the page's one Apply.
  */
 export function CostPriceApplyButton({ changeSet }: { changeSet: CostPriceChangeSetDetail }) {
   const submit = useSubmitCostPriceChangeSet(changeSet.id);

@@ -170,7 +170,11 @@ Sorento person, same permissions), Mr Chen (sales at XIAMEN TAIYANG, no Sorento 
   clearable, with Valid to refused before Valid from; the file's own date from its name is shown
   beside them as text; the file input is `FileDropzone`.
 - **AC-S1-20** `[FE]` (J4) The review page renders the stat cards as filters, a search box, sheet
-  tabs (`variant="line"`, scrolling at 375px), and a `DataGrid` with explicit column sizes; change
+  tabs (`variant="line"`, scrolling at 375px) each showing its row count under the active stat
+  filter ("19系列 (48)", "All sheets (228)"; round 7), and a `DataGrid` with explicit column sizes,
+  sortable column headers with the column menu and the list views' pager (rows per page, page
+  buttons; round 7), with no sticky footer bar: the header's Apply N changes is the page's one
+  call to action and a verifier's Accept all and Return to submitter sit beside the search; change
   percent is a `Badge` (rise and fall tinted apart); a `code_note` shows under the code; a
   Not found row carries the product single-select (`SearchableSelect`, searching code and
   description, clearable) and Skip.

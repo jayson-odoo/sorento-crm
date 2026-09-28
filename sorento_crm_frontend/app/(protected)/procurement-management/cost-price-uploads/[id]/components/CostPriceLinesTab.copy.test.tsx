@@ -1,8 +1,8 @@
 /**
- * CostPriceLinesTab (#1288, Lane A) - tester finding, singular copy on the sticky apply
- * bar: today it always reads "N changes ready" / "Apply N changes" even for `N === 1`
- * ("1 changes ready", "Apply 1 changes") - a plain string literal in the JSX with no
- * pluralisation.
+ * CostPriceLinesTab (#1288, Lane A) - tester finding, singular copy on the Apply button:
+ * "Apply 1 change", never "Apply 1 changes". Round 7 R1 removed the sticky footer bar
+ * ("N changes ready"), so the copy lives on the header's Apply alone and the tab carries
+ * no "ready" text at all.
  *
  * Mocked at the hook boundary, same technique as `CostPriceLinesTab.test.tsx`.
  */
@@ -43,6 +43,7 @@ vi.mock('../../hooks/useCostPriceChangeSets', () => ({
 }));
 
 import { CostPriceLinesTab } from './CostPriceLinesTab';
+import { CostPriceApplyButton } from './CostPriceApplyButton';
 
 function line(overrides: Partial<CostPriceChangeLine> = {}): CostPriceChangeLine {
   return {
@@ -117,13 +118,14 @@ function renderTab(cs: CostPriceChangeSetDetail) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
+      <CostPriceApplyButton changeSet={cs} />
       <CostPriceLinesTab changeSet={cs} />
     </QueryClientProvider>,
   );
 }
 
-describe('Sticky apply bar copy is singular for one change, plural for more than one', () => {
-  it('1 line reads "1 change ready" and "Apply 1 change"', () => {
+describe('Apply copy is singular for one change, plural for more than one', () => {
+  it('1 line reads "Apply 1 change"', () => {
     linesData = [line({ id: 'a' })];
     renderTab(
       changeSet({
@@ -135,11 +137,11 @@ describe('Sticky apply bar copy is singular for one change, plural for more than
       }),
     );
 
-    expect(screen.getByText('1 change ready')).toBeInTheDocument();
+    expect(screen.queryByText(/change ready/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Apply 1 change' })).toBeInTheDocument();
   });
 
-  it('2 lines read "2 changes ready" and "Apply 2 changes"', () => {
+  it('2 lines read "Apply 2 changes"', () => {
     linesData = [line({ id: 'a' }), line({ id: 'b', supplier_code: 'ZZT-002' })];
     renderTab(
       changeSet({
@@ -151,7 +153,7 @@ describe('Sticky apply bar copy is singular for one change, plural for more than
       }),
     );
 
-    expect(screen.getByText('2 changes ready')).toBeInTheDocument();
+    expect(screen.queryByText(/changes ready/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Apply 2 changes' })).toBeInTheDocument();
   });
 });
