@@ -308,3 +308,25 @@ decided where the plan left room, so a reviewer can check it against sections 7 
 - **`escalation_declined` copy.** It keeps "Escalation declined." (19 recorded replay cases,
   4 engine pins and the node fixtures carry it, and the plan keeps existing copy untouched).
   AC-MEM084's switch to `offer_declined` is left for the owner.
+
+## 10. Fix round 6: readable summaries (28 Sep 2026)
+
+Owner hand test: "the structure of our summary is quite messy". Decisions:
+
+- **Template, not a model call.** `episode_digest._summary` is a grammar-aware template:
+  what the contact asked about (topics and codes by name), what they got, what is still
+  open. It stays deterministic and replayable (AC-MEM029), never quotes a figure
+  (AC-MEM021), and costs no tokens at episode close. No bracket tags, no semicolon
+  chains, no date, no turn count. At most 200 chars, so the printed line fits 240.
+- **One stored text, two readers.** The recall reply and the parser's L4 layer print
+  `episode_line`: `Mon 28 Sep, Stock: <summary>` (the day and Topic from the frame's own
+  columns). The Conversations card shows the same summary and the same Topic word
+  (`topic` on each row); When and Turns stay columns.
+- **Old stored summaries.** Every reader goes through `readable_summary`, which renders an
+  old-shape summary from the frame's `domain`, `entities` and its old tags, so tags are
+  never shown. `scripts/backfill_chatbot_episodes.py` (already the post-deploy step)
+  rewrites them for good from each frame's own turns, console frames included
+  (`summaries_rewritten=N`). No data migration: the digest is app code and a migration
+  must not import it.
+- **Budget.** Three maximum-length lines: L4 248 est. tokens (cap 250, nothing dropped),
+  round 5 was 250. The worst-case assembler fixture is unchanged at 1,517.
