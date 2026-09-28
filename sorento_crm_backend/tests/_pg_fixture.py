@@ -94,7 +94,7 @@ def blank_schema_engine():
     paid once for the whole session rather than per test. Data isolation is the
     caller's job: use ``blank_session()``, which discards writes.
 
-    ``scm``, ``dealer_kit``, ``chatbot``, ``sales`` and ``projects`` are translated alongside the
+    ``scm``, ``dealer_kit``, ``chatbot``, ``sales``, ``finance`` and ``projects`` are translated alongside the
     default schema, so those models -- which could not be created on sqlite at all -- are
     included. Any future module that declares its own schema must be added here
     too, or ``create_all`` fails on the first table it cannot place.
@@ -125,6 +125,7 @@ def blank_schema_engine():
         admin.exec_driver_sql(f'CREATE SCHEMA "{name}_projects"')
         admin.exec_driver_sql(f'CREATE SCHEMA "{name}_chatbot"')
         admin.exec_driver_sql(f'CREATE SCHEMA "{name}_sales"')
+        admin.exec_driver_sql(f'CREATE SCHEMA "{name}_finance"')
         admin.close()
 
         scoped = engine.execution_options(
@@ -135,6 +136,7 @@ def blank_schema_engine():
                 "projects": f"{name}_projects",
                 "chatbot": f"{name}_chatbot",
                 "sales": f"{name}_sales",
+                "finance": f"{name}_finance",
             }
         )
         # AUTOCOMMIT, so each CREATE TABLE / ADD CONSTRAINT / CREATE INDEX commits
@@ -174,6 +176,7 @@ def drop_blank_schema():
         admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_projects" CASCADE')
         admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_chatbot" CASCADE')
         admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_sales" CASCADE')
+        admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_finance" CASCADE')
         admin.close()
 
 
@@ -210,7 +213,8 @@ def blank_session() -> Session:
     # `{name}_projects` earlier and seven core tables silently repoint at the module's.
     # `scm` and `dealer_kit` share no bare name with core, so their position is free.
     # `sales` does (`teams`, `team_members`), and like projects it trails the default schema,
-    # so unqualified raw SQL naming either still means core's Users & Access table.
+    # so unqualified raw SQL naming either still means core's Users & Access table. `finance`
+    # shares no bare name with core; it sits beside `sales`.
     #
     # `public` is LAST, deliberately trailing every scratch schema: every table on
     # `Base.metadata` was just created in one of the schemas above, so a real table name
@@ -224,7 +228,7 @@ def blank_session() -> Session:
     name = _BLANK["name"]
     connection.exec_driver_sql(
         f'SET LOCAL search_path TO "{name}", "{name}_scm", "{name}_dealer_kit", '
-        f'"{name}_chatbot", "{name}_sales", "{name}_projects", "public"'
+        f'"{name}_chatbot", "{name}_sales", "{name}_finance", "{name}_projects", "public"'
     )
 
     session = Session(bind=connection, join_transaction_mode="create_savepoint")
@@ -300,7 +304,7 @@ def pg_empty_schema(tables) -> Session:
     for you -- Postgres validates FK targets at DDL time where sqlite did not, so an
     incomplete list fails loudly here instead of silently not enforcing.
 
-    Every module schema is translated (``scm``, ``projects``, ``chatbot`` and ``sales``
+    Every module schema is translated (``scm``, ``projects``, ``chatbot``, ``sales`` and ``finance``
     alongside the default),
     mirroring ``blank_schema_engine``: a model that declares a schema must land in a
     scratch copy of it, never in the REAL ``projects`` schema, and a caller reaching
@@ -314,6 +318,7 @@ def pg_empty_schema(tables) -> Session:
     admin.exec_driver_sql(f'CREATE SCHEMA "{name}_projects"')
     admin.exec_driver_sql(f'CREATE SCHEMA "{name}_chatbot"')
     admin.exec_driver_sql(f'CREATE SCHEMA "{name}_sales"')
+    admin.exec_driver_sql(f'CREATE SCHEMA "{name}_finance"')
     admin.close()
 
     scoped = engine.execution_options(
@@ -323,6 +328,7 @@ def pg_empty_schema(tables) -> Session:
             "projects": f"{name}_projects",
             "chatbot": f"{name}_chatbot",
             "sales": f"{name}_sales",
+            "finance": f"{name}_finance",
         }
     )
     connection = scoped.connect()
@@ -345,4 +351,5 @@ def pg_empty_schema(tables) -> Session:
         cleanup.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_projects" CASCADE')
         cleanup.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_chatbot" CASCADE')
         cleanup.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_sales" CASCADE')
+        cleanup.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_finance" CASCADE')
         cleanup.close()

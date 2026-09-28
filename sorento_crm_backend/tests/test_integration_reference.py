@@ -153,6 +153,8 @@ class TestEntityTypeAllowlist:
             "order_lines",
             # autocount-brands-ingest AC-15: brands joined the ingest surface.
             "brands",
+            # Finance S0 (#1309): billing document headers, in the `finance` schema.
+            "billing_documents",
         }
 
     def test_every_supported_type_names_a_real_table(self, db):
@@ -164,7 +166,14 @@ class TestEntityTypeAllowlist:
                 text("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")
             )
         }
-        assert SUPPORTED_ENTITY_TYPES <= existing
+        # Module-schema types are reached through their Table, never the bare name
+        # (`_module_table`), so they are checked against the model instead.
+        from app.services.integration_reference_service import _module_table
+
+        module_types = {t for t in SUPPORTED_ENTITY_TYPES if _module_table(t) is not None}
+        assert module_types == {"billing_documents"}
+        assert _module_table("billing_documents").fullname == "finance.billing_documents"
+        assert SUPPORTED_ENTITY_TYPES - module_types <= existing
 
     def test_unknown_entity_type_is_rejected_on_link(self, svc):
         with pytest.raises(UnsupportedEntityType):

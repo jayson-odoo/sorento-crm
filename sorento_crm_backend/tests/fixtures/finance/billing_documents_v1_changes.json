@@ -1,0 +1,82 @@
+{
+  "companyCode": "SRT",
+  "records": [
+    {
+      "source_ref": "SRT_DB:IV:1001",
+      "document_type": "invoice",
+      "doc_no": "IV-2609/0001",
+      "doc_date": "2026-09-01",
+      "status": "posted",
+      "source_modified_at": "2026-09-08T10:00:00",
+      "customer_ref": "SRT_DB:ZZFIN-C1",
+      "customer_code": "ZZFIN-C1",
+      "customer_name": "ZZFIN Customer One",
+      "agent_code": "ZZFIN-AG1",
+      "currency_code": "MYR",
+      "currency_rate": 1,
+      "net_total": 800.0,
+      "tax_total": 80.0,
+      "total": 880.0,
+      "local_net_total": 800.0,
+      "against_doc_no": null,
+      "against_source_ref": null,
+      "ref": "THE MET KL",
+      "description": "Invoice transferred from SO-2608/0001",
+      "lines": [
+        {
+          "source_ref": "SRT_DB:IV:1001:1",
+          "line_number": 1,
+          "product_ref": "SRT_DB:ZZFIN-P1",
+          "product_code": "ZZFIN-P1",
+          "description": "ZZFIN product one",
+          "uom": "PCS",
+          "quantity": 8,
+          "unit_price": 100.0,
+          "discount_amount": 0,
+          "net_amount": 800.0,
+          "tax_code": "SV-10",
+          "tax_rate": 10,
+          "tax_amount": 80.0,
+          "line_total": 880.0,
+          "from_doc_type": "SO",
+          "from_doc_no": "SO-2608/0001",
+          "from_line_ref": "SRT_DB:SO:9001:1"
+        }
+      ]
+    },
+    {
+      "source_ref": "SRT_DB:CS:2001",
+      "document_type": "cash_sale",
+      "doc_no": "CS-2609/0001",
+      "doc_date": "2026-09-02",
+      "status": "cancelled",
+      "source_modified_at": "2026-09-08T11:00:00",
+      "customer_code": "ZZFIN-C1",
+      "customer_name": "ZZFIN Customer One",
+      "agent_code": "ZZFIN-AG1",
+      "currency_code": "MYR",
+      "currency_rate": 1,
+      "net_total": 90.0,
+      "tax_total": 9.0,
+      "total": 99.0,
+      "local_net_total": 90.0,
+      "lines": [
+        {
+          "source_ref": "SRT_DB:CS:2001:1",
+          "line_number": 1,
+          "product_code": "ZZFIN-P1",
+          "description": "ZZFIN product one",
+          "uom": "PCS",
+          "quantity": 2,
+          "unit_price": 50.0,
+          "discount_amount": 10.0,
+          "net_amount": 90.0,
+          "tax_code": "SV-10",
+          "tax_rate": 10,
+          "tax_amount": 9.0,
+          "line_total": 99.0
+        }
+      ]
+    }
+  ]
+}
