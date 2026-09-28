@@ -52,13 +52,13 @@ def _column(conn, schema):
     ).first()
 
 
-def test_revision_chains_onto_the_batch2_merge():
-    """Main's heads are joined by merge_28sep_batch2 (#1337); this revision hangs off that
+def test_revision_chains_onto_the_batch3_merge():
+    """Main's heads are joined by merge_28sep_batch3 (#1348); this revision hangs off that
     merge point, so the tree has exactly one head."""
     module = _load()
     assert module.revision == "eta1_0001_contact_eta_offset"
     assert len(module.revision) <= 32
-    assert module.down_revision == "merge_28sep_batch2"
+    assert module.down_revision == "merge_28sep_batch3"
 
 
 def test_up_down_up_adds_a_not_null_default_true_column():
