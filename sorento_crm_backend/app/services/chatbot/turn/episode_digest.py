@@ -292,7 +292,8 @@ def _date_prefix(when: Any) -> str:
 
 
 def _summary(turns: list[dict[str, Any]], asks: list[dict[str, Any]], offers: list[dict[str, Any]]) -> str:
-    header = f"{_date_prefix(turns[0]['created_at'])}, {len(turns)} turns"
+    # "1 turn", never "1 turns": the history reply shows this line to the dealer (S4).
+    header = f"{_date_prefix(turns[0]['created_at'])}, {len(turns)} turn{'' if len(turns) == 1 else 's'}"
 
     # Collapse consecutive/repeated asks about the same (domain, entities, outcome)
     # into one clause - two turns both asking "stock SRTWB1455" and both answered read

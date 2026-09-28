@@ -9,14 +9,32 @@
         "message": "check stock srtwc286",
         "verdict": {
           "domain_hint": "inventory",
-          "entities": [{"raw": "SRTWC286", "hint": "product", "canonical_code": "SRTWC286", "current_message": true, "confident": true, "hint_confident": true}]
+          "entities": [
+            {
+              "raw": "SRTWC286",
+              "hint": "product",
+              "canonical_code": "SRTWC286",
+              "current_message": true,
+              "confident": true,
+              "hint_confident": true
+            }
+          ]
         }
       },
       {
         "message": "incoming",
         "verdict": {
           "domain_hint": "incoming",
-          "entities": [{"raw": "SRTWC286", "hint": "product", "canonical_code": "SRTWC286", "current_message": false, "confident": true, "hint_confident": true}]
+          "entities": [
+            {
+              "raw": "SRTWC286",
+              "hint": "product",
+              "canonical_code": "SRTWC286",
+              "current_message": false,
+              "confident": true,
+              "hint_confident": true
+            }
+          ]
         }
       }
     ]
@@ -28,8 +46,16 @@
       "what products do i usually ask about",
       "what did I ask you last week?"
     ],
-    "verdict": {"message_type": "history_question", "domain_hint": null, "intent_hint": null, "entities": []},
-    "clarifier": {"ack": "Sure, here you go.", "language": "en"}
+    "verdict": {
+      "message_type": "history_question",
+      "domain_hint": null,
+      "intent_hint": null,
+      "entities": []
+    },
+    "clarifier": {
+      "ack": "Sure, here you go.",
+      "language": "en"
+    }
   },
   "expected": {
     "branch_kind": "low_signal",
@@ -39,9 +65,14 @@
       "2. ",
       "incoming SRTWC286",
       "inventory SRTWC286",
-      "Reply with a number and I'll run it again"
+      "Reply with a number and I'll run it again",
+      "1 turn: incoming SRTWC286"
     ],
-    "reply_not_contains": ["Are you asking about any of these?", "I can help with the topics listed above."],
+    "reply_not_contains": [
+      "Are you asking about any of these?",
+      "I can help with the topics listed above.",
+      "1 turns"
+    ],
     "no_tool_call": true
   }
 }
