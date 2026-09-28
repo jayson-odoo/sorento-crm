@@ -10,8 +10,11 @@ today (section "Measurement"). Owner confirmed the B3 exclusion list as built (2
 Merge round: origin/main 721ca398 merged, aud_0001 chains on identity_0001_s0_model, single head
 aud_0001_audit_standard_s0, up-down-up clean. Round 3 runs: the touched and audit, identity, queue, worker,
 scheduler, ingest and import suites (178 files) 2981 passed, 73 skipped, 0 failed; kill tests
-K1 to K15 all red. Hardening round (owner ruling 28 Sep 19:1x MYT): capture best-effort and
-loud, migration lock timeout, off switch; in progress on PR #1299. S1, S2, S3 not started.
+K1 to K15 all red. Hardening round (owner ruling 28 Sep 19:1x MYT) built on PR #1299: capture
+best-effort and loud (savepoint, integration_log channel `audit`, `audit_trail_gaps` via
+`aud_0002_audit_trail_gaps`, health page count), migration lock timeout, off switch
+`AUDIT_CAPTURE_ENABLED`; single head aud_0002, up-down-up clean; backend suite green apart from
+failures that are environmental or red on the base too (PR comment). S1, S2, S3 not started.
 Plan created: 2026-09-26 (from the investigation report on #1281, comment 5846914028, sections 7
 to 10, investigated at `51d30ccc5`).
 Domain: audit (CORE, not a module: every install needs a trail; the `audit` App Store key keeps
