@@ -248,6 +248,8 @@ class TestAC1700AnsweringAMemberOfferMiss:
         qf = _parser_output(
             message_type="casual", intent_hint=None, domain_hint=None, entities=[],
             is_affirmative=True,
+            # #1323: a "yes" over an escalation offer is the parser's semantic verdict.
+            escalation={"is_escalation_confirmation": True, "company_pick": None},
         )
         result = self._run_qf(session_factory, monkeypatch, qf, "yes", "zzt-r4-member-yes")
 
@@ -388,6 +390,8 @@ class TestAC1703EscalateOverARoster:
         qf = _parser_output(
             message_type="casual", intent_hint=None, domain_hint=None, entities=[],
             is_affirmative=True,
+            # #1323: a "yes" over an escalation offer is the parser's semantic verdict.
+            escalation={"is_escalation_confirmation": True, "company_pick": None},
         )
         result = _run(session_factory, monkeypatch, qf=qf, text_body="yes", msg_id="zzt-r4-roster-yes")
 

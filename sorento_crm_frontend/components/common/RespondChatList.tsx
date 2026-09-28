@@ -7,7 +7,6 @@ import {
   CheckCheck,
   AlertCircle,
   Clock,
-  CornerUpLeft,
   ExternalLink,
   FileText,
   Headphones,
@@ -28,10 +27,13 @@ import {
   formatDatePillLabel,
   describeQuotedContext,
   extractTemplateButtons,
-  getMessageBodyText,
+  findQuotedOriginal,
   getReceiptTier,
+  quoteExcerptOf,
+  splitMessageQuote,
   type MessageAttachmentDescriptor,
   type QuotedContext,
+  type ReplyTarget,
   type RespondMessageRenderable,
 } from '@/lib/respondIoChatRender';
 import { getRespondMessageDisplayTimeMs, getRespondMessageSortTimeMs } from '@/lib/respondIoMessage';
@@ -41,12 +43,14 @@ import {
   getRespondSenderName,
 } from '@/lib/respondIoOutgoingMessage';
 import { linkifySegments } from '@/lib/linkifySegments';
-import { parseWhatsAppText, stripWhatsAppMarkup } from '@/lib/whatsappText';
+import { parseWhatsAppText } from '@/lib/whatsappText';
 import { cn } from '@/lib/utils';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
 import ConversationSearchBar from '@/components/common/conversation/ConversationSearchBar';
+import MessageBubbleActions from '@/components/common/conversation/MessageBubbleActions';
+import QuotedContextBlock from '@/components/common/conversation/QuotedContextBlock';
 import type { ConversationSearchController } from '@/components/common/conversation/useConversationThread';
 import { splitHighlightSegments } from '@/lib/textHighlight';
 import { parseDateTimeAsUTC } from '@/lib/helpers';
@@ -194,6 +198,13 @@ interface RespondChatListProps {
    * quotes it can actually reach.
    */
   onJumpToMessage?: (messageId: string) => void;
+  /**
+   * #1317: every bubble carries WhatsApp's message actions (chevron on hover,
+   * right click, long press) on every surface, with no opt-in (owner answer 3).
+   * This adds Reply to that menu and the swipe-right gesture. Absent (a
+   * read-only surface, a resolved ticket, no send rights) = Copy only, no swipe.
+   */
+  onReply?: (target: ReplyTarget) => void;
 }
 
 /** Message text with the searched term marked. Escaping lives in the helper. */
@@ -425,66 +436,6 @@ function ReceiptTicks({ tier }: { tier: ReturnType<typeof getReceiptTier> }) {
   return <CheckCheck className="size-3.5 text-sky-500" aria-label="Read" />;
 }
 
-/**
- * The "replying to" block above a bubble whose message quotes an earlier one
- * (UAC AC-L6). Clickable ONLY when the quoted message is in the loaded window:
- * a control that cannot do the thing it offers is worse than a plain label.
- */
-function QuotedContextBlock({
-  context,
-  agentLabel,
-  contactLabel,
-  onJump,
-}: {
-  context: QuotedContext;
-  /** Who sent the quoted message on OUR side, when it can be named. */
-  agentLabel: string;
-  /** The contact's own name, when the thread knows it. */
-  contactLabel?: string | null;
-  onJump?: () => void;
-}) {
-  // A quoted message from the contact reads as their name when we hold one, and
-  // otherwise as a bare "Replying to" - the generic word "Contact" names nobody.
-  const senderLabel =
-    context.sender === 'contact'
-      ? (contactLabel ?? '').trim() || null
-      : context.sender === 'agent'
-        ? agentLabel
-        : null;
-  const inner = (
-    <>
-      <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide opacity-70">
-        <CornerUpLeft className="size-3" />
-        {senderLabel ? `Replying to ${senderLabel}` : 'Replying to'}
-      </span>
-      <span className="line-clamp-3 whitespace-pre-wrap break-words">
-        {stripWhatsAppMarkup(context.excerpt)}
-      </span>
-    </>
-  );
-  const className =
-    'mb-1 flex w-full flex-col gap-0.5 rounded border-s-2 border-emerald-500 bg-black/5 px-2 py-1 text-start text-xs italic opacity-80 dark:bg-white/5';
-
-  if (!onJump) {
-    return (
-      <div data-testid="quoted-context" className={className}>
-        {inner}
-      </div>
-    );
-  }
-  return (
-    <button
-      type="button"
-      data-testid="quoted-context"
-      onClick={onJump}
-      aria-label="Go to the quoted message"
-      className={`${className} transition-colors hover:bg-black/10 dark:hover:bg-white/10`}
-    >
-      {inner}
-    </button>
-  );
-}
-
 export default function RespondChatList({
   items,
   contactName,
@@ -510,6 +461,7 @@ export default function RespondChatList({
   focusMessageId = null,
   focusNonce = 0,
   onJumpToMessage,
+  onReply,
   className,
 }: RespondChatListProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -810,6 +762,22 @@ export default function RespondChatList({
     return byId;
   }, [sortedItems]);
 
+  // #1317: our own reply-to quotes travel as a leading ">" line (no id on the
+  // wire), so the quoted message is found by its text among the messages loaded
+  // BEFORE the reply. Inbound text is never split (splitMessageQuote).
+  const outgoingQuotes = useMemo(() => {
+    const byItem = new Map<
+      RespondMessageRenderable,
+      { quoted: string; original?: RespondMessageRenderable }
+    >();
+    sortedItems.forEach((item, i) => {
+      const { quoted } = splitMessageQuote(item);
+      if (!quoted) return;
+      byItem.set(item, { quoted, original: findQuotedOriginal(quoted, sortedItems.slice(0, i)) });
+    });
+    return byItem;
+  }, [sortedItems]);
+
   const jumpToMessage = useCallback(
     (id: string) => {
       scrollBubbleIntoView(bubbleRefs.current.get(id), { behavior: 'smooth', block: 'center' });
@@ -887,7 +855,7 @@ export default function RespondChatList({
         ref={scrollRef}
         onScroll={handleScroll}
         data-testid="chat-scroll-container"
-        className={`flex flex-col gap-2 overflow-y-auto rounded-b-md border bg-[#efeae2] dark:bg-[#0b141a] p-3 ${maxHeightClass}`}
+        className={`flex flex-col gap-2 overflow-y-auto overflow-x-hidden rounded-b-md border bg-[#efeae2] dark:bg-[#0b141a] p-3 ${maxHeightClass}`}
       >
         {isLoadingOlder && (
           <div
@@ -968,12 +936,29 @@ export default function RespondChatList({
 
           const item = entry.item;
           const isOutgoing = item.traffic === 'outgoing';
-          const text = getMessageBodyText(item);
-          // AC-L6: a contact's quote-reply arrives as a STRUCTURED `replyTo`.
-          // There is no outgoing counterpart - Respond's send API takes no
-          // reply-to, and the ">"-prefix emulation we used to write was removed
-          // rather than left to read like a real quote.
-          const quotedContext = describeQuotedContext(item);
+          // Outgoing text may open with our ">" reply-to line (#1317); the body
+          // is what the bubble shows under the quote block.
+          const text = splitMessageQuote(item).body;
+          const outgoingQuote = outgoingQuotes.get(item);
+          // AC-L6: a contact's quote-reply arrives as a STRUCTURED `replyTo`,
+          // and wins when both exist (one quote block per bubble, AC-RT-23).
+          // Ours is the ">" line, matched back to its original by text.
+          const quotedContext: QuotedContext | null =
+            describeQuotedContext(item) ??
+            (outgoingQuote
+              ? {
+                  messageId:
+                    outgoingQuote.original?.messageId != null
+                      ? String(outgoingQuote.original.messageId)
+                      : null,
+                  excerpt: outgoingQuote.quoted,
+                  sender: outgoingQuote.original
+                    ? outgoingQuote.original.traffic === 'outgoing'
+                      ? 'agent'
+                      : 'contact'
+                    : null,
+                }
+              : null);
           const attachments = describeMessageAttachments(item);
           const displayMs = getRespondMessageDisplayTimeMs(item);
           const key = item.messageId != null ? String(item.messageId) : `msg-${idx}`;
@@ -1018,6 +1003,13 @@ export default function RespondChatList({
           // asks the caller's fetch-back loader (below). AC-CP-10: no id at all
           // (a malformed replyTo) stays inert either way.
           const quotedTargetId = quotedContext?.messageId ?? null;
+          const replyTarget = (): ReplyTarget => ({
+            messageId: item.messageId != null ? String(item.messageId) : null,
+            excerpt: quoteExcerptOf(item),
+            senderLabel: isOutgoing
+              ? (senderLabel ?? quotedAgentLabel(item))
+              : contactName?.trim() || 'Customer',
+          });
 
           return (
             <div
@@ -1043,13 +1035,16 @@ export default function RespondChatList({
                 </div>
               )}
               <div className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
-                <div
-                  data-active-match={isActiveMatch ? 'true' : undefined}
+                <MessageBubbleActions
+                  enabled={!isPending}
+                  onReply={onReply ? () => onReply(replyTarget()) : undefined}
+                  copyText={text}
                   className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-sm shadow-sm ${bubbleClass}${
                     isHighlighted ? ' ring-2 ring-amber-400 dark:ring-amber-500' : ''
                   }${isActiveMatch ? ' ring-2 ring-sky-500 dark:ring-sky-400' : ''}${
                     isFlashed ? ' ring-2 ring-emerald-500 dark:ring-emerald-400' : ''
                   }`}
+                  activeMatch={isActiveMatch}
                 >
                   {senderLabel && (
                     <div className="mb-0.5 flex items-center gap-2">
@@ -1108,7 +1103,7 @@ export default function RespondChatList({
                     {displayMs > 0 && <span>{formatBubbleTime(displayMs)}</span>}
                     <ReceiptTicks tier={tier} />
                   </div>
-                </div>
+                </MessageBubbleActions>
               </div>
             </div>
           );

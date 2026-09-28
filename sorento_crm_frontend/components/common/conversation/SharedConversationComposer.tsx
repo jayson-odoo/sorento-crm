@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { toast } from '@/lib/toast';
 import {
   Send,
+  CornerUpLeft,
   Link2,
   LayoutTemplate,
   FileText,
@@ -35,6 +36,7 @@ import {
   NoChatTemplateError,
   type ChatTemplatePreview,
 } from '@/services/whatsappTemplateService';
+import { buildQuotedReplyText, type ReplyTarget } from '@/lib/respondIoChatRender';
 
 interface SharedConversationComposerProps {
   /** 'complaint' | 'stock_inquiry' | 'purchase_request' | 'sponsorship_form' | 'conversation_sla' */
@@ -80,12 +82,28 @@ interface SharedConversationComposerProps {
    */
   attachmentsEnabled?: boolean;
   /**
+   * The message being replied to (#1317). Respond.io has no reply-to
+   * parameter, so the excerpt is carried as a ">" quote line on the outgoing
+   * text (`buildQuotedReplyText`); the id and excerpt ride along to the
+   * `sendAdapter` for the audit trail only.
+   */
+  replyTo?: ReplyTarget | null;
+  /**
+   * Drops `replyTo`: the preview's Cancel (no argument), and after a
+   * successful send, naming the target that send carried - controls stay live
+   * during a send, so the owner keeps a target picked in the meantime.
+   */
+  onClearReplyTo?: (sent?: ReplyTarget) => void;
+  /**
    * Overrides the default send. Used where the send must be stamped with more
-   * than (entityType, entityId) - e.g. an intervention ticket carrying files.
+   * than (entityType, entityId) - e.g. an intervention ticket carrying files
+   * and a quoted message.
    */
   sendAdapter?: (payload: {
     text: string;
     files: File[];
+    replyToMessageId?: string | null;
+    replyToExcerpt?: string | null;
   }) => Promise<{
     sent_as: 'text' | 'template' | 'attachment';
     /**
@@ -162,6 +180,8 @@ export default function SharedConversationComposer({
   pendingBubble,
   notAvailableMessage = 'Reply is only available when a Respond.io conversation is linked to this record.',
   attachmentsEnabled = false,
+  replyTo = null,
+  onClearReplyTo,
   sendAdapter,
   windowStateOverride = null,
   showTemplateButton = true,
@@ -214,6 +234,11 @@ export default function SharedConversationComposer({
     setReplyText(replyComposePrefill.text);
     queueMicrotask(() => replyTextareaRef.current?.focus());
   }, [replyComposePrefill]);
+
+  // Starting a reply puts the caret where the answer goes, as WhatsApp does.
+  useEffect(() => {
+    if (replyTo) queueMicrotask(() => replyTextareaRef.current?.focus());
+  }, [replyTo]);
 
   // ---- Snippets, emoji, AI assist (UAC AC-L4 / AC-L5) ---------------------
 
@@ -441,7 +466,8 @@ export default function SharedConversationComposer({
     // positional (the backend delivers in order and stops at the first
     // failure), so it must be matched against THIS list, not later state.
     const sentFiles = files;
-    const text = typed;
+    // #1317: the quote rides INSIDE the text (Respond has no reply-to).
+    const text = replyTo ? buildQuotedReplyText(replyTo.excerpt, typed) : typed;
     setSending(true);
     setSendError(null);
     setFailedFileName(null);
@@ -454,7 +480,13 @@ export default function SharedConversationComposer({
     });
     try {
       const result = sendAdapter
-        ? await sendAdapter({ text, files: sentFiles })
+        ? await sendAdapter({
+            text,
+            files: sentFiles,
+            ...(replyTo
+              ? { replyToMessageId: replyTo.messageId, replyToExcerpt: replyTo.excerpt }
+              : {}),
+          })
         : await sendConversationMessage(entityType, entityId, text);
       // Partial delivery: the text and the delivered files are gone for good
       // (the contact has them), so only what did NOT reach them stays staged -
@@ -478,6 +510,8 @@ export default function SharedConversationComposer({
         ...cur.slice(sentFiles.length),
       ]);
       setFailedFileName(failed?.filename ?? null);
+      // The quote went out with the text, whatever happened to the files.
+      if (replyTo) onClearReplyTo?.(replyTo);
       if (attachmentsDropped) {
         toast.error(
           sentFiles.length === 1
@@ -800,8 +834,39 @@ export default function SharedConversationComposer({
     });
   };
 
+  // WhatsApp's quoted preview above the message box (#1317, AC-RT-13).
+  const replyToPreview = replyTo ? (
+    <div
+      data-testid="composer-reply-to"
+      className="flex items-start gap-2 rounded-md border-s-4 border-emerald-500 bg-muted/40 px-2.5 py-1.5 text-xs"
+    >
+      <CornerUpLeft className="mt-0.5 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-semibold text-emerald-700 dark:text-emerald-300">
+          {replyTo.senderLabel}
+        </div>
+        <div className="line-clamp-2 break-words text-muted-foreground" title={replyTo.excerpt}>
+          {replyTo.excerpt}
+        </div>
+      </div>
+      {onClearReplyTo && (
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className="size-5 shrink-0"
+          aria-label="Cancel reply"
+          onClick={() => onClearReplyTo()}
+        >
+          <X className="size-3.5" />
+        </Button>
+      )}
+    </div>
+  ) : null;
+
   return (
     <div className="space-y-2">
+      {replyToPreview}
       {attachmentChips}
 
       {/* The message field and its typeaheads share one positioning context, so
@@ -838,7 +903,8 @@ export default function SharedConversationComposer({
           <div className="rounded-md border bg-muted/30 p-3 text-sm whitespace-pre-wrap break-words">
             {renderTemplateBody()}
           </div>
-          {/[\n\t]|\s{2,}/.test(replyText) && (
+          {/* A quote is a line of its own, so it is flattened too (#1317). */}
+          {(!!replyTo || /[\n\t]|\s{2,}/.test(replyText)) && (
             <p className="text-xs text-amber-600 dark:text-amber-400" data-testid="flatten-warning">
               Line breaks, tabs and repeated spaces are removed when sent as a template - the
               message is delivered on one line.
