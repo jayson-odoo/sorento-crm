@@ -37,10 +37,12 @@ from app.services.chatbot.lanes.business.fetch import (
 )
 from app.services.chatbot_parser_prompt import (
     GROWTH_R1_ADDENDUM,
+    KNOWN_BRANDS_ADDENDUM,
     LAST_COST_ADDENDUM,
     LOW_STOCK_ADDENDUM,
     ESCALATION_CONFIRMATION_ADDENDUM,
     MEMORY_ADDENDUM,
+    QUANTITY_ADDENDUM,
     SALES_ANALYSIS_ADDENDUM,
     SALES_REPORT_ADDENDUM,
     STOCK_TASK_ADDENDUM,
@@ -158,7 +160,10 @@ class TestBothPublishedBodiesCarryTheVocabulary:
 
         The strong `.endswith` form is restored (review S4, 12 Sep 2026) by stripping the
         LATER addenda first, newest outermost: `MEMORY_ADDENDUM` (chatbot memory lane A,
-        migration `mem_0002_parser_memory`), then `SALES_ANALYSIS_ADDENDUM` (#1267 S1), then
+        migration `mem_0002_parser_memory`), then `ESCALATION_CONFIRMATION_ADDENDUM` (#1323),
+        then `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep 2026), then
+        `QUANTITY_ADDENDUM` (issue #1262 slice 5, 26 Sep 2026), then
+        `SALES_ANALYSIS_ADDENDUM` (#1267 S1), then
         `STOCK_TASK_ADDENDUM` (chatbot-stock-ask-v2 S3, PR #1247), then `SALES_REPORT_ADDENDUM`
         (PLAN-chatbot-sales-report.md S4 wiring point 1), then `LOW_STOCK_ADDENDUM`
         (PLAN-low-stock-report.md S7, 14 Sep 2026), then `LAST_COST_ADDENDUM`. Each stacks
@@ -168,7 +173,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         for body in (SEMANTIC_PARSER_PROMPT,):
             assert body.removesuffix(MEMORY_ADDENDUM).removesuffix(
                 ESCALATION_CONFIRMATION_ADDENDUM
-            ).removesuffix(
+            ).removesuffix(KNOWN_BRANDS_ADDENDUM).removesuffix(QUANTITY_ADDENDUM).removesuffix(
                 SALES_ANALYSIS_ADDENDUM
             ).removesuffix(
                 STOCK_TASK_ADDENDUM

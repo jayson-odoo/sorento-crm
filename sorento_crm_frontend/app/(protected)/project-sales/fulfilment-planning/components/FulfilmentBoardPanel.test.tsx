@@ -116,6 +116,18 @@ vi.mock('next-auth/react', () => ({
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => false,
 }));
+
+/**
+ * #1312, fix round 1 should-fix 3: the ONE line-attachments lookup call now lives
+ * here (moved out of `FulfilmentBoardListView`, which is unit-tested standalone
+ * with no `QueryClientProvider` in scope) - `FulfilmentBoardPanel: line
+ * attachments lookup` below is where the "one call, not one per row" assertion
+ * that used to live in `FulfilmentBoardListView.attachments.test.tsx` moved to.
+ */
+const soLineAttachmentLookup = vi.fn().mockReturnValue({ data: {}, isLoading: false });
+vi.mock('../../_shared/hooks/useSoLineAttachments', () => ({
+  useSoLineAttachmentLookup: (lineIds: string[]) => soLineAttachmentLookup(lineIds),
+}));
 vi.mock('../../_shared/hooks/useBoardTransfers', () => ({
   // The real key, because the confirm hook invalidates it by name (D6).
   BOARD_TRANSFERS_KEY: 'board-stock-transfers',
@@ -4331,5 +4343,34 @@ describe("FulfilmentBoardPanel: Confirm carries a covered line's staged reject (
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('· 1 withdrawn')),
     );
+  });
+});
+
+describe('FulfilmentBoardPanel: line attachments lookup (#1312, AC-U2, fix round 1 should-fix 3)', () => {
+  it('batches every contribution into the lookup, never a per-row call, over the WHOLE selection', async () => {
+    getPlanningBoard.mockResolvedValue(
+      boardOf([
+        demand({ line_no: 1, item_code: 'WESERP10B' }),
+        demand({
+          sales_order_id: 'so-b',
+          so_number: 'SO398322',
+          line_no: 2,
+          item_code: 'CSH2072',
+        }),
+      ]),
+    );
+
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    // Never once per row: once the board has loaded, the lookup is handed BOTH
+    // ids together in one batched call - not two separate calls each naming one.
+    // (An earlier render, before `board.data` has arrived, calls it with `[]` -
+    // the hook itself gates on `ids.length > 0` and issues no request for that.)
+    expect(soLineAttachmentLookup).toHaveBeenLastCalledWith(
+      expect.arrayContaining(['core-so-a-1', 'core-so-b-2']),
+    );
+    const lastCall = soLineAttachmentLookup.mock.calls.at(-1)?.[0] as string[];
+    expect(lastCall).toHaveLength(2);
   });
 });

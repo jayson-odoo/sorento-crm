@@ -27,10 +27,12 @@ import pytest
 from app.services.chatbot_parser_prompt import (
     ESCALATION_CONFIRMATION_ADDENDUM,
     GROWTH_R1_ADDENDUM,
+    KNOWN_BRANDS_ADDENDUM,
     LAST_COST_ADDENDUM,
     LIVE_SYSTEM_MESSAGE_SHA256,
     LOW_STOCK_ADDENDUM,
     MEMORY_ADDENDUM,
+    QUANTITY_ADDENDUM,
     SALES_ANALYSIS_ADDENDUM,
     SALES_REPORT_ADDENDUM,
     STOCK_TASK_ADDENDUM,
@@ -147,6 +149,24 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # every OTHER carried axis; `replace` drops the whole scope to this message's own
 # entities alone). Net +676. Measured via `_without_growth_r1_addendum
 # (SEMANTIC_PARSER_PROMPT)` against the coder's landed change, not derived.
+# #1262 slice 5 (F4, 26 Sep 2026): `QUANTITY_ADDENDUM` stacks AFTER
+# `SALES_REPORT_ADDENDUM`, the newest outermost suffix - stripped first in
+# `_without_growth_r1_addendum`, below. It does not move CONSTANT_CHARS (which
+# measures the body BEFORE every later addendum, growth r1's own included).
+# 63657 -> 63711 (#1262 slice 9, F1a, 26 Sep 2026): an IN-BODY edit, not an
+# addendum - the ENTITY OPERATIONS list's `brand -> Sorento, Mocha, or Cabana`
+# bullet is replaced (not appended around) with `brand -> a name from the Known
+# brands: line ...`, because AC-S9-2's own test asserts the hard-coded phrase is
+# GONE from the published template, which an addendum stacked outside the body
+# cannot make true (the phrase would still be present, just superseded in
+# meaning). `KNOWN_BRANDS_ADDENDUM` (stacked after `QUANTITY_ADDENDUM`) is the
+# separate, ADDITIVE piece - it teaches the new `Known brands:` line itself, the
+# same shape every other addendum teaches a new key. Net +54, this one bullet
+# only; nothing else in the body moved. NOT reproducible from a live re-fetch by
+# `test_the_constant_is_reproducible_from_the_live_file` (that test's own
+# `_requested_attributes_block` exemption covers a different span) - that test
+# stays skipped without `CHATBOT_LIVE_SYSTEM_MESSAGE` set, which is every CI run;
+# flagged for whoever next re-derives the constant from a live fetch.
 # -602 chars (PR #1247 round 8, owner ruling 26 Sep 2026 ~09:50Z, "that one can
 # remove"): the n8n `{{ (() => ...)() }}` expression after "Companies OFFERED" is cut. The
 # CRM registry never evaluated it, so it reached the model as literal JavaScript. See
@@ -160,7 +180,12 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # stacks AFTER `SALES_REPORT_ADDENDUM` (`_without_growth_r1_addendum` peels it first),
 # so it is not part of this number. Net -387. Measured via `_without_growth_r1_
 # addendum(SEMANTIC_PARSER_PROMPT)`, not derived.
-CONSTANT_CHARS = 62668
+#
+# Merge of main b299bf6e (#1301) into chatbot memory lane A (integration round 5, 28 Sep
+# 2026): main's +54 (the brand bullet now points at the Known brands line, 63055 -> 63109)
+# and this lane's -387 above touch different spans of the body and both stand:
+# 62668 + 54 = 62722. Measured, not derived.
+CONSTANT_CHARS = 62722
 
 #: The line the round 8 cut rewrote, as the live file carries it and as the constant does.
 COMPANIES_OFFERED_LIVE = (
@@ -179,7 +204,9 @@ def _without_growth_r1_addendum(text: str) -> str:
     `LAST_COST_ADDENDUM` (migration 511, 12 Sep 2026), then `LOW_STOCK_ADDENDUM`
     (PLAN-low-stock-report.md S7, 14 Sep 2026), then `SALES_REPORT_ADDENDUM`
     (PLAN-chatbot-sales-report.md S4 wiring point 1, migration
-    `519_chatbot_sales_report_vocab`), then `MEMORY_ADDENDUM` (chatbot memory lane A,
+    `519_chatbot_sales_report_vocab`), then `QUANTITY_ADDENDUM` (issue #1262 slice 5,
+    26 Sep 2026), then `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep 2026),
+    then `ESCALATION_CONFIRMATION_ADDENDUM` (#1323), then `MEMORY_ADDENDUM` (chatbot memory lane A,
     migration `mem_0002_parser_memory`, which also folds the moved CURRENT DATE
     section into this same trailing block - AC-MEM071) now stack AFTER
     `GROWTH_R1_ADDENDUM` on both bodies, the same way this one stacked after the live
@@ -191,13 +218,18 @@ def _without_growth_r1_addendum(text: str) -> str:
     `test_parser_growth_r1_reachability.py::test_the_addendum_is_appended_to_both_bodies`.
     """
     # MEMORY_ADDENDUM (chatbot memory lane A) is the newest addendum, then
-    # ESCALATION_CONFIRMATION_ADDENDUM (#1323), then SALES_ANALYSIS_ADDENDUM (#1267 S1),
+    # ESCALATION_CONFIRMATION_ADDENDUM (#1323), then the #1262 pair (KNOWN_BRANDS_ADDENDUM,
+    # QUANTITY_ADDENDUM), then SALES_ANALYSIS_ADDENDUM (#1267 S1),
     # then STOCK_TASK_ADDENDUM (ported from PR #1118, not merged, chatbot-stock-ask-v2
     # S3), so they come off FIRST, in that order.
     if text.endswith(MEMORY_ADDENDUM):
         text = text[: -len(MEMORY_ADDENDUM)]
     if text.endswith(ESCALATION_CONFIRMATION_ADDENDUM):
         text = text[: -len(ESCALATION_CONFIRMATION_ADDENDUM)]
+    if text.endswith(KNOWN_BRANDS_ADDENDUM):
+        text = text[: -len(KNOWN_BRANDS_ADDENDUM)]
+    if text.endswith(QUANTITY_ADDENDUM):
+        text = text[: -len(QUANTITY_ADDENDUM)]
     if text.endswith(SALES_ANALYSIS_ADDENDUM):
         text = text[: -len(SALES_ANALYSIS_ADDENDUM)]
     if text.endswith(STOCK_TASK_ADDENDUM):

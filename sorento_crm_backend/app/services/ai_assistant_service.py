@@ -329,6 +329,16 @@ class _TurnToolCache:
         return out
 
 
+class MCPToolCallError(RuntimeError):
+    """#1262 slice 1 (F2): the MCP server's own `isError: true` on a `tools/call`
+    result - the tool ran and reported failure (an invalid uuid, a refused filter),
+    which nobody was reading before this, so the raw text ("Error executing tool
+    ...") reached WhatsApp verbatim. Raising it is what lets `run_fetch`'s existing
+    `except Exception` take its error arm instead of returning the text as an answer,
+    and it is what the in-app AI assistant's own tool loop already catches and feeds
+    back to the model as a `tool_call_failed` result (AC-S1-4, unchanged by this)."""
+
+
 class MCPRuntimeClient:
     """Minimal JSON-RPC client for FastMCP streamable HTTP endpoint."""
 
@@ -401,14 +411,20 @@ class MCPRuntimeClient:
 
     def call_tool(self, tool_name: str, args: dict[str, Any]) -> str:
         result = self._rpc("tools/call", {"name": tool_name, "arguments": args})
+        text = ""
         if "content" in result and isinstance(result["content"], list):
             chunks = []
             for item in result["content"]:
                 if isinstance(item, dict) and isinstance(item.get("text"), str):
                     chunks.append(item["text"])
             if chunks:
-                return "\n".join(chunks)
-        return json.dumps(result)
+                text = "\n".join(chunks)
+        # #1262 slice 1 (F2): `isError` is the JSON-RPC result's own verdict on the
+        # call, not something the joined text above says anything about - raise
+        # rather than hand the tool's error text back as if it were an answer.
+        if result.get("isError"):
+            raise MCPToolCallError(text or json.dumps(result))
+        return text or json.dumps(result)
 
 
 class AIAssistantConfigService:

@@ -81,14 +81,20 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         bare assertion) so a future second lineage, if one is ever added, is covered
         for free.
 
-        `SALES_REPORT_ADDENDUM` (PLAN-chatbot-sales-report.md S4), then `MEMORY_ADDENDUM`
-        (chatbot memory lane A, migration `mem_0002_parser_memory`) stacked AFTER this
-        one, newest outermost, so both are stripped first before `LOW_STOCK_ADDENDUM` is
-        asserted as the tail - the same treatment `LAST_COST_ADDENDUM` got here when
-        `LOW_STOCK_ADDENDUM` landed."""
+        `SALES_REPORT_ADDENDUM` (PLAN-chatbot-sales-report.md S4) stacked AFTER this one,
+        newest outermost, so it is stripped first before `LOW_STOCK_ADDENDUM` is asserted
+        as the tail - the same treatment `LAST_COST_ADDENDUM` got here when
+        `LOW_STOCK_ADDENDUM` landed. `STOCK_TASK_ADDENDUM` and `SALES_ANALYSIS_ADDENDUM`
+        stacked after THAT, then `QUANTITY_ADDENDUM` (issue #1262 slice 5, 26 Sep 2026),
+        then `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep 2026), then
+        `ESCALATION_CONFIRMATION_ADDENDUM` (#1323), then `MEMORY_ADDENDUM` (chatbot memory
+        lane A, migration `mem_0002_parser_memory`) after that, so it comes off first of
+        all."""
         from app.services.chatbot_parser_prompt import (
             ESCALATION_CONFIRMATION_ADDENDUM,
+            KNOWN_BRANDS_ADDENDUM,
             MEMORY_ADDENDUM,
+            QUANTITY_ADDENDUM,
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             STOCK_TASK_ADDENDUM,
@@ -100,14 +106,17 @@ class TestBothPublishedBodiesCarryTheVocabulary:
             assert (
                 body.removesuffix(MEMORY_ADDENDUM)
                 .removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+                .removesuffix(KNOWN_BRANDS_ADDENDUM)
+                .removesuffix(QUANTITY_ADDENDUM)
                 .removesuffix(SALES_ANALYSIS_ADDENDUM)
                 .removesuffix(STOCK_TASK_ADDENDUM)
                 .removesuffix(SALES_REPORT_ADDENDUM)
                 .endswith(addendum)
             ), (
                 f"{name} body does not end with LOW_STOCK_ADDENDUM once the newer "
-                "MEMORY_ADDENDUM, SALES_ANALYSIS_ADDENDUM and SALES_REPORT_ADDENDUM are "
-                "stripped - LOW_STOCK_ADDENDUM must stay the tail beneath them"
+                "MEMORY_ADDENDUM/KNOWN_BRANDS_ADDENDUM/QUANTITY_ADDENDUM/SALES_ANALYSIS_ADDENDUM/"
+                "STOCK_TASK_ADDENDUM/SALES_REPORT_ADDENDUM are stripped - "
+                "LOW_STOCK_ADDENDUM must stay the tail beneath them"
             )
 
     def test_the_addendum_stacks_after_last_cost(self) -> None:
@@ -117,9 +126,11 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         makes both of them wrong in a way whose failure message points at the wrong
         constant."""
         from app.services.chatbot_parser_prompt import (
+            KNOWN_BRANDS_ADDENDUM,
             LAST_COST_ADDENDUM,
             ESCALATION_CONFIRMATION_ADDENDUM,
             MEMORY_ADDENDUM,
+            QUANTITY_ADDENDUM,
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             STOCK_TASK_ADDENDUM,
@@ -130,6 +141,8 @@ class TestBothPublishedBodiesCarryTheVocabulary:
             assert (
                 body.removesuffix(MEMORY_ADDENDUM)
                 .removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+                .removesuffix(KNOWN_BRANDS_ADDENDUM)
+                .removesuffix(QUANTITY_ADDENDUM)
                 .removesuffix(SALES_ANALYSIS_ADDENDUM)
                 .removesuffix(STOCK_TASK_ADDENDUM)
                 .removesuffix(SALES_REPORT_ADDENDUM)

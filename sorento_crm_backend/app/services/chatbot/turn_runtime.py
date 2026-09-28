@@ -457,6 +457,181 @@ def load_profile(
     )
 
 
+def active_brands(db: Session) -> list[dict[str, Any]]:
+    """#1262 slice 9 (F1a), round 3 section 6 step 1: the live `Brand` rows the
+    parser's `Known brands:` line is built from - `{brand_name, brand_code, id,
+    company_id, is_active}` for every ACTIVE brand, read fresh on every call (no
+    cache: an operator edit in the table must reach the next turn with no
+    restart).
+
+    `app.models.product.Brand`, not the `projects` model's own brand-shaped
+    table - `Brand` is the catalogue's own brand row (`brands`, `CompanyScopedMixin`),
+    the one `crm_outstanding_report`'s own `Product.brand_id` points at; the
+    projects model names something else entirely.
+
+    Company scope is read off `db` itself, not recomputed here: `run_turn`
+    (engine.py, `_contact_company_scope` / `_scoped_factory`) already stamps
+    every session it opens with the contact's own companies before this ever
+    runs, and `Brand`'s `CompanyScopedMixin` auto-filters any ORM query on that
+    session to them (`app.models.base.do_orm_execute`) - a second, explicit
+    `company_id IN (...)` filter here would be a second copy of the same rule,
+    liable to disagree with it the day one changes and the other does not.
+    """
+    from app.models.product import Brand
+
+    rows = (
+        db.query(Brand)
+        .filter(Brand.is_active.is_(True))
+        .order_by(Brand.brand_name)
+        .all()
+    )
+    return [
+        {
+            "id": row.id,
+            "brand_name": row.brand_name,
+            "brand_code": row.brand_code,
+            "company_id": row.company_id,
+            "is_active": row.is_active,
+        }
+        for row in rows
+    ]
+
+
+_BRAND_WORD_RE = re.compile(r"[0-9a-z]+")
+
+
+def _osa_distance(a: str, b: str) -> int:
+    """Edit distance counting a swap of two neighbouring letters as one edit
+    ("sorneto" is one edit from "sorento")."""
+    rows = [list(range(len(b) + 1))]
+    for i in range(1, len(a) + 1):
+        row = [i] + [0] * len(b)
+        for j in range(1, len(b) + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            row[j] = min(rows[i - 1][j] + 1, row[j - 1] + 1, rows[i - 1][j - 1] + cost)
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                row[j] = min(row[j], rows[i - 2][j - 2] + 1)
+        rows.append(row)
+    return rows[-1][-1]
+
+
+def brand_rows_for_word(brands: list[dict[str, Any]], word: Any) -> list[dict[str, Any]]:
+    """#1262 fix lane round 7, R1: the live brand rows a typed word names, decided by
+    the word alone so the same word gives the same brand every time.
+
+    An exact name or code wins, then a word of the message that is a name or code
+    ("sorento brand"), then the nearest brand name by spelling: one edit for a word of
+    four or five letters, two for a longer one, and only when the nearest distance
+    names one brand (a tie names none). Codes are matched exactly, never by spelling.
+    No match returns [], which callers say back as a word they could not find."""
+    folded = " ".join(jsc.nullish_str(word).casefold().split())
+    if not folded:
+        return []
+
+    def keys(row: dict[str, Any]) -> set[str]:
+        out = {
+            " ".join(jsc.nullish_str(row.get(k)).casefold().split())
+            for k in ("brand_name", "brand_code")
+        }
+        out.discard("")
+        return out
+
+    exact = [row for row in brands if folded in keys(row)]
+    if exact:
+        return exact
+    words = _BRAND_WORD_RE.findall(folded)
+    whole = [row for row in brands if keys(row) & set(words)]
+    if whole:
+        return whole
+    best: int | None = None
+    nearest: list[dict[str, Any]] = []
+    for w in words:
+        if len(w) < 4:
+            continue
+        limit = 1 if len(w) <= 5 else 2
+        for row in brands:
+            name = "".join(jsc.nullish_str(row.get("brand_name")).casefold().split())
+            if len(name) < 4:
+                continue
+            distance = _osa_distance(w, name)
+            if distance > limit:
+                continue
+            if best is None or distance < best:
+                best, nearest = distance, [row]
+            elif distance == best and row not in nearest:
+                nearest.append(row)
+    names = {"".join(jsc.nullish_str(r.get("brand_name")).casefold().split()) for r in nearest}
+    return nearest if len(names) == 1 else []
+
+
+def brand_entity_word(entity: dict[str, Any]) -> str:
+    """The word a brand-hinted entity is resolved by: what the customer typed, and the
+    parser's `canonical_code` only when no typed word came with it. The parser's own
+    reading of a misspelt word is a guess that differs between runs (round 7, R1), so
+    it never decides the brand while the typed word is there."""
+    raw = jsc.nullish_str(entity.get("raw")).strip()
+    return raw or jsc.nullish_str(entity.get("canonical_code")).strip()
+
+
+def _brand_hinted_entities_matching_live(
+    db: Session, entities: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """#1262 slice 9 (F1a): the `hint: "brand"` entities among `entities` whose own
+    `raw` or `canonical_code` matches a LIVE brand's name or code, case-insensitive
+    exact - the gate `resolve_kinds` uses to keep a real brand word away from the
+    shared resolver entirely. A brand-hinted token NOT on the live list is
+    untouched (today's path - AC-S9-3's own guard), because it is not this
+    contact's brand to answer for.
+    """
+    candidates = [
+        e
+        for e in entities
+        if isinstance(e, dict) and jsc.nullish_str(e.get("hint")).strip().lower() == "brand"
+    ]
+    if not candidates:
+        return []
+    live = active_brands(db)
+    # #1262 fix lane round 7, R1: the same word-alone read the brand ids come from
+    # (`brand_rows_for_word`), so a word kept off the resolver always has a brand and a
+    # word with none always reaches it and is said back.
+    return [e for e in candidates if brand_rows_for_word(live, brand_entity_word(e))]
+
+
+def order_brand_filter(
+    db: Session, lane_out: dict[str, Any], focus: Focus | None
+) -> tuple[list[str], list[str]]:
+    """#1262 fix lane round 3, B1-r2 and N7: the brand an ORDER fetch is filtered by,
+    as `(ids, names)` - the one source the tool args, the carried focus and the
+    "Brand:" header line all read.
+
+    The ids: the brand words this turn typed, matched against the live list
+    (`lanes.business._resolve_outstanding_brand_ids`, name or code), else the brand
+    the conversation already carries (`focus.outstanding_brand_ids`, or the answered
+    question's own `outstanding_carried_brand_ids`). A carried id is kept only while it
+    is still a live brand in this session's scope. The names are read off those same
+    live rows, so a brand typed by its code ("srt") prints "Sorento".
+    """
+    from app.services.chatbot.lanes.business import _resolve_outstanding_brand_ids
+
+    parse = dict(lane_out)
+    if not parse.get("outstanding_carried_brand_ids") and focus is not None:
+        parse["outstanding_carried_brand_ids"] = list(focus.outstanding_brand_ids)
+    semantic: dict[str, Any] = {}
+    try:
+        _resolve_outstanding_brand_ids(parse, semantic, db=db)
+        live = {row["id"]: row for row in active_brands(db)}
+    except Exception:  # noqa: BLE001 - a test double with no real session has no
+        # brands either; the fetch then runs exactly as it did before this seam.
+        # Round 4, N11: logged, so a real DB error dropping the brand is visible.
+        logger.warning("order_brand_filter: live brand lookup failed", exc_info=True)
+        return [], []
+    ids = [b for b in jsc.array(semantic.get("outstanding_brand_ids")) if b in live]
+    names = [
+        jsc.nullish_str(live[b].get("brand_name") or live[b].get("brand_code")).strip() for b in ids
+    ]
+    return ids, [n for n in names if n]
+
+
 def _stock_availability_only(db: Session, contact_respond_id: str, space_id: str | None) -> bool:
     """Is this contact's stock visibility policy "Availability only" (hand test F1)?
 
@@ -1463,7 +1638,60 @@ def resolve_kinds(
     from app.services.chatbot.lanes.business import services as business_services
 
     entry = ENTRY_BY_BRANCH_KIND.get(branch_kind, "resolve")
-    entities = (jsc.get(jsc.get(ctx, "parse"), "output") or {}).get("entities") or []
+    output_block_for_domain = jsc.get(jsc.get(ctx, "parse"), "output") or {}
+    entities = output_block_for_domain.get("entities") or []
+    # #1262 slice 9 (F1a), owner ruling 7: a brand-hinted token matching a LIVE
+    # brand (name or code, case-insensitive exact) resolves inside the chatbot,
+    # never through the shared resolver - no order-domain fan-out to
+    # customer/transporter (`entity_resolver._DOMAIN_HINT_EXPANSIONS["order"]
+    # ["brand"]`, untouched - it still serves n8n/MCP callers), no reconcile
+    # re-type, no roster, no kind pick.
+    #
+    # Security B1 / SF3 (review round, 26 Sep 2026, two passes): ORDER domain only -
+    # the strip ran unconditionally for every domain, which also blinded
+    # promotion/inventory turns naming only a brand (`gate.py`'s own brand-grouping
+    # code ~1546-1556 and `tier_gate.py`'s own `query_brands` derivation ~207-223
+    # both read `parser.get("entities")` for a `hint: "brand"` entity ON PURPOSE).
+    #
+    # Second pass: dropped from the TOKEN LIST that reaches the resolver only
+    # (`resolver_excluded_entity_ids`, threaded through `resolve_gate.run` into
+    # `resolve_entity_body`'s own token building) - NEVER from `ctx.parse.output.
+    # entities` itself. A mixed order+promotion turn (`branch_kind: "check_promotion"`,
+    # `domain_hint: "order"`) enters `resolve_gate.run` at `entry == "access_check"`,
+    # which reads `parser = ctx.parse.output` (the SAME object, not a copy) to run
+    # `tier_gate` BEFORE resolve-entity is even called - mutating that object here
+    # blinded `tier_gate`'s own `query_brands` fallback exactly the same way the
+    # domain-unscoped version blinded promotion/inventory, just narrowed to this one
+    # mixed shape. `apply()` reads `verdict.get("entities")` directly (never this
+    # function's own ctx), so the entity still settles onto `focus.brands` exactly as
+    # any other confident entity would (`turn/apply.py::_focus_rules`'s generic
+    # per-hint grouping) - untouched by either strip.
+    is_order_domain = (
+        jsc.nullish_str(output_block_for_domain.get("domain_hint")).strip().lower() == "order"
+    )
+    live_brands_read = True
+    try:
+        matched_brands = (
+            _brand_hinted_entities_matching_live(db, entities) if is_order_domain else []
+        )
+    except Exception:  # noqa: BLE001 - a caller handing over a test double with no
+        # real session (every `resolve_kinds` test that stubs `resolve_gate.run`
+        # entirely and never seeds a live `Brand` table) has no opinion on brand
+        # matches either; the token falls through to the shared resolver
+        # unchanged, exactly as it did before this slice.
+        matched_brands = []
+        live_brands_read = False
+    resolver_excluded_entity_ids = (
+        frozenset(id(e) for e in matched_brands) if matched_brands else None
+    )
+    # The entities THIS call would resolve against, brand-excluded ids aside - used
+    # ONLY for the entity-less early return just below, never handed to the resolver
+    # itself as a replacement list (that stays `ctx`'s own, unmutated).
+    entities_after_exclusion = (
+        [e for e in entities if id(e) not in resolver_excluded_entity_ids]
+        if resolver_excluded_entity_ids
+        else entities
+    )
     # Security B1/S1 (review round, 20 Sep 2026): the `access_check` entry is about the
     # CONTACT, not about anything the message named - `resolve_gate.run` reads the
     # entitlement and runs the tier gate BEFORE resolve-entity is even called, and main's
@@ -1473,7 +1701,7 @@ def resolve_kinds(
     # (no product) fell through to `narrow.py`'s entitlement-BLIND tier menu, and the turn
     # that ANSWERS a tier pick (a bare "1", no entity of its own) reached `_tier_gate`
     # with no entitlement to recompose against at all.
-    if not entities and entry != "access_check":
+    if not entities_after_exclusion and entry != "access_check":
         return ResolveOutcome({}, [], None, {}, {}, False, None)
     if roster_caps is None:
         from app.models.chatbot_policy import ChatbotEntityKind
@@ -1499,6 +1727,7 @@ def resolve_kinds(
             probe_default_start=resolve_gate.default_probe_start(),
             dry_run=dry_run,
             roster_caps=roster_caps,
+            resolver_excluded_entity_ids=resolver_excluded_entity_ids,
         )
     except Exception:  # noqa: BLE001 - see the docstring: nothing to reconcile, not a failure
         logger.warning("chatbot: the resolver did not answer", exc_info=True)
@@ -1520,6 +1749,27 @@ def resolve_kinds(
     compatible = [e for e in jsc.array(gate.get("compatible_entities")) if isinstance(e, dict)]
     unplaced = unplaced_tokens(entities, resolved)
     compatible = _without_guesses(compatible, resolved, unplaced)
+    if is_order_domain and live_brands_read:
+        # #1262 fix lane round 3, S5: a brand word that is NOT on the live list, typed
+        # beside one that is ("Sorento and XYZ"), must be said back like any other
+        # token nothing could place, never filtered away in silence. The live brand
+        # narrows the fetch; this one gets the same "could not find" line.
+        placed_tokens = {
+            _token_key(jsc.get(r, "token"))
+            for r in jsc.array(jsc.get(resolved, "resolutions"))
+            if jsc.array(jsc.get(r, "matches"))
+        }
+        matched_ids = {id(e) for e in matched_brands}
+        for e in entities:
+            if (
+                isinstance(e, dict)
+                and id(e) not in matched_ids
+                and jsc.nullish_str(e.get("hint")).strip().lower() == "brand"
+            ):
+                raw = jsc.nullish_str(e.get("raw")).strip()
+                key = _token_key(raw)
+                if key and key not in placed_tokens:
+                    unplaced.setdefault(key, raw)
     # The attribute-first `predicate` block (AC-1534): the resolver counted the set the
     # question described, and the count is what the answer's own header says. It rides
     # the gate to the tool trigger, where `fetch.output_structurer` prepends it.
@@ -1691,6 +1941,8 @@ def candidates_by_kind(
     each one ("has incoming"). Deduped on identity, in the resolver's own order - the
     order the customer will read the numbers in.
     """
+    from app.services.chatbot.lanes.business.fetch import is_uuid as is_uuid_value
+
     stamps = gate.get("incoming_by_code") if isinstance(gate.get("incoming_by_code"), dict) else {}
     grouped: dict[str, list[dict[str, Any]]] = {}
     seen: dict[str, set[str]] = {}
@@ -1705,10 +1957,14 @@ def candidates_by_kind(
         if identity in seen.setdefault(kind, set()):
             continue
         seen[kind].add(identity)
+        # #1262 slice 2 (F1c): `uuid` is a real uuid or nothing - falling back to
+        # `code` here is how a kind-pick's printed label ("Sorento (customer)") ended
+        # up as a candidate's own `uuid`.
+        row_uuid = row.get("uuid")
         built: dict[str, Any] = {
             "raw": code or row.get("raw"),
             "canonical_code": code or None,
-            "uuid": row.get("uuid") or code,
+            "uuid": row_uuid if is_uuid_value(row_uuid) else None,
             "hint": kind,
         }
         family = row.get("uuids")
@@ -1910,9 +2166,21 @@ def outstanding_carry(
         out["outstanding_carried_product_code"] = carried_codes[0]
         if len(carried_codes) > 1:
             out["outstanding_carried_product_codes"] = carried_codes
-    ids = [e["uuid"] for e in focus.customers if isinstance(e, dict) and e.get("uuid")]
+    # #1262 slice 2 (F1c): only a real uuid rides out as a carried customer id - a
+    # kind-pick's printed label ("Sorento (customer)") settled onto `focus.customers`
+    # must never reach the next turn's `outstanding_carried_customer_ids`.
+    from app.services.chatbot.lanes.business.fetch import is_uuid as _is_uuid
+
+    ids = [e["uuid"] for e in focus.customers if isinstance(e, dict) and _is_uuid(e.get("uuid"))]
     if ids:
         out["outstanding_carried_customer_ids"] = ids
+    # #1262 slice 9 (F1a) follow-up: the same carry, for the brand the scope question
+    # (or an open detail offer) was asked about - already-resolved uuids on
+    # `focus.outstanding_brand_ids` (settled by `_settle_question_subject`), never
+    # re-resolved (D10).
+    brand_ids = [b for b in focus.outstanding_brand_ids if _is_uuid(b)]
+    if brand_ids:
+        out["outstanding_carried_brand_ids"] = brand_ids
     for entity in focus.warehouse:
         if not isinstance(entity, dict):
             continue
@@ -2153,6 +2421,20 @@ def make_tool_runner(
         answered = spec.filters.get("outstanding")
         if isinstance(answered, dict):
             lane_out = outstanding_carry(lane_out, focus, answered)
+        brand_names: list[str] = []
+        if domain == "order":
+            # #1262 fix lane round 3, B1-r2: the brand is a carried axis like the
+            # customer. Resolved once here, sent as is (`run_fetch` takes these ids),
+            # written back onto the focus so the next turn carries it, and named on
+            # the header off the same ids (the envelope's `brand_names`).
+            brand_ids, brand_names = order_brand_filter(db, lane_out, focus)
+            if brand_ids:
+                lane_out = {**lane_out, "outstanding_brand_ids": brand_ids}
+            from app.services.chatbot.lanes.business import typed_brand_words
+
+            if brand_ids or typed_brand_words(lane_out):
+                # Round 4, S6: a typed brand off the list ends the carry (ruling 13).
+                focus.outstanding_brand_ids = list(brand_ids)
         lane_ctx = {
             **ctx,
             "parse": {**(ctx.get("parse") or {}), "output": lane_out},
@@ -2377,7 +2659,7 @@ def make_tool_runner(
                     _drop_focus_entities(focus, dropped_entities)
                     fragment = rerun_fragment
                     entities = keep_entities
-        if _answered_unfiltered(fragment, entities, unplaced):
+        if not brand_names and _answered_unfiltered(fragment, entities, unplaced):
             # Every subject this fetch had is a token the resolver could not place, so
             # there was nothing to filter by - and a tool called with no filter answers
             # about everything. "stock for srttwc286" reached
@@ -2420,6 +2702,7 @@ def make_tool_runner(
             ran_with=lane_out,
             unplaced=unplaced,
             raw_fragment=fragment,
+            brand_names=brand_names,
         )
 
     return runner
@@ -2957,7 +3240,13 @@ def _spec_row(entity: dict[str, Any]) -> dict[str, Any]:
     product word ("cheaper") reached this fallback with neither, and every downstream
     code reader then sent it to the tool verbatim as `product_code=cheaper`.
     """
-    uuid = entity.get("uuid") or entity.get("canonical_code")
+    # #1262 slice 2 (F1c): `uuid` is a real uuid or it is absent - never `canonical_code`
+    # promoted into it, which is how a kind-pick's printed label ("Sorento (customer)")
+    # ended up in `uuid` here (the diagnosis transcript's own recorded state).
+    from app.services.chatbot.lanes.business.fetch import is_uuid as _is_uuid
+
+    raw_uuid = entity.get("uuid")
+    uuid = raw_uuid if _is_uuid(raw_uuid) else None
     settled_raw = entity.get("raw") if uuid else None
     return {
         "entity_type": entity.get("hint"),
@@ -3067,6 +3356,27 @@ def domain_denial_text(db: Session, domain: str) -> str | None:
         return None
 
 
+def _lane_text_without_withheld_header(
+    text: Any, set_header: Any, *, counted_set: bool
+) -> Any:
+    """#1262 slice 6 (F6a): `header_override` (below) is already withheld when
+    `counted_set` is False - this is the SAME withholding for the other carrier.
+    `lanes/business/fetch.py`'s report builder bakes the identical `set_header`
+    string as the FIRST line of `response`/`lane_text` whenever a predicate rode
+    on the ctx, with no `counted_set` check of its own ("got eta" over carried
+    products counted 0 against the leftover word "eta" and printed "0 products
+    have incoming stock." above the real ETA rows). Stripped by exact prefix, off
+    the same `set_header` string `header_override` itself is built from - never a
+    guess at the header's shape.
+    """
+    if counted_set or not isinstance(text, str) or not isinstance(set_header, str):
+        return text
+    prefix = set_header.strip()
+    if prefix and text.startswith(prefix):
+        return text[len(prefix) :].lstrip("\n")
+    return text
+
+
 def envelope_of(
     fragment: dict[str, Any],
     spec: FetchSpec,
@@ -3077,6 +3387,7 @@ def envelope_of(
     unplaced: dict[str, str] | None = None,
     counted_set: bool = True,
     raw_fragment: dict[str, Any] | None = None,
+    brand_names: list[str] | None = None,
 ) -> dict[str, Any]:
     """The kept lane's fetch fragment as the composer's envelope (AC-1530, AC-1531).
 
@@ -3126,7 +3437,11 @@ def envelope_of(
         # (#930's grammar, contract 102); this is what a tool with no rows to render -
         # a report, a refusal, a miss suggestion - has to say instead. A refused domain
         # says contract 7's registered sentence.
-        "lane_text": denial_text if refused else fetched.get("response"),
+        "lane_text": _lane_text_without_withheld_header(
+            denial_text if refused else fetched.get("response"),
+            fetched.get("set_header"),
+            counted_set=counted_set,
+        ),
         # A counted-set answer's own header ("10 taps have certificates. Showing
         # 5.", AC-1316/AC-1317) - unlike `lane_text` this travels ALONGSIDE rows, not
         # instead of them: the composer still renders `figures` through its own
@@ -3216,6 +3531,10 @@ def envelope_of(
         # `turn/compose.py` never reads this key. ABSENT (not merely `None`) unless the
         # caller supplies one - `make_tool_runner.runner` is the one caller that does.
         envelope["raw_fragment"] = raw_fragment
+    if brand_names:
+        # #1262 fix lane round 3, B1-r2: the live brands this order fetch was filtered
+        # by (`order_brand_filter`), for the "Brand:" line on both order headers.
+        envelope["brand_names"] = list(brand_names)
     return envelope
 
 

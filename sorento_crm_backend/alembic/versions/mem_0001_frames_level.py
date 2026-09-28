@@ -27,7 +27,7 @@ are declared in `ConversationFrame.__table_args__` - so `Base.metadata.create_al
 what a REAL migrated database needs.
 
 Revision ID: mem_0001_frames_level
-Revises: merge_28sep_esc_fin
+Revises: chatbot_known_brands, soatt_0001_so_line_attachments
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "mem_0001_frames_level"
-down_revision = "merge_28sep_esc_fin"
+down_revision = ("chatbot_known_brands", "soatt_0001_so_line_attachments")
 branch_labels = None
 depends_on = None
 

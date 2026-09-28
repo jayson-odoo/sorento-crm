@@ -97,6 +97,25 @@ def recent_exchange_lines(
 _RECENT_EXCHANGES_HEADER = "Recent exchanges, oldest first:"
 
 
+def known_brands_line(brands: list[dict[str, Any]] | None) -> str | None:
+    """#1262 slice 9 (F1a): the `Known brands:` line - the live `Brand` rows for the
+    contact's own companies as `name (code)` pairs, deduped by name (a brand active in
+    more than one of the contact's companies prints once), `None` when nothing is left.
+    Shared by `parser.build_user_block` and `assemble`, so both print the same line."""
+    seen: set[str] = set()
+    pairs: list[str] = []
+    for row in brands or []:
+        name = str((row or {}).get("brand_name") or "").strip()
+        code = str((row or {}).get("brand_code") or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        pairs.append(f"{name} ({code})" if code else name)
+    if not pairs:
+        return None
+    return f"Known brands: {', '.join(pairs)}"
+
+
 def _collapse_whitespace(value: str) -> str:
     """Newlines and repeated whitespace folded to single spaces (security review
     26 Sep 2026, S2) - a multi-line entity or fact value must never break this
@@ -158,6 +177,11 @@ class ContextLayers:
     task_lines: list[str] | None = None
     open_question_line: str | None = None
     recent_exchanges: list[tuple[str, str]] | None = None
+    #: #1301 (#1262 slice 9, F1a), carried through the round 5 merge with main: the
+    #: live `Brand` rows (`turn_runtime.active_brands`), rendered as the one `Known
+    #: brands:` line at every level. Kept whole, like the task lines: it is what a
+    #: misspelt brand word is resolved against.
+    brands: list[dict[str, Any]] | None = None
 
 
 def _l5_segment(fact: dict[str, Any]) -> str:
@@ -307,6 +331,7 @@ def _render_l2(
     pending_options: list[str] | None,
     task_lines: list[str] | None = None,
     open_question_line: str | None = None,
+    brands_line: str | None = None,
 ) -> tuple[str, bool]:
     dropped = False
     options_line: str | None = None
@@ -330,6 +355,10 @@ def _render_l2(
 
     def _render(subj: str | None) -> str:
         parts = []
+        # #1301: the brand list is the most stable line in this layer, so it goes
+        # first, and it is kept whole (only the subject shrinks).
+        if brands_line:
+            parts.append(brands_line)
         if subj:
             parts.append(f"Current subject: {subj}")
         # PR #1247: the open task lines and the Open question object, in the same
@@ -396,6 +425,9 @@ def _assemble_off(layers: ContextLayers) -> tuple[str, dict[str, Any]]:
         lines.append("Open question options: " + "; ".join(layers.pending_options))
     if layers.settings_profile_line:
         lines.append(layers.settings_profile_line)
+    brands_line = known_brands_line(layers.brands)
+    if brands_line:
+        lines.append(brands_line)
     exchanges = recent_exchange_lines(layers.recent_exchanges, previous)
     if exchanges:
         lines.append(_RECENT_EXCHANGES_HEADER)
@@ -441,6 +473,7 @@ def assemble(layers: ContextLayers) -> tuple[str, dict[str, Any]]:
         layers.pending_options,
         layers.task_lines,
         layers.open_question_line,
+        known_brands_line(layers.brands),
     )
     l1_text, l1_dropped = _render_l1(layers.current_message, layers.reply_to, layers.media_line)
 
