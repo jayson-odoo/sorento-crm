@@ -826,6 +826,35 @@ PERMISSION_REGISTRY.extend(_crud("sales", "opportunities", "Sales Opportunities"
 PERMISSION_REGISTRY.extend(_crud("sales", "targets", "Sales Targets"))
 
 
+# Finance module (plan 3.5, slice S0, #1309; ruling Q9). Migration `fin_0001_billing_documents`
+# creates these and grants them to admin and superadmin; declared here as well so a database
+# built with create_all + sync_permissions (CI, `scripts/bootstrap_env`) has them. `edit` and
+# `delete` gate only the AutoCount ingest and deletions doors (no UI creates or deletes a
+# billing document); `export` is the list's Export (S2).
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "finance.billing_documents.view",
+        "name": "View Billing Documents",
+        "description": "Permission to view billing documents (invoices, cash sales, credit and debit notes).",
+    },
+    {
+        "slug": "finance.billing_documents.export",
+        "name": "Export Billing Documents",
+        "description": "Permission to export the billing documents list.",
+    },
+    {
+        "slug": "finance.billing_documents.edit",
+        "name": "Ingest Billing Documents",
+        "description": "Permission to push billing documents through the AutoCount ingest.",
+    },
+    {
+        "slug": "finance.billing_documents.delete",
+        "name": "Delete Billing Documents",
+        "description": "Permission to delete billing documents through the AutoCount ingest.",
+    },
+])
+
+
 def sync_permissions(db: Session, created_by_user_id: Optional[str] = None) -> int:
     """
     Idempotent sync: ensure every slug in PERMISSION_REGISTRY exists in user_permissions.

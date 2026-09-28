@@ -39,11 +39,11 @@ def _run(conn, fn):
         fn()
 
 
-def test_revision_fits_alembic_version_and_sits_on_identity_0001_s0_model():
-    # Merge round 2 re-parents S2 onto main's head after #1297 (targets) and #1303 (identity S0).
+def test_revision_fits_alembic_version_and_sits_on_fin_0001_billing_documents():
+    # Merge round 4 re-parents S2 onto main's head after #1314 (finance S0).
     module = _load("sales_0003_opportunities")
     assert len(module.revision) <= 32
-    assert module.down_revision == "identity_0001_s0_model"
+    assert module.down_revision == "fin_0001_billing_documents"
 
 
 def test_permission_slugs_are_registered_in_the_python_registry():

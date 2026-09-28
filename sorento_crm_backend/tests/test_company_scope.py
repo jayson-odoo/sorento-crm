@@ -572,7 +572,10 @@ def test_every_company_id_table_is_registered():
     # Both sit in the sales module's PURGE_ORDER and `purge_tables.json`.
     # The S1 fix round 3 (PR #1297) adds 1: `sales.target_commission_tiers` are one target's
     # own tiers, read and replaced only through that scoped target (plan 3.3).
-    expected_owned = 146
+    # PLAN-finance-billing-documents-27sep.md (S0, #1309) adds 2: `finance.billing_documents`
+    # and `finance.billing_document_lines` are one company's own AutoCount billing documents,
+    # pushed under that company's anchor; the read-back loads a document BY ID.
+    expected_owned = 148
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

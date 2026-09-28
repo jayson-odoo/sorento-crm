@@ -27,6 +27,9 @@ _LANE_BRANCH: dict[str, str] = {
     # wire concept, so this is a copy-key choice inside one existing arm, not new scope.
     "offer_declined": "escalation_declined",
     "not_supported": "not_supported",
+    # #865 round 6 (R5): junk over an open multi-company escalation offer re-asks the
+    # company (`apply._holds_the_offer`), on the canned lane n8n named `offer_hold`.
+    "offer_hold": "offer_hold",
     "clarification": "clarify_menu",
     "casual": "low_signal",
     # S3 (chatbot media-into-turn): bare entities with no domain and no carried
