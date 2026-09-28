@@ -542,3 +542,24 @@ the same rule per domain. AC-1381's header lines and AC-1373's two-line rows are
 - AC-1388 (F1, zero set) A described set that qualifies nothing says what it looked for and what the
   set holds in the key's other values (AC-1374), never "Could not find incoming for category ...".
 
+## N. Owner hand test of 28 Sep 2026 (11:27 to 11:32 MYT, console :3083, contact 487555417) [BE]
+
+Every attribute ask answers through the ONE reply the product-code ask already has. AC-1374,
+AC-1388 and the "I don't know ... I know ..." sentence of AC-1385 are superseded.
+
+- AC-1389 A described set that qualifies nothing reads "Here's what you want: gunmetal wash basins
+  (2)", the described products one per line, then "But no incoming matched these. Would you like me
+  to escalate to purchasing team?". No "I looked for", no other-finish counts.
+- AC-1390 A value the registry does not know reads "Here's what you want: pink water closets", the
+  subject broken down by that key one line each ("• White water closets: 7"), then "Couldn't find:
+  pink (finish or colour). Would you like me to escalate to ... team?". No list of known choices, no
+  typo mention. A word the set reader could not use is a "Couldn't find" line, never "did you mean".
+- AC-1391 No brand named means every brand: no default brand in the intro, no "Other brands" line.
+- AC-1392 A set longer than one reply gives the full count and a breakdown by the next attribute
+  (brand when none was named, then class, then the registry's keys), one line each; never "how many
+  should I show".
+- AC-1393 A domain word alone ("cert?") after any attribute answer, hit or miss, keeps the subject
+  and the specifications of that ask.
+- AC-1394 A product ask naming a property ("kitchen sink 1.2mm thickness") lists only the products
+  with it, every brand, under one intro line ("Here are kitchen sinks with thickness 1.2 mm (2).").
+- AC-1395 A category word alone never opens the "Which kind of file do you need?" menu.

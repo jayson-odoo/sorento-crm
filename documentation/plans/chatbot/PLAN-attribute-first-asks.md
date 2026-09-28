@@ -1,6 +1,6 @@
 # PLAN: attribute-first asks, "which products have X", across every product and domain
 
-Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged, revive repairs R35 to R38 and owner ruling R39 (no paging) built, reviewer pass fix round done; owner hand test round 2 (W1 to W6: brand binding, plain-words header, readable rows, paging keeps the set, chatbot default brand, water basin) built tester first; owner hand test of round 2 (round 3, W1 to W6: vertical rows, a count after a page continues, a new class word starts a new set, no "(default)", brand scope proven) built red first; owner console test of round 3 (round 4, R1 to R7: brand weights, line-by-line header, two-line rows, a miss says what it searched, the clarify answer reruns the ask, unknown values said back, plain words) built red first; reviewer pass at d6fa2b31 (round 5: B1 R6 fires only on a value-position word, S1 list values in the near miss, S2 one display helper, S3 serial_ddl, N1 to N4) fixed red first; reviewer pass at 34cb4697 (round 6: B1-r5 whole-word product name match, N-r5-1 to N-r5-3) fixed red first; owner hand test of rounds 4 to 6 (round 7, items 1 to 7: ETA words and ETA row shape, a code's descriptor picks its variants, code then descriptor, the normal stock header, a brand from the offer narrows the set, certificates only in the attachment shape, plain words) fixed red first; main 11bf373ec merged 27 Sep 2026 (511_attribute_first_lookup_sets re-parented onto merge_27sep_three_heads); owner retest of round 7 (round 8, F1 the parser bounded by the specification registry with a deterministic grounding step, F2 one answer shape per domain) built red first, single alembic head spk_0001_specification_kind; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
+Status: REVIVED 26 Sep 2026 on PR #833 - origin/main merged, revive repairs R35 to R38 and owner ruling R39 (no paging) built, reviewer pass fix round done; owner hand test round 2 (W1 to W6: brand binding, plain-words header, readable rows, paging keeps the set, chatbot default brand, water basin) built tester first; owner hand test of round 2 (round 3, W1 to W6: vertical rows, a count after a page continues, a new class word starts a new set, no "(default)", brand scope proven) built red first; owner console test of round 3 (round 4, R1 to R7: brand weights, line-by-line header, two-line rows, a miss says what it searched, the clarify answer reruns the ask, unknown values said back, plain words) built red first; reviewer pass at d6fa2b31 (round 5: B1 R6 fires only on a value-position word, S1 list values in the near miss, S2 one display helper, S3 serial_ddl, N1 to N4) fixed red first; reviewer pass at 34cb4697 (round 6: B1-r5 whole-word product name match, N-r5-1 to N-r5-3) fixed red first; owner hand test of rounds 4 to 6 (round 7, items 1 to 7: ETA words and ETA row shape, a code's descriptor picks its variants, code then descriptor, the normal stock header, a brand from the offer narrows the set, certificates only in the attachment shape, plain words) fixed red first; main 11bf373ec merged 27 Sep 2026 (511_attribute_first_lookup_sets re-parented onto merge_27sep_three_heads); owner retest of round 7 (round 8, F1 the parser bounded by the specification registry with a deterministic grounding step, F2 one answer shape per domain) built red first; main fcbfa379 merged 28 Sep 2026 (511 re-parented onto fin_0001_billing_documents); owner hand test of 28 Sep (round 9, one reply structure for every attribute ask, AC-1389 to AC-1395) built red first, single alembic head spk_0002_colour_word_spec; awaiting the orchestrator's CI label, an owner console pass on the prod copy and merge go. Track: full. Lane `feat/chatbot-attribute-first-asks`.
 Test report: `attribute-first-asks-test-report.md`.
 UAC: `attribute-first-asks-acceptance-criteria.md`.
 Supersedes: `documentation/plans/_archive/chatbot/PLAN-spec-backward-search.md` (its backend half
@@ -564,6 +564,29 @@ Parser prompt: not changed. No migration.
   product-code rows through `fetch._item_line`; `set_rows_text` and the bold header lines are
   gone. Price asks about a set get a `price` leg (no filter).
 - Latent defect fixed: `_near_miss`'s empty-list fallback was the JSON string "[]".
+
+## Owner hand test of 28 Sep 2026 11:27 to 11:32 MYT (round 9, one reply structure)
+
+Owner rulings (reply alignment page, round 3, and chat): "you do like here is what you want, but no
+incoming, do you want me to escalate..., I want that structure to stay, i don't want so many route";
+"need to be more line by line, more structured"; "C: no cap, but no explanations and no repeats";
+"always break it down"; "I want us to reuse the functions that we have"; "i don't want new layer".
+
+- AC-1389: a set that qualifies nothing is `answer.what_you_want_reply` (the product-code miss's own
+  layout) over `predicate.members` (`product_predicate_service.resolve_product_set`, the set without
+  its legs). `near_miss_sentence` is no longer called.
+- AC-1390: an unknown value is the same layout; the subject is broken down by the value's key
+  (`references._unknown_value_members`, `resolve_product_set(breakdown_key=...)`).
+  `unknown_values_sentence` is no longer called. An unread word is the "Couldn't find" line.
+- AC-1391: no silent brand default (`prefer_weighted_brand=False` at the resolve endpoint).
+- AC-1392: too many is the count plus `_set_breakdown` by the next attribute, never a paging question.
+- AC-1393: a document word alone ("cert?") keeps the subject (`turn_runtime.with_carried_entities`).
+- AC-1394: a product ask naming a property counts the described set on the existing `price` leg
+  (`{"price": "described"}`), so a measurement filters it.
+- AC-1395: a category word alone under the document domain is a product ask, never the "Which kind
+  of file" menu (`head/grounding._category_word_under_documents`).
+- Parser: `SPECIFICATION_ADDENDUM` says a colour word on its own, misspelt or not on the list, is a
+  finish specification; published unlabelled by `spk_0002_colour_word_spec`.
 
 ## Definition of done
 
