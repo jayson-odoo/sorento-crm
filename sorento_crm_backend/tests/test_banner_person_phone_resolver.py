@@ -2,7 +2,8 @@
 
 Covers PR-1..PR-6 in documentation/plans/forms/form-banner-person-links-acceptance-criteria.md:
 - resolve a users.id -> RespondContact.phone_number bare digits (PR-1)
-- phone-match fallback via contact_number -> resolve_user_respond_contact (PR-2)
+- no phone-match fallback: an unlinked user has no wa.me phone (PR-2, superseded by
+  identity S3 fix round 2, #1280)
 - no linked contact / no phone-matchable number -> None (PR-3)
 - respond_user_id path (complaint rejecter) -> User -> phone (PR-4)
 - users.id path (stock-inquiry rejecter) -> User -> phone (PR-5)
@@ -61,10 +62,14 @@ def test_explicit_link_returns_bare_digits(db):
 
 
 # ---- PR-2 ---------------------------------------------------------------
-def test_phone_match_fallback_returns_digits(db):
+def test_phone_match_without_link_returns_none(db):
+    """PR-2's phone-match fallback is superseded by identity S3 fix round 2 (#1280,
+    reviewer B1): a banner links only a user's linked contact, so a contact the owner
+    unlinked is never shown (or re-linked) because its phone matches."""
     _contact(db, "60123456789")
     uid = _user(db, contact_number="60123456789")
-    assert wa_phone_for_user_id(db, uid) == "60123456789"
+    assert wa_phone_for_user_id(db, uid) is None
+    assert db.query(User).get(uid).respond_contact_id is None
 
 
 # ---- PR-3 ---------------------------------------------------------------

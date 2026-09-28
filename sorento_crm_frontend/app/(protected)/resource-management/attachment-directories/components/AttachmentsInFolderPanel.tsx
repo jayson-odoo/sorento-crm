@@ -1166,7 +1166,7 @@ export default function AttachmentsInFolderPanel({
                           { value: '__all__', label: 'All users' },
                           ...usersSelect.map((u) => ({
                             value: u.id,
-                            label: u.name?.trim() || u.email,
+                            label: u.name?.trim() || u.email || 'Unnamed user',
                           })),
                         ]}
                         placeholder="All users"

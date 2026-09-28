@@ -138,6 +138,9 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const canAct = useHasPermission(ORDER_INQUIRY_ACTION_PERMISSION);
   const canAcknowledge = useHasPermission(ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION);
   const canReserve = useHasPermission(ORDER_INQUIRY_RESERVE_PERMISSION);
+  // #1312 (Q6): the Lines tab's own paperclip upload/remove - the same grant that
+  // confirms the board and writes OI lines.
+  const canEditAttachments = useHasPermission('projects.projects.edit');
   const { data: session } = useSession();
   const currentUserId = session?.user?.id ?? null;
 
@@ -895,6 +898,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
             onAmendReserve={handleAmendReserve}
             onLineHistoryClick={handleLineHistoryClick}
             onUndoStaged={handleUndoStaged}
+            canEditAttachments={canEditAttachments}
           />
         </TabsContent>
 

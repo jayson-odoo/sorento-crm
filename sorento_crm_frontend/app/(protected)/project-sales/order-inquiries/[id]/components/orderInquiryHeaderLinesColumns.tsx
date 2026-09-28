@@ -43,6 +43,8 @@ import {
 } from '../../components/orderInquiryWorklistColumns';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
 import { OrderInquiryDocumentLink, ViaSpoPoNumber } from '../../components/OrderInquiryDocumentDialog';
+import { SoLineAttachmentsButton } from '../../../_shared/components/SoLineAttachmentsButton';
+import type { SoLineAttachmentsByLine } from '../../../_shared/services/soLineAttachmentService';
 
 /**
  * The Lines tab's own columns (AC-DP-03): Expand, Product, SO line, Qty, Taken,
@@ -358,6 +360,8 @@ export function useOrderInquiryHeaderLinesColumns({
   onAmendReserve,
   onLineHistoryClick,
   onUndoStaged,
+  attachmentsByLine,
+  canEditAttachments = false,
 }: {
   /** AC-RS-83/83c: gates the reserve icons inside the State cell - a viewer without
    * `projects.order_inquiries.reserve` sees the pills only. */
@@ -375,6 +379,18 @@ export function useOrderInquiryHeaderLinesColumns({
   onLineHistoryClick?: (line: OrderInquiryLine) => void;
   /** Drops a staged decision, restoring the two icons. */
   onUndoStaged?: (rowId: string) => void;
+  /**
+   * #1312 (AC-U6): every line's own clarification files, keyed by CORE sales-order
+   * line id - `OrderInquiryLinesTab` owns the ONE lookup call this reads over
+   * (`useSoLineAttachmentLookup`), the same shape the fulfilment board's own list
+   * view passes into its columns. This is a pure renderer over it, like every other
+   * prop here - no hook call of its own, since a cell function is invoked directly
+   * by this file's own unit test (`orderInquiryHeaderLinesColumns.test.tsx`), outside
+   * a real React render pass, where a hook call would break the Rules of Hooks.
+   */
+  attachmentsByLine?: SoLineAttachmentsByLine;
+  /** #1312 (Q6): `projects.projects.edit` - gates the lightbox's own upload/remove. */
+  canEditAttachments?: boolean;
 } = {}): ColumnDef<OrderInquiryLineRow>[] {
   return React.useMemo<ColumnDef<OrderInquiryLineRow>[]>(() => {
     const columns: ColumnDef<OrderInquiryLineRow>[] = [
@@ -619,11 +635,26 @@ export function useOrderInquiryHeaderLinesColumns({
               <HistoryIcon className="size-3.5" aria-hidden />
             </Button>
           );
+          // #1312 (AC-U6): the same paperclip the fulfilment board carries, on every
+          // line that names a core sales-order line - a row raised before AutoCount
+          // reconciled it (`core_line_id` null) has nowhere to file a clarification
+          // against, same rule the board's own list view follows.
+          const coreLineId = row.original.core_line_id;
+          const attachments = coreLineId ? (attachmentsByLine?.[coreLineId] ?? []) : null;
+
           if (!canReserve || line.liveRows.length === 0) {
             return (
               <div className="flex min-w-0 items-center gap-1">
                 <span className="shrink-0">{pill}</span>
                 {history}
+                {coreLineId ? (
+                  <SoLineAttachmentsButton
+                    lineId={coreLineId}
+                    label={`${row.original.so_number ?? ''} L${line.lineNo ?? ''} ${row.original.item_code ?? ''}`}
+                    attachments={attachments ?? []}
+                    canEdit={canEditAttachments}
+                  />
+                ) : null}
               </div>
             );
           }
@@ -631,6 +662,14 @@ export function useOrderInquiryHeaderLinesColumns({
             <div className="flex min-w-0 items-center gap-1">
               <span className="shrink-0">{pill}</span>
               {history}
+              {coreLineId ? (
+                <SoLineAttachmentsButton
+                  lineId={coreLineId}
+                  label={`${row.original.so_number ?? ''} L${line.lineNo ?? ''} ${row.original.item_code ?? ''}`}
+                  attachments={attachments ?? []}
+                  canEdit={canEditAttachments}
+                />
+              ) : null}
               <ReserveActionsCell
                 row={primary}
                 staged={stagedByRowId?.[primary.id]}
@@ -654,5 +693,7 @@ export function useOrderInquiryHeaderLinesColumns({
     onAmendReserve,
     onLineHistoryClick,
     onUndoStaged,
+    attachmentsByLine,
+    canEditAttachments,
   ]);
 }

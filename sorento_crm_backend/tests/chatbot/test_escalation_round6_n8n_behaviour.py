@@ -78,17 +78,35 @@ SORENTO_MEMBERS = [("zzt-u-jer", "Jereen Tee"), ("zzt-u-tay", "Tay Zhi Yang")]
 # --------------------------------------------------------------------------- #
 
 
-def _chain(session_factory) -> dict[str, str]:
+def _chain(session_factory, *, product_order: tuple[str, str] = ("mocha", "sorento")) -> dict[str, str]:
+    """`product_order` is the order the two same-code products are INSERTED in, which is
+    the only thing that decides which one the resolver's exact probe returns first (it has
+    no ORDER BY). The default is this file's historical order; a shared xdist worker's
+    earlier tests can still lay the rows out the other way on disk (main cd220251)."""
     a = _seed_company(session_factory, name=MOCHA)
     b = _seed_company(session_factory, name=SORENTO)
+    ids = {"mocha": a, "sorento": b}
+    for key in product_order:
+        _seed_product(session_factory, company_id=ids[key], code=PRODUCT_CODE)
     for company in (a, b):
-        _seed_product(session_factory, company_id=company, code=PRODUCT_CODE)
         _seed_customer(session_factory, company_id=company, name=CUSTOMER_NAME, code=CUSTOMER_CODE)
     workspace = _seed_workspace(session_factory)
     _seed_contact(
         session_factory, contact_id=CONTACT, phone="+60000000966", workspace_id=workspace, company_ids=[a, b]
     )
-    return {"mocha": a, "sorento": b}
+    return ids
+
+
+# The both-company miss names the companies in the order the resolver returned the product
+# rows, and that order is the table's physical row order: the exact product probe has no
+# ORDER BY and the answer node keeps the resolver's order (the n8n parity fixtures pin it,
+# e.g. `crossdomain-render/exec-13488926.json` says "checked in Sorento and Mocha"). No rule
+# fixes it, so a test that needs "both were searched" accepts either order.
+BOTH_CHECKED = ("checked in Mocha and Sorento", "checked in Sorento and Mocha")
+
+
+def _checked_both(said: str) -> bool:
+    return any(phrase in said for phrase in BOTH_CHECKED)
 
 
 def _stub_rosters(monkeypatch, ids: dict[str, str]) -> list[dict[str, Any]]:
@@ -162,10 +180,20 @@ def _dry_run_lane(calls: list[tuple[Any, Any, Any]]):
 class Conversation:
     """One contact, turn after turn, the session written to the DB between turns."""
 
-    def __init__(self, session_factory, monkeypatch, stub_parser, stub_access, system_settings_row, *, rows):
+    def __init__(
+        self,
+        session_factory,
+        monkeypatch,
+        stub_parser,
+        stub_access,
+        system_settings_row,
+        *,
+        rows,
+        product_order: tuple[str, str] = ("mocha", "sorento"),
+    ):
         self.sf = session_factory
         self.stub_parser = stub_parser
-        self.ids = _chain(session_factory)
+        self.ids = _chain(session_factory, product_order=product_order)
         self.rosters = _stub_rosters(monkeypatch, self.ids)
         envelope = _orders_envelope(
             rows(self),
@@ -224,8 +252,10 @@ def _both_miss(conv: Conversation) -> list[dict[str, Any]]:
 
 @pytest.fixture
 def conversation(session_factory, monkeypatch, stub_parser, stub_access, system_settings_row):
-    def start(rows):
-        return Conversation(session_factory, monkeypatch, stub_parser, stub_access, system_settings_row, rows=rows)
+    def start(rows, **kwargs):
+        return Conversation(
+            session_factory, monkeypatch, stub_parser, stub_access, system_settings_row, rows=rows, **kwargs
+        )
 
     return start
 
@@ -384,7 +414,7 @@ class TestR3BothMissClarifiesTheCompany:
     def _offer(self, conversation) -> Conversation:
         conv = conversation(_both_miss)
         said = _said(conv.say(f"{PRODUCT_CODE} kim seng jaya send yet", _order_ask()))
-        assert "checked in Mocha and Sorento" in said, said
+        assert _checked_both(said), said
         return conv
 
     def test_the_multi_company_picker_copy(self, conversation):
@@ -505,6 +535,39 @@ class TestR3BothMissClarifiesTheCompany:
         assert result.branch_kind != "out_of_scope"
 
 
+class TestR3RefusalHoldsWhicheverProductRowComesFirst:
+    """Main deploy cd220251 (run 36379111785): on a shared xdist worker the Sorento product
+    row sat ahead of the Mocha one, the offer said "checked in Sorento and Mocha", and the
+    refusal test died in its setup before the rule it pins was ever reached. Both physical
+    orders are pinned here, so the refusal is proven in each and the phrase's order is on
+    the record as the resolver's, not a promise."""
+
+    @pytest.mark.parametrize(
+        ("product_order", "phrase"),
+        [
+            (("mocha", "sorento"), "checked in Mocha and Sorento"),
+            (("sorento", "mocha"), "checked in Sorento and Mocha"),
+        ],
+    )
+    def test_a_parser_pick_of_a_company_never_offered_is_refused(self, conversation, product_order, phrase):
+        conv = conversation(_both_miss, product_order=product_order)
+        said = _said(conv.say(f"{PRODUCT_CODE} kim seng jaya send yet", _order_ask()))
+        assert phrase in said, said
+        assert f"{PICKER_HEAD}\n*Mocha:*\n1. Kia Yee\n*Sorento:*\n2. Jereen Tee" in said, (
+            "the picker's order is the lookup's company order, not the product rows'"
+        )
+        conv.say("the cabana one", _reply(escalation={"is_escalation_confirmation": False, "company_pick": "Cabana"}))
+        assert conv.last_lane == [], "a pick outside the offered pool routes nowhere"
+        assert conv.open_question().get("kind") == "member_offer"
+
+    @pytest.mark.parametrize("product_order", [("mocha", "sorento"), ("sorento", "mocha")])
+    def test_a_parser_pick_of_an_offered_company_still_routes(self, conversation, product_order):
+        conv = conversation(_both_miss, product_order=product_order)
+        conv.say(f"{PRODUCT_CODE} kim seng jaya send yet", _order_ask())
+        conv.say("the coffee brand one", _reply(escalation={"is_escalation_confirmation": False, "company_pick": "Mocha"}))
+        assert conv.company() == conv.ids["mocha"]
+
+
 class TestR3BothMissWithNoPicker:
     """A both-company miss off the order lane (no member picker, rev-3): the plain phrase,
     then a bare yes clarifies with the rev-3 plain copy, then a company reply routes."""
@@ -512,7 +575,7 @@ class TestR3BothMissWithNoPicker:
     def _offer(self, conversation) -> Conversation:
         conv = conversation(_both_miss)
         said = _said(conv.say(f"{PRODUCT_CODE} kim seng jaya send yet", _order_ask(agent="general_enquiries")))
-        assert "checked in Mocha and Sorento" in said and PICKER_HEAD not in said, said
+        assert _checked_both(said) and PICKER_HEAD not in said, said
         return conv
 
     def test_yes_clarifies_with_the_plain_copy(self, conversation):
@@ -650,7 +713,7 @@ class TestR7OwnersRound4Transcript:
     def _offer(self, conversation) -> Conversation:
         conv = conversation(_both_miss)
         said = _said(conv.say("DO brand sorneto for cheng huat sentul", _order_ask()))
-        assert "checked in Mocha and Sorento" in said, said
+        assert _checked_both(said), said
         return conv
 
     def test_how_about_mocha_read_as_a_new_order_ask_is_answered_not_escalated(self, conversation):

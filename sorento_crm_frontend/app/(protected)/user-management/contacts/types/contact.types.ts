@@ -31,6 +31,28 @@ export interface RespondContact {
   chatbot_recall_enabled?: boolean;
   /** S6: may this contact ask the chatbot for stock. A CRM fact, default on. */
   chatbot_stock_allowed?: boolean;
+  /** Identity S3: the user this contact is linked to, if any (list rows). Null
+   *  without `user_management.users.view`. */
+  linked_user_id?: string | null;
+  linked_user_name?: string | null;
+  /** Identity S3: which role the Add user form should suggest for this contact
+   *  (S3 contract 1.1) - a market-segment or sales-agent salesperson, else a
+   *  portal user. */
+  is_salesperson?: boolean;
+  suggested_role_slug?: 'salesperson' | 'portal_user';
+  /** Identity S3: the full linked user (contact detail only), or null when
+   *  unlinked or the caller lacks `user_management.users.view`. */
+  linked_user?: {
+    id: string;
+    name: string | null;
+    email: string | null;
+    status: string;
+    has_password: boolean;
+    roles: { id: string; name: string }[];
+    /** True when the user's phone is not the contact's (or is empty), so the
+     *  WhatsApp code cannot reach that user (fix round 2, S3). */
+    phone_differs_from_contact?: boolean;
+  } | null;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;

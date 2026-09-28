@@ -65,6 +65,14 @@ def _writeback_notification_delivery(db: Session, row: EmailOutbox, status: str,
 _ATTACHMENT_MIME = {
     ".pdf": "application/pdf",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    # #1312: the OI handover's own line attachments widen this to images and .xls -
+    # what the sales-order-line attachment upload accepts (Q3).
+    ".xls": "application/vnd.ms-excel",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
 }
 
 
@@ -89,6 +97,12 @@ def _attachments_for(row: EmailOutbox) -> Optional[list]:
     filled in (`supplier_notice_service`, F4) - and the second travels as
     `metadata_json["extra_attachments"]` rather than as a second set of columns nothing else
     in the system would ever fill.
+
+    An extra marked `"optional": True` (#1312, AC-E6: the OI handover's own per-line
+    files - a file can be deleted between the email being queued and the outbox
+    draining) is skipped, logged, rather than failing the whole send when its download
+    raises; a NON-optional extra keeps today's behaviour (raised, so the outbox's own
+    backoff/retry applies to the whole row).
     """
     out: list[tuple] = []
 
@@ -105,6 +119,19 @@ def _attachments_for(row: EmailOutbox) -> Optional[list]:
     meta = row.metadata_json if isinstance(row.metadata_json, dict) else {}
     for extra in meta.get("extra_attachments") or []:
         if not isinstance(extra, dict) or not extra.get("storage_key"):
+            continue
+        if extra.get("optional"):
+            try:
+                out.append(
+                    _fetch_attachment(
+                        extra.get("storage_provider"), extra["storage_key"], extra.get("filename")
+                    )
+                )
+            except Exception:  # noqa: BLE001 - a missing optional file must not block the email
+                logger.warning(
+                    "email_outbox: skipping missing optional attachment %s (%s)",
+                    extra.get("filename"), extra.get("storage_key"),
+                )
             continue
         out.append(
             _fetch_attachment(

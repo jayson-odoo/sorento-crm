@@ -4,10 +4,12 @@
 code is what a document states and therefore the only thing an import can resolve; who is
 behind it is `person_label`, which groups them for reporting and decides nothing.
 
-NOT `access_agents` (those are Respond.io routing agents) and NOT `users`: the captain's
-ruling of 2026-08-14 is that salespeople "shouldn't have user account in our system, or
-optional at least", so there is no link to `users` in this slice. A nullable `user_id` FK is
-future work for the day one of them needs a login.
+NOT `access_agents` (those are Respond.io routing agents) and NOT `users`. The captain's
+ruling of 2026-08-14 that salespeople "shouldn't have user account in our system, or optional
+at least" is SUPERSEDED by #1280 (owner ruling 26 Sep 2026 23:45 MYT, "yeah correct"): a
+salesperson may now have a user, created by the owner from their WhatsApp contact
+(`PLAN-unified-identity-26sep.md` section 6). No `user_id` column is added here: the path
+agent -> `contact_id` -> `users.respond_contact_id` is already one join.
 
 **This table is also the AutoCount mirror target** (`app/models/sales_agent.py` on the
 autocount branch, migration `303_autocount_slice2_masters`), which is why it already exists

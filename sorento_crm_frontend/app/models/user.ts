@@ -95,6 +95,22 @@ export interface User {
   role?: UserRole;
   sessions?: Session[];
   accounts?: Account[];
+  /** Identity S3 - the Sign-in section (`GET /users/{id}` / `/users/me`, S3 1.7). */
+  phoneVerifiedAt?: string | null;
+  phone_verified_at?: string | null;
+  linkedContact?: { id: string; name: string | null; phone_number: string | null } | null;
+  linked_contact?: { id: string; name: string | null; phone_number: string | null } | null;
+  /** True when a contact is linked and the user's own phone no longer matches
+   *  it (AC-46) - also true when the user has no phone at all. */
+  phoneDiffersFromContact?: boolean;
+  phone_differs_from_contact?: boolean;
+  /** `auth_method` of the user's newest session, or null if they have never
+   *  signed in. */
+  lastSignInMethod?: string | null;
+  last_sign_in_method?: string | null;
+  /** Has an email, no password, and has never been sent an invite. */
+  needsInvitation?: boolean;
+  needs_invitation?: boolean;
 }
 
 export interface UserRole {
