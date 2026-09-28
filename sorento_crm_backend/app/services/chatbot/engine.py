@@ -935,26 +935,70 @@ def _apply_top_selling_updates(focus: Any, updates: dict[str, Any]) -> None:
 #: customer, 2 for the sales agent." prints (`lanes/business._top_selling_ask_who`),
 #: and the option each names. A reply carrying one of them picks that option, as a typed
 #: label picks any other printed list (owner retest of round 4, 27 Sep 2026, R2).
-TOP_SELLING_WHO_WORDS = {"customer": 1, "sales": 2, "agent": 2}
+#: Round 9 (owner hand test after round 8, 28 Sep 2026): "salesman" and "saleman" fell
+#: to the low signal greeting; the other words people call either side mean the same.
+TOP_SELLING_WHO_WORDS = {
+    "customer": 1, "client": 1,
+    "sales": 2, "agent": 2, "salesman": 2, "salesmen": 2, "salesperson": 2, "rep": 2,
+}
 _WORD_RE = re.compile(r"[a-z]+")
+#: Words this short are matched exactly: one edit from "rep" is too many other words.
+_WHO_TYPO_MIN_LEN = 4
 
 
 def _words(text: str) -> list[str]:
     return _WORD_RE.findall((text or "").lower())
 
 
-def _top_selling_who_answer(text: str, verdict: dict[str, Any]) -> int | None:
+def _one_edit_apart(a: str, b: str) -> bool:
+    """One insertion, deletion, substitution or swap of two neighbouring letters."""
+    if a == b or abs(len(a) - len(b)) > 1:
+        return a == b
+    if len(a) == len(b):
+        diff = [i for i in range(len(a)) if a[i] != b[i]]
+        return len(diff) == 1 or (
+            len(diff) == 2 and diff[1] == diff[0] + 1 and a[diff[0]] == b[diff[1]] and a[diff[1]] == b[diff[0]]
+        )
+    short, long_ = (a, b) if len(a) < len(b) else (b, a)
+    return any(long_[:i] + long_[i + 1 :] == short for i in range(len(long_)))
+
+
+def _who_word(word: str, *, typos: bool) -> int | None:
+    """The option a word of the reply names, a typo one edit away included when `typos`."""
+    if word in TOP_SELLING_WHO_WORDS:
+        return TOP_SELLING_WHO_WORDS[word]
+    if not typos or len(word) < _WHO_TYPO_MIN_LEN:
+        return None
+    near = {
+        option
+        for known, option in TOP_SELLING_WHO_WORDS.items()
+        if len(known) >= _WHO_TYPO_MIN_LEN + 1 and _one_edit_apart(word, known)
+    }
+    return near.pop() if len(near) == 1 else None
+
+
+def _top_selling_who_answer(db: Session, text: str, verdict: dict[str, Any], who: dict[str, Any]) -> int | None:
     """Which option of the open "customer or sales agent?" question this message
     picks: 1, 2, 0 for "neither" (the parser's own `is_affirmative: false`), or None
-    when it answers something else."""
+    when it answers something else. Round 9: a short reply is also read for typos of
+    the option words ("saleman") and for the customer name or the agent's code or
+    person label the question named ("WT", "SAMPLE - WILLIAM")."""
     bare = (text or "").strip()
     if bare in ("1", "2"):
         return int(bare)
-    picked = {TOP_SELLING_WHO_WORDS[w] for w in _words(text) if w in TOP_SELLING_WHO_WORDS}
+    short = len(bare.split()) <= _TOP_SELLING_ANSWER_WORDS
+    picked = {p for p in (_who_word(w, typos=short) for w in _words(text)) if p is not None}
     if 2 in picked:
         return 2
     if picked == {1}:
         return 1
+    if short and bare:
+        agents = {i for i, _ in business_services.resolve_sales_agent_token(db, bare)} & set(who.get("agent_ids") or [])
+        customers = {i for i, _ in business_services.customers_named(db, bare)} & set(who.get("customer_ids") or [])
+        if agents and not customers:
+            return 2
+        if customers and not agents:
+            return 1
     hints = {e.get("hint") for e in (verdict.get("entities") or []) if isinstance(e, dict)}
     if "sales_agent" in hints:
         return 2
@@ -1303,7 +1347,7 @@ def _top_selling_verdict(
         return verdict, state, None
     pending = state.pending
     if ranking and slot and slot.get("asked") == "who" and isinstance(slot.get("who"), dict):
-        answer = _top_selling_who_answer(text, verdict)
+        answer = _top_selling_who_answer(db, text, verdict, slot["who"])
         if answer is not None:
             return _as_ranking_answer(verdict, top_selling_who=answer), state, "top_selling_who_answer"
     if focus.status == "top_selling" and slot and slot.get("asked"):
