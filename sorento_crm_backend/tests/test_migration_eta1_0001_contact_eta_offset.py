@@ -52,11 +52,16 @@ def _column(conn, schema):
     ).first()
 
 
-def test_revision_chains_onto_main_head():
+def test_revision_merges_mains_two_heads():
+    """Main carried two heads (both children of fin_0001) when this lane merged it; this
+    revision is their merge point, so the tree has exactly one head."""
     module = _load()
     assert module.revision == "eta1_0001_contact_eta_offset"
     assert len(module.revision) <= 32
-    assert module.down_revision == "fin_0001_billing_documents"
+    assert set(module.down_revision) == {
+        "chatbot_esc_confirm_1323",
+        "fin_0002_billing_demand_class",
+    }
 
 
 def test_up_down_up_adds_a_not_null_default_true_column():

@@ -6,15 +6,19 @@ this contact is told carries the product-or-category `chatbot_eta_offset_days`
 existed. `ADD COLUMN IF NOT EXISTS` (sa2_0002_contact_toggles' idiom) keeps this re-runnable
 against a schema where `Base.metadata.create_all` already created the ORM-mapped column.
 
+Also the MERGE point of main's two heads as of 28 Sep 2026 (`chatbot_esc_confirm_1323` and
+`fin_0002_billing_demand_class`, both children of `fin_0001_billing_documents`), so the tree
+has one head again. Neither parent's DDL touches `respond_contacts`, so the order is free.
+
 Revision ID: eta1_0001_contact_eta_offset
-Revises: fin_0001_billing_documents
+Revises: chatbot_esc_confirm_1323, fin_0002_billing_demand_class
 Create Date: 2026-09-28
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "eta1_0001_contact_eta_offset"
-down_revision = "fin_0001_billing_documents"
+down_revision = ("chatbot_esc_confirm_1323", "fin_0002_billing_demand_class")
 branch_labels = None
 depends_on = None
 

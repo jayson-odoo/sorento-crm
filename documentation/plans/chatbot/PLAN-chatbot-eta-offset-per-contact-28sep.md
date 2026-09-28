@@ -1,6 +1,6 @@
 # PLAN: chatbot ETA +x days from one per-contact switch; container and quantity deniable; packing list gate on incoming
 
-Status: IN REVIEW - issue #1328, full track (migration), cloud lane, PR #1329 (28 Sep 2026)
+Status: READY FOR CI - issue #1328, full track (migration), cloud lane, PR #1329, reviewer + security-reviewer addressed (28 Sep 2026)
 Domain: chatbot / incoming stock / contacts
 UAC: `chatbot-eta-offset-per-contact-28sep-acceptance-criteria.md`
 
@@ -77,5 +77,7 @@ UAC: `chatbot-eta-offset-per-contact-28sep-acceptance-criteria.md`
 
 ## Migration
 
-`eta1_0001_contact_eta_offset` on `fin_0001_billing_documents`: one
-`ADD COLUMN IF NOT EXISTS`. No data change, never touches `alembic_version` by hand.
+`eta1_0001_contact_eta_offset`: one `ADD COLUMN IF NOT EXISTS`. Its `down_revision` is
+BOTH of main's heads at merge time (`chatbot_esc_confirm_1323`, `fin_0002_billing_demand_class`,
+both children of `fin_0001_billing_documents`), so it is also their merge point and the tree
+has one head. No data change, never touches `alembic_version` by hand.
