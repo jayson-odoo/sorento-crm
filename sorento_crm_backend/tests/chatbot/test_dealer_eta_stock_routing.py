@@ -1,6 +1,7 @@
 """Owner hand test, 28 Sep 2026 (PR #1329): a stock ask answers stock, an incoming ask
 answers incoming, and a dealer's incoming reply is the deduped ETA list plus the
-salesperson line.
+salesperson line. UAC AC-EO13 to AC-EO16
+(`documentation/plans/chatbot/chatbot-eta-offset-per-contact-28sep-acceptance-criteria.md`).
 
 Owner, verbatim: "stock is stock, incoming is incoming, no such thing as incoming stock"
 and "it should just list deduped ETAs, and say please refer to sales person".
@@ -64,6 +65,7 @@ def _mcp():
 
 def _seed(sf, *, dealer: bool, salesperson: bool, later_shipment: bool = False) -> None:
     from app.models.access import RespondContact, RespondContactCustomer, StockVisibilityPolicy
+    from app.models.resources import Attachment
     from app.models.order import Customer
     from app.models.procurement import InboundShipment, InboundShipmentLine
     from app.models.product import Product, ProductCategory, UnitOfMeasure
@@ -128,7 +130,21 @@ def _seed(sf, *, dealer: bool, salesperson: bool, later_shipment: bool = False) 
     etas = [REAL_ETA, REAL_ETA] + ([LATER_REAL_ETA] if later_shipment else [])
     # Listed out of order on purpose: the dealer reply sorts.
     for n, eta in enumerate(reversed(etas)):
+        # A packing list on each, so the stock ask's own `incoming` branch (R5: the
+        # earliest still-incoming shipment WITH a packing list) can answer too.
+        aid = str(uuid.uuid4())
+        db.add(
+            Attachment(
+                id=aid,
+                original_filename="packing-list.pdf",
+                stored_filename=f"{aid}.pdf",
+                file_path=f"/attachments/{aid}.pdf",
+                mime_type="application/pdf",
+            )
+        )
+        db.flush()
         shipment = InboundShipment(
+            attachment_id=aid,
             id=str(uuid.uuid4()),
             shipment_number=f"ZZT-SHP-{uuid.uuid4().hex[:6]}-{n}",
             shipment_date=date(2026, 8, 1),
@@ -268,15 +284,26 @@ def _dealer_reply(etas: list[str], salesperson: str | None = SALESPERSON) -> str
 # ------------------------------------------------------------------ routing (item 1)
 
 
+def _answered_as_stock(c: Console, reply: str, *, dealer: bool) -> None:
+    """The stock tool is the turn's own tool. A dealer never reaches the incoming tool at
+    all; staff may, but only as the zero-stock ladder's rung under the stock answer
+    ("No stock for X. But there is INCOMING stock (ETA) ..."), the prod-parity ruling of
+    21 Sep 2026, never as the answer to the ask."""
+    assert c.tools[:1] == [STOCK_TOOL], c.tools
+    assert not reply.startswith("Here is the incoming stock I found"), reply
+    if dealer:
+        assert INCOMING_TOOL not in c.tools, c.tools
+    else:
+        assert f"No stock for {CODE}" in reply, reply
+
+
 @pytest.mark.parametrize("dealer", [True, False], ids=["dealer", "staff"])
 def test_typo_stock_ask_after_an_incoming_turn_reaches_the_stock_tool(console, dealer):
     """The owner's first message: "stoick X" over a carried incoming focus."""
     c = console(dealer=dealer, salesperson=True)
     c.say(f"incoming {CODE}", INCOMING)
     reply = c.say(f"stoick {CODE}", _v(None))
-    assert c.tools[:1] == [STOCK_TOOL], c.tools
-    assert INCOMING_TOOL not in c.tools
-    assert "incoming stock I found" not in reply
+    _answered_as_stock(c, reply, dealer=dealer)
 
 
 @pytest.mark.parametrize("dealer", [True, False], ids=["dealer", "staff"])
@@ -286,9 +313,7 @@ def test_check_stock_read_as_incoming_still_reaches_the_stock_tool(console, deal
     c = console(dealer=dealer, salesperson=True)
     c.say(f"incoming {CODE}", INCOMING)
     reply = c.say(f"check stock {CODE}", _v("incoming", "check_incoming"))
-    assert c.tools[:1] == [STOCK_TOOL], c.tools
-    assert INCOMING_TOOL not in c.tools
-    assert "incoming stock I found" not in reply
+    _answered_as_stock(c, reply, dealer=dealer)
 
 
 def test_a_dealer_stock_ask_gets_the_availability_answer_not_figures(console):

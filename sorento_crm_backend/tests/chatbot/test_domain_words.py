@@ -1,5 +1,5 @@
 """The customer's own stock or incoming word decides between the two domains (owner
-ruling, hand test 28 Sep 2026: "stock is stock, incoming is incoming").
+ruling, hand test 28 Sep 2026: "stock is stock, incoming is incoming"; AC-EO13, AC-EO14).
 
 `domain_words.stock_or_incoming` reads the message BEFORE `apply()`, the same seam
 `order_list.order_list_verdict` reads a brand word at. Pure: no database.

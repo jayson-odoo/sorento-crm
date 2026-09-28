@@ -27,9 +27,12 @@ from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
 from app.services.eta_policy import (
     apply_to_incoming,
+    dealer_view,
+    is_dealer,
     query_eta_from,
     resolve_request_contact,
     rules_for_contact,
+    salesperson_name,
 )
 from app.services.field_access import CLEARANCE_PERMISSION, apply_field_access
 from app.services.error_handler import handle_internal_error
@@ -121,7 +124,7 @@ def _for_contact(
         result["data"] = rows[(page - 1) * limit : page * limit]
         result["pagination"] = {"total": len(rows), "page": page, "limit": limit}
         result["empty"] = not result["data"]
-    return apply_field_access(
+    result = apply_field_access(
         db,
         result,
         resource="incoming_stock",
@@ -129,6 +132,11 @@ def _for_contact(
         contact_id=contact.resolved or _UNRESOLVED_CONTACT,
         staff_permission=CLEARANCE_PERMISSION,
     )
+    if is_dealer(db, contact.resolved):
+        # PR #1329 fix round: a dealer is told each product once, its distinct ETAs and
+        # who to ask - after the reveals, so a date the contact may not see is not told.
+        result = dealer_view(result, salesperson=salesperson_name(db, contact.resolved))
+    return result
 
 
 #: A contact id no row carries: `apply_field_access` treats a contact that named nobody

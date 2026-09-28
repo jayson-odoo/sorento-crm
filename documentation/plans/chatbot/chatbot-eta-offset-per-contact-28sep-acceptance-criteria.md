@@ -22,3 +22,19 @@ Plan: `PLAN-chatbot-eta-offset-per-contact-28sep.md` (issue #1328)
 - AC-EO11: a row naming several products is padded by the largest of their offsets.
 - AC-EO12: the single-shipment routes (`/shipments/{id}/products`, `/shipments/{id}/attachment`)
   follow the same contact rules.
+
+Fix round, owner hand test 28 Sep 2026:
+
+- AC-EO13: a stock ask ("stock X", "check stock X", "stoick X", "X x 150") runs the stock
+  tool first for every contact, whatever the parser read or the conversation carried; a
+  dealer (availability-only policy) gets the availability answer ("How many units of X?",
+  then one sentence per product) and never the incoming reply.
+- AC-EO14: an incoming ask ("incoming X", "ETA X", "when arriving X") runs the incoming
+  tool, even when the parser read it as a stock ask; a message with both words keeps the
+  parser's reading.
+- AC-EO15: a dealer's incoming reply is one message: per product, the code once and its
+  distinct ETAs sorted (padded by the contact's offset rule), then "Please refer to your
+  salesperson, <name>." (or without the name when the contact has no salesperson); no
+  container, quantity, allocation, packing list, numbering or intro.
+- AC-EO16: two incoming lines that read the same after the contact's view is applied print
+  once; staff keep today's full incoming reply.

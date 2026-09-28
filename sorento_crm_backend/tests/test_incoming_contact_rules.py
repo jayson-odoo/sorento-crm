@@ -3,7 +3,7 @@ quantity, and the packing list gate on the incoming routes.
 
 Plan: `documentation/plans/chatbot/PLAN-chatbot-eta-offset-per-contact-28sep.md`.
 UAC: `chatbot-eta-offset-per-contact-28sep-acceptance-criteria.md` (AC-EO1 to AC-EO9; the
-dealer view is AC-EO13 to AC-EO15).
+dealer view is AC-EO15 and AC-EO16).
 
 Postgres only, blank schema, every row seeded here (CI's database has none).
 """
@@ -347,12 +347,14 @@ def test_a_mixed_shipment_row_takes_the_largest_offset(client, db):
 
 
 def test_stock_ask_and_incoming_agree_for_one_contact_and_product(client, db):
-    """The owner's ask in one assertion: one shipment, one answer, whichever route."""
+    """The owner's ask in one assertion: one shipment, one answer, whichever route.
+    `_stock_ask_eta` puts the contact on the availability policy, so the incoming route
+    answers it with the dealer view (PR #1329 fix round): the one date it tells."""
     p, _ = _seed(db)
     for switch in (True, False):
         contact = _contact(db, offset_applied=switch)
         told = _stock_ask_eta(db, p, contact)
-        listed = _list(client, p, contact)["data"][0]["estimated_arrival_date"]
+        (listed,) = _list(client, p, contact)["data"][0]["etas"]
         assert date.fromisoformat(listed).strftime("%d/%m/%Y") == told
 
 
@@ -756,7 +758,7 @@ def _dealer(db, *, offset_applied=True, salesperson=None):
     return contact
 
 
-def _second_shipment(db, p, *, eta=SHIP_ETA):
+def _twin_shipment(db, p, *, eta=SHIP_ETA):
     shipment = _incoming_shipment(db, eta=eta, attachment_id=_attachment(db).id)
     shipment.shipping_container_number = unique_code("CONT")[:30]
     _incoming_line(db, shipment_id=shipment.id, product_id=p.id, shipped=25)
@@ -766,8 +768,8 @@ def _second_shipment(db, p, *, eta=SHIP_ETA):
 
 def test_dealer_list_is_one_row_per_product_with_deduped_padded_etas(client, db):
     p, _ = _seed(db)
-    _second_shipment(db, p)  # same ETA, another container: the owner's duplicate
-    _second_shipment(db, p, eta=date(2026, 12, 1))
+    _twin_shipment(db, p)  # same ETA, another container: the owner's duplicate
+    _twin_shipment(db, p, eta=date(2026, 12, 1))
     body = _list(client, p, _dealer(db, salesperson="ZZT Sean"))
     assert body["dealer_view"] is True
     assert body["data"] == [{"product_code": p.product_code, "etas": [PADDED, "2026-12-06"]}]
@@ -776,7 +778,7 @@ def test_dealer_list_is_one_row_per_product_with_deduped_padded_etas(client, db)
 
 def test_dealer_list_carries_no_container_quantity_allocation_or_file(client, db):
     p, _ = _seed(db)
-    _second_shipment(db, p)
+    _twin_shipment(db, p)
     body = _list(client, p, _dealer(db))
     keys = set(_walk_keys(body["data"]))
     assert keys == {"product_code", "etas"}
@@ -797,7 +799,7 @@ def test_dealer_with_no_salesperson_has_a_null_name(client, db):
 
 def test_dealer_by_product_is_the_same_view(client, db):
     p, _ = _seed(db)
-    _second_shipment(db, p)
+    _twin_shipment(db, p)
     body = _by_product(client, p, _dealer(db, salesperson="ZZT Sean"))
     assert body["dealer_view"] is True
     assert body["data"] == [{"product_code": p.product_code, "etas": [PADDED]}]
@@ -805,7 +807,7 @@ def test_dealer_by_product_is_the_same_view(client, db):
 
 def test_a_non_dealer_contact_keeps_the_full_rows(client, db):
     p, _ = _seed(db)
-    _second_shipment(db, p)
+    _twin_shipment(db, p)
     params = {"product_ids": p.product_code, "contact_id": _contact(db).id}
     body = client.get("/api/v1/incoming-stock/list", params=params).json()
     assert "dealer_view" not in body
@@ -815,7 +817,7 @@ def test_a_non_dealer_contact_keeps_the_full_rows(client, db):
 
 def test_staff_without_a_contact_keep_the_full_rows(client, db):
     p, _ = _seed(db)
-    _second_shipment(db, p)
+    _twin_shipment(db, p)
     body = client.get("/api/v1/incoming-stock/list", params={"product_ids": p.product_code}).json()
     assert "dealer_view" not in body
     assert len(body["data"]) == 2

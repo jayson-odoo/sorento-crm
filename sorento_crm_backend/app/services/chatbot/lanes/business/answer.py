@@ -491,6 +491,15 @@ def crossdomain_zeroset(
     availability = jsc.get(env_probe, "stock_availability")
     if isinstance(availability, list) and availability:
         return off("stock_availability")
+    # PR #1329 fix round: the same for a dealer's incoming reply - the product code and
+    # its ETAs are the whole answer, and a dealer is referred to their salesperson. Its
+    # lines carry the code in the title, never a field, so the probe below would read
+    # every code as missing; the presenter flags each line instead.
+    if any(
+        jsc.get(jsc.get(it, "flags"), "dealer_view") is True
+        for it in _envelope_items(env_probe)
+    ):
+        return off("dealer_view")
 
     qf = parser if isinstance(parser, dict) else {}
     dh = qf.get("domain_hint")

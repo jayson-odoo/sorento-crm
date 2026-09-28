@@ -1,6 +1,6 @@
 # PLAN: chatbot ETA +x days from one per-contact switch; container and quantity deniable; packing list gate on incoming
 
-Status: READY FOR CI - issue #1328, full track (migration), cloud lane, PR #1329, reviewer + security-reviewer addressed (28 Sep 2026)
+Status: READY FOR CI - issue #1328, full track (migration), cloud lane, PR #1329, reviewer + security-reviewer addressed; fix round from the owner hand test (dealer ETA reply, stock vs incoming routing) built (28 Sep 2026)
 Domain: chatbot / incoming stock / contacts
 UAC: `chatbot-eta-offset-per-contact-28sep-acceptance-criteria.md`
 
@@ -57,6 +57,48 @@ UAC: `chatbot-eta-offset-per-contact-28sep-acceptance-criteria.md`
   so the two agree whenever one product is asked about. A `/shipments` row counts only its
   still-incoming lines, keyed by (company, shipment number); a row with no shipment number is
   padded by the largest offset there is.
+
+## Fix round: owner hand test, 28 Sep 2026 (AC-EO13 to AC-EO16)
+
+Owner, console, dealer contact: "stoick SRTWC286-SH-NEW" and "check stock SRTWC286-SH-NEW"
+both answered "Here is the incoming stock I found." with the product twice. Rulings: "stock
+is stock, incoming is incoming, no such thing as incoming stock"; the dealer incoming reply
+"should just list deduped ETAs, and say please refer to sales person".
+
+**Trace** (engine harness: real engine, real routes through TestClient, real MCP presenter,
+parser verdict stubbed; `tests/chatbot/test_dealer_eta_stock_routing.py`). A clean stock
+reading (`domain_hint: inventory`) reached the stock tool on this branch and on main. After
+an incoming turn, a message the parser gives no domain ("stoick", a typo) or reads as
+`incoming` against the carried focus inherits `incoming`, and nothing read the customer's
+own stock word, so the stock ask ran `crm_incoming_stock_list`. Not caused by this PR (it
+touched no routing) nor by the availability policy. The product printed twice because two
+still-incoming lines share one ETA and the container and quantities that told them apart
+are withheld from the contact.
+
+- **Routing** (`app/services/chatbot/domain_words.py`, called in `engine._run_stages`
+  after `order_list_verdict`, before `apply()`): a stock word (the inventory row's own
+  `switch_words`, plus a one-slip typo of "stock": an extra, missing or swapped letter,
+  never a changed one, so "stick" and "stack" stay words) and no incoming word turns an
+  incoming or domain-less reading into the stock domain; a quantity with no incoming word
+  does the same over a turn that would land on incoming; an incoming word and no stock
+  word turns a stock reading into incoming; both words keep the parser's reading; any
+  other domain is never touched. Recorded on the trace as `domain_words`.
+- **Dealer reply** (`eta_policy.dealer_view`, applied last in `incoming_stock._for_contact`
+  when `eta_policy.is_dealer`, the availability-policy test the chatbot profile uses): one
+  row per product, `{product_code, etas}`, the ETAs distinct and sorted, padded by the
+  offset rule, the revised ETA used when the contact may see one; plus
+  `salesperson_name` (the sales agent on the contact's customer, primary link first).
+  No container, quantity, allocation or packing list. The presenter
+  (`presenters._incoming_dealer`) prints "<code>" and "ETA: <dates>" per product and
+  `closing` "Please refer to your salesperson, <name>." (no name: "Please refer to your
+  salesperson."); the engine prints it with no intro and no numbering, and the zero-stock
+  ladder stands down for it as it does for an availability reply.
+- **Identical rows**: `presenters._without_repeats` drops an incoming line that reads
+  exactly like an earlier one, for any contact whose reveals leave two lines identical.
+- Staff and non-dealer contacts keep today's full reply. A staff stock miss still climbs
+  the zero-stock ladder to incoming under the stock answer (prod parity, 21 Sep ruling).
+- Not changed here: a dealer's incoming MISS still offers the purchasing team; the
+  "refer to your salesman" rule of 26 Sep covers the stock ask only.
 
 ## Behaviour changes on deploy (stated, not hidden)
 

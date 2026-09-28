@@ -321,3 +321,102 @@ def apply_to_incoming(
         if not kept:
             payload["empty"] = True
     return payload
+
+
+# --------------------------------------------------------------- the dealer view
+#
+# PR #1329 fix round (owner hand test, 28 Sep 2026: "it should just list deduped ETAs,
+# and say please refer to sales person"). A dealer - a contact whose stock visibility
+# policy is "Availability only", the same test the chatbot's own profile applies
+# (`turn_runtime._stock_availability_only`) - is told, per product, the code once and
+# its distinct ETAs, sorted, and who to ask. Nothing else: no container, no quantity, no
+# allocation, no packing list. Two shipment lines with one ETA are one date, which is
+# also what printed the owner's product twice (two still-incoming lines on one ETA,
+# told apart only by the container and quantities the contact is not shown).
+
+
+def is_dealer(db: Session, resolved_contact_id: Optional[str]) -> bool:
+    """Is this contact on the "Availability only" stock policy? Unresolved = no."""
+    if not resolved_contact_id:
+        return False
+    from app.services.stock_visibility import resolve_policy
+
+    policy = resolve_policy(db, resolved_contact_id)
+    return policy is not None and policy.mode == "availability"
+
+
+def salesperson_name(db: Session, resolved_contact_id: str) -> Optional[str]:
+    """The name of the sales agent on the contact's customer (the primary link first),
+    or None when the contact has no customer with an agent."""
+    from app.models.access import RespondContactCustomer
+    from app.models.order import Customer
+    from app.models.sales_agent import SalesAgent
+
+    agent = (
+        db.query(SalesAgent)
+        .join(Customer, Customer.sales_agent_id == SalesAgent.id)
+        .join(RespondContactCustomer, RespondContactCustomer.customer_id == Customer.id)
+        .filter(RespondContactCustomer.contact_id == str(resolved_contact_id))
+        .order_by(RespondContactCustomer.is_primary.desc(), RespondContactCustomer.created_at.asc())
+        .first()
+    )
+    if agent is None:
+        return None
+    for name in (agent.person_label, agent.contact_name, agent.description, agent.sales_agent):
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    return None
+
+
+def _iso(value: Any) -> Optional[str]:
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, str) and value.strip():
+        return value.strip()[:10]
+    return None
+
+
+def _told(node: dict[str, Any]) -> Optional[str]:
+    # The revised ETA, when the contact may see one, is the date the shipment is now
+    # promised for; else the ETA itself. Both are already padded (`apply_to_incoming`).
+    return _iso(node.get("eta_delay_date")) or _iso(node.get("estimated_arrival_date"))
+
+
+def dealer_view(payload: Any, *, salesperson: Optional[str]) -> Any:
+    """One row per product - `{"product_code", "etas"}`, the ETAs distinct and sorted -
+    in the order the products first appear, plus `dealer_view` and `salesperson_name`.
+    Handles `/list` (shipment rows with `lines`), `/by-product` (product rows with
+    `shipments`) and `/shipments` (no product: one row, code None). A single-row payload
+    (`/shipments/{id}/...`) is not a chat answer and passes through."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        return payload
+    etas: dict[Optional[str], set[str]] = {}
+    for row in payload["data"]:
+        if not isinstance(row, dict):
+            continue
+        if isinstance(row.get("shipments"), list):
+            pairs = [(row.get("product_code"), _told(s)) for s in row["shipments"] if isinstance(s, dict)]
+        elif isinstance(row.get("lines"), list):
+            pairs = [(line.get("product_code"), _told(row)) for line in row["lines"] if isinstance(line, dict)]
+        else:
+            pairs = [(row.get("product_code"), _told(row))]
+        for code, eta in pairs:
+            dates = etas.setdefault(code, set())
+            if eta:
+                dates.add(eta)
+    rows = [{"product_code": code, "etas": sorted(dates)} for code, dates in etas.items()]
+    out = {
+        key: payload[key]
+        for key in ("resolved_entities", "lookup_companies")
+        if key in payload
+    }
+    out.update(
+        {
+            "data": rows,
+            "empty": not rows,
+            "pagination": {"total": len(rows), "page": 1, "limit": max(len(rows), 1)},
+            "dealer_view": True,
+            "salesperson_name": salesperson,
+        }
+    )
+    return out
