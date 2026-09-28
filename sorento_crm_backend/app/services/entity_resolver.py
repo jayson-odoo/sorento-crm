@@ -1815,6 +1815,18 @@ def _probe_attachment_type(db: Session, tokens: list[str]) -> dict[str, list[Res
 PREFIX_LIMIT = 20
 
 
+def _product_family_order():
+    """The one order a product probe returns its rows in, whatever plan Postgres picks.
+
+    With no ORDER BY the rows came back in heap order (an index scan over one
+    company_id key walks row positions), so "srtwc286" listed SRTWC286-SH first on one
+    run and SRTWC286-SH-NEW-P on the next, and a "1 2 3" family pick meant different
+    products (deploy of d79b46c5). Code order is the family's own order: the base code
+    is a prefix of its variants, so it sorts first. The id breaks a tie between two
+    companies' copies of one code."""
+    return (Product.product_code, Product.id)
+
+
 def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
     # Strip whitespace from both sides so 'cgb9032b- new' matches 'CGB9032B-NEW'.
     norm_token = _strip_all_ws(token)
@@ -1824,6 +1836,7 @@ def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
     rows = (
         db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
         .filter(code_norm.ilike(prefix), chat_searchable_products())
+        .order_by(*_product_family_order())
         .limit(PREFIX_LIMIT)
         .all()
     )
@@ -1832,6 +1845,7 @@ def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
         rows = (
             db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
             .filter(code_norm.ilike(substr), chat_searchable_products())
+            .order_by(*_product_family_order())
             .limit(PREFIX_LIMIT)
             .all()
         )
@@ -3433,7 +3447,7 @@ def _and_probe_product(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     tier = _and_max_tier_filter(base, counts)
     if tier is None:
         return []
-    rows = base.filter(tier).limit(AND_MODE_LIMIT).all()
+    rows = base.filter(tier).order_by(*_product_family_order()).limit(AND_MODE_LIMIT).all()
     return [
         ResolvedEntity(
             entity_type="product",
