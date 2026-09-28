@@ -39,6 +39,7 @@ from app.services.chatbot_parser_prompt import (
     GROWTH_R1_ADDENDUM,
     LAST_COST_ADDENDUM,
     LOW_STOCK_ADDENDUM,
+    ESCALATION_CONFIRMATION_ADDENDUM,
     MEMORY_ADDENDUM,
     SALES_ANALYSIS_ADDENDUM,
     SALES_REPORT_ADDENDUM,
@@ -166,6 +167,8 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         once the later ones are off."""
         for body in (SEMANTIC_PARSER_PROMPT,):
             assert body.removesuffix(MEMORY_ADDENDUM).removesuffix(
+                ESCALATION_CONFIRMATION_ADDENDUM
+            ).removesuffix(
                 SALES_ANALYSIS_ADDENDUM
             ).removesuffix(
                 STOCK_TASK_ADDENDUM

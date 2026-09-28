@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 
 from app.services.chatbot import jsc
 from app.services.chatbot.contracts import DEFAULT_SUGGESTED_AGENT, DEFAULT_SUGGESTED_TEAM
+from app.services.chatbot.turn.apply import names_its_own_ask
 from app.services.chatbot.turn.decide import picked_positions
 from app.services.chatbot.turn.pending import (
     OFFER_KINDS,
@@ -888,6 +889,15 @@ def with_company_pick(verdict: dict[str, Any], *, pending: Pending | None, messa
     escalation = dict(verdict.get("escalation") or {})
     named = escalation.get("named_teams")
     if named and pending is not None and pending.team not in named:
+        return verdict
+    if names_its_own_ask(verdict):
+        # #1323 case 2: the parser read an ask of its own ("mocha brand", "how about
+        # mocha"), so the company it names is that ask's brand, never the pick - and a
+        # pick here would also wipe the entities and domain the parser just read.
+        if escalation.get("company_pick"):
+            escalation["company_pick"] = None
+            escalation["is_escalation_confirmation"] = False
+            return {**verdict, "escalation": escalation}
         return verdict
     picked = company_pick(verdict, pending, message)
     if picked is None:

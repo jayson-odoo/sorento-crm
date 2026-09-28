@@ -36,6 +36,7 @@ from sqlalchemy.sql import func
 
 from app.database import Base
 from app.models.base import CompanyScopedMixin
+from app.services.scm.demand_class import check_constraint_sql
 
 SCHEMA = "finance"
 
@@ -112,6 +113,10 @@ class BillingDocument(CompanyScopedMixin, Base):
     against_doc_no = Column(String(50), nullable=True)
     ref = Column(String(100), nullable=True)
     description = Column(Text, nullable=True)
+    # The sales order type this document was billed from (ruling Q14, S1): the DEALER /
+    # PROJECT TEAM blocks of the invoiced basis. Decided at ingest by `classify_document`,
+    # the ladder the SO feed shares; NULL when nothing classifies (the report's `(blank)`).
+    demand_class = Column(String(32), nullable=True)
     source_system = Column(
         String(50), nullable=False, default="autocount", server_default="autocount"
     )
@@ -138,6 +143,9 @@ class BillingDocument(CompanyScopedMixin, Base):
             _in_list("document_type", DOCUMENT_TYPES), name="ck_finance_billing_documents_type"
         ),
         CheckConstraint(_in_list("status", STATUSES), name="ck_finance_billing_documents_status"),
+        CheckConstraint(
+            check_constraint_sql(), name="ck_finance_billing_documents_demand_class"
+        ),
         # The database backstop behind the `integration_references` key: a second writer
         # cannot land the same document twice (UAC S0-7: the type is part of the key).
         Index(
