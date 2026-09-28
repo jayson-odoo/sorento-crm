@@ -21,7 +21,7 @@ depend on another migration's module staying importable. Nothing a customer sees
 until the owner moves the `production` label onto the new version.
 
 Revision ID: chatbot_picker_domain_1352
-Revises: sales_agent_aliases_r7
+Revises: merge_29sep_batch4
 """
 import logging
 
@@ -32,7 +32,7 @@ from app.models.ai_prompt import AIPromptVersion
 from app.services.ai_prompt_registry import PROMPT_KEYS
 
 revision = "chatbot_picker_domain_1352"
-down_revision = "sales_agent_aliases_r7"
+down_revision = "merge_29sep_batch4"
 branch_labels = None
 depends_on = None
 
