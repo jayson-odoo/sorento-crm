@@ -1,6 +1,6 @@
 # PLAN: scheduled reorder run takes its scope from the config page (#1340)
 
-Status: in progress (full track: carries a data migration for the seeded description).
+Status: in review on PR #1342, awaiting CI label and owner hand test (full track: carries a data migration for the seeded description).
 UAC: `scm-reorder-run-scheduled-scope-acceptance-criteria.md` (alongside).
 
 ## Owner ask (28 Sep, verbatim)
