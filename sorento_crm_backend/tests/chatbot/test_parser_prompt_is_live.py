@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from app.services.chatbot_parser_prompt import (
+    ESCALATION_CONFIRMATION_ADDENDUM,
     GROWTH_R1_ADDENDUM,
     KNOWN_BRANDS_ADDENDUM,
     LAST_COST_ADDENDUM,
@@ -202,12 +203,16 @@ def _without_growth_r1_addendum(text: str) -> str:
     tail once `LAST_COST_ADDENDUM` is off lives in
     `test_parser_growth_r1_reachability.py::test_the_addendum_is_appended_to_both_bodies`.
     """
+    # ESCALATION_CONFIRMATION_ADDENDUM (#1323) is the newest addendum, so it comes off
+    # FIRST, then the #1262 pair (KNOWN_BRANDS_ADDENDUM, QUANTITY_ADDENDUM), then
+    # SALES_ANALYSIS_ADDENDUM (#1267 S1), then STOCK_TASK_ADDENDUM (ported from PR
+    # #1118, not merged, chatbot-stock-ask-v2 S3).
+    if text.endswith(ESCALATION_CONFIRMATION_ADDENDUM):
+        text = text[: -len(ESCALATION_CONFIRMATION_ADDENDUM)]
     if text.endswith(KNOWN_BRANDS_ADDENDUM):
         text = text[: -len(KNOWN_BRANDS_ADDENDUM)]
     if text.endswith(QUANTITY_ADDENDUM):
         text = text[: -len(QUANTITY_ADDENDUM)]
-    # SALES_ANALYSIS_ADDENDUM (#1267 S1) comes off next (the #1262 pair above is outermost),
-    # then STOCK_TASK_ADDENDUM (ported from PR #1118, not merged, chatbot-stock-ask-v2 S3).
     if text.endswith(SALES_ANALYSIS_ADDENDUM):
         text = text[: -len(SALES_ANALYSIS_ADDENDUM)]
     if text.endswith(STOCK_TASK_ADDENDUM):

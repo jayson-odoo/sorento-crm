@@ -1,0 +1,139 @@
+# Parser eval case (d) for issue #1323, the second recorded case: a company named as a
+# FILTER is not the company pick.
+#
+# Owner hand test, 28 Sep 2026 11:42 MYT, console contact 487555417: "delivery order brand
+# sorento cheng huat sentul" ended "Would you like me to escalate to Mocha customer service
+# team?" (a `team_pick`, team customer_service, `expects: yes_no`, one option "Mocha"), and
+# "mocha brand" came back `is_escalation_confirmation: true`, `company_pick: "Mocha"` and was
+# handed to customer service. Every case injects that open offer as
+# `previous_conversation_state`.
+#
+# `live_only: true`: these grade the REAL parser LLM by hand, once per prompt change, never
+# in CI. Pin the unpromoted version the chatbot_esc_confirm_1323 migration published:
+#
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-28-escalation-company-filter.yaml \
+#       --base-url http://127.0.0.1:8000 \
+#       --prompt-version <id of the chatbot_esc_confirm_1323 row>
+
+contact: '487555417'
+cases:
+- name: '#1323 (d) mocha brand over the open Mocha offer is the DO ask with a brand filter, not the pick'
+  live_only: true
+  previous_conversation_state:
+    focus:
+      domains:
+      - order
+    open_question:
+      kind: team_pick
+      expects: yes_no
+      team: customer_service
+      asked_at_turn: 1
+      payload:
+        agent: order_enquiries
+      options:
+      - position: 1
+        label: Mocha
+        entity_type: company
+        payload:
+          team: customer_service
+          agent: order_enquiries
+    ideation: null
+    access_levels: []
+    contains_flyer: false
+  text: mocha brand
+  expect:
+    parser:
+      escalation:
+        is_escalation_confirmation: false
+        company_pick: null
+      entities:
+      - raw: mocha
+        hint: brand
+        current_message: true
+- name: '#1323 (d) how about mocha over the open Mocha offer is a new ask, not the pick'
+  live_only: true
+  previous_conversation_state:
+    focus:
+      domains:
+      - order
+    open_question:
+      kind: team_pick
+      expects: yes_no
+      team: customer_service
+      asked_at_turn: 1
+      payload:
+        agent: order_enquiries
+      options:
+      - position: 1
+        label: Mocha
+        entity_type: company
+        payload:
+          team: customer_service
+          agent: order_enquiries
+    ideation: null
+    access_levels: []
+    contains_flyer: false
+  text: how about mocha
+  expect:
+    parser:
+      escalation:
+        is_escalation_confirmation: false
+        company_pick: null
+- name: '#1323 (d) Mocha alone over the open Mocha offer is the pick'
+  live_only: true
+  previous_conversation_state:
+    focus:
+      domains:
+      - order
+    open_question:
+      kind: team_pick
+      expects: yes_no
+      team: customer_service
+      asked_at_turn: 1
+      payload:
+        agent: order_enquiries
+      options:
+      - position: 1
+        label: Mocha
+        entity_type: company
+        payload:
+          team: customer_service
+          agent: order_enquiries
+    ideation: null
+    access_levels: []
+    contains_flyer: false
+  text: Mocha
+  expect:
+    parser:
+      escalation:
+        is_escalation_confirmation: true
+        company_pick: Mocha
+- name: '#1323 (d) 1 over the open Mocha offer is the pick'
+  live_only: true
+  previous_conversation_state:
+    focus:
+      domains:
+      - order
+    open_question:
+      kind: team_pick
+      expects: yes_no
+      team: customer_service
+      asked_at_turn: 1
+      payload:
+        agent: order_enquiries
+      options:
+      - position: 1
+        label: Mocha
+        entity_type: company
+        payload:
+          team: customer_service
+          agent: order_enquiries
+    ideation: null
+    access_levels: []
+    contains_flyer: false
+  text: '1'
+  expect:
+    parser:
+      escalation:
+        is_escalation_confirmation: true

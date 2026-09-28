@@ -89,6 +89,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         then `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep 2026) after that, so it
         comes off first of all."""
         from app.services.chatbot_parser_prompt import (
+            ESCALATION_CONFIRMATION_ADDENDUM,
             KNOWN_BRANDS_ADDENDUM,
             QUANTITY_ADDENDUM,
             SALES_ANALYSIS_ADDENDUM,
@@ -100,7 +101,8 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
             assert (
-                body.removesuffix(KNOWN_BRANDS_ADDENDUM)
+                body.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+                .removesuffix(KNOWN_BRANDS_ADDENDUM)
                 .removesuffix(QUANTITY_ADDENDUM)
                 .removesuffix(SALES_ANALYSIS_ADDENDUM)
                 .removesuffix(STOCK_TASK_ADDENDUM)
@@ -122,6 +124,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         from app.services.chatbot_parser_prompt import (
             KNOWN_BRANDS_ADDENDUM,
             LAST_COST_ADDENDUM,
+            ESCALATION_CONFIRMATION_ADDENDUM,
             QUANTITY_ADDENDUM,
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
@@ -131,7 +134,8 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
             assert (
-                body.removesuffix(KNOWN_BRANDS_ADDENDUM)
+                body.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+                .removesuffix(KNOWN_BRANDS_ADDENDUM)
                 .removesuffix(QUANTITY_ADDENDUM)
                 .removesuffix(SALES_ANALYSIS_ADDENDUM)
                 .removesuffix(STOCK_TASK_ADDENDUM)

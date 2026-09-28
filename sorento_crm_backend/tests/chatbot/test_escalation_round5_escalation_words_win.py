@@ -432,7 +432,14 @@ class TestApplyPlansTheEscalationOnly:
             expects="yes_no",
             payload={"agent": "general_enquiries", "brand_code": "mocha"},
         )
-        parsed = {**_fixed_code_verdict(), "is_affirmative": True}
+        # #1323: an escalation offer is accepted on the parser's semantic verdict only;
+        # asking for the handover to the offered team is that verdict (the prompt's
+        # ESCALATION CONFIRMATION section), whatever product the message names.
+        parsed = {
+            **_fixed_code_verdict(),
+            "is_affirmative": True,
+            "escalation": {"is_escalation_confirmation": True, "company_pick": None},
+        }
         _state, plan = self._run(parsed, pending=offer)
         assert plan.trace.lane == "escalation"
         assert plan.trace.team == "marketing_product"

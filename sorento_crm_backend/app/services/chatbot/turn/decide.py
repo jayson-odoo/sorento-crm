@@ -11,7 +11,8 @@
 #
 #   ANSWER   the message answers the open question - a position, an offered option named
 #            by its exact label, a yes to an offer, or "all" over a numbered menu. An
-#            escalation offer takes one explicit position or a yes, nothing weaker.
+#            escalation offer takes one explicit position or the parser's own
+#            `is_escalation_confirmation`, nothing weaker (#1323).
 #   REFINE   the message keeps the standing subject and narrows it - the parser's own
 #            "only" marker, entities that sit on axes the subject does not hold, or a
 #            date window on its own (R15, R24).
@@ -241,15 +242,16 @@ def picked_positions(pending: Pending, verdict: dict[str, Any]) -> tuple[list[in
             # numbered menu - `compose._team_pick_question`'s single-team branch) is
             # answered by a yes, never by a position. "how about SO?" carried
             # `reference_positions: [1]` over exactly this shape and position 1
-            # escalated a business question about a document - the generic
-            # `is_affirmative`/`is_escalation_confirmation` arm further down in
-            # `decide()` is the only door a yes_no pending answers through.
+            # escalated a business question about a document - the
+            # `is_escalation_confirmation` arm further down in `decide()` is the only
+            # door a yes_no pending answers through (#1323).
             return None
         # A handover is the most expensive thing the bot can do with a message, so it
         # takes an EXPLICIT signal and nothing weaker: ONE position the customer typed
         # (which is how a multi-team roster is answered at all, contract 108), or the
-        # plain yes the acceptance arm reads for itself. A label match and a broaden are
-        # both too weak to hand a conversation to a human on, and so is a SET of
+        # parser's semantic confirmation the acceptance arm reads for itself (#1323). A
+        # label match and a broaden are both too weak to hand a conversation to a human
+        # on, and so is a SET of
         # positions: there is no handing one conversation to every team at once, which
         # is the rule contract 31 already keeps for "all". Measured on
         # `console/handpass3-owner-17sep-purchase-cost-po.json` step 3, where the ten
@@ -616,15 +618,26 @@ def decide(
             **facts,
         )
 
-    accepted = (
-        verdict.get("is_affirmative") is True
-        or escalation.get("is_escalation_confirmation") is True
-    )
+    if pending.kind in ESCALATION_OFFER_KINDS:
+        # Issue #1323 (owner ruling, 28 Sep 2026: "the chatbot should be able to
+        # understand whether the user means escalation ... semantically"). An escalation
+        # offer is accepted on the parser's ONE semantic verdict and nothing else, for
+        # every offer shape (a yes/no offer, a team menu, a company pick).
+        # `is_affirmative` stays the AFFIRMATION flag and never hands over by itself:
+        # turn 9d9c417d carried it true beside ten product codes and a stock ask the
+        # parser itself had called `is_escalation_confirmation: false`, and the stock ask
+        # went to the warehouse team unanswered.
+        accepted = escalation.get("is_escalation_confirmation") is True
+        why = "escalation_confirmation"
+    else:
+        accepted = (
+            verdict.get("is_affirmative") is True
+            or escalation.get("is_escalation_confirmation") is True
+        )
+        why = "affirmative"
     if accepted and not (facts["declined"] or facts["negated"]):
         # A decline outranks every acceptance signal - the acceptance arm has always read
         # it that way, and now the generic path does too.
-        return Decision(
-            ANSWER, "affirmative", entities=tuple(entities), window=window, **facts
-        )
+        return Decision(ANSWER, why, entities=tuple(entities), window=window, **facts)
 
     return _subject_reading(verdict, focus, pending, entities, window, facts)

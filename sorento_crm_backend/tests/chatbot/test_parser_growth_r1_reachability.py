@@ -40,6 +40,7 @@ from app.services.chatbot_parser_prompt import (
     KNOWN_BRANDS_ADDENDUM,
     LAST_COST_ADDENDUM,
     LOW_STOCK_ADDENDUM,
+    ESCALATION_CONFIRMATION_ADDENDUM,
     QUANTITY_ADDENDUM,
     SALES_ANALYSIS_ADDENDUM,
     SALES_REPORT_ADDENDUM,
@@ -167,9 +168,9 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         stacked after the live text, so `GROWTH_R1_ADDENDUM` is still exactly the tail
         once the later ones are off."""
         for body in (SEMANTIC_PARSER_PROMPT,):
-            assert body.removesuffix(KNOWN_BRANDS_ADDENDUM).removesuffix(
-                QUANTITY_ADDENDUM
-            ).removesuffix(SALES_ANALYSIS_ADDENDUM).removesuffix(
+            assert body.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(
+                KNOWN_BRANDS_ADDENDUM
+            ).removesuffix(QUANTITY_ADDENDUM).removesuffix(SALES_ANALYSIS_ADDENDUM).removesuffix(
                 STOCK_TASK_ADDENDUM
             ).removesuffix(
                 SALES_REPORT_ADDENDUM

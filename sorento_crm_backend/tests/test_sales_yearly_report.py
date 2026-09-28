@@ -305,7 +305,8 @@ def test_ac_r3_3_basis_is_required_single_and_defaults_to_delivered(db, definiti
     assert basis.default == ("delivered",)
     assert basis.multi is False and basis.clearable is False
     with pytest.raises(AppException) as bad:
-        _run(db, definition, basis=["invoiced"])
+        # "invoiced" is a basis since finance S1 (#1309); an unknown one is still refused.
+        _run(db, definition, basis=["shipped"])
     assert bad.value.status_code == 422
     view = engine.view_config(definition)
     assert view.params["basis"] == ["delivered"]
