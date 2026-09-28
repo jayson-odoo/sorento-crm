@@ -19,9 +19,12 @@ right reason rather than a live run against the un-rewired engine).
 is assumed to be v3's already-declared `requested_attributes: list[str]` key
 (`tests.chatbot._turn_helpers.verdict`'s own default, `[]`) plus `domain_hint` /
 `entities[].hint` naming the class word's resolved kind - no other key exists in the
-v3 schema for this. The exact reply grammar ("N <kind> have <attribute>. Showing 5.")
-and the paging window (5 per page, "Showing 6 to 10" on a second "more") are copied
-from the console yaml's own `reply_contains` assertions, not invented.
+v3 schema for this. The reply grammar was copied from the console yaml's own
+`reply_contains` assertions ("N <kind> have <attribute>. Showing 5." and "Showing 6 to
+10" on a second "more"); the hotfix of 28 Sep 2026 (owner: "this cap 5 is hurting the
+production now") re-pinned both to the owner's standing rule instead: every qualifying
+product is listed under "N <kind> have <attribute>." with no "Showing", and a "more"
+is not a page.
 
 Seeding (coordinator amendment, 16 Sep 2026): CI's database has no data, so every
 test seeds its own products / certificates / promotions rows on the BLANK scratch
@@ -233,12 +236,10 @@ def _stub_certificate_tools(session_factory, monkeypatch, *, codes: list[str]) -
     probe's own shape (`pickers._probe_rows`), a different seam.
 
     Filtering by `arguments["product_ids"]` matters, not just returning every seeded
-    row: `fetch.py` slices `product_ids` to the first FIVE itself (`out["product_ids"]
-    = out["product_ids"][:5]`, "the PAGE is built by slicing product_ids itself") and
-    the header's own "Showing N" counts DISTINCT product codes actually present in the
-    tool's answer - a stub that ignores the slice and returns all eleven makes "Showing
-    5" and the second-page "Showing 6 to 10" both permanently false regardless of what
-    the real code does.
+    row: the rendered list is whatever ids `fetch.py` actually sent (every qualifying
+    product since the 28 Sep 2026 hotfix removed its five-id slice), so a stub that
+    ignored the argument would list all eleven whatever the real code did and could
+    never catch a cut coming back.
 
     Without any of this, `MCPRuntimeClient.call_tool` reaches the REAL MCP server on
     :8765, which reads a DIFFERENT (non-test) database that has never heard of a
@@ -284,10 +285,11 @@ def _stub_certificate_tools(session_factory, monkeypatch, *, codes: list[str]) -
 
 class TestCountedSetAnswer:
     """Console case "a class word scopes the set and the header counts it" (AC-1306,
-    AC-1316): "which tap has cert" -> "taps have certificates ... Showing 5"."""
+    AC-1316): "which tap has cert" -> "11 taps have certificates." and all eleven
+    listed (hotfix 28 Sep 2026: was "... Showing 5", the five-product page)."""
 
     @pytest.mark.xfail(strict=True, reason=_XFAIL_ATTRIBUTE_FIRST_NEVER_ROUTES_COUNTED_SET)
-    def test_counted_answer_names_kind_attribute_and_shows_five(
+    def test_counted_answer_names_kind_attribute_and_lists_every_product(
         self, session_factory, stub_parser, stub_access, monkeypatch
     ) -> None:
         _seed_contact(session_factory, phone="+60000000020")
@@ -312,12 +314,20 @@ class TestCountedSetAnswer:
 
         text = (result.reply or {}).get("text", "")
         assert "have certificates" in text or "certificate" in text.lower(), text
-        assert "Showing 5" in text, text
+        # Hotfix 28 Sep 2026: was `assert "Showing 5" in text`.
+        assert "11 taps have" in text, text
+        assert "Showing" not in text, text
+        for code in codes:
+            assert code in text, (code, text)
 
 
-class TestPagingByFive:
+class TestMoreIsNotAPage:
+    """Hotfix 28 Sep 2026: was `TestPagingByFive` ("more" answered "Showing 6 to 10").
+    The first answer already lists all eleven, so no page is carried and a "more"
+    never pages the set."""
+
     @pytest.mark.xfail(strict=True, reason=_XFAIL_ATTRIBUTE_FIRST_NEVER_ROUTES_COUNTED_SET)
-    def test_more_pages_the_same_set_by_five(
+    def test_more_after_the_counted_answer_is_not_a_page(
         self, session_factory, stub_parser, stub_access, monkeypatch
     ) -> None:
         _seed_contact(session_factory, phone="+60000000021")
@@ -344,7 +354,9 @@ class TestPagingByFive:
         from app.services.chatbot import engine as engine_mod
 
         first = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-        assert "Showing 5" in (first.reply or {}).get("text", ""), first.reply
+        # Hotfix 28 Sep 2026: was `assert "Showing 5" in ...`.
+        first_text = (first.reply or {}).get("text", "")
+        assert "11 taps have" in first_text and "Showing" not in first_text, first.reply
 
         v2 = verdict(message_type="clarification", user_goal="more", continuation=True)
         stub_parser(v2, on_call=on_call)
@@ -353,7 +365,8 @@ class TestPagingByFive:
         second_envelope.message["message"]["message"]["text"] = "more"
         second = engine_mod.run_turn(second_envelope, session_factory=session_factory)
 
-        assert "Showing 6 to 10" in (second.reply or {}).get("text", ""), second.reply
+        # Hotfix 28 Sep 2026: was `assert "Showing 6 to 10" in ...`.
+        assert "Showing" not in (second.reply or {}).get("text", ""), second.reply
 
 
 class TestOwnCompanyCertificatesOnly:
