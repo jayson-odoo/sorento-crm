@@ -133,7 +133,7 @@ def after_answered_turn(
         db.query(Customer).filter(Customer.id == customer_id).first() if customer_id else None
     )
     company_id = _write_company_id(db, customer)
-    # Fix round 2 (AC-SA410): the salesperson's own allowed-to-send flag, checked here so
+    # Fix round 2 (AC-SA411): the salesperson's own allowed-to-send flag, checked here so
     # no job is enqueued for a contact the send path would refuse anyway.
     blocked_agent: Optional[str] = None
     if (

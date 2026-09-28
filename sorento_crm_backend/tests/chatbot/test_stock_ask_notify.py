@@ -100,7 +100,7 @@ class LiveDealer:
             self.customer_id = str(uuid.uuid4())
             sales_agent_id = None
             if agent_allowed is not None:
-                # Fix round 2 (AC-SA410): a sales agent whose Respond contact carries the
+                # Fix round 2 (AC-SA411): a sales agent whose Respond contact carries the
                 # allowed-to-send flag (`respond_contacts.outbound_enabled`).
                 self.agent_contact_id = str(uuid.uuid4())
                 self.agent_respond_id = f"ZZT-agent-{uuid.uuid4().hex[:8]}"
@@ -430,7 +430,7 @@ def _asks_and_logs(session_factory, contact_id: str) -> tuple[list[Any], list[In
 
 
 @pytest.mark.parametrize("console", [False, True], ids=["live", "console"])
-def test_ac_sa410_agent_not_allowed_to_send_enqueues_nothing_but_writes_and_logs(
+def test_ac_sa411_agent_not_allowed_to_send_enqueues_nothing_but_writes_and_logs(
     session_factory, monkeypatch, stub_access, console
 ):
     """Fix round 2 (owner note on PR #1333, 28 Sep 2026): the salesperson notification
@@ -459,7 +459,7 @@ def test_ac_sa410_agent_not_allowed_to_send_enqueues_nothing_but_writes_and_logs
 
 
 @pytest.mark.parametrize("console", [False, True], ids=["live", "console"])
-def test_ac_sa410_agent_allowed_to_send_enqueues_the_jobs(
+def test_ac_sa411_agent_allowed_to_send_enqueues_the_jobs(
     session_factory, monkeypatch, stub_access, console
 ):
     dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True, agent_allowed=True)
