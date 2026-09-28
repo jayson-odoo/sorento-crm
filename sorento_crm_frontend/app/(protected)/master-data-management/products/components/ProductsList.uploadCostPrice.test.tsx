@@ -46,7 +46,7 @@ vi.mock('@/hooks/usePermissions', () => ({
 vi.mock('@/app/(protected)/procurement-management/cost-price-uploads/components/UploadPriceListDialog', () => ({
   UploadPriceListDialog: (props: { open: boolean; onUploaded?: () => void }) => {
     dialog.lastProps = props;
-    return props.open ? <div role="dialog">Upload price list</div> : null;
+    return props.open ? <div role="dialog">Upload cost list</div> : null;
   },
 }));
 
@@ -133,7 +133,7 @@ describe('ProductsList header: Upload cost price, Create product under Actions',
     renderList();
     expect(screen.queryByRole('dialog')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Upload cost price' }));
-    expect(screen.getByRole('dialog').textContent).toContain('Upload price list');
+    expect(screen.getByRole('dialog').textContent).toContain('Upload cost list');
     expect(dialog.lastProps?.open).toBe(true);
   });
 

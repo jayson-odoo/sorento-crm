@@ -179,7 +179,7 @@ export default function CostPriceUploadsList() {
   const primaryAction = canUpload ? (
     <Button onClick={() => setUploadOpen(true)}>
       <Plus className="size-4" />
-      Upload price list
+      Upload cost list
     </Button>
   ) : null;
 

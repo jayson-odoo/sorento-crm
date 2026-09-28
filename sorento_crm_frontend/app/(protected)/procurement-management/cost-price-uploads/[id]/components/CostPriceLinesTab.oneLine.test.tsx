@@ -250,7 +250,7 @@ describe('R6: a duplicate code is one line', () => {
     const { container } = renderAllShapes();
     expect(screen.queryByRole('button', { name: /Duplicate code/ })).not.toBeInTheDocument();
     const row = screen.getByText('吊卡').closest('tr') as HTMLElement;
-    expect(within(row).getByText('OPP 9.90')).toBeInTheDocument();
+    expect(within(row).getByText('· OPP 9.90')).toBeInTheDocument();
     expect(within(row).getByText('CNY 110.00')).toBeInTheDocument();
     assertEveryCellIsOneLine(container);
   });

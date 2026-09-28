@@ -106,7 +106,9 @@ export function CostPriceChangeSetDetail({ changeSetId }: { changeSetId: string 
         }
         crumbTitle={changeSet.code}
         actions={
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          // `shrink-0` + no wrap from sm up: the long supplier line beside it must not push
+          // Apply under the gear (browser pass at 1280, round 6 R1: top right, one row).
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:shrink-0 sm:flex-nowrap">
             {changeSet.actions.can_refresh_prices ? (
               <Button variant="outline" onClick={() => void refreshPrices.mutateAsync()} disabled={refreshPrices.isPending}>
                 Refresh costs
@@ -122,6 +124,7 @@ export function CostPriceChangeSetDetail({ changeSetId }: { changeSetId: string 
               actions={gearActions}
               primary={<CostPriceApplyButton changeSet={changeSet} />}
               pendingAction={discard.countdown}
+              className="sm:flex-nowrap"
             />
           </div>
         }

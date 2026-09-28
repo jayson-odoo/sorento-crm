@@ -400,13 +400,14 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
     const skip = (line: CostPriceChangeLine, reason: string) =>
       void patchLine.mutateAsync({ lineId: line.id, patch: { skipped: true, skip_reason: reason } });
     // Widths (1280, round 6 R2): every cell is one line, and a verifier's Decision column
-    // (150) still lands inside ~950px: 80 + 200 + 80 + 150 + 110 + 110 + 70 + 150 = 950.
+    // (150) still lands inside ~950px: 70 + 240 + 70 + 150 + 100 + 100 + 70 + 150 = 950.
+    // The supplier code column is the widest: it carries the note and the duplicate rows.
     const base: ColumnDef<CostPriceChangeLine>[] = [
       {
         // Sheet and Row merged into one column (column-width budget, 1280 breakpoint).
         id: 'sheet_row',
         header: 'Sheet / row',
-        size: 80,
+        size: 70,
         cell: ({ row }) => (
           <div className={`${ONE_LINE} text-xs`} title={`${row.original.sheet}, row ${row.original.row_no}`}>
             <span className="truncate font-medium">{row.original.sheet}</span>
@@ -417,7 +418,7 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
       {
         id: 'supplier_code',
         header: 'Supplier code',
-        size: 200,
+        size: 240,
         cell: ({ row }) => {
           const line = row.original;
           const others = duplicateRowsText(line);
@@ -425,8 +426,8 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
           return (
             <div className={ONE_LINE} title={title}>
               <span className="shrink-0 font-medium">{line.supplier_code}</span>
-              {line.code_note ? <span className="truncate text-xs text-muted-foreground">{line.code_note}</span> : null}
-              {others ? <span className="truncate text-xs text-muted-foreground">{others}</span> : null}
+              {line.code_note ? <span className="shrink-0 text-xs text-muted-foreground">{line.code_note}</span> : null}
+              {others ? <span className="min-w-0 truncate text-xs text-muted-foreground">· {others}</span> : null}
             </div>
           );
         },
@@ -434,7 +435,7 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
       {
         id: 'configuration',
         header: 'Configuration',
-        size: 80,
+        size: 70,
         cell: ({ row }) => (
           <div className={ONE_LINE} title={row.original.configuration ?? ''}>
             <span className="truncate">{row.original.configuration ?? '-'}</span>
@@ -499,7 +500,7 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
       {
         id: 'current',
         header: 'Cost now',
-        size: 110,
+        size: 100,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
         cell: ({ row }) =>
           row.original.stale ? (
@@ -511,7 +512,7 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
       {
         id: 'new',
         header: 'New cost',
-        size: 110,
+        size: 100,
         meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
         cell: ({ row }) => <CostCell value={row.original.new_unit_cost} currency={changeSet.currency} />,
       },
