@@ -3,8 +3,8 @@
 Status: Lane A (S1 + S2) built on PR #1305, full track for round 8 (migration
 `cpc4_cost_packaging_method`), fix lane round 8 done, awaiting the orchestrator's review and the
 owner's hand test (owner ruling of 28 Sep 2026, 15:2x and 15:3x MYT: cost per packaging method,
-Q9 reversed, section 12; main 77d083a2 and `merge_28sep_esc_fin` merged, cpc1 re-parented onto
-it, single head `cpc4_cost_packaging_method`; evidence in `evidence/round8-packaging/`). Round 7 done (owner hand
+Q9 reversed, section 12; main d79b46c5 merged, cpc1 re-parented onto `merge_28sep_batch2`,
+single head `cpc4_cost_packaging_method`; evidence in `evidence/round8-packaging/`). Round 7 done (owner hand
 test of round 6, 28 Sep 2026: sticky footer bar removed, the lines table is the system DataGrid
 with sorting and the list views' pager, sheet tabs show row counts; no migration; evidence
 in `evidence/round7-set-page/`; main cd220251 merged, single head cpc3_lead_time_nullable). Round 6 done (owner hand test of 28 Sep
