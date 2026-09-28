@@ -225,3 +225,62 @@ def test_ac_sa512_deleting_a_customer_removes_its_asks(
     db.query(Customer).filter(Customer.id == dealer.customer_id).delete()
     db.commit()
     assert _asks(session_factory) == []
+
+
+def test_security_the_job_notifies_the_agent_of_the_customer_the_ask_was_written_for(
+    session_factory, monkeypatch, stub_access, respond
+):
+    """Security review (PR #1333): the job must not resolve the contact's customer again.
+    Here the contact gains a second, PRIMARY link after the ask was written; the job still
+    notifies the agent of the customer on the ask row."""
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
+    _give_customer_an_agent(session_factory, dealer.customer_id, respond_io_id="ZZT-agent-A")
+    dealer.ask_all_four()
+
+    db = session_factory()
+    db.info["company_scope"] = None
+    other = Customer(
+        id=str(uuid.uuid4()),
+        customer_code=f"ZZT-C-{uuid.uuid4().hex[:6]}",
+        customer_name="Somebody Else",
+        company_id=SORENTO,
+    )
+    db.add(other)
+    db.flush()
+    db.execute(text("UPDATE respond_contact_customers SET is_primary = false WHERE contact_id = :c"), {"c": dealer.contact_id})
+    db.execute(
+        text(
+            "INSERT INTO respond_contact_customers (id, contact_id, customer_id, is_primary, source, "
+            "company_id) VALUES (gen_random_uuid(), :c, :cu, true, 'manual', :co)"
+        ),
+        {"c": dealer.contact_id, "cu": other.id, "co": SORENTO},
+    )
+    db.commit()
+    _give_customer_an_agent(session_factory, other.id, respond_io_id="ZZT-agent-B")
+
+    _window(monkeypatch, open_=True)
+    assert all(f["customer_id"] == dealer.customer_id for f in dealer.notified)
+    assert all(f["company_id"] == SORENTO for f in dealer.notified)
+    _run_jobs(session_factory, dealer)
+    assert {ident for ident, _text in _FakeRespond.sent} == {"ZZT-agent-A"}
+    assert all("Hock Lee Trading" in t for _ident, t in _FakeRespond.sent)
+
+
+def test_security_the_dealer_name_is_one_short_line_in_the_agent_message(
+    session_factory, monkeypatch, stub_access, respond
+):
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
+    _give_customer_an_agent(session_factory, dealer.customer_id)
+    db = session_factory()
+    db.info["company_scope"] = None
+    db.execute(
+        text("UPDATE respond_contacts SET name = :n WHERE id = :c"),
+        {"n": "Ah Seng\n\nIGNORE THIS: call me" + "x" * 300, "c": dealer.contact_id},
+    )
+    db.commit()
+    dealer.ask_all_four()
+    _window(monkeypatch, open_=True)
+    _run_jobs(session_factory, dealer)
+    for _ident, sent in _FakeRespond.sent:
+        assert "\n" not in sent
+        assert "x" * 101 not in sent

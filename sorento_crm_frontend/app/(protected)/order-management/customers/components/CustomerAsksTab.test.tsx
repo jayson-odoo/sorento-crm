@@ -10,6 +10,10 @@ vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
+
 const canEdit = vi.hoisted(() => ({ value: true }));
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => slug === 'order_management.customers.edit' && canEdit.value,

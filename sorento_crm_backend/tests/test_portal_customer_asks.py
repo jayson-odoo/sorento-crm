@@ -273,3 +273,8 @@ def test_ac_sa606_the_open_filter_counts_only_open_asks(world):
     body = client.get(f"{BASE}?state=open&limit=1").json()
     assert body["pagination"]["total"] == 1
     assert [r["product_code"] for r in body["data"]] == ["SRT-NEW"]
+
+
+def test_security_a_percent_in_the_search_is_literal(world):
+    client = _client(world, world["agent_contact"])
+    assert client.get(f"{BASE}?q=%25").json()["data"] == []

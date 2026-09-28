@@ -16,6 +16,7 @@ RQ job (`app/tasks/stock_ask_tasks.py`) runs the send. Nothing here imports
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
@@ -164,6 +165,8 @@ def after_answered_turn(
             continue
         facts = {
             "ask_id": ask.id,
+            "customer_id": ask.customer_id,
+            "company_id": ask.company_id,
             "turn_id": turn_id,
             "contact_id": contact_id,
             "product_id": entry.get("product_id"),
@@ -200,17 +203,31 @@ def _record_outcome(db: Session, facts: dict[str, Any], *, sent: bool, reason: O
         logger.warning("stock ask %s: could not record the notification outcome", ask_id)
 
 
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]+")
+
+
 def _contact_label(contact: Any) -> str:
-    return (
+    """The contact's display name. It comes off their own WhatsApp profile, so control
+    characters and line breaks are folded to one space and the length is capped before it
+    reaches another person's message (security review, lane PR #1333)."""
+    raw = (
         getattr(contact, "name", None)
         or " ".join(filter(None, [getattr(contact, "first_name", None), getattr(contact, "last_name", None)]))
         or getattr(contact, "phone_number", None)
         or "-"
     )
+    return _CONTROL_CHARS.sub(" ", str(raw)).strip()[:100] or "-"
 
 
-def _recipient(db: Session, contact_id: Optional[str]) -> tuple[Any, Any, Any, Optional[str]]:
-    """(dealer contact, customer, agent's Respond contact, skip reason)."""
+def _recipient(
+    db: Session, contact_id: Optional[str], customer_id: Optional[str] = None
+) -> tuple[Any, Any, Any, Optional[str]]:
+    """(dealer contact, customer, agent's Respond contact, skip reason).
+
+    `customer_id` is the customer the ask row was written against, in the turn's own
+    company scope. When the job carries it, it is used as is: resolving the contact's
+    customer again here, later and under another scope, could pick a different customer
+    (security review, lane PR #1333)."""
     from app.models.access import RespondContact
     from app.models.order import Customer
     from app.models.sales_agent import SalesAgent
@@ -221,7 +238,8 @@ def _recipient(db: Session, contact_id: Optional[str]) -> tuple[Any, Any, Any, O
         if contact_id
         else None
     )
-    customer_id = resolve_customer(db, contact_id) if contact_id else None
+    if customer_id is None and contact_id:
+        customer_id = resolve_customer(db, contact_id)
     customer = (
         db.query(Customer).filter(Customer.id == customer_id).first() if customer_id else None
     )
@@ -286,7 +304,9 @@ def notify_salesman(db: Session, facts: dict[str, Any]) -> dict[str, Any]:
     `{"status": "failed", "error": ...}`.
     """
     try:
-        dealer, customer, agent_contact, reason = _recipient(db, facts.get("contact_id"))
+        dealer, customer, agent_contact, reason = _recipient(
+            db, facts.get("contact_id"), facts.get("customer_id")
+        )
     except Exception as exc:  # noqa: BLE001 - a broken read is a failed attempt, not a crash
         logger.warning("stock ask %s: recipient lookup failed: %s", facts.get("turn_id"), exc)
         db.rollback()
@@ -524,12 +544,13 @@ def list_for_agent(
         query = query.filter(StockAsk.state == state)
     term = (q or "").strip()
     if term:
-        like = f"%{term}%"
+        escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{escaped}%"
         query = query.filter(
             or_(
-                Customer.customer_name.ilike(like),
-                Customer.customer_code.ilike(like),
-                StockAsk.product_code.ilike(like),
+                Customer.customer_name.ilike(like, escape="\\"),
+                Customer.customer_code.ilike(like, escape="\\"),
+                StockAsk.product_code.ilike(like, escape="\\"),
             )
         )
     rows, total = _page(query, page, limit)
