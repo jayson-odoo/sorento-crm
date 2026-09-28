@@ -31,6 +31,15 @@ table is scanned; VALIDATE CONSTRAINT and the index builds run in an autocommit 
 the rest commits. So the upgrade is rerun-safe (IF NOT EXISTS, DROP ... IF EXISTS), and an
 INVALID index left by an interrupted build is dropped and rebuilt.
 
+Lock timeout (owner ruling 28 Sep 2026 19:1x MYT, hardening round): the transactional half
+runs under `lock_timeout = 5s` and `statement_timeout = 60s`, both transaction-local and put
+back before the autocommit block, and takes `audit_logs`' lock first with `LOCK TABLE` in a
+savepoint, retried up to 5 times with a backoff. An ALTER queued behind a long transaction
+would otherwise queue every audited save behind itself (Postgres grants locks in order); now
+the wait is bounded and the fifth miss fails with a message, never a silent wait. The
+autocommit block (VALIDATE, the CONCURRENTLY builds) sets no timeout: it scans the table and
+takes no lock that blocks a write. The downgrade uses the same bounded lock.
+
 Any later migration that rewrites audit rows must run
 `SET LOCAL sorento.audit_maintenance = 'on'` first.
 
@@ -41,8 +50,14 @@ Revision ID: aud_0001_audit_standard_s0
 Revises: merge_28sep_esc_fin
 Create Date: 2026-09-26
 """
+import time
+
 import sqlalchemy as sa
 from alembic import op
+
+LOCK_TIMEOUT = "5s"
+STATEMENT_TIMEOUT = "60s"
+LOCK_ATTEMPTS = 5
 
 ENSURE_MAINTAINER_ROLE_SQL = """
 DO $do$
@@ -163,10 +178,59 @@ def _ensure_index(bind, name: str, statement: str, *, concurrently: bool) -> Non
             raise RuntimeError(f"aud_0001_audit_standard_s0: index {name} is still INVALID after a rebuild; drop it and rerun.")
 
 
+def _is_lock_timeout(exc: Exception) -> bool:
+    orig = getattr(exc, "orig", None)
+    return getattr(orig, "pgcode", None) == "55P03" or "lock timeout" in str(orig or exc).lower()
+
+
+def _set_timeouts(bind) -> tuple:
+    """Bound this transaction's waits; returns the previous values for ``_restore_timeouts``."""
+    previous = tuple(
+        bind.execute(sa.text(f"SELECT current_setting('{name}')")).scalar()
+        for name in ("lock_timeout", "statement_timeout")
+    )
+    bind.execute(sa.text(f"SELECT set_config('lock_timeout', '{LOCK_TIMEOUT}', true)"))
+    bind.execute(sa.text(f"SELECT set_config('statement_timeout', '{STATEMENT_TIMEOUT}', true)"))
+    return previous
+
+
+def _restore_timeouts(bind, previous: tuple) -> None:
+    """Put the session's values back, so no later migration in this transaction inherits them."""
+    lock, statement = (value or "0" for value in previous)
+    bind.execute(sa.text(f"SELECT set_config('lock_timeout', '{lock}', true)"))
+    bind.execute(sa.text(f"SELECT set_config('statement_timeout', '{statement}', true)"))
+
+
+def _lock_audit_logs(bind) -> None:
+    """ACCESS EXCLUSIVE on audit_logs, each attempt bounded by ``LOCK_TIMEOUT`` and wrapped in a
+    savepoint so a timeout leaves the migration's transaction usable for the next attempt."""
+    for attempt in range(1, LOCK_ATTEMPTS + 1):
+        bind.execute(sa.text("SAVEPOINT aud_0001_lock"))
+        try:
+            bind.execute(sa.text("LOCK TABLE audit_logs IN ACCESS EXCLUSIVE MODE"))
+        except sa.exc.OperationalError as exc:
+            if not _is_lock_timeout(exc):
+                raise
+            bind.execute(sa.text("ROLLBACK TO SAVEPOINT aud_0001_lock"))
+            if attempt < LOCK_ATTEMPTS:
+                time.sleep(2 * attempt)
+            continue
+        bind.execute(sa.text("RELEASE SAVEPOINT aud_0001_lock"))
+        return
+    raise RuntimeError(
+        f"aud_0001_audit_standard_s0: could not lock audit_logs in {LOCK_ATTEMPTS} attempts of "
+        f"lock_timeout {LOCK_TIMEOUT}; a long-running transaction holds it. Find it in "
+        "pg_stat_activity (wait_event_type = 'Lock' or state = 'idle in transaction'), end it, "
+        "and rerun the upgrade."
+    )
+
+
 def _upgrade(concurrently: bool) -> None:
     """Rerun-safe: the autocommit block below commits the first half on its own, so a rerun
     after a failed index build must find every earlier step already done and move on."""
     bind = op.get_bind()
+    previous = _set_timeouts(bind)
+    _lock_audit_logs(bind)
     for name, ddl in _COLUMNS:
         bind.execute(sa.text(f"ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS {name} {ddl}"))
 
@@ -185,6 +249,7 @@ def _upgrade(concurrently: bool) -> None:
     bind.execute(sa.text("DROP TRIGGER IF EXISTS audit_logs_append_only_truncate ON audit_logs"))
     for statement in APPEND_ONLY_TRIGGERS_SQL:
         bind.execute(sa.text(statement))
+    _restore_timeouts(bind, previous)
 
     def _finish(b, concurrent: bool) -> None:
         b.execute(sa.text("ALTER TABLE audit_logs VALIDATE CONSTRAINT audit_logs_action_check"))
@@ -203,6 +268,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    previous = _set_timeouts(bind)
+    # No statement_timeout here: the EVENT delete below scans the table.
+    bind.execute(sa.text(f"SELECT set_config('statement_timeout', '{previous[1] or '0'}', true)"))
+    _lock_audit_logs(bind)
     op.execute("DROP TRIGGER IF EXISTS audit_logs_append_only_row ON audit_logs")
     op.execute("DROP TRIGGER IF EXISTS audit_logs_append_only_truncate ON audit_logs")
     op.execute("DROP FUNCTION IF EXISTS audit_logs_append_only()")
@@ -216,3 +286,4 @@ def downgrade() -> None:
         op.execute(f"DROP INDEX IF EXISTS {name}")
     for name, _ddl in reversed(_COLUMNS):
         op.drop_column("audit_logs", name)
+    _restore_timeouts(bind, previous)

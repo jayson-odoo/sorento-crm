@@ -63,10 +63,12 @@ def test_auto_flush_stamps_actor_contact_from_context(db):
         user.name = "Staff Renamed"  # tracked UPDATE (User.__audit_track__)
         # Invoke the exact function the SQLAlchemy before_flush listener calls.
         audit_service._session_before_flush(db, None, None)
-        audit_rows = [o for o in db.new if isinstance(o, AuditLog)]
+        # Built for after_flush, which inserts them in a savepoint (best-effort capture,
+        # owner ruling 28 Sep 2026), rather than added to the business flush.
+        audit_rows = db.info.get("audit_rows") or []
         stamped = [
             r for r in audit_rows
-            if r.entity_type == "users" and r.action == "UPDATE" and r.contact_id == cid
+            if r["entity_type"] == "users" and r["action"] == "UPDATE" and r["contact_id"] == cid
         ]
         assert stamped, "auto-flush audit row was not stamped with the actor contact id"
     finally:

@@ -201,3 +201,33 @@ def _install_append_only_trigger(target, connection, **kw):  # noqa: ANN001
     connection.execute(text(APPEND_ONLY_FUNCTION_SQL.format(schema=prefix)))
     for statement in APPEND_ONLY_TRIGGERS_SQL:
         connection.execute(text(statement.format(schema=prefix)))
+
+
+class AuditTrailGap(Base):
+    """A record whose audit trail was NOT written: the capture failed and the business write
+    went ahead (owner ruling 28 Sep 2026 19:1x MYT, PLAN-audit-standard-26sep.md "Best-effort
+    capture"). One row per record and action; the matching ``integration_log`` row (channel
+    ``audit``) carries the error. A later slice backfills and stamps ``backfilled_at``; the
+    system health page counts the open ones.
+
+    A side table, not a column on every audited table: one migration, and a trail's absence is
+    readable in one place.
+    """
+
+    __tablename__ = "audit_trail_gaps"
+    __audit_skip__ = "the audit trail's own failure ledger"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    entity_type = Column(String(100), nullable=False)
+    entity_id = Column(String(100), nullable=False)
+    action = Column(String(20), nullable=False)
+    company_id = Column(UUID(as_uuid=False), nullable=True)
+    integration_log_id = Column(UUID(as_uuid=False), nullable=True)
+    error = Column(Text, nullable=True)
+    occurred_at = Column(DateTime(timezone=False), server_default=text("clock_timestamp()"), nullable=False)
+    backfilled_at = Column(DateTime(timezone=False), nullable=True)
+
+    __table_args__ = (
+        Index("ix_audit_trail_gaps_entity", "entity_type", "entity_id"),
+        Index("ix_audit_trail_gaps_occurred_at", "occurred_at"),
+    )

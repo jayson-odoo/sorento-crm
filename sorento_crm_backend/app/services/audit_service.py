@@ -279,31 +279,69 @@ def log_audit(
     contract); source, trace id and correlation id from the current ``AuditContext``
     (#1281 S0). Old / new values are redacted here, whoever the caller is.
     """
+    entry = AuditLog(**_audit_row(
+        db, entity_type, entity_id, action,
+        old_values=old_values, new_values=new_values, user_id=user_id, contact_id=contact_id,
+        description=description, ip_address=ip_address, company_id=company_id, event=event,
+        reason=reason, root_entity_type=root_entity_type, root_entity_id=root_entity_id,
+    ))
+    if not capture_enabled():
+        # The emergency off switch: the row is built for the caller and never stored.
+        return entry
+    db.add(entry)
+    if not skip_flush:
+        db.flush()  # so entry.id is available if needed
+    return entry
+
+
+def _audit_row(
+    db: Any,
+    entity_type: str,
+    entity_id: str,
+    action: str,
+    *,
+    old_values: Optional[dict[str, Any]] = None,
+    new_values: Optional[dict[str, Any]] = None,
+    user_id: Optional[str] = None,
+    contact_id: Optional[str] = None,
+    description: Optional[str] = None,
+    ip_address: Optional[str] = None,
+    company_id: Optional[str] = None,
+    event: Optional[str] = None,
+    reason: Optional[str] = None,
+    root_entity_type: Optional[str] = None,
+    root_entity_id: Optional[str] = None,
+) -> dict:
+    """The audit_logs column values ``log_audit`` writes, for the ORM object and for the
+    flush hook's Core INSERT alike."""
     from app.audit_context import current_audit_context
 
     actor = _actor_for_row(db, user_id=user_id, contact_id=contact_id)
     if description is None and actor is not None and actor.tool_name:
         description = f"Tool: {actor.tool_name}"
     ctx = current_audit_context()
-    entry = AuditLog(
-        entity_type=entity_type,
-        entity_id=entity_id,
-        action=action.upper(),
-        user_id=user_id,  # None for system/public actions (e.g. approval via public link)
-        contact_id=contact_id if contact_id is not None else (actor.contact_id if actor else None),
-        old_values=_redact(old_values),
-        new_values=_redact(new_values),
-        description=description,
-        ip_address=ip_address if ip_address is not None else (actor.ip_address if actor else None),
-        company_id=company_id,
-        root_entity_type=root_entity_type or entity_type,
-        root_entity_id=root_entity_id if root_entity_id is not None else entity_id,
+    return {
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "action": action.upper(),
+        "user_id": user_id,  # None for system/public actions (e.g. approval via public link)
+        "contact_id": contact_id if contact_id is not None else (actor.contact_id if actor else None),
+        "old_values": _redact(old_values),
+        "new_values": _redact(new_values),
+        "description": description,
+        "ip_address": ip_address if ip_address is not None else (actor.ip_address if actor else None),
+        "company_id": company_id,
+        "root_entity_type": root_entity_type or entity_type,
+        "root_entity_id": root_entity_id if root_entity_id is not None else entity_id,
         **_context_columns(actor, ctx, event=event, reason=reason),
-    )
-    db.add(entry)
-    if not skip_flush:
-        db.flush()  # so entry.id is available if needed
-    return entry
+    }
+
+
+def capture_enabled() -> bool:
+    """``AUDIT_CAPTURE_ENABLED``, read on every write (the emergency off switch)."""
+    from app.config import settings
+
+    return bool(getattr(settings, "audit_capture_enabled", True))
 
 
 def _actor_for_row(db: Any, *, user_id: Any = None, contact_id: Any = None) -> Any:
@@ -770,11 +808,62 @@ def _company_from_parent(session: Session, conn: Any, cls: type, values: Optiona
 
 
 def _session_before_flush(session: Session, _flush_context: Any, _instances: Any) -> None:
-    """Collect audit payloads from session.new, session.dirty, session.deleted for audited models."""
-    pending = session.info.setdefault("audit_pending", [])
-    # Skip if we're already inside an audit flush (avoid recursion)
-    if session.info.get("audit_flushing"):
+    """Build the audit rows for session.new, session.dirty and session.deleted; ``after_flush``
+    writes them.
+
+    Best-effort (owner ruling 28 Sep 2026 19:1x MYT, PLAN-audit-standard-26sep.md "Best-effort
+    capture"): nothing here may raise into the business flush. The reads this needs (old values,
+    parent companies) run in a savepoint, because a failed SELECT aborts a Postgres transaction
+    as surely as a failed INSERT; a failure is handed to ``after_flush`` to record once the new
+    rows have their keys.
+    """
+    # Fresh per flush: a flush that failed after this ran never reached after_flush, and its
+    # rows must not ride along with the next one.
+    for key in ("audit_rows", "audit_pending_new", "audit_failure"):
+        session.info.pop(key, None)
+    if session.info.get("audit_flushing") or not capture_enabled():
         return
+    try:
+        from app.audit_context import current_audit_context, get_actor
+
+        # session.info wins over the contextvar (get_actor): FastAPI runs a sync
+        # dependency in a SEPARATE threadpool thread from the path op, so a contextvar
+        # it mutated is not visible here, while session.info lives on the shared Session.
+        actor = get_actor(session)
+        ctx = current_audit_context()
+        audited: dict = {}
+
+        def _is_audited(obj: Any) -> bool:
+            cls = obj.__class__
+            if cls not in audited:
+                audited[cls] = _audited_here(cls, actor, ctx)
+            return audited[cls]
+
+        work = [(obj, "CREATE") for obj in session.new if _is_audited(obj)]
+        work += [(obj, "UPDATE") for obj in session.dirty if _is_audited(obj)]
+        work += [(obj, "DELETE") for obj in session.deleted if _is_audited(obj)]
+        # Resilience: some unit tests bind to a sqlite engine whose schema is a
+        # subset that excludes `audit_logs` (the audit listener is global and fires
+        # on any tracked insert). Production always has the table, so this guard
+        # is a no-op in prod.
+        if not work or not _audit_table_exists(session.get_bind()):
+            return
+    except Exception as exc:  # noqa: BLE001 - capture never fails the write
+        logger.exception("audit: capture setup failed")
+        session.info["audit_failure"] = (exc, [])
+        return
+    try:
+        with session.connection().begin_nested():
+            rows, pending_new = _collect_flush_rows(session, work, actor, ctx)
+    except Exception as exc:  # noqa: BLE001 - capture never fails the write
+        session.info["audit_failure"] = (exc, work)
+        return
+    session.info["audit_rows"] = rows
+    session.info["audit_pending_new"] = pending_new
+
+
+def _collect_flush_rows(session: Session, work: list, actor: Any, ctx: Any) -> tuple[list, list]:
+    """(audit rows for objects whose key is known, new objects whose key the INSERT makes)."""
     # created_by / updated_by keep the EFFECTIVE user during impersonation; the
     # audit row's real_user_id says who was at the keyboard (identity S0, plan 8.2).
     skip_set = set(session.info.get("skip_audit_for") or [])
@@ -787,128 +876,110 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
     def _should_skip(etype: str, eid: str) -> bool:
         return etype in skip_types or (etype, eid) in skip_set
 
-    from app.audit_context import current_audit_context, get_actor
-    # session.info wins over the contextvar (get_actor): FastAPI runs a sync
-    # dependency in a SEPARATE threadpool thread from the path op, so a contextvar
-    # it mutated is not visible here, while session.info lives on the shared Session.
-    actor = get_actor(session)
-    ctx = current_audit_context()
-    audited: dict = {}
-
-    def _is_audited(obj: Any) -> bool:
-        cls = obj.__class__
-        if cls not in audited:
-            audited[cls] = _audited_here(cls, actor, ctx)
-        return audited[cls]
-
-    company_cache: dict = {}
-    for obj in session.new:
-        if not _is_audited(obj):
-            continue
-        cls = obj.__class__
-        entity_type = _audit_entity_type(cls)
-        entity_id = _entity_id_str(obj)
-        if not entity_id:
-            # No key yet: a column default (Python-side ``uuid4`` runs only at INSERT) or a
-            # DB-generated one. Known after the INSERT, so the CREATE row is written in
-            # after_flush instead. Main dropped these CREATE rows silently.
-            if entity_type not in skip_types:
-                session.info.setdefault("audit_pending_new", []).append(obj)
-            continue
-        if _should_skip(entity_type, entity_id):
-            continue
-        cols = getattr(cls, "__audit_columns__", None)
-        # Same timing gap as company_id, unresolved: a column whose value comes from
-        # a Python-side or server DEFAULT is still None here, so the CREATE snapshot
-        # reads null for it (e.g. customers.customer_type, server_default "company").
-        # Left as-is deliberately: a server default is SQL text, not a value we can
-        # evaluate without a round-trip, and half-resolving only the Python-side ones
-        # would make the snapshot inconsistent per column rather than uniformly
-        # "unset at creation". UPDATE rows read the real stored value.
-        snapshot = _model_to_audit_dict(obj)
-        new_values = {k: v for k, v in snapshot.items() if k in cols} if cols is not None else snapshot
-        root = _root(cls, entity_type, entity_id, snapshot)
-        company = _company_id_for_new(obj) or _company_from_parent(session, session.connection(), cls, snapshot, company_cache)
-        pending.append((entity_type, entity_id, "CREATE", None, new_values, company, root))
-    for obj in session.dirty:
-        if not _is_audited(obj):
-            continue
-        cls = obj.__class__
-        entity_type = _audit_entity_type(cls)
-        entity_id = _entity_id_str(obj)
-        if _should_skip(entity_type, entity_id):
-            continue
-        cols = getattr(cls, "__audit_columns__", None)
-        old_values, new_values = _old_new_from_dirty(obj, columns=cols, conn=session.connection())
-        if not old_values and not new_values:
-            continue
-        # Only the keys the root and company need, not a second serialization of the row.
-        links = [link[1] for link in (_parent_of(cls),) if link] + [link[0] for link in (_company_fk(cls),) if link]
-        current = {key: getattr(obj, key, None) for key in links}
-        root = _root(cls, entity_type, entity_id, current)
-        company = getattr(obj, "company_id", None) or _company_from_parent(session, session.connection(), cls, current, company_cache)
-        pending.append((entity_type, entity_id, "UPDATE", old_values, new_values, company, root))
-    for obj in session.deleted:
-        if not _is_audited(obj):
-            continue
-        cls = obj.__class__
-        entity_type = _audit_entity_type(cls)
-        entity_id = _entity_id_str(obj)
-        if _should_skip(entity_type, entity_id):
-            continue
-        cols = getattr(cls, "__audit_columns__", None)
-        snapshot = _model_to_audit_dict(obj)
-        old_values = {k: v for k, v in snapshot.items() if k in cols} if cols is not None else snapshot
-        root = _root(cls, entity_type, entity_id, snapshot)
-        company = getattr(obj, "company_id", None) or _company_from_parent(session, session.connection(), cls, snapshot, company_cache)
-        pending.append((entity_type, entity_id, "DELETE", old_values, None, company, root))
-
-    # Add audit log rows in the same flush (so we never call flush from inside an event)
-    if not pending:
-        return
-    # Resilience: some unit tests bind to a sqlite engine whose schema is a
-    # subset that excludes `audit_logs` (the audit listener is global and fires
-    # on any tracked insert). Writing there raises "no such table" and fails
-    # otherwise-unrelated tests. Production always has the table, so this guard
-    # is a no-op in prod.
-    if not _audit_table_exists(session.get_bind()):
-        session.info.pop("audit_pending", None)
-        return
     user_id = _uuid_or_none(actor.user_id) if actor is not None else None
     ip_address = actor.ip_address if actor is not None else None
     contact_id = actor.contact_id if actor is not None else None
-    session.info["audit_flushing"] = True
-    try:
-        for entity_type, entity_id, action, old_values, new_values, entity_company_id, root in pending:
-            log_audit(
-                session,
-                entity_type,
-                entity_id,
-                action,
-                old_values=old_values,
-                new_values=new_values,
-                user_id=user_id,
-                contact_id=contact_id,
-                ip_address=ip_address,
-                company_id=entity_company_id,
-                root_entity_type=root[0],
-                root_entity_id=root[1],
-                skip_flush=True,
-            )
-            if ctx is not None and ctx.event:
-                ctx.event_hits.add((entity_type, entity_id))
-    finally:
-        session.info.pop("audit_flushing", None)
-        session.info.pop("audit_pending", None)
+    company_cache: dict = {}
+    pending = []
+    pending_new = []
+    for obj, action in work:
+        cls = obj.__class__
+        entity_type = _audit_entity_type(cls)
+        entity_id = _entity_id_str(obj)
+        cols = getattr(cls, "__audit_columns__", None)
+        if action == "CREATE":
+            if not entity_id:
+                # No key yet: a column default (Python-side ``uuid4`` runs only at INSERT) or a
+                # DB-generated one. Known after the INSERT, so the CREATE row is written in
+                # after_flush instead. Main dropped these CREATE rows silently.
+                if entity_type not in skip_types:
+                    pending_new.append(obj)
+                continue
+            if _should_skip(entity_type, entity_id):
+                continue
+            # Same timing gap as company_id, unresolved: a column whose value comes from
+            # a Python-side or server DEFAULT is still None here, so the CREATE snapshot
+            # reads null for it (e.g. customers.customer_type, server_default "company").
+            # Left as-is deliberately: a server default is SQL text, not a value we can
+            # evaluate without a round-trip, and half-resolving only the Python-side ones
+            # would make the snapshot inconsistent per column rather than uniformly
+            # "unset at creation". UPDATE rows read the real stored value.
+            snapshot = _model_to_audit_dict(obj)
+            new_values = {k: v for k, v in snapshot.items() if k in cols} if cols is not None else snapshot
+            root = _root(cls, entity_type, entity_id, snapshot)
+            company = _company_id_for_new(obj) or _company_from_parent(session, session.connection(), cls, snapshot, company_cache)
+            pending.append((entity_type, entity_id, "CREATE", None, new_values, company, root))
+        elif action == "UPDATE":
+            if _should_skip(entity_type, entity_id):
+                continue
+            old_values, new_values = _old_new_from_dirty(obj, columns=cols, conn=session.connection())
+            if not old_values and not new_values:
+                continue
+            # Only the keys the root and company need, not a second serialization of the row.
+            links = [link[1] for link in (_parent_of(cls),) if link] + [link[0] for link in (_company_fk(cls),) if link]
+            current = {key: getattr(obj, key, None) for key in links}
+            root = _root(cls, entity_type, entity_id, current)
+            company = getattr(obj, "company_id", None) or _company_from_parent(session, session.connection(), cls, current, company_cache)
+            pending.append((entity_type, entity_id, "UPDATE", old_values, new_values, company, root))
+        else:
+            if _should_skip(entity_type, entity_id):
+                continue
+            snapshot = _model_to_audit_dict(obj)
+            old_values = {k: v for k, v in snapshot.items() if k in cols} if cols is not None else snapshot
+            root = _root(cls, entity_type, entity_id, snapshot)
+            company = getattr(obj, "company_id", None) or _company_from_parent(session, session.connection(), cls, snapshot, company_cache)
+            pending.append((entity_type, entity_id, "DELETE", old_values, None, company, root))
+
+    rows = []
+    for entity_type, entity_id, action, old_values, new_values, entity_company_id, root in pending:
+        rows.append(_audit_row(
+            session,
+            entity_type,
+            entity_id,
+            action,
+            old_values=old_values,
+            new_values=new_values,
+            user_id=user_id,
+            contact_id=contact_id,
+            ip_address=ip_address,
+            company_id=entity_company_id,
+            root_entity_type=root[0],
+            root_entity_id=root[1],
+        ))
+        if ctx is not None and ctx.event:
+            ctx.event_hits.add((entity_type, entity_id))
+    return rows, pending_new
 
 
 def _session_after_flush(session: Session, _flush_context: Any) -> None:
-    """Write CREATE rows for rows whose key was unknown before the INSERT (see before_flush);
-    clear the pending list."""
-    session.info.pop("audit_pending", None)
-    pending_new = session.info.pop("audit_pending_new", None)
-    if not pending_new:
+    """Write the rows ``before_flush`` built, plus CREATE rows for rows whose key was unknown
+    before the INSERT, in a savepoint released before the flush returns: the trail commits with
+    the business write, and a failed INSERT rolls back only the savepoint (owner ruling 28 Sep
+    2026 19:1x MYT). A failure is recorded by ``_record_capture_failure``, never raised."""
+    rows = session.info.pop("audit_rows", None) or []
+    pending_new = session.info.pop("audit_pending_new", None) or []
+    failure = session.info.pop("audit_failure", None)
+    if failure is not None:
+        exc, work = failure
+        _record_capture_failure(session, exc, [_entity_of(obj, action) for obj, action in work])
+    if not rows and not pending_new:
         return
+    try:
+        conn = session.connection()
+        with conn.begin_nested():
+            new_rows = _pending_new_rows(session, conn, pending_new)
+            for batch in (rows, new_rows):
+                if batch:
+                    conn.execute(AuditLog.__table__.insert(), batch)
+    except Exception as exc:  # noqa: BLE001 - capture never fails the write
+        entities = [(r["entity_type"], r["entity_id"], r["action"], r["company_id"]) for r in rows]
+        entities += [_entity_of(obj, "CREATE") for obj in pending_new]
+        _record_capture_failure(session, exc, entities)
+
+
+def _pending_new_rows(session: Session, conn: Any, pending_new: list) -> list:
+    if not pending_new:
+        return []
     from app.audit_context import current_audit_context
 
     ctx = current_audit_context()
@@ -940,15 +1011,95 @@ def _session_after_flush(session: Session, _flush_context: Any) -> None:
             "old_values": None,
             "new_values": _redact(new_values),
             "description": None,
-            "company_id": snapshot.get("company_id") or _company_from_parent(session, session.connection(), cls, snapshot, company_cache),
+            "company_id": snapshot.get("company_id") or _company_from_parent(session, conn, cls, snapshot, company_cache),
             "root_entity_type": root[0],
             "root_entity_id": root[1],
             **who,
         })
-    if rows:
+    return rows
+
+
+def _entity_of(obj: Any, action: str) -> tuple:
+    """(entity type, id, action, company) of an object whose audit row was lost, read from its
+    loaded state only (no SELECT)."""
+    insp = inspect(obj)
+    parts = [insp.dict.get(insp.mapper.get_property_by_column(c).key) for c in insp.mapper.primary_key]
+    entity_id = "_".join(str(p) for p in parts) if all(p is not None for p in parts) else ""
+    return (_audit_entity_type(obj.__class__), entity_id, action, insp.dict.get("company_id"))
+
+
+# integration_log.business_id is a NOT NULL uuid; an entity whose key is not a UUID (or no
+# entity at all) is filed under the nil UUID, its real id in external_reference.
+_NIL_UUID = "00000000-0000-0000-0000-000000000000"
+AUDIT_FAILURE_CHANNEL = "audit"
+
+
+def _record_capture_failure(session: Session, exc: BaseException, entities: list) -> None:
+    """Make a failed capture loud: one ``integration_log`` row (channel ``audit``) with the
+    error, the entities and the actor, and one ``audit_trail_gaps`` row per record left without
+    its trail. In its own savepoint; if even that fails, an ERROR log line and nothing more,
+    so the business write still goes ahead."""
+    import json
+    from datetime import datetime as _dt
+    from uuid import uuid4
+
+    from app.audit_context import current_audit_context
+    from app.models.audit import AuditTrailGap
+    from app.models.integration import IntegrationLog
+
+    error = str(getattr(exc, "orig", None) or exc)[:2000]
+    entities = list(dict.fromkeys((str(t), str(i or ""), str(a), c) for t, i, a, c in entities))
+    logger.error(
+        "audit: capture failed, the write proceeds without its trail (%d record(s)): %s",
+        len(entities), error, exc_info=exc,
+    )
+    try:
         conn = session.connection()
-        if _audit_table_exists(conn):
-            conn.execute(AuditLog.__table__.insert(), rows)
+        with conn.begin_nested():
+            ctx = current_audit_context()
+            who = _core_actor_columns(session, ctx)
+            first = entities[0] if entities else ("unknown", "", "UNKNOWN", None)
+            log_id = str(uuid4())
+            payload = {
+                "actor": {k: who.get(k) for k in ("actor_type", "user_id", "real_user_id", "contact_id", "integration_id", "job_id")},
+                "source": who.get("source"),
+                "trace_id": who.get("trace_id"),
+                "correlation_id": who.get("correlation_id"),
+                "event": who.get("event"),
+                "record_count": len(entities),
+                "records": [{"entity_type": t, "entity_id": i, "action": a} for t, i, a, _c in entities[:BULK_AUDIT_CAP]],
+            }
+            conn.execute(IntegrationLog.__table__.insert().values(
+                id=log_id,
+                integration_channel=AUDIT_FAILURE_CHANNEL,
+                business_table=first[0][:100],
+                business_id=first[1] if _is_uuid(first[1]) else _NIL_UUID,
+                external_reference=first[1][:255] or None,
+                direction="outbound",
+                endpoint="audit_logs",
+                http_method="INSERT",
+                request_payload=json.dumps(payload, default=str),
+                status="failed",
+                error_code=type(getattr(exc, "orig", None) or exc).__name__[:100],
+                error_message=error,
+                created_by=who.get("user_id"),
+                processed_at=_dt.utcnow(),
+            ))
+            gaps = [
+                {
+                    "entity_type": t[:100],
+                    "entity_id": (i or "*")[:100],
+                    "action": a[:20],
+                    "company_id": _uuid_or_none(c),
+                    "integration_log_id": log_id,
+                    "error": error,
+                }
+                for t, i, a, c in entities[:BULK_AUDIT_CAP]
+            ]
+            if gaps:
+                conn.execute(AuditTrailGap.__table__.insert(), gaps)
+    except Exception:  # noqa: BLE001 - the business write must still go ahead
+        logger.exception("audit: the capture failure could not be recorded either")
 
 
 def _bulk_value(value: Any) -> Any:
@@ -967,7 +1118,7 @@ def _session_do_orm_execute(state: Any) -> None:
     the statement's own connection. Raw ``text()`` DML and ``bulk_*_mappings`` are not seen
     here; they are allowlisted by name (S3).
     """
-    if not (state.is_update or state.is_delete):
+    if not (state.is_update or state.is_delete) or not capture_enabled():
         return
     session = state.session
     params = state.parameters if isinstance(state.parameters, dict) else {}
@@ -995,13 +1146,22 @@ def _session_do_orm_execute(state: Any) -> None:
     conn = session.connection(bind_arguments=state.bind_arguments)
     if not _audit_table_exists(conn):
         return
-    # Same contract as the flush path: the audit rows share the write's transaction, so a
-    # failed capture fails the write rather than leaving a change with no trail.
-    _write_bulk_rows(session, conn, cls, entity_type, statement, state.is_delete, params)
+    # Best-effort, as the flush path (owner ruling 28 Sep 2026 19:1x MYT, superseding "a failed
+    # capture fails the write"): the pre-select and the INSERT share one savepoint, so a failure
+    # rolls back only the trail and the statement still runs; the failure is recorded instead.
+    touched: list = []
+    try:
+        with conn.begin_nested():
+            _write_bulk_rows(session, conn, cls, entity_type, statement, state.is_delete, params, touched)
+    except Exception as exc:  # noqa: BLE001 - capture never fails the write
+        action = "DELETE" if state.is_delete else "UPDATE"
+        entities = [(entity_type, eid, action, company) for eid, company in touched] or [(entity_type, "*", action, None)]
+        _record_capture_failure(session, exc, entities)
 
 
 def _write_bulk_rows(
-    session: Session, conn: Any, cls: type, entity_type: str, statement: Any, is_delete: bool, params: dict
+    session: Session, conn: Any, cls: type, entity_type: str, statement: Any, is_delete: bool, params: dict,
+    touched: Optional[list] = None,
 ) -> None:
     from app.audit_context import current_audit_context
 
@@ -1128,6 +1288,8 @@ def _write_bulk_rows(
     if out:
         for entry in out:
             entry.setdefault("description", None)
+        if touched is not None:
+            touched.extend((e["entity_id"], e["company_id"]) for e in out if e["entity_id"] != "*")
         conn.execute(AuditLog.__table__.insert(), out)
 
 

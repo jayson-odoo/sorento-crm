@@ -81,7 +81,7 @@ def _new_brand(db):
 class TestBestEffort:
     def test_be01_a_failed_flush_capture_keeps_the_business_row_and_logs_once(self, db, poisoned):
         """AC-S0-30: the audit INSERT fails, the UPDATE commits, one integration_log row."""
-        stamp_actor(db, AuditActor(actor_type="user", user_id="00000000-0000-4000-8000-000000000001"))
+        stamp_actor(AuditActor(actor_type="user", user_id="00000000-0000-4000-8000-000000000001"), db=db)
         brand = _new_brand(db)
         db.expire_all()
         failures_before = len(_failures(db))
