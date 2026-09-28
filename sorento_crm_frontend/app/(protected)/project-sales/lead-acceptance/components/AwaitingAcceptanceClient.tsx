@@ -256,11 +256,7 @@ export function AwaitingAcceptanceClient() {
             </Button>
           </div>
         }
-      >
-        <p className="text-sm text-muted-foreground">
-          Leads handed to a salesperson who has not accepted them yet.
-        </p>
-      </PageHeader>
+      />
 
       {query.isError ? (
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">
@@ -297,9 +293,6 @@ export function AwaitingAcceptanceClient() {
                 Assign a lead from the leads list and it appears here until the
                 salesperson accepts it.
               </p>
-              <Button asChild variant="outline" className="mt-4">
-                <Link href="/project-sales/leads">Go to leads</Link>
-              </Button>
             </div>
           }
         >

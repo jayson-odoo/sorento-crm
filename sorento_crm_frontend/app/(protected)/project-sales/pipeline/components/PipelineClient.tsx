@@ -325,11 +325,7 @@ export function PipelineClient() {
             </DropdownMenu>
           </div>
         }
-      >
-        <p className="text-sm text-muted-foreground">
-          Every project in the company, so nobody works a development twice.
-        </p>
-      </PageHeader>
+      />
 
       {/* Board has no grid toolbar to host them, so it carries the same two controls in
           the same order the toolbar uses. Grid view feeds them into the toolbar instead,
