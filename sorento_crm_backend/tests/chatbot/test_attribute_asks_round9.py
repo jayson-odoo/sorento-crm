@@ -168,7 +168,9 @@ def _plain(text: str, world) -> None:
     """No explanation, no brand the customer did not name, no repeated line."""
     for phrase in _EXPLAINING:
         assert phrase not in text, (phrase, text)
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    # A row's own fields ("*List Price:* MYR 100.00") may read alike on two rows; every
+    # other line is said once.
+    lines = [line.strip() for line in text.splitlines() if line.strip() and not line.startswith("*")]
     assert len(lines) == len(set(lines)), text
 
 

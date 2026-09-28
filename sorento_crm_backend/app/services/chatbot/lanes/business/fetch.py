@@ -2852,11 +2852,21 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             not_understood=jsc.get(predicate, "unrecognized_terms"),
             offset=offset,
             previous_total=jsc.get(predicate, "previous_total"),
+            breakdown=jsc.get(predicate, "breakdown"),
         )
         set_header = header
         # Round 3 W4: the default brand answered, so the reply closes with the others -
         # above the footer, which stays the last line as it is on the product-code answer.
-        other_brands = answer_mod.other_brands_line(jsc.get(predicate, "other_brands"), require)
+        # Fix round 9 on PR #833: a word the set reader could not use closes the reply in
+        # the same place ("Couldn't find: ..."), the "did not match" line.
+        other_brands = "\n".join(
+            line
+            for line in (
+                answer_mod.not_understood_line(jsc.get(predicate, "unrecognized_terms")),
+                answer_mod.other_brands_line(jsc.get(predicate, "other_brands"), require),
+            )
+            if line
+        )
         if set_withheld:
             msg = header
         else:

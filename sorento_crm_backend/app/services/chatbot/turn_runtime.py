@@ -3009,7 +3009,11 @@ def with_carried_entities(
     that distinguishes "typed this turn" from "carried" (the low stock prune, the
     outstanding report's typed-code match) still can.
 
-    A turn that names its own entities is untouched - this is the EMPTY case only.
+    A turn that names its own entities is untouched - this is the EMPTY case, and the
+    case of a turn that names only a document word ("cert?", "photo?"): that word says
+    what to answer, not about what, so the subject and its filters are carried beside it
+    (fix round 9 on PR #833, the owner's "cert?" after "any gunmetal basin has
+    incoming?" answered every certified product).
 
     `unsettled_only` is the FETCH turn's version of the same question, and the narrower
     reading of it. A carry that already holds a `uuid` is settled: it is in the plan
@@ -3020,7 +3024,12 @@ def with_carried_entities(
     or sends the token where a uuid belongs. Those rows, and only those, are handed over
     on a turn that fetches.
     """
-    if parse_output.get("entities"):
+    own = [e for e in parse_output.get("entities") or [] if isinstance(e, dict)]
+    domain_word_only = bool(own) and all(
+        str(e.get("hint") or "").strip().lower() == "attachment_type" and e.get("current_message") is not False
+        for e in own
+    )
+    if parse_output.get("entities") and not domain_word_only:
         return parse_output
     carried: list[dict[str, Any]] = []
     # Every kind the focus holds, `extra` included. `KIND_FIELD_MAP` names four kinds
@@ -3038,6 +3047,9 @@ def with_carried_entities(
         if isinstance(rows, list)
     ]
     for kind, rows in by_kind:
+        if domain_word_only and kind == "attachment_type":
+            # This turn's own document word replaces the carried one.
+            continue
         for row in rows:
             if not isinstance(row, dict):
                 continue
@@ -3064,7 +3076,7 @@ def with_carried_entities(
             carried.append(entity)
     if not carried:
         return parse_output
-    return {**parse_output, "entities": carried}
+    return {**parse_output, "entities": [*carried, *own]}
 
 
 def _is_certificate_type(db: Session, attachment_type_id: Any) -> bool:

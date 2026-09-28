@@ -2618,7 +2618,9 @@ def not_understood_line(words: Any) -> str:
     if not terms:
         return ""
     quoted = _and_list([f'"{t}"' for t in terms])
-    return f"I did not understand {quoted}, so it is not part of this search."
+    # Fix round 9 on PR #833 (owner: "no explanations"): the "did not match" line of the
+    # one reply structure, never how the search was run.
+    return f"Couldn't find: {quoted}."
 
 
 #: The sentence a set answer opens with, per leg, when the tool's own intro does not
@@ -2633,6 +2635,97 @@ _SET_INTRO_BY_LEG: dict[str, str] = {
     "price": "Prices for the requested products.",
 }
 _REQUESTED = "the requested products"
+#: A product ask about a described set (`predicate.derive_require`'s `{"price":
+#: "described"}`): the products tool's own intro, about the described set.
+_DESCRIBED_INTRO = "Here are the requested products."
+
+#: What "But no ... matched these" names per leg: the product-code miss's own words
+#: ("But no incoming matched these.").
+_MISS_NOUN: dict[str, str] = {
+    "certificate": "certificate",
+    "stock": "stock",
+    "incoming": "incoming",
+    "promotion": "promotion",
+}
+
+
+def breakdown_lines(breakdown: Any, set_noun: str) -> list[str]:
+    """"• Sorento wash basins: 120", one line per value of the key the resolver broke the
+    set down by (`product_predicate_service._set_breakdown`), largest first. Fix round 9
+    on PR #833: "always break it down", no cap."""
+    noun = set_noun or "products"
+    out = []
+    for row in jsc.array(jsc.get(breakdown, "rows")):
+        value = jsc.js_string(jsc.get(row, "value")).strip()
+        count = int(jsc.get(row, "count") or 0)
+        if value and count:
+            out.append(f"• {value} {noun}: {count:,}")
+    return out
+
+
+def what_you_want_reply(asked: str, lines: list[str], *, missing: str = "", leg: str = "", team: Any) -> str:
+    """The ONE reply a miss has, the product-code miss's own (owner, 28 Sep 2026: "you do
+    like here is what you want, but no incoming, do you want me to escalate..., I want
+    that structure to stay"): what was asked for on one line, what matched line by line,
+    what did not match, one short escalate offer. Fix round 9 on PR #833."""
+    head = "\n".join([f"Here's what you want: {asked}", *lines])
+    if missing:
+        tail = f"Couldn't find: {missing}."
+    elif lines and leg:
+        tail = f"But no {leg} matched these."
+    else:
+        tail = "But none matched."
+    return f"{head}\n\n{tail} Would you like me to escalate to {team} team?"
+
+
+def described_members_reply(predicate: Any, team: Any) -> str | None:
+    """A set that qualified nothing, in `what_you_want_reply`: the described products
+    (`predicate.members`, the set without its legs) under "Here's what you want", then
+    "But no incoming matched these". None when the resolver sent no members."""
+    members = jsc.get(predicate, "members")
+    if not isinstance(members, dict):
+        return None
+    require = jsc.get(predicate, "require") or {}
+    labels = [jsc.js_string(c) for c in jsc.array(jsc.get(predicate, "class_labels")) if jsc.truthy(c)]
+    noun = set_noun_for(labels)
+    phrase = described_set_phrase(jsc.get(predicate, "description"), noun, {})
+    total = int(jsc.get(members, "total") or 0)
+    lines = [f"• {jsc.js_string(c)}" for c in jsc.array(jsc.get(members, "codes")) if jsc.truthy(c)]
+    lines = lines or breakdown_lines(jsc.get(members, "breakdown"), noun)
+    leg = next(iter(require), "")
+    noun_of_leg = (
+        jsc.js_string(require[leg]).strip().lower() if leg == "attachment_type" else _MISS_NOUN.get(leg, "")
+    )
+    return what_you_want_reply(f"{phrase} ({total:,})" if total else phrase, lines, leg=noun_of_leg, team=team)
+
+
+def unknown_values_reply(unknown: Any, predicate: Any, team: Any) -> str:
+    """A value the registry does not know ("pink" as a finish or colour), in
+    `what_you_want_reply`: the subject with the value as asked, the subject broken down
+    by that key (`predicate.members.breakdown`), then "Couldn't find: pink (finish or
+    colour)". No list of the registry's choices and no typo said back."""
+    members = jsc.get(predicate, "members") if isinstance(predicate, dict) else None
+    labels = [jsc.js_string(c) for c in jsc.array(jsc.get(members, "class_labels")) if jsc.truthy(c)]
+    noun = set_noun_for(labels)
+    said = [jsc.js_string(jsc.get(u, "said")).strip() for u in jsc.array(unknown)]
+    said = [w for w in said if w]
+    description = [
+        *jsc.array(jsc.get(members, "description")),
+        *({"key": "said", "label": "", "value": w, "kind": "enum"} for w in said),
+    ]
+    asked = described_set_phrase(description, noun, {}) if members is not None else " ".join(said)
+    missing = _and_list(
+        [
+            f"{w} ({jsc.js_string(jsc.get(u, 'label')).strip().lower()})"
+            if jsc.js_string(jsc.get(u, "label")).strip()
+            else f'"{w}"'
+            for u in jsc.array(unknown)
+            for w in [jsc.js_string(jsc.get(u, "said")).strip()]
+            if w
+        ]
+    )
+    lines = breakdown_lines(jsc.get(members, "breakdown"), noun) if members is not None else []
+    return what_you_want_reply(asked, lines, missing=missing, team=team)
 
 
 def _value_words(value: str) -> str:
@@ -2676,7 +2769,7 @@ def described_set_phrase(description: Any, set_noun: str, require: dict[str, Any
     phrase = " ".join(words)
     if after:
         phrase += f" with {_and_list(after)}"
-    has = _header_predicate_phrase(require)
+    has = _header_predicate_phrase(require) if require else ""
     return f"{phrase} with {has}" if has else phrase
 
 
@@ -2692,6 +2785,7 @@ def build_set_header(
     offset: int = 0,
     previous_total: int | None = None,
     exhausted: bool = False,
+    breakdown: Any = None,
 ) -> str:
     """A counted set's ONE intro line (fix round 8 on PR #833, owner retest of round 7):
     the product-code answer's own intro with "the requested products" replaced by the
@@ -2707,23 +2801,25 @@ def build_set_header(
 
     A pure string function: `qualifying_total` and `shown` are counts the caller already
     has, never re-derived here."""
-    phrase = described_set_phrase(description, set_noun, require)
+    tool_intro = jsc.js_string(intro or "").strip() if isinstance(intro, str) else ""
+    leg = next(iter(require or {}), "")
+    described_only = (require or {}).get("price") == "described"
+    if described_only:
+        base = _DESCRIBED_INTRO
+    elif _REQUESTED in tool_intro:
+        base = tool_intro
+    else:
+        base = _SET_INTRO_BY_LEG.get(leg, "Here are the results for the requested products.")
+    # Fix round 9 on PR #833 (owner: "no repeats"): every intro above already names what
+    # the set has ("Incoming stock found for ..."), so the phrase does not say it again.
+    names_leg = described_only or _REQUESTED in tool_intro or leg in _SET_INTRO_BY_LEG
+    phrase = described_set_phrase(description, set_noun, {} if names_leg else require)
     withheld = not exhausted and shown <= 0 and qualifying_total > 0
     if withheld or exhausted or shown >= qualifying_total - offset:
         count = f"{qualifying_total:,}"
     else:
         count = f"{qualifying_total:,}, showing {offset + 1} to {offset + shown}"
-    tool_intro = jsc.js_string(intro or "").strip() if isinstance(intro, str) else ""
-    leg = next(iter(require or {}), "")
-    base = (
-        tool_intro
-        if _REQUESTED in tool_intro
-        else _SET_INTRO_BY_LEG.get(leg, "Here are the results for the requested products.")
-    )
     header = base.replace(_REQUESTED, f"{phrase} ({count})")
-    missed = not_understood_line(not_understood)
-    if missed:
-        header += f" {missed}"
     if previous_total and previous_total != qualifying_total:
         # W4: the page re-counted and the set moved since the question; say so.
         header += f" It was {previous_total:,} when you asked."
@@ -2731,10 +2827,12 @@ def build_set_header(
         # Round 3 W2: a count after the last page; every product was already listed.
         header += f" That is all {qualifying_total:,}."
     elif withheld:
-        header += (
-            " That is too many to list in one message. How many should I show "
-            f"(up to {SET_LIST_MAX})? Or ask again naming a brand or size."
-        )
+        # Fix round 9 on PR #833 (owner: "no cap", "always break it down"): the full count
+        # and the set broken down by the next attribute, one line each, never a paging
+        # question.
+        lines = breakdown_lines(breakdown, set_noun)
+        if lines:
+            header += "\n" + "\n".join(lines)
     return header
 
 
@@ -3604,47 +3702,35 @@ def not_found_error_message(
                 and jsc.array(jsc.get(predicate, "unrecognized_terms"))
             ):
                 # AC-1320 (work item F2): the described set named NOTHING this
-                # catalogue can read - clarify the term, never answer the
-                # honest-zero copy below, which would falsely say "none of these
-                # qualify" for a set that was never actually described.
-                term = jsc.js_string(jsc.array(jsc.get(predicate, "unrecognized_terms"))[0])
-                suggestions = [
-                    jsc.js_string(s).strip().lower()
-                    for s in jsc.array(jsc.get(predicate, "suggestions"))
-                    if jsc.truthy(s)
-                ]
-                if suggestions:
-                    escalate_message = (
-                        f"I don't know '{term}' as a product type. "
-                        f"Did you mean {_human_list(suggestions)}?"
-                    )
-                else:
-                    # Fix round, F2: NOTHING was near enough to offer as a real
-                    # "did you mean" - the catalogue's own most common class
-                    # labels (`common_class_labels`) still give a real answer,
-                    # never the contentless "Did you mean the product types I
-                    # know?".
-                    common = [
-                        jsc.js_string(c).strip().lower()
-                        for c in jsc.array(jsc.get(predicate, "common_class_labels"))
-                        if jsc.truthy(c)
-                    ]
-                    common_text = ", ".join(common) if common else "a class or product type I know"
-                    escalate_message = (
-                        f"I don't know '{term}' as a product type. "
-                        f"Try a product type such as {common_text}."
-                    )
-                is_clarification = True
+                # catalogue can read. Fix round 9 on PR #833 (owner, 28 Sep 2026: "no
+                # explanations", no typo mention): the word is the "did not match" line
+                # of the one reply structure, never a "did you mean" or a list of the
+                # product types the catalogue knows.
+                terms = [jsc.js_string(t) for t in jsc.array(jsc.get(predicate, "unrecognized_terms")) if jsc.truthy(t)]
+                asked = " ".join(
+                    jsc.js_string(jsc.get(e, "raw"))
+                    for e in entities_list
+                    if jsc.get(e, "hint") in ("category", "product_type", "specification") and jsc.truthy(jsc.get(e, "raw"))
+                ) or terms[0]
+                escalate_message = what_you_want_reply(
+                    asked, [], missing=_and_list([f'"{t}"' for t in terms]), team=team
+                )
             elif (
                 described_set_answers
                 and jsc.get(predicate, "qualifying_total") == 0
                 and isinstance(jsc.get(predicate, "near_miss"), dict)
             ):
-                # R4 (round 4 on PR #833): the miss says what was searched and what the
-                # set holds in the key's other values, before the escalation offer.
-                escalate_message = (
-                    f"{near_miss_sentence(jsc.get(predicate, 'near_miss'), jsc.get(predicate, 'require') or {})} "
-                    f"Would you like me to escalate to {team} team?"
+                # Fix round 9 on PR #833 (owner, 28 Sep 2026: "you do like here is what
+                # you want, but no incoming, do you want me to escalate..., I want that
+                # structure to stay"): round 4's near-miss sentence ("I looked for ...
+                # in another finish or colour") is retired for the product-code miss's
+                # own structure, the described products line by line.
+                escalate_message = described_members_reply(predicate, team) or what_you_want_reply(
+                    described_set_phrase(jsc.get(predicate, "description"), set_noun_for(
+                        [jsc.js_string(c) for c in jsc.array(jsc.get(predicate, "class_labels")) if jsc.truthy(c)]
+                    ), jsc.get(predicate, "require") or {}),
+                    [],
+                    team=team,
                 )
             elif (
                 described_set_answers
@@ -3723,7 +3809,9 @@ def not_found_error_message(
                     phrase = described_set_phrase(
                         described, set_noun_for(labels), jsc.get(predicate, "require") or {}
                     )
-                    escalate_message = f"Couldn't find {phrase}{checked}. Would you like me to escalate to {team} team?"
+                    escalate_message = described_members_reply(predicate, team) or what_you_want_reply(
+                        phrase, [], team=team
+                    )
                 else:
                     escalate_message = (
                         f"Couldn't find {subject_phrase} with "
@@ -3881,8 +3969,10 @@ def not_found_error_message(
     unknown_values = jsc.array(jsc.get(predicate, "unknown_values")) if isinstance(predicate, dict) else []
     unknown_values = unknown_values or jsc.array(jsc.get(r, "unknown_spec_values"))
     if unknown_values:
-        escalate_message = unknown_values_sentence(unknown_values)
-        is_clarification = True
+        # Fix round 9 on PR #833: the one reply structure, the subject broken down by the
+        # unknown value's key; the escalate offer stands, so it is not a clarify.
+        escalate_message = unknown_values_reply(unknown_values, predicate, team)
+        is_clarification = False
         found_summary = ""
 
     # Q23: the customer named an access level they do not hold. The gate detects it; say so

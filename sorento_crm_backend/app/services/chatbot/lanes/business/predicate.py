@@ -238,7 +238,27 @@ def derive_require(
             return {"certificate": {"scheme": raw}}
         return {"attachment_type": raw}
 
+    if intent == "check_product" and _describes_a_set(parser_output):
+        # Fix round 9 on PR #833 (owner hand test 28 Sep: "kitchen sink 1.2mm thickness"
+        # listed every kitchen sink): a product ask that names a property of the thing
+        # is an ask about the described set, counted on the existing no-filter leg
+        # (`_leg_price`) so the property narrows it. "described" tells the header this
+        # is not a price question.
+        return {"price": "described"}
+
     return None
+
+
+def _describes_a_set(parser_output: dict[str, Any]) -> bool:
+    """A specification entity this turn (`head/grounding.py`), known value or not, and no
+    product named: the ask is about products described by what they are and have."""
+    entities = [e for e in parser_output.get("entities") or [] if isinstance(e, dict)]
+    if any(str(e.get("hint") or "").strip().lower() == "product" for e in entities):
+        return False
+    return any(
+        str(e.get("hint") or "").strip().lower() in ("specification", "spec") and e.get("current_message") is not False
+        for e in entities
+    )
 
 
 def derive_predicate_words(

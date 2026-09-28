@@ -1639,6 +1639,58 @@ def _with_grounded_unknowns(found: list[dict], grounded: list[dict] | None) -> l
     return extra + [u for u in found if u.get("key") not in keys]
 
 
+def _set_list_max() -> int:
+    """The longest set one chatbot reply lists (`answer.SET_LIST_MAX`), read at call time."""
+    from app.services.chatbot.lanes.business import answer as answer_mod
+
+    return int(answer_mod.SET_LIST_MAX)
+
+
+def _unknown_value_members(db: Session, payload, query_text: str, unknown: list[dict], current_user) -> dict | None:
+    """The described set without its unknown value, broken down by that value's key:
+    "pink water closets" is answered with the finishes the water closets do come in
+    (fix round 9 on PR #833, owner: "always break it down"). None when the rest of the
+    ask describes no set, or the key is not one the registry holds."""
+    from app.services.product_predicate_service import resolve_product_set
+    from app.services.product_spec_understanding import derive_search_inputs
+
+    key = next((u.get("key") for u in unknown if u.get("key")), None)
+    if not key:
+        return None
+    said = [str(u.get("said") or "") for u in unknown]
+    specs, _free, _excl, _understanding = derive_search_inputs(
+        db,
+        _strip_predicate_words(query_text, said),
+        specs=list(payload.extracted_specs or []),
+        free_terms=[],
+        allow_model=False,
+        user_id=current_user.get("id"),
+        log_usage=False,
+    )
+    brand_entry = next((e for e in specs if e.get("key") == "brand"), None)
+    specs = [e for e in specs if e.get("key") not in ("brand", key)]
+    scope_terms = list(payload.scope_terms or [])
+    if not specs and not scope_terms:
+        return None
+    outcome = resolve_product_set(
+        db,
+        require={},
+        specs=specs,
+        scope_terms=scope_terms or None,
+        limit=1,
+        brand=str(brand_entry["value"]) if brand_entry else None,
+        access_levels=payload.access_levels,
+        breakdown_key=key,
+    )
+    if not outcome.get("qualifying_total"):
+        return None
+    members: dict[str, Any] = {"total": int(outcome["qualifying_total"])}
+    for field in ("breakdown", "description", "class_labels"):
+        if outcome.get(field):
+            members[field] = outcome[field]
+    return members
+
+
 def _strip_predicate_words(text: str, words: list[str] | None) -> str:
     """`query` with every `predicate_words` entry removed, whole-word, case-insensitive.
 
@@ -2735,6 +2787,11 @@ def resolve_reference_post(
                 "unrecognized_terms": [u["said"] for u in unknown],
                 "unknown_values": unknown,
             }
+            # Fix round 9 on PR #833: the subject without the unknown value, broken down
+            # by that value's key, so the reply lists what the set does come in.
+            members = _unknown_value_members(db, payload, query_text, unknown, current_user)
+            if members:
+                result["predicate"]["members"] = members
             return _stamp_brand_on_products(db, result)
 
         # R14/AC-1338 (third console pass): a bare `{"certificate": True}`
@@ -2829,8 +2886,11 @@ def resolve_reference_post(
             # The stock leg counts only the locations the asking contact's own
             # stock visibility policy allows, as the stock tool answers them.
             stock_policy=_stock_policy_for(db, payload) if require.get("stock") else None,
-            # R1: no brand named -> the highest weighted brand's set first.
-            prefer_weighted_brand=True,
+            # Fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every
+            # brand, never a silent default. R1's weighted default is off here; a set too
+            # long for one message is broken down by brand instead (`breakdown`).
+            prefer_weighted_brand=False,
+            breakdown_over=_set_list_max(),
         )
         # One nested block, not top-level scalars: n8n item-mutation chains
         # persist top-level keys across nodes. And never inside `by_entity_type`,
@@ -2903,6 +2963,11 @@ def resolve_reference_post(
         # R4 (round 4): what a zero set looked for and the count in its other values.
         if outcome.get("near_miss"):
             result["predicate"]["near_miss"] = outcome["near_miss"]
+        # Fix round 9: a long set's breakdown by the next attribute, and a zero set's
+        # described products without the legs.
+        for key in ("breakdown", "members"):
+            if outcome.get(key):
+                result["predicate"][key] = outcome[key]
         # W4: what a page of this set replays - the bound specs, the brand and the ids
         # LOOKUP matched (the other half of the union) - so the page counts the same set.
         if outcome["qualifying_total"]:
