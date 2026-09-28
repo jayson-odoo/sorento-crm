@@ -1,6 +1,6 @@
 # PLAN - Ideation status update: pull the shared service's status-event feed, send the template
 
-**Status:** in build, 29 Sep 2026. Track: full track (one migration: a new cursor table plus a
+**Status:** in review on PR #1357, awaiting CI and the owner hand test, 29 Sep 2026. Track: full track (one migration: a new cursor table plus a
 partial unique index on `integration_log`). Issue #1355. UAC:
 `ideation-status-update-29sep-acceptance-criteria.md` (AC-IS001 onward).
 

@@ -1,6 +1,6 @@
 # UAC - Ideation status update send (issue #1355)
 
-**Status:** in build, 29 Sep 2026
+**Status:** in review on PR #1357, 29 Sep 2026
 **Plan:** `PLAN-ideation-status-update-29sep.md` (this file is the contract it fulfils)
 
 Tags: `[BE]` sorento backend, `[FE]` sorento frontend, `[T]` pinned by a test.
