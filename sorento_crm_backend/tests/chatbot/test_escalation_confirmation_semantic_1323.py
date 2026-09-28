@@ -368,7 +368,7 @@ def _load_migration():
     return module
 
 
-def test_the_migration_chains_onto_the_identity_head_with_a_short_id() -> None:
+def test_the_migration_chains_onto_a_committed_revision_with_a_short_id() -> None:
     module = _load_migration()
     assert module.revision == "chatbot_esc_confirm_1323"
     assert len(module.revision) <= 32

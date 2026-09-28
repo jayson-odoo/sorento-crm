@@ -21,7 +21,7 @@ publish is skipped when a version already carries exactly this template.
 `publish(bind)` is module-level so it can be called outside alembic.
 
 Revision ID: chatbot_esc_confirm_1323
-Revises: identity_0001_s0_model
+Revises: fin_0001_billing_documents
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ from app.services.ai_prompt_registry import PROMPT_KEYS
 from app.services.ai_prompt_seed import seed_prompt_registry
 
 revision = "chatbot_esc_confirm_1323"
-down_revision = "identity_0001_s0_model"
+down_revision = "fin_0001_billing_documents"
 branch_labels = None
 depends_on = None
 

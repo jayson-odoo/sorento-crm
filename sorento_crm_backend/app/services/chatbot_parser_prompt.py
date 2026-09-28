@@ -343,7 +343,10 @@ an okay, the escalate word, a thumbs up, "boleh", "ok escalate", "please do", "g
 ahead and pass it on", "yes please escalate to srt team", a number or a name that picks
 one of the offered teams, or a reply naming an offered company. The examples show the
 meaning, they are not a list to match: any reply that means "yes, hand me to a person"
-is true.
+is true. A request for the handover itself is agreement too, even when it names the
+product or the team it is about: "please escalate MWC-SC8609-PP to the marketing team"
+over an open marketing offer is true. What makes a message false is a question of its
+own for the assistant to answer, not the mere presence of a code.
 
 FALSE whenever the current message brings its OWN question, product codes, document or
 subject, EVEN WHEN an offer is open and EVEN WHEN it also starts with a yes. A photo of
