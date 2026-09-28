@@ -17,9 +17,12 @@ import { Input } from '@/components/ui/input';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { FormSection } from '@/components/common/FormSection';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
+  CLASH_MIN_CHARS,
   useClashPreview,
+  useFetchClashPreview,
   useProjectParties,
   useProjectTemplates,
   useProjectTypes,
@@ -32,11 +35,13 @@ import { ClashWarningPanel } from './ClashWarningPanel';
 /**
  * Registration: claim a development before spending time on it.
  *
- * The form asks for the fewest decisions that make the claim meaningful. Only
- * developer and title decide identity, so those come first and the clash check runs
- * against them live; everything else is knowable later and demanding it up front is
- * how a registration screen becomes something people put off until after they have
- * already started working the project.
+ * Progressive, the portal price tag form's pattern (owner hand test, PR #1336): the
+ * dialog opens on Who and what; Details stays collapsed and opens once, by itself,
+ * when every Who and what field is filled. A section the user folded or opened by
+ * hand is never moved by that rule.
+ *
+ * The duplicate check runs when the user presses Check beside the title, not on
+ * every keystroke, and once more on submit as the guard.
  */
 export function RegisterProjectDialog({
   open,
@@ -71,7 +76,17 @@ export function RegisterProjectDialog({
   const contractors = useProjectParties({ party_type: 'main_contractor', limit: 200 });
   const types = useProjectTypes();
   const templates = useProjectTemplates(typeId || undefined);
-  const clash = useClashPreview(title, developerId || null);
+  // The title the user last checked; editing the field clears it, so a result
+  // never sits under a title it was not asked about.
+  const [checkedTitle, setCheckedTitle] = React.useState('');
+  // The title counts as filled once the user leaves the field or checks it, so
+  // Details does not open under them after the first letter.
+  const [titleSettled, setTitleSettled] = React.useState(false);
+  const clash = useClashPreview(checkedTitle, developerId || null);
+  const fetchClash = useFetchClashPreview();
+
+  const [sectionOpen, setSectionOpen] = React.useState({ who: true, details: false });
+  const detailsSettledRef = React.useRef(false);
 
   const selectedType = types.data?.find((type) => type.id === typeId);
   // A property development infers its delivery window from the launch date plus a
@@ -93,7 +108,16 @@ export function RegisterProjectDialog({
     setDeliveryFrom('');
     setDeliveryTo('');
     setJoinTarget(null);
+    setCheckedTitle('');
+    setTitleSettled(false);
+    setSectionOpen({ who: true, details: false });
+    detailsSettledRef.current = false;
   }, []);
+
+  const toggleSection = (key: 'who' | 'details', next: boolean) => {
+    if (key === 'details') detailsSettledRef.current = true;
+    setSectionOpen((prev) => ({ ...prev, [key]: next }));
+  };
 
   React.useEffect(() => {
     // Clearing the type must clear the template too, or a stale template from the
@@ -101,12 +125,46 @@ export function RegisterProjectDialog({
     setTemplateId('');
   }, [typeId]);
 
-  const wouldBlock = clash.data?.would_block ?? false;
+  // Template counts only when the chosen type offers one to pick.
+  const templateNeeded = Boolean(typeId) && (templates.data?.length ?? 0) > 0;
+  const whoComplete =
+    Boolean(developerId) &&
+    Boolean(typeId) &&
+    titleSettled &&
+    title.trim().length > 0 &&
+    (!templateNeeded || Boolean(templateId));
+
+  // Every Who and what field filled opens Details, once per dialog (the portal
+  // form's openSectionOnce).
+  React.useEffect(() => {
+    if (!whoComplete || detailsSettledRef.current) return;
+    detailsSettledRef.current = true;
+    setSectionOpen((prev) => (prev.details ? prev : { ...prev, details: true }));
+  }, [whoComplete]);
+
+  const checkable = title.trim().length >= CLASH_MIN_CHARS;
+  const hasChecked = checkedTitle.length > 0;
+  const wouldBlock = hasChecked && (clash.data?.would_block ?? false);
   const canSubmit = title.trim().length > 0 && !wouldBlock && !register.isPending;
+
+  async function handleCheck() {
+    const trimmed = title.trim();
+    if (trimmed.length < CLASH_MIN_CHARS) return;
+    setTitleSettled(true);
+    setCheckedTitle(trimmed);
+    await fetchClash(trimmed, developerId || null).catch(() => undefined);
+  }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!canSubmit) return;
+    // The one duplicate check on submit: the guard, whether or not Check was pressed.
+    if (checkable) {
+      const trimmed = title.trim();
+      setCheckedTitle(trimmed);
+      const preview = await fetchClash(trimmed, developerId || null);
+      if (preview.would_block) return;
+    }
     const project = await register.mutateAsync({
       title: title.trim(),
       developer_party_id: developerId || null,
@@ -139,17 +197,16 @@ export function RegisterProjectDialog({
         <DialogContent className="max-h-[92vh] w-full max-w-2xl overflow-hidden">
           <DialogHeader>
             <DialogTitle>Register a project</DialogTitle>
-            <DialogDescription>
-              Claim the development first.
-            </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleSubmit} className="flex min-h-0 flex-col">
-            <DialogBody className="max-h-[calc(92vh-11rem)] space-y-5 overflow-y-auto">
-              <fieldset className="space-y-4">
-                <legend className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Who and what
-                </legend>
+            <DialogBody className="max-h-[calc(92vh-9rem)] space-y-4 overflow-y-auto">
+              <FormSection
+                title="Who and what"
+                summary={title.trim() || null}
+                open={sectionOpen.who}
+                onOpenChange={(next) => toggleSection('who', next)}
+              >
 
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
@@ -189,23 +246,52 @@ export function RegisterProjectDialog({
                   <Label htmlFor="project-title">
                     Project title <span className="text-destructive">*</span>
                   </Label>
-                  <Input
-                    id="project-title"
-                    value={title}
-                    onChange={(event) => setTitle(event.target.value)}
-                    placeholder="e.g. Setia Alam Phase 3B"
-                    autoComplete="off"
-                    required
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id="project-title"
+                      value={title}
+                      onChange={(event) => {
+                        setTitle(event.target.value);
+                        setCheckedTitle('');
+                        if (!event.target.value.trim()) setTitleSettled(false);
+                      }}
+                      onBlur={() => setTitleSettled(title.trim().length > 0)}
+                      placeholder="e.g. Setia Alam Phase 3B"
+                      autoComplete="off"
+                      required
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="shrink-0"
+                      disabled={!checkable || clash.isFetching}
+                      onClick={() => void handleCheck()}
+                    >
+                      {clash.isFetching && hasChecked && (
+                        <Loader2 className="size-4 animate-spin" aria-hidden />
+                      )}
+                      Check
+                    </Button>
+                  </div>
+                  {hasChecked &&
+                    clash.isSuccess &&
+                    !clash.isFetching &&
+                    clash.data.candidates.length === 0 && (
+                      <p className="text-xs text-muted-foreground" aria-live="polite">
+                        No existing project matches this title.
+                      </p>
+                    )}
                 </div>
 
-                <ClashWarningPanel
-                  candidates={clash.data?.candidates ?? []}
-                  isLoading={clash.isFetching}
-                  developerChosen={Boolean(developerId)}
-                  onRequestJoin={(candidate) => setJoinTarget({ candidate, kind: 'join' })}
-                  onDispute={(candidate) => setJoinTarget({ candidate, kind: 'dispute' })}
-                />
+                {hasChecked && (
+                  <ClashWarningPanel
+                    candidates={clash.data?.candidates ?? []}
+                    isLoading={clash.isFetching}
+                    developerChosen={Boolean(developerId)}
+                    onRequestJoin={(candidate) => setJoinTarget({ candidate, kind: 'join' })}
+                    onDispute={(candidate) => setJoinTarget({ candidate, kind: 'dispute' })}
+                  />
+                )}
 
                 {typeId && (
                   <div className="space-y-1.5">
@@ -227,12 +313,13 @@ export function RegisterProjectDialog({
                     />
                   </div>
                 )}
-              </fieldset>
+              </FormSection>
 
-              <fieldset className="space-y-4 border-t border-border pt-5">
-                <legend className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Details (optional)
-                </legend>
+              <FormSection
+                title="Details (optional)"
+                open={sectionOpen.details}
+                onOpenChange={(next) => toggleSection('details', next)}
+              >
 
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
@@ -305,9 +392,6 @@ export function RegisterProjectDialog({
                         value={launchDate}
                         onChange={(event) => setLaunchDate(event.target.value)}
                       />
-                      <p className="text-xs text-muted-foreground">
-                        Expected delivery is derived from this plus the configured lag.
-                      </p>
                     </div>
                   ) : (
                     // One range, one control: two date fields let "to" land before
@@ -326,7 +410,7 @@ export function RegisterProjectDialog({
                     </div>
                   )}
                 </div>
-              </fieldset>
+              </FormSection>
             </DialogBody>
 
             <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">

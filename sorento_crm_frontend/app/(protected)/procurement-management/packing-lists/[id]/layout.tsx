@@ -141,11 +141,10 @@ function PackingListToolbar({ id }: { id: string }) {
             label="Back to packing lists"
           />
         }
-      >
-        {/* Read-only metadata belongs in the header, never inside a tab body: it has no
-            edit counterpart, and putting it in a tab would make view and edit differ. */}
-        <p className="text-sm text-muted-foreground break-words">{subtitle}</p>
-      </PageHeader>
+      />
+      {/* Read-only record metadata: under the header (which has no subtitle slot, PR
+          #1336), never inside a tab body, so view and edit stay the same. */}
+      <p className="text-sm text-muted-foreground break-words">{subtitle}</p>
 
       {/* The record's own actions: pager, gear, primary (D6). They sit under the
           toolbar rather than on it, and wrap under the title at 375. */}

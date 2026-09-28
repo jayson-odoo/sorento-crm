@@ -171,7 +171,6 @@ export default function AttachmentTypesList() {
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       isPlaceholderData={isPlaceholderData}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

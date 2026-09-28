@@ -288,7 +288,6 @@ export default function RespondContactsOutboundList() {
             : 'No Respond.io contacts yet. They appear here once a contact messages us or is synced from Respond.io.'
         }
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">
