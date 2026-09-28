@@ -268,13 +268,47 @@ def void_tracker(db: Session, tracking_id: str, reason: str) -> None:
     _write_event(db, tracker, "voided", reason)
 
 
+def _extension_governs_clock(db: Session, tracker) -> bool:
+    """Was this stage's clock last set by an extension (#1326)?
+
+    True when the stage has an `extend` event and no escalation came after the latest
+    one. An escalation writes a fresh tier clock, so an older extension no longer says
+    anything about the due date.
+    """
+    from app.models.sla import ConversationSLAEventLog
+
+    logs = ConversationSLAEventLog
+    latest_extend = (
+        db.query(logs)
+        .filter(logs.sla_tracking_id == str(tracker.id), logs.event_type == "extend")
+        .order_by(logs.event_at.desc())
+        .first()
+    )
+    if latest_extend is None:
+        return False
+    escalated_since = (
+        db.query(logs.id)
+        .filter(
+            logs.sla_tracking_id == str(tracker.id),
+            logs.event_type == "escalation",
+            logs.event_at > latest_extend.event_at,
+        )
+        .first()
+    )
+    return escalated_since is None
+
+
 def reopen_tracker(db: Session, tracking_id: str) -> None:
     """Put the previous stage back with the person who held it (AC-PGE-3/4).
 
     The clock restarts from now against the stage's own hours - the original due date
-    is meaningless once time has passed. `escalated_at` is deliberately left alone: a
-    stage that was escalated comes back escalated and stays locked, because the handling
-    lock keys on that column and not on tier.
+    is meaningless once time has passed. Except when the stage was EXTENDED (#1326):
+    somebody deliberately set that due date, so the undo gives the stage back the clock
+    it had immediately before the action. Resolving a stage never touches its clock
+    columns, so the resolved row still holds exactly that clock and is simply left
+    alone. `escalated_at` is deliberately left alone: a stage that was escalated comes
+    back escalated and stays locked, because the handling lock keys on that column and
+    not on tier.
     """
     from app.models.sla import ConversationSLATracking
     from app.services.form_sla_service import _working_due_naive
@@ -290,6 +324,11 @@ def reopen_tracker(db: Session, tracking_id: str) -> None:
     tracker.is_resolved = False
     tracker.resolved_at = None
     tracker.resolved_by = None
+
+    if _extension_governs_clock(db, tracker):
+        db.commit()
+        _write_event(db, tracker, "reopened", "restored by undo, extended deadline kept")
+        return
 
     # Recompute both clocks from the policy tier's HOURS. `due_at_resolution` is a
     # timestamp, not a duration - reading it as one would set the due date to an epoch

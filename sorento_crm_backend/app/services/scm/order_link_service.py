@@ -734,7 +734,20 @@ def book_so_numbers_by_ref(db: Session, refs: Sequence[str]) -> dict[str, str]:
     (187 values repeat, legacy bare line numbers from an old import) and the line-level
     version needed a deterministic ORDER BY to be total at all.
     """
-    out: dict[str, str] = {}
+    return {ref: number for ref, (_id, number) in book_sales_orders_by_ref(db, refs).items()}
+
+
+def book_sales_orders_by_ref(
+    db: Session, refs: Sequence[str]
+) -> dict[str, tuple[str, str]]:
+    """`from_so_line_ref` -> `(sales_orders.id, so_number)`, for the refs that resolve.
+
+    `book_so_numbers_by_ref`'s own read, returning the order's id beside its number, so the
+    Stock Debt view (R42, 28 Sep 2026) pins a PO line to the SAME sales order the S/O column
+    prints - one resolution rule, read one way on both screens. Everything that docstring
+    says about the document-level join, the split and company scope holds here.
+    """
+    out: dict[str, tuple[str, str]] = {}
     # full ref -> its document key, and the reverse, so one query answers for every ref.
     doc_key_of: dict[str, str] = {}
     for raw in refs:
@@ -752,15 +765,17 @@ def book_so_numbers_by_ref(db: Session, refs: Sequence[str]) -> dict[str, str]:
         return out
 
     rows = (
-        db.query(SalesOrder.source_ref, SalesOrder.so_number)
+        db.query(SalesOrder.source_ref, SalesOrder.id, SalesOrder.so_number)
         .filter(SalesOrder.source_ref.in_(sorted(set(doc_key_of.values()))))
         .all()
     )
-    number_of_doc = {
-        str(source_ref): so_number for source_ref, so_number in rows if so_number
+    order_of_doc = {
+        str(source_ref): (str(order_id), so_number)
+        for source_ref, order_id, so_number in rows
+        if so_number
     }
     for ref, doc_key in doc_key_of.items():
-        found = number_of_doc.get(doc_key)
+        found = order_of_doc.get(doc_key)
         if found:
             out[ref] = found
     return out

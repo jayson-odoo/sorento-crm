@@ -24,6 +24,17 @@ vi.mock('@/services/contactImpersonationService', () => ({
   startContactImpersonation: vi.fn(),
 }));
 
+// Identity S3: the row now renders the Add user modal (closed) for the "Create
+// user" action, which reads the session and the caller's permissions even
+// while closed - neither is under test here.
+vi.mock('next-auth/react', () => ({
+  useSession: () => ({ data: { user: { email: 'admin@zzt.test' } } }),
+}));
+vi.mock('@/lib/is-superadmin', () => ({ isSuperadminUser: () => false }));
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => false,
+}));
+
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));

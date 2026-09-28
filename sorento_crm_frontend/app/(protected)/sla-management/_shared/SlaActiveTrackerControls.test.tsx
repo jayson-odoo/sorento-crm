@@ -84,4 +84,62 @@ describe('SlaActiveTrackerControls - extension banner', () => {
     expect(screen.getByText(/SLA deadline extended/)).toBeInTheDocument();
     expect(screen.getByText(/parts ETA slipped/)).toBeInTheDocument();
   });
+
+  // #1326, CMP26-0288: the extension banner said "until 06/11 · tier 3 · assigned to
+  // CK Lee" while the stage had been escalated off a restarted clock. It must state
+  // the live clock, and the tier and assignee recorded when the extension was made.
+  it('reads the live due date, and the tier and assignee at the time of the extension', () => {
+    render(
+      <SlaActiveTrackerControls
+        activeTracker={tracker({
+          current_tier: 3,
+          assigned_user_name: 'CK Lee',
+          due_at_resolution: new Date('2026-11-11T00:00:00Z'),
+          event_logs: [
+            evt({
+              event_at: new Date('2026-09-22T02:23:00Z'),
+              reason: 'Technician to attend and check',
+              to_tier: 1,
+              assigned_user_name: 'Magen',
+              // A stale value on the event must not win over the live clock.
+              due_at: new Date('2026-11-06T00:00:00Z'),
+            }),
+          ],
+        })}
+      />,
+    );
+    const banner = screen.getByText(/SLA deadline extended/);
+    expect(banner).toHaveTextContent(/11\/11\/2026/);
+    expect(banner).not.toHaveTextContent(/06\/11\/2026/);
+    expect(banner).toHaveTextContent(/tier 1/);
+    expect(banner).not.toHaveTextContent(/tier 3/);
+    expect(banner).toHaveTextContent(/Magen/);
+    expect(banner).not.toHaveTextContent(/CK Lee/);
+  });
+
+  it('hides an extension that a later escalation replaced', () => {
+    render(
+      <SlaActiveTrackerControls
+        activeTracker={tracker({
+          current_tier: 3,
+          escalation_reason: 'Ziv did not approve or reject by 28 Sep 2026, 11:44 AM',
+          event_logs: [
+            evt({
+              event_at: new Date('2026-09-22T02:23:00Z'),
+              reason: 'Technician to attend and check',
+              to_tier: 1,
+            }),
+            evt({
+              event_type: 'escalation',
+              event_at: new Date('2026-09-25T03:44:00Z'),
+              from_tier: 1,
+              to_tier: 2,
+            }),
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText(/SLA escalated/)).toBeInTheDocument();
+    expect(screen.queryByText(/SLA deadline extended/)).not.toBeInTheDocument();
+  });
 });

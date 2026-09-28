@@ -6,7 +6,8 @@ SLA extension, rejection) shows WHO did the thing and links their name to
 person id into those digits - no per-feature phone lookup.
 
 Phone digits come bare (e.g. ``60123456789``, no ``+``) from
-``respond_contacts.phone_number`` via ``normalize_msisdn`` / ``resolve_user_respond_contact``,
+``respond_contacts.phone_number`` of the user's LINKED contact (``resolve_user_respond_contact``;
+no link, no phone),
 which is exactly what ``wa.me/{digits}`` wants. Never re-add ``+``.
 
 All helpers are best-effort: a missing / garbage id (or no linked contact) returns

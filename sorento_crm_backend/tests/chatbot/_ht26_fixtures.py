@@ -9,6 +9,7 @@ SRTKT1631SS (T12 to T14) and the ELP3753 miss (T15, T16). Every uuid is syntheti
 """
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 #: T1: "check stock srtwc286" placed these ten, SRTWC286-SH first.
@@ -27,7 +28,10 @@ SRTWC286_FAMILY: list[str] = [
 
 
 def uuid_of(code: str) -> str:
-    return f"u-{code.lower()}"
+    # A real uuid, deterministic per code: #1262 slice 2 (F1c) lets only a real uuid
+    # ride a carried entity into the fetch (`turn_runtime._spec_row`), as every
+    # production id is. The earlier "u-<code>" form was read as no id at all.
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"zzt-ht26/{code.lower()}"))
 
 
 def row(code: str, *, needs_quantity: bool = True, requested_qty: Any = None, branch=None):
