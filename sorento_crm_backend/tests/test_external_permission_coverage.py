@@ -84,6 +84,9 @@ class TestCoverage:
             READ_PERMISSIONS,
         )
         from app.services.document_ingest_service import DOCUMENT_ENTITIES
+        from app.services.finance.billing_document_ingest_service import (
+            BILLING_DOCUMENT_ENTITIES,
+        )
         from app.services.master_ingest_service import ENTITY_SPECS
         from app.services.shipping_order_ingest_service import SHIPPING_ORDER_ENTITIES
         from app.services.stock_balance_ingest_service import STOCK_BALANCE_ENTITIES
@@ -91,12 +94,14 @@ class TestCoverage:
         # Masters, documents, shipping orders AND stock balances: one route
         # serves all four since group A3/S3/SR5, so a map that covers only
         # some of the registries leaves the rest reachable-but-refused, which
-        # reads as a broken feature rather than a protected one.
+        # reads as a broken feature rather than a protected one. Billing documents
+        # (finance S0, contract 2.6) are the fifth registry on the same route.
         served = (
             set(ENTITY_SPECS)
             | set(DOCUMENT_ENTITIES)
             | set(SHIPPING_ORDER_ENTITIES)
             | set(STOCK_BALANCE_ENTITIES)
+            | set(BILLING_DOCUMENT_ENTITIES)
         )
         assert set(INGEST_PERMISSIONS) == served
         assert set(READ_PERMISSIONS) == served
