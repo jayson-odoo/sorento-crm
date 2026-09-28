@@ -47,6 +47,7 @@ from app.services.chatbot.turn.pending import (
     Pending,
     ask as pending_ask,
     is_roster,
+    offered_companies,
     with_answered_positions,
 )
 from app.services.chatbot.turn.plan import FetchSpec, Plan, Trace
@@ -149,6 +150,42 @@ def _names_a_subject(verdict: dict[str, Any]) -> bool:
     )
 
 
+def _named_teams(verdict: dict[str, Any]) -> list[str]:
+    """The teams an escalate-to-a-named-team message named (#865 round 5), as
+    `turn_runtime.with_named_team_escalation` stamped them; `[]` for any other turn."""
+    teams = (verdict.get("escalation") or {}).get("named_teams")
+    return [t for t in teams if isinstance(t, str) and t] if isinstance(teams, list) else []
+
+
+def _named_team_is_a_new_request(
+    verdict: dict[str, Any], pending: Pending | None, trace: Trace
+) -> dict[str, Any]:
+    """An escalate-to-a-named-team message never accepts an offer made for another team
+    (#706, H69: "a pending escalation offer never consumes a request for a DIFFERENT
+    team"), nor the escalation's own product did-you-mean, which only a number answers
+    (#865 round 5).
+
+    The prompt tells the parser an escalate word over an offer IS agreement
+    (`is_affirmative: true`), so without this "escalate to marketing team MWC-SC8609-PP"
+    over the did-you-mean accepted it with no product picked. An offer FOR one of the
+    named teams is still accepted as before, so its carried agent and brand (#1108) hold.
+    """
+    named = _named_teams(verdict)
+    if not named or pending is None or pending.kind not in ESCALATION_OFFER_KINDS:
+        return verdict
+    offered = {pending.team} | {(o.get("payload") or {}).get("team") for o in pending.options}
+    product_pick = any(o.get("entity_type") == "product" for o in pending.options)
+    if offered & set(named) and not product_pick:
+        return verdict
+    escalation = verdict.get("escalation") or {}
+    trace.rules_fired.append("named_team_is_a_new_request")
+    return {
+        **verdict,
+        "is_affirmative": None if verdict.get("is_affirmative") is True else verdict.get("is_affirmative"),
+        "escalation": {**escalation, "is_escalation_confirmation": False},
+    }
+
+
 def _confirmation_defused(verdict: dict[str, Any], trace: Trace) -> dict[str, Any]:
     """A decisive intent plus an entity this message named outranks the parser's own
     `is_escalation_confirmation` (owner report, 8 Sep 2026).
@@ -167,6 +204,10 @@ def _confirmation_defused(verdict: dict[str, Any], trace: Trace) -> dict[str, An
     """
     escalation = verdict.get("escalation") or {}
     if escalation.get("is_escalation_confirmation") is not True:
+        return verdict
+    if _named_teams(verdict):
+        # #865 round 5: an escalate word plus a named team is an escalation whatever it
+        # names beside it; the product it names is the escalation's focus, not a question.
         return verdict
     decisive = verdict.get("intent_hint") or verdict.get("domain_hint")
     if not decisive or not _names_a_subject(verdict):
@@ -200,6 +241,9 @@ def _help_request_is_an_ask(verdict: dict[str, Any]) -> bool:
         and not verdict.get("intent_hint")
         and not verdict.get("domain_hint")
         and _names_a_subject(verdict)
+        # #865 round 5: "escalate to marketing team MWC-SC8609-PP water closet" names a
+        # product and no domain, and it is still a request for the team it named.
+        and not _named_teams(verdict)
     )
 
 
@@ -271,6 +315,14 @@ def _answer_offer(pending: Pending, decision: Decision, focus: Focus, trace: Tra
             # for a roster.
             return None
 
+    products = [o for o in pending.options if o.get("entity_type") == "product"]
+    if products and picked is None:
+        # #865 round 5: the escalation's product did-you-mean is answered by a number; a
+        # bare yes picks only when there was one product to pick.
+        if len(products) != 1:
+            return None
+        picked = products[0]
+
     option_payload = (picked.get("payload") or {}) if picked else {}
     if option_payload.get("hold") is True:
         # Contract 43: "No it's okay" is on the roster precisely so it can be picked,
@@ -300,7 +352,34 @@ def _answer_offer(pending: Pending, decision: Decision, focus: Focus, trace: Tra
     # no position, so this stays `None` and the pool travels instead - which is exactly
     # what makes the clarify ask happen rather than a blind assign.
     trace.company = option_payload.get("company")
+    product_code = option_payload.get("product_code")
+    if isinstance(product_code, str) and product_code:
+        # #865 round 5: the picked product is what the escalation is about, so its brand
+        # and company are what the draw reads (`lanes/escalation._apply_focus_brand`).
+        _set_kind_field(
+            focus,
+            "product",
+            [{"raw": product_code, "hint": "product", "canonical_code": product_code, "current_message": True, "confident": True}],
+        )
+        trace.rules_fired.append("escalation_product_picked")
     return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
+
+
+def _holds_the_offer(pending: Pending, decision: Decision, verdict: dict[str, Any]) -> bool:
+    """Is this reply junk over an open multi-company escalation offer (#865 round 6, R5)?
+
+    n8n's Tier 4 (`output_exchange` rev-4, `offer_hold`): no pick of any kind, no yes or
+    no, and not a new question - no domain, no business or clarification reading, no
+    request for help, nothing named. Only a pool of two or more companies is held (rev-4
+    (E)): a single-company offer has nothing left to clarify.
+    """
+    if decision.kind != CARRY or len(offered_companies(pending)) < 2:
+        return False
+    return not (
+        verdict.get("domain_hint")
+        or verdict.get("message_type") in ("business_query", "clarification", "request_for_help")
+        or verdict.get("entities")
+    )
 
 
 def _drop_question_subject(focus: Focus, pending: Pending) -> None:
@@ -560,7 +639,7 @@ def _answer_outstanding(
     return focus, carried, None, True
 
 
-def _answer_pending(state: State, decision: Decision, trace: Trace):
+def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dict[str, Any] | None = None):
     # Returns (focus_after, pending_after, short_circuit_plan, domain_locked).
     #
     # Every branch here is an EFFECT of the one Decision `decide()` already made; not one
@@ -810,6 +889,16 @@ def _answer_pending(state: State, decision: Decision, trace: Trace):
         trace.rules_fired.append("answer_pending_own_entities")
         return focus, pending, None, False
 
+    if _holds_the_offer(pending, decision, verdict or {}):
+        # #865 round 6 (R5), n8n `offer_hold` (UAC M8d): nothing in this reply answers
+        # an offer that showed MORE THAN ONE company, and it is no question of its own
+        # either. Assigning now would draw from a pool nobody chose, and running the
+        # reply as small talk would drop the offer, so the company clarify is asked again
+        # and the offer stays open exactly as it was.
+        trace.rules_fired.append("offer_hold")
+        trace.lane = "offer_hold"
+        return focus, pending, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
+
     # NOTHING matched the open question: no position, no offered label, no broaden, no
     # yes and no no. Owner ruling, hand pass 3 - the question stays open exactly as it
     # was and the message is planned as itself, whatever it is; the tail keeps the
@@ -842,7 +931,16 @@ def _focus_rules(
         focus = Focus(**kept)
         trace.rules_fired.append("reset_on_topic")
 
-    confident_entities = [e for e in entities if e.get("confident") is not False]
+    # #865 round 5 (R2): on an escalation to a named team, a product code the parser is
+    # unsure of is still what the escalation is about - the lane asks the did-you-mean for
+    # it (`lanes/escalation._product_clarify`) - so it reaches the focus.
+    escalating = bool(_named_teams(verdict))
+    confident_entities = [
+        e
+        for e in entities
+        if e.get("confident") is not False
+        or (escalating and e.get("hint") == "product" and e.get("current_message") is True)
+    ]
     by_kind: dict[str, list[dict[str, Any]]] = {}
     for e in confident_entities:
         hint = e.get("hint")
@@ -1065,7 +1163,11 @@ def _reconcile_step(
     result = apply_reconciliation(entities, resolved)
     trace.reconciled = result.reconciled
 
-    if result.kind_pick_options is not None:
+    if result.kind_pick_options is not None and _named_teams(verdict):
+        # #865 round 5: "water closet (promotion) or water closet (attachment_type)?" is a
+        # question about what to FETCH, and an escalation to a named team fetches nothing.
+        trace.rules_fired.append("named_team_asks_no_kind")
+    elif result.kind_pick_options is not None:
         # #1262 slice 8 (F1b siblings), owner ruling 6: a SECOND (or third...)
         # ambiguous token in the same message queues on this pick's own payload,
         # asked in turn once this one is answered (`_answer_pending`'s kind_pick
@@ -2457,6 +2559,7 @@ def apply(
     # The same shape, one line down: a hallucinated escalation confirmation over a message
     # that names its own question (owner report, 8 Sep 2026). Decided here so the three
     # readers of that flag cannot disagree about one turn.
+    verdict = _named_team_is_a_new_request(verdict, state.pending, trace)
     verdict = _confirmation_defused(verdict, trace)
 
     # AC-1592 test triage: the old `head/output_exchange.py::_assert_emission` named
@@ -2528,7 +2631,7 @@ def apply(
         return replace(state, focus=focus), reconcile_short_circuit
 
     focus_after_pending, pending_after, pending_short_circuit, domain_locked = _answer_pending(
-        state, decision, trace
+        state, decision, trace, verdict
     )
     if pending_short_circuit is not None:
         # #1262 slice 8 (F1b siblings): `focus_after_pending` carries this branch's
@@ -2544,6 +2647,9 @@ def apply(
         # throw the task step's own answer away with the rest of the turn. The task
         # step has already decided; this carries that decision, and nothing else about
         # the turn.
+        # #865 round 5 (main) reads the product picked off the escalation's
+        # did-you-mean off this turn's focus; `focus_after_pending` already carries it,
+        # alongside #1262 slice 8's queued kind_pick sibling.
         closed_focus = focus_after_pending
         if task_outcome.tasks != tuple(state.focus.tasks or ()):
             closed_focus = replace(focus_after_pending, tasks=task_outcome.tasks)
@@ -2771,6 +2877,18 @@ def apply(
         ),
     )
     _exact_code_when_a_quantity_is_named(plan, verdict, trace)
+
+    if _named_teams(verdict) and trace.lane == "escalation":
+        # #865 round 5 (R1): an escalate word plus a named team is the escalation lane's,
+        # whatever product words ride along. They are its focus (already on `focus`), not
+        # a question: no fetch, no roster, no did-you-mean from the business lane (the
+        # escalation asks its own, `lanes/escalation._product_clarify`), and any offer
+        # left open is closed, because this message is the customer's own answer to where
+        # it goes.
+        plan.fetch = []
+        plan.ask = None
+        new_state.pending = None
+        trace.rules_fired.append("named_team_escalation_plans_nothing")
 
     if task_locked and plan.ask is None:
         # Ported from PR #1118 (not merged): the narrower built a spec for the task's

@@ -123,6 +123,14 @@ function MessageBubble({
             ) : null}
           </div>
         ) : null}
+        {!isUser && message.routingLine ? (
+          <p
+            className="mt-1 break-words text-xs text-muted-foreground"
+            data-testid="chatbot-console-routing-line"
+          >
+            {message.routingLine}
+          </p>
+        ) : null}
         {message.quickReplies && message.quickReplies.length > 0 ? (
           <div className="mt-2 flex flex-wrap gap-2">
             {message.quickReplies.map((chip, index) => (

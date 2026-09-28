@@ -34,7 +34,13 @@ from sqlalchemy.orm import Session
 from app.services.chatbot import jsc
 from app.services.chatbot.contracts import DEFAULT_SUGGESTED_AGENT, DEFAULT_SUGGESTED_TEAM
 from app.services.chatbot.turn.decide import picked_positions
-from app.services.chatbot.turn.pending import OFFER_KINDS, Pending, from_wire, tick as tick_pending
+from app.services.chatbot.turn.pending import (
+    OFFER_KINDS,
+    Pending,
+    from_wire,
+    offered_companies,
+    tick as tick_pending,
+)
 from app.services.chatbot.turn.plan import FetchSpec
 from app.services.chatbot.turn import policy_rows
 from app.services.chatbot.turn.reconcile import hits_for_token
@@ -96,6 +102,11 @@ class TurnContext:
     # `turn/compose.py::compose` so a freshly minted `team_pick`/roster re-arm can
     # stamp `payload["brand_code"]` beside the agent it already stamps.
     routing_brand: str | None = None
+    # #865 (fix round 2, N2): the focus product's brand, as a thunk, for a turn whose
+    # resolver never ran (a SETTLED focus product is not re-resolved). A thunk so the
+    # products x brands read runs only when compose actually mints a `team_pick`; read
+    # through `turn/compose.py::_routing_brand`, never directly.
+    focus_brand: Callable[[], str | None] | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -632,11 +643,12 @@ def _prior_suggested_team(session_block: Any) -> str | None:
         return None
 
 
-#: The two offer kinds whose options can name a COMPANY - the escalate offer this engine
-#: mints itself (`answer_bridge`) and the company clarify the escalation lane asks back
-#: (`engine._question_offered`). `member_offer`'s options name a PERSON, so it carries no
-#: roster of its own and is not listed.
-_COMPANY_OFFER_KINDS: frozenset[str] = frozenset({"team_pick", "company_pick"})
+#: The offer kinds that can name a COMPANY - the escalate offer this engine mints itself
+#: (`answer_bridge`), the company clarify the escalation lane asks back
+#: (`engine._question_offered`), and (#865 round 6) the CS member picker, whose options
+#: name a PERSON but whose payload names the companies whose rosters it printed
+#: (`turn.pending.offered_companies`).
+_COMPANY_OFFER_KINDS: frozenset[str] = frozenset({"team_pick", "company_pick", "member_offer"})
 
 
 def escalation_roster_plan(
@@ -679,23 +691,9 @@ def escalation_roster_plan(
         or pending.kind not in _COMPANY_OFFER_KINDS
     ):
         return None
-    plan: list[dict[str, Any]] = []
-    for opt in pending.options:
-        # Mapping guard (reviewer N-b): a persisted option that is not a dict must not
-        # take the turn down on its way through a roster read.
-        payload = opt.get("payload") if isinstance(opt, Mapping) else None
-        payload = payload if isinstance(payload, Mapping) else {}
-        company = payload.get("company")
-        if not company:
-            continue
-        plan.append(
-            {
-                "plan_idx": len(plan),
-                "company_id": payload.get("company_id") or None,
-                "company_name": company,
-                "brand_code": payload.get("brand_code") or None,
-            }
-        )
+    # One reader of the offered pool (`offered_companies`), which also carries reviewer
+    # N-b's Mapping guard: a persisted option that is not a dict never takes the turn down.
+    plan = [{"plan_idx": i, **row} for i, row in enumerate(offered_companies(pending))]
     return plan or None
 
 
@@ -843,6 +841,183 @@ def _accepted_pending_brand(pending: Pending | None, verdict: Mapping[str, Any])
     / `company_pick` already use. See `_accepted_pending_field`'s own docstring for
     the shared gate/accept-check/fall-through."""
     return _accepted_pending_field(pending, verdict, "brand_code")
+
+
+#: The domains whose help requests are answered rather than escalated (contract 21, 22):
+#: the same pair `turn/apply._HELP_EXEMPT_DOMAINS` keeps.
+_NAMED_TEAM_EXEMPT_DOMAINS = frozenset({"portal_link", "ideate"})
+
+
+def with_named_team_escalation(verdict: dict[str, Any]) -> dict[str, Any]:
+    """An escalate word plus a named team is a help request, whatever else the message
+    carries (#865 round 5, R1).
+
+    The parser prompt's MESSAGE TYPE rule 1 already says it: asking for a specific team or
+    to escalate is `request_for_help`, and it "takes priority over business_query,
+    clarification, and casual ... even if they also mention a product or order". The
+    owner's "pelase escalate to marketing team MWc-SC8609-)PP water closet" came back a
+    master_products business query and was answered with a spec sheet; its `user_goal`
+    still read "escalate ... to the marketing team". This makes the prompt's rule hold on
+    the verdict, from the parser's own reading of the message
+    (`lanes/escalation.asks_for_a_named_team`, the reader round 4's `_named_teams` uses;
+    never the raw text, D11).
+
+    Stamps `escalation.named_teams`, the catalogue teams the customer named, the one
+    structured fact `turn/apply.py` acts on: such a turn plans no fetch, asks no narrowing
+    or kind question, and accepts no open offer made for a different team (an explicit
+    team beats a pending offer, #706). Its product words stay on the verdict as the
+    escalation's focus.
+    """
+    from app.services.chatbot.lanes.escalation import _named_teams, asks_for_a_named_team
+
+    if verdict.get("domain_hint") in _NAMED_TEAM_EXEMPT_DOMAINS or not asks_for_a_named_team(verdict):
+        return verdict
+    escalation = verdict.get("escalation") if isinstance(verdict.get("escalation"), dict) else {}
+    return {
+        **verdict,
+        "message_type": "request_for_help",
+        "escalation": {**escalation, "named_teams": _named_teams(verdict)},
+    }
+
+
+# n8n `output_exchange` rev-5 (`_coFillers` / `_coNegators`), byte-identical word lists:
+# the company-pick tier strips confirmation and request words before matching, and a
+# negator anywhere refuses the pick ("not mocha" is never a pick for Mocha).
+_CO_FILLERS = frozenset(
+    "yes ya yeah yep yup ok okay okie oki k sure please pls plz pl kindly team the a an to for "
+    "of on at in route assign escalate escalation pass send forward transfer connect pick "
+    "choose select prefer handle help one lah la leh lor ah go with it that this then can "
+    "could would like want need you me my us i ill id company side instead guys ppl people "
+    "staff department dept group thanks thank ty tq".split()
+)
+_CO_NEGATORS = frozenset(
+    "no not nope nah never dont neither nor none without except cancel stop".split()
+)
+# (C) a product-code-like token ("MUB6201", "MWCX7608-SH-S10") refuses the pick.
+_CO_PRODUCT_TOKEN = re.compile(r"^[a-z]{2,}[a-z0-9-]*\d", re.IGNORECASE)
+
+
+def _co_token(word: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", word.lower())
+
+
+def company_pick(verdict: Mapping[str, Any], pending: Pending | None, message: Any) -> str | None:
+    """Which OFFERED company this reply names, or None (#865 round 6, R3).
+
+    The port of the n8n parser fork's `_coCompanyPick` (sorento-crm-n8n PR #23, rev-5),
+    which the #952 re-architecture deleted with `head/output_exchange` and never
+    replaced, so a reply of "mocha" or "srt" to a two-company offer reached routing only
+    when the model happened to fill `escalation.company_pick`. The rules, as n8n has
+    them:
+
+    * (A) the pool is the companies the offer SHOWED (`offered_companies`), never the
+      union: "yes mocha" over a Sorento-only offer picks nothing.
+    * (B) a company matches by name, code or alias (`lanes/escalation.CO_ALIASES`), on a
+      word boundary, and exactly one company may match.
+    * (C) the reply counts only when it is short (up to four words, and a remainder of
+      two or more words also needs no entity of its own and no domain question), or
+      longer with at most six words left once the filler words are stripped and no
+      entity or domain question of its own; a product-code-like token refuses it.
+    * (D) a negator anywhere ("not mocha", "no") refuses it.
+    * The parser's own `escalation.company_pick` is the semantic fallback, accepted only
+      when it names exactly one offered company, the reply is not a bare confirmation
+      (it strips to nothing), carries no negator and is not a domain question.
+
+    `message` is the customer's own text: this tier reads it, as n8n's does
+    (D11-reproduced: `output_exchange` `_coCompanyPick`, `latest_user_message`).
+    """
+    from app.services.chatbot.lanes.escalation import CO_ALIASES
+
+    pool: dict[str, set[str]] = {}
+    for row in offered_companies(pending):
+        name = str(row["company_name"])
+        key = name.lower().strip()
+        keys = pool.setdefault(name, {key})
+        keys.update(CO_ALIASES.get(key, []))
+    if not pool:
+        return None
+
+    raw_reply = re.split(r"\s*reply to:", str(message or ""), flags=re.IGNORECASE)[0].strip()
+    words = raw_reply.split()
+    kept = [w for w in words if _co_token(w) not in _CO_FILLERS]
+    has_negator = any(_co_token(w) in _CO_NEGATORS for w in words)
+    product_token = any(_CO_PRODUCT_TOKEN.match(re.sub(r"[^a-z0-9-]", "", w, flags=re.IGNORECASE)) for w in words)
+    current_entity = any(
+        isinstance(e, Mapping) and e.get("current_message") is True for e in (verdict.get("entities") or [])
+    )
+    domain_question = (
+        bool(verdict.get("domain_hint")) or verdict.get("message_type") in ("business_query", "clarification")
+    ) and verdict.get("is_affirmative") is not True
+    short_ok = 0 < len(words) <= 4 and (len(kept) < 2 or not (current_entity or domain_question))
+    long_ok = len(words) > 4 and 0 < len(kept) <= 6 and not current_entity and not domain_question
+
+    def hits(texts: list[str]) -> str | None:
+        found = {
+            name
+            for name, keys in pool.items()
+            if any(re.search(rf"(^|[^a-z0-9]){re.escape(k)}([^a-z0-9]|$)", t) for k in keys for t in texts)
+        }
+        return next(iter(found)) if len(found) == 1 else None
+
+    if has_negator:
+        return None
+    if not product_token:
+        texts = [" ".join(kept).lower()] if (short_ok or long_ok) and kept else []
+        mention = verdict.get("person_mention")
+        if isinstance(mention, str) and mention.strip():
+            texts.append(mention.strip().lower())
+        picked = hits(texts) if texts else None
+        if picked is not None:
+            return picked
+    if not kept or domain_question:
+        return None
+    raw_pick = (verdict.get("escalation") or {}).get("company_pick") if isinstance(verdict.get("escalation"), Mapping) else None
+    if not isinstance(raw_pick, str) or not raw_pick.strip():
+        return None
+    wanted = raw_pick.lower().strip()
+    direct = [name for name, keys in pool.items() if wanted in keys]
+    if len(direct) == 1:
+        return direct[0]
+    return None if direct else hits([wanted])
+
+
+def with_company_pick(verdict: dict[str, Any], *, pending: Pending | None, message: Any) -> dict[str, Any]:
+    """The verdict with the company this reply picked off an open escalation offer
+    (#865 round 6, R3), or with the parser's unvalidated pick removed.
+
+    A pick IS the acceptance (n8n Tier 2.5: `{is_escalation_confirmation: true,
+    company_pick}`), so `apply()` accepts the offer and `escalation_context` routes by
+    the picked row. The parser's own `company_pick` survives only when it validates
+    against the offered pool; over an offer that names no company it is left untouched.
+    A numbered pick, or a request for a team the offer was not made for (#706), is not
+    this tier's to read.
+    """
+    offered = offered_companies(pending)
+    if not offered or verdict.get("reference_positions"):
+        return verdict
+    escalation = dict(verdict.get("escalation") or {})
+    named = escalation.get("named_teams")
+    if named and pending is not None and pending.team not in named:
+        return verdict
+    picked = company_pick(verdict, pending, message)
+    if picked is None:
+        if escalation.get("company_pick"):
+            escalation["company_pick"] = None
+            return {**verdict, "escalation": escalation}
+        return verdict
+    return {
+        **verdict,
+        "domain_hint": None,
+        "entities": [],
+        "is_affirmative": True,
+        "escalation": {
+            **escalation,
+            "is_escalation_confirmation": True,
+            "escalation_declined": False,
+            "company_pick": picked,
+            "company_pick_by": "reply",
+        },
+    }
 
 
 def with_routing_agent_default(
