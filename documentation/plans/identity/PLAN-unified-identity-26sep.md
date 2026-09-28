@@ -19,7 +19,8 @@ chains on main's single head `sales_0005_commission_tiers`. S0 merged to main (#
 PR #1307 (branch `claude/identity-s1-phone-signin-w6akca`, full track); the reviewer pass at 56daafae
 (needs work) is addressed by S1 fix lane round 2 on the same PR; main 9d150067 merged into it and the
 PR retargeted to main (28 Sep 2026, retarget round), with the owner ruling of 27 Sep applied: sign-in
-reuses the approved `portal_otp` WhatsApp template. S2 and S3 not started.
+reuses the approved `portal_otp` WhatsApp template; main cd220251 merged in (28 Sep 2026, merge-main
+round, clean merge, single alembic head `fin_0001_billing_documents`). S2 and S3 not started.
 UAC: `identity-unified-login-acceptance-criteria.md` (same folder; the Journey is there, and every
 AC traces to a step in it).
 Classification: CORE (auth and users are base-platform), tables stay in `public`.
