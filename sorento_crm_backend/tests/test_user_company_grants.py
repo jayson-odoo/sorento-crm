@@ -1,9 +1,12 @@
 """UserService company-grant tests (multi-company follow-up).
 
 Covers the user_companies grant wiring added to the Add/Edit User flow:
- - create_user(company_ids=[SRT, MCH]) → two user_companies rows; a SINGLE
-    company also becomes the user's last_active_company_id landing default.
- - invite_user(company_ids=[...]) → same grant behaviour.
+ - create_user(company_ids=[SRT, MCH]) → two user_companies rows; the FIRST
+    id also becomes the user's last_active_company_id landing default (S3
+    contract 1.2 widens this from "only when there is exactly one").
+ - invite_user(company_ids=[...]) → same grant behaviour. S3 (#1280) removed
+    only the `POST /users/invite` ROUTE and its Next proxy (AC-58); the
+    onboarding provisioning task still calls this method directly.
  - set_user_companies() replaces the whole grant set and repoints
     last_active_company_id when the previous active grant is revoked.
  - Unknown company ids are silently skipped.
@@ -63,7 +66,7 @@ def _grant_ids(db, user_id: str) -> set[str]:
 # --------------------------------------------------------------------------- #
 # create_user                                                                  #
 # --------------------------------------------------------------------------- #
-def test_create_user_grants_two_companies_no_landing_default(db, companies):
+def test_create_user_grants_two_companies_first_is_landing_default(db, companies):
     svc = UserService(db)
     user = svc.create_user(
         UserCreate(
@@ -73,8 +76,8 @@ def test_create_user_grants_two_companies_no_landing_default(db, companies):
         )
     )
     assert _grant_ids(db, user.id) == {companies["srt"], companies["mch"]}
-    # Two companies -> no single landing default.
-    assert user.last_active_company_id is None
+    # S3 1.2: the FIRST id becomes the landing default, not just a single one.
+    assert str(user.last_active_company_id) == companies["srt"]
 
 
 def test_create_user_single_company_sets_landing_default(db, companies):
@@ -121,7 +124,8 @@ def test_invite_user_grants_companies(db, companies):
         invited_by_user_id=inviter,
     )
     assert _grant_ids(db, user.id) == {companies["srt"], companies["mch"]}
-    assert user.last_active_company_id is None
+    # S3 1.2: the FIRST id becomes the landing default, not just a single one.
+    assert str(user.last_active_company_id) == companies["srt"]
 
 
 def test_invite_user_single_company_sets_landing_default(db, companies):

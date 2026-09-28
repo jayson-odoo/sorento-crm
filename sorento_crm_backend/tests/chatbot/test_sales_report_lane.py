@@ -1175,6 +1175,7 @@ class TestParserPromptAndContractsTeachSalesReport:
         after it, newest outermost, so `SALES_REPORT_ADDENDUM` is the tail of the one
         body that exists once that is stripped."""
         from app.services.chatbot_parser_prompt import (
+            ESCALATION_CONFIRMATION_ADDENDUM,
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
@@ -1184,10 +1185,10 @@ class TestParserPromptAndContractsTeachSalesReport:
 
         # `STOCK_TASK_ADDENDUM` (ported from PR #1118, not merged, chatbot-stock-ask-v2
         # S3), then `SALES_ANALYSIS_ADDENDUM` (#1267 S1), then `SPECIFICATION_ADDENDUM`
-        # (fix round 8 on PR #833) stacked after this one, newest outermost, so they come
-        # off first.
-        assert SEMANTIC_PARSER_PROMPT.removesuffix(SPECIFICATION_ADDENDUM).endswith(SALES_ANALYSIS_ADDENDUM)
-        assert SEMANTIC_PARSER_PROMPT.removesuffix(SPECIFICATION_ADDENDUM).removesuffix(
+        # (fix round 8 on PR #833) and `ESCALATION_CONFIRMATION_ADDENDUM` (#1323) stacked after
+        # this one, newest outermost, so they come off first.
+        assert SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SPECIFICATION_ADDENDUM).endswith(SALES_ANALYSIS_ADDENDUM)
+        assert SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SPECIFICATION_ADDENDUM).removesuffix(
             SALES_ANALYSIS_ADDENDUM
         ).removesuffix(STOCK_TASK_ADDENDUM).endswith(SALES_REPORT_ADDENDUM), (
             "SEMANTIC_PARSER_PROMPT does not end with SALES_REPORT_ADDENDUM once the "
@@ -1203,6 +1204,7 @@ class TestParserPromptAndContractsTeachSalesReport:
         `test_the_addendum_is_appended_to_the_single_body` above) - one body, not two."""
         from app.services.chatbot_parser_prompt import (
             LOW_STOCK_ADDENDUM,
+            ESCALATION_CONFIRMATION_ADDENDUM,
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
@@ -1211,7 +1213,8 @@ class TestParserPromptAndContractsTeachSalesReport:
         )
 
         assert (
-            SEMANTIC_PARSER_PROMPT.removesuffix(SPECIFICATION_ADDENDUM)
+            SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+            .removesuffix(SPECIFICATION_ADDENDUM)
             .removesuffix(SALES_ANALYSIS_ADDENDUM)
             .removesuffix(STOCK_TASK_ADDENDUM)
             .removesuffix(SALES_REPORT_ADDENDUM)

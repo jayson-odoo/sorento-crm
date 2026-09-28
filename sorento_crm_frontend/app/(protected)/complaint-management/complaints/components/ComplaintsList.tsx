@@ -431,7 +431,7 @@ export default function ComplaintsList() {
                         { value: '__unassigned__', label: 'Unassigned' },
                         ...assigneeOptions.map((u) => ({
                           value: u.respond_user_id!,
-                          label: u.name || u.email,
+                          label: u.name || u.email || 'Unnamed user',
                         })),
                       ]}
                       placeholder="All assignees"

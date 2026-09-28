@@ -440,6 +440,11 @@ def _grade_parser(wanted: dict[str, Any], got: dict[str, Any]) -> list[str]:
     catch, and a subset test would call it a pass. A key the emission does not carry at
     all is reported as absent rather than as null, because the two mean different things
     about the prompt (a key it was never asked for versus one it declined to fill).
+
+    OBJECTS are the one exception (#1323): a dict names only the keys it grades, so an
+    entity can be pinned by `canonical_code` / `hint` / `current_message` without also
+    spelling out every flag the parser stamps on it, and `escalation` by its one verdict.
+    Lists stay whole: same length, same order, each item graded by this same rule.
     """
     failures: list[str] = []
     if not got:
@@ -449,9 +454,24 @@ def _grade_parser(wanted: dict[str, Any], got: dict[str, Any]) -> list[str]:
             failures.append(f"parser emitted no {key!r} at all, expected {expected!r}")
             continue
         actual = got[key]
-        if actual != expected:
+        if not _parser_value_matches(expected, actual):
             failures.append(f"parser {key} is {actual!r}, expected {expected!r}")
     return failures
+
+
+def _parser_value_matches(expected: Any, actual: Any) -> bool:
+    """Equality, except that an expected dict grades only the keys it names."""
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            k in actual and _parser_value_matches(v, actual[k]) for k, v in expected.items()
+        )
+    if isinstance(expected, list):
+        return (
+            isinstance(actual, list)
+            and len(actual) == len(expected)
+            and all(_parser_value_matches(e, a) for e, a in zip(expected, actual))
+        )
+    return actual == expected
 
 
 def _grade(

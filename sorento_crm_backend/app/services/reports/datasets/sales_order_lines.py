@@ -39,14 +39,41 @@ CHANNELS: Tuple[Tuple[str, str], ...] = (("dealer", "Dealer"), ("project", "Proj
 _DEMAND_CLASS = {"dealer": "retail", "project": "project"}
 
 #: The Basis filter (G1): Delivered is the default, and the basis prints on every header.
-BASES: Tuple[Tuple[str, str], ...] = (("delivered", "Delivered"), ("ordered", "Ordered"))
-BASIS_WORDS = {"delivered": "Delivered (transferred to DO)", "ordered": "Ordered"}
-
-_CHANNEL_LABEL = sa.case(
-    (SalesOrder.demand_class == "retail", sa.literal("Dealer")),
-    (SalesOrder.demand_class == "project", sa.literal("Project team")),
-    else_=sa.null(),
+#: Invoiced (finance S1) reads billing documents, `datasets/billing_documents.py`.
+BASES: Tuple[Tuple[str, str], ...] = (
+    ("delivered", "Delivered"),
+    ("ordered", "Ordered"),
+    ("invoiced", "Invoiced"),
 )
+BASIS_WORDS = {
+    "delivered": "Delivered (transferred to DO)",
+    "ordered": "Ordered",
+    "invoiced": "Invoiced (invoices, cash sales and debit notes less credit notes, excluding tax)",
+}
+
+
+def channel_label(demand_class: Any) -> Any:
+    """The Channel dimension over a demand class column: `retail` reads Dealer, `project`
+    reads Project team, anything else is the pivot's `(blank)`. One copy, for the order
+    bases and the invoiced one (ruling Q14: both group by the sales order type)."""
+    return sa.case(
+        (demand_class == "retail", sa.literal("Dealer")),
+        (demand_class == "project", sa.literal("Project team")),
+        else_=sa.null(),
+    )
+
+
+def channel_filter(demand_class: Any, values: List[str]) -> Any:
+    """The Channel filter over a demand class column. A NULL class is in no channel, so
+    with both ticked an unclassified row is in neither block (the cleared filter has it)."""
+    unknown = [v for v in values if v not in _DEMAND_CLASS]
+    if unknown:
+        raise AppException(status_code=422, message=f"Unknown channel '{unknown[0]}'",
+                           code="REPORT_INVALID_PARAMS")
+    return demand_class.in_([_DEMAND_CLASS[v] for v in values])
+
+
+_CHANNEL_LABEL = channel_label(SalesOrder.demand_class)
 
 
 def _exprs() -> dict:
@@ -113,29 +140,29 @@ _SORENTO = "00000000-0000-0000-0000-000000000001"
 
 
 def company_condition(ctx, values: List[str]) -> Optional[Any]:
-    return SalesOrder.company_id == values[0]
+    """The run's dataset's own company column: the invoiced basis reads another table."""
+    return ctx.dataset.company_column == values[0]
 
 
 def channel_condition(ctx, values: List[str]) -> Optional[Any]:
-    unknown = [v for v in values if v not in _DEMAND_CLASS]
-    if unknown:
-        raise AppException(status_code=422, message=f"Unknown channel '{unknown[0]}'",
-                           code="REPORT_INVALID_PARAMS")
-    return SalesOrder.demand_class.in_([_DEMAND_CLASS[v] for v in values])
+    return channel_filter(SalesOrder.demand_class, values)
 
 
 def basis_condition(ctx, values: List[str]) -> Optional[Any]:
     """The basis picks the MEASURE, not the rows: it filters nothing. It is still checked,
     because an unknown basis would otherwise read silently as Delivered."""
     if len(values) != 1 or values[0] not in BASIS_WORDS:
-        raise AppException(status_code=422, message="Basis is Ordered or Delivered",
+        raise AppException(status_code=422, message="Basis is Ordered, Delivered or Invoiced",
                            code="REPORT_INVALID_PARAMS")
     return None
 
 
 def note(ctx) -> str:
-    """The basis line on every header (G1)."""
-    return f"Basis: {BASIS_WORDS[_basis(ctx)]}, by sales order date. Sales orders, not invoices."
+    """The basis line on every header (G1; finance S1 UAC S1-5 for Invoiced)."""
+    basis = _basis(ctx)
+    if basis == "invoiced":
+        return f"Basis: {BASIS_WORDS[basis]}, by document date, grouped by the sales order type."
+    return f"Basis: {BASIS_WORDS[basis]}, by sales order date. Sales orders, not invoices."
 
 
 COLUMNS: Tuple[reg.Column, ...] = (

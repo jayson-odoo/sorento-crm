@@ -145,7 +145,9 @@ def test_ac01_resolve_user_respond_contact_never_caches_onto_a_contact_another_u
 
         result = resolve_user_respond_contact(db, seeker)  # must not raise
 
-        assert result is not None and result.id == contact.id
+        # S3 fix round 2 (B1): no link, no contact - the phone-match fallback that
+        # returned the holder's contact here is gone (respond_link_service docstring).
+        assert result is None
         db.refresh(seeker)
         assert seeker.respond_contact_id is None, "seeker must not have cached a contact another user already holds"
 
@@ -480,14 +482,20 @@ def test_invite_losing_the_email_race_to_the_unique_index_is_409_email_taken(api
     db.commit()
     monkeypatch.setattr(UserService, "_check_email_free", lambda self, email, exclude_user_id: None)
 
-    resp = client.post(
-        "/api/v1/user-management/users/invite", json={"email": f"{stem}@EXAMPLE.COM", "name": "Invite Race Loser"}
-    )
+    # S3 (AC-58) removed the POST /users/invite route; UserService.invite_user stays for
+    # onboarding provisioning, so the race is pinned on the service method it calls.
+    from app.schemas.user import UserCreate
+    from app.services.error_handler import AppException
 
-    assert resp.status_code == 409, resp.text
-    body = resp.json()
-    assert body.get("code") == "EMAIL_TAKEN", body
-    assert "Invite Race Winner" in str(body.get("message") or "")
+    with pytest.raises(AppException) as raised:
+        UserService(db).invite_user(
+            UserCreate(email=f"{stem}@EXAMPLE.COM", name="Invite Race Loser"),
+            invited_by_user_id=_admin.id,
+        )
+
+    assert raised.value.status_code == 409
+    assert raised.value.code == "EMAIL_TAKEN"
+    assert "Invite Race Winner" in raised.value.message
 
 
 def test_update_losing_the_contact_race_to_the_unique_index_is_409_contact_already_linked(api_client, monkeypatch):
