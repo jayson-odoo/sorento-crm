@@ -2597,7 +2597,10 @@ def _header_predicate_phrase(require: dict[str, Any]) -> str:
                 parts.append(f"{scheme} certificates")
                 continue
         if key == "price":
-            # A price set is the described products themselves: nothing to "have".
+            # A product ask about the set ("described") names no leg. A price ask does
+            # (fix round 12: the opener no longer carries the tool's "Prices for").
+            if value != "described":
+                parts.append("prices")
             continue
         noun = _HEADER_PREDICATE_NOUN.get(key)
         if noun:

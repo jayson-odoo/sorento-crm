@@ -246,7 +246,7 @@ def test_w1_sorento_wash_basin_is_the_sorento_basin_set_never_wider(chat, world,
         f"whici {brand} wash basin has stock",
         _stock_verdict(_brand_entity_shapes(brand, "wash basin")[shape], f"which {brand} wash basin has stock"),
     )
-    assert f"Stock summary for {_display(world['sorento'].brand_name)} wash basins (5)." in text, text
+    assert f"Here's what you want: {_display(world['sorento'].brand_name)} wash basins with stock (5)" in text, text
     assert _codes_in(text, world) == _codes(world["srt_basins"][:3] + world["srt_wall"]), text
     # The brand word scoped the set, so it was found.
     assert "could not find" not in text, text
@@ -264,7 +264,7 @@ def test_w1_sorento_wall_hung_basin_keeps_brand_class_and_mounting(chat, world, 
         f"which {brand} wall hung basin has stock?",
         _stock_verdict(_brand_entity_shapes(brand, "wall hung basin")[shape], f"which {brand} wall hung basin has stock"),
     )
-    assert f"Stock summary for {_display(world['sorento'].brand_name)} wall hung wash basins (2)." in text, text
+    assert f"Here's what you want: {_display(world['sorento'].brand_name)} wall hung wash basins with stock (2)" in text, text
     assert _codes_in(text, world) == _codes(world["srt_wall"]), text
 
 
@@ -280,7 +280,7 @@ def test_w1_wall_hung_basin_keeps_the_basin_class(chat, world):
         "which wall hung basin has stock",
         _stock_verdict([{"raw": "wall hung basin", "hint": "product_type"}], "which wall hung basin has stock"),
     )
-    assert "Stock summary for wall hung wash basins (3)." in text, text
+    assert "Here's what you want: wall hung wash basins with stock (3)" in text, text
     assert _codes_in(text, world) == _codes(world["srt_wall"] + world["mch_wall"]), text
 
 
@@ -327,7 +327,7 @@ def test_w2_the_header_names_brand_type_and_mounting_in_plain_words(chat, world,
         _stock_verdict(_brand_entity_shapes(brand.lower(), "wall hung basin")[shape], "which wall hung basin has stock"),
     )
     first = one_line_header(text)
-    assert first == f"Stock summary for {_display(brand)} wall hung wash basins (2).", text
+    assert first == f"Here's what you want: {_display(brand)} wall hung wash basins with stock (2)", text
     assert "wall_hung" not in text and "_" not in first, text
 
 
@@ -338,7 +338,7 @@ def test_w2_without_a_brand_the_header_still_names_the_spec(chat, world):
         "which wall hung basin has stock",
         _stock_verdict([{"raw": "wall hung basin", "hint": "product_type"}], "which wall hung basin has stock"),
     )
-    assert one_line_header(text) == "Stock summary for wall hung wash basins (3).", text
+    assert one_line_header(text) == "Here's what you want: wall hung wash basins with stock (3)", text
 
 
 def test_w2_a_word_that_was_not_understood_is_said_never_silently_dropped(chat, world):
@@ -352,7 +352,7 @@ def test_w2_a_word_that_was_not_understood_is_said_never_silently_dropped(chat, 
         ),
     )
     first = one_line_header(text)
-    assert "Stock summary for wash basins" in first, text
+    assert "Here's what you want: wash basins with stock" in first, text
     # Amended to fix round 9 on PR #833 (owner: "no explanations"): the word is the "did
     # not match" line of the reply, never how the search was run.
     assert 'Couldn\'t find: "zzqx".' in text and "did not understand" not in text, text
@@ -426,14 +426,14 @@ def test_w4_a_bare_count_after_the_count_question_keeps_the_brand_set(chat, worl
     )
     # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: never a paging question):
     # one brand named and nothing else splits the 5, so the first 3 are listed.
-    assert one_line_header(ask) == f"Stock summary for {_display(brand)} wash basins (5, showing 1 to 3).", ask
+    assert one_line_header(ask) == f"Here's what you want: {_display(brand)} wash basins with stock (5, showing 1 to 3)", ask
     assert "How many" not in ask, ask
 
     page = chat.say("2", _bare())
 
     # The last 2 of the 5: every product now shown, so the count is bare.
     first = one_line_header(page)
-    assert first == f"Stock summary for {_display(brand)} wash basins (5).", page
+    assert first == f"Here's what you want: {_display(brand)} wash basins with stock (5)", page
     listed = _listed(page, world)
     assert len(listed) == 2 and set(listed) <= _codes(world["srt_basins"][:3] + world["srt_wall"]), page
     assert not set(listed) & set(_listed(ask, world)), (ask, page)
@@ -456,11 +456,11 @@ def test_w4_another_n_continues_from_where_the_list_stopped(chat, world, small_l
         f"which {brand.lower()} wash basin has stock",
         _stock_verdict(_brand_entity_shapes(brand.lower(), "wash basin")[0], "which wash basin has stock"),
     )
-    assert one_line_header(page1) == f"Stock summary for {_display(brand)} wash basins (5, showing 1 to 3).", page1
+    assert one_line_header(page1) == f"Here's what you want: {_display(brand)} wash basins with stock (5, showing 1 to 3)", page1
     page2 = chat.say("can give another 2?", _bare(top_n=parser_top_n))
 
     first = one_line_header(page2)
-    assert first == f"Stock summary for {_display(brand)} wash basins (5).", page2
+    assert first == f"Here's what you want: {_display(brand)} wash basins with stock (5)", page2
     # The rows are numbered where the list stands, 4 and 5, not 1 and 2 again.
     assert [ln.split(".")[0] for ln in page2.splitlines()[1:] if re.match(r"^\d+\. ", ln)] == ["4", "5"], page2
     one, two = _listed(page1, world), _listed(page2, world)
@@ -470,7 +470,7 @@ def test_w4_another_n_continues_from_where_the_list_stopped(chat, world, small_l
 
     # And again: every product is shown already.
     page3 = chat.say("another 2", _bare())
-    assert one_line_header(page3) == f"Stock summary for {_display(brand)} wash basins (5). That is all 5.", page3
+    assert one_line_header(page3) == f"Here's what you want: {_display(brand)} wash basins with stock (5). That is all 5.", page3
 
 
 def test_w4_another_n_after_a_listed_page_never_offers_more_itself(chat, world, small_list):
@@ -496,7 +496,7 @@ def test_w4_a_count_that_moved_between_the_ask_and_the_page_is_said(chat, world,
         _stock_verdict(_brand_entity_shapes(brand.lower(), "wash basin")[0], "which wash basin has stock"),
     )
     # Amended to fix round 9 on PR #833: the ask lists what fits.
-    assert f"Stock summary for {_display(brand)} wash basins (5, showing 1 to 3)." in ask, ask
+    assert f"Here's what you want: {_display(brand)} wash basins with stock (5, showing 1 to 3)" in ask, ask
     db = world["db"]
     wh = _warehouse(db)
     _stock_for(db, product_id=world["srt_basins"][3].id, warehouse_id=wh.id)
@@ -505,7 +505,7 @@ def test_w4_a_count_that_moved_between_the_ask_and_the_page_is_said(chat, world,
     page = chat.say("2", _bare())
 
     first = one_line_header(page)
-    assert f"Stock summary for {_display(brand)} wash basins (6" in first, page
+    assert f"Here's what you want: {_display(brand)} wash basins with stock (6" in first, page
     assert "It was 5 when you asked." in first, page
 
 
@@ -519,9 +519,9 @@ def test_w4_a_count_named_in_the_ask_itself_continues_on_another_n(chat, world, 
         f"show 2 {brand.lower()} wash basins with stock",
         _stock_verdict(_brand_entity_shapes(brand.lower(), "wash basin")[0], "show 2 wash basins with stock", top_n=2),
     )
-    assert f"Stock summary for {_display(brand)} wash basins (5, showing 1 to 2)." in one_line_header(first), first
+    assert f"Here's what you want: {_display(brand)} wash basins with stock (5, showing 1 to 2)" in one_line_header(first), first
     more = chat.say("another 2", _bare())
-    assert f"Stock summary for {_display(brand)} wash basins (5, showing 3 to 4)." in one_line_header(more), more
+    assert f"Here's what you want: {_display(brand)} wash basins with stock (5, showing 3 to 4)" in one_line_header(more), more
     assert not set(_listed(first, world)) & set(_listed(more, world)), (first, more)
 
 
@@ -558,7 +558,7 @@ def test_w5_no_brand_named_answers_the_default_brand_first_and_names_the_others(
     first = one_line_header(text)
     # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every
     # brand, whatever the weights, and no "Other brands" line.
-    assert first == "Stock summary for wash basins (8).", text
+    assert first == "Here's what you want: wash basins with stock (8)", text
     assert "Other brands" not in text, text
     assert _codes(world["srt_basins"][:3] + world["srt_wall"] + world["mch_basins"] + world["mch_wall"]) <= set(row_codes(text)), text
 
@@ -573,7 +573,7 @@ def test_w5_naming_a_brand_answers_that_brand_only(chat, sorento_default):
         _stock_verdict(_brand_entity_shapes(mocha.lower(), "wash basin")[0], "which wash basin has stock"),
     )
     first = one_line_header(text)
-    assert one_line_header(first).startswith(f"Stock summary for {_display(mocha)} wash basins (3)."), text
+    assert one_line_header(first).startswith(f"Here's what you want: {_display(mocha)} wash basins with stock (3)"), text
     assert "(default)" not in text and "Other brands" not in text, text
     assert _codes_in(text, world) == _codes(world["mch_basins"] + world["mch_wall"]), text
 
@@ -606,7 +606,7 @@ def test_w5_a_page_of_the_default_brand_set_keeps_the_default(chat, sorento_defa
     first = one_line_header(page)
     # Amended to fix round 9 on PR #833: no default brand; the count typed after the
     # breakdown lists that many of the whole set.
-    assert first.startswith("Stock summary for wash basins (8, showing 1 to 2)."), page
+    assert first.startswith("Here's what you want: wash basins with stock (8, showing 1 to 2)"), page
     assert len(row_codes(page)) == 2, page
 
 
@@ -637,7 +637,7 @@ def test_w6_water_basin_is_a_wash_basin_even_where_the_category_lacks_the_word(c
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
     # header is the product-code answer's own intro naming the described set and its
     # count.
-    assert one_line_header(text) == "Stock summary for wash basins (8).", text
+    assert one_line_header(text) == "Here's what you want: wash basins with stock (8)", text
     assert _codes_in(text, world) == _codes(world["srt_basins"][:3] + world["srt_wall"] + world["mch_basins"] + world["mch_wall"]), text
 
 

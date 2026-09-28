@@ -1306,20 +1306,20 @@ def _cert_ctx(text: str, entities: list[dict[str, Any]]) -> dict[str, Any]:
             20,
             "taps",
             {"certificate": True},
-            "Certificates found for taps (1,256, showing 1 to 20).",
+            "Here's what you want: taps with certificates (1,256, showing 1 to 20)",
         ),
-        (3, 3, "taps", {"certificate": True}, "Certificates found for taps (3)."),
-        (1, 1, "tap", {"certificate": True}, "Certificates found for tap (1)."),
-        (7, 7, "taps", {"stock": True}, "Stock summary for taps (7)."),
-        (2, 2, "taps", {"attachment_type": "Product Photos"}, "Files found for taps with product photos (2)."),
-        (4, 4, "sinks", {"incoming": True}, "Incoming stock found for sinks (4)."),
-        (4, 4, "sinks", {"promotion": True}, "Promotions found for sinks (4)."),
+        (3, 3, "taps", {"certificate": True}, "Here's what you want: taps with certificates (3)"),
+        (1, 1, "tap", {"certificate": True}, "Here's what you want: tap with certificates (1)"),
+        (7, 7, "taps", {"stock": True}, "Here's what you want: taps with stock (7)"),
+        (2, 2, "taps", {"attachment_type": "Product Photos"}, "Here's what you want: taps with product photos (2)"),
+        (4, 4, "sinks", {"incoming": True}, "Here's what you want: sinks with incoming stock (4)"),
+        (4, 4, "sinks", {"promotion": True}, "Here's what you want: sinks with a promotion (4)"),
         (
             9,
             9,
             "taps",
             {"certificate": True, "stock": True},
-            "Certificates found for taps with stock (9).",
+            "Here's what you want: taps with certificates and stock (9)",
         ),
     ],
 )
@@ -1387,7 +1387,7 @@ def test_set_answer_carries_the_header_and_lists_every_product():
     # answers use the product-code rows under one intro line naming the described set and
     # its count, never "N noun have leg.".
     lines = legacy_lines(reply)
-    assert lines and lines[0] == "Certificates found for taps (7).", reply
+    assert lines and lines[0] == "Here's what you want: taps with certificates (7)", reply
     # Round 7 on PR #833 (owner hand test, item 7): certificate rows keep the normal
     # attachment structure, led by "*Product Code:*".
     from tests.chatbot.set_reply import full_row_codes
@@ -1434,7 +1434,7 @@ def test_set_answer_is_scoped_to_the_class_word():
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): set
     # answers use the product-code rows under one intro line.
     lines = legacy_lines(reply)
-    assert lines and lines[0] == "Certificates found for taps (2).", reply
+    assert lines and lines[0] == "Here's what you want: taps with certificates (2)", reply
     assert basin_code not in reply, reply
 
 
@@ -1464,7 +1464,7 @@ def test_set_answer_header_omits_showing_when_all_fit():
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): set
     # answers use the product-code rows under one intro line.
     lines = legacy_lines(reply)
-    assert lines and lines[0] == "Certificates found for taps (3).", reply
+    assert lines and lines[0] == "Here's what you want: taps with certificates (3)", reply
     assert "Showing" not in reply, reply
 
 
@@ -1497,7 +1497,7 @@ def test_expired_only_certificate_still_counts_and_is_flagged():
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): set
     # answers use the product-code rows under one intro line.
     lines = legacy_lines(reply)
-    assert lines and lines[0] == "Certificates found for taps (1).", reply
+    assert lines and lines[0] == "Here's what you want: taps with certificates (1)", reply
     # Round 7 on PR #833: the normal attachment row, with its own expiry flag.
     assert "*Validity:* Expired" in reply and "*(EXPIRED)*" in reply, reply
 
@@ -1674,7 +1674,7 @@ def test_stock_set_answer_matches_forward_block_for_a_dealer():
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): set
     # answers use the product-code rows under one intro line.
     lines_has = reply_has.splitlines()
-    assert lines_has and lines_has[0] == "Stock details found for taps (2).", reply_has
+    assert lines_has and lines_has[0] == "Here's what you want: taps with stock (2)", reply_has
 
 
 # --------------------------------------------------------------------------- #
@@ -1773,7 +1773,7 @@ def test_set_answer_replaces_the_found_line_and_no_picker_forms():
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): set
     # answers use the product-code rows under one intro line.
     lines = legacy_lines(reply)
-    assert lines and lines[0] == "Certificates found for taps (3).", reply
+    assert lines and lines[0] == "Here's what you want: taps with certificates (3)", reply
     assert "Found:" not in reply, reply
     assert "Please choose" not in reply, reply
     assert "needs to be more specific" not in reply, reply
@@ -1858,8 +1858,8 @@ def test_brand_and_category_words_give_a_set_answer_not_a_picker():
     # (brand and category both still named, inside the phrase).
     lines = legacy_lines(reply)
     # W2 (owner hand test round 2): the line leads with what was identified.
-    assert lines and lines[0] == "Certificates found for Sorento bidets (1).", reply
-    assert lines[0].startswith("Certificates found for Sorento"), reply
+    assert lines and lines[0] == "Here's what you want: Sorento bidets with certificates (1)", reply
+    assert lines[0].startswith("Here's what you want: Sorento"), reply
     assert cert_product_code in reply, reply
     assert "Please choose" not in reply, reply
     assert srt_bidet_code not in reply, reply
@@ -2153,7 +2153,7 @@ def test_unresolved_word_token_is_the_description_not_a_miss():
     lines = legacy_lines(reply)
     assert lines and "(1)" in lines[0], reply
     # Amended to fix round 9 on PR #833: the intro names its leg once.
-    assert lines[0].startswith("Certificates found for "), reply
+    assert lines[0].startswith("Here's what you want: ") and lines[0].count("certificates") == 1, reply
     assert "ZZTWT5875" in reply, reply
     assert "Couldn't find" not in reply, reply
     assert "no certificate matched" not in reply, reply
@@ -2180,10 +2180,10 @@ def test_set_header_names_the_scheme():
     from app.services.chatbot.lanes.business.answer import build_set_header
 
     assert build_set_header(940, 5, "products", {"certificate": {"scheme": "PPS"}}) == (
-        "Certificates found for products with PPS certificates (940, showing 1 to 5)."
+        "Here's what you want: products with PPS certificates (940, showing 1 to 5)"
     )
     assert build_set_header(2, 2, "taps", {"certificate": True}) == (
-        "Certificates found for taps (2)."
+        "Here's what you want: taps with certificates (2)"
     )
 
 
@@ -2330,7 +2330,7 @@ def test_shown_counts_products_not_rows():
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): set
     # answers use the product-code rows under one intro line.
     lines = legacy_lines(reply)
-    assert lines and lines[0] == "Stock details found for wash basins (5).", reply
+    assert lines and lines[0] == "Here's what you want: wash basins with stock (5)", reply
     assert "Showing" not in reply, reply
 
     with blank_session() as db:
@@ -2368,7 +2368,7 @@ def test_shown_counts_products_not_rows():
     # answers use the product-code rows under one intro line; a named count says how many
     # of the total are shown ("(7, showing 1 to 4)") in place of "Here are the first 4.".
     lines = legacy_lines(reply)
-    assert lines and lines[0] == "Stock details found for wash basins (7, showing 1 to 4).", reply
+    assert lines and lines[0] == "Here's what you want: wash basins with stock (7, showing 1 to 4)", reply
     shown_codes = _s4_codes_in(reply)
     assert len(shown_codes) == 4, reply
 
@@ -3068,7 +3068,7 @@ def test_category_entity_yields_a_set_answer_not_a_clarify():
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): set
     # answers use the product-code rows under one intro line.
     lines = legacy_lines(reply)
-    assert lines and lines[0] == "Certificates found for taps (3).", reply
+    assert lines and lines[0] == "Here's what you want: taps with certificates (3)", reply
     assert "i don't know" not in reply.lower(), reply
 
 
@@ -3242,7 +3242,7 @@ def test_set_noun_for_irregular_plurals():
     assert set_noun_for(["Bathroom Accessory"]) == "bathroom accessories"
     assert set_noun_for(["Jacuzzi"]) == "jacuzzis"
     assert build_set_header(1, 1, "bathroom accessory", {"stock": True}) == (
-        "Stock summary for bathroom accessory (1)."
+        "Here's what you want: bathroom accessory with stock (1)"
     )
 
 

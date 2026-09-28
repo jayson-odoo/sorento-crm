@@ -79,7 +79,7 @@ def test_which_tap_has_valid_cert_answers_the_whole_certified_set(
 
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
     # header is the product-code answer's own intro naming the described set and its count.
-    assert one_line_header(text).startswith("Certificates found for taps (7)."), text
+    assert one_line_header(text).startswith("Here's what you want: taps with certificates (7)"), text
     assert _s4_codes_in(text) == set(codes), text
 
 
@@ -251,7 +251,7 @@ def test_a_listed_set_asks_the_tool_for_enough_rows(session_factory, stub_parser
 
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
     # header is the product-code answer's own intro naming the described set and its count.
-    assert one_line_header(text) == "Certificates found for taps (7).", text
+    assert one_line_header(text) == "Here's what you want: taps with certificates (7)", text
     assert _s4_codes_in(text) == set(codes), text
     assert isinstance(calls[0]["args"].get("limit"), int) and calls[0]["args"]["limit"] >= 14, calls
 
@@ -276,7 +276,7 @@ def test_a_row_cap_that_still_cuts_the_set_says_how_many_are_listed(
 
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap has cert")
 
-    assert one_line_header(text).startswith("Certificates found for taps (7, showing 1 to 2)."), text
+    assert one_line_header(text).startswith("Here's what you want: taps with certificates (7, showing 1 to 2)"), text
     assert len(_s4_codes_in(text)) == 2, text
 
 
@@ -343,13 +343,13 @@ def test_the_recount_after_how_many_keeps_the_dealers_stock_visibility(
     first = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap got stock")
     # Amended to fix round 9 on PR #833 (never a paging question): the first answer lists
     # what fits, the count typed next continues with the other one.
-    assert one_line_header(first) == "Stock summary for taps (2, showing 1 to 1).", first
+    assert one_line_header(first) == "Here's what you want: taps with stock (2, showing 1 to 1)", first
     before = len(calls)
 
     stub_parser(_bare_verdict(top_n=1, continuation=True, user_goal="show 1"))
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=2, text="1")
 
-    assert one_line_header(text) == "Stock summary for taps (2).", text
+    assert one_line_header(text) == "Here's what you want: taps with stock (2)", text
     asked = {pid for c in calls[before:] for pid in (c["args"].get("product_ids") or [])}
     assert taps[1].id not in asked, asked
     assert asked <= {taps[0].id, taps[2].id} and len(asked) == 1, asked
@@ -407,7 +407,7 @@ def test_a_bare_count_answers_the_question_whatever_the_parser_made_of_it(
     # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: never a paging question): the
     # seven taps are one brand and nothing else splits them, so the first answer lists
     # what fits (5 of 7) and the count typed next continues: the last 2, count bare.
-    assert one_line_header(text) == "Certificates found for taps (7).", text
+    assert one_line_header(text) == "Here's what you want: taps with certificates (7)", text
     assert len(_s4_codes_in(text)) == 2, text
     assert len(calls) == before + 1 and len(calls[-1]["args"]["product_ids"]) == 2, calls
 
@@ -460,7 +460,7 @@ def test_a_count_that_names_nothing_still_arms_the_question(
     stub_parser(_tap_cert_verdict(top_n=bad_count))
     stub_access()
     first = _turn(engine_mod, session_factory, contact_id=contact_id, n=1, text="which tap has cert")
-    assert one_line_header(first) == "Certificates found for taps (7, showing 1 to 5).", first
+    assert one_line_header(first) == "Here's what you want: taps with certificates (7, showing 1 to 5)", first
 
     stub_parser(_bare_verdict(top_n=3, continuation=True, user_goal="show 3"))
     text = _turn(engine_mod, session_factory, contact_id=contact_id, n=2, text="3")
@@ -468,4 +468,4 @@ def test_a_count_that_names_nothing_still_arms_the_question(
     # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: never a paging question): the
     # seven taps are one brand and nothing else splits them, so the first answer lists
     # what fits (5 of 7) and the count typed next continues: the last 2, count bare.
-    assert one_line_header(text) == "Certificates found for taps (7).", text
+    assert one_line_header(text) == "Here's what you want: taps with certificates (7)", text

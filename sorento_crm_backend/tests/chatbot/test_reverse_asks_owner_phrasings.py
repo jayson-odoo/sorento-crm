@@ -193,7 +193,7 @@ def test_which_water_tap_got_stock(session_factory, stub_parser, stub_access, mo
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): set
     # answers use the product-code rows under one intro line naming the described set and
     # its count, never "N noun have leg.".
-    assert "Stock details found for taps (2)." in text, text
+    assert "Here's what you want: taps with stock (2)" in text, text
     for p in taps[:2]:
         assert p.product_code in text, text
     assert taps[2].product_code not in text, text
@@ -227,7 +227,7 @@ def test_which_water_tap_got_certificate(session_factory, stub_parser, stub_acce
     )
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): set
     # answers use the product-code rows under one intro line.
-    assert "Certificates found for taps (2)." in text, text
+    assert "Here's what you want: taps with certificates (2)" in text, text
     for p in taps[:2]:
         assert p.product_code in text, text
     assert basins[0].product_code not in text, text
@@ -260,7 +260,7 @@ def test_which_water_basin_got_stock(session_factory, stub_parser, stub_access, 
     )
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): set
     # answers use the product-code rows under one intro line.
-    assert "Stock details found for wash basins (2)." in text, text
+    assert "Here's what you want: wash basins with stock (2)" in text, text
     for p in basins[:2]:
         assert p.product_code in text, text
     for p in taps:
@@ -293,7 +293,7 @@ def test_which_basin_got_incoming(session_factory, stub_parser, stub_access, mon
     )
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): set
     # answers use the product-code rows under one intro line.
-    assert "Incoming stock found for wash basins (2)." in text, text
+    assert "Here's what you want: wash basins with incoming stock (2)" in text, text
     for p in basins[:2]:
         assert p.product_code in text, text
     assert taps[0].product_code not in text, text
@@ -388,7 +388,7 @@ def test_dealer_on_availability_only_counts_only_allowed_locations_and_sees_no_q
 
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): set
     # answers use the product-code rows under one intro line.
-    assert "Stock summary for taps (1)." in text, text
+    assert "Here's what you want: taps with stock (1)" in text, text
     assert taps[0].product_code in text, text
     assert taps[1].product_code not in text, text
     assert taps[2].product_code not in text, text

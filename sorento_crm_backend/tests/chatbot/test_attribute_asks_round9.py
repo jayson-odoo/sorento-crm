@@ -196,7 +196,7 @@ def test_turn2_cert_keeps_the_gunmetal_basins_of_the_miss(chat, world):
     text = chat.say(T2, _v2())
     print(text)
     assert _codes(text, world) == {p.product_code for p in world["gunmetal"]}, text
-    assert text.startswith("Certificates found for gunmetal wash basins (2).\n\n1. *Product Code:* CBWB9GM0"), text
+    assert text.startswith("Here's what you want: gunmetal wash basins with certificates (2)\n\n1. *Product Code:* CBWB9GM0"), text
     for code, block in _blocks(text).items():
         assert block == _blocks(_by_code(chat, code, "cert"))[code], code
     _plain(text, world)
@@ -244,7 +244,7 @@ def test_too_many_is_the_full_count_and_a_breakdown_by_brand_never_a_paging_ques
     text = chat.say(message, _ask("stock", "water closet", message))
     print(text)
     lines = text.split("\n")
-    total = int(re.match(r"Stock summary for water closets \((\d+)\)\.$", lines[0]).group(1))
+    total = int(re.match(r"Here's what you want: water closets with stock \((\d+)\)$", lines[0]).group(1))
     rows = [re.fullmatch(r"• (\S+) water closets: (\d+)", line) for line in lines[1:]]
     assert rows and all(rows), text
     assert sum(int(m.group(2)) for m in rows) == total, text
@@ -267,7 +267,7 @@ def test_a_document_word_still_asks_about_documents(chat, world):
     """The guard is the category word ALONE: "any basin has cert" stays a certificate ask."""
     message = "any gunmetal basin has cert"
     text = chat.say(message, _ask("cert", "gunmetal basin", message))
-    assert text.startswith("Certificates found for gunmetal wash basins (2)."), text
+    assert text.startswith("Here's what you want: gunmetal wash basins with certificates (2)"), text
 
 
 def test_the_five_turns_in_order(chat, world):
@@ -278,9 +278,9 @@ def test_the_five_turns_in_order(chat, world):
         _plain(text, world)
     assert replies[0].startswith("Here's what you want: gunmetal wash basins (2)\n"), replies[0]
     assert replies[0].endswith("But no incoming matched these. Would you like me to escalate to purchasing team?"), replies[0]
-    assert replies[1].startswith("Certificates found for gunmetal wash basins (2)."), replies[1]
+    assert replies[1].startswith("Here's what you want: gunmetal wash basins with certificates (2)"), replies[1]
     # Amended to fix round 10 on PR #833: turn 3 says "pnk" as typed.
     assert replies[2].startswith("Here's what you want: pnk water closets\n• White water closets: "), replies[2]
     assert replies[3].startswith("Here's what you want: pink water closets\n• White water closets: "), replies[3]
-    assert replies[4].startswith("Here are kitchen sinks with thickness 1.2 mm (2)."), replies[4]
+    assert replies[4].startswith("Here's what you want: kitchen sinks with thickness 1.2 mm (2)"), replies[4]
     assert _codes(replies[4], world) == {p.product_code for p in world["thick12"]}, replies[4]
