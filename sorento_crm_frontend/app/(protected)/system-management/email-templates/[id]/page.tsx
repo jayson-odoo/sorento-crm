@@ -127,6 +127,9 @@ export default function EmailTemplateDetailPage() {
   }
 
   const variableList = useMemo(() => variables.data?.variables ?? [], [variables.data]);
+  // Stable ids for the read-only rows: blocksFor mints ids for a template with no
+  // layout_json, and minting them on every render would remount every row.
+  const viewBlocks = useMemo(() => (template ? blocksFor(template) : []), [template]);
 
   async function copyVariable(key: string) {
     const token = `{{ ${key} }}`;
@@ -233,11 +236,10 @@ export default function EmailTemplateDetailPage() {
                         id="et-preheader"
                         value={draft.preheader}
                         onChange={(e) => patchDraft({ preheader: e.target.value })}
-                        placeholder="Shown in the inbox list, under the subject"
                       />
                     ) : (
                       <p className="text-sm text-muted-foreground">
-                        {template.preheader || "Derived from the intro block's text"}
+                        {template.preheader || '-'}
                       </p>
                     )}
                   </div>
@@ -250,11 +252,10 @@ export default function EmailTemplateDetailPage() {
                         onChange={(e) => patchDraft({ bodyText: e.target.value })}
                         rows={3}
                         className="font-mono text-sm"
-                        placeholder="Auto-derived from the blocks if left blank"
                       />
                     ) : (
                       <p className="text-sm text-muted-foreground">
-                        {template.body_text || 'Auto-derived from the blocks.'}
+                        {template.body_text || '-'}
                       </p>
                     )}
                   </div>
@@ -292,7 +293,7 @@ export default function EmailTemplateDetailPage() {
                       onChange={(blocks) => patchDraft({ blocks })}
                     />
                   ) : (
-                    <BlockListReadOnly blocks={blocksFor(template)} />
+                    <BlockListReadOnly blocks={viewBlocks} />
                   )}
                 </CardContent>
               </Card>
@@ -302,9 +303,6 @@ export default function EmailTemplateDetailPage() {
                   <CardTitle>Variables</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="mb-2 text-xs text-muted-foreground">
-                    Click to copy a Jinja2 placeholder.
-                  </p>
                   {variableList.length === 0 ? (
                     <p className="text-sm text-muted-foreground">No variables for this template.</p>
                   ) : (

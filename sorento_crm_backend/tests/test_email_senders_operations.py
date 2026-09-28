@@ -94,7 +94,7 @@ def test_complaint_created_is_templated(db, monkeypatch, no_real_queue):
     html = notif.data["body_html"]
     assert has_layout(html)
     assert "New Complaint created" in html  # the template's own heading, not a safety-net wrapper
-    assert "em-btn-link" in html
+    assert '<a class="em-btn-link"' in html
 
     delivery = (
         db.query(NotificationDelivery)
@@ -104,7 +104,7 @@ def test_complaint_created_is_templated(db, monkeypatch, no_real_queue):
     notification_tasks._enqueue_email_for_delivery(db, notif, user, delivery, "complaint_created_external")
     row = db.query(EmailOutbox).filter(EmailOutbox.recipient_email == user.email).one()
     assert has_layout(row.body_html)
-    assert "em-btn-link" in row.body_html
+    assert '<a class="em-btn-link"' in row.body_html
     view_url = svc._build_complaint_view_url(c.id)
     assert view_url in row.body_html
     assert view_url in row.body_text  # text part carries the link
@@ -140,7 +140,7 @@ def test_complaint_do_delivered_is_templated(db, monkeypatch, no_real_queue):
     html = notif.data["body_html"]
     assert has_layout(html)
     assert "Replacement delivery order delivered" in html
-    assert "em-btn-link" in html
+    assert '<a class="em-btn-link"' in html
     assert "SKU-1 x 2</li>" in html
     # still the old pins: plain body byte-identical, internal link, never the token link
     assert "\n- SKU-1 x 2\n- SKU-2 x 1" in (notif.body or "")
@@ -207,7 +207,7 @@ def test_attachment_linked_merges_two_notices_into_one_outbox_row(db):
     # Each notice's OWN Notification.data.body_html is already the branded template.
     first_notif = db.query(Notification).filter(Notification.id == n_ids1[0]).one()
     assert has_layout(first_notif.data["body_html"])
-    assert "em-btn-link" in first_notif.data["body_html"]
+    assert '<a class="em-btn-link"' in first_notif.data["body_html"]
     assert "photo-a.jpg" in first_notif.data["body_html"]
 
     for nid in (n_ids1[0], n_ids2[0]):
@@ -224,7 +224,58 @@ def test_attachment_linked_merges_two_notices_into_one_outbox_row(db):
     row = rows[0]
     assert has_layout(row.body_html)
     assert "photo-a.jpg" in row.body_html and "photo-b.jpg" in row.body_html
-    assert "em-btn-link" in row.body_html
+    assert '<a class="em-btn-link"' in row.body_html
+
+
+def test_attachment_merge_into_pre_deploy_row_keeps_every_file(db):
+    """A row created before #1349 has plain items but no structured attachment_items; a
+    post-deploy notice merging into it must not render only its own file (review B1)."""
+    from app.models.resources import Attachment
+    from app.services import attachment_notification_helper as helper
+    from app.tasks import notification_tasks
+
+    user = _user(db, name="Uploader")
+    batch = uuid.uuid4().hex[:16]
+    atts = [
+        Attachment(id=str(uuid.uuid4()), original_filename=f"old-{i}.jpg", stored_filename=f"{i}.jpg",
+                   file_path=f"https://cdn.example.test/{i}.jpg", uploaded_by=user.id, upload_batch_id=batch)
+        for i in (1, 2)
+    ]
+    db.add_all(atts)
+    db.flush()
+    ids = []
+    for i, att in enumerate(atts, start=1):
+        n_ids, _ = helper.notify_uploaders_after_external_attachment_event(
+            db, [att.id],
+            notification_batch_id=f"legacy-{i}",
+            notif_type="external_product_attachment_linked",
+            title="Product attachment linked: PRD-9",
+            summary_plain='Your file was linked to product "PRD-9"',
+            summary_html="<p>Your file was linked to product <strong>PRD-9</strong>.</p>",
+            entity_url="https://crm.example.com/master-data-management/products/p9",
+            entity_link_text="Open product",
+        )
+        ids.append(n_ids[0])
+    first = db.query(Notification).filter(Notification.id == ids[0]).one()
+    legacy = dict(first.data)
+    meta = dict(legacy["email_coalesce"])
+    meta.pop("attachment_items", None)
+    meta.pop("template_code", None)
+    legacy["email_coalesce"] = meta
+    first.data = legacy
+    db.flush()
+    for nid in ids:
+        notif = db.query(Notification).filter(Notification.id == nid).one()
+        delivery = (
+            db.query(NotificationDelivery)
+            .filter(NotificationDelivery.notification_id == notif.id, NotificationDelivery.channel == "email")
+            .one()
+        )
+        notification_tasks._enqueue_email_for_delivery(db, notif, user, delivery, "external_product_attachment")
+    rows = db.query(EmailOutbox).filter(EmailOutbox.recipient_email == user.email).all()
+    assert len(rows) == 1
+    assert "old-1.jpg" in rows[0].body_html and "old-2.jpg" in rows[0].body_html
+    assert "old-1.jpg" in rows[0].body_text and "old-2.jpg" in rows[0].body_text
 
 
 def test_attachment_linked_explicit_user_no_uploader(db):
@@ -251,7 +302,7 @@ def test_attachment_linked_explicit_user_no_uploader(db):
     html = notif.data["body_html"]
     assert has_layout(html)
     assert "Form created" in html
-    assert "em-btn-link" in html
+    assert '<a class="em-btn-link"' in html
 
 
 # --------------------------------------------------------------------------- #
@@ -280,7 +331,7 @@ def test_promotion_created_is_templated(db):
     html = notif.data["body_html"]
     assert has_layout(html)
     assert "Promotion created: Year-End Sale" in html
-    assert "em-btn-link" in html
+    assert '<a class="em-btn-link"' in html
     assert "promo-banner.png" in html
 
 
@@ -298,7 +349,7 @@ def test_promotion_created_explicit_user(db):
     html = notif.data["body_html"]
     assert has_layout(html)
     assert "Promotion created: Clearance Bonanza" in html
-    assert "em-btn-link" in html
+    assert '<a class="em-btn-link"' in html
 
 
 # --------------------------------------------------------------------------- #
@@ -315,7 +366,7 @@ def test_sla_daily_summary_html_is_templated(db):
 
     assert has_layout(html_body)
     assert "Your daily SLA summary" in html_body
-    assert "em-btn-link" in html_body
+    assert '<a class="em-btn-link"' in html_body
     assert "12" in html_body and "48" in html_body  # responded_7 / responded_30 facts
     # the plain text is unchanged - it is also the WhatsApp fallback default and the
     # in-app body, so it cannot drift from what those channels read.
@@ -348,7 +399,7 @@ def test_onboarding_intake_link_is_templated(db, monkeypatch):
     assert row.subject == f"Submit your team for onboarding: {request.title}"
     assert has_layout(row.body_html)
     assert "Submit your team for onboarding" in row.body_html
-    assert "em-btn-link" in row.body_html
+    assert '<a class="em-btn-link"' in row.body_html
     assert request.token in row.body_text  # the link is in the text part
 
 
@@ -438,9 +489,9 @@ def test_bare_notification_renders_notification_generic(db):
 
     row = db.query(EmailOutbox).filter(EmailOutbox.recipient_email == user.email).one()
     assert has_layout(row.body_html)
-    assert "Import finished" in row.body_html  # the title, as the heading
+    assert ">Import finished</h1>" in row.body_html  # the title, as the template's heading
     assert "Your import of 120 rows finished" in row.body_html
-    assert "em-btn-link" in row.body_html
+    assert '<a class="em-btn-link"' in row.body_html
     assert row.subject == "Import finished"  # subject stays the notification title
 
 

@@ -33,7 +33,7 @@ TEMPLATES.append(
         name="Stock inquiry team notice",
         description="Sent to a team (e.g. purchasing) one email to all when a stock inquiry needs its review.",
         subject="{{ heading }}",
-        preheader="{{ intro }}",
+        preheader="{{ intro | truncate(140, true, '...', 0) }}",
         blocks=[
             _h(),
             {"type": "heading", "text": "{{ heading }}"},
@@ -68,7 +68,7 @@ TEMPLATES.append(
         name="Purchase request / sponsorship form submitted",
         description="Sent to the Project Sales team, one email to all, when a purchase request or sponsorship form is created or updated by an external integration.",
         subject="{{ heading }}",
-        preheader="{{ intro }}",
+        preheader="{{ intro | truncate(140, true, '...', 0) }}",
         blocks=[
             _h(),
             {"type": "heading", "text": "{{ heading }}"},

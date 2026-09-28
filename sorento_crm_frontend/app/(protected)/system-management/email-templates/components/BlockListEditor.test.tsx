@@ -116,4 +116,13 @@ describe('BlockListEditor', () => {
     const textarea = screen.getByLabelText('HTML source') as HTMLTextAreaElement;
     expect(textarea.value).toBe('<p>Hi</p>');
   });
+
+  it('custom text with a table or Jinja tag opens in HTML mode so the rich editor cannot mangle it', () => {
+    const html = '<table><tr>{% for l in lines %}<td>{{ l.item_code }}</td>{% endfor %}</tr></table>';
+    const customBlocks: EmailBlock[] = [{ id: 'c2', type: 'custom_text', html }];
+    render(<BlockListEditor blocks={customBlocks} onChange={vi.fn()} />);
+
+    const textarea = screen.getByLabelText('HTML source') as HTMLTextAreaElement;
+    expect(textarea.value).toBe(html);
+  });
 });

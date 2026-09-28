@@ -198,7 +198,7 @@ def test_create_with_blocks_without_body_html_round_trips_order(db, stop_patches
 
     prev = c.post(f"/api/v1/system/email-templates/{created['id']}/preview", json={}).json()
     html = prev["body_html"]
-    assert html.index("em-btn-link") < html.index("Hi Sample Recipient") < html.index("One")
+    assert html.index('<a class="em-btn-link"') < html.index("Hi Sample Recipient") < html.index("One")
 
 
 def test_create_legacy_template_still_requires_body(db, stop_patches):
@@ -425,3 +425,33 @@ def test_preview_draft_expensive_jinja_is_bounded(db, stop_patches):  # B2
         assert r.status_code == 200
         assert time.monotonic() - started < 6, heading
         assert "[template-error" not in r.json()["body_html"]
+
+
+def test_update_mirrors_custom_text_into_body_html(db, stop_patches):  # review S3, AC-EM045
+    c = _c(db, stop_patches, {VIEW, ADD, EDIT})
+    created = c.post("/api/v1/system/email-templates", json={"code": unique_code("m"), "name": "T", "subject": "S", "layout_json": DOC}).json()
+    changed = {"version": 1, "blocks": [dict(b) for b in DOC["blocks"]]}
+    changed["blocks"][2] = {"id": "c", "type": "custom_text", "html": "<p>Changed</p>"}
+    r = c.put(f"/api/v1/system/email-templates/{created['id']}", json={"layout_json": changed})
+    assert r.json()["body_html"] == "<p>Changed</p>\n<p>Two</p>"
+
+
+def test_first_arrangement_drops_derived_text_part(db, stop_patches):  # review S1
+    from app.services.templating import html_to_text
+
+    c = _c(db, stop_patches, {VIEW, ADD, EDIT})
+    created = c.post("/api/v1/system/email-templates", json={"code": unique_code("t"), "name": "T", "subject": "S", "body_html": "<p>Old body</p>"}).json()
+    assert created["body_text"] == html_to_text("<p>Old body</p>")
+    doc = {"version": 1, "blocks": [{"type": "heading", "text": "New heading"}, {"type": "custom_text", "html": "<p>Old body</p>"}, {"type": "button", "label": "Go", "url": "https://x.example/1"}]}
+    # the editor sends back the prefilled derived text unchanged
+    r = c.put(f"/api/v1/system/email-templates/{created['id']}", json={"layout_json": doc, "body_text": created["body_text"]})
+    assert r.json()["body_text"] is None
+    text = c.post(f"/api/v1/system/email-templates/{created['id']}/preview", json={}).json()["body_text"]
+    assert "New heading" in text and "Go: https://x.example/1" in text
+
+
+def test_first_arrangement_keeps_hand_written_text_part(db, stop_patches):
+    c = _c(db, stop_patches, {VIEW, ADD, EDIT})
+    created = c.post("/api/v1/system/email-templates", json={"code": unique_code("t"), "name": "T", "subject": "S", "body_html": "<p>Old</p>", "body_text": "HAND | WRITTEN"}).json()
+    r = c.put(f"/api/v1/system/email-templates/{created['id']}", json={"layout_json": DOC, "body_text": "HAND | WRITTEN"})
+    assert r.json()["body_text"] == "HAND | WRITTEN"

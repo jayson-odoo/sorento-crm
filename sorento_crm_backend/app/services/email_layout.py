@@ -217,7 +217,9 @@ def theme_defaults(settings: Any = None, company_logo_url: Optional[str] = None)
     socials = []
     for field, label in _SOCIAL_FIELDS:
         url = (getattr(settings, field, None) or "").strip()
-        if url and _safe_url(url):
+        # SocialLink caps url at 500; an over-long settings value is skipped, never raised
+        # (load_theme must not fail a mail).
+        if url and len(url) <= 500 and _safe_url(url):
             socials.append({"label": label, "url": url})
     help_url = (getattr(settings, "website_url", None) or "").strip() or None
     return {

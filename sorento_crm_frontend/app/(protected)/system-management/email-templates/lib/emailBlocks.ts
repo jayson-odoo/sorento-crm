@@ -46,9 +46,9 @@ export function defaultBlockFor(type: EmailBlockType, id: string): EmailBlock {
     case 'facts':
       return { id, type, rows: [], hide_empty: true };
     case 'button':
-      return { id, type, label: '', url: '' };
+      return { id, type, label: 'Open', url: '' };
     case 'link':
-      return { id, type, label: '', url: '' };
+      return { id, type, label: 'Or paste this link into your browser:', url: '' };
     case 'custom_text':
       return { id, type, html: '' };
     case 'footer':

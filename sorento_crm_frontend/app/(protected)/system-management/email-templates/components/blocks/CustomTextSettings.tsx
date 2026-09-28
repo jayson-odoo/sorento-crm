@@ -20,7 +20,9 @@ export function CustomTextSettings({
   block: CustomTextBlock;
   onChange: (patch: AnyBlockPatch) => void;
 }) {
-  const [htmlMode, setHtmlMode] = useState(false);
+  // Tables and Jinja tags do not survive the rich-text editor (StarterKit has no Table
+  // extension), so a block that carries them opens in HTML mode.
+  const [htmlMode, setHtmlMode] = useState(() => /<table|\{%/i.test(block.html ?? ''));
 
   return (
     <div className="space-y-2">

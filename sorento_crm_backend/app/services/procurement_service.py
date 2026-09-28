@@ -8609,8 +8609,10 @@ class PurchaseRequestService:
             user_id=str(requested_by_uid),
             type="purchase_request_approved",
             title=rendered["subject"],
-            body=rendered["body_text"],
-            data={"body_html": rendered["body_html"]},
+            # The bell and web push keep their one-line body; the email's text part is
+            # the rendered template (notification_tasks prefers data["body_text"]).
+            body=f"{type_label} {form_number} (Project: {project}) has been approved.\n\nView form: {view_url}",
+            data={"body_html": rendered["body_html"], "body_text": rendered["body_text"]},
             source_entity_type="purchase_request",
             source_entity_id=str(header.id),
             event_type="approved",
@@ -8649,8 +8651,10 @@ class PurchaseRequestService:
             user_id=str(requested_by_uid),
             type="purchase_request_rejected",
             title=rendered["subject"],
-            body=rendered["body_text"],
-            data={"body_html": rendered["body_html"]},
+            # The bell and web push keep their one-line body; the email's text part is
+            # the rendered template (notification_tasks prefers data["body_text"]).
+            body=f"{type_label} {form_number} (Project: {project}) has been rejected.\n\nView form: {view_url}",
+            data={"body_html": rendered["body_html"], "body_text": rendered["body_text"]},
             source_entity_type="purchase_request",
             source_entity_id=str(header.id),
             event_type="rejected",

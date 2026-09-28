@@ -734,7 +734,7 @@ SYSTEM = json.loads(r'''{
    "version": 1
   },
   "name": "Purchase request / sponsorship form submitted",
-  "preheader": "{{ intro }}",
+  "preheader": "{{ intro | truncate(140, true, '...', 0) }}",
   "subject": "{{ heading }}"
  },
  "sla_daily_summary": {
@@ -772,7 +772,7 @@ SYSTEM = json.loads(r'''{
      "type": "facts"
     },
     {
-     "html": "<h3>Outstanding conversations</h3><table width=\"100%\"><thead><tr><th>Name</th><th>Phone</th><th>Conversation</th></tr></thead><tbody>{% for c in conversations %}<tr><td>{{ c.name }}</td><td>{{ c.phone }}</td><td><a href=\"{{ c.link }}\">Open</a></td></tr>{% endfor %}</tbody></table>",
+     "html": "<h3>Outstanding conversations</h3><table width=\"100%\"><thead><tr><th>Name</th><th>Phone</th><th>Conversation</th></tr></thead><tbody>{% for c in conversations %}<tr><td>{{ c.name }}</td><td>{{ c.phone }}</td><td><a href=\"{{ c.link }}\">Open</a></td></tr>{% else %}<tr><td colspan=\"3\">No outstanding assigned conversations.</td></tr>{% endfor %}</tbody></table>",
      "type": "custom_text"
     },
     {
@@ -824,7 +824,7 @@ SYSTEM = json.loads(r'''{
    "version": 1
   },
   "name": "Stock inquiry team notice",
-  "preheader": "{{ intro }}",
+  "preheader": "{{ intro | truncate(140, true, '...', 0) }}",
   "subject": "{{ heading }}"
  }
 }''')

@@ -173,7 +173,8 @@ _register(
                     "<h3>Outstanding conversations</h3>"
                     "<table width=\"100%\"><thead><tr><th>Name</th><th>Phone</th><th>Conversation</th></tr></thead><tbody>"
                     "{% for c in conversations %}<tr><td>{{ c.name }}</td><td>{{ c.phone }}</td>"
-                    "<td><a href=\"{{ c.link }}\">Open</a></td></tr>{% endfor %}"
+                    "<td><a href=\"{{ c.link }}\">Open</a></td></tr>"
+                    "{% else %}<tr><td colspan=\"3\">No outstanding assigned conversations.</td></tr>{% endfor %}"
                     "</tbody></table>"
                 ),
             },

@@ -231,6 +231,10 @@ def test_requester_notified_approved_email_is_branded(db, monkeypatch):  # AC-EM
     assert "tok-fixed" in body_html
     assert row.title == "Purchase Request approved"
     assert "tok-fixed" in (row.body or "")
+    # review S2: the bell/push body stays one line; the email text part is the template.
+    assert row.body.startswith("Purchase Request PR26-0777 (Project: Taman Melati Phase 2) has been approved.")
+    assert "You received this email" not in row.body
+    assert "You received this email" in row.data["body_text"]
 
 
 def test_requester_notified_rejected_email_is_branded(db, monkeypatch):  # AC-EM066
@@ -253,6 +257,8 @@ def test_requester_notified_rejected_email_is_branded(db, monkeypatch):  # AC-EM
     assert "PR26-0777" in body_html and "Taman Melati Phase 2" in body_html
     assert "tok-fixed-2" in body_html
     assert row.title == "Sponsorship Form rejected"
+    assert row.body.startswith("Sponsorship Form PR26-0777 (Project: Taman Melati Phase 2) has been rejected.")
+    assert "You received this email" in row.data["body_text"]
 
 
 # --------------------------------------------------------------- 8. approval link

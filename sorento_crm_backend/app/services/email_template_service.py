@@ -340,6 +340,16 @@ class EmailTemplateService:
         layout = payload.get("layout_json")
         if layout:
             doc = EmailDocument.model_validate(layout)
+            if row.layout_json is None:
+                # First arrangement of a legacy template: a text part that was only ever
+                # derived from the old body would freeze the mail's text to that body and
+                # hide every block added now (review S1). Drop it so text derives from the
+                # blocks; a hand-written text part (e.g. the OI pipe tables) is kept.
+                derived_old = html_to_text(row.body_html or "")
+                if (row.body_text or "").strip() == derived_old.strip():
+                    row.body_text = None
+                if (payload.get("body_text") or "").strip() == derived_old.strip():
+                    payload["body_text"] = None
             row.layout_json = doc.model_dump(mode="json")
             row.body_html = _mirror_body_html(doc)
             if "body_text" in payload:

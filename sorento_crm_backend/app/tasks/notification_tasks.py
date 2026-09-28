@@ -246,6 +246,10 @@ def _enqueue_email_for_delivery(db, notification: Notification, user, delivery: 
     notification_title = str(getattr(notification, "title", ""))
     notification_body = getattr(notification, "body", None)
     body_text = str(notification_body) if notification_body is not None else notification_title
+    # A producer that renders an email template keeps a short in-app/push `body` and
+    # hands the email its full text part here (#1349).
+    if isinstance(data, dict) and data.get("body_text") and data.get("body_html"):
+        body_text = str(data["body_text"])
     from_name = data.get("from_name")
     body_html = data.get("body_html")
 
@@ -435,9 +439,12 @@ def _enqueue_coalesced_attachment_email(
 
     def _rebuild(merged_meta: dict) -> tuple[str, str]:
         items = list(merged_meta.get("attachment_items") or [])
-        if template_code and items:
-            return _render(items)
         plain_items = list(merged_meta.get("attachment_plain_items") or [])
+        # Only when the structured list covers EVERY attachment merged so far: a row
+        # created before #1349 carries plain items but no structured ones, and rendering
+        # the template from the new notice's items alone would drop the older files.
+        if template_code and items and len(items) >= len(plain_items):
+            return _render(items)
         html_items = list(merged_meta.get("attachment_html_items") or [])
         rebuilt_plain = f"{intro_plain}\n" + "\n".join(plain_items) + f"\n\n{footer_plain}"
         rebuilt_html = f"{intro_html}<ul>{''.join(html_items)}</ul>{footer_html}"

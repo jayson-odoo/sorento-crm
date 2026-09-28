@@ -147,7 +147,6 @@ export default function EmailTemplateForm({ open, onOpenChange, onSaved }: Props
                 id="et-preheader"
                 value={preheader}
                 onChange={(e) => setPreheader(e.target.value)}
-                placeholder="Shown in the inbox list, under the subject"
               />
             </div>
             <div className="space-y-1">

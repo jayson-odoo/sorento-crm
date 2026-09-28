@@ -373,3 +373,20 @@ def test_render_budget_stops_runaway_template_quickly():  # B2 / S1
     r = _render(_doc({"type": "heading", "text": "{% for i in range(1000) %}{% for j in range(1000) %}{% for k in range(1000) %}{% endfor %}{% endfor %}{% endfor %}"}, {"type": "intro", "text": "Still sent"}))
     assert time.monotonic() - started < 6
     assert r.fallback_used and "Still sent" in r.body_text
+
+
+def test_sla_digest_with_no_rows_keeps_empty_state():  # review S6
+    from app.services.email_system_templates import SYSTEM_TEMPLATES
+
+    t = SYSTEM_TEMPLATES["sla_daily_summary"]
+    ctx = {**t.sample, "conversations": [], "outstanding_count": 0, "company": {"name": "Sorento"}}
+    r = render_document(EmailDocument.model_validate(t.document()), subject=t.subject, context=ctx, theme=_theme(), preheader=t.preheader)
+    assert not r.fallback_used
+    assert "No outstanding assigned conversations." in r.body_html
+
+
+def test_overlong_social_setting_is_skipped_not_raised():  # review nit
+    class Long(_Settings):
+        social_facebook = "https://facebook.com/" + "x" * 600
+    t = resolve_theme({}, theme_defaults(Long()))
+    assert [s.label for s in t.social_links] == ["LinkedIn"]
