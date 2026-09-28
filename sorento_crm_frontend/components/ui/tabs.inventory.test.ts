@@ -69,6 +69,9 @@ const SEGMENTED_KEEPERS = [
   // toggle over one workbook, never navigation between panels - DESIGN-LANGUAGE section 4's
   // pill case, specified as a pill by the UAC.
   'app/(protected)/scm/low-stock-report/components/LowStockReportView.tsx',
+  // The email preview's Desktop 600 / Mobile 375 switch (#1349 AC-EM030/031): two options,
+  // a width toggle over one iframe, never navigation.
+  'app/(protected)/system-management/email-templates/components/EmailPreviewFrame.tsx',
 ];
 
 /** Every `.tsx` under the scanned roots, tests excluded. */
