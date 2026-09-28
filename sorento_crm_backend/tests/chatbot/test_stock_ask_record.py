@@ -1,0 +1,227 @@
+"""Chatbot stock ask v2 S5 (PLAN-chatbot-stock-ask-v2-24sep.md "S5 - Asks table + CRM Asks
+tab"), the record half: AC-SA501 to AC-SA504 and AC-SA512.
+
+Real turns through `engine.run_turn` (`test_stock_ask_notify.LiveDealer`), then the job body
+`stock_ask_service.notify_salesman` run on the facts the turn enqueued, against the same
+blank schema. `send_text_or_template`'s network seams are replaced as in the S4 tests.
+"""
+from __future__ import annotations
+
+import json
+import uuid
+
+from sqlalchemy import text
+
+from app.models.integration import IntegrationLog
+from app.models.order import Customer
+from app.models.sales_agent import SalesAgent
+from app.models.stock_ask import StockAsk
+from app.services import stock_ask_service
+
+from tests.chatbot.test_engine import stub_access  # noqa: F401 - a pytest fixture
+from tests.chatbot.test_rearch_s3_attribute_first import SORENTO
+from tests.chatbot.test_stock_ask_notify import (
+    IN_STOCK,
+    NO_INCOMING,
+    TOO_BIG,
+    LiveDealer,
+    _FakeRespond,
+    _window,
+    respond,  # noqa: F401 - a pytest fixture
+)
+
+
+def _asks(session_factory) -> list[StockAsk]:
+    db = session_factory()
+    db.info["company_scope"] = None
+    return db.query(StockAsk).order_by(StockAsk.product_code).all()
+
+
+def _by_code(session_factory) -> dict[str, StockAsk]:
+    return {a.product_code: a for a in _asks(session_factory)}
+
+
+def _run_jobs(session_factory, dealer: LiveDealer) -> list[dict]:
+    db = session_factory()
+    db.info["company_scope"] = None
+    return [stock_ask_service.notify_salesman(db, facts) for facts in dealer.notified]
+
+
+def _give_customer_an_agent(session_factory, customer_id: str, *, respond_io_id="ZZT-agent-rid"):
+    db = session_factory()
+    db.info["company_scope"] = None
+    agent_contact = str(uuid.uuid4())
+    db.execute(
+        text(
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, name, session_vars) "
+            "VALUES (:id, :rid, :phone, 'Agent Lim', CAST('{}' AS jsonb))"
+        ),
+        {"id": agent_contact, "rid": respond_io_id, "phone": f"+6003{uuid.uuid4().int % 10**7:07d}"},
+    )
+    agent = SalesAgent(
+        id=str(uuid.uuid4()), sales_agent=f"ZZT{uuid.uuid4().hex[:6]}", contact_id=agent_contact
+    )
+    db.add(agent)
+    db.flush()
+    db.query(Customer).filter(Customer.id == customer_id).update({"sales_agent_id": agent.id})
+    db.commit()
+    return agent
+
+
+def test_ac_sa501_a_live_turn_writes_one_open_row_per_answered_product(
+    session_factory, monkeypatch, stub_access
+):
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
+    out = dealer.ask_all_four()
+    assert out.error is None, out.error
+    reply = out.reply["text"]
+
+    rows = _by_code(session_factory)
+    assert set(rows) == {"ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-INC", "ZZTSA-NOI"}
+    expected = {
+        "ZZTSA-BIG": ("too_big", 300, f"ZZTSA-BIG x 300: {TOO_BIG}"),
+        "ZZTSA-INS": ("in_stock", 50, f"ZZTSA-INS x 50: {IN_STOCK}"),
+        "ZZTSA-INC": ("incoming", 150, "ZZTSA-INC x 150: no stock at the moment, ETA 19/10/2026."),
+        "ZZTSA-NOI": ("no_incoming", 20, f"ZZTSA-NOI x 20: {NO_INCOMING}"),
+    }
+    for code, (branch, qty, line) in expected.items():
+        row = rows[code]
+        assert (row.branch, row.quantity) == (branch, qty), code
+        assert row.answer_summary == line, code
+        assert line in reply, code
+        assert row.state == "open"
+        assert row.note is None
+        assert row.customer_id == dealer.customer_id
+        assert row.contact_id == dealer.contact_id
+        assert row.product_id == dealer.uuid_of(code)
+        assert str(row.company_id) == SORENTO
+
+
+def test_ac_sa501_dry_run_and_console_write_no_row(session_factory, monkeypatch, stub_access):
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
+    out = dealer.ask_all_four(is_test=True)
+    assert out.error is None, out.error
+    assert _asks(session_factory) == []
+
+
+def test_ac_sa501_toggle_off_still_records_every_ask(session_factory, monkeypatch, stub_access):
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=False)
+    dealer.ask_all_four()
+    rows = _by_code(session_factory)
+    assert len(rows) == 4
+    assert dealer.jobs == []
+
+
+def test_ac_sa502_reasons_at_write(session_factory, monkeypatch, stub_access):
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=False)
+    dealer.ask_all_four()
+    rows = _by_code(session_factory)
+    assert rows["ZZTSA-INC"].notify_skip_reason == "not_notified_branch"
+    for code in ("ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI"):
+        assert rows[code].notify_skip_reason == "toggle_off", code
+    assert all(r.notified_agent is False for r in rows.values())
+
+
+def test_ac_sa502_b3_is_not_notified_even_with_the_toggle_on(
+    session_factory, monkeypatch, stub_access
+):
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
+    dealer.ask_all_four()
+    rows = _by_code(session_factory)
+    assert rows["ZZTSA-INC"].notify_skip_reason == "not_notified_branch"
+    assert {f["ask_id"] for f in dealer.notified} == {
+        rows[c].id for c in ("ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI")
+    }
+
+
+def test_ac_sa502_a_sent_notification_flips_notified_agent(
+    session_factory, monkeypatch, stub_access, respond
+):
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
+    _give_customer_an_agent(session_factory, dealer.customer_id)
+    dealer.ask_all_four()
+    _window(monkeypatch, open_=True)
+    results = _run_jobs(session_factory, dealer)
+    assert [r["status"] for r in results] == ["sent", "sent", "sent"]
+    rows = _by_code(session_factory)
+    for code in ("ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI"):
+        assert rows[code].notified_agent is True, code
+        assert rows[code].notify_skip_reason is None, code
+    assert rows["ZZTSA-INC"].notified_agent is False
+    assert len(_FakeRespond.sent) == 3
+
+
+def test_ac_sa502_each_skip_reason_is_written_on_the_row(
+    session_factory, monkeypatch, stub_access, respond
+):
+    """The customer has no sales agent: the job writes `no_sales_agent` on every row it ran for."""
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
+    dealer.ask_all_four()
+    _window(monkeypatch, open_=True)
+    results = _run_jobs(session_factory, dealer)
+    assert {r["reason"] for r in results} == {"no_sales_agent"}
+    rows = _by_code(session_factory)
+    for code in ("ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI"):
+        assert rows[code].notified_agent is False
+        assert rows[code].notify_skip_reason == "no_sales_agent", code
+
+
+def test_ac_sa502_a_failed_send_is_written_on_the_row(
+    session_factory, monkeypatch, stub_access, respond
+):
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
+    _give_customer_an_agent(session_factory, dealer.customer_id)
+    dealer.ask_all_four()
+    _window(monkeypatch, open_=False)  # closed, and no template mapped
+    _run_jobs(session_factory, dealer)
+    rows = _by_code(session_factory)
+    assert rows["ZZTSA-BIG"].notified_agent is False
+    assert rows["ZZTSA-BIG"].notify_skip_reason == "send_failed"
+
+
+def test_ac_sa503_a_contact_with_no_customer_still_gets_a_row(
+    session_factory, monkeypatch, stub_access
+):
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True, with_customer=False)
+    dealer.ask_all_four()
+    rows = _by_code(session_factory)
+    assert len(rows) == 4
+    for code in ("ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI"):
+        assert rows[code].customer_id is None
+        assert rows[code].notify_skip_reason == "no_customer", code
+    assert rows["ZZTSA-INC"].notify_skip_reason == "not_notified_branch"
+    assert dealer.jobs == []
+
+
+def test_ac_sa504_the_integration_log_references_the_ask(
+    session_factory, monkeypatch, stub_access, respond
+):
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
+    _give_customer_an_agent(session_factory, dealer.customer_id)
+    dealer.ask_all_four()
+    _window(monkeypatch, open_=True)
+    _run_jobs(session_factory, dealer)
+    rows = _by_code(session_factory)
+    db = session_factory()
+    db.info["company_scope"] = None
+    logs = db.query(IntegrationLog).filter(IntegrationLog.integration_channel == "respond_io").all()
+    assert len(logs) == 3
+    assert {l.business_table for l in logs} == {"stock_asks"}
+    assert {str(l.business_id) for l in logs} == {
+        rows[c].id for c in ("ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI")
+    }
+    assert all(json.loads(l.request_payload)["message"]["type"] == "text" for l in logs)
+
+
+def test_ac_sa512_deleting_a_customer_removes_its_asks(
+    session_factory, monkeypatch, stub_access
+):
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=False)
+    dealer.ask_all_four()
+    assert len(_asks(session_factory)) == 4
+    db = session_factory()
+    db.info["company_scope"] = None
+    db.execute(text("DELETE FROM respond_contact_customers WHERE customer_id = :c"), {"c": dealer.customer_id})
+    db.query(Customer).filter(Customer.id == dealer.customer_id).delete()
+    db.commit()
+    assert _asks(session_factory) == []

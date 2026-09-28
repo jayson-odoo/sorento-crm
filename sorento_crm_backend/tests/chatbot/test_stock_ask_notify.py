@@ -69,7 +69,15 @@ class LiveDealer:
     """A dealer on WhatsApp: live turns through `engine.run_turn`, the stock tool stubbed to
     answer each code with the branch `BRANCH_OF` names."""
 
-    def __init__(self, session_factory, monkeypatch, stub_access, *, notify: bool) -> None:
+    def __init__(
+        self,
+        session_factory,
+        monkeypatch,
+        stub_access,
+        *,
+        notify: bool,
+        with_customer: bool = True,
+    ) -> None:
         self.session_factory = session_factory
         self._next: dict[str, Any] | None = None
         self.jobs: list[tuple[Any, tuple, dict]] = []
@@ -81,6 +89,29 @@ class LiveDealer:
             text("UPDATE respond_contacts SET notify_salesman = :n WHERE respond_io_id = :c"),
             {"n": notify, "c": str(CONTACT_ID)},
         )
+        self.contact_id = db.execute(
+            text("SELECT id FROM respond_contacts WHERE respond_io_id = :c"),
+            {"c": str(CONTACT_ID)},
+        ).scalar()
+        self.customer_id = None
+        if with_customer:
+            self.customer_id = str(uuid.uuid4())
+            db.add(
+                Customer(
+                    id=self.customer_id,
+                    customer_code=f"ZZT-C-{uuid.uuid4().hex[:6]}",
+                    customer_name="Hock Lee Trading",
+                    company_id=SORENTO,
+                )
+            )
+            db.flush()
+            db.execute(
+                text(
+                    "INSERT INTO respond_contact_customers (id, contact_id, customer_id, "
+                    "is_primary, source) VALUES (gen_random_uuid(), :c, :cu, true, 'manual')"
+                ),
+                {"c": self.contact_id, "cu": self.customer_id},
+            )
         db.commit()
         self.codes = _seed_products(session_factory, list(BRANCH_OF))
         stub_access()
@@ -185,6 +216,9 @@ class LiveDealer:
             ),
             is_test=is_test,
         )
+
+    def uuid_of(self, code: str) -> str:
+        return next(pid for pid, c in self.codes.items() if c == code)
 
     @property
     def notified(self) -> list[dict[str, Any]]:
