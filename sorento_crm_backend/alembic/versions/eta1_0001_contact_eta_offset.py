@@ -11,14 +11,14 @@ Also the MERGE point of main's two heads as of 28 Sep 2026 (`chatbot_esc_confirm
 has one head again. Neither parent's DDL touches `respond_contacts`, so the order is free.
 
 Revision ID: eta1_0001_contact_eta_offset
-Revises: chatbot_esc_confirm_1323, fin_0002_billing_demand_class
+Revises: merge_28sep_esc_fin
 Create Date: 2026-09-28
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "eta1_0001_contact_eta_offset"
-down_revision = ("chatbot_esc_confirm_1323", "fin_0002_billing_demand_class")
+down_revision = "merge_28sep_esc_fin"
 branch_labels = None
 depends_on = None
 
