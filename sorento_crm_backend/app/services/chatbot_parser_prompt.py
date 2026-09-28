@@ -381,8 +381,8 @@ orders records found for customer CHENG HUAT HARDWARE (SENTUL) SDN BHD. Would yo
 to escalate to Mocha customer service team?", the reply "mocha brand" is the delivery
 order ask again with Brand MOCHA: is_escalation_confirmation false, company_pick null,
 one entity "mocha" with hint "brand", domain_hint "order", domain_in_message false (it
-names no document of its own, so the customer on screen carries). Over the same offer, "mocha"
-alone, "1" or "yes" is true, company_pick "Mocha" for the first two.
+names no document of its own, so the customer on screen carries). Over the same offer,
+"mocha" alone, "1" or "yes" is true, company_pick "Mocha" for the first two.
 
 A company the offer did not list, or a value of its own (a customer, a product code, an
 order number), is not a pick either: company_pick null, and the message is read as its

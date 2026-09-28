@@ -315,3 +315,23 @@ def test_eval_case_d_expects_the_filter_as_a_new_ask_and_the_bare_name_as_the_pi
     assert grade(brand_case, filtered) == []
     assert grade(cases["Mocha"]["expect"]["parser"], recorded) == []
     assert grade(cases["1"]["expect"]["parser"], recorded) == []
+
+
+def test_the_round_1_migration_publishes_the_narrowed_rule() -> None:
+    """`chatbot_esc_confirm_1323` is idempotent by template, so the changed words make
+    it publish one new unlabelled version carrying them, and a second run adds nothing."""
+    from app.models.ai_prompt import AIPromptVersion
+    from tests._pg_fixture import blank_session
+    from tests.chatbot.test_escalation_confirmation_semantic_1323 import _load_migration
+
+    module = _load_migration()
+    with blank_session() as db:
+        bind = db.connection()
+        module.publish(bind)
+        rows = db.query(AIPromptVersion).filter(AIPromptVersion.name == "chatbot_semantic_parser").all()
+        newest = max(rows, key=lambda r: r.version)
+        assert (newest.config_json or {}).get("chatbot_esc_confirm_1323") is True
+        assert "ONLY when the message IS the answer to the offer" in newest.template
+        assert '"mocha brand"' in newest.template
+        module.publish(bind)
+        assert db.query(AIPromptVersion).filter(AIPromptVersion.name == "chatbot_semantic_parser").count() == len(rows)
