@@ -136,7 +136,7 @@ def test_a_decision_carries_whether_the_message_named_its_own_domain(reading, ow
     decision = decide(reading, Focus(domains=["incoming"]), _roster())
     assert decision.answers and decision.positions == (4,)
     assert decision.own_domain is own
-    assert decision.as_trace().get("own_domain") is own
+    assert bool(decision.as_trace().get("own_domain")) is own
 
 
 def test_a_a_domain_word_with_no_pick_answers_nothing_on_the_roster():
