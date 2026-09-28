@@ -137,6 +137,42 @@ def test_gunmetal_basin_is_wash_basins_only_never_the_flexible_trap(chat, world,
         assert other not in text.lower().replace("escalate", ""), (other, text)
 
 
+@pytest.mark.parametrize(
+    "message,verdict,leg",
+    [
+        # Fix round 12 on PR #833: the owner's phrase on :3084 and the script's, as v46 reads
+        # them (the leg's ask, category + finish). The gunmetal trap HAS stock here, so a
+        # stock word that let a word neighbour in would list it.
+        pytest.param(
+            "any gunmetal basin have stock",
+            lambda: _code_ask("any gunmetal basin have stock", _entity("basin", "category"), _spec("gunmetal", "finish", "Gunmetal"), attrs=("stock",), intent_hint="check_stock", domain_hint="inventory"),
+            " with stock",
+            id="owner-have-stock",
+        ),
+        pytest.param(
+            "any gunmetal basin has incoming?",
+            lambda: _code_ask("any gunmetal basin has incoming?", _entity("basin", "category"), _spec("gunmetal", "finish", "Gunmetal"), attrs=("incoming",), intent_hint="check_incoming", domain_hint="incoming"),
+            " with incoming stock",
+            id="script-has-incoming",
+        ),
+    ],
+)
+def test_round12_console_owner_and_script_phrases_stay_attribute_first(chat, world, message, verdict, leg):
+    from tests.chatbot.test_lane_require import _stock_for
+
+    db = world["db"]
+    for trap in world["traps"]:
+        _stock_for(db, product_id=trap.id, warehouse_id=world["warehouse"].id, on_hand=937)
+    db.commit()
+    text = chat.say(message, verdict())
+    print(text)
+    lines = text.split("\n")
+    assert lines[0] == f"Here's what you want: gunmetal wash basins{leg}", text
+    assert lines[-1].startswith("Couldn't find: gunmetal (finish or colour)."), text
+    assert "Stock summary" not in text, text
+    assert not _codes(text, world) & {p.product_code for p in world["traps"]}, text
+
+
 def test_a_gunmetal_flexible_trap_is_found_when_asked_for_by_its_own_type(chat, world):
     """Exact is not blind: the trap is a bathroom accessory with a gunmetal finish, and
     asking for exactly that finds it."""
