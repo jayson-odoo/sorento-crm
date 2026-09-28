@@ -4059,6 +4059,10 @@ class PickingHeaderService:
         re-uploads the same spreadsheet.
         """
         existing = self.get_grn_by_picking_number(picking_number)
+        if existing is not None and existing.doc_key is not None:
+            # #1354 S2, plan section 3: the AutoCount GRN ingest owns this GRN; the sheet
+            # neither rewrites its header nor adds lines to it (see the line upsert below).
+            return existing, False
         if existing:
             existing.spo_number = spo_number
             existing.picking_date = picking_date
@@ -4138,6 +4142,14 @@ class PickingHeaderService:
         It is written on BOTH branches, so a row a previous run mis-stamped is
         corrected rather than left behind.
         """
+        # #1354 S2: an AutoCount-owned GRN's lines are the ingest's; the sheet adds none.
+        owned = (
+            self.db.query(PickingHeader.doc_key)
+            .filter(PickingHeader.id == picking_header_id)
+            .scalar()
+        )
+        if owned is not None:
+            return None
         # Match by (header, product, warehouse, spo_allocation_id) to allow splitting across multiple SPOs
         filters = [
             PickingLine.picking_header_id == picking_header_id,

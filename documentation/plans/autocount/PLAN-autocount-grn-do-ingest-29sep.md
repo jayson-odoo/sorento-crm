@@ -327,7 +327,7 @@ Partial unique index `uq_picking_headers_company_book_doc_key`.
 | `dtl_key`*, `seq`* | `DtlKey`, `Seq` |
 | `product_id`, `item_code`* | `ItemCode` |
 | `destination_warehouse_id`, `location_code`* | `Location` |
-| `description`*, `uom`* | `Description`, `UOM` |
+| `description`*, `uom_code`* (`uom` is the model's unit relationship) | `Description`, `UOM` |
 | `qty`* NUMERIC(15,4) | `Qty` (exact) |
 | `quantity_picked`, `quantity_expected` | `Qty` rounded to integer (the existing integer columns) |
 | `foc_qty`* | `FOCQty` |

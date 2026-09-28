@@ -875,3 +875,17 @@ def test_branch_after_do_fills_name(env):
     assert env.order(900001).branch_name == "KLCC SITE OFFICE"
     env.post(BR_INGEST, [_branch(name="KLCC RENAMED")])
     assert env.order(900001).branch_name == "KLCC RENAMED"
+
+
+def test_cross_repo_contract_carries_section_13():
+    """AC-AG014: the contract of record the shared-service lane implements."""
+    doc = (Path(__file__).resolve().parents[2] / "documentation" / "plans" / "autocount"
+           / "PLAN-autocount-cross-repo-contract.md").read_text()
+    heading = "## 13. delivery_orders, goods_receive_notes, branches (contract 2.7)"
+    assert heading in doc
+    section = doc.split(heading, 1)[1]
+    for needle in ("/api/v1/external/ingest/delivery_orders",
+                   "/api/v1/external/ingest/goods_receive_notes/deletions",
+                   "/api/v1/external/ingest/branches", "doc_keys", "`book`",
+                   "stale_ignored", "adopted_by_doc_no", "FromDocDtlKey", "Never deleted"):
+        assert needle in section, needle

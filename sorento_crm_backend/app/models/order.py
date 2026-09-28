@@ -14,6 +14,7 @@ from sqlalchemy import (
     UniqueConstraint,
     event,
     text,
+    BigInteger,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
@@ -334,7 +335,36 @@ class Order(Base, CompanyScopedMixin):
     deleted_at = Column(DateTime(timezone=False), nullable=True)
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
-    
+    # AutoCount DO ingest (#1354 S2, plan 2.2). A row is AutoCount-OWNED when `doc_key` is
+    # set: the ingest then owns every column below plus order_number / order_date /
+    # created_time / customer_id / debtor_* / agent / remarks / is_cancelled / the money
+    # columns and all lines, and the tracking upload keeps its own (plan section 3).
+    source_book = Column(String(20), nullable=True)
+    doc_key = Column(BigInteger, nullable=True)
+    source_modified_at = Column(DateTime(timezone=True), nullable=True)
+    source_vanished_at = Column(DateTime(timezone=True), nullable=True)
+    last_synced_at = Column(DateTime(timezone=False), nullable=True)
+    source_record = Column(JSONB, nullable=True)
+    branch_code = Column(String(100), nullable=True)
+    branch_name = Column(String(255), nullable=True)
+    deliver_address = Column(Text, nullable=True)
+    deliver_contact = Column(String(255), nullable=True)
+    deliver_phone = Column(String(100), nullable=True)
+    ship_via = Column(String(100), nullable=True)
+    ship_info = Column(String(255), nullable=True)
+    ref = Column(String(255), nullable=True)
+    ref_doc_no = Column(String(100), nullable=True)
+    sales_order_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("sales_orders.id", ondelete="SET NULL", name="fk_orders_sales_order_id"),
+        nullable=True,
+    )
+    description = Column(Text, nullable=True)
+    doc_status = Column(String(20), nullable=True)
+    currency_code = Column(String(10), nullable=True)
+    currency_rate = Column(Numeric(18, 8), nullable=True)
+    local_net_total = Column(Numeric(15, 2), nullable=True)
+
     customer = relationship("Customer", back_populates="orders")
     order_status = relationship("OrderStatus", back_populates="orders")
     lines = relationship(
@@ -355,6 +385,13 @@ class Order(Base, CompanyScopedMixin):
         Index("ix_orders_debtor_code", "debtor_code"),
         Index("ix_orders_kpi_warning", "kpi_warning"),
         Index("ix_orders_is_cancelled", "is_cancelled"),
+        Index(
+            "uq_orders_company_book_doc_key",
+            "company_id", "source_book", "doc_key",
+            unique=True,
+            postgresql_where=text("doc_key IS NOT NULL"),
+        ),
+        Index("ix_orders_sales_order_id", "sales_order_id"),
     )
 
 
@@ -401,6 +438,23 @@ class OrderLine(Base, CompanyScopedMixin):
         ),
         nullable=True,
     )
+    # AutoCount DO ingest (#1354 S2, plan 2.3): identity, typed columns and what the line
+    # says it was transferred from (kept as sent; `sales_order_line_id` is the resolved link).
+    dtl_key = Column(BigInteger, nullable=True)
+    item_code = Column(String(100), nullable=True)
+    location_code = Column(String(50), nullable=True)
+    description = Column(Text, nullable=True)
+    uom = Column(String(30), nullable=True)
+    foc_qty = Column(Numeric(15, 4), nullable=True)
+    discount_text = Column(String(50), nullable=True)
+    batch_no = Column(String(100), nullable=True)
+    delivery_date = Column(Date, nullable=True)
+    proj_no = Column(String(50), nullable=True)
+    your_po_no = Column(String(100), nullable=True)
+    your_po_date = Column(Date, nullable=True)
+    from_doc_type = Column(String(10), nullable=True)
+    from_doc_no = Column(String(100), nullable=True)
+    from_dtl_key = Column(BigInteger, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -421,6 +475,12 @@ class OrderLine(Base, CompanyScopedMixin):
         ),
         UniqueConstraint("order_id", "line_sequence", name="uq_order_lines_order_id_line_sequence"),
         Index("ix_order_lines_sales_order_line_id", "sales_order_line_id"),
+        Index(
+            "uq_order_lines_order_dtl_key",
+            "order_id", "dtl_key",
+            unique=True,
+            postgresql_where=text("dtl_key IS NOT NULL"),
+        ),
     )
 
 

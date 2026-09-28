@@ -15,6 +15,7 @@ from app.models.order import Order, OrderStatus, Customer, CustomerContact, Orde
 from app.models.sales_agent import SalesAgent
 from app.models.sales import SalesTeam, SalesTeamMember
 from app.models.finance import BillingDocument, BillingDocumentLine
+from app.models.autocount_branch import Branch
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine, PurchaseOrder, PurchaseOrderLine
 from app.models.supplier_notice import SupplierNotice, SupplierNoticeLine
@@ -376,6 +377,8 @@ __all__ = [
     # Finance (schema: finance)
     "BillingDocument",
     "BillingDocumentLine",
+    # AutoCount branch table (#1354 S2)
+    "Branch",
     # Dealer Kit (schema: dealer_kit)
     "Page",
     "PageVersion",

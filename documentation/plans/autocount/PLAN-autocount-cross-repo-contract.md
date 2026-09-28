@@ -572,3 +572,184 @@ payments):
 - **A8.** Agent and customer codes on billing documents are the codes the SO feed sends.
 - **A10.** The agent code on an IV transferred from an SO is the SO's agent code in the normal
   case; the shared service reports how often they differ (feeds Q15).
+
+## 13. delivery_orders, goods_receive_notes, branches (contract 2.7)
+
+29 Sep 2026, #1354 S2. Plan: `documentation/plans/autocount/PLAN-autocount-grn-do-ingest-29sep.md`
+(section 1, of which this is a copy); UAC `autocount-grn-do-ingest-29sep-acceptance-criteria.md`.
+The CRM side is built; the shared service's HTTP source, cursor and sink (S1, S4) are not. This
+section is the contract of record for them. References to 2.1 and 2.3 below are the plan's
+(the branch table, and the DO line columns).
+
+### 13.1 Doors
+
+| Call | Slug (all existing) | Body |
+| --- | --- | --- |
+| `POST /api/v1/external/ingest/delivery_orders` (`?dry_run=true` optional) | `order_management.orders.edit` | `{"companyCode", "book", "records": [DO, ...]}` |
+| `POST /api/v1/external/ingest/goods_receive_notes` (`?dry_run=true`) | `procurement.grn.edit` | `{"companyCode", "book", "records": [GRN, ...]}` |
+| `POST /api/v1/external/ingest/branches` (`?dry_run=true`) | `order_management.customers.edit` | `{"companyCode", "book", "records": [Branch, ...]}` |
+| `POST /api/v1/external/ingest/delivery_orders/deletions` (`?dry_run=true`) | `.edit` + `order_management.orders.delete` | `{"companyCode", "book", "doc_date_from", "doc_date_to", "doc_keys": [..]}` |
+| `POST /api/v1/external/ingest/goods_receive_notes/deletions` (`?dry_run=true`) | `.edit` + `procurement.grn.delete` | same |
+| `POST /api/v1/external/read/delivery_orders` | `order_management.orders.view` | `{"companyCode", "source_refs": ["db1:DO:55120", ...]}` |
+| `POST /api/v1/external/read/goods_receive_notes` | `procurement.grn.view` | `{"companyCode", "source_refs": ["db1:GRN:771", ...]}` |
+
+`branches` has no read and no deletions door (404 `unknown_entity`); trigger for adding them: a
+branch deleted in AutoCount that must disappear from the CRM.
+
+`GET /api/v1/external/contract` answers `"version": "2.7"` and lists the three entities.
+
+### 13.2 Envelope
+
+- `companyCode`: the company anchor, unchanged (422 `COMPANY_ANCHOR_REQUIRED` /
+  `UNKNOWN_COMPANY` / `COMPANY_ANCHOR_AMBIGUOUS` / `COMPANY_BINDING_INVALID`).
+- `book`: the AutoCount company book the records came from, the path segment of the vendor URL
+  (`db1` = Sorento, ruling V9). Required on the three entities; 1 to 20 characters of
+  `[A-Za-z0-9_-]`, else 422 `INVALID_BODY`.
+- `records`: up to 1000 (413 `BATCH_TOO_LARGE` above). A body without a `records` array is 422
+  `INVALID_BODY`.
+
+### 13.3 Record = the AutoCount record exactly as the vendor API returned it
+
+The shared service does NOT map fields. Each record is the header object from
+`deliveryorderbyLastModified` / `...bydocdate` (or the GRN equivalents), with its `Details`
+array, as returned. Unknown keys are accepted and kept: the whole record is stored as sent in
+one JSON column (`source_record`, ruling Q1). The CRM reads these keys:
+
+- DO header: `DocKey`, `DocNo`, `DocDate`, `DocStatus`, `Cancelled`, `BranchCode`,
+  `DebtorCode`, `DebtorName`, `DeliverAddr1..4`, `DeliverContact`, `DeliverPhone1`,
+  `SalesAgent`, `ShipVia`, `ShipInfo`, `Ref`, `RefDocNo`, `Remark1..4`, `Description`,
+  `CurrencyCode`, `CurrencyRate`, `Total`, `Tax`, `NetTotal`, `LocalNetTotal`,
+  `CreatedTimeStamp`, `LastModified`, `Details`.
+- GRN header: the same minus `BranchCode`, `DebtorCode/Name`, `DeliverAddr*`, `SalesAgent`,
+  plus `CreditorCode`, `CreditorName`, `SupplierDONo`, `PurchaseAgent`.
+- Line (`Details[]`): `DtlKey`, `Seq`, `ItemCode`, `Description`, `Qty`, `FOCQty`, `UOM`,
+  `UnitPrice`, `Discount`, `DiscountAmt`, `SubTotal`, `Tax`, `Location`, `BatchNo`,
+  `DeliveryDate`, `ProjNo`; DO adds `YourPONo`, `YourPODate`; GRN adds `OurPONo`, `OurPODate`.
+  When the vendor adds them: `FromDocType`, `FromDocNo`, `FromDocDtlKey`.
+- Branch: `BranchCode`, `BranchName`, `AccNo` (see Q1 below).
+
+Required: `DocKey` (integer or integer string), `DocNo`, `DocDate` (ISO date or datetime, or
+`yyyyMMdd`); per line `DtlKey` (integer). `Details` absent is an empty list. At most 2000 lines;
+`DtlKey` unique within the document. `LastModified` should always be sent (see 13.6). A record
+over 1 MB serialised fails (`errors.record`).
+
+`source_ref` (echoed in every verdict and used by the read door) is derived by the CRM:
+`{book}:DO:{DocKey}` / `{book}:GRN:{DocKey}`. Lines: `{book}:DO:{DocKey}:{DtlKey}`. Branches:
+`{book}:BR:{AccNo}:{BranchCode}`.
+
+### 13.4 Idempotency and provenance
+
+- Key: `(company, book, DocKey)`, a partial unique index on `orders (company_id, source_book,
+  doc_key)` and `picking_headers (company_id, source_book, doc_key)`; lines by `(header,
+  dtl_key)`. Branches by `(company, book, AccNo, BranchCode)`.
+- Provenance on the row: `source_book`, `doc_key`, `source_modified_at` (LastModified),
+  `source_record` (the record as sent), `last_synced_at`. No `integration_references` row: the
+  key lives on the row because the row can predate the feed (adoption, 13.5).
+
+### 13.5 Adopt by number
+
+A DO whose `DocNo` equals an existing `orders.order_number` in the anchor company that has no
+`doc_key` (created by the tracking upload's Master sheet or the DO detail import) is ADOPTED:
+the row keeps its id and every tracking column, gains the AutoCount identity, and AutoCount
+writes its own columns (2.3). Verdict `updated` with warning `adopted_by_doc_no`. Same for a GRN
+on `picking_headers.picking_number` (`picking_type='goods_received'`).
+
+Existing lines of an adopted document (no `dtl_key`) are matched one to one to the incoming
+lines: DO by (product, warehouse, quantity), GRN by (product, quantity), first fit in `Seq`
+order; a matched line keeps its id (and, on a GRN, its `spo_allocation_id` / `po_line_id`). An
+unmatched old line is deleted. When a deleted GRN line carried an SPO or PO link, the record
+carries warning `legacy_links_released` and the SPO receipt is recomputed.
+
+A `DocNo` held by a row that already has a DIFFERENT `doc_key` is `failed` with
+`errors.DocNo`. The rest of the batch lands.
+
+### 13.6 Stale guard, unchanged, cancel
+
+- `LastModified` is Malaysia time when naive (ruling V1), converted and stored with its zone.
+- When both stored and incoming `LastModified` exist and the incoming one is OLDER: nothing is
+  written, `unchanged` + warning `stale_ignored`.
+- Otherwise (newer, equal or absent) the resolved values are compared with what is stored:
+  identical answers `unchanged` and writes nothing (not even `last_synced_at`); any difference
+  answers `updated`. So an equal timestamp with new content (for example the vendor adding the
+  `FromDoc*` fields) still lands.
+- `Cancelled` truthy (`T`, `Y`, `1`, `true`, `True`) is an update: DO `is_cancelled=true`, GRN
+  `is_cancelled=true` and `picking_status='cancelled'`; the row and lines stay.
+
+### 13.7 Resolution (masters are linked, never created)
+
+- Customer (`DebtorCode`) in the anchor; unresolved: `customer_id` null, code and name kept,
+  warning `customer_unresolved`.
+- Product (`ItemCode`) and warehouse (`Location`): the line columns are NOT NULL on both tables,
+  so an unresolved code makes the record `retryable` with `errors["Details.N.ItemCode"]` /
+  `errors["Details.N.Location"]` (the SO / PO ingest rule: products and warehouses come through
+  the same feed and arrive). A GRN line with no `Location` lands with no warehouse.
+- A Details row with no `ItemCode` (a description-only row) is not written as a line; it stays in
+  `source_record`, counted in `lines.skipped`, warning `line_without_item`.
+- Branch: `BranchCode` + `DebtorCode` against the branch table (2.1); unresolved: code kept, name
+  null, warning `branch_unresolved`. Empty `BranchCode` resolves nothing and warns nothing.
+
+### 13.8 Links
+
+| Link | Rule |
+| --- | --- |
+| DO line -> SO line (exact) | `FromDocDtlKey` present and `FromDocType` absent or `SO`: the anchor's `sales_order_lines` row whose `source_ref` ends in `:{FromDocDtlKey}` (the SO feed's `{database}:{DocKey}:{DtlKey}`), inside the SO numbered `FromDocNo` when sent. Exactly one match fills `order_lines.sales_order_line_id`; none or several: null, warning `so_line_unresolved`. |
+| GRN line -> PO line or SPO line (exact) | `FromDocDtlKey` present: the anchor's `purchase_order_lines` or `spo_allocations` row whose `source_ref` ends in `:{FromDocDtlKey}` (or equals it), inside `FromDocNo` when sent. Exactly one across both fills `po_line_id` or `spo_allocation_id`; else null, warning `po_line_unresolved`. |
+| DO -> SO (document number) | Only when `RefDocNo` is non-empty: the anchor's one `sales_orders` row with `so_number = RefDocNo` fills `orders.sales_order_id`; none or several: null, warning `sales_order_unresolved`. The line link stays null. |
+| GRN line -> PO / SPO (document number) | Only when the line's `OurPONo` is non-empty and no exact link: the anchor's one `purchase_orders` row with `po_number = OurPONo` fills `picking_lines.purchase_order_id` and `from_doc_type='PO'`; else when an `spo_allocations` row carries `spo_number = OurPONo`, `from_doc_type='SPO'` (no SPO header table to point at); else warning `purchase_order_unresolved`. The line link stays null; the FIFO SPO matcher is NOT run and `spo_number_raw` is not written. |
+
+`from_doc_type`, `from_doc_no`, `from_dtl_key` are stored as sent on every line.
+
+**Later fill (Q10 a).** An unlinked line fills when (a) a later push of the same document
+carries the link (content changed, 13.6), or (b) the SO / PO it names has arrived by the DB
+transfer: at the end of every non-dry DO / GRN batch the CRM fills, for the anchor company,
+every null link whose stored `from_dtl_key` / `RefDocNo` / `OurPONo` now resolves by the rules
+above (one set-based UPDATE per link kind). Trigger for hooking the DB transfer itself: a DO
+measured waiting more than a day for a link its SO already carries.
+
+**Counter.** Every record's `lines` carries `linked` and `unlinked` (lines with no line-level
+link) next to `created`, `updated`, `deleted`, `adopted`, `skipped`; a batch with unlinked lines
+logs `ingest.unlinked_lines entity=.. company=.. count=..`. The S3 verification screen reads the
+dry-run's per-record counters.
+
+### 13.9 Verdicts and error shape
+
+Unchanged from 2.6: always 200, `{dry_run, summary{total, created, updated, failed, retryable,
+unchanged?}, records[{source_ref, outcome, entity_id, errors?, warnings?, lines?}]}`, one
+SAVEPOINT per record. Warning vocabulary added in 2.7: `adopted_by_doc_no`, `branch_unresolved`,
+`line_without_item`, `so_line_unresolved`, `po_line_unresolved`, `sales_order_unresolved`,
+`purchase_order_unresolved`, `legacy_links_released`, `restored`.
+
+### 13.10 Deletions (the sweep)
+
+AutoCount hard-deletes and shows nothing (ruling V6). The shared service's sweep calls
+byDocDate for a date range, compares with what it pushed, and sends the vanished `DocKey`s:
+
+```json
+{"companyCode": "SRT", "book": "db1", "doc_date_from": "2026-08-15", "doc_date_to": "2026-09-28",
+ "doc_keys": [55120, 55121]}
+```
+
+For each key: no row in the anchor with that `(book, doc_key)`: `not_found`. A row whose stored
+`DocDate` is outside the range: `failed`, `errors.doc_date` (the sweep only speaks for the days
+it read). Otherwise the row is marked cancelled (DO `is_cancelled`, GRN `is_cancelled` +
+`picking_status='cancelled'`) and `source_vanished_at` is set: `deactivated`. **Never deleted.**
+Repeating it answers `deactivated` and writes nothing. Response shape = the existing deletions
+shape. `doc_keys` over 1000: 413; missing dates, `from > to`, or missing `doc_keys`: 422
+`INVALID_BODY`. A later push of a vanished DocKey (the sweep was wrong) clears
+`source_vanished_at`, takes `Cancelled` from the payload and answers `updated` + `restored`.
+
+### 13.11 Branches
+
+`POST /ingest/branches`: each record a `branchbypage` row as returned. Required `BranchCode`.
+Key `(company, book, AccNo or '', BranchCode)`. Verdicts `created` / `updated` / `unchanged` /
+`failed`. When a branch's name changes (or a branch arrives after its DOs), every AutoCount DO in
+the anchor with that `(book, DebtorCode = AccNo, BranchCode)` gets the new `branch_name`.
+
+### 13.12 What the shared service must add (S1, S4)
+
+HTTP source for `branchbypage`, `goodsreceivenotebyLastModified` / `...bydocdate`,
+`deliveryorderbyLastModified` / `...bydocdate` per book; hourly poll on byLastModified for
+yesterday and today (Malaysia time); backfill by DocDate one day per call from 1 Jan 2023;
+branches daily and before the backfill; the deletion sweep over a trailing DocDate window
+(45 days, scout Q9); push each record verbatim with the envelope above; the per-entity pull /
+push switch (ruling Q5).

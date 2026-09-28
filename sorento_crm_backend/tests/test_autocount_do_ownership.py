@@ -93,9 +93,13 @@ def test_do_detail_import_skips_autocount_owned_do(seeded):  # noqa: F811
     factory, fx = seeded
     s = factory()
     try:
-        o = s.query(Order).filter(Order.order_number == fx.doc_no).one()
-        o.doc_key = 990002
-        o.source_book = "db1"
+        # A Core UPDATE on the Table: no ORM company filter, still schema-translated.
+        table = Order.__table__
+        s.execute(
+            table.update()
+            .where(table.c.order_number == fx.doc_no)
+            .values(doc_key=990002, source_book="db1")
+        )
         s.commit()
     finally:
         s.close()

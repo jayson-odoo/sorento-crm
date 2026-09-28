@@ -1,0 +1,1346 @@
+"""Ingest AutoCount Delivery Orders, Goods Receive Notes and branches (#1354 S2, contract 2.7).
+
+Plan: documentation/plans/autocount/PLAN-autocount-grn-do-ingest-29sep.md. A sibling of
+`BillingDocumentIngestService` (same constructor shape, same `ingest()` / `RecordResult`
+contract, one SAVEPOINT per record, dry-run rollback), with four differences that come from
+where these documents land:
+
+**The record is AutoCount's own.** The shared service forwards the vendor API's header object
+with its `Details` rows unmapped; this module reads the PascalCase keys it needs and stores the
+whole record as sent in `source_record` (ruling Q1). Unknown keys are kept, never refused.
+
+**Existing tables, so adopt by number.** A DO lands on `orders` / `order_lines` (ruling Q3), a
+GRN on `picking_headers` / `picking_lines` (ruling Q4). The tracking upload or the Excel GRN
+import may have created the row first; the push adopts it by its document number instead of
+duplicating it (Q8 a), keeps its id and every column the upload owns (plan section 3), and
+matches its old lines to the incoming ones so their ids (and a GRN line's SPO or PO link)
+survive.
+
+**Idempotency on the row.** `(company, book, DocKey)` is a partial unique index on the header
+table itself; there is no `integration_references` row, because the row can predate the feed.
+
+**Links are resolved, never waited for.** A line names the SO / PO / SPO line it came from only
+when the vendor sends `FromDocDtlKey` (today it does not); otherwise the document number
+(`RefDocNo` on a DO, `OurPONo` on a GRN line) links the document and the line link stays null
+(Q10 a). A link once made is never unset by a later push that cannot resolve it. At the end of
+every real batch, waiting links that now resolve are filled.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from typing import Any, Optional
+
+from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.models.autocount_branch import Branch
+from app.models.base import company_scope
+from app.models.inventory import Warehouse
+from app.models.order import Customer, Order, OrderLine, OrderStatus, SalesOrder, SalesOrderLine
+from app.models.procurement import (
+    PickingHeader,
+    PickingLine,
+    PurchaseOrder,
+    PurchaseOrderLine,
+    SPOAllocation,
+)
+from app.models.product import Product
+from app.services.deletion_service import (
+    DeletionOutcome,
+    DeletionRecordResult,
+    DeletionResult,
+)
+from app.services.master_ingest_service import (
+    INTERNAL_ERROR_MESSAGE,
+    IngestOutcome,
+    IngestResult,
+    RecordResult,
+    UnsupportedIngestEntity,
+    integrity_conflict_errors,
+)
+from app.services.master_ref_resolver import (
+    WARN_CUSTOMER_UNRESOLVED,
+    MasterRefResolver,
+    dedupe_warnings,
+)
+
+logger = logging.getLogger(__name__)
+
+DELIVERY_ORDERS_ENTITY = "delivery_orders"
+GOODS_RECEIVE_NOTES_ENTITY = "goods_receive_notes"
+BRANCHES_ENTITY = "branches"
+AUTOCOUNT_DOC_ENTITIES = frozenset({DELIVERY_ORDERS_ENTITY, GOODS_RECEIVE_NOTES_ENTITY})
+AUTOCOUNT_BRANCH_ENTITIES = frozenset({BRANCHES_ENTITY})
+
+SOURCE_SYSTEM = "autocount"
+# The vendor URL's book segment (`/api/db1/...`, ruling V9: db1 is Sorento).
+BOOK_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,20}$")
+# Ruling V1: LastModified is Malaysia time. A naive timestamp is read as +08:00.
+MALAYSIA = timezone(timedelta(hours=8))
+MAX_LINES = 2000
+MAX_RECORD_BYTES = 1_000_000
+# Waiting links re-tried per kind at the end of a batch; the rest wait for the next batch.
+MAX_WAITING_LINKS = 5000
+
+_DOC_PREFIX = {DELIVERY_ORDERS_ENTITY: "DO", GOODS_RECEIVE_NOTES_ENTITY: "GRN"}
+
+# Contract 2.7 warning vocabulary. `customer_unresolved` and `stale_ignored` are the existing ones.
+WARN_STALE_IGNORED = "stale_ignored"
+WARN_ADOPTED = "adopted_by_doc_no"
+WARN_BRANCH_UNRESOLVED = "branch_unresolved"
+WARN_LINE_WITHOUT_ITEM = "line_without_item"
+WARN_SO_LINE_UNRESOLVED = "so_line_unresolved"
+WARN_PO_LINE_UNRESOLVED = "po_line_unresolved"
+WARN_SALES_ORDER_UNRESOLVED = "sales_order_unresolved"
+WARN_PURCHASE_ORDER_UNRESOLVED = "purchase_order_unresolved"
+WARN_LEGACY_LINKS_RELEASED = "legacy_links_released"
+WARN_RESTORED = "restored"
+CONTRACT_2_7_WARNINGS = (
+    WARN_ADOPTED,
+    WARN_BRANCH_UNRESOLVED,
+    WARN_LINE_WITHOUT_ITEM,
+    WARN_SO_LINE_UNRESOLVED,
+    WARN_PO_LINE_UNRESOLVED,
+    WARN_SALES_ORDER_UNRESOLVED,
+    WARN_PURCHASE_ORDER_UNRESOLVED,
+    WARN_LEGACY_LINKS_RELEASED,
+    WARN_RESTORED,
+)
+
+# Columns a push never UNSETS: a link made earlier (by an exact ref, a document number, a
+# waiting-link fill, or carried from an adopted Excel line) stays when this push cannot
+# resolve one. A push that resolves a DIFFERENT target replaces it.
+_DO_HEADER_LINKS = ("sales_order_id",)
+_DO_LINE_LINKS = ("sales_order_line_id",)
+_GRN_LINE_LINKS = ("po_line_id", "spo_allocation_id", "purchase_order_id")
+
+_MONEY = Decimal("0.01")
+_FOUR = Decimal("0.0001")
+_RATE = Decimal("0.00000001")
+
+
+# ============================================================================ parsing
+class _Invalid(Exception):
+    """A record the CRM refuses as sent: `failed`, with the field named."""
+
+    def __init__(self, errors: dict[str, str]):
+        super().__init__(json.dumps(errors))
+        self.errors = errors
+
+
+class _Retry(Exception):
+    """A product or warehouse the record names is not here yet: `retryable`."""
+
+    def __init__(self, errors: dict[str, str]):
+        super().__init__(json.dumps(errors))
+        self.errors = errors
+
+
+def _text(value: Any, limit: Optional[int] = None) -> Optional[str]:
+    if value is None:
+        return None
+    out = str(value).strip()
+    if not out:
+        return None
+    return out[:limit] if limit else out
+
+
+def _int(value: Any) -> Optional[int]:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+    text = str(value).strip()
+    return int(text) if re.fullmatch(r"-?\d{1,18}", text) else None
+
+
+def _dec(value: Any, exp: Decimal) -> Optional[Decimal]:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    try:
+        out = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        raise ValueError("not a number") from None
+    if not out.is_finite():
+        raise ValueError("not a number")
+    return out.quantize(exp, rounding=ROUND_HALF_UP)
+
+
+def _parse_dt(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    if re.fullmatch(r"\d{8}", text):
+        return datetime.strptime(text, "%Y%m%d")
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    return datetime.fromisoformat(text)
+
+
+def _date(value: Any) -> Optional[date]:
+    parsed = _parse_dt(value)
+    return parsed.date() if parsed is not None else None
+
+
+def _naive(value: Any) -> Optional[datetime]:
+    parsed = _parse_dt(value)
+    if parsed is None:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(MALAYSIA).replace(tzinfo=None)
+    return parsed
+
+
+def _modified(value: Any) -> Optional[datetime]:
+    parsed = _parse_dt(value)
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=MALAYSIA)
+    return parsed.astimezone(timezone.utc)
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().upper() in {"T", "Y", "1", "TRUE", "YES"}
+
+
+def _joined(*values: Any) -> Optional[str]:
+    parts = [str(v).strip() for v in values if v is not None and str(v).strip()]
+    return "\n".join(parts) or None
+
+
+def _field(errors: dict[str, str], key: str, fn, value):
+    """`fn(value)`, recording a parse failure under `key` instead of raising."""
+    try:
+        return fn(value)
+    except (ValueError, TypeError):
+        errors[key] = f"invalid value {str(value)[:60]!r}"
+        return None
+
+
+@dataclass
+class _Line:
+    index: int
+    raw: dict
+    dtl_key: int
+    seq: Optional[int]
+    item_code: Optional[str]
+    location: Optional[str]
+    qty: Optional[Decimal]
+    from_doc_type: Optional[str]
+    from_doc_no: Optional[str]
+    from_dtl_key: Optional[int]
+    values: dict[str, Any]
+
+
+@dataclass
+class _Doc:
+    raw: dict
+    doc_key: int
+    doc_no: str
+    doc_date: date
+    modified: Optional[datetime]
+    cancelled: bool
+    lines: list[_Line]
+    values: dict[str, Any]
+
+
+def _source_ref(book: str, entity: str, doc_key: Any) -> Optional[str]:
+    key = _int(doc_key)
+    return f"{book}:{_DOC_PREFIX[entity]}:{key}" if key is not None else None
+
+
+def _parse(entity: str, raw: dict) -> _Doc:
+    errors: dict[str, str] = {}
+    doc_key = _int(raw.get("DocKey"))
+    if doc_key is None:
+        errors["DocKey"] = "required, an integer"
+    doc_no = _text(raw.get("DocNo"))
+    if doc_no is None:
+        errors["DocNo"] = "required"
+    elif len(doc_no) > 50:
+        errors["DocNo"] = "longer than 50 characters"
+    doc_date = _field(errors, "DocDate", _date, raw.get("DocDate"))
+    if doc_date is None and "DocDate" not in errors:
+        errors["DocDate"] = "required"
+    modified = _field(errors, "LastModified", _modified, raw.get("LastModified"))
+
+    header: dict[str, Any] = {
+        "ship_via": _text(raw.get("ShipVia"), 100),
+        "ship_info": _text(raw.get("ShipInfo"), 255),
+        "ref": _text(raw.get("Ref"), 255),
+        "ref_doc_no": _text(raw.get("RefDocNo"), 100),
+        "description": _text(raw.get("Description")),
+        "doc_status": _text(raw.get("DocStatus"), 20),
+        "currency_code": _text(raw.get("CurrencyCode"), 10),
+        "currency_rate": _field(errors, "CurrencyRate", lambda v: _dec(v, _RATE),
+                                raw.get("CurrencyRate")),
+        "local_net_total": _field(errors, "LocalNetTotal", lambda v: _dec(v, _MONEY),
+                                  raw.get("LocalNetTotal")),
+    }
+    total = _field(errors, "Total", lambda v: _dec(v, _MONEY), raw.get("Total"))
+    tax = _field(errors, "Tax", lambda v: _dec(v, _MONEY), raw.get("Tax"))
+    net = _field(errors, "NetTotal", lambda v: _dec(v, _MONEY), raw.get("NetTotal"))
+    if net is None and total is not None:
+        net = total + (tax or Decimal("0.00"))
+    header.update(subtotal_amount=total, tax_amount=tax, total_amount=net)
+    remarks = _joined(raw.get("Remark1"), raw.get("Remark2"), raw.get("Remark3"), raw.get("Remark4"))
+    if entity == DELIVERY_ORDERS_ENTITY:
+        header.update(
+            created_time=_field(errors, "CreatedTimeStamp", _naive, raw.get("CreatedTimeStamp")),
+            debtor_code=_text(raw.get("DebtorCode"), 100),
+            debtor_name=_text(raw.get("DebtorName"), 255),
+            branch_code=_text(raw.get("BranchCode"), 100),
+            deliver_address=_joined(raw.get("DeliverAddr1"), raw.get("DeliverAddr2"),
+                                    raw.get("DeliverAddr3"), raw.get("DeliverAddr4")),
+            deliver_contact=_text(raw.get("DeliverContact"), 255),
+            deliver_phone=_text(raw.get("DeliverPhone1"), 100),
+            agent=_text(raw.get("SalesAgent"), 100),
+            remarks=remarks,
+        )
+    else:
+        header.update(
+            creditor_code=_text(raw.get("CreditorCode"), 100),
+            creditor_name=_text(raw.get("CreditorName"), 255),
+            supplier_do_no=_text(raw.get("SupplierDONo"), 100),
+            purchase_agent=_text(raw.get("PurchaseAgent"), 100),
+            remarks=remarks,
+        )
+
+    details = raw.get("Details")
+    if details is None:
+        details = []
+    lines: list[_Line] = []
+    if not isinstance(details, list):
+        errors["Details"] = "must be an array"
+    elif len(details) > MAX_LINES:
+        errors["Details"] = f"more than {MAX_LINES} lines"
+    else:
+        seen_dtl: set[int] = set()
+        seen_seq: set[int] = set()
+        for index, row in enumerate(details):
+            prefix = f"Details.{index}"
+            if not isinstance(row, dict):
+                errors[prefix] = "must be an object"
+                continue
+            dtl_key = _int(row.get("DtlKey"))
+            if dtl_key is None:
+                errors[f"{prefix}.DtlKey"] = "required, an integer"
+                continue
+            if dtl_key in seen_dtl:
+                errors["Details"] = f"DtlKey {dtl_key} appears twice"
+            seen_dtl.add(dtl_key)
+            item_code = _text(row.get("ItemCode"), 100)
+            seq = _int(row.get("Seq"))
+            if item_code is not None and seq is not None:
+                if seq in seen_seq:
+                    errors["Details"] = f"Seq {seq} appears twice"
+                seen_seq.add(seq)
+            qty = _field(errors, f"{prefix}.Qty", lambda v: _dec(v, _FOUR), row.get("Qty"))
+            values = {
+                "item_code": item_code,
+                "location_code": _text(row.get("Location"), 50),
+                "description": _text(row.get("Description")),
+                "foc_qty": _field(errors, f"{prefix}.FOCQty", lambda v: _dec(v, _FOUR),
+                                  row.get("FOCQty")),
+                "discount_text": _text(row.get("Discount"), 50),
+                "delivery_date": _field(errors, f"{prefix}.DeliveryDate", _date,
+                                        row.get("DeliveryDate")),
+                "proj_no": _text(row.get("ProjNo"), 50),
+                "dtl_key": dtl_key,
+            }
+            unit_price = _field(errors, f"{prefix}.UnitPrice", lambda v: _dec(v, _FOUR),
+                                row.get("UnitPrice"))
+            discount_amt = _field(errors, f"{prefix}.DiscountAmt", lambda v: _dec(v, _FOUR),
+                                  row.get("DiscountAmt"))
+            sub_total = _field(errors, f"{prefix}.SubTotal", lambda v: _dec(v, _FOUR),
+                               row.get("SubTotal"))
+            line_tax = _field(errors, f"{prefix}.Tax", lambda v: _dec(v, _FOUR), row.get("Tax"))
+            if entity == DELIVERY_ORDERS_ENTITY:
+                values.update(
+                    uom=_text(row.get("UOM"), 30),
+                    quantity=qty if qty is not None else Decimal("0.0000"),
+                    unit_price=unit_price,
+                    discount=discount_amt,
+                    total=sub_total,
+                    tax=line_tax,
+                    batch_no=_text(row.get("BatchNo"), 100),
+                    your_po_no=_text(row.get("YourPONo"), 100),
+                    your_po_date=_field(errors, f"{prefix}.YourPODate", _date,
+                                        row.get("YourPODate")),
+                )
+            else:
+                rounded = int((qty or Decimal("0")).to_integral_value(rounding=ROUND_HALF_UP))
+                values.update(
+                    uom_code=_text(row.get("UOM"), 30),
+                    seq=seq,
+                    qty=qty,
+                    quantity_picked=rounded,
+                    quantity_expected=rounded,
+                    unit_cost=unit_price.quantize(_MONEY, rounding=ROUND_HALF_UP)
+                    if unit_price is not None else None,
+                    line_total=sub_total.quantize(_MONEY, rounding=ROUND_HALF_UP)
+                    if sub_total is not None else None,
+                    discount_amount=discount_amt.quantize(_MONEY, rounding=ROUND_HALF_UP)
+                    if discount_amt is not None else None,
+                    tax_amount=line_tax.quantize(_MONEY, rounding=ROUND_HALF_UP)
+                    if line_tax is not None else None,
+                    batch_number_picked=_text(row.get("BatchNo"), 100),
+                    our_po_no=_text(row.get("OurPONo"), 100),
+                    our_po_date=_field(errors, f"{prefix}.OurPODate", _date,
+                                       row.get("OurPODate")),
+                )
+            lines.append(
+                _Line(
+                    index=index,
+                    raw=row,
+                    dtl_key=dtl_key,
+                    seq=seq,
+                    item_code=item_code,
+                    location=values["location_code"],
+                    qty=qty,
+                    from_doc_type=_text(row.get("FromDocType"), 10),
+                    from_doc_no=_text(row.get("FromDocNo"), 100),
+                    from_dtl_key=_int(row.get("FromDocDtlKey")),
+                    values=values,
+                )
+            )
+    if errors:
+        raise _Invalid(errors)
+    return _Doc(
+        raw=raw,
+        doc_key=doc_key,
+        doc_no=doc_no,
+        doc_date=doc_date,
+        modified=modified,
+        cancelled=_truthy(raw.get("Cancelled")),
+        lines=lines,
+        values=header,
+    )
+
+
+# ============================================================================ the service
+@dataclass
+class _Verdict:
+    outcome: IngestOutcome
+    entity_id: Optional[str]
+    warnings: list[str]
+    lines: dict[str, int] = field(default_factory=dict)
+
+
+def _line_counts() -> dict[str, int]:
+    return {"created": 0, "updated": 0, "deleted": 0, "adopted": 0, "skipped": 0,
+            "linked": 0, "unlinked": 0}
+
+
+class AutocountDocIngestService(MasterRefResolver):
+    """`delivery_orders`, `goods_receive_notes` and `branches` for one company and one book.
+
+    Subclasses `MasterRefResolver` for its anchor-scoped code lookups (`_resolve_by_code`)
+    and its memo, never for its back-creating rungs: nothing here creates a master.
+    """
+
+    def __init__(
+        self, db: Session, integration_id: Optional[str], *, company_id: str, book: str
+    ):
+        super().__init__(db, integration_id, company_id=company_id)
+        self.book = book
+        # SPO allocations whose receipt a GRN write moved, for the route's post-commit hook.
+        self.touched_allocation_ids: set[str] = set()
+        self.released_allocation_ids: set[str] = set()
+
+    # ------------------------------------------------------------------ the batch
+    def ingest(
+        self, entity_type: str, records: list[Any], *, dry_run: bool = False
+    ) -> IngestResult:
+        if entity_type not in AUTOCOUNT_DOC_ENTITIES | AUTOCOUNT_BRANCH_ENTITIES:
+            raise UnsupportedIngestEntity(f"Unsupported AutoCount entity {entity_type!r}")
+        result = IngestResult(dry_run=dry_run)
+        try:
+            for raw in records:
+                if entity_type == BRANCHES_ENTITY:
+                    result.records.append(self._ingest_branch(raw))
+                else:
+                    result.records.append(self._ingest_one(entity_type, raw))
+            if not dry_run and entity_type in AUTOCOUNT_DOC_ENTITIES:
+                with company_scope(self.db, frozenset({self.company_id})):
+                    self._fill_waiting_links(entity_type)
+        finally:
+            if dry_run:
+                self.db.rollback()
+        unlinked = sum((r.lines or {}).get("unlinked", 0) for r in result.records)
+        if unlinked and not dry_run:
+            logger.info(
+                "ingest.unlinked_lines entity=%s company=%s count=%d",
+                entity_type, self.company_id, unlinked,
+            )
+        return result
+
+    def _ingest_one(self, entity: str, raw: Any) -> RecordResult:
+        source_ref = _source_ref(self.book, entity, raw.get("DocKey")) if isinstance(raw, dict) else None
+        if not isinstance(raw, dict):
+            return RecordResult(source_ref=None, outcome=IngestOutcome.FAILED,
+                                errors={"record": "must be an object"})
+        try:
+            size = len(json.dumps(raw, default=str))
+        except (TypeError, ValueError):
+            size = MAX_RECORD_BYTES + 1
+        if size > MAX_RECORD_BYTES:
+            return RecordResult(source_ref=source_ref, outcome=IngestOutcome.FAILED,
+                                errors={"record": f"larger than {MAX_RECORD_BYTES} bytes"})
+        try:
+            doc = _parse(entity, raw)
+        except _Invalid as exc:
+            return RecordResult(source_ref=source_ref, outcome=IngestOutcome.FAILED,
+                                errors=exc.errors)
+
+        savepoint = self.db.begin_nested()
+        try:
+            with company_scope(self.db, frozenset({self.company_id})):
+                verdict = (
+                    self._apply_do(doc) if entity == DELIVERY_ORDERS_ENTITY else self._apply_grn(doc)
+                )
+            savepoint.commit()
+            return RecordResult(
+                source_ref=source_ref,
+                outcome=verdict.outcome,
+                entity_id=verdict.entity_id,
+                warnings=dedupe_warnings(verdict.warnings),
+                lines=verdict.lines,
+            )
+        except _Retry as exc:
+            savepoint.rollback()
+            return RecordResult(source_ref=source_ref, outcome=IngestOutcome.RETRYABLE,
+                                errors=exc.errors)
+        except _Invalid as exc:
+            savepoint.rollback()
+            return RecordResult(source_ref=source_ref, outcome=IngestOutcome.FAILED,
+                                errors=exc.errors)
+        except IntegrityError as exc:
+            savepoint.rollback()
+            logger.warning("ingest.integrity_conflict entity=%s source_ref=%s", entity,
+                           source_ref, exc_info=True)
+            return RecordResult(source_ref=source_ref, outcome=IngestOutcome.FAILED,
+                                errors=integrity_conflict_errors(exc))
+        except Exception:  # noqa: BLE001 - one document's failure, not the batch's
+            savepoint.rollback()
+            logger.warning("ingest.document_failed entity=%s source_ref=%s", entity,
+                           source_ref, exc_info=True)
+            return RecordResult(source_ref=source_ref, outcome=IngestOutcome.FAILED,
+                                errors={"_": INTERNAL_ERROR_MESSAGE})
+
+    # ------------------------------------------------------------- shared steps
+    def _find(self, model, number_column, doc: _Doc, extra_filters=()):
+        """(row, adopted). The row keyed by (book, DocKey), else the unowned row with the
+        same document number, adopted. A number held by another DocKey fails the record."""
+        row = (
+            self.db.query(model)
+            .filter(model.company_id == self.company_id, model.source_book == self.book,
+                    model.doc_key == doc.doc_key, *extra_filters)
+            .one_or_none()
+        )
+        by_number = (
+            self.db.query(model)
+            .filter(model.company_id == self.company_id, number_column == doc.doc_no,
+                    *extra_filters)
+            .one_or_none()
+        )
+        if row is not None:
+            if by_number is not None and by_number.id != row.id:
+                raise _Invalid({"DocNo": f"{doc.doc_no!r} is already another document's number"})
+            return row, False
+        if by_number is None:
+            return None, False
+        if by_number.doc_key is not None:
+            raise _Invalid({"DocNo": f"{doc.doc_no!r} is already another AutoCount document's "
+                                     f"number (DocKey {by_number.doc_key})"})
+        return by_number, True
+
+    def _is_stale(self, existing, doc: _Doc, adopted: bool) -> bool:
+        return (
+            existing is not None
+            and not adopted
+            and existing.source_modified_at is not None
+            and doc.modified is not None
+            and doc.modified < existing.source_modified_at
+        )
+
+    def _identity(self, doc: _Doc) -> dict[str, Any]:
+        return {
+            "source_book": self.book,
+            "doc_key": doc.doc_key,
+            "source_modified_at": doc.modified,
+            "source_vanished_at": None,
+            "source_record": doc.raw,
+        }
+
+    def _resolve_items(self, doc: _Doc, warnings: list[str], *, warehouse_required: bool):
+        """(product_id, warehouse_id) per written line, or `_Retry` naming every missing code.
+        A Details row with no ItemCode is not a line (kept in `source_record`)."""
+        missing: dict[str, str] = {}
+        resolved: dict[int, tuple[str, Optional[str]]] = {}
+        for line in doc.lines:
+            if line.item_code is None:
+                continue
+            product_id = self._resolve_by_code(Product, line.item_code)
+            if product_id is None:
+                missing[f"Details.{line.index}.ItemCode"] = f"product {line.item_code!r} not found"
+            warehouse_id = None
+            if line.location is not None:
+                warehouse_id = self._resolve_by_code(Warehouse, line.location)
+                if warehouse_id is None:
+                    missing[f"Details.{line.index}.Location"] = (
+                        f"warehouse {line.location!r} not found"
+                    )
+            elif warehouse_required:
+                missing[f"Details.{line.index}.Location"] = "required on a delivery order line"
+            resolved[line.index] = (product_id, warehouse_id)
+        if missing:
+            raise _Retry(missing)
+        if any(line.item_code is None for line in doc.lines):
+            warnings.append(WARN_LINE_WITHOUT_ITEM)
+        return resolved
+
+    @staticmethod
+    def _changes(row, values: dict[str, Any], keep_links: tuple[str, ...]) -> dict[str, Any]:
+        out = {}
+        for key, value in values.items():
+            if key in keep_links and value is None:
+                continue
+            if getattr(row, key) != value:
+                out[key] = value
+        return out
+
+    def _customer(self, code: Optional[str], warnings: list[str]) -> Optional[str]:
+        if not code:
+            return None
+        entity_id = self._resolve_by_code(Customer, code)
+        if entity_id is None:
+            warnings.append(WARN_CUSTOMER_UNRESOLVED)
+        return entity_id
+
+    def _branch_name(self, debtor_code: Optional[str], branch_code: Optional[str],
+                     warnings: list[str]) -> Optional[str]:
+        if not branch_code:
+            return None
+        rows = (
+            self.db.query(Branch.acc_no, Branch.branch_name)
+            .filter(Branch.company_id == self.company_id, Branch.source_book == self.book,
+                    Branch.branch_code == branch_code)
+            .all()
+        )
+        exact = [r for r in rows if debtor_code and r.acc_no == debtor_code]
+        if len(exact) == 1:
+            return exact[0].branch_name
+        if len(rows) == 1:
+            return rows[0].branch_name
+        warnings.append(WARN_BRANCH_UNRESOLVED)
+        return None
+
+    def _new_status_id(self) -> Optional[str]:
+        key = ("order_statuses", "code", "new")
+        if key not in self._memo:
+            row = (
+                self.db.query(OrderStatus.id)
+                .filter(OrderStatus.status_code.ilike("new"))
+                .first()
+            )
+            self._memo[key] = str(row[0]) if row else None
+        return self._memo[key]
+
+    # --------------------------------------------------------------- link lookups
+    @staticmethod
+    def _ref_matches(column, dtl_key: int):
+        return or_(column == str(dtl_key), column.like(f"%:{dtl_key}"))
+
+    def _so_line(self, dtl_key: int, doc_no: Optional[str]) -> Optional[str]:
+        query = (
+            self.db.query(SalesOrderLine.id)
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .filter(SalesOrderLine.company_id == self.company_id,
+                    self._ref_matches(SalesOrderLine.source_ref, dtl_key))
+        )
+        if doc_no:
+            query = query.filter(SalesOrder.so_number == doc_no)
+        rows = query.limit(2).all()
+        return str(rows[0][0]) if len(rows) == 1 else None
+
+    def _po_or_spo_line(self, dtl_key: int, doc_no: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+        """(po_line_id, spo_allocation_id): exactly one match across both tables, else both
+        None. SPO and PO share one AutoCount table, so one DtlKey resolves against either."""
+        po_query = (
+            self.db.query(PurchaseOrderLine.id)
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .filter(PurchaseOrderLine.company_id == self.company_id,
+                    self._ref_matches(PurchaseOrderLine.source_ref, dtl_key))
+        )
+        spo_query = self.db.query(SPOAllocation.id).filter(
+            SPOAllocation.company_id == self.company_id,
+            self._ref_matches(SPOAllocation.source_ref, dtl_key),
+        )
+        if doc_no:
+            po_query = po_query.filter(PurchaseOrder.po_number == doc_no)
+            spo_query = spo_query.filter(SPOAllocation.spo_number == doc_no)
+        po_rows = po_query.limit(2).all()
+        spo_rows = spo_query.limit(2).all()
+        if len(po_rows) + len(spo_rows) != 1:
+            return None, None
+        if po_rows:
+            return str(po_rows[0][0]), None
+        return None, str(spo_rows[0][0])
+
+    def _sales_order(self, so_number: Optional[str]) -> Optional[str]:
+        if not so_number:
+            return None
+        rows = (
+            self.db.query(SalesOrder.id)
+            .filter(SalesOrder.company_id == self.company_id, SalesOrder.so_number == so_number)
+            .limit(2)
+            .all()
+        )
+        return str(rows[0][0]) if len(rows) == 1 else None
+
+    def _purchase_order(self, po_number: str) -> tuple[Optional[str], Optional[str]]:
+        """(purchase_order_id, from_doc_type) for a GRN line's `OurPONo`."""
+        rows = (
+            self.db.query(PurchaseOrder.id)
+            .filter(PurchaseOrder.company_id == self.company_id,
+                    PurchaseOrder.po_number == po_number)
+            .limit(2)
+            .all()
+        )
+        if len(rows) == 1:
+            return str(rows[0][0]), "PO"
+        if not rows:
+            spo = (
+                self.db.query(SPOAllocation.id)
+                .filter(SPOAllocation.company_id == self.company_id,
+                        SPOAllocation.spo_number == po_number)
+                .first()
+            )
+            if spo is not None:
+                return None, "SPO"
+        return None, None
+
+    # ================================================================== delivery orders
+    def _apply_do(self, doc: _Doc) -> _Verdict:
+        existing, adopted = self._find(Order, Order.order_number, doc)
+        if self._is_stale(existing, doc, adopted):
+            return _Verdict(IngestOutcome.UNCHANGED, str(existing.id), [WARN_STALE_IGNORED])
+
+        warnings: list[str] = []
+        resolved = self._resolve_items(doc, warnings, warehouse_required=True)
+        header = dict(doc.values)
+        header.update(self._identity(doc))
+        header.update(
+            order_number=doc.doc_no,
+            order_date=doc.doc_date,
+            is_cancelled=doc.cancelled,
+            customer_id=self._customer(header["debtor_code"], warnings),
+            branch_name=self._branch_name(header["debtor_code"], header["branch_code"], warnings),
+            sales_order_id=self._sales_order(header["ref_doc_no"]),
+        )
+        # `orders` money columns are NOT NULL with a 0 default.
+        for key in ("subtotal_amount", "tax_amount", "total_amount"):
+            if header[key] is None:
+                header[key] = Decimal("0.00")
+        if header["ref_doc_no"] and header["sales_order_id"] is None:
+            warnings.append(WARN_SALES_ORDER_UNRESOLVED)
+
+        lines: list[dict[str, Any]] = []
+        for line in doc.lines:
+            if line.item_code is None:
+                continue
+            product_id, warehouse_id = resolved[line.index]
+            values = dict(line.values)
+            values.update(
+                line_sequence=line.seq if line.seq is not None else line.index + 1,
+                product_id=product_id,
+                warehouse_id=warehouse_id,
+                from_doc_type=line.from_doc_type,
+                from_doc_no=line.from_doc_no,
+                from_dtl_key=line.from_dtl_key,
+                sales_order_line_id=None,
+            )
+            if line.from_dtl_key is not None and (line.from_doc_type in (None, "SO")):
+                values["sales_order_line_id"] = self._so_line(line.from_dtl_key, line.from_doc_no)
+                if values["sales_order_line_id"] is None:
+                    warnings.append(WARN_SO_LINE_UNRESOLVED)
+            lines.append(values)
+
+        counts = _line_counts()
+        counts["skipped"] = sum(1 for line in doc.lines if line.item_code is None)
+        if existing is None:
+            order = Order(company_id=self.company_id, order_status_id=self._new_status_id(),
+                          last_synced_at=datetime.utcnow(), **header)
+            self.db.add(order)
+            self.db.flush()
+            for values in lines:
+                self.db.add(OrderLine(company_id=self.company_id, order_id=order.id, **values))
+            self.db.flush()
+            counts["created"] = len(lines)
+            self._count_links(counts, order.lines, "sales_order_line_id")
+            return _Verdict(IngestOutcome.CREATED, str(order.id), warnings, counts)
+
+        if adopted:
+            warnings.append(WARN_ADOPTED)
+        if existing.source_vanished_at is not None:
+            warnings.append(WARN_RESTORED)
+        changed = self._write_lines(
+            existing, list(existing.lines), lines, counts,
+            seq_column="line_sequence",
+            legacy_key=lambda row: (str(row.product_id), str(row.warehouse_id), row.quantity),
+            incoming_key=lambda v: (str(v["product_id"]), str(v["warehouse_id"]), v["quantity"]),
+            make=lambda values: OrderLine(company_id=self.company_id, order_id=existing.id,
+                                          **values),
+            attach=existing.lines,
+            keep_links=_DO_LINE_LINKS,
+        )
+        header_changes = self._changes(existing, header, _DO_HEADER_LINKS)
+        if not header_changes and not changed:
+            self._count_links(counts, existing.lines, "sales_order_line_id")
+            return _Verdict(IngestOutcome.UNCHANGED, str(existing.id), warnings, counts)
+        for key, value in header_changes.items():
+            setattr(existing, key, value)
+        existing.last_synced_at = datetime.utcnow()
+        self.db.flush()
+        self.db.expire(existing, ["lines"])
+        self._count_links(counts, existing.lines, "sales_order_line_id")
+        return _Verdict(IngestOutcome.UPDATED, str(existing.id), warnings, counts)
+
+    # ================================================================== goods receive notes
+    def _apply_grn(self, doc: _Doc) -> _Verdict:
+        goods_received = (PickingHeader.picking_type == "goods_received",)
+        existing, adopted = self._find(PickingHeader, PickingHeader.picking_number, doc,
+                                       goods_received)
+        if self._is_stale(existing, doc, adopted):
+            return _Verdict(IngestOutcome.UNCHANGED, str(existing.id), [WARN_STALE_IGNORED])
+
+        warnings: list[str] = []
+        resolved = self._resolve_items(doc, warnings, warehouse_required=False)
+        header = dict(doc.values)
+        header.update(self._identity(doc))
+        header.update(
+            picking_number=doc.doc_no,
+            picking_date=doc.doc_date,
+            is_cancelled=doc.cancelled,
+            picking_status="cancelled" if doc.cancelled else "approved",
+        )
+
+        lines: list[dict[str, Any]] = []
+        for line in doc.lines:
+            if line.item_code is None:
+                continue
+            product_id, warehouse_id = resolved[line.index]
+            values = dict(line.values)
+            values.update(
+                product_id=product_id,
+                destination_warehouse_id=warehouse_id,
+                from_doc_type=line.from_doc_type,
+                from_doc_no=line.from_doc_no,
+                from_dtl_key=line.from_dtl_key,
+                po_line_id=None,
+                spo_allocation_id=None,
+                purchase_order_id=None,
+            )
+            if line.from_dtl_key is not None:
+                po_line, spo_line = self._po_or_spo_line(line.from_dtl_key, line.from_doc_no)
+                values.update(po_line_id=po_line, spo_allocation_id=spo_line)
+                if po_line is None and spo_line is None:
+                    warnings.append(WARN_PO_LINE_UNRESOLVED)
+            elif values["our_po_no"]:
+                purchase_order_id, doc_type = self._purchase_order(values["our_po_no"])
+                if doc_type is None:
+                    warnings.append(WARN_PURCHASE_ORDER_UNRESOLVED)
+                else:
+                    values.update(purchase_order_id=purchase_order_id,
+                                  from_doc_type=line.from_doc_type or doc_type,
+                                  from_doc_no=line.from_doc_no or values["our_po_no"])
+            lines.append(values)
+
+        counts = _line_counts()
+        counts["skipped"] = sum(1 for line in doc.lines if line.item_code is None)
+        if existing is None:
+            grn = PickingHeader(company_id=self.company_id, picking_type="goods_received",
+                                inspection_status="pending", source_system=SOURCE_SYSTEM,
+                                last_synced_at=datetime.utcnow(), **header)
+            self.db.add(grn)
+            self.db.flush()
+            for values in lines:
+                self.db.add(PickingLine(company_id=self.company_id, picking_header_id=grn.id,
+                                        **values))
+                if values["spo_allocation_id"]:
+                    self.touched_allocation_ids.add(values["spo_allocation_id"])
+            self.db.flush()
+            counts["created"] = len(lines)
+            self.db.expire(grn, ["picking_lines"])
+            self._count_links(counts, grn.picking_lines, "po_line_id", "spo_allocation_id")
+            return _Verdict(IngestOutcome.CREATED, str(grn.id), warnings, counts)
+
+        if adopted:
+            warnings.append(WARN_ADOPTED)
+        if existing.source_vanished_at is not None:
+            warnings.append(WARN_RESTORED)
+        stored = list(existing.picking_lines)
+        changed = self._write_lines(
+            existing, stored, lines, counts,
+            seq_column=None,
+            legacy_key=lambda row: (str(row.product_id), row.quantity_picked),
+            incoming_key=lambda v: (str(v["product_id"]), v["quantity_picked"]),
+            make=lambda values: PickingLine(company_id=self.company_id,
+                                            picking_header_id=existing.id, **values),
+            attach=None,
+            keep_links=_GRN_LINE_LINKS,
+            on_removed=lambda row: self._release(row, warnings),
+        )
+        header_changes = self._changes(existing, header, ())
+        if not header_changes and not changed:
+            self._count_links(counts, existing.picking_lines, "po_line_id", "spo_allocation_id")
+            return _Verdict(IngestOutcome.UNCHANGED, str(existing.id), warnings, counts)
+        for key, value in header_changes.items():
+            setattr(existing, key, value)
+        existing.last_synced_at = datetime.utcnow()
+        self.db.flush()
+        self.db.expire(existing, ["picking_lines"])
+        for row in existing.picking_lines:
+            if row.spo_allocation_id:
+                self.touched_allocation_ids.add(str(row.spo_allocation_id))
+        self._count_links(counts, existing.picking_lines, "po_line_id", "spo_allocation_id")
+        return _Verdict(IngestOutcome.UPDATED, str(existing.id), warnings, counts)
+
+    def _release(self, row: PickingLine, warnings: list[str]) -> None:
+        if row.spo_allocation_id:
+            self.released_allocation_ids.add(str(row.spo_allocation_id))
+            self.touched_allocation_ids.add(str(row.spo_allocation_id))
+        if (row.spo_allocation_id or row.po_line_id) and row.dtl_key is None:
+            warnings.append(WARN_LEGACY_LINKS_RELEASED)
+
+    # ------------------------------------------------------------------ lines
+    def _write_lines(self, header, stored, incoming, counts, *, seq_column, legacy_key,
+                     incoming_key, make, attach, keep_links, on_removed=None) -> bool:
+        """Apply the incoming line set to a stored document. Returns whether anything changed.
+
+        Stored lines with a `dtl_key` match by it. Lines without one (an adopted upload's)
+        are claimed one to one by `legacy_key == incoming_key`, first fit, and keep their id.
+        Everything else stored and not claimed is deleted.
+        """
+        by_dtl = {row.dtl_key: row for row in stored if row.dtl_key is not None}
+        legacy = [row for row in stored if row.dtl_key is None]
+        plan: list[tuple[Any, dict[str, Any]]] = []  # (row or None, values)
+        for values in incoming:
+            row = by_dtl.pop(values["dtl_key"], None)
+            if row is None:
+                key = incoming_key(values)
+                match = next((r for r in legacy if legacy_key(r) == key), None)
+                if match is not None:
+                    legacy.remove(match)
+                    counts["adopted"] += 1
+                    row = match
+            plan.append((row, values))
+        removed = list(by_dtl.values()) + legacy
+
+        changes: list[tuple[Any, dict[str, Any]]] = []
+        created: list[dict[str, Any]] = []
+        for row, values in plan:
+            if row is None:
+                created.append(values)
+                continue
+            diff = self._changes(row, values, keep_links)
+            if diff:
+                changes.append((row, diff))
+                if row.dtl_key is not None:
+                    counts["updated"] += 1
+        counts["created"] += len(created)
+        counts["deleted"] += len(removed)
+        if not changes and not created and not removed:
+            return False
+
+        for row in removed:
+            if on_removed is not None:
+                on_removed(row)
+            self.db.delete(row)
+        self.db.flush()
+        if seq_column is not None:
+            # (order_id, line_sequence) is unique: park every moving row on a negative
+            # sequence first, so a swap never collides mid-flush.
+            moving = [(row, diff) for row, diff in changes if seq_column in diff]
+            for offset, (row, _) in enumerate(moving, start=1):
+                setattr(row, seq_column, -offset)
+            if moving:
+                self.db.flush()
+        for row, diff in changes:
+            for key, value in diff.items():
+                setattr(row, key, value)
+        self.db.flush()
+        for values in created:
+            self.db.add(make(values))
+        self.db.flush()
+        if attach is not None:
+            self.db.expire(header, ["lines"])
+        return True
+
+    @staticmethod
+    def _count_links(counts: dict[str, int], rows, *columns: str) -> None:
+        linked = sum(1 for row in rows if any(getattr(row, c) for c in columns))
+        counts["linked"] = linked
+        counts["unlinked"] = len(rows) - linked
+
+    # ------------------------------------------------------------ waiting links
+    def _fill_waiting_links(self, entity: str) -> None:
+        """Fill every null link in the anchor company that now resolves (Q10 a): the SO or
+        PO a document named has arrived since it landed. Through the ORM, one row at a time,
+        so the audit listener sees the header changes."""
+        if entity == DELIVERY_ORDERS_ENTITY:
+            waiting_lines = (
+                self.db.query(OrderLine)
+                .filter(OrderLine.company_id == self.company_id,
+                        OrderLine.sales_order_line_id.is_(None),
+                        OrderLine.from_dtl_key.isnot(None),
+                        or_(OrderLine.from_doc_type.is_(None), OrderLine.from_doc_type == "SO"))
+                .limit(MAX_WAITING_LINKS)
+                .all()
+            )
+            for row in waiting_lines:
+                target = self._so_line(row.from_dtl_key, row.from_doc_no)
+                if target is not None:
+                    row.sales_order_line_id = target
+            waiting_headers = (
+                self.db.query(Order)
+                .filter(Order.company_id == self.company_id, Order.doc_key.isnot(None),
+                        Order.sales_order_id.is_(None), Order.ref_doc_no.isnot(None))
+                .limit(MAX_WAITING_LINKS)
+                .all()
+            )
+            for row in waiting_headers:
+                target = self._sales_order(row.ref_doc_no)
+                if target is not None:
+                    row.sales_order_id = target
+        else:
+            exact = (
+                self.db.query(PickingLine)
+                .filter(PickingLine.company_id == self.company_id,
+                        PickingLine.po_line_id.is_(None),
+                        PickingLine.spo_allocation_id.is_(None),
+                        PickingLine.from_dtl_key.isnot(None))
+                .limit(MAX_WAITING_LINKS)
+                .all()
+            )
+            for row in exact:
+                po_line, spo_line = self._po_or_spo_line(row.from_dtl_key, row.from_doc_no)
+                if po_line or spo_line:
+                    row.po_line_id, row.spo_allocation_id = po_line, spo_line
+                    if spo_line:
+                        self.touched_allocation_ids.add(spo_line)
+            by_number = (
+                self.db.query(PickingLine)
+                .filter(PickingLine.company_id == self.company_id,
+                        PickingLine.dtl_key.isnot(None),
+                        PickingLine.purchase_order_id.is_(None),
+                        PickingLine.from_dtl_key.is_(None),
+                        PickingLine.our_po_no.isnot(None))
+                .limit(MAX_WAITING_LINKS)
+                .all()
+            )
+            for row in by_number:
+                purchase_order_id, doc_type = self._purchase_order(row.our_po_no)
+                if purchase_order_id is not None:
+                    row.purchase_order_id = purchase_order_id
+                    row.from_doc_type = row.from_doc_type or doc_type
+                    row.from_doc_no = row.from_doc_no or row.our_po_no
+        self.db.flush()
+
+    # ================================================================== deletions
+    def delete(
+        self,
+        entity: str,
+        doc_keys: list[Any],
+        date_from: date,
+        date_to: date,
+        *,
+        dry_run: bool = False,
+    ) -> DeletionResult:
+        """The sweep's vanished DocKeys: cancelled in place, never deleted (plan 1.10)."""
+        if entity not in AUTOCOUNT_DOC_ENTITIES:
+            raise UnsupportedIngestEntity(f"Unsupported AutoCount entity {entity!r}")
+        model = Order if entity == DELIVERY_ORDERS_ENTITY else PickingHeader
+        date_column = "order_date" if entity == DELIVERY_ORDERS_ENTITY else "picking_date"
+        result = DeletionResult(dry_run=dry_run)
+        try:
+            with company_scope(self.db, frozenset({self.company_id})):
+                for value in doc_keys:
+                    result.records.append(
+                        self._delete_one(entity, model, date_column, value, date_from, date_to)
+                    )
+                self.db.flush()
+        finally:
+            if dry_run:
+                self.db.rollback()
+        return result
+
+    def _delete_one(self, entity, model, date_column, value, date_from, date_to):
+        doc_key = _int(value)
+        ref = _source_ref(self.book, entity, doc_key) if doc_key is not None else str(value)
+        if doc_key is None:
+            return DeletionRecordResult(source_ref=ref, outcome=DeletionOutcome.FAILED,
+                                        errors={"doc_key": "must be an integer"})
+        row = (
+            self.db.query(model)
+            .filter(model.company_id == self.company_id, model.source_book == self.book,
+                    model.doc_key == doc_key)
+            .one_or_none()
+        )
+        if row is None:
+            return DeletionRecordResult(source_ref=ref, outcome=DeletionOutcome.NOT_FOUND)
+        stored_date = getattr(row, date_column)
+        if stored_date is None or not (date_from <= stored_date <= date_to):
+            return DeletionRecordResult(
+                source_ref=ref, outcome=DeletionOutcome.FAILED, entity_id=str(row.id),
+                errors={"doc_date": f"stored DocDate {stored_date} is outside the swept range"},
+            )
+        if row.source_vanished_at is None:
+            row.source_vanished_at = datetime.now(timezone.utc)
+            row.is_cancelled = True
+            if model is PickingHeader:
+                row.picking_status = "cancelled"
+                for line in row.picking_lines:
+                    if line.spo_allocation_id:
+                        self.touched_allocation_ids.add(str(line.spo_allocation_id))
+        return DeletionRecordResult(source_ref=ref, outcome=DeletionOutcome.DEACTIVATED,
+                                    entity_id=str(row.id))
+
+    # ================================================================== branches
+    def _ingest_branch(self, raw: Any) -> RecordResult:
+        if not isinstance(raw, dict):
+            return RecordResult(source_ref=None, outcome=IngestOutcome.FAILED,
+                                errors={"record": "must be an object"})
+        code = _text(raw.get("BranchCode"), 100)
+        acc_no = _text(raw.get("AccNo"), 100) or ""
+        source_ref = f"{self.book}:BR:{acc_no}:{code}" if code else None
+        if code is None:
+            return RecordResult(source_ref=None, outcome=IngestOutcome.FAILED,
+                                errors={"BranchCode": "required"})
+        values = {"branch_name": _text(raw.get("BranchName"), 255), "source_record": raw}
+        savepoint = self.db.begin_nested()
+        try:
+            with company_scope(self.db, frozenset({self.company_id})):
+                row = (
+                    self.db.query(Branch)
+                    .filter(Branch.company_id == self.company_id, Branch.source_book == self.book,
+                            Branch.acc_no == acc_no, Branch.branch_code == code)
+                    .one_or_none()
+                )
+                if row is None:
+                    row = Branch(company_id=self.company_id, source_book=self.book, acc_no=acc_no,
+                                 branch_code=code, last_synced_at=datetime.utcnow(), **values)
+                    self.db.add(row)
+                    outcome = IngestOutcome.CREATED
+                else:
+                    diff = {k: v for k, v in values.items() if getattr(row, k) != v}
+                    if not diff:
+                        savepoint.commit()
+                        return RecordResult(source_ref=source_ref, outcome=IngestOutcome.UNCHANGED,
+                                            entity_id=str(row.id))
+                    for key, value in diff.items():
+                        setattr(row, key, value)
+                    row.last_synced_at = datetime.utcnow()
+                    outcome = IngestOutcome.UPDATED
+                self.db.flush()
+                self._refresh_branch_names(acc_no, code, values["branch_name"])
+            savepoint.commit()
+            return RecordResult(source_ref=source_ref, outcome=outcome, entity_id=str(row.id))
+        except Exception:  # noqa: BLE001 - one record's failure, not the batch's
+            savepoint.rollback()
+            logger.warning("ingest.branch_failed source_ref=%s", source_ref, exc_info=True)
+            return RecordResult(source_ref=source_ref, outcome=IngestOutcome.FAILED,
+                                errors={"_": INTERNAL_ERROR_MESSAGE})
+
+    def _refresh_branch_names(self, acc_no: str, code: str, name: Optional[str]) -> None:
+        """Every AutoCount DO of this branch carries its current name (plan Q10)."""
+        query = self.db.query(Order).filter(
+            Order.company_id == self.company_id, Order.source_book == self.book,
+            Order.doc_key.isnot(None), Order.branch_code == code,
+            or_(Order.branch_name.is_(None), Order.branch_name != name),
+        )
+        if acc_no:
+            query = query.filter(Order.debtor_code == acc_no)
+        for order in query.all():
+            order.branch_name = name
+        self.db.flush()
+
+
+# ============================================================================ read-back
+class AutocountDocReadService:
+    """Current stored state for a batch of `{book}:{DO|GRN}:{DocKey}` refs, in the anchor."""
+
+    def __init__(self, db: Session, *, company_id: str):
+        self.db = db
+        self.company_id = company_id
+
+    def current_state(self, entity: str, source_refs: list[Any]) -> dict[str, Any]:
+        prefix = _DOC_PREFIX[entity]
+        found: list[dict[str, Any]] = []
+        not_found: list[str] = []
+        with company_scope(self.db, frozenset({self.company_id})):
+            for value in source_refs:
+                ref = value if isinstance(value, str) else str(value)
+                parts = ref.split(":")
+                doc_key = _int(parts[2]) if len(parts) == 3 and parts[1] == prefix else None
+                row = None
+                if doc_key is not None:
+                    model = Order if entity == DELIVERY_ORDERS_ENTITY else PickingHeader
+                    row = (
+                        self.db.query(model)
+                        .filter(model.company_id == self.company_id,
+                                model.source_book == parts[0], model.doc_key == doc_key)
+                        .one_or_none()
+                    )
+                if row is None:
+                    not_found.append(ref)
+                    continue
+                found.append(self._do(ref, row) if entity == DELIVERY_ORDERS_ENTITY
+                             else self._grn(ref, row))
+        return {"records": found, "not_found": not_found}
+
+    @staticmethod
+    def _common(ref: str, row) -> dict[str, Any]:
+        return {
+            "source_ref": ref,
+            "entity_id": str(row.id),
+            "book": row.source_book,
+            "doc_key": row.doc_key,
+            "source_modified_at": _iso(row.source_modified_at),
+            "source_vanished_at": _iso(row.source_vanished_at),
+            "is_cancelled": row.is_cancelled,
+            "doc_status": row.doc_status,
+            "ref": row.ref,
+            "ref_doc_no": row.ref_doc_no,
+            "remarks": row.remarks,
+            "description": row.description,
+            "currency_code": row.currency_code,
+            "currency_rate": _num(row.currency_rate),
+            "local_net_total": _num(row.local_net_total),
+        }
+
+    def _do(self, ref: str, row: Order) -> dict[str, Any]:
+        return {
+            **self._common(ref, row),
+            "doc_no": row.order_number,
+            "doc_date": _iso(row.order_date),
+            "debtor_code": row.debtor_code,
+            "debtor_name": row.debtor_name,
+            "customer_id": row.customer_id,
+            "branch_code": row.branch_code,
+            "branch_name": row.branch_name,
+            "agent": row.agent,
+            "sales_order_id": row.sales_order_id,
+            "subtotal_amount": _num(row.subtotal_amount),
+            "tax_amount": _num(row.tax_amount),
+            "total_amount": _num(row.total_amount),
+            "lines": [
+                {
+                    "entity_id": str(line.id),
+                    "dtl_key": line.dtl_key,
+                    "seq": line.line_sequence,
+                    "item_code": line.item_code,
+                    "location_code": line.location_code,
+                    "quantity": _num(line.quantity),
+                    "unit_price": _num(line.unit_price),
+                    "total": _num(line.total),
+                    "from_doc_type": line.from_doc_type,
+                    "from_doc_no": line.from_doc_no,
+                    "from_dtl_key": line.from_dtl_key,
+                    "sales_order_line_id": line.sales_order_line_id,
+                }
+                for line in row.lines
+            ],
+        }
+
+    def _grn(self, ref: str, row: PickingHeader) -> dict[str, Any]:
+        lines = sorted(row.picking_lines, key=lambda l: (l.seq is None, l.seq or 0))
+        return {
+            **self._common(ref, row),
+            "doc_no": row.picking_number,
+            "doc_date": _iso(row.picking_date),
+            "picking_status": row.picking_status,
+            "creditor_code": row.creditor_code,
+            "creditor_name": row.creditor_name,
+            "supplier_do_no": row.supplier_do_no,
+            "subtotal_amount": _num(row.subtotal_amount),
+            "tax_amount": _num(row.tax_amount),
+            "total_amount": _num(row.total_amount),
+            "lines": [
+                {
+                    "entity_id": str(line.id),
+                    "dtl_key": line.dtl_key,
+                    "seq": line.seq,
+                    "item_code": line.item_code,
+                    "location_code": line.location_code,
+                    "qty": _num(line.qty),
+                    "unit_cost": _num(line.unit_cost),
+                    "line_total": _num(line.line_total),
+                    "our_po_no": line.our_po_no,
+                    "from_doc_type": line.from_doc_type,
+                    "from_doc_no": line.from_doc_no,
+                    "from_dtl_key": line.from_dtl_key,
+                    "po_line_id": line.po_line_id,
+                    "spo_allocation_id": line.spo_allocation_id,
+                    "purchase_order_id": line.purchase_order_id,
+                }
+                for line in lines
+            ],
+        }
+
+
+def _iso(value) -> Optional[str]:
+    return value.isoformat() if value is not None else None
+
+
+def _num(value) -> Optional[float]:
+    return None if value is None else float(value)
+
+
+def parse_deletion_body(payload: dict) -> tuple[list[Any], date, date]:
+    """(doc_keys, date_from, date_to) or ValueError naming what is wrong (422 INVALID_BODY)."""
+    doc_keys = payload.get("doc_keys")
+    if not isinstance(doc_keys, list):
+        raise ValueError("Body must contain a 'doc_keys' array")
+    try:
+        date_from = _date(payload.get("doc_date_from"))
+        date_to = _date(payload.get("doc_date_to"))
+    except (ValueError, TypeError):
+        raise ValueError("'doc_date_from' and 'doc_date_to' must be dates") from None
+    if date_from is None or date_to is None:
+        raise ValueError("Body must contain 'doc_date_from' and 'doc_date_to'")
+    if date_from > date_to:
+        raise ValueError("'doc_date_from' is after 'doc_date_to'")
+    return doc_keys, date_from, date_to
+
+
+__all__ = [
+    "AUTOCOUNT_BRANCH_ENTITIES",
+    "AUTOCOUNT_DOC_ENTITIES",
+    "BOOK_PATTERN",
+    "BRANCHES_ENTITY",
+    "CONTRACT_2_7_WARNINGS",
+    "DELIVERY_ORDERS_ENTITY",
+    "GOODS_RECEIVE_NOTES_ENTITY",
+    "AutocountDocIngestService",
+    "AutocountDocReadService",
+    "parse_deletion_body",
+]

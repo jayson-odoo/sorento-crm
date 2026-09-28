@@ -2921,6 +2921,16 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
                 if not order:
                     _skip(row_idx, oc.ORDER_NOT_FOUND, f"Order not found: {doc_no}", row_data, doc_no)
                     continue
+                if order.doc_key is not None:
+                    # #1354 S2, plan section 3: the AutoCount DO ingest owns this DO's lines.
+                    _skip(
+                        row_idx,
+                        oc.AUTOCOUNT_OWNED,
+                        f"AutoCount sends the lines of {doc_no}",
+                        row_data,
+                        doc_no,
+                    )
+                    continue
                 if not product:
                     _skip(
                         row_idx,

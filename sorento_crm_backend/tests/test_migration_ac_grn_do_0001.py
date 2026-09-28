@@ -36,7 +36,7 @@ NEW_COLUMNS = {
                         "ref_doc_no", "remarks", "description", "doc_status", "is_cancelled",
                         "currency_code", "currency_rate", "subtotal_amount", "tax_amount",
                         "total_amount", "local_net_total"},
-    "picking_lines": {"dtl_key", "seq", "item_code", "location_code", "description", "uom",
+    "picking_lines": {"dtl_key", "seq", "item_code", "location_code", "description", "uom_code",
                       "qty", "foc_qty", "discount_text", "discount_amount", "tax_amount",
                       "delivery_date", "proj_no", "our_po_no", "our_po_date", "from_doc_type",
                       "from_doc_no", "from_dtl_key", "purchase_order_id"},
