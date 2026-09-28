@@ -1,6 +1,9 @@
 # PLAN: Cost price from the supplier's price list, as dated cost lists, verified when suppliers submit (#1288)
 
-Status: Lane A (S1 + S2) built on PR #1305, small fix track, fix lane round 7 done (owner hand
+Status: Lane A (S1 + S2) built on PR #1305, full track for round 8 (migration
+`cpc4_cost_packaging_method`), fix lane round 8 in progress (owner ruling of 28 Sep 2026, 15:2x
+and 15:3x MYT: cost per packaging method, Q9 reversed, section 12; main 77d083a2 and
+`merge_28sep_esc_fin` merged, cpc1 re-parented onto it). Round 7 done (owner hand
 test of round 6, 28 Sep 2026: sticky footer bar removed, the lines table is the system DataGrid
 with sorting and the list views' pager, sheet tabs show row counts; no migration; evidence
 in `evidence/round7-set-page/`; main cd220251 merged, single head cpc3_lead_time_nullable). Round 6 done (owner hand test of 28 Sep
@@ -298,20 +301,32 @@ gains `__audit_track__`. One migration, chained on the head at Phase 2 time via
 | `start_date` | date, nullable | null = from the beginning (Q3 ruling) |
 | `end_date` | date, nullable | null = no end; check `end_date >= start_date` when both are set |
 | `source_change_line_id` | FK `cost_price_change_lines.id` ON DELETE SET NULL, nullable | which upload line made it (J8, J14) |
+| `packaging_method` | varchar(255) NOT NULL, default `standard` | round 8 (Q9 reversed): the packaging this cost is for, as the supplier wrote it |
+| `packaging_key` | varchar(255) NOT NULL, default `standard` | round 8: `packaging_method` NFKC-folded, trimmed, case folded; the key rows are grouped by |
 | `created_by_user_id` | FK users, nullable | null when it came from a supplier set |
 | `created_at`, `updated_at` | naive UTC | |
 
-Index on `(product_supplier_id, start_date)`.
+Index on `(product_supplier_id, packaging_key, start_date)` (round 8; was
+`(product_supplier_id, start_date)`). Not a unique index: one link and packaging keeps its dated
+history (an always row, dated overrides, overridden rows from earlier sets), so the key picks the
+group `price_in_force` runs over, and one set can write only one row per key (section 6).
 
 **The price in force on a day D** is, among the link's rows with (`start_date` null or <= D) and
 (`end_date` null or >= D), the one with the latest `start_date` (null counts as earliest); a tie
 goes to the latest `created_at`. So an "always" row is the base price and a dated row overrides
 it for its range, as a dated rule does in an Odoo price list. One function,
-`price_in_force(link, day)`, holds that rule; nothing else re-spells it.
+`price_in_force(link, day)`, holds that rule; nothing else re-spells it. Round 8: the rule runs
+over the rows of ONE packaging (`current_cost(rows, day, packaging)`); a caller with no
+packaging gets the `standard` line.
 
 ### 4.2 `product_suppliers.unit_cost` stays the price in force
 
 `unit_cost` and `currency` keep their meaning for every reader in section 3.2: "the price today".
+Round 8: that is the `standard` packaging's price in force; a link whose cost rows are all in one
+other packaging follows that packaging (so a supplier that only ever quotes `（彩盒）` still moves
+the reorder engine's price); a link with several packagings and no standard row keeps its price.
+Trigger for a per-link "default packaging" choice: the owner names a product bought in several
+packagings with no plain code, whose reorder price is wrong.
 For a link with at least one cost list row they are written only from `price_in_force(link,
 today)`: in the same transaction as an apply or a cost list edit, and by a daily tick at 00:05
 Malaysia time on the existing scheduler (a start date arriving, an end date passing). When no row
@@ -353,7 +368,8 @@ Partial unique index: one row per (company_id, supplier_id) WHERE status IN ('dr
 | --- | --- | --- |
 | `id`, `change_set_id` (FK, ON DELETE CASCADE) | | |
 | `sheet`, `row_no`, `line_no` (序号) | text, int, text | J4: where in the file, searchable |
-| `supplier_code_raw`, `supplier_code`, `code_note` | text | AC-S1-04: the cell as written, the cleaned code, the bracket text (shown, never matched) |
+| `supplier_code_raw`, `supplier_code` | text | AC-S1-04: the cell as written, the cleaned code |
+| `packaging_method`, `packaging_key` | text NOT NULL, default `standard` | round 8, AC-S1-04: the bracket text as written (was `code_note`) and its folded key; part of the line's key, never used to match the product |
 | `configuration` | text | J4 (产品配置), searchable |
 | `flags` | text[]: `configuration_from_merge`, `price_from_merge`, `duplicate_code` | AC-S1-03, AC-S1-10 |
 | `match_outcome` | text: `exact`, `ladder`, `alias`, `manual`, `unmatched` | AC-S1-08 |
@@ -370,7 +386,8 @@ Partial unique index: one row per (company_id, supplier_id) WHERE status IN ('dr
 
 Change percent is computed on read, never stored. The round 2 columns `packaging_note`,
 `candidate_product_id` and the `near`, `ambiguous` and `pick_one` values are gone (Q8 and Q9,
-round 3).
+round 3). Round 8 brings packaging back as data, not as a pick step: `code_note` became
+`packaging_method` (migration `cpc4_cost_packaging_method`, which copies the notes across).
 
 ### 4.5 `supplier_price_links` (CompanyScopedMixin, `__audit_track__`)
 
@@ -394,7 +411,9 @@ permission and is audited like every other setting.
 - No supplier currency column (Q2 ruling). Trigger: a supplier with no links yet uploads a list
   in a currency the header does not state, more than once.
 - No supplier Chinese name column (section 5.4 names the trigger).
-- No packaging variant column or pick step (Q9 withdrawn, section 12).
+- No packaging pick step, and no packaging master table: the packaging is free text as the
+  supplier writes it (round 8, Q9 reversed, section 12). Trigger for a master list: the same
+  packaging written several ways by one supplier splits its costs, more than once.
 
 ## 5. Parsing the supplier's Excel
 
@@ -418,9 +437,10 @@ Trigger to move it onto the `imports` queue: a real file over 2,000 rows or a pa
    `description` (always) and `unit_price` (flagged `price_from_merge`, AC-S1-03); `item_code` is
    never filled.
 5. Code cleaning (AC-S1-04): NFKC-fold (turns `（彩盒）` into `(彩盒)`), trim, collapse inner
-   whitespace, then split one trailing bracket group into `supplier_code` and `code_note`. The
-   verbatim cell is `supplier_code_raw`. This is cleaning so the shared engine sees a code, not
-   a variant concept: the note is shown under the code and never used to match (section 12, Q9).
+   whitespace, then split one trailing bracket group into `supplier_code` and `packaging_method`
+   (round 8; `standard` when there is no bracket). The verbatim cell is `supplier_code_raw`. The
+   shared engine sees only the code; the packaging is part of the line's key, never of the
+   match (section 12, Q9 as reversed).
 6. Price cleaning (AC-S1-05): numbers as numbers; strings stripped of `¥ ￥ 元 RMB CNY ,` and
    spaces, then `Decimal`; anything else (面议, blank, negative) leaves the price null and the
    line `needs_attention`.
@@ -474,15 +494,19 @@ over-design. Both are applied by dropping the near-match layer entirely.
   alias with `source=manual`, `matched_by='cost_price_set'`. Nothing is remembered from a set
   that is discarded or never applied (AC-S1-12).
 - A bound product not yet linked to this supplier is `new_link` (AC-S1-09).
-- **Duplicate code** (AC-S1-10, round 6 R6, owner 28 Sep 2026): rows in one set with the same
-  supplier code, or bound to the same product, collapse into ONE line carrying the FIRST row's
-  cost. The other rows are stored `skipped` with flag `duplicate_row` and ride on the line as
+- **Line key** (round 8, owner 28 Sep 2026): (supplier code, packaging key) and (bound product,
+  packaging key). The 2500 series rows `CB2500SS-BL（彩盒）`, `CB2500SS-BL-DIY（OPP）` and
+  `CB2500SS-BL-DIY（吊卡）` are three lines; a plain code and a bracketed row of the same code are
+  two lines. The round 6 collapse of every row of one code is removed.
+- **Duplicate code** (AC-S1-10, round 6 R6 as amended in round 8): rows in one set with the same
+  supplier code AND packaging, or bound to the same product with the same packaging, collapse
+  into ONE line carrying the FIRST row's cost. The other rows are stored `skipped` with flag `duplicate_row` and ride on the line as
   `duplicate_rows` (note + cost, shown inline); Apply is not blocked, and the cost list's
   `source` records the sheet and row applied. `choose_duplicate_row` in
   `cost_price_change_service.py` is the one place the rule lives (lower cost, last row or a
   per-line choice is a later one-function change). A hand skip of the used row promotes the
-  next. This is the generic check any upload needs (one link gets one new cost per upload),
-  not a packaging feature; the owner's CPC-0002 file had 84 such rows.
+  next. This is the generic check any upload needs (one link and packaging gets one new cost
+  per upload).
 - A skipped unmatched code writes nothing. Trigger for "remember this skip" (a dismissal alias,
   which the ladder already honours): the same code is skipped on three consecutive sets for one
   supplier.
@@ -778,7 +802,6 @@ link on a phone at 375).
 | --- | --- |
 | Readers that price a day other than today | A reader needs a future or past price, twice (section 4.2) |
 | Near-match suggestions or a new matching rung | Unmatched rows that the shared engine could have bound are mapped by hand on three sets (Q8) |
-| Packaging variants as a concept | The owner names a supplier that prices one code in two packings that Sorento buys as one product (Q9) |
 | FX conversion, or writing `products.cost_price` | The owner rules that the MYR cost should follow supplier prices (Q1, Q2) |
 | OTP on the supplier page | A link is found forwarded outside the supplier, or the owner asks |
 | Server-sent WeChat messages | Sorento connects a WeChat channel with an API |
@@ -850,6 +873,20 @@ is written to them.
    **Applied: the variant concept is dropped.** The bracket text is cleaned off the code so it
    matches, and shown as a note (section 5.1 step 5). A code that appears twice in one upload is
    flagged "Duplicate code" and one is skipped, the generic check any upload needs (AC-S1-10).
+   **REVERSED by the owner (28 Sep 2026, 15:2x MYT), from the supplier's own 2500 series sheet
+   (`CB2500SS-BL（彩盒）` 9.50, `CB2500SS-BL-DIY（OPP）` 9.90, `CB2500SS-BL-DIY（吊卡）` 9.40), verbatim:
+   "for our cost list upload right, for this, actually it is cost per packaging method, so we
+   need the packaging method, i think this was raised by you during thep lanning phase but I
+   ignored, sorry, there needs to be diffetent cost for differnet packging method correct".
+   Follow-up answers (28 Sep 2026, 15:3x MYT), verbatim: "1 packagin value is free text yeah, a
+   code with no bracket yeah correct, yeah correct PO keep their own unit cost yeah".
+   Applied in fix lane round 8: a cost list line is keyed by product code AND packaging method;
+   the bracket text is the packaging method (free text, shown as written, key folded with NFKC,
+   trim and case fold); a code with no bracket is the `standard` packaging and never collides
+   with a bracketed row of the same code; the round 6 collapse of every row of one code is
+   removed, and only the same code with the same packaging is a duplicate; purchase orders keep
+   their own unit cost (Q16 stands, no PO change). Sections 4.1, 4.2, 4.4, 5.1, 6; AC-S1-04,
+   AC-S1-10, AC-PK-01 to AC-PK-05.**
 10. **One open set per supplier.** **Owner ruling (26 Sep 2026): "yeah correct". Applied: the
     partial unique index (4.3) and AC-S1-14.**
 11. **Supplier identity, what they see, and link expiry.** Not yet answered. Recommend: one link

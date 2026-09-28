@@ -3,7 +3,8 @@
 Status: draft, round 3 (27 Sep 2026). Written to the owner rulings of 26 Sep 23:45 MYT (Q1, Q2,
 Q5, Q6, Q7, Q10), 27 Sep 00:10 MYT (Q3, Q4), 27 Sep 00:45 MYT (verification off for the first
 rollout, the shared matching engine, search on every page) and 27 Sep 00:50 MYT (final mockups);
-Q8 and Q9 are withdrawn features (plan section 12); Q16 is ruled 27 Sep 15:31 MYT (no PO save or
+Q8 is a withdrawn feature and Q9 was withdrawn then reversed by the owner on 28 Sep 2026 (plan
+section 12, round 8); Q16 is ruled 27 Sep 15:31 MYT (no PO save or
 product import writes a supplier price: AC-CL-09, AC-CL-10); Q11 to Q15 stay written to their
 recommendations. An owner answer that differs rewrites the ACs it names before Phase 1 starts.
 Track: full.
@@ -17,7 +18,15 @@ page's call to action is "Apply N changes" top right with Download file and Disc
 every line is exactly one line at 1280 with the currency beside both costs ("CNY 10.50"); there
 is no lead time input (AC-S2-05); a duplicate code is one line (AC-S1-10); and every
 user-facing "price" on this feature reads "cost" (Cost changed, Cost now, New cost, Upload cost
-list, the supplier's Costs tab). API field names stay as they are. Below, "price in force" and
+list, the supplier's Costs tab). API field names stay as they are.
+
+Round 8 (owner ruling of 28 Sep 2026, 15:2x and 15:3x MYT, PR #1305) makes the cost per
+packaging method: a cost list line is keyed by the supplier code (or bound product) AND its
+packaging method, the bracket text of a code IS the packaging method (free text, shown as
+written, folded for the key), a code with no bracket is the `standard` packaging, and purchase
+orders keep their own unit cost (Q16 stands). AC-S1-04, AC-S1-09, AC-S1-10, AC-CL-01, AC-CL-04,
+AC-CL-07 and AC-CL-08 are amended below; AC-PK-01 to AC-PK-05 are new. This replaces the round 6
+rule that collapsed every row of one code into one line. Below, "price in force" and
 "new price" name the data the lines carry; on screen they read "Cost now" and "New cost".
 
 Tags: `[BE]` pytest, `[FE]` vitest, `[E2E]` agent-browser evidence run (no new Playwright spec),
@@ -52,11 +61,11 @@ Sorento person, same permissions), Mr Chen (sales at XIAMEN TAIYANG, no Sorento 
   currency from that supplier's prices. She may set Valid from and Valid to (both optional; empty
   means always). She clicks Upload.
 - **J3.** The system reads every sheet, finds the header row on each (序号 型号 产品配置 价格), fills
-  merged configuration cells down, cleans a bracketed note off a code, and matches every code with
+  merged configuration cells down, takes a code's bracket text as its packaging method, and matches every code with
   the same engine the PI, packing list and loading plan uploads use. She lands on the review page.
 - **J4.** The review page opens filtered to "Cost changed". She can search by code,
   configuration or product, and switch sheets. Each line is exactly one line at 1280 and shows
-  sheet and row, supplier code with its note, configuration, matched product, cost now and new
+  sheet and row, supplier code, packaging method, configuration, matched product, cost now and new
   cost each with its currency ("CNY 10.50"), and the change percent. Codes the engine could not
   match are listed under "Not found"; a code that appears on two rows is one line, the other
   row's note and cost inline on it (round 6, 28 Sep 2026).
@@ -116,8 +125,10 @@ Sorento person, same permissions), Mr Chen (sales at XIAMEN TAIYANG, no Sorento 
   carry the price flagged `price_from_merge`, and the flag shows on the line.
 - **AC-S1-04** `[BE]` (J3) Given codes `CB2500SS-BL（彩盒）` and ` SRTWT1900-BL-DIY `, then the codes
   are NFKC-folded and trimmed to `CB2500SS-BL` and `SRTWT1900-BL-DIY`, the bracket text is kept as
-  `code_note` (`彩盒`) and shown under the code, the verbatim cell is kept as `supplier_code_raw`,
-  and the note is never used to match.
+  the line's `packaging_method` (`彩盒`, as written) and shown in its own Packaging column beside
+  the code, a code with no bracket gets `packaging_method = standard`, the verbatim cell is kept
+  as `supplier_code_raw`, and the packaging is never used to match the product (it is part of
+  the line's key, AC-S1-10). (Amended by the owner, 28 Sep 2026, round 8: was `code_note`.)
 - **AC-S1-05** `[BE]` (J3) Given a price cell holding `¥512`, `512.00元`, `"512"` or `512`, then the
   price is 512.00; given `面议`, blank or a negative number, then the line has no price, is listed
   under "Needs attention" and blocks Apply until skipped.
@@ -133,16 +144,21 @@ Sorento person, same permissions), Mr Chen (sales at XIAMEN TAIYANG, no Sorento 
   set, is `unmatched`. There is no near-match or suggestion outcome, and no new rung (Q8, round
   3). A test asserts the upload calls the same engine functions the PI apply calls.
 - **AC-S1-09** `[BE]` (J4) Given a bound product, then the line records the price in force of the
-  (product, supplier) link at parse time, the new price, and the change percent (null when there
+  (product, supplier) link FOR THE LINE'S PACKAGING at parse time (round 8; none when that
+  packaging has no cost yet, so the line is `changed` from nothing), the new price, and the change percent (null when there
   is none); given no link exists, the line is `new_link`.
-- **AC-S1-10** `[BE]` (J4, J5) Given two or more rows with the same supplier code (or bound to one
-  product) in one set, then they collapse into ONE line carrying the FIRST row's cost, with the
-  other rows' notes and costs shown inline on that line (for example "OPP 9.90"); there is no
-  "Duplicate code" filter and no manual skip for it, Apply is not blocked by it, and the applied
-  cost list records which sheet and row was used (`source.sheet`, `source.row_no`). The choice
-  lives in one function, `choose_duplicate_row`, so a later ruling (lower cost, last row, per-line
-  choice) is a one-function change. There is no packaging variant concept (Q9, round 3).
-  (Amended by the owner, 28 Sep 2026, round 6 R6.)
+- **AC-S1-10** `[BE]` (J4, J5) A line's key is (supplier code, packaging method), and (bound
+  product, packaging method); the packaging part is folded (NFKC, trimmed, case folded), so
+  `OPP` and `opp` are one packaging. Given the supplier's 2500 series rows
+  `CB2500SS-BL（彩盒）` 9.50, `CB2500SS-BL-DIY（OPP）` 9.90 and `CB2500SS-BL-DIY（吊卡）` 9.40, then the
+  set has THREE lines with three costs, and Apply writes three cost list rows. Given `ZZ-1` and
+  `ZZ-1（彩盒）`, then two lines (the plain code is the `standard` packaging and never collides with
+  a bracketed row). Given two or more rows with the same code AND the same packaging (or bound
+  to one product with the same packaging), then they are a duplicate: ONE line carrying the
+  FIRST row's cost, the other rows' costs shown inline on it, no filter and no manual skip for
+  it, Apply not blocked, and the applied cost list records which sheet and row was used
+  (`source.sheet`, `source.row_no`); the choice lives in `choose_duplicate_row`. (Amended by the
+  owner, 28 Sep 2026, round 8: replaces the round 6 R6 collapse of every row of one code.)
 - **AC-S1-11** `[BE]` (J5, J8) Given any `unmatched` or `needs_attention` line not
   mapped or skipped, when Apply (or, with verification on, Submit) is called, then 422 names the
   count.
@@ -206,7 +222,28 @@ Sorento person, same permissions), Mr Chen (sales at XIAMEN TAIYANG, no Sorento 
 
 ## Cost lists (S1)
 
-- **AC-CL-01** `[BE]` `[T]` (J15, Q3) `price_in_force(link, day)` returns: the always row when it is
+Round 8, cost per packaging method (owner, 28 Sep 2026: "there needs to be diffetent cost for
+differnet packging method correct"; "1 packagin value is free text yeah, a code with no bracket
+yeah correct, yeah correct PO keep their own unit cost yeah"):
+
+- **AC-PK-01** `[BE]` `[T]` A cost list row carries `packaging_method` (free text as the supplier
+  wrote it, `standard` for a plain code) and `packaging_key` (NFKC, trimmed, case folded). Its
+  status (In force, Overridden, ...) is decided among the rows of the same link AND packaging.
+- **AC-PK-02** `[BE]` `[T]` The current-cost reader `current_cost(rows, day, packaging)` takes the
+  packaging as part of its key; a caller with no packaging gets the `standard` line (the
+  fallback of AC-CL-04 applies), and the API contract says so.
+- **AC-PK-03** `[BE]` `[T]` Migration `cpc4_cost_packaging_method` adds the columns to
+  `product_supplier_costs` and `cost_price_change_lines`, moves every line's bracket note
+  (`code_note`) into `packaging_method` (else `standard`), gives each cost row its source line's
+  packaging (else `standard`), and is idempotent; down, up, down, up keeps the data.
+- **AC-PK-04** `[FE]` The set page's lines grid has a Packaging column beside Supplier code,
+  sortable, and a Packaging filter (`SearchableMultiSelect`); the 375 card shows the packaging
+  beside the code.
+- **AC-PK-05** `[BE]` Purchase orders keep their own unit cost (Q16 stands): no PO screen or
+  route changes, and no PO path reads or writes a packaging cost.
+
+- **AC-CL-01** `[BE]` `[T]` (J15, Q3) `price_in_force(link, day)`, over the rows of ONE packaging
+  method (round 8), returns: the always row when it is
   the only row; a dated row over the always row inside its range; the always row again after the
   dated row's end; for two rows covering the day, the one with the later start; for equal starts,
   the newest; none when every row has ended or not started.
@@ -215,19 +252,23 @@ Sorento person, same permissions), Mr Chen (sales at XIAMEN TAIYANG, no Sorento 
 - **AC-CL-03** `[BE]` Given end before start, then 422; given a negative price, 422.
 - **AC-CL-04** `[BE]` `[T]` (J8, J16) Given an apply or a hand edit, then `product_suppliers.unit_cost`
   and `currency` equal `price_in_force(link, today)` in the same transaction; null when none is
-  in force. A link with no cost list rows is never written by this code.
+  in force. A link with no cost list rows is never written by this code. Round 8: the link price
+  is the `standard` packaging's price in force; a link whose cost rows are all in ONE other
+  packaging follows that packaging; a link with several packagings and no standard row keeps
+  its price (`current_cost` in `supplier_cost_service.py`, contract section 2.1).
 - **AC-CL-05** `[BE]` `[T]` (J17) Given the daily tick runs for a fixed day, then every link with cost
   lists whose price in force differs from `unit_cost` is updated through the ORM, and one
   `SUPPLIER_COST_TICK` audit row lists them; a second run the same day changes nothing.
 - **AC-CL-06** `[BE]` (J16) Given `procurement.product_suppliers.edit`, then add, change and delete
   of a cost list row succeed and are audited; without it, 403. Delete is the 10 s deferred action.
 - **AC-CL-07** `[FE]` (J15) The supplier record's Costs tab (named Prices before round 6) lists each linked product with its cost
-  list rows (price, currency, Valid from, Valid to, status pill: In force, Scheduled, Ended,
+  list rows (round 8: a Packaging column beside the product code, one row group per product and
+  packaging, sortable, with a Packaging filter; price, currency, Valid from, Valid to, status pill: In force, Scheduled, Ended,
   Always; source: set code or "Edited by hand"), with search (product code, description, supplier
   code) and a Status filter (`SearchableMultiSelect`); empty state "No prices recorded for this
   supplier yet" with Upload cost list as the next step (round 6 wording: "No costs recorded").
 - **AC-CL-08** `[FE]` (J15) The product record's Suppliers tab shows, per supplier, the price in
-  force and its cost lists (same columns as AC-CL-07), with search by supplier name or set code;
+  force and its cost lists (same columns as AC-CL-07, each cost row naming its packaging), with search by supplier name or set code;
   the price renders in the link's own currency (fixes `ProductDetail.tsx` formatting every cost
   as MYR, for the supplier price only).
 - **AC-CL-09** `[BE]` `[T]` (J8, Q16) Given a purchase order is revised (a line re-priced, a line
@@ -394,6 +435,6 @@ Sorento person, same permissions), Mr Chen (sales at XIAMEN TAIYANG, no Sorento 
 ## Out of scope (named triggers in the plan, section 11)
 
 Readers that price a day other than today, near-match suggestions or a new matching rung,
-packaging variants, FX conversion into MYR, writing `products.cost_price`, a supplier login
+a packaging pick step or packaging master table (packaging itself is in scope since round 8), FX conversion into MYR, writing `products.cost_price`, a supplier login
 (arrives with #1280), OTP on the supplier page, automatic WeChat sending, product creation from
 an unmatched code, and multiple open sets per supplier.
