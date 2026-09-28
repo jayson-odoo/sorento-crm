@@ -53,7 +53,20 @@ def _current_other_heads() -> set[str]:
     More than one means this migration doubles as their merge revision."""
     cfg = Config(str(Path(__file__).resolve().parent / ".." / "alembic.ini"))
     script = ScriptDirectory.from_config(cfg)
-    others = [r for r in script.walk_revisions() if r.revision != MODULE_NAME]
+    revisions = list(script.walk_revisions())
+    # This migration AND everything chained on top of it since (a later migration
+    # whose ancestry runs through it is not a head this one could have sat on).
+    above = {MODULE_NAME}
+    grew = True
+    while grew:
+        grew = False
+        for rev in revisions:
+            down = rev.down_revision
+            downs = set(down if isinstance(down, (tuple, list)) else (down,)) if down else set()
+            if rev.revision not in above and downs & above:
+                above.add(rev.revision)
+                grew = True
+    others = [r for r in revisions if r.revision not in above]
     pointed_at: set[str] = set()
     for rev in others:
         down = rev.down_revision
