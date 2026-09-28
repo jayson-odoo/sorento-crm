@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Picker Mechanism Alignment</title>
+<style>
+:root{
+  --bg:#fbfaf7;--surface:#ffffff;--ink:#1d1d1b;--muted:#5f5e58;--line:#e2dfd6;
+  --accent:#2f5d8a;--bad:#a4372a;--bad-bg:#fbecea;--good:#2e6b3f;--good-bg:#e9f4ec;
+  --warn:#8a6414;--warn-bg:#fbf3df;--code-bg:#f2f0ea;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141413;--surface:#1d1d1b;--ink:#ecebe6;--muted:#a8a69d;--line:#34332f;
+    --accent:#86b2dc;--bad:#f09a8c;--bad-bg:#3a201c;--good:#8fd0a0;--good-bg:#1c3122;
+    --warn:#e6c37a;--warn-bg:#352a14;--code-bg:#262522;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#141413;--surface:#1d1d1b;--ink:#ecebe6;--muted:#a8a69d;--line:#34332f;
+  --accent:#86b2dc;--bad:#f09a8c;--bad-bg:#3a201c;--good:#8fd0a0;--good-bg:#1c3122;
+  --warn:#e6c37a;--warn-bg:#352a14;--code-bg:#262522;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:980px;margin:0 auto;padding:32px 16px 80px}
+h1{font-size:1.7rem;margin:0 0 4px}
+h2{font-size:1.25rem;margin:44px 0 12px;padding-top:12px;border-top:1px solid var(--line)}
+h3{font-size:1.05rem;margin:22px 0 8px}
+p,li{max-width:74ch}
+.meta{color:var(--muted);font-size:.9rem}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.84rem}
+code{background:var(--code-bg);padding:1px 5px;border-radius:4px}
+pre{background:var(--code-bg);padding:12px 14px;border-radius:8px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;border:1px solid var(--line)}
+blockquote{margin:12px 0;padding:10px 16px;border-left:4px solid var(--accent);background:var(--surface);border-radius:0 8px 8px 0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:12px 0}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface);margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{text-align:left;vertical-align:top;padding:8px 10px;border-bottom:1px solid var(--line)}
+th{background:var(--code-bg);font-weight:600}
+tr:last-child td{border-bottom:0}
+.pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:.78rem;font-weight:600}
+.pill.bad{background:var(--bad-bg);color:var(--bad)}
+.pill.good{background:var(--good-bg);color:var(--good)}
+.pill.warn{background:var(--warn-bg);color:var(--warn)}
+.flow{display:flex;flex-direction:column;gap:6px;margin:12px 0}
+.step{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.step b{display:block}
+.step small{color:var(--muted)}
+.step.bad{border-color:var(--bad);background:var(--bad-bg)}
+.step.good{border-color:var(--good);background:var(--good-bg)}
+.arrow{color:var(--muted);text-align:center;font-size:.9rem;line-height:1}
+.loop{border:2px dashed var(--bad);border-radius:10px;padding:10px;margin-top:6px}
+.loop>.lbl{color:var(--bad);font-weight:600;font-size:.85rem;margin-bottom:6px}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:640px){.split{grid-template-columns:1fr}}
+ol.q li{margin:8px 0}
+.toc a{color:var(--accent)}
+</style>
+</head>
+<body>
+<main>
+<h1>Picker mechanism: alignment</h1>
+<div class="meta">Issue #1352 scout, 28 Sep 2026. Read from origin/main <code>5b18b6d0</code>. Report: <code>documentation/plans/chatbot/SCOUT-picker-mechanism-28sep.md</code>. No code change.</div>
+
+<h2>The ask, in the owner's words</h2>
+<blockquote>"code first hotfix and patching approach is wrong, i think we should see how we work out our picker, like the mechanism in which how we retain the picker, is very wrong"</blockquote>
+<blockquote>On the prompt block "AN OPEN NUMBERED QUESTION IS ANSWERED WITH reference_positions": "like this, i don't know why we need this"</blockquote>
+<blockquote>"the upstream differentiate the forward asking and reverse asking by either if found by product code -&gt; forward asking, if cannot find product code, fallback to spec search -&gt; reverse asking"</blockquote>
+
+<div class="card"><b>Short answer.</b> The picker is kept open on purpose after it is answered (the "sticky roster"), shown to the parser again on every turn as a question it still owes, and the engine accepts any pick over any domain word. So "check stock" after "4" is read as "4" again. A prompt sentence cannot fix it, because the engine ignores the domain whenever a pick is present. The fix is to close the question on the next message, let the engine recognise a pick itself before the parser, and never show the parser an open question.</div>
+
+<h2>The three production cases</h2>
+<div class="tbl"><table>
+<tr><th>#</th><th>Conversation</th><th>What went wrong</th><th>Mechanism</th></tr>
+<tr><td>1</td><td>"incoming srtwc286" -&gt; list of 10 -&gt; "4" -&gt; "check stock"</td><td>Same incoming reply again</td><td>Retained roster + parser replays pick [4] + pick locks domain to incoming</td></tr>
+<tr><td>2</td><td>"stoick SRTWC286-SH-NEW" after the incoming pick</td><td>Incoming reply</td><td>Typed code equals option 4's label on the retained roster: <code>label_match</code> pick, domain locked to incoming</td></tr>
+<tr><td>3</td><td>"7820 stock" (WhatsApp)</td><td>"2 taps have stock." only on-hand &gt; 0</td><td>Not the picker: digits-only code fragment fails the code-shape test, so the reverse-ask (HAS) predicate ran over code matches</td></tr>
+</table></div>
+
+<h3>Case 1 trace (console harness, real <code>engine.run_turn</code>, parser stubbed)</h3>
+<p>What the parser was shown on the third turn (abridged; full text in the report):</p>
+<pre>Current user message: check stock
+Current subject: domain incoming; product SRTWC286-SH-NEW.
+Open question: {"kind":"pick_one","options":[...10 variants...],"owed":["pick"]}
+Pending: the assistant is waiting for a product_pick reply.
+Open question options: SRTWC286-SH; SRTWC286-SH-150; ... SRTWC286-SH-UF
+Recent exchanges, oldest first:
+User: incoming srtwc286
+Assistant: incoming search needs to be more specific ... 10 variants
+User: 4
+Assistant: (the Previous response)</pre>
+<div class="tbl"><table>
+<tr><th>Reading of "check stock"</th><th>Decision</th><th>Fetch</th><th>Result</th></tr>
+<tr><td>A. Production verdict: casual, no domain, pick [4]</td><td>answer / positions, <code>domain_locked_by_pick</code></td><td>incoming</td><td><span class="pill bad">same incoming reply</span></td></tr>
+<tr><td>B. Domain word read (inventory) but pick [4] kept</td><td>answer / positions, <code>domain_locked_by_pick</code></td><td>incoming</td><td><span class="pill bad">incoming again</span></td></tr>
+<tr><td>C. Inventory + <code>reference_positions [4]</code></td><td>answer / positions</td><td>incoming</td><td><span class="pill bad">incoming again</span></td></tr>
+<tr><td>D. Owner's sentence fully obeyed: inventory, no pick</td><td>carry / nothing_answered</td><td>inventory</td><td><span class="pill good">"How many units of SRTWC286-SH-NEW?"</span> but the list is still stored</td></tr>
+<tr><td>D then "5" (answering how many)</td><td>answer / positions, <code>domain_locked_by_pick</code></td><td>incoming</td><td><span class="pill bad">incoming for SRTWC286-SH-NEW-150</span></td></tr>
+</table></div>
+<p><b>Why the owner's prompt sentence changed nothing:</b> rows A to C show the engine answers incoming for every verdict that still carries a pick, whatever it says about the domain (<code>decide.py:263</code> never reads <code>domain_in_message</code> for a position; <code>apply.py:817</code> re-domains to the list's domain; <code>apply.py:3191</code> ignores <code>domain_hint</code>). And the model kept the pick because the block still says a pick is owed. Row D shows that even a perfect verdict only moves the failure one turn later.</p>
+
+<h2>The mechanism today</h2>
+<div class="flow">
+  <div class="step"><b>1. Born</b><small>A wide candidate list, a ranking, an offer or a did-you-mean creates one <code>Pending</code> (<code>pending.ask</code>).</small></div>
+  <div class="arrow">&darr;</div>
+  <div class="step bad"><b>2. Stored with no expiry</b><small><code>tail.py:32</code> writes <code>answer.question or state.pending</code>: a turn that asks nothing new keeps the old question. Only escalation offers have a 3-turn clock.</small></div>
+  <div class="loop"><div class="lbl">Every later turn, until closed</div>
+    <div class="flow">
+      <div class="step bad"><b>3. Shown to the parser as still owed</b><small><code>Open question: {...}</code>, <code>Pending: waiting for a product_pick reply</code>, <code>Open question options</code> (<code>parser.py:673-686</code>). A pending pick hides the stock task's own question (<code>question.py:96</code>).</small></div>
+      <div class="arrow">&darr;</div>
+      <div class="step bad"><b>4. Prompt asks the model to answer it</b><small>"emit that option's number and NOTHING else: domain_hint null, intent_hint null"; "a paraphrase is still an answer"; "the roster stays on screen until its own topic changes". About ten clauses exist only for this.</small></div>
+      <div class="arrow">&darr;</div>
+      <div class="step bad"><b>5. Pick read first, trusted over the domain</b><small><code>_open_pick_answer</code> (<code>apply.py:2966</code>) turns the pick into <code>reference_positions</code>; <code>decide.picked_positions</code> returns it as ANSWER (<code>decide.py:263</code>); a typed code equal to an option label is a pick too (<code>decide.py:128</code>).</small></div>
+      <div class="arrow">&darr;</div>
+      <div class="step bad"><b>6. Pick locks the domain</b><small><code>focus.domains = pending.payload.domain</code> (<code>apply.py:817</code>); the plan keeps it unless <code>asks</code> is non-empty (<code>apply.py:3191</code>).</small></div>
+      <div class="arrow">&darr;</div>
+      <div class="step bad"><b>7. Kept open after its own answer</b><small><code>with_answered_positions</code> (<code>apply.py:872</code>); a non-answer keeps it "exactly as it was" (<code>apply.py:940</code>).</small></div>
+    </div>
+  </div>
+  <div class="arrow">&darr;</div>
+  <div class="step"><b>8. Closed only when</b><small>every option has been picked (<code>apply.py:2984</code>), or a new ask about a subject that is NOT one of the options gets an answer (<code>apply.py:3426</code>, <code>_roster_is_about</code>). A follow-up about the picked product never closes it.</small></div>
+</div>
+
+<h2>The proposed mechanism</h2>
+<div class="flow">
+  <div class="step good"><b>1. Store the question for one message only</b><small>Drop <code>or state.pending</code>; delete sticky roster kinds, <code>answered_positions</code>, the TTL clock. The focus (domain + subject) is what carries.</small></div>
+  <div class="arrow">&darr;</div>
+  <div class="step good"><b>2. Engine checks for a pick before the parser</b><small>New pure <code>turn/pick.py</code>: the whole message is a number or list of numbers in range, an ordinal word (EN, MS, ZH, pinyin), an option's label or code, an all-word, or yes/no for a confirm.</small></div>
+  <div class="split">
+    <div class="step good"><b>It is a pick</b><small>Engine builds the pick's verdict itself (option entity, question's domain). No parser call. Question consumed.</small></div>
+    <div class="step good"><b>It is not a pick</b><small>Question dropped. Parser runs with no open question in view, reads domain, intent and entities over the carried focus. "check stock" = inventory for SRTWC286-SH-NEW.</small></div>
+  </div>
+  <div class="arrow">&darr;</div>
+  <div class="step good"><b>3. Entities resolve code first, spec search only when no code matched</b><small>One code-tier predicate replaces the code-shape test (case 3), in a separate small routing lane.</small></div>
+</div>
+
+<h3>Deleted</h3>
+<div class="split">
+<div class="card"><b>Prompt</b><ul>
+<li>AN OPEN NUMBERED QUESTION IS ANSWERED WITH reference_positions</li>
+<li>THE OPEN QUESTION AND open_question_answer: header, PICKING, CONFIRM</li>
+<li>POSITIONAL REFERENCES: "roster stays on screen", bare-number clause</li>
+<li>INTENT &amp; DOMAIN: the "bare reply answers an offer" exception</li>
+<li>Number words are positions; top-selling row pick; customer-or-agent positions</li>
+<li>REFERENCE TARGET (if the dym marker has no writer left)</li>
+<li>The 28 Sep "decisive domain word is never an answer" sentence</li>
+<li>Schema: <code>reference_positions</code>, <code>reference_target</code>, pick / yes / no modes</li>
+</ul></div>
+<div class="card"><b>Engine</b><ul>
+<li>User block lines <code>Open question</code> (picks), <code>Pending</code>, <code>Open question options</code></li>
+<li><code>_open_pick_answer</code>, <code>picked_positions</code>, <code>_positions_by_label</code>, <code>broadens_the_roster</code></li>
+<li><code>ROSTER_KINDS</code>, <code>is_roster</code>, <code>with_answered_positions</code>, <code>tick</code>, <code>OFFER_TTL</code></li>
+<li><code>_fully_answered_roster</code>, <code>_roster_is_about</code>, <code>new_ask_closes_stale_roster</code></li>
+<li>Carry arms: <code>answer_pending_not_an_answer</code>, <code>answer_pending_own_entities</code>, <code>offer_hold</code> re-print</li>
+<li><code>tail.py:32</code> <code>or state.pending</code>; the pick half of <code>_top_selling_verdict</code></li>
+</ul></div>
+</div>
+<p><b>Pins to migrate</b> (measured): 39 test files assert a non-empty <code>reference_positions</code>, 26 pin <code>answered_positions</code>, 14 pin <code>ROSTER_KINDS</code>/<code>is_roster</code>, 11 pin <code>open_question_answer</code>. Position stubs become message text; "roster survives its pick" and paraphrase-pick tests are re-pinned to the new rule after the owner's rulings below. <b>Estimate:</b> 1 lane (standard track, no migration), plus an optional half lane to put the stock quantity task on the same one-shot rule.</p>
+<p><b>Risks:</b> paraphrased picks ("the DO one", "gimme the list") become ordinary messages; a second pick from the same list needs the list again; a word table in code overrules the D17 "code never reads words" rule (precedent: <code>engine.py:1630</code> already does it for top selling); escalation offers lose their 3-turn window.</p>
+
+<h2>Divergence table</h2>
+<div class="tbl"><table>
+<tr><th>#</th><th>Owner rule</th><th>Code does</th><th>Where</th><th>Case</th></tr>
+<tr><td>1</td><td>Picker closes when answered</td><td>Roster kinds stay open after their pick</td><td><code>pending.py:48</code>, <code>apply.py:872</code></td><td>1, 2</td></tr>
+<tr><td>2</td><td>"</td><td>A turn that asks nothing keeps the old question</td><td><code>tail.py:32</code></td><td>1</td></tr>
+<tr><td>3</td><td>"</td><td>New ask closes the list only if its subject is not an option</td><td><code>apply.py:3400-3448</code></td><td>1, 2</td></tr>
+<tr><td>4</td><td>"</td><td>A non-answer keeps the question open</td><td><code>apply.py:940</code></td><td>1</td></tr>
+<tr><td>5</td><td>Own domain word is never a pick</td><td>A parser position is an answer without reading <code>domain_in_message</code></td><td><code>decide.py:263</code></td><td>1</td></tr>
+<tr><td>6</td><td>"</td><td>Pick's domain overrides the message's <code>domain_hint</code></td><td><code>apply.py:817</code>, <code>apply.py:3191</code></td><td>1, 2</td></tr>
+<tr><td>7</td><td>"</td><td>Prompt tells the model to null domain and intent when answering</td><td>prompt, open numbered question</td><td>1</td></tr>
+<tr><td>8</td><td>"</td><td>Prompt: paraphrase is an answer; only a code, name, order or "other topic" is new</td><td>same block</td><td>1</td></tr>
+<tr><td>9</td><td>"</td><td>"The roster stays on screen until its own topic changes"</td><td>prompt, positional references</td><td>1</td></tr>
+<tr><td>10</td><td>Parser reads domain, intent, entities</td><td>Parser also decides pick vs ask via a 7-mode object</td><td><code>parser.py:363</code></td><td>1</td></tr>
+<tr><td>11</td><td>"</td><td>Two open questions shown at once; the pick hides the stock task</td><td><code>question.py:96</code></td><td>1 (then "5")</td></tr>
+<tr><td>12</td><td>"</td><td>Contradicting clauses: list stays vs list closed after one pick</td><td>prompt</td><td>1</td></tr>
+<tr><td>13</td><td>Typed code is an entity, code first</td><td>Typed code equal to an option label becomes a pick of the old question</td><td><code>decide.py:128</code>, <code>:271</code></td><td>2</td></tr>
+<tr><td>14</td><td>No domain word: carry</td><td>Typo "stoick" reads as no domain, carried incoming wins</td><td>domain chain in <code>apply()</code></td><td>2</td></tr>
+<tr><td>15</td><td>Code first, spec only when no code matched</td><td>Digits-only fragment matched by code still runs the HAS predicate</td><td><code>references.py:1523</code>, <code>:2642</code></td><td>3</td></tr>
+<tr><td>16</td><td>Forward = reverse from the tool's view</td><td>Predicate turn fetches only the first five ids</td><td><code>fetch.py:1033</code></td><td>3</td></tr>
+<tr><td>17</td><td>Picker is short-lived</td><td>Escalation offers live 3 turns; business questions never expire</td><td><code>pending.py:259-290</code></td><td>general</td></tr>
+<tr><td>18</td><td>One mechanism</td><td>Top-selling pick resolved in code from text, others by the parser</td><td><code>engine.py:1630</code> vs <code>apply.py:2753</code></td><td>general</td></tr>
+</table></div>
+
+<h2>Rulings on the parked and stopped patches</h2>
+<div class="tbl"><table>
+<tr><th>Patch</th><th>Ruling</th><th>Why</th></tr>
+<tr><td>#1351 round 1: five-product page removal</td><td><span class="pill good">Keep, ship alone</span></td><td>A deletion of paging the owner already ruled out; not a picker layer; #833 removes the same hunks.</td></tr>
+<tr><td>#1351 round 2: code-fragment exemption</td><td><span class="pill warn">Fold</span></td><td>Right rule, wrong shape: a second exception on a shape test. Replace the shape test with one "matched at a code tier" predicate, in a small routing lane after the picker lane.</td></tr>
+<tr><td>#1329 <code>domain_words.py</code> + typo tolerance</td><td><span class="pill bad">Drop</span></td><td>A second domain reader to out-vote a pick that should not exist.</td></tr>
+<tr><td>#1329 decide.py rows</td><td><span class="pill bad">Drop</span></td><td>Same.</td></tr>
+<tr><td>#1329 prompt clauses</td><td><span class="pill warn">Drop one, keep one</span></td><td>"Decisive word is never an answer" goes with its section. "domain_in_message true implies a domain_hint" is plain parser consistency and stays.</td></tr>
+<tr><td>#833 attribute-first, picker side</td><td><span class="pill warn">Keep shape, drop guards</span></td><td>Mints no roster, but adds <code>reference_positions: []</code> guards so a count is not read as a row pick; dead once the parser emits no positions. Drop them and the paging carry on rebase.</td></tr>
+</table></div>
+
+<h2>Open questions (recommendation in bold)</h2>
+<ol class="q">
+<li>Should a pick skip the parser entirely? <b>Yes: a pure pick is answered by the engine; everything else is parsed with no open question in view.</b></li>
+<li>After a pick, is a second number from the same list still a pick? <b>No. The list closed on the first answer; a second number is an ordinary message.</b></li>
+<li>Paraphrased picks ("show me the DO one", "gimme the list")? <b>Ordinary message. DO/SO words already resolve through the document path; anything else re-asks.</b></li>
+<li>A pick with a quantity ("1, I need 2") on a stock did-you-mean? <b>Allow exactly "&lt;pick&gt; &lt;number&gt;" on a stock pick, nothing wider.</b></li>
+<li>Escalation offers: one-shot too? <b>Yes.</b></li>
+<li>Which languages in the ordinal table? <b>EN, MS, ZH characters and pinyin, nothing more until a real message needs it.</b></li>
+<li>Ship #1351 round 1 now? <b>Yes, on its own, before the picker lane.</b></li>
+<li>#1351 round 2? <b>Fold into one code-tier predicate in a small routing lane after the picker lane.</b></li>
+</ol>
+</main>
+</body>
+</html>
