@@ -32,7 +32,6 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.models.conversation_frame import ConversationFrame
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.turn import episode_digest
-from app.services.chatbot.turn import memory as memory_mod
 from app.services.chatbot_reply_copy import CHATBOT_REPLY_HISTORY_LEAD, CHATBOT_REPLY_HISTORY_NOTHING
 from tests.chatbot._turn_helpers import entity, verdict
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, stub_access, stub_parser  # noqa: F401
