@@ -169,7 +169,10 @@ def create_document(
     project: Project,
     actor_user_id: str,
     payload: Optional[Dict[str, Any]] = None,
+    render_templates: bool = True,
 ) -> ProjectQuotationDocument:
+    """``render_templates=False`` leaves the letter to the caller, which renders it once the
+    quotation's lines exist (the form's create, #1341), so ``{{grand_total}}`` is the real one."""
     payload = payload or {}
     document = ProjectQuotationDocument(
         company_id=project.company_id,
@@ -188,7 +191,8 @@ def create_document(
     )
     db.add(document)
     db.flush()
-    _render_templates_onto(db, document, payload)
+    if render_templates:
+        _render_templates_onto(db, document, payload)
     return document
 
 
@@ -334,7 +338,9 @@ def create_document_with_scopes(
         if (body.get(field) or "").strip()
     }
 
-    document = create_document(db, project=project, actor_user_id=actor_user_id, payload=body)
+    document = create_document(
+        db, project=project, actor_user_id=actor_user_id, payload=body, render_templates=False
+    )
     # A typed recipient CORRECTS the party snapshot (the result create-then-edit gave before); a
     # blank one keeps what the developer party says rather than blanking the letterhead.
     for field, value in corrections.items():
@@ -347,14 +353,16 @@ def create_document_with_scopes(
         written.extend(
             _add_form_scope(db, document=document, actor_user_id=actor_user_id, item=item)
         )
+    # The letter, once the lines exist: typed text has its merge fields filled, and a blank tab
+    # takes the company template, both against the real total rather than 0.00.
+    db.flush()
     if letter:
         from app.services import project_quotation_template_service as templates
 
-        db.flush()
         context = templates.build_document_context(db, document=document)
         for field, text in letter.items():
             setattr(document, field, templates.render(text, context))
-        db.flush()
+    _render_templates_onto(db, document, letter)
     return document, written
 
 

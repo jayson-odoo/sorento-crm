@@ -108,13 +108,18 @@ to Customer"; "header stays in header tab"; delete a saved scope: "yes can"; hea
 - **AC-QF056** On create, the Cover letter and Terms tabs are present, prefilled from the company's
   active templates, and editable before the first save; the typed text is saved with the
   quotation and its merge fields are filled against the saved quotation. No template leaves the
-  tab empty and editable.
+  tab empty and editable. Save waits until the templates have answered. A tab left blank takes the
+  company template, rendered after the lines are written, so `{{grand_total}}` is the real total.
 - **AC-QF057** The quotation page's primary CTA reads "Send to Customer R<n>" (the revision kept,
   as the old label had it). The exports' hint reads "Send it to the customer first". The success
   toast reads "Sent to the customer as <ref>". API and status names are unchanged.
 - **AC-QF058** Edit quotation offers Remove scope on a saved scope none of whose versions was
   ever sent to the customer; the removal is staged and sent in the ONE PATCH as
-  `remove_scope_ids`, deleting the scope, its versions and lines.
+  `remove_scope_ids`, deleting the scope, its versions and lines. Removal is a hard delete, so it
+  needs `projects.projects.delete` like the scope DELETE route: without it the form offers no
+  Remove on a saved scope and the server answers 403 `quotation_scope_remove_forbidden`. A scope
+  named in both `remove_scope_ids` and `scopes` is refused up front (422
+  `quotation_scope_removed_and_edited`).
 - **AC-QF059** The server refuses to remove a scope any version of which was issued (even after a
   revision) with 422 `quotation_scope_issued`, naming the scope; nothing in that save lands. A
   scope of another document is a 404.

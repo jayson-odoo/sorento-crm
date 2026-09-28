@@ -40,7 +40,7 @@ from app.schemas.status import StatusGraphResponse
 from app.services import project_quotation_approval_service as approvals
 from app.services import project_quotation_document_service as svc
 from app.services import project_service as projects
-from app.services.error_handler import handle_internal_error
+from app.services.error_handler import AppException, handle_internal_error
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
 
@@ -206,6 +206,22 @@ async def update_quotation_document(
         removed = body.pop("remove_scope_ids", None) or []
         for scope_id in removed:
             validate_uuid_path(str(scope_id), resource="Scope")
+        if removed:
+            # A hard delete of the scope, its versions and lines: the same grant the scope
+            # DELETE route asks for, not merely edit.
+            if DELETE not in permission_slugs(db, current_user["id"]):
+                raise AppException(
+                    status_code=403,
+                    message="You can edit this quotation but not remove its scopes.",
+                    code="quotation_scope_remove_forbidden",
+                )
+            edited = {str(item.get("id")) for item in (scopes or []) if item.get("id")}
+            if edited & {str(scope_id) for scope_id in removed}:
+                raise AppException(
+                    status_code=422,
+                    message="A scope cannot be removed and edited in the same save.",
+                    code="quotation_scope_removed_and_edited",
+                )
         svc.update_document(db, document=document, payload=body)
         # Edit quotation may delete a saved scope nothing in which was issued (#1341, Q2).
         if removed:

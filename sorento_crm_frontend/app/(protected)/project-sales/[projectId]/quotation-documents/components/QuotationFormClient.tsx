@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { projectCrumbs } from '../../../_shared/lib/crumbs';
 import {
   useProject,
@@ -119,7 +120,9 @@ function newScope(): FormScope {
  * (owner on Q3: "yes can, header only is fine"), so this one is left out rather than refused.
  */
 function isUntouchedNewScope(scope: FormScope): boolean {
-  return !scope.id && !scope.scope_label.trim() && scope.lines.length === 0;
+  return (
+    !scope.id && !scope.scope_label.trim() && !scope.series_id && scope.lines.length === 0
+  );
 }
 
 /** Today in the browser's own calendar, as the ISO date the API speaks. */
@@ -161,10 +164,8 @@ export function QuotationFormClient({
   const mutations = useQuotationDocumentMutations(projectId, documentId);
   // The company's letter and terms, for the create form's own tabs. Edit reads the saved text.
   const letterTemplates = useQuotationLetterTemplates(projectId, !isEdit);
-  const details = useQuotationHeaderDetails(
-    isEdit ? projectId : undefined,
-    saved.data?.scopes ?? [],
-  );
+  // Removing a saved scope is a hard delete: the same grant as the scope DELETE route.
+  const canRemoveSaved = useHasPermission('projects.projects.delete');
 
   const [header, setHeader] = React.useState<QuotationDocumentBody | null>(
     null,
@@ -176,6 +177,12 @@ export function QuotationFormClient({
   /** Saved scopes removed on this form, deleted by the one PATCH (#1341, Q2). */
   const [removedIds, setRemovedIds] = React.useState<string[]>([]);
   const [tab, setTab] = React.useState<FormTab>('header');
+  const savedScopes = saved.data?.scopes;
+  const keptScopes = React.useMemo(
+    () => (savedScopes ?? []).filter((scope) => !removedIds.includes(scope.id)),
+    [savedScopes, removedIds],
+  );
+  const details = useQuotationHeaderDetails(isEdit ? projectId : undefined, keptScopes);
   const [error, setError] = React.useState<string | null>(null);
   const [isSaving, setIsSaving] = React.useState(false);
   /** Anything typed since the page opened. Drives the warning on leaving the site. */
@@ -418,7 +425,7 @@ export function QuotationFormClient({
             </Button>
             <Button
               type="button"
-              disabled={isSaving || loading || failed || !allSeeded}
+              disabled={isSaving || loading || failed || !allSeeded || !letterReady}
               onClick={() => void save()}
             >
               {isSaving ? 'Saving...' : 'Save quotation'}
@@ -490,7 +497,7 @@ export function QuotationFormClient({
                   onRemove={
                     // A saved scope goes only once its versions have answered and none was
                     // ever sent to the customer; the server refuses the rest anyway.
-                    scope.id && (!scope.seeded || scope.issued)
+                    scope.id && (!canRemoveSaved || !scope.seeded || scope.issued)
                       ? undefined
                       : () => {
                           setDirty(true);

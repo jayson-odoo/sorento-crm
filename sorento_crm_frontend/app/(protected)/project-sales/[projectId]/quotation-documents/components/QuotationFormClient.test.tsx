@@ -33,6 +33,15 @@ if (!window.matchMedia) {
   });
 }
 
+// Removing a saved scope is a hard delete, gated on projects.projects.delete like the scope
+// DELETE route. Granted by default; a spec below takes it away.
+let granted = new Set(['projects.projects.view', 'projects.projects.edit', 'projects.projects.delete']);
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: (slug: string) => granted.has(slug),
+  useHasAnyPermission: (slugs: string[]) => slugs.some((slug) => granted.has(slug)),
+  usePermissions: () => ({ permissions: [...granted], permissionSet: granted, isLoading: false }),
+}));
+
 const push = vi.fn();
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, replace: vi.fn(), back: vi.fn() }),
@@ -285,6 +294,7 @@ function scopeSection(index: number) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  granted = new Set(['projects.projects.view', 'projects.projects.edit', 'projects.projects.delete']);
   getProject.mockResolvedValue(project());
   listSeries.mockResolvedValue([
     {
@@ -839,5 +849,54 @@ describe('QuotationFormClient from the Overview (AC-QF061)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(push).toHaveBeenCalledWith('/project-sales/p1?tab=quotations');
     expect(createQuotationDocument).not.toHaveBeenCalled();
+  });
+});
+
+describe('QuotationFormClient review round (fix round 2)', () => {
+  it('AC-QF058: without the delete grant a saved scope offers no Remove; a new one still does', async () => {
+    granted = new Set(['projects.projects.view', 'projects.projects.edit']);
+    renderForm('d1');
+    await openTab('Lines');
+    const scope = await waitFor(() => scopeSection(0));
+    await within(scope).findByText('Wall-hung WC');
+
+    expect(within(scope).queryByRole('button', { name: 'Remove scope' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Add a scope/i }));
+    expect(
+      within(scopeSection(1)).getByRole('button', { name: 'Remove scope' }),
+    ).toBeInTheDocument();
+  });
+
+  it('AC-QF052: a scope removed on the form leaves the Header details too', async () => {
+    listQuotationVersions.mockResolvedValue([version({ issued_by_name: 'Baser Ramli' })]);
+    renderForm('d1');
+    await openTab('Lines');
+    const scope = await waitFor(() => scopeSection(0));
+    await within(scope).findByText('Wall-hung WC');
+    await openTab('Header');
+    expect(await screen.findByText('Baser Ramli')).toBeInTheDocument();
+
+    await openTab('Lines');
+    fireEvent.click(within(scopeSection(0)).getByRole('button', { name: 'Remove scope' }));
+    await openTab('Header');
+    expect(screen.queryByText('Baser Ramli')).toBeNull();
+  });
+
+  it('AC-QF056: keeps Save off on create until the letter templates have answered', async () => {
+    let answer: (value: { cover_letter_html: string | null; terms_html: string | null }) => void =
+      () => {};
+    getQuotationLetterTemplates.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    renderForm();
+    await screen.findByLabelText('Your Ref');
+
+    expect(screen.getByRole('button', { name: 'Save quotation' })).toBeDisabled();
+    answer({ cover_letter_html: '<p>Hi</p>', terms_html: null });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save quotation' })).toBeEnabled(),
+    );
   });
 });

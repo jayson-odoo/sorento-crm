@@ -313,11 +313,10 @@ describe('what each quotation document tab renders', () => {
 
   it('still renders an empty cover letter and an empty terms tab, with their empty states', async () => {
     renderTab(`${BASE}/cover-letter`, <QuotationCoverLetterTab />);
-    expect(
-      await screen.findByText(/No cover letter on this quotation yet/i),
-    ).toBeInTheDocument();
+    // Exact: no explanation of when the template is applied, and no "issued" wording (AC-QF057).
+    expect(await screen.findByText('No cover letter on this quotation yet.')).toBeInTheDocument();
 
     renderTab(`${BASE}/terms`, <QuotationTermsTab />);
-    expect(await screen.findByText(/No terms on this quotation yet/i)).toBeInTheDocument();
+    expect(await screen.findByText('No terms on this quotation yet.')).toBeInTheDocument();
   });
 });

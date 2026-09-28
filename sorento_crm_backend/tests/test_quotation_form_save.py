@@ -31,6 +31,7 @@ from .test_project_quotation_document_routes import (  # noqa: F401  (fixture im
     _product,
     _sign,
     _uom,
+    _without_permission,
     api,
 )
 
@@ -592,9 +593,18 @@ def test_the_create_form_reads_the_company_letter_templates(api, monkeypatch):
     assert body["terms_html"] == bodies["terms"]
 
 
+_ONE_PRICED_SCOPE = [
+    {
+        "scope_label": f"{MARKER} Townhouse",
+        "lines": [{"description_snapshot": "Vanity top", "unit_price": "250.00", "quantity": "4"}],
+    }
+]
+
+
 def test_a_letter_edited_on_create_is_stored_with_its_merge_fields_filled(api, monkeypatch):
     """AC-QF056: what the salesperson typed in the create form's tabs is what the quotation
-    holds, with the merge fields rendered against the saved document (its number and Attn)."""
+    holds, with the merge fields rendered against the saved document: its number, its Attn and
+    the total of the lines saved in the same request (rendered AFTER the scopes exist)."""
     client, _db, _company_id, _user_id, project, _party = api
     _fake_templates(monkeypatch)
 
@@ -603,11 +613,79 @@ def test_a_letter_edited_on_create_is_stored_with_its_merge_fields_filled(api, m
         project.id,
         {
             "attn_name": "Kelly",
-            "cover_letter_html": "<p>Hi {{attn_name}}, see {{our_ref}}. Edited.</p>",
+            "cover_letter_html": "<p>Hi {{attn_name}}, see {{our_ref}}, RM {{grand_total}}.</p>",
             "terms_html": "<p>Edited terms.</p>",
+            "scopes": _ONE_PRICED_SCOPE,
         },
     )
     assert response.status_code == 201, response.text
     body = response.json()
-    assert body["cover_letter_html"] == f"<p>Hi Kelly, see {body['document_no']}. Edited.</p>"
+    assert body["cover_letter_html"] == (
+        f"<p>Hi Kelly, see {body['document_no']}, RM 1,000.00.</p>"
+    )
     assert body["terms_html"] == "<p>Edited terms.</p>"
+
+
+def test_a_blank_letter_on_create_takes_the_template_with_the_real_total(api, monkeypatch):
+    """AC-QF056: a create form whose letter tab is blank (cleared, or saved before the templates
+    answered) gets the company template, rendered after the scopes, so its total is not 0.00."""
+    from app.services import project_quotation_template_service as templates
+
+    client, _db, _company_id, _user_id, project, _party = api
+    monkeypatch.setattr(
+        templates,
+        "active_template",
+        lambda db, *, company_id, kind: _FakeTemplate("<p>RM {{grand_total}}</p>"),
+    )
+
+    response = _create(
+        client, project.id, {"cover_letter_html": "  ", "scopes": _ONE_PRICED_SCOPE}
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["cover_letter_html"] == "<p>RM 1,000.00</p>"
+    assert body["terms_html"] == "<p>RM 1,000.00</p>"
+
+
+def test_removing_a_scope_needs_the_delete_permission(api):
+    """AC-QF058: removing a saved scope is a hard delete, so it asks for the same grant as the
+    scope DELETE route (projects.projects.delete). Edit alone gets a 403 and the scope stays."""
+    client, db, _company_id, _user_id, project, _party = api
+    product = _seed_product(db)
+    document = _created(client, db, project.id, product)
+    townhouse = document["scopes"][0]
+
+    with _without_permission("projects.projects.delete"):
+        response = _patch(
+            client,
+            project.id,
+            document["id"],
+            {"your_ref": f"{MARKER}/NO", "remove_scope_ids": [townhouse["id"]]},
+        )
+    assert response.status_code == 403, response.text
+    db.expire_all()
+    assert db.get(ProjectQuotation, townhouse["id"]) is not None
+    assert db.get(ProjectQuotationDocument, document["id"]).your_ref != f"{MARKER}/NO"
+
+
+def test_a_scope_both_removed_and_edited_in_one_save_is_refused_up_front(api):
+    """A scope named in remove_scope_ids and in scopes is a contradiction; refused with a 422
+    that says so, not a misleading 404 after the delete."""
+    client, db, _company_id, _user_id, project, _party = api
+    product = _seed_product(db)
+    document = _created(client, db, project.id, product)
+    townhouse = document["scopes"][0]
+
+    response = _patch(
+        client,
+        project.id,
+        document["id"],
+        {
+            "remove_scope_ids": [townhouse["id"]],
+            "scopes": [{"id": townhouse["id"], "scope_label": "Renamed"}],
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.json().get("code") == "quotation_scope_removed_and_edited"
+    db.expire_all()
+    assert db.get(ProjectQuotation, townhouse["id"]) is not None

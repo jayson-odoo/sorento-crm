@@ -3,7 +3,9 @@
 Status: fix round 2 in review on PR #1343 (build lane, issue #1341, branch
 `feat/project-sales-quotation-form`): the owner's rulings below (Header and Lines tabs, Send to
 Customer, delete scope, header-only save, letter on create) built on top of the original scope.
-Track: full lane (diff well over 300 lines; no migration; no auth or RBAC change).
+Track: full lane (diff well over 300 lines; no migration). One permission gate added in round 2:
+removing a saved scope asks for `projects.projects.delete`, mirroring the existing scope DELETE
+route, so `security-reviewer` ran on that surface.
 
 UAC: `quotation-form-28sep-acceptance-criteria.md` (beside this file).
 
