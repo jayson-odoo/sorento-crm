@@ -13,6 +13,8 @@ is what lets the 66-fixture replay run as JSON in, JSON out.
 | (B-HB-1, not live) | `resolve_and_gate` | S6a's `business.run_until_exit` |
 | (the member roster) | `team_members` | `app.api.v1.external.team_members` |
 | (new, 6 Sep 2026) | `staff_lookup` | `users` x `team_members` x `agent_teams`, read here |
+| (new, 27 Sep 2026, #865) | `product_brand` | `products` x `brands` x `companies`, read here (`focus_product_origin`) |
+| (new, 28 Sep 2026, #865 round 5) | `product_suggestions` | the resolver's trigram did-you-mean (`entity_resolver._trgm_lookup`), in the contact's scope |
 
 Every test in `test_s5_escalation_lane.py` injects its own `services`, which is the point
 of the seam; `test_s5_escalation_seams.py` covers THIS module - the wiring that runs once
@@ -29,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -57,6 +60,13 @@ class EscalationServices:
     sla_create: Any
     team_members: Any
     staff_lookup: Any
+    # #865 (owner ruling 27 Sep 2026, fix option 1): the brand of the product the
+    # escalation is about, read off the product row. Defaulted so an older injected
+    # bundle keeps working and simply resolves no brand, exactly as before.
+    product_brand: Any = None
+    # #865 round 5: the did-you-mean for a product code no company holds, so a typo is
+    # settled inside the escalation. Defaulted for the same reason as `product_brand`.
+    product_suggestions: Any = None
 
 
 def _next_assignee(db: Any):
@@ -198,6 +208,172 @@ def _staff_lookup(db: Any):
     return call
 
 
+def _product_refs(products: Any) -> tuple[set[str], set[str]]:
+    """`(uuids, upper-cased codes)` off focus product entries. A settled entry names its
+    row by `uuid`; an unsettled one only by its code (`canonical_code`, else `raw`)."""
+    uuids: set[str] = set()
+    codes: set[str] = set()
+    for entry in products or []:
+        if not isinstance(entry, dict):
+            continue
+        hint = entry.get("hint")
+        if hint not in (None, "product"):
+            continue
+        uid = entry.get("uuid")
+        if isinstance(uid, str) and uid.strip():
+            try:
+                uuids.add(str(uuid.UUID(uid.strip())))
+                continue
+            except ValueError:
+                pass  # not a row id; fall through to the code, as an unsettled entry
+        code = entry.get("canonical_code") or entry.get("raw")
+        if isinstance(code, str) and code.strip():
+            codes.add(code.strip().upper())
+    return uuids, codes
+
+
+def _company_brand(name: Any, code: Any) -> str | None:
+    """The brand a company's name stands for, or None (fix round 4).
+
+    The Mocha company sells only the MOCHA brand, and its rows carry no brand row, so
+    the company is the brand. The incumbent Sorento company is not: it carries several
+    brands (SORENTO, MOCHA), so a Sorento row without a brand row names none, as before.
+    Keyed off `escalation.CO_ALIASES`, the lane's own company vocabulary.
+    """
+    from app.services.chatbot.lanes.escalation import CO_ALIASES
+
+    keys = {str(v).strip().lower() for v in (name, code) if v}
+    for brand, aliases in CO_ALIASES.items():
+        if brand != "sorento" and keys & {brand, *aliases}:
+            return brand
+    return None
+
+
+def focus_product_origin(db: Any, products: Any) -> dict[str, Any]:
+    """`{brand, company, not_found}` for the product(s) the conversation is about (#865).
+
+    The brand is a fact the product row owns, so it is read here at the point of use rather
+    than persisted beside the product in the session (contract 129 keeps the five-key wire
+    shape byte-compatible). One brand is the answer; products that disagree name none,
+    because a guess there picks a person for the wrong brand. Lower-cased, the spelling
+    `next-assignee` narrows by.
+
+    Fix round 4 (the owner's rule, 27 Sep: every Mocha company item and every Mocha-brand
+    product in Sorento goes to the Mocha brand member, whichever company the customer is
+    talking to): a code is looked for in the contact's own company first, and only a code
+    found nowhere there is looked for across every company. A row's brand is its brand
+    row, else the brand its company stands for (`_company_brand`). This read is for
+    routing only; stock, prices and orders keep the turn's company scope, and so does this
+    session once the read is done. `company` names where the rows were found and
+    `not_found` lists the codes no company holds.
+    """
+    empty: dict[str, Any] = {"brand": None, "company": None, "not_found": []}
+    uuids, codes = _product_refs(products)
+    if not uuids and not codes:
+        return empty
+    from sqlalchemy import func
+
+    from app.models.base import company_scope
+    from app.models.company import Company
+    from app.models.product import Brand, Product
+    from app.services.entity_resolver import _prefix_probe_product, _probe_product
+
+    def find(code: str) -> set[str]:
+        hits = _probe_product(db, [code]).get(code) or _prefix_probe_product(db, code)
+        return {str(hit.uuid) for hit in hits if hit.uuid}
+
+    not_found: list[str] = []
+    # A savepoint, so a read that fails aborts only itself and never the caller's unit of
+    # work (the turn's, or the lane's own before it draws an assignee).
+    with db.begin_nested():
+        # An unsettled entry holds the token the customer typed ("srtwc286"), not the
+        # row's code (SRTWC286-SH): a domain that does not narrow on product never
+        # settles it (fix round 3, the owner's 27 Sep console retest). Its rows are the
+        # ones the resolver matched for the answer, so they are found by the resolver's
+        # own code tiers: exact, else prefix, else substring.
+        for code in sorted(codes):
+            found = find(code)
+            if not found:
+                with company_scope(db, None):
+                    found = find(code)
+            if not found:
+                not_found.append(code)
+            uuids.update(found)
+        if not uuids:
+            return {**empty, "not_found": not_found}
+        with company_scope(db, None):
+            rows = (
+                db.query(func.lower(Brand.brand_code), Company.name, Company.code)
+                .select_from(Product)
+                .outerjoin(Brand, Brand.id == Product.brand_id)
+                .join(Company, Company.id == Product.company_id)
+                .filter(Product.id.in_(sorted(uuids)))
+                .distinct()
+                .all()
+            )
+    brands = sorted(
+        {
+            str(brand).strip() if brand and str(brand).strip() else _company_brand(name, company_code)
+            for brand, name, company_code in rows
+        }
+        - {None}
+    )
+    companies = sorted({str(name) for _brand, name, _code in rows if name})
+    return {
+        "brand": brands[0] if len(brands) == 1 else None,
+        "company": " and ".join(companies) or None,
+        "not_found": not_found,
+    }
+
+
+def focus_product_brand(db: Any, products: Any) -> str | None:
+    """The brand alone of `focus_product_origin`, for the offer mint sites (#865)."""
+    return focus_product_origin(db, products)["brand"]
+
+
+def _product_brand(db: Any):
+    def call(products: Any) -> dict[str, Any]:
+        return focus_product_origin(db, products)
+
+    return call
+
+
+#: How many codes the escalation's did-you-mean offers: the product lane's own "did you
+#: mean A, B, or C" length.
+SUGGESTIONS_CAP = 3
+
+
+def product_suggestions(db: Any, code: str) -> list[str]:
+    """The product codes the resolver offers for a code it cannot place (#865 round 5).
+
+    The same did-you-mean the product lane shows: `entity_resolver._trgm_lookup`, the
+    trigram neighbours `resolve()` turns into a token's alternatives, floored at
+    `ENTITY_MISS_SUGGEST_FLOOR`. It runs on the lane's session, so it is scoped to the
+    contact's companies exactly as the product lane's is: a customer is never shown a
+    code their companies do not hold. Best effort inside a savepoint; a failed probe
+    offers nothing and the escalation goes out as before.
+    """
+    from app.services.entity_resolver import ENTITY_MISS_SUGGEST_FLOOR, _trgm_lookup
+
+    with db.begin_nested():
+        hits = _trgm_lookup(db, code, frozenset({"product"}))
+    codes: list[str] = []
+    for hit in hits:
+        if hit.entity_type != "product" or (hit.similarity or 0.0) < ENTITY_MISS_SUGGEST_FLOOR:
+            continue
+        found = str(hit.canonical_code or "").strip()
+        if found and found not in codes:
+            codes.append(found)
+    return codes[:SUGGESTIONS_CAP]
+
+
+def _product_suggestions(db: Any):
+    def call(code: str) -> list[str]:
+        return product_suggestions(db, code)
+
+    return call
+
+
 def _not_live(name: str):
     def call(*_args: Any, **_kwargs: Any) -> Any:
         raise NotImplementedError(
@@ -263,4 +439,6 @@ def build(db: Any) -> EscalationServices:
         sla_create=_sla_create(db),
         team_members=_not_live("team_members"),
         staff_lookup=_staff_lookup(db),
+        product_brand=_product_brand(db),
+        product_suggestions=_product_suggestions(db),
     )

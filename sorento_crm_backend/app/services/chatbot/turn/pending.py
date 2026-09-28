@@ -172,6 +172,47 @@ OFFER_KINDS: frozenset[str] = frozenset(PENDING_KINDS) - ROSTER_KINDS
 ESCALATION_OFFER_KINDS: frozenset[str] = frozenset({"team_pick", "member_offer", "company_pick"})
 
 
+def offered_companies(pending: Pending | None) -> list[dict[str, Any]]:
+    """The companies an open escalation offer put in front of the customer, in order.
+
+    #865 round 6 (n8n `miss-company-routing` (A): "POOL = the companies actually
+    OFFERED"). A member picker names its pool on its own payload (`roster_plan`, the
+    companies whose rosters it printed); a team offer or a company clarify names one
+    company per option. One row per company, `{company_id, company_name, brand_code}`,
+    the `routing_roster_plan` row shape; `[]` for an offer that names no company.
+    """
+    if pending is None or pending.kind not in ESCALATION_OFFER_KINDS:
+        return []
+    plan = pending.payload.get("roster_plan")
+    if isinstance(plan, list) and plan:
+        source = [
+            {
+                "company_id": row.get("company_id"),
+                "company": row.get("company_name"),
+                "brand_code": row.get("brand_code"),
+            }
+            for row in plan
+            if isinstance(row, dict)
+        ]
+    else:
+        source = [
+            o.get("payload") for o in pending.options if isinstance(o, dict) and isinstance(o.get("payload"), dict)
+        ]
+    rows: list[dict[str, Any]] = []
+    for entry in source:
+        name = entry.get("company")
+        if not isinstance(name, str) or not name.strip() or any(r["company_name"] == name for r in rows):
+            continue
+        rows.append(
+            {
+                "company_id": entry.get("company_id") or None,
+                "company_name": name,
+                "brand_code": entry.get("brand_code") or None,
+            }
+        )
+    return rows
+
+
 def quick_replies_suppressed(kind: str | None) -> bool:
     """Does this pending's own options get withheld from `quick_replies`?
 

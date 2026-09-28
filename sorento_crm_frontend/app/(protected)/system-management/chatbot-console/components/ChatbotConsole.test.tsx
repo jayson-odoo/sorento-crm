@@ -451,3 +451,61 @@ describe('ChatbotConsole - item 6, the version pill', () => {
     expect(screen.getAllByTestId('chatbot-console-prompt-pill')).toHaveLength(1);
   });
 });
+
+describe('ChatbotConsole - where an escalation went (#865 fix round 3)', () => {
+  it('shows the routing line on the escalation turn, without opening the trace', async () => {
+    postConsoleTurn.mockResolvedValue({
+      turn_id: 'turn-escalate',
+      branch_kind: 'out_of_scope',
+      reply_text: '',
+      quick_replies: [],
+      send_messages: [
+        'Your request is out of the scope of my ability and require human assistance.',
+        'This inquiry has been routed to the respective person-in-charge (PIC) from marketing product team.',
+      ],
+      session_vars: {},
+      trace_summary: {
+        tool: null,
+        args_short: null,
+        crossdomain_rungs: [],
+        reveals_dropped: [],
+        routing_line:
+          'Routing: team marketing_product, brand sorento, source focus_product, assignee Tay Zhi Yang',
+      },
+    });
+
+    renderConsole();
+    fireEvent.change(textarea(), { target: { value: 'please escalate to marketing team' } });
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+
+    const line = await screen.findByTestId('chatbot-console-routing-line');
+    expect(line).toHaveTextContent(
+      'Routing: team marketing_product, brand sorento, source focus_product, assignee Tay Zhi Yang',
+    );
+    // One line per turn: on the turn's first bubble only.
+    expect(screen.getAllByTestId('chatbot-console-routing-line')).toHaveLength(1);
+    // The customer's own reply is unchanged.
+    expect(
+      screen.getByText('Your request is out of the scope of my ability and require human assistance.'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows no routing line on a turn that did not escalate', async () => {
+    postConsoleTurn.mockResolvedValue({
+      turn_id: 'turn-spec',
+      branch_kind: 'business_query',
+      reply_text: 'Here are the matching products.',
+      quick_replies: [],
+      send_messages: [],
+      session_vars: {},
+      trace_summary: { tool: null, args_short: null, crossdomain_rungs: [], reveals_dropped: [], routing_line: null },
+    });
+
+    renderConsole();
+    fireEvent.change(textarea(), { target: { value: 'check spec srtwc286' } });
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+
+    expect(await screen.findByText('Here are the matching products.')).toBeInTheDocument();
+    expect(screen.queryByTestId('chatbot-console-routing-line')).toBeNull();
+  });
+});
