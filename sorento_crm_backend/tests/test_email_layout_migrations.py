@@ -74,7 +74,7 @@ def _row(db, code):
 
 def test_head_chain():  # AC-EM097
     mods = _scripts()
-    assert mods["eml_0001_layout_columns"].down_revision == "merge_28sep_batch3"
+    assert mods["eml_0001_layout_columns"].down_revision == "sales_agent_aliases_r7"
     assert mods["eml_0002_seed_layouts"].down_revision == "eml_0001_layout_columns"
     sd = ScriptDirectory.from_config(Config("alembic.ini"))
     assert sd.get_heads() == ["eml_0002_seed_layouts"]
