@@ -221,7 +221,9 @@ describe('PartiesClient', () => {
 
     expect(await screen.findByText('No parties yet')).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Add the first party' }),
+      screen.getByText(
+        'Add the developer you are about to register a project with. Every project references one.',
+      ),
     ).toBeInTheDocument();
 
     openFilters();
@@ -230,9 +232,23 @@ describe('PartiesClient', () => {
     });
 
     expect(await screen.findByText('No parties match')).toBeInTheDocument();
+  });
+
+  // #1335: one CTA per page. The header's "Add party" is the only Add; the empty
+  // state keeps its heading and hint but offers no second button.
+  it('offers one Add, in the header, and no subtitle under the title', async () => {
+    renderClient();
+
+    const empty = (await screen.findByText('No parties yet')).parentElement as HTMLElement;
+    expect(within(empty).queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /add the first party/i })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /add party/i })).toHaveLength(1);
     expect(
-      screen.queryByRole('button', { name: 'Add the first party' }),
+      screen.queryByText(/reused across projects/i),
     ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /add party/i }));
+    expect(await screen.findByText('Add a party')).toBeInTheDocument();
   });
 
   it('confirms before deleting, and says it cannot be undone', async () => {

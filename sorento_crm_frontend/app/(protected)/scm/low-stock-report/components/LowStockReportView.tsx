@@ -186,13 +186,12 @@ export function LowStockReportView({ runId }: { runId: string }) {
             appendListState={false}
           />
         }
-      >
-        {data?.run.generated_at || data?.run.as_of ? (
-          <p className="text-sm text-muted-foreground">
-            Daily plan, {fmtWallStamp(data.run.generated_at ?? data.run.as_of)}
-          </p>
-        ) : null}
-      </PageHeader>
+      />
+      {data?.run.generated_at || data?.run.as_of ? (
+        <p className="text-sm text-muted-foreground">
+          Daily plan, {fmtWallStamp(data.run.generated_at ?? data.run.as_of)}
+        </p>
+      ) : null}
 
       <Card className="min-w-0 overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">

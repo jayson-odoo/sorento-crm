@@ -257,17 +257,16 @@ export function POIntakeConfirmClient({
             </div>
           ) : undefined
         }
-      >
-        {extractionSettled && (
-          <p className="text-sm text-muted-foreground">
-            {project.data?.project_code
-              ? `${project.data.title} (${project.data.project_code})`
-              : project.data?.title}
-            {` · ${version.lines.length} line${version.lines.length === 1 ? '' : 's'}`}
-            <TotalsMetaLine version={version} onJumpToProblem={jumpToProblem} />
-          </p>
-        )}
-      </PageHeader>
+      />
+      {extractionSettled && (
+        <p className="text-sm text-muted-foreground">
+          {project.data?.project_code
+            ? `${project.data.title} (${project.data.project_code})`
+            : project.data?.title}
+          {` · ${version.lines.length} line${version.lines.length === 1 ? '' : 's'}`}
+          <TotalsMetaLine version={version} onJumpToProblem={jumpToProblem} />
+        </p>
+      )}
 
       {version.extraction_state === 'failed' ? (
         <POIntakeExtractionFailed

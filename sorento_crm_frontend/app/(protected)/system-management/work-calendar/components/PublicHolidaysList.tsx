@@ -141,7 +141,6 @@ export default function PublicHolidaysList() {
         isLoading={isLoading}
         isPlaceholderData={isPlaceholderData}
         tableLayout={{ columnsVisibility: true }}
-        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block space-y-3">

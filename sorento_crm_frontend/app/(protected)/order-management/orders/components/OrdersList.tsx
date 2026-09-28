@@ -323,7 +323,6 @@ export default function OrdersList() {
       rowHref={rowHref}
       rowPending={rowPending}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
