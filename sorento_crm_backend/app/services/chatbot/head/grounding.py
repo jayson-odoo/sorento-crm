@@ -455,8 +455,9 @@ def _names_two_types(db: "Session", raw: str, vocab: Vocabulary) -> bool:
 
 
 def _unheard_words(db: "Session", raw: str, used: set[int], keep: set[int]) -> tuple[list[str], set[int]]:
-    """The words of a category token the catalogue's vocabulary does not hold at all
-    (`product_spec_search.unrecognized_words`), and `used` with their positions added.
+    """The words of a category token the catalogue does not hold at all (no registry,
+    class or brand word, `product_spec_search.unrecognized_words`, and no product's name
+    or description word), and `used` with their positions added.
 
     Fix round 10 on PR #833 ("for #833 yeah exact only"): "pnk water closet" is water
     closets and a word nothing matched, said back in the "Couldn't find" line; the word is
@@ -465,9 +466,11 @@ def _unheard_words(db: "Session", raw: str, used: set[int], keep: set[int]) -> t
     product type it is."""
     if not keep:
         return [], used
-    from app.services.product_spec_search import unrecognized_words
+    from app.services.product_spec_search import _names_a_product, unrecognized_words
 
-    alien = set(unrecognized_words(db, raw))
+    # A word some product carries word for word in its name or description ("deck" in
+    # "deck mounted bath mixer", round 5 B1) is the catalogue's own word too.
+    alien = {w for w in unrecognized_words(db, raw) if not _names_a_product(db, w)}
     if not alien:
         return [], used
     tokens = _words(raw)

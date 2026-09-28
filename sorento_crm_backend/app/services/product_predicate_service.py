@@ -952,7 +952,7 @@ def resolve_product_set(
         # thinking to need exact match though", "for #833 yeah exact only"): a word
         # that names no product type is said back as it was typed ("Couldn't find:
         # water tap basin (product type)"), never matched to the nearest class label
-        # (the retired difflib `_nearest_class_labels`) nor answered with the
+        # (the retired `_nearest_class_labels`, a close-spelling guess) nor answered with the
         # catalogue's most common ones (`_common_class_labels`, retired with it).
         return {
             "candidates": [],

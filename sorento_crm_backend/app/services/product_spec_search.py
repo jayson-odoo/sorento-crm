@@ -1152,9 +1152,10 @@ def search_specs(
     `exact` (fix round 10 on PR #833, owner 28 Sep 2026: "i tried to search like gunmetal
     basin, there is no such thing and it gives me flexible trap", "for #833 yeah exact
     only"): a candidate must HOLD every value that was asked for, the product type
-    included (`_exact_classes`), and a free word that merely appears in its sentence is
-    no evidence at all. A product with no exact signal is never a result. Off for every
-    caller but the chatbot's spec fallback.
+    included (`_exact_classes`), a number equal to the one stored (a threshold keeps its
+    own meaning), and a free word that merely appears in its sentence is no evidence at
+    all. A product with no exact signal is never a result. Off for every caller but the
+    chatbot's spec fallback.
     """
     specs = specs or []
     exclusions = exclusions or []
@@ -1223,7 +1224,7 @@ def search_specs(
     implied_classes = {
         label.lower()
         for term in free_terms
-        for label in (_exact_classes(db, term) if exact else resolve_classes_for_term(db, term))
+        for label in ((_exact_classes(db, term) or []) if exact else resolve_classes_for_term(db, term))
     }
     if exact and any(_exact_classes(db, term) is None for term in free_terms):
         # The words name two different product types ("water tap basin"): no one product
@@ -1337,7 +1338,9 @@ def search_specs(
                 and isinstance(target, (int, float, Decimal))
                 and not isinstance(actual, bool)
             ):
-                tolerance, decay = match_windows.get(key, (0.0, 0.0))
+                # Exact mode: a number is the number stored (the described set's own
+                # equality, `membership_clause`), never the registry's tolerance band.
+                tolerance, decay = (1e-6, 0.0) if exact else match_windows.get(key, (0.0, 0.0))
                 # "above 900mm" is a THRESHOLD, not an approximate equality. Scored as
                 # equality, a 960mm basin sat 60mm from the target and a 850mm one sat
                 # 50mm from it, so the basin that actually cleared 900 ranked BELOW the

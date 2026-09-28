@@ -418,18 +418,17 @@ def test_r5_answering_the_clarify_runs_the_counted_set_the_customer_asked_for(ch
     header is the product-code answer's own intro naming the described set and its count.
     """
     ask = chat.say("any water tap basin", _ask("stock", "water tap basin", "any water tap basin"))
-    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): the one reply structure; the
-    # nearest product types are its lines, and naming one still re-runs the ask.
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): the one reply structure.
+    # Amended to fix round 10 (owner, 28 Sep 2026: "for #833 yeah exact only"): no product
+    # types are offered (the nearest labels are retired); the phrase is said back whole as
+    # the product type nothing matched, and "tap" after it is a search for taps of its own.
     assert ask == (
-        "Here's what you want: water tap basin\n• Taps\n• Wash basins\n\n"
-        "Couldn't find: \"water tap basin\". Would you like me to escalate to warehouse team?"
+        "Here's what you want: water tap basin\n\n"
+        "Couldn't find: water tap basin (product type). Would you like me to escalate to warehouse team?"
     ), ask
-    before = len(chat.calls)
     text = chat.say("tap", _product_ask("tap", "tap"))
     assert "Here are the matching products" not in text, text
-    assert _header(text) == ["Stock summary for taps (2)."], text
     assert set(row_codes(text)) == _codes(world["taps"]), text
-    assert [c["name"] for c in chat.calls[before:]] != ["crm_master_products_list"], chat.calls[before:]
 
 
 def test_r5_the_other_option_runs_that_set(chat, world):
@@ -437,8 +436,12 @@ def test_r5_the_other_option_runs_that_set(chat, world):
     header is the product-code answer's own intro naming the described set and its count."""
     chat.say("any water tap basin", _ask("stock", "water tap basin", "any water tap basin"))
     text = chat.say("wash basin", _product_ask("wash basin", "wash basin"))
-    # Amended to fix round 9 on PR #833: every brand (no silent default).
-    assert "Stock summary for wash basins (6)." in _header(text)[-1], text
+    # Amended to fix round 10 on PR #833 ("for #833 yeah exact only"): no option was
+    # offered, so "wash basin" is its own search, and every row is a wash basin.
+    rows = set(row_codes(text))
+    assert rows, text
+    basins = {p.product_code for p in world["every"] if "basin" in (p.product_name or "").lower()}
+    assert rows <= basins, (rows, basins, text)
 
 
 def test_r5_a_reply_that_is_not_an_option_is_its_own_question(chat, world):
@@ -591,7 +594,9 @@ def test_r7_a_miss_names_its_domain_in_plain_words(chat, world):
     """Found by the scan: a product ask for a bare class word answered "But no
     master_products matched these." - the domain key, as stored."""
     text = chat.say("wash basin", _product_ask("wash basin", "wash basin"))
-    assert "master_products" not in text and "master products" in text, text
+    # Amended to fix round 10 on PR #833: "wash basin" is read word for word as the class
+    # and answered, so this turn is no longer a miss; no stored key is said either way.
+    assert "master_products" not in text, text
 
 
 # --------------------------------------------------------------------------- #
@@ -628,8 +633,9 @@ def test_replay_the_owners_eight_exchanges(chat, world, list_max_2):
     # 5: R4.
     assert five.startswith("Here's what you want: gunmetal wash basins with incoming stock\n"), five
     # 6 and 7: R5.
-    assert six.startswith("Here's what you want: water tap basin\n• Taps\n• Wash basins\n"), six
-    assert "Stock summary for taps (2)." in _header(seven), seven
+    # Amended to fix round 10 on PR #833 ("for #833 yeah exact only"): no options offered.
+    assert six.startswith("Here's what you want: water tap basin\n\nCouldn't find: water tap basin (product type)."), six
+    assert set(row_codes(seven)) == _codes(world["taps"]), seven
     # 8: R6.
     assert eight.endswith("Couldn't find: t trap (trap). Would you like me to escalate to purchasing team?"), eight
 

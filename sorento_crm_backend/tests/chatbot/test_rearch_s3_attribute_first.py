@@ -426,8 +426,9 @@ class TestUnknownAttributeClarify:
 
         text = (result.reply or {}).get("text", "")
         # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): the one reply structure;
-        # the word the catalogue could not read is its "Couldn't find" line.
-        assert 'couldn\'t find: "water tap"' in text.lower(), text
+        # the word the catalogue could not read is its "Couldn't find" line. Fix round 10
+        # ("for #833 yeah exact only"): said as the product type, it is named with its kind.
+        assert "couldn't find: water tap (product type)." in text.lower(), text
 
 
 class TestAnyXIncomingLeg:

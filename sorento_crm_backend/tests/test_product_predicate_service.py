@@ -1126,10 +1126,12 @@ def test_promotion_leg_respects_access_levels(db):
     assert out_no_tier["qualifying_total"] == 2
 
 
-def test_common_and_nearest_class_labels_are_company_scoped(db):
-    """AC-1335/SEC-S2: `_common_class_labels` and `_nearest_class_labels` must
-    read only the CALLER's own catalogue - a class label that exists solely in
-    another company must never reach a company A reply.
+def test_an_unread_word_offers_no_class_labels_so_none_leak_across_companies(db):
+    """AC-1335/SEC-S2: a class label that exists solely in another company must
+    never reach a company A reply. Fix round 10 on PR #833 (owner, 28 Sep 2026: "for
+    #833 yeah exact only"): `_common_class_labels` and `_nearest_class_labels` are
+    retired, so a zero for an unread word offers no class label at all, and this
+    pins that the near-spelling of company B's label comes back with none.
 
     World: company B (Mocha, via `tests/_mc_lookup_seed.seed_mocha`) owns a
     product whose derived spec class is the nonsense label "Zzqsecretclass" -
@@ -1147,7 +1149,7 @@ def test_common_and_nearest_class_labels_are_company_scoped(db):
     from app.models.base import set_company_scope
     from app.models.product_spec import ProductSpecifications
     from app.services.company_scope import DEFAULT_COMPANY_ID
-    from app.services.product_predicate_service import _common_class_labels, _nearest_class_labels
+    from app.services.product_predicate_service import resolve_product_set
 
     mocha = seed_mocha(db)
     with company_scope(db, frozenset({mocha.id})):
@@ -1167,11 +1169,10 @@ def test_common_and_nearest_class_labels_are_company_scoped(db):
     db.commit()
 
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
-    common = _common_class_labels(db, limit=50)
-    assert "Zzqsecretclass" not in common, common
-
-    nearest = _nearest_class_labels(db, "zzqsecretclas")
-    assert nearest == [], nearest
+    out = resolve_product_set(db, require={"stock": True}, scope_terms=["zzqsecretclas"])
+    assert out["qualifying_total"] == 0, out
+    assert "suggestions" not in out and "common_class_labels" not in out, out
+    assert "Zzqsecretclass" not in repr(out), out
 
 
 # --------------------------------------------------------------------------- #

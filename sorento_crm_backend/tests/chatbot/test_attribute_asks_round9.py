@@ -208,10 +208,15 @@ def test_turns3_and_4_pink_water_closet_breaks_the_water_closets_down_by_finish(
     text = chat.say(message, verdict)
     print(text)
     lines = text.split("\n")
-    assert lines[0] == "Here's what you want: pink water closets", text
+    # Amended to fix round 10 on PR #833 (owner, 28 Sep 2026: "for #833 yeah exact only"):
+    # the word is said as the customer typed it. The parser still puts "pnk" right to
+    # "pink" (`_v3`, spk_0002); grounding reads the customer's own word back
+    # (`grounding._as_typed`). Turn 4 typed "pink" and is unchanged.
+    said, other = ("pnk", "pink") if turn == "pnk" else ("pink", "pnk")
+    assert lines[0] == f"Here's what you want: {said} water closets", text
     assert any(re.fullmatch(r"• White water closets: \d+", line) for line in lines), text
-    assert "Couldn't find: pink (finish or colour). Would you like me to escalate to" in text, text
-    assert "pnk" not in text, text
+    assert f"Couldn't find: {said} (finish or colour). Would you like me to escalate to" in text, text
+    assert other not in text, text
     _plain(text, world)
 
 
@@ -274,7 +279,8 @@ def test_the_five_turns_in_order(chat, world):
     assert replies[0].startswith("Here's what you want: gunmetal wash basins (2)\n"), replies[0]
     assert replies[0].endswith("But no incoming matched these. Would you like me to escalate to purchasing team?"), replies[0]
     assert replies[1].startswith("Certificates found for gunmetal wash basins (2)."), replies[1]
-    assert replies[2].startswith("Here's what you want: pink water closets\n• White water closets: "), replies[2]
+    # Amended to fix round 10 on PR #833: turn 3 says "pnk" as typed.
+    assert replies[2].startswith("Here's what you want: pnk water closets\n• White water closets: "), replies[2]
     assert replies[3].startswith("Here's what you want: pink water closets\n• White water closets: "), replies[3]
     assert replies[4].startswith("Here are kitchen sinks with thickness 1.2 mm (2)."), replies[4]
     assert _codes(replies[4], world) == {p.product_code for p in world["thick12"]}, replies[4]

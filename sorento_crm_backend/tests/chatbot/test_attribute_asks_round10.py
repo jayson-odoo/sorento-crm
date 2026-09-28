@@ -177,7 +177,9 @@ def test_pnk_water_closet_says_pnk_as_typed(chat, world, verdict):
 def test_pnk_inside_the_category_token_is_said_back_never_searched(chat, world):
     text = chat.say(P1, _code_ask(P1, _entity("pnk water closet", "category")))
     print(text)
-    assert text.startswith("Here's what you want: water closet"), text
+    lines = text.split("\n")
+    assert lines[0] == "Here's what you want: pnk water closets", text
+    assert all(re.fullmatch(r"• \S+ water closets: \d+", line) for line in lines[1:-2]) and lines[1:-2], text
     assert 'Couldn\'t find: "pnk".' in text, text
     assert "*Product Code:*" not in text and "product:" not in text, text
 
@@ -261,8 +263,7 @@ def test_lookup_ids_are_code_matches_only():
         ],
         "intersection": [{"entity_type": "product", "uuid": "e", "match_tier": "and"}],
     }
-    assert _collect_lookup_product_ids(result, ["basin"]) == ["c"]
-    assert _collect_lookup_product_ids(result, ["srtwc8840"]) == ["c", "e"]
+    assert _collect_lookup_product_ids(result) == ["c", "e"]
 
 
 @pytest.mark.parametrize(
@@ -281,3 +282,18 @@ def test_grounding_binds_a_word_only_as_the_catalogue_spells_it(world, raw, boun
 
     grounded, _ = ground_words(raw, load_vocabulary(world["db"]))
     assert any(g.value is not None for g in grounded) is bound, [g.__dict__ for g in grounded]
+
+
+def test_exact_ranking_reads_a_number_as_the_number_stored(world):
+    """1.2 mm is 1.2 mm: a 1.25 mm sink is inside the registry's tolerance band and the
+    ordinary ranker would count it, the chatbot's exact ranking does not."""
+    from app.services.product_spec_search import search_specs
+
+    db = world["db"]
+    ks = _class_category(db, "KS")
+    uom = world["srt_tubs"][0].base_uom_id
+    for code, mm in (("SRTKS10T120", "1.2"), ("SRTKS10T125", "1.25")):
+        _make(db, code=code, name=f"Sink {mm}", description=f"{code} KITCHEN SINK (860X500X220X{mm}MM)", brand=world["sorento"], category_id=ks, uom_id=uom)
+    db.commit()
+    found = search_specs(db, specs=[{"key": "thickness", "value": 1.2}], free_terms=["kitchen sink"], exact=True)
+    assert {c["product_code"] for c in found["candidates"]} == {"SRTKS10T120"}, found["candidates"]

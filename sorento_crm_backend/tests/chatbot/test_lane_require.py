@@ -1581,11 +1581,11 @@ def test_unknown_term_clarifies_with_nearest_names():
         msg = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
         text = (msg.get("escalate_message") or "").strip()
 
-    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: the one reply structure, no
-    # explanations): the word is the "Couldn't find" line and the product types on offer
-    # are the lines; naming one still re-runs the ask.
-    assert text.startswith("Here's what you want: water tap\n• Taps"), text
-    assert 'Couldn\'t find: "water tap".' in text, text
+    # Amended to fix round 10 on PR #833 (owner, 28 Sep 2026: "for #833 yeah exact only"):
+    # no product types are offered as lines either (the nearest and the most common labels
+    # are retired); the word is the "Couldn't find" line of the one reply structure.
+    assert text.startswith("Here's what you want: water tap\n\nCouldn't find: \"water tap\"."), text
+    assert "•" not in text, text
     assert "Did you mean" not in text and "I don't know" not in text, text
 
 
@@ -2274,11 +2274,11 @@ def test_common_product_types_fallback_is_never_empty_under_contact_scope():
         msg = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
         text = (msg.get("escalate_message") or "").strip()
 
-    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: the one reply structure, no
-    # explanations): the word is the "Couldn't find" line and the product types on offer
-    # are the lines; naming one still re-runs the ask.
-    for label in ("• Taps", "• Wash basins", "• Water closets"):
-        assert label in text, text
+    # Amended to fix round 10 on PR #833 (owner, 28 Sep 2026: "for #833 yeah exact only"):
+    # no product types are offered as lines either (the nearest and the most common labels
+    # are retired); the word is the "Couldn't find" line of the one reply structure.
+    assert text.startswith("Here's what you want: zzqx\n\nCouldn't find: \"zzqx\"."), text
+    assert "•" not in text, text
     assert "a class or product type I know" not in text and "Try a product type" not in text, text
 
 
@@ -3167,13 +3167,12 @@ def test_clarify_with_no_candidate_offers_common_product_types():
         msg = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
         text = (msg.get("escalate_message") or "").strip()
 
-    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: the one reply structure, no
-    # explanations): the word is the "Couldn't find" line and the product types on offer
-    # are the lines; naming one still re-runs the ask.
-    assert text.startswith("Here's what you want: zzqx\n"), text
-    assert 'Couldn\'t find: "zzqx".' in text, text
+    # Amended to fix round 10 on PR #833 (owner, 28 Sep 2026: "for #833 yeah exact only"):
+    # no product types are offered as lines either (the nearest and the most common labels
+    # are retired); the word is the "Couldn't find" line of the one reply structure.
+    assert text.startswith("Here's what you want: zzqx\n\nCouldn't find: \"zzqx\"."), text
     for label in ("tap", "wash basin", "water closet"):
-        assert label in text.lower(), text
+        assert label not in text.lower(), text
     assert "Did you mean the product types I know?" not in text, text
 
 

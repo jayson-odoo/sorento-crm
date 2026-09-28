@@ -377,6 +377,8 @@ def resolve_bare_reply_under_member_offer(
         "fallback_to_all_types": True,
         "limit": 15,
         "spec_fallback": True,
+        # Fix round 10 on PR #833 ("for #833 yeah exact only"): exact values, no ranking guess.
+        "exact_match": True,
         "understand_phrase": True,
         # AC-18 (PLAN-spec-visibility-policy.md "Spec fallback"): this contact's
         # hidden keys ride along so the resolve route can neither rank on one nor
@@ -585,6 +587,8 @@ def resolve_entity_body(
         "fallback_to_all_types": True,
         "limit": 15,
         "spec_fallback": True,
+        # Fix round 10 on PR #833 ("for #833 yeah exact only"): exact values, no ranking guess.
+        "exact_match": True,
         "understand_phrase": True,
         # AC-18 (PLAN-spec-visibility-policy.md "Spec fallback"): see the sibling
         # body builder above for the reasoning.

@@ -419,9 +419,29 @@ def test_item4_pink_colour_is_an_unknown_finish_or_colour_never_a_document_type(
     assert "document type" not in text.lower(), text
 
 
+M5_SPELT = "any kitchen sink with thickness 1.2 mm"
+
+
+def _v5_spelt(kind: str = "stock") -> dict[str, Any]:
+    return _ask(kind, "kitchen sink", M5_SPELT, extra=[{**_entity("thickness 1.2 mm", "attachment_type"), "canonical_code": "technical drawing"}])
+
+
+def test_item5_misspelt_kitchne_and_thicnkess_are_said_back_never_read_as_the_words_they_resemble(compact, world):
+    """Fix round 10 on PR #833 (owner, 28 Sep 2026: "for #833 yeah exact only"): round 8
+    read "kitchne" as kitchen and "thicnkess" as thickness, one typo apart. Neither is the
+    catalogue's word, so neither binds; both are the "Couldn't find" line."""
+    text = compact.say(M5, _v5("stock"))
+    print(text)
+    assert "document type" not in text.lower(), text
+    assert not _codes(text, world) & {p.product_code for p in world["thick12"] + world["thick10"]}, text
+    assert 'Couldn\'t find: "kitchne" and "thicnkess 1.2 mm".' in text, text
+
+
 @pytest.mark.parametrize("kind", ["stock", "cert"])
 def test_item5_thickness_1_2_mm_narrows_the_kitchen_sinks(compact, world, kind):
-    text = compact.say(M5, _v5(kind))
+    """Amended to fix round 10 on PR #833: the owner's words spelt as the catalogue spells
+    them (the misspelt message is pinned just above)."""
+    text = compact.say(M5_SPELT, _v5_spelt(kind))
     assert "document type" not in text.lower(), text
     if kind == "stock":
         assert _codes(text, world) == {p.product_code for p in world["thick12"]}, text
@@ -513,6 +533,9 @@ def test_the_retest_in_order(compact, world, list_max_3):
     assert _codes(replies[2], world) == {p.product_code for p in world["gunmetal"]}, replies[2]
     assert _codes(replies[3], world) == {p.product_code for p in world["gunmetal"]}, replies[3]
     assert "Couldn't find: f trap (trap)." in replies[4] and "Couldn't find: pink (finish or colour)." in replies[5], replies[4:6]
-    assert _codes(replies[6], world) == {p.product_code for p in world["thick12"]}, replies[6]
+    # Amended to fix round 10 on PR #833 ("for #833 yeah exact only"): the misspelt
+    # "kitchne" and "thicnkess" bind nothing and are said back.
+    assert not _codes(replies[6], world), replies[6]
+    assert 'Couldn\'t find: "kitchne" and "thicnkess 1.2 mm".' in replies[6], replies[6]
     for text in replies:
         assert "document type" not in text.lower(), text

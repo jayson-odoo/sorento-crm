@@ -1329,6 +1329,15 @@ class ResolveReferenceRequest(BaseModel):
             "Omit / null = no cap (current default behaviour)."
         ),
     )
+    exact_match: bool = Field(
+        default=False,
+        description=(
+            "Only with `spec_fallback`: list only products that hold every value asked "
+            "for exactly, the product type included, never the nearest by relevance "
+            "(the chatbot's rule, PR #833 fix round 10). Absent or false keeps the "
+            "relevance ranking byte-identical for every other caller."
+        ),
+    )
     spec_fallback: bool = Field(
         default=False,
         description=(
@@ -1589,7 +1598,7 @@ def _has_exact_product_match(result: dict[str, Any], tokens: list[str] | None = 
 _CODE_MATCH_TIERS = frozenset({"exact", "prefix", "substring", "head_code", "and"})
 
 
-def _collect_lookup_product_ids(result: dict[str, Any], tokens: list[str] | None = None) -> list[str]:
+def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
     """Every product uuid LOOKUP matched BY CODE, in order, deduped.
 
     Work item C2: the described set's other half besides the class/product_type/
@@ -1597,10 +1606,11 @@ def _collect_lookup_product_ids(result: dict[str, Any], tokens: list[str] | None
 
     Fix round 10 on PR #833 (owner, 28 Sep 2026: "i tried to search like gunmetal
     basin, there is no such thing and it gives me flexible trap", "for #833 yeah exact
-    only"): only a code-shaped token's code-tier match counts. A word ("basin",
-    "gunmetal basin") describes the set through the catalogue's own vocabulary alone
-    (`filter_specs`); the resolver's embedding and trigram neighbours of a word are a
-    guess, and the embedding tier is what put a flexible trap into "gunmetal basin".
+    only"): only a code-tier match counts (the code, its prefix, a substring of it: the
+    code matching a typed "65502" still gets). A word ("basin", "gunmetal basin")
+    describes the set through the catalogue's own vocabulary alone (`filter_specs`); the
+    resolver's embedding and trigram neighbours of a word are a guess, and the embedding
+    tier is what put a flexible trap into "gunmetal basin".
     """
     ids: list[str] = []
     seen: set[str] = set()
@@ -1616,14 +1626,60 @@ def _collect_lookup_product_ids(result: dict[str, Any], tokens: list[str] | None
             ids.append(uid)
 
     for resolution in result.get("resolutions") or []:
-        if not _is_code_shaped(str((resolution or {}).get("token") or "")):
-            continue
         for match in (resolution or {}).get("matches") or []:
             _take(match)
-    if any(_is_code_shaped(str(t or "")) for t in (tokens or [])):
-        for match in result.get("intersection") or []:
-            _take(match)
+    for match in result.get("intersection") or []:
+        _take(match)
     return ids
+
+
+#: The resolver tiers that answer a token with its nearest neighbour, not a match.
+_NEIGHBOUR_TIERS = frozenset({"embedding", "trgm"})
+
+
+def _drop_word_neighbours(result: dict[str, Any]) -> None:
+    """Fix round 10 on PR #833 (owner, 28 Sep 2026: "i tried to search like gunmetal
+    basin, there is no such thing and it gives me flexible trap", "for #833 yeah exact
+    only"), for `exact_match` callers: a WORD token (no digit in it: "basin", "gunmetal
+    basin") gets no product by nearest neighbour, neither as a match (the embedding tier
+    answered "basin" with the flexible trap) nor as a did-you-mean alternative. A token
+    with a digit keeps them: a code typo ("SRWC8088") still finds its code. Customers,
+    orders and every other entity type are untouched."""
+    def word(token: Any) -> bool:
+        return not any(ch.isdigit() for ch in str(token or ""))
+
+    def neighbour(match: Any) -> bool:
+        return (
+            isinstance(match, dict)
+            and match.get("entity_type") == "product"
+            and match.get("match_tier") in _NEIGHBOUR_TIERS
+        )
+
+    for resolution in result.get("resolutions") or []:
+        if not isinstance(resolution, dict) or not word(resolution.get("token")):
+            continue
+        for key in ("matches", "alternatives"):
+            kept = [m for m in resolution.get(key) or [] if not neighbour(m)]
+            if len(kept) != len(resolution.get(key) or []):
+                resolution[key] = kept
+        if not resolution.get("matches"):
+            resolution["resolved"] = False
+            token = resolution.get("token")
+            unresolved = result.setdefault("unresolved_tokens", [])
+            if token and token not in unresolved:
+                unresolved.append(token)
+    if all(word(t) for t in result.get("tokens") or []):
+        if isinstance(result.get("alternatives"), list):
+            result["alternatives"] = [m for m in result["alternatives"] if not neighbour(m)]
+        if isinstance(result.get("intersection"), list):
+            result["intersection"] = [m for m in result["intersection"] if not neighbour(m)]
+            by_type: dict[str, list[dict[str, Any]]] = {}
+            for m in result["intersection"]:
+                by_type.setdefault(m["entity_type"], []).append(m)
+            result["by_entity_type"] = by_type
+            result["empty"] = not result["intersection"]
+            if result["empty"]:
+                result["unresolved_tokens"] = list(result.get("tokens") or [])
 
 
 # A COPY of `app.services.chatbot.head.output_exchange._CERT_RE`, never an import of it:
@@ -1670,13 +1726,14 @@ def _unknown_value_members(db: Session, payload, query_text: str, unknown: list[
     """The described set without its unknown value, broken down by that value's key:
     "pink water closets" is answered with the finishes the water closets do come in
     (fix round 9 on PR #833, owner: "always break it down"). None when the rest of the
-    ask describes no set, or the key is not one the registry holds."""
+    ask describes no set."""
     from app.services.product_predicate_service import resolve_product_set
     from app.services.product_spec_understanding import derive_search_inputs
 
+    # Fix round 10 on PR #833: a word with no key at all ("pnk" in "pnk water closet",
+    # "kitchne" in "kitchne sink") breaks the rest down by the next attribute that splits
+    # it (`_set_breakdown`), so the reply still lists what does exist.
     key = next((u.get("key") for u in unknown if u.get("key")), None)
-    if not key:
-        return None
     said = [str(u.get("said") or "") for u in unknown]
     specs, _free, _excl, _understanding = derive_search_inputs(
         db,
@@ -1701,6 +1758,7 @@ def _unknown_value_members(db: Session, payload, query_text: str, unknown: list[
         brand=str(brand_entry["value"]) if brand_entry else None,
         access_levels=payload.access_levels,
         breakdown_key=key,
+        breakdown_over=None if key else 0,
     )
     if not outcome.get("qualifying_total"):
         return None
@@ -2753,6 +2811,9 @@ def resolve_reference_post(
             code="ENTITY_PIN_MISMATCH",
         ) from exc
 
+    if payload.exact_match:
+        _drop_word_neighbours(result)
+
     # Shape B: a domain predicate over the described set. This is NOT a fallback -
     # "what faucets have certs" is a different question from "find me a faucet",
     # and it runs whenever the parser asked it, whatever the normal probes found -
@@ -2883,7 +2944,7 @@ def resolve_reference_post(
         # (`payload.limit`, 15), which would cut a 40-product set that fits one
         # message down to 15.
         # Read BEFORE `_emit_spec_matches` adds the qualifying set to the resolutions.
-        lookup_ids = _collect_lookup_product_ids(result, payload.tokens)
+        lookup_ids = _collect_lookup_product_ids(result)
         outcome = resolve_product_set(
             db,
             # R14/AC-1338: the PROMOTED require (a bare `true` recovered a
@@ -3129,9 +3190,9 @@ def resolve_reference_post(
             specs = [s for s in specs if s.get("key") not in hidden_spec_keys]
 
         # Fix round 10 on PR #833 (owner, 28 Sep 2026: "for #833 yeah exact only"): the
-        # chatbot's spec fallback lists only products that hold every value asked for,
-        # never the nearest by relevance (`search_specs(exact=True)`).
-        found = search_specs(db, specs=specs, exclusions=exclusions, free_terms=free_terms, exact=True)
+        # chatbot (`exact_match`) is listed only products that hold every value asked
+        # for, never the nearest by relevance (`search_specs(exact=True)`).
+        found = search_specs(db, specs=specs, exclusions=exclusions, free_terms=free_terms, exact=payload.exact_match)
         if hidden_spec_keys:
             from app.services.product_spec_rendering import render_spec_sentence
 

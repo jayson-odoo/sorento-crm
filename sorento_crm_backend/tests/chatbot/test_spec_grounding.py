@@ -98,16 +98,28 @@ def test_item4_pink_colour_is_an_unknown_finish_or_colour_never_a_photo(vdb):
     assert "Gunmetal" in spec["spec_known"] and "Chrome" in spec["spec_known"], spec
 
 
-def test_item5_thickness_1_2_mm_is_a_thickness_and_kitchne_sink_a_kitchen_sink(vdb):
-    """"any kitchne sink with thicnkess 1.2 mm" -> [category "kitchne sink",
-    attachment_type "thicnkess 1.2 mm" canonical "technical drawing"]."""
+def test_item5_thickness_1_2_mm_is_a_thickness_and_kitchen_sink_a_kitchen_sink(vdb):
+    """"any kitchen sink with thickness 1.2 mm" -> [category "kitchen sink",
+    attachment_type "thickness 1.2 mm" canonical "technical drawing"]."""
     out = _ground(
-        vdb, _e("kitchne sink", "category"), _e("thicnkess 1.2 mm", "attachment_type", canonical_code="technical drawing")
+        vdb, _e("kitchen sink", "category"), _e("thickness 1.2 mm", "attachment_type", canonical_code="technical drawing")
     )
     assert all(e["hint"] != "attachment_type" for e in out), out
     assert ("category", "kitchen sink") in _kinds(out), out
     [spec] = [e for e in out if e["hint"] == "specification"]
     assert (spec["spec_key"], spec["spec_value"], spec["spec_unit"]) == ("thickness", 1.2, "mm"), spec
+
+
+def test_item5_misspelt_kitchne_and_thicnkess_bind_nothing(vdb):
+    """Fix round 10 on PR #833 (owner, 28 Sep 2026: "for #833 yeah exact only"). Round 8
+    read "kitchne sink" as a kitchen sink and "thicnkess" as thickness, one typo apart
+    (`_near`, retired). Neither is the catalogue's word: nothing binds, never a document."""
+    out = _ground(
+        vdb, _e("kitchne sink", "category"), _e("thicnkess 1.2 mm", "attachment_type", canonical_code="technical drawing")
+    )
+    assert all(e["hint"] != "attachment_type" for e in out), out
+    assert ("category", "kitchen sink") not in _kinds(out), out
+    assert not [s for s in _specs(out) if s[1] is not None], out
 
 
 def test_undermount_basin_is_an_under_counter_basin(vdb):
@@ -193,7 +205,7 @@ def test_every_registry_choice_glued_to_a_product_type_grounds(vdb, key, order):
     [
         ("thickness 1.2 mm", "kitchen sink", "thickness", 1.2),
         ("1.0mm thick", "kitchen sink", "thickness", 1),
-        ("thicknes 0.8 mm", "kitchen sink", "thickness", 0.8),
+        ("thickness 0.8 mm", "kitchen sink", "thickness", 0.8),
         ("600mm long", "basin", "dim_length", 600),
         ("width 450 mm", "basin", "dim_width", 450),
         ("height 800mm", "water closet", "dim_height", 800),
@@ -231,11 +243,20 @@ def test_a_word_beside_a_keys_own_word_that_is_no_choice_is_unknown(vdb, said, k
 @pytest.mark.parametrize("raw", ["deck mounted tap", "long spout basin tap", "grease trap"])
 def test_an_ordinary_product_word_before_a_head_word_is_not_an_unknown_value(vdb, raw):
     """Round 5 B1 kept: "deck mounted", "grease trap" are product words, never a value the
-    registry is told it does not know."""
+    registry is told it does not know. Fix round 10 on PR #833 ("for #833 yeah exact
+    only"): a word no product and no registry entry holds ("deck" here, where no product
+    is deck mounted) is said back as a word nothing matched, with no key."""
     out = _ground(vdb, _e(raw, "category"))
-    assert all(e.get("spec_value") is not None for e in out if e["hint"] == "specification"), out
+    assert all(
+        e.get("spec_value") is not None or not e.get("spec_key") for e in out if e["hint"] == "specification"
+    ), out
 
 
-def test_a_typo_of_a_choice_grounds_to_the_choice(vdb):
+def test_a_typo_of_a_choice_binds_nothing(vdb):
+    """Fix round 10 on PR #833 ("for #833 yeah exact only"): "gunmetl" is not the
+    registry's "gunmetal". Round 8 grounded it to the choice; now it is said back as
+    typed, and only the exact spelling (any case, a plural aside) binds."""
     out = _ground(vdb, _e("gunmetl basin", "category"))
-    assert _specs(out) == [("finish", "gunmetal")], out
+    assert ("finish", "gunmetal") not in _specs(out), out
+    assert any(e["hint"] == "specification" and e["raw"] == "gunmetl" and e["spec_value"] is None for e in out), out
+    assert _specs(_ground(vdb, _e("GUNMETAL basins", "category"))) == [("finish", "gunmetal")]
