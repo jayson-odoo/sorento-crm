@@ -2091,6 +2091,156 @@ def test_handover_sends_one_email_with_actor_in_cc(monkeypatch):
         )
 
 
+def test_handover_email_attachments_forwarded_via_one_email(monkeypatch):
+    """#1312 fix round 1, blocker 2 (AC-E2): the automation hop was unguarded - a
+    reviewer round replaced the forward with `{}` and every other test (88 of them)
+    stayed green, because none of them actually drove
+    `AutomationService._send_per_match`'s ONE_EMAIL branch with a context carrying
+    `email_attachments`. This one does, the same real-dispatch shape
+    `test_handover_sends_one_email_with_actor_in_cc` above uses (minus the
+    multi-recipient bit that AC is not about), and asserts the one thing that broke:
+    `Notification.data["extra_attachments"]`.
+    """
+    import uuid as _uuid
+
+    from app.models.automation import Automation
+    from app.models.email_template import EmailTemplate
+    from app.models.notification import Notification
+    from app.models.user import User
+    from app.services import notification_email
+    from app.services.automation_service import AutomationService
+
+    monkeypatch.setattr(notification_email, "send_notification_email", lambda *a, **kw: None)
+    monkeypatch.setattr(notification_email, "send_notification_email_multi", lambda *a, **kw: None)
+
+    with blank_session() as db:
+        creator = User(
+            id=str(_uuid.uuid4()),
+            email=f"zzt-oihe-ea-creator-{_uuid.uuid4().hex[:6]}@test.local",
+            name="ZZT OIHE EA Creator",
+            status="ACTIVE",
+            is_trashed=False,
+        )
+        buyer = User(
+            id=str(_uuid.uuid4()),
+            email=f"zzt-oihe-ea-buyer-{_uuid.uuid4().hex[:6]}@test.local",
+            name="Purchasing",
+            status="ACTIVE",
+            is_trashed=False,
+        )
+        db.add_all([creator, buyer])
+        db.flush()
+
+        template = EmailTemplate(
+            id=str(_uuid.uuid4()),
+            code=f"zzt-oihe-ea-tpl-{_uuid.uuid4().hex[:6]}",
+            name="ZZT OIHE EA test template",
+            subject="OI: {{ handover.subject_scope }}",
+            body_html="<p>Hi {{ recipient.name }}</p>",
+            body_text=None,
+            is_active=True,
+        )
+        db.add(template)
+        db.flush()
+
+        automation = Automation(
+            id=str(_uuid.uuid4()),
+            name="ZZT OIHE EA handover",
+            enabled=True,
+            trigger_type="order_inquiry_handover",
+            trigger_config={},
+            action_type="send_email",
+            email_template_id=str(template.id),
+            recipient_config={
+                "user_ids": [str(buyer.id)],
+                "role_ids": [],
+                "extra_emails": [],
+                "include_actor": False,
+                # AC-H26: the opt-in that routes this through `_send_per_match`'s
+                # ONE_EMAIL branch - the ONLY branch that forwards `email_attachments`
+                # (see that method's own comment).
+                "one_email": True,
+            },
+            group_matches=False,
+            schedule_type="manual",
+            timezone="Asia/Kuala_Lumpur",
+            created_by_user_id=str(creator.id),
+        )
+        db.add(automation)
+        db.commit()
+
+        extra_attachments = [
+            {
+                "filename": "SO423136-L3-a.png",
+                "storage_provider": "r2",
+                "storage_key": "k1",
+                "optional": True,
+            },
+        ]
+        context = {
+            "handover": {
+                "subject_scope": "SO423136",
+                "verbs": ["ORDER"],
+                "headline": "ORDER",
+                "orders": [],
+                "lines": [],
+                "line_count": 0,
+                "link": "https://crm.test/project-sales/order-inquiries?query=SO423136",
+            },
+            "actor": {"name": "Raiser", "email": "raiser@test.local"},
+            "today": "2026-09-27",
+            "email_attachments": extra_attachments,
+        }
+
+        result = AutomationService(db).dispatch_event(
+            "order_inquiry_handover",
+            context=context,
+            source_kind="order_inquiry_handover",
+            source_id=str(_uuid.uuid4()),
+        )
+        assert result["fired"] == 1, result
+        run_id = result["results"][0]["run_id"]
+
+        notif = (
+            db.query(Notification)
+            .filter(
+                Notification.source_entity_type == "automation_run",
+                Notification.source_entity_id == run_id,
+            )
+            .one()
+        )
+        data = dict(notif.data or {})
+        assert data.get("extra_attachments") == extra_attachments
+
+
+def test_record_handover_queues_core_line_id(api, monkeypatch):
+    """#1312 fix round 1, blocker 2: `_record_handover` must queue `core_line_id` -
+    the id `so_line_attachments.handover_attachments` keys attachments on - alongside
+    `line_no`. Captured at `_build_handover_context`'s own INPUT (the raw pending
+    queue) rather than its output: a line with no files never prints `core_line_id`
+    anywhere in the built CONTEXT, so asserting against the context would not catch
+    a regression here.
+    """
+    client, world = api
+    _register(world)
+    from app.services import project_order_inquiry_service as svc
+
+    captured: list[list[dict]] = []
+    real_build = svc._build_handover_context
+
+    def _capture(pending, *args, **kwargs):
+        captured.append([dict(item) for item in pending])
+        return real_build(pending, *args, **kwargs)
+
+    monkeypatch.setattr(svc, "_build_handover_context", _capture)
+
+    fixture = _raise_one_row(api, qty="10")
+
+    assert captured, "expected _build_handover_context to have been called"
+    queued = captured[-1][0]
+    assert queued.get("core_line_id") == str(fixture["core_line"].id)
+
+
 # =============================================================================== #
 # `PLAN-scm-oi-handover-r2-undo.md` - S1 email layout, S2 named-path equality gate #
 # (S2's own new tests live above, beside the rewritten AC-H23 test), S3 subject,   #

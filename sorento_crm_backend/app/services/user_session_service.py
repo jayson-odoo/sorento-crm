@@ -77,6 +77,13 @@ def mint_session(
         user_agent=(user_agent or None),
         ip_address=(ip_address or None),
         auth_method=auth_method,
+        # Explicit, not the column's `server_default=func.now()`: Postgres's
+        # `now()` is pinned to the TRANSACTION's start, so two sessions minted
+        # a moment apart inside one transaction (a test, an impersonation
+        # immediately after login) would otherwise share one `created_at` and
+        # make "the newest session" (S3 1.7 `last_sign_in_method`) a coin
+        # flip. Python's clock has real per-call resolution.
+        created_at=now,
     )
     db.add(row)
     db.commit()

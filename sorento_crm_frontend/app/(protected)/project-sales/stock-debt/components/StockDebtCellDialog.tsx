@@ -91,9 +91,48 @@ function date(value: string | null): string {
  * much. `highlightLines` marks the document's own line when the dialog opens from here
  * (R31b), so a reader can jump straight to it.
  */
+/** R42: a PO line - the document link, then its line number, muted. */
+function PoLineLink({
+  poNumber,
+  poLineNumber,
+  poId,
+  poLineId,
+}: {
+  poNumber: string;
+  poLineNumber: number | null;
+  poId: string | null;
+  poLineId: string | null;
+}) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1">
+      <OrderInquiryDocumentLink kind="po" document={poNumber} poId={poId} poLineId={poLineId} />
+      {poLineNumber != null && (
+        <span className="shrink-0 text-muted-foreground">line {poLineNumber}</span>
+      )}
+    </span>
+  );
+}
+
 function CoveredByEntry({ entry }: { entry: StockDebtAssignedFrom }) {
   if (entry.kind === 'on_hand') {
     return <span className="truncate text-muted-foreground">{entry.ref}</span>;
+  }
+  if (entry.kind === 'po') {
+    // R42: a purchase order covers a line too. The same link, kind `po`, opened on the
+    // PO line itself (`poLineId` marks it and offers the jump). The line number rides
+    // beside it, unlike an SPO's (R31a): one PO often covers one order from two lines
+    // (PO 202609-S0029's 1,305 and 4 both name SO419208), and two identical numbers
+    // side by side read as one document listed twice.
+    return entry.po_number ? (
+      <PoLineLink
+        poNumber={entry.po_number}
+        poLineNumber={entry.po_line_number ?? null}
+        poId={entry.po_id ?? null}
+        poLineId={entry.po_line_id ?? null}
+      />
+    ) : (
+      <span className="truncate text-muted-foreground">{entry.ref}</span>
+    );
   }
   if (!entry.spo_number) {
     return null;
@@ -405,7 +444,15 @@ export function StockDebtCellDialog({
         header: 'Document',
         size: 210,
         cell: ({ row }) =>
-          row.original.spo_number ? (
+          row.original.kind === 'po' && row.original.po_number ? (
+            // R42: a PO line, linked the way Covered by links it.
+            <PoLineLink
+              poNumber={row.original.po_number}
+              poLineNumber={row.original.po_line_number ?? null}
+              poId={row.original.po_id ?? null}
+              poLineId={row.original.po_line_id ?? null}
+            />
+          ) : row.original.spo_number ? (
             <OrderInquiryDocumentLink kind="spo" document={row.original.spo_number} />
           ) : (
             <span className="block truncate" title={row.original.ref ?? ''}>
@@ -430,8 +477,8 @@ export function StockDebtCellDialog({
         cell: ({ row }) => <span>{date(row.original.date)}</span>,
       },
       {
-        // R26: an SPO's own RAW ordered quantity; the on-hand figure, unchanged, for
-        // every other kind.
+        // R26: an SPO's (and, R42, a PO line's) own RAW ordered quantity; the on-hand
+        // figure, unchanged, for on hand.
         id: 'qty',
         header: 'Qty',
         size: 90,
@@ -442,8 +489,8 @@ export function StockDebtCellDialog({
         ),
       },
       {
-        // R26: an SPO's own quantity received so far - blank for every other kind (on
-        // hand has no received/outstanding history to state).
+        // R26: a document's own quantity received so far - blank for on hand, which has
+        // no received/outstanding history to state.
         id: 'received_qty',
         header: 'Received',
         size: 100,
@@ -456,8 +503,8 @@ export function StockDebtCellDialog({
         ),
       },
       {
-        // R26: the walk's own NETTED balance for an SPO (Qty minus Received) - what the
-        // walk actually counts as incoming. Blank for every other kind, same reason.
+        // R26: the walk's own NETTED balance for a document (Qty minus Received) - what
+        // the walk actually counts as incoming. Blank for on hand, same reason.
         id: 'outstanding_qty',
         header: 'Outstanding',
         size: 100,
@@ -503,8 +550,9 @@ export function StockDebtCellDialog({
         // number, just relocated).
         footer: () => `Free ${supplyTotals.free.toLocaleString()}`,
         cell: ({ row }) => {
-          // A PO line's `expected_date` is the SO date it was TYPED against, not an
-          // arrival (R29), so it is stated as what it is and nothing reads it (R30).
+          // A PO line's `expected_date` is the SO date it was TYPED against (R29). Since
+          // R42 the view parks the PO on it, so the server sends `bought_for` only when it
+          // is NOT the row's date (the board's reading), and this prints only then.
           const boughtFor =
             row.original.kind === 'po' && row.original.bought_for
               ? `bought for ${date(row.original.bought_for)}`
