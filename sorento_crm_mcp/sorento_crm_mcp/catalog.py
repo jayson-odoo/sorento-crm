@@ -910,7 +910,11 @@ CATALOG: tuple[ToolSpec, ...] = (
             "the agent does NOT mean every field. When not permitted the keys are ABSENT from the "
             "response - absent means 'not permitted', it does NOT mean 'not reached yet'. Never tell "
             "a user a date is unknown or pending because a key is missing; say you cannot share it. "
-            "A `field_access.denied` block lists what was withheld and why."
+            "A `field_access.denied` block lists what was withheld and why. The container number "
+            "(`shipping_container_number`) and the quantities (`remaining_incoming_quantity`, "
+            "`unallocated_quantity`, `allocated_quantity`) are gated the same way for a contact. "
+            "For a contact, the ETA is already the date that contact may be told, and the "
+            "packing-list attachment is present only when that contact may receive it."
         ),
         "/api/v1/incoming-stock/list",
         (),
