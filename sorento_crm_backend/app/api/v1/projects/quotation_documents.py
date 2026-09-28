@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
+from app.api.v1.projects.quotations import _notify_breaches
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import ListResponse
@@ -39,7 +40,7 @@ from app.schemas.status import StatusGraphResponse
 from app.services import project_quotation_approval_service as approvals
 from app.services import project_quotation_document_service as svc
 from app.services import project_service as projects
-from app.services.error_handler import handle_internal_error
+from app.services.error_handler import AppException, handle_internal_error
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
 
@@ -130,17 +131,36 @@ async def create_quotation_document(
     """Arrives already filled in (AC-A2): reference, recipient and subject are all derived."""
     try:
         project = _editable_project(db, project_id, current_user)
-        document = svc.create_document(
+        # The quotation form page (#1341) sends the scopes and their lines with the letterhead;
+        # all of it lands in this one commit, or none of it does.
+        document, lines = svc.create_document_with_scopes(
             db,
             project=project,
             actor_user_id=current_user["id"],
             payload=payload.model_dump(exclude_unset=True),
         )
+        for line in lines:
+            _notify_breaches(db, line, current_user["id"])
         db.commit()
         db.refresh(document)
         return svc.serialize_document(db, document)
     except Exception as exc:
         db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/projects/{project_id}/quotation-documents/letter-templates")
+async def get_quotation_letter_templates(
+    project_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """The company's cover letter and terms for the create form's own tabs (#1341). Declared
+    before ``/{document_id}`` so the literal segment is not read as a document id."""
+    try:
+        project = _editable_project(db, project_id, current_user)
+        return svc.letter_templates(db, project=project)
+    except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
@@ -181,7 +201,46 @@ async def update_quotation_document(
         validate_uuid_path(document_id, resource="Quotation")
         _editable_project(db, project_id, current_user)
         document = svc.get_document_or_404(db, project_id, document_id)
-        svc.update_document(db, document=document, payload=payload.model_dump(exclude_unset=True))
+        body = payload.model_dump(exclude_unset=True)
+        scopes = body.pop("scopes", None)
+        # Normalised and de-duplicated before any write: a repeated id is one removal.
+        removed = list(
+            dict.fromkeys(
+                validate_uuid_path(str(scope_id), resource="Scope")
+                for scope_id in body.pop("remove_scope_ids", None) or []
+            )
+        )
+        if removed:
+            # A hard delete of the scope, its versions and lines: the same grant the scope
+            # DELETE route asks for, not merely edit.
+            if DELETE not in permission_slugs(db, current_user["id"]):
+                raise AppException(
+                    status_code=403,
+                    message="You can edit this quotation but not remove its scopes.",
+                    code="quotation_scope_remove_forbidden",
+                )
+            edited = {str(item.get("id")).lower() for item in (scopes or []) if item.get("id")}
+            if edited & set(removed):
+                raise AppException(
+                    status_code=422,
+                    message="A scope cannot be removed and edited in the same save.",
+                    code="quotation_scope_removed_and_edited",
+                )
+        svc.update_document(db, document=document, payload=body)
+        # Edit quotation may delete a saved scope nothing in which was issued (#1341, Q2).
+        if removed:
+            svc.remove_form_scopes(db, document=document, scope_ids=removed)
+        # The form's edit Save (#1341): header and scopes in ONE commit. A scope the customer
+        # holds refuses new lines with the existing 422, and the header change goes back too.
+        if scopes is not None:
+            for item in scopes:
+                if item.get("id"):
+                    validate_uuid_path(str(item["id"]), resource="Scope")
+            lines = svc.apply_form_scopes(
+                db, document=document, actor_user_id=current_user["id"], scopes=scopes
+            )
+            for line in lines:
+                _notify_breaches(db, line, current_user["id"])
         db.commit()
         db.refresh(document)
         return svc.serialize_document(db, document)

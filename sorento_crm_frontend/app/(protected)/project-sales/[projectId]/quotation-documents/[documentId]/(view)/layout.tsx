@@ -1,8 +1,8 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import RequireAccess from '@/app/components/common/RequireAccess';
-import { QuotationDocumentClient } from './components/QuotationDocumentClient';
-import { QuotationDocumentPageHeader } from './components/QuotationDocumentPageHeader';
+import { QuotationDocumentClient } from '../components/QuotationDocumentClient';
+import { QuotationDocumentPageHeader } from '../components/QuotationDocumentPageHeader';
 
 export const metadata: Metadata = {
   title: 'Quotation document',
@@ -16,11 +16,12 @@ export const metadata: Metadata = {
  * client's words: "please don't make quotation list and form in 1 page, click on the list, then
  * go to another page to view it".
  *
- * A LAYOUT rather than a page because the document reads as four tabs - scopes, cover letter,
+ * A LAYOUT rather than a page because the document reads as five tabs - header, lines, cover letter,
  * terms, signatures - and the client asked for each to be reachable without scrolling past fifty
  * priced lines. The tabs are routes under here, so the terms can be linked to directly and Back
- * walks through them. What sits above them - the refs, the recipient, the total, the CTA - is the
- * identity of the record, so it is rendered once here and stays on screen on every tab.
+ * walks through them. What sits above them - the status, the project title and developer lines,
+ * the CTA - is the identity of the record, so it is rendered once here and stays on screen on every
+ * tab. The refs, the recipient and the total are the Header tab (#1341).
  */
 export default async function ProjectQuotationDocumentLayout({
   params,

@@ -4,21 +4,10 @@ import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Check, Download, Link2, PenLine, SquarePen, Trash2 } from 'lucide-react';
-import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import DetailActions from '@/components/common/DetailActions';
@@ -31,46 +20,35 @@ import {
   useQuotationIssues,
 } from '../../../../_shared/hooks/useQuotationDocuments';
 import RecordNavigation from '@/components/common/RecordNavigation';
-import type { QuotationDocument } from '../../../../_shared/services/quotationDocumentService';
 import {
   useProject,
   useProjectQuotationVersions,
-  useQuotationBulkLineMutation,
   useQuotationMutations,
   useQuotations,
 } from '../../../../_shared/hooks/useProjects';
 import { quotationStanding } from '../../../../_shared/lib/quotationDecision';
-import { sumMoney } from '../../../../_shared/lib/money';
-import {
-  stagedLinesToBody,
-  stagedScopeTotal,
-  unfinishedStagedLines,
-} from '../../../components/QuotationVersionEditor';
 import {
   QuotationApprovalPanel,
   isBlockedByApproval,
 } from './QuotationApprovalPanel';
 import { QuotationChangesRequestedPanel } from './QuotationChangesRequestedPanel';
-import { QuotationDocumentHeader } from './QuotationDocumentHeader';
 import { QuotationDocumentProvider } from './QuotationDocumentContext';
 import { QuotationDocumentTabs } from './QuotationDocumentTabs';
 import { QuotationSignDialog } from './QuotationSignDialog';
 import { QuotationSignLinkDialog } from './QuotationSignLinkDialog';
 import { ReviseToEditDialog } from './ReviseToEditDialog';
-import { useQuotationEditSession } from './useQuotationEditSession';
 
 /**
  * One quotation DOCUMENT: the letterhead the customer receives, and the tabs it is read through.
  *
- * This is the shell every tab renders inside. The identity of the record - its ref, who it is to,
- * its total, the one CTA and the gear - sits ABOVE the tabs and stays on screen wherever the
- * reader goes, because it is what the record IS rather than one section of it.
+ * This is the shell every tab renders inside. The identity of the record - its status, the project
+ * title and developer lines, the one CTA and the gear - sits ABOVE the tabs and stays on screen
+ * wherever the reader goes. The letterhead card (refs, recipient, total) is the Header tab (#1341).
  *
  * The header follows the system's own rule and nothing else: ONE primary CTA, and every other
  * action behind the gear. Download is not a call to action, it is a thing you can also do;
- * issuing is the move that changes what the customer holds. Edit is behind the gear for the same
- * reason - but only its ENTRY POINT. Once a session is open, Cancel and Save ARE the screen's one
- * intent, and they belong in the header where a control you are about to press can be seen.
+ * issuing is the move that changes what the customer holds. Edit quotation is behind the gear for
+ * the same reason, and opens the whole quotation in the form page (#1341): this page is a read.
  *
  * The document is fetched HERE, once, and handed to the tabs through context. Fetching it per tab
  * would let two tabs hold two versions of one quotation, and this is also the only place state can
@@ -102,8 +80,8 @@ export function QuotationDocumentClient({
   /**
    * Which scopes are still open for editing, straight from the server's own `is_editable`.
    *
-   * Read here rather than inside the Scopes panel because Edit sits in this header and is on
-   * screen from every tab. Both queries are the ones the Scopes panel and the line editor already
+   * Read here rather than inside the Lines tab because Edit sits in this header and is on
+   * screen from every tab. Both queries are the ones the Lines tab and the line editor already
    * use, so react-query answers them from cache on the usual path.
    */
   const quotations = useQuotations(projectId);
@@ -116,8 +94,8 @@ export function QuotationDocumentClient({
   );
   const scopeVersions = useProjectQuotationVersions(quotations.data);
   const quotationMutations = useQuotationMutations(projectId);
-  const bulkLines = useQuotationBulkLineMutation(projectId);
-  const edit = useQuotationEditSession();
+  // Edit quotation opens the form page (#1341): "Edit quotation means I edit the whole quotation".
+  const editPath = `/project-sales/${projectId}/quotation-documents/${documentId}/edit`;
 
   const [activeScopeId, setActiveScopeId] = React.useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
@@ -126,8 +104,6 @@ export function QuotationDocumentClient({
   // The item ticks in place and the menu stays open to be read (S7-05).
   const [signLinkCopied, setSignLinkCopied] = React.useState(false);
   const [revisePrompt, setRevisePrompt] = React.useState(false);
-  const [confirmRemovals, setConfirmRemovals] = React.useState(false);
-  const [isSaving, setIsSaving] = React.useState(false);
 
   const selectScope = React.useCallback((scopeId: string) => setActiveScopeId(scopeId), []);
 
@@ -135,31 +111,6 @@ export function QuotationDocumentClient({
   // scopes, which would re-sum the header on every render of the page.
   const documentScopes = document.data?.scopes;
   const scopes = React.useMemo(() => documentScopes ?? [], [documentScopes]);
-
-  /**
-   * The document total with every staged scope's own figure in place of its saved one.
-   *
-   * Derived HERE, from the staged drafts the shell already holds, rather than being reported
-   * upwards by whichever editor happens to be mounted. That report needed a matching cleanup on
-   * unmount, which is two mechanisms for one number and the reason a tab switch used to snap the
-   * header back to a figure the screen no longer agreed with.
-   *
-   * Summed with the repo's decimal-exact helper over STRINGS - `parseFloat` on 52 two-decimal
-   * values drifts, and a cent of drift on a quotation total is the kind of disagreement the
-   * customer notices. `null` (the helper's answer to anything that is not a plain decimal) falls
-   * the header back to the server's own `grand_total`.
-   */
-  const stagedScopes = edit.scopes;
-  const liveGrandTotal = React.useMemo(() => {
-    if (Object.keys(stagedScopes).length === 0) return null;
-    return sumMoney(
-      scopes.map(
-        (scope) =>
-          (stagedScopes[scope.id] ? stagedScopeTotal(stagedScopes[scope.id].lines) : null) ??
-          scope.scope_total,
-      ),
-    );
-  }, [scopes, stagedScopes]);
 
   /**
    * Every scope whose current version is frozen, so Edit knows whether it is about to change
@@ -184,23 +135,6 @@ export function QuotationDocumentClient({
       }))
       .filter((pair) => pair.current && !(pair.current.is_editable ?? pair.current.is_current));
   }, [quotations.data, scopeVersions.rows, scopes]);
-
-  /**
-   * Warn before the browser throws the staged work away.
-   *
-   * Only covers leaving the SITE (a refresh, a closed tab, an external link). Moving between this
-   * document's own tabs keeps the session, which is the whole reason it lives in the shell.
-   */
-  const isDirty = edit.isDirty;
-  React.useEffect(() => {
-    if (!isDirty) return;
-    const warn = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [isDirty]);
 
   if (document.isLoading || project.isLoading) {
     return (
@@ -231,23 +165,7 @@ export function QuotationDocumentClient({
 
   const record = document.data;
   const canEdit = project.data.can_edit;
-  /**
-   * The document as the SCREEN currently stands: the server's row with whatever header edits are
-   * staged merged over it.
-   *
-   * Merged here, once, rather than per field further down, because three places read the
-   * letterhead - the title, the recipient line under it, and the letterhead card - and a session
-   * that only reached one of them would have the card saying one recipient while the heading two
-   * centimetres above it said another. `documentDraft` only ever holds keys somebody actually
-   * typed into, so an untouched field still reads the server's value.
-   */
-  const shown: QuotationDocument = { ...record, ...edit.documentDraft };
-  // Read off the SERVER's record, never off `shown`: where a quotation stands is the customer's
-  // answer, not something a half-typed edit session can change.
   const standing = quotationStanding(record);
-  // Same gate the letter panels use: a reader with no edit rights never gets a writing surface,
-  // even if a session were somehow open.
-  const isHeaderEditable = canEdit && edit.isEditing;
   // R1 on a document nobody has issued, R3 on one that stands at R2. One expression for both:
   // the next revision is always the one after whatever the customer currently holds.
   const nextIssueNo = (record.current_issue_no ?? 0) + 1;
@@ -281,13 +199,13 @@ export function QuotationDocumentClient({
   /**
    * What pressing the change-request banner's button will actually do, said in its label.
    *
-   * Deliberately NOT "Revise to v3": the Scopes tab already carries a per-scope button by that
+   * Deliberately NOT "Revise to v3": the Lines tab already carries a per-scope button by that
    * exact name, and two controls reading the same words a few centimetres apart - one acting on
    * one scope, one on the whole document - is worse than a vaguer label. This one is the
    * DOCUMENT's act, and the prompt it opens names the scopes and the version it will mint.
    *
-   * With no frozen scope left (a revision is already open) the click goes straight into a
-   * session, and the label has to say that rather than promise a version it will not mint.
+   * With no frozen scope left (a revision is already open) the click goes straight to the
+   * form page, and the label has to say that rather than promise a version it will not mint.
    */
   const reviseLabel =
     lockedScopes.length === 0 ? 'Edit this quotation' : 'Revise this quotation';
@@ -300,26 +218,23 @@ export function QuotationDocumentClient({
    * Every line here names the way forward as well as the reason.
    */
   const headerHints: string[] = [];
-  if (edit.isEditing) {
-    headerHints.push('Nothing is written until you press Save.');
-  } else {
-    if (!canEdit) {
-      headerHints.push('You can read this quotation but not change it.');
-    } else if (lockedScopes.length > 0) {
-      headerHints.push('The customer holds this version. Edit opens the next one.');
-    }
-    if (canEdit && !isSigned) headerHints.push('Sign it first');
+  if (!canEdit) {
+    headerHints.push('You can read this quotation but not change it.');
+  } else if (lockedScopes.length > 0) {
+    headerHints.push('The customer holds this version. Edit opens the next one.');
   }
+  if (canEdit && !isSigned) headerHints.push('Sign it first');
 
   /**
-   * Edit. On a quotation the customer holds it asks first, because the answer is a revision.
+   * Edit quotation: the whole quotation in the form page (#1341). On a quotation the customer
+   * holds it asks first, because the answer is a revision; the form opens once that is made.
    */
   function startEditing() {
     if (lockedScopes.length > 0) {
       setRevisePrompt(true);
       return;
     }
-    edit.begin();
+    router.push(editPath);
   }
 
   async function reviseThenEdit() {
@@ -330,69 +245,10 @@ export function QuotationDocumentClient({
         await quotationMutations.revise.mutateAsync(pair.quotation.id);
       }
       setRevisePrompt(false);
-      edit.begin();
+      router.push(editPath);
     } catch {
       // The mutation toasted the reason. The dialog stays open so it can be tried again.
     }
-  }
-
-  /**
-   * The whole quotation in one write: the lines of every scope that was touched, then the
-   * letterhead prose.
-   *
-   * ONE request per scope, not one per line. That is the client's complaint answered - "every
-   * addition of line doesn't trigger a save" - and it also makes a Save atomic per scope: either
-   * the arrangement they made is what is stored, or nothing moved.
-   */
-  async function runSave() {
-    setIsSaving(true);
-    try {
-      for (const scope of edit.changedScopes) {
-        await bulkLines.mutateAsync({
-          versionId: scope.versionId,
-          lines: stagedLinesToBody(scope.lines),
-        });
-      }
-
-      const wroteDocument = Object.keys(edit.documentDraft).length > 0;
-      if (wroteDocument) {
-        await mutations.update.mutateAsync({ id: documentId, body: edit.documentDraft });
-      }
-
-      edit.cancel();
-      // The document PATCH raises its own "Quotation saved". Two notifications for one button
-      // press is the same noise the per-line toasts were removed for.
-      if (!wroteDocument) toast.success('Quotation saved');
-    } catch {
-      // Every mutation already toasted the reason, and the session is deliberately left open:
-      // what was typed is still on screen and still saveable.
-    } finally {
-      setIsSaving(false);
-    }
-  }
-
-  function requestSave() {
-    // A line the server would refuse is caught here rather than half-way through a save that
-    // has already rewritten another scope. The cell is already marked; this says how many.
-    const unfinished = edit.changedScopes.reduce(
-      (total, scope) => total + unfinishedStagedLines(scope.lines),
-      0,
-    );
-    if (unfinished > 0) {
-      toast.error(
-        unfinished === 1
-          ? 'One line still needs a product or a description.'
-          : `${unfinished} lines still need a product or a description.`,
-      );
-      return;
-    }
-    // The one confirmation of the whole edit view. Staging a removal destroyed nothing, so it
-    // asked nothing; this is the moment lines actually leave the quotation.
-    if (edit.removedCount > 0) {
-      setConfirmRemovals(true);
-      return;
-    }
-    void runSave();
   }
 
   /**
@@ -462,19 +318,16 @@ export function QuotationDocumentClient({
             </Badge>
           </div>
           <h2 className="mt-1 break-words text-xl font-semibold">
-            {shown.subject_title ?? '-'}
+            {record.subject_title ?? '-'}
           </h2>
           <p className="break-words text-sm text-muted-foreground">
-            {shown.recipient_name_snapshot ?? '-'}
+            {record.recipient_name_snapshot ?? '-'}
           </p>
         </div>
 
         {/* One CTA, then the gear. Issuing is the move; exports and the delete live behind the
             gear so the header states one intent. Sign sits beside it as an outline button only
-            while it is the thing standing in the way.
-
-            In an edit session the header states ONE intent too, and it is a different one: Save
-            and Cancel, with signing and issuing out of the way until the changes have landed. */}
+            while it is the thing standing in the way. */}
         <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
           {/* Pager, gear, primary (D6), through the shared group rather than a
               hand-rolled row: the order is the same rule on all 39 detail pages,
@@ -484,11 +337,8 @@ export function QuotationDocumentClient({
               /* Step between this project's quotation documents without going back to the
                   list, the users-detail pattern. List mode off the cached documents query -
                   the list screen the user came from already fetched it, so the neighbours
-                  cost nothing. Hidden while editing: stepping away mid-session would look
-                  like it discarded the staged lines (it would not - they live in the shell -
-                  but a control that LOOKS destructive is one nobody should have to trust).
-                  Rendered from two documents up, since with one there is nowhere to go. */
-              !edit.isEditing && (siblingDocuments.data ?? []).length > 1 && (
+                  cost nothing. Rendered from two documents up, since with one there is nowhere to go. */
+              (siblingDocuments.data ?? []).length > 1 && (
                 <RecordNavigation
                   index={documentIndex >= 0 ? documentIndex + 1 : null}
                   total={(siblingDocuments.data ?? []).length}
@@ -517,10 +367,9 @@ export function QuotationDocumentClient({
             }
             gear={
               <DetailActionsMenu ariaLabel="Quotation actions">
-                {/* Edit's ENTRY POINT lives here, not in the header: one primary CTA, everything
-                    else behind the gear. Only the way IN moved - once a session is open, Cancel
-                    and Save are the header's controls and they stay on screen. */}
-                {canEdit && !edit.isEditing && (
+                {/* Edit lives here, not in the header: one primary CTA, everything else behind
+                    the gear. It opens the form page with the whole quotation (#1341). */}
+                {canEdit && (
                   <DropdownMenuItem onSelect={startEditing}>
                     <SquarePen className="size-4" aria-hidden />
                     Edit quotation
@@ -543,7 +392,7 @@ export function QuotationDocumentClient({
                   <span className="min-w-0">
                     Download PDF
                     <span className="block text-xs text-muted-foreground">
-                      {record.is_issued ? 'Prepared in My Downloads' : 'Issue it first'}
+                      {record.is_issued ? 'Prepared in My Downloads' : 'Send it to the customer first'}
                     </span>
                   </span>
                 </DropdownMenuItem>
@@ -555,7 +404,7 @@ export function QuotationDocumentClient({
                   <span className="min-w-0">
                     Download Excel
                     <span className="block text-xs text-muted-foreground">
-                      {record.is_issued ? 'Prepared in My Downloads' : 'Issue it first'}
+                      {record.is_issued ? 'Prepared in My Downloads' : 'Send it to the customer first'}
                     </span>
                   </span>
                 </DropdownMenuItem>
@@ -576,7 +425,7 @@ export function QuotationDocumentClient({
                       {signLinkCopied ? 'Copied' : 'Copy counter-sign link'}
                       {!record.is_issued && (
                         <span className="block text-xs text-muted-foreground">
-                          Issue it first
+                          Send it to the customer first
                         </span>
                       )}
                     </span>
@@ -595,29 +444,7 @@ export function QuotationDocumentClient({
             }
             primary={
               <>
-              {canEdit && edit.isEditing && (
-                <>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={isSaving}
-                    onClick={() => edit.cancel()}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={isSaving || !edit.isDirty}
-                    title={edit.isDirty ? undefined : 'Nothing has changed yet'}
-                    onClick={requestSave}
-                  >
-                    {isSaving ? 'Saving...' : 'Save quotation'}
-                  </Button>
-                </>
-              )}
-              {canEdit && !edit.isEditing && !isSigned && (
+              {canEdit && !isSigned && (
                 <Button
                   type="button"
                   size="sm"
@@ -628,7 +455,7 @@ export function QuotationDocumentClient({
                   Sign
                 </Button>
               )}
-              {canEdit && !edit.isEditing && (
+              {canEdit && (
                 <Button
                   type="button"
                   size="sm"
@@ -642,12 +469,15 @@ export function QuotationDocumentClient({
                   }
                   onClick={() => mutations.issue.mutate(documentId)}
                 >
-                  {`Issue R${nextIssueNo}`}
+                  {/* The owner on "Issue R1": "call this Send to Customer" (#1341). The revision
+                      stays in the label, as it did, because R2 is a different paper from R1. The
+                      API and the status names keep "issue". */}
+                  {`Send to Customer R${nextIssueNo}`}
                 </Button>
               )}
               {/* Where a queued export is actually collected. Rendered only once something has
                   been issued, because a download of a revision that does not exist yet cannot: the
-                  gear already says "Issue it first", and a chip that can only ever read 0 is a
+                  gear already says "Send it to the customer first", and a chip that can only ever read 0 is a
                   control with nothing behind it.
 
                   Keyed to the LATEST revision, which is the one whose exports anybody is chasing.
@@ -691,8 +521,8 @@ export function QuotationDocumentClient({
         document={record}
         reviseLabel={reviseLabel}
         // The SAME entry point Edit uses, so a revision is still something the salesperson is
-        // asked about. Withheld from a reader, and while a session is already open.
-        onRevise={canEdit && !edit.isEditing ? startEditing : undefined}
+        // asked about. Withheld from a reader.
+        onRevise={canEdit ? startEditing : undefined}
         isRevising={quotationMutations.revise.isPending}
       />
 
@@ -718,12 +548,8 @@ export function QuotationDocumentClient({
         }}
       />
 
-      <QuotationDocumentHeader
-        document={shown}
-        liveGrandTotal={liveGrandTotal}
-        onChange={isHeaderEditable ? edit.stageDocument : undefined}
-      />
-
+      {/* The letterhead card lives in the Header tab now, first of the tabs (#1341): "i need this
+          to be under 'Header' tab to align with our system design". */}
       <QuotationDocumentTabs projectId={projectId} documentId={documentId} />
 
       <QuotationDocumentProvider
@@ -737,7 +563,6 @@ export function QuotationDocumentClient({
           sorentoSignature,
           activeScopeId,
           selectScope,
-          edit,
         }}
       >
         {children}
@@ -769,38 +594,6 @@ export function QuotationDocumentClient({
         isRevising={quotationMutations.revise.isPending}
         onConfirm={reviseThenEdit}
       />
-
-      {/* The edit view's ONE destructive confirmation. Staging a removal destroys nothing and so
-          asks nothing; this is the moment the lines actually leave, and it names how many. */}
-      <AlertDialog open={confirmRemovals} onOpenChange={setConfirmRemovals}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirm delete</AlertDialogTitle>
-            <AlertDialogDescription>
-              {`Saving removes ${edit.removedCount} ${
-                edit.removedCount === 1 ? 'line' : 'lines'
-              } from this quotation. This action cannot be undone.`}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isSaving}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={isSaving}
-              onClick={(event) => {
-                // Held open by hand: the dialog closes itself on the click, and the save that
-                // follows would then have no place to report a failure back to.
-                event.preventDefault();
-                void runSave().then(() => setConfirmRemovals(false));
-              }}
-            >
-              {`Save and remove ${edit.removedCount} ${
-                edit.removedCount === 1 ? 'line' : 'lines'
-              }`}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <ConfirmDeleteDialog
         open={confirmDelete}
