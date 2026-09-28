@@ -1,6 +1,6 @@
 # PLAN: chatbot ETA +x days from one per-contact switch; container and quantity deniable; packing list gate on incoming
 
-Status: READY FOR CI - issue #1328, full track (migration), cloud lane, PR #1329, reviewer + security-reviewer addressed; fix round from the owner hand test (dealer ETA reply, stock vs incoming routing) built (28 Sep 2026)
+Status: READY FOR CI - issue #1328, full track (migration), cloud lane, PR #1329, reviewer + security-reviewer addressed; fix round from the owner hand test (dealer ETA reply, stock vs incoming routing) built and tested, main 5b18b6d0 merged (28 Sep 2026)
 Domain: chatbot / incoming stock / contacts
 UAC: `chatbot-eta-offset-per-contact-28sep-acceptance-criteria.md`
 
