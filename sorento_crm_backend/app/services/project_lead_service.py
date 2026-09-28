@@ -1029,12 +1029,19 @@ def _mark_qualified(db: Session, lead: ProjectLead) -> None:
     db.flush()
 
 
-def _release_lead(db: Session, lead_id: str) -> None:
+def _release_lead(
+    db: Session, lead_id: str, *, actor_user_id: str, permissions: Set[str]
+) -> None:
     """Undo `_mark_qualified` once no project carries the lead any more (#1339, Q1).
 
     Only a qualified lead is touched: the conversion was undone, so the lead is open
     again on its first rung and pickable in the project form, and the conversion
-    metric stops counting it.
+    metric stops counting it. A lead qualified into several projects stays qualified
+    while any of them still carries it.
+
+    Reopening is a change to the LEAD, so it needs the same right as linking it: a
+    project collaborator who unlinks somebody else's lead detaches it from the project
+    but leaves the lead's own state, and its owner's conversion, alone.
     """
     still_carried = (
         db.query(Project.id).filter(Project.lead_id == lead_id).first() is not None
@@ -1043,6 +1050,8 @@ def _release_lead(db: Session, lead_id: str) -> None:
         return
     lead = db.query(ProjectLead).filter(ProjectLead.id == lead_id).first()
     if lead is None or lead.outcome != OUTCOME_QUALIFIED:
+        return
+    if not can_edit_lead(lead, actor_user_id, permissions):
         return
     lead.outcome = OUTCOME_OPEN
     lead.qualified_at = None
@@ -1066,15 +1075,32 @@ def set_project_lead(
     lead. Unlike Qualify, a lead another project already carries is refused: picking
     it in a form is far more likely a mis-pick than a second phase, and Qualify stays
     the way to derive several projects from one lead.
+
+    Re-sending the current lead is a no-op, so a collaborator saving other fields on a
+    project that carries somebody else's lead is never asked for rights on that lead.
     """
+    from app.services.uuid_path_param import validate_uuid_path
+
     previous = project.lead_id
-    new = lead_id or None
+    new = validate_uuid_path(lead_id, resource="Lead") if lead_id else None
     if new == previous:
         return
 
     lead = None
     if new:
-        lead = get_lead(db, new)
+        # Locked, so two saves racing to link the same lead cannot both pass the
+        # already-linked check below.
+        lead = (
+            db.query(ProjectLead)
+            .filter(ProjectLead.id == new)
+            .with_for_update()
+            .first()
+        )
+        if lead is None:
+            raise AppException(
+                status_code=404, message="Lead not found.", code="lead_not_found"
+            )
+        assert_can_edit_lead(lead, actor_user_id, permissions)
         other = (
             db.query(Project)
             .filter(Project.lead_id == lead.id, Project.id != project.id)
@@ -1098,12 +1124,13 @@ def set_project_lead(
                 ),
                 code="lead_not_linkable",
             )
-        assert_can_edit_lead(lead, actor_user_id, permissions)
 
     project.lead_id = new
     db.flush()
     if previous:
-        _release_lead(db, previous)
+        _release_lead(
+            db, previous, actor_user_id=actor_user_id, permissions=permissions
+        )
     if lead is not None:
         _mark_qualified(db, lead)
 

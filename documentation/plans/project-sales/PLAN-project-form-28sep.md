@@ -84,7 +84,8 @@ beside it:
 - D6. Unlink (`lead_id: null` on update) clears `project.lead_id`. If no other project still
   carries that lead, the lead goes back to open on its initial rung and `qualified_at` is cleared,
   so the unlinked lead is pickable again and the conversion metric does not count a conversion that
-  was undone. See Q1.
+  was undone. See Q1. Reopening needs the lead right (owner or manage); an editor without it
+  detaches the lead and leaves its state alone (review round 1, security L1).
 - D7. Filing reference (`admin_ref`) joins the register request so the create page can set it.
 - D8. Edit permission unchanged: owner, approved collaborator, or manage (`assert_can_edit_project`).
   The edit page renders a read-only refusal when `can_edit` is false; the gear's Edit project entry
@@ -118,3 +119,6 @@ beside it:
   it. If the production sales admin role does not hold it, picking another salesperson is refused
   (403 `project_owner_assign_forbidden`) and the fix is a role grant, not a code change. This lane
   does not loosen the check.
+- Q4. Permission for the link: Qualify needs `projects.projects.create`; registering a project and
+  therefore linking a lead through the form needs `projects.projects.edit` (the register route's
+  existing gate). Both still need the lead right. Keep, or require `.create` for the form link too?

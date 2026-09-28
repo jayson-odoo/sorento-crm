@@ -840,3 +840,92 @@ describe('ProjectForm: edit submit (AC-PF025)', () => {
     );
   });
 });
+
+describe('ProjectForm: edit guards (review round 1, PR #1345)', () => {
+  const blockingMatch = (projectId: string): ClashCandidate => ({
+    project_id: projectId,
+    project_code: `PRJ-${projectId}`,
+    title: 'Setia Alam Phase 3B',
+    outcome: 'open',
+    brands: [],
+    similarity: 1,
+    blocks: true,
+  });
+
+  it('keeps the project template when the edit form opens under StrictMode (AC-PF015, PF025)', async () => {
+    listProjectTemplates.mockResolvedValue([
+      { id: 'tp1', name: 'Standard', has_forked_status_graph: false },
+    ]);
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <React.StrictMode>
+        <QueryClientProvider client={client}>
+          <ProjectForm mode="edit" project={baseProject({ template_id: 'tp1' })} />
+        </QueryClientProvider>
+      </React.StrictMode>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() =>
+      expect(updateProject).toHaveBeenCalledWith(
+        'p1',
+        expect.objectContaining({ template_id: 'tp1' }),
+      ),
+    );
+  });
+
+  it('saves an unrelated field without running the clash guard (AC-PF032)', async () => {
+    previewClashes.mockResolvedValue({ candidates: [blockingMatch('p9')], would_block: true });
+    renderForm({ mode: 'edit', project: baseProject() });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Puchong' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() =>
+      expect(updateProject).toHaveBeenCalledWith(
+        'p1',
+        expect.objectContaining({ location: 'Puchong' }),
+      ),
+    );
+    expect(previewClashes).not.toHaveBeenCalled();
+  });
+
+  it('a rename matching only the project itself is not blocked (AC-PF032)', async () => {
+    previewClashes.mockResolvedValue({ candidates: [blockingMatch('p1')], would_block: true });
+    renderForm({ mode: 'edit', project: baseProject() });
+    fireEvent.change(screen.getByLabelText(/project title/i), {
+      target: { value: 'Setia Alam Phase 3B Tower' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() =>
+      expect(updateProject).toHaveBeenCalledWith(
+        'p1',
+        expect.objectContaining({ title: 'Setia Alam Phase 3B Tower' }),
+      ),
+    );
+    expect(previewClashes).toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Blocked by an existing project' })).toBeNull();
+  });
+
+  it('a rename onto another project is still blocked (AC-PF032)', async () => {
+    previewClashes.mockResolvedValue({ candidates: [blockingMatch('p9')], would_block: true });
+    renderForm({ mode: 'edit', project: baseProject() });
+    fireEvent.change(screen.getByLabelText(/project title/i), {
+      target: { value: 'Setia Alam Phase 3B Tower' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Blocked by an existing project' }),
+      ).toBeDisabled(),
+    );
+    expect(updateProject).not.toHaveBeenCalled();
+  });
+});

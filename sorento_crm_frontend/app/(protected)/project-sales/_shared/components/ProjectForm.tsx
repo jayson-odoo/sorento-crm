@@ -106,7 +106,7 @@ export function ProjectForm(props: ProjectFormProps) {
   }, [mode, sessionUserId]);
   const [leadId, setLeadId] = React.useState(project?.lead_id ?? '');
   const [leadOption, setLeadOption] = React.useState<LeadOption | null>(
-    project?.lead_id ? { value: project.lead_id, label: project.lead_code ?? project.lead_id } : null,
+    project?.lead_id ? { value: project.lead_id, label: project.lead_code ?? 'Linked lead' } : null,
   );
 
   const [joinTarget, setJoinTarget] = React.useState<{
@@ -144,19 +144,6 @@ export function ProjectForm(props: ProjectFormProps) {
   // there is nothing "complete" to react to.
   const detailsSettledRef = React.useRef(mode === 'edit');
 
-  const typeMountedRef = React.useRef(false);
-  React.useEffect(() => {
-    // Clearing the type must clear the template too, or a stale template from the
-    // previous type is submitted and the project gets roles it should not offer. Skip
-    // the very first run: on mount that would wipe the project's own template before
-    // the user has touched anything (edit mode).
-    if (!typeMountedRef.current) {
-      typeMountedRef.current = true;
-      return;
-    }
-    setTemplateId('');
-  }, [typeId]);
-
   const selectedType = types.data?.find((type) => type.id === typeId);
   // A property development infers its delivery window from the launch date plus a
   // configurable lag; anything else has to state the window, because a hotel
@@ -187,6 +174,13 @@ export function ProjectForm(props: ProjectFormProps) {
     setSectionOpen((prev) => (prev.details ? prev : { ...prev, details: true }));
   }, [whoComplete]);
 
+  // The server re-runs the clash check on an edit only when the title or developer
+  // changes; the form's guard follows it, so a project that already exists is never
+  // blocked from saving an unrelated field.
+  const identityChanged =
+    mode === 'create' ||
+    title.trim() !== (project?.title ?? '') ||
+    (developerId || null) !== (project?.developer_party_id ?? null);
   const checkable = title.trim().length >= CLASH_MIN_CHARS;
   const hasChecked = checkedTitle.length > 0;
   const rawCandidates = clash.data?.candidates ?? [];
@@ -194,7 +188,8 @@ export function ProjectForm(props: ProjectFormProps) {
   // block a save or show up in the panel.
   const candidates =
     mode === 'edit' ? rawCandidates.filter((c) => c.project_id !== project!.id) : rawCandidates;
-  const wouldBlock = hasChecked && candidates.some((candidate) => candidate.blocks);
+  const wouldBlock =
+    identityChanged && hasChecked && candidates.some((candidate) => candidate.blocks);
   const pending = register.isPending || update.isPending;
   const canSubmit = title.trim().length > 0 && !wouldBlock && !pending;
 
@@ -232,7 +227,7 @@ export function ProjectForm(props: ProjectFormProps) {
     event.preventDefault();
     if (!canSubmit) return;
     // The one duplicate check on submit: the guard, whether or not Check was pressed.
-    if (checkable) {
+    if (checkable && identityChanged) {
       const trimmed = title.trim();
       setCheckedTitle(trimmed);
       // A failed check does not stop the user: the server refuses a blocked title
@@ -245,13 +240,19 @@ export function ProjectForm(props: ProjectFormProps) {
           : previewCandidates;
       if (filtered.some((c) => c.blocks)) return;
     }
-    if (mode === 'create') {
-      const created = await register.mutateAsync(buildBody());
-      router.push(`/project-sales/${created.id}`);
-    } else {
-      const body: ProjectUpdateBody = buildBody();
-      await update.mutateAsync(body);
-      router.push(`/project-sales/${project!.id}`);
+    // A refusal (409 lead_already_linked, 403, ...) is toasted by the mutation hook;
+    // the user stays on the form with what they typed.
+    try {
+      if (mode === 'create') {
+        const created = await register.mutateAsync(buildBody());
+        router.push(`/project-sales/${created.id}`);
+      } else {
+        const body: ProjectUpdateBody = buildBody();
+        await update.mutateAsync(body);
+        router.push(`/project-sales/${project!.id}`);
+      }
+    } catch {
+      // handled by the hook's onError
     }
   }
 
@@ -291,7 +292,14 @@ export function ProjectForm(props: ProjectFormProps) {
               <SearchableSelect
                 id="project-type"
                 value={typeId}
-                onChange={setTypeId}
+                onChange={(next) => {
+                  // A new type must clear the template too, or a stale template from
+                  // the previous type is submitted and the project gets roles it should
+                  // not offer. In the handler, not an effect, so opening an edit form
+                  // never wipes the project's own template.
+                  setTypeId(next);
+                  if (next !== typeId) setTemplateId('');
+                }}
                 clearable
                 options={(types.data ?? []).map((type) => ({
                   value: type.id,

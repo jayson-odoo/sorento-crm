@@ -51,7 +51,8 @@ Plan: `PLAN-project-form-28sep.md`. One AC per behaviour. "Form" means the share
 - AC-PF031. A blocking match turns the CTA into "Blocked by an existing project" and disables it;
   submit re-runs the check as a guard.
 - AC-PF032. In edit mode Check excludes the project itself (the server's update clash check already
-  does); a rename that collides is refused with the server's message.
+  does), and the submit guard runs only when the title or developer changed, as the server does;
+  a rename that collides with another project is blocked.
 - AC-PF033. Create mode opens on Who and what with Details collapsed; Details opens by itself once
   developer, type, title (settled) and template (when the type has templates) are filled, once; a
   section the user toggled by hand is never moved.
@@ -82,9 +83,13 @@ Plan: `PLAN-project-form-28sep.md`. One AC per behaviour. "Form" means the share
   otherwise 403 `lead_not_editable`.
 - AC-PF056. Unlink on edit (lead cleared) sets `lead_id` to null. When no other project carries the
   lead, the lead goes back to open on its initial rung with `qualified_at` cleared (plan Q1).
+- AC-PF056b. Unlinking by a project editor who has no right on the lead (not its owner, no
+  manage) detaches it from the project but leaves the lead's own state alone (review round 1).
 - AC-PF057. Swapping to a different lead unlinks the old one (AC-PF056) and links the new one
   (AC-PF052) in one save.
-- AC-PF058. Re-saving with the same lead is a no-op for the lead.
+- AC-PF058. Re-saving with the same lead is a no-op for the lead, and needs no right on it (a
+  collaborator saving other fields on a project that carries somebody else's lead succeeds).
+- AC-PF058b. A malformed lead id is a 404, never a database error.
 - AC-PF059. Qualify on a lead is unchanged (still creates a new project, still allows several).
 - AC-PF060. The Overview "Where this came from" shows the linked lead after create and after edit,
   and "Registered directly" after unlink.
