@@ -480,6 +480,45 @@ describe('QuotationDocumentClient header total', () => {
   });
 });
 
+/**
+ * No repeated information under a page title (#1335). The page title is the document number and
+ * the record header names the project, so neither is said a second time on the screen.
+ */
+describe('QuotationDocumentClient header dedupe', () => {
+  it('does not repeat the document number under the breadcrumb', async () => {
+    // Our Ref differs so the only way the number can be on screen is a repeat of the title.
+    getQuotationDocument.mockResolvedValue(quotationDocument({ our_ref: 'NCSB-OURS-1' }));
+    renderScreen();
+
+    expect(await screen.findByText('NCSB-OURS-1')).toBeInTheDocument();
+    expect(screen.queryByText('SRT/Q/2026/0141')).toBeNull();
+    // The status pill and the project title and developer lines stay.
+    expect(
+      screen.getByRole('heading', { level: 2, name: 'CADANGAN MEMBINA PANGSAPURI' }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText('Nadi Cergas Sdn Bhd').length).toBeGreaterThan(0);
+    expect(screen.getByText('Draft')).toBeInTheDocument();
+  });
+
+  it('says the project title once, in the record header, not again in the card', async () => {
+    getQuotationDocument.mockResolvedValue(quotationDocument());
+    renderScreen();
+
+    expect(
+      await screen.findByRole('heading', { level: 2, name: 'CADANGAN MEMBINA PANGSAPURI' }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText('CADANGAN MEMBINA PANGSAPURI')).toHaveLength(1);
+  });
+
+  it('leaves no subject read in the card, but keeps the Subject input in an edit session', () => {
+    const { rerender } = render(<QuotationDocumentHeader document={quotationDocument()} />);
+    expect(screen.queryByText('CADANGAN MEMBINA PANGSAPURI')).toBeNull();
+
+    rerender(<QuotationDocumentHeader document={quotationDocument()} onChange={() => {}} />);
+    expect(screen.getByLabelText('Subject')).toHaveValue('CADANGAN MEMBINA PANGSAPURI');
+  });
+});
+
 describe('QuotationDocumentClient signing gate', () => {
   it('refuses to offer Issue until the quotation is signed, and says why', async () => {
     getQuotationDocument.mockResolvedValue(quotationDocument());
@@ -911,8 +950,8 @@ describe('QuotationDocumentClient letterhead editing', () => {
     // backend refuses to change it. So it stays a read even here.
     expect(screen.queryByLabelText('Our Ref')).toBeNull();
     expect(screen.getByText('Our Ref')).toBeInTheDocument();
-    // Twice on screen on purpose: the record's identity line at the top, and the letterhead.
-    expect(screen.getAllByText('SRT/Q/2026/0141').length).toBeGreaterThan(0);
+    // Once, in the letterhead's Our Ref. The page title already is the number (#1335).
+    expect(screen.getAllByText('SRT/Q/2026/0141')).toHaveLength(1);
   });
 
   it('sends the staged letterhead in the ONE document PATCH', async () => {
