@@ -245,7 +245,8 @@ class QueryContext:
 
     @property
     def dataset(self) -> reg.Dataset:
-        return self.definition.dataset
+        """The row set this run reads: the one its param values pick (`datasets_by`)."""
+        return self.definition.dataset_for(self.values)
 
     @property
     def company_id(self) -> Optional[str]:
@@ -318,6 +319,7 @@ def resolve(
             raise _invalid(f"Unknown param '{key}'")
 
     basis_key: Optional[str] = None
+    date_basis_param = ""
     period: Optional[Period] = None
     values: Dict[str, Any] = {}
 
@@ -325,8 +327,7 @@ def resolve(
         given = params.get(param.key, None)
         if isinstance(param, reg.DateBasisParam):
             basis_key = str(given) if given not in (None, "") else param.default
-            if definition.dataset.basis(basis_key) is None:
-                raise _invalid(f"Unknown date basis '{basis_key}' for '{param.key}'")
+            date_basis_param = param.key
             values[param.key] = basis_key
         elif isinstance(param, reg.PeriodParam):
             period = resolve_period(given if given is not None else param.resolved_default())
@@ -339,6 +340,11 @@ def resolve(
 
     if basis_key is None or period is None:
         raise _invalid(f"Report '{definition.key}' declares no date basis or no period param")
+    # Checked once every select is bound: the dataset, and so its date bases, can follow
+    # a select param (`datasets_by`).
+    dataset = definition.dataset_for(values)
+    if dataset.basis(basis_key) is None:
+        raise _invalid(f"Unknown date basis '{basis_key}' for '{date_basis_param}'")
 
     grants = _grants(db, company_grants) if definition.dataset.scope == "company" else None
     _bind_company(db, definition, values, params, grants)
@@ -349,7 +355,7 @@ def resolve(
         date_basis_key=basis_key,
         # Malaysia wall clock, once: the period predicate, the month bucket, the ordering
         # and the printed date all read this one expression, so they cannot disagree.
-        date_basis=reg.to_malaysia(definition.dataset.basis(basis_key).expr),
+        date_basis=reg.to_malaysia(dataset.basis(basis_key).expr),
         period=period,
         values=values,
         company_grants=grants,
@@ -451,12 +457,18 @@ def _column_expr(ctx: QueryContext, column: reg.Column) -> ColumnElement:
 
 
 def _select_columns(ctx: QueryContext, keys: List[str]) -> List[reg.Column]:
-    """The catalog columns behind the requested keys, in the requested order (AC-A5)."""
+    """The catalog columns behind the requested keys, in the requested order (AC-A5).
+
+    A key another of the report's datasets holds is left out rather than refused: a view
+    saved on one basis names that basis's columns, and it must still run on the other."""
     dataset = ctx.dataset
+    catalog = {c.key for c in ctx.definition.catalog()}
     columns: List[reg.Column] = []
     for key in keys:
         column = dataset.column(key)
         if column is None:
+            if key in catalog:
+                continue
             raise _invalid(f"Unknown detail column '{key}'")
         columns.append(column)
     return columns
@@ -552,7 +564,11 @@ def _detail_layout(
 
     return ReportDetailLayout(
         key=definition.detail.key,
-        title=definition.detail.title,
+        title=(
+            definition.detail.title(ctx)
+            if callable(definition.detail.title)
+            else definition.detail.title
+        ),
         columns=out_columns,
         column_groups=out_groups,
         rows=rows,
@@ -968,17 +984,27 @@ def workbook_columns(definition: reg.ReportDefinition, view: ReportViewConfig) -
     return list((definition.default_view.get("detail") or {}).get("columns") or [])
 
 
-def validate_view(definition: reg.ReportDefinition, view: ReportViewConfig) -> None:
+def validate_view(
+    definition: reg.ReportDefinition,
+    view: ReportViewConfig,
+    dataset: Optional[reg.Dataset] = None,
+) -> None:
     """Answer a bad view at the button, not in a download row a minute later.
 
     ``run`` finds these faults on the way to the screen, but ``export`` hands the view to a
     worker: an unknown column there is a failed row in My Downloads with no way back to the
     press that caused it. Same resolver the workbook uses, same messages.
     """
-    dataset = definition.dataset
+    catalog = {c.key for c in definition.catalog()}
     for key in workbook_columns(definition, view):
-        if dataset.column(key) is None:
+        if key not in catalog:
             raise _invalid(f"Unknown detail column '{key}'")
+    # The pivot must hold on the dataset the run will read: the caller's resolved one
+    # (the export's filter-bar params win over the view's own), else the view's params'.
+    if dataset is None:
+        dataset = definition.dataset_for(
+            {k: _as_list(v) for k, v in (view.params or {}).items()}
+        )
 
     pivot = view.pivot
     if pivot.rows == pivot.cols:

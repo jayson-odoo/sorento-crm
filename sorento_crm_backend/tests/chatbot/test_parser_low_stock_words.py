@@ -86,6 +86,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         as the tail - the same treatment `LAST_COST_ADDENDUM` got here when
         `LOW_STOCK_ADDENDUM` landed."""
         from app.services.chatbot_parser_prompt import (
+            ESCALATION_CONFIRMATION_ADDENDUM,
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             STOCK_TASK_ADDENDUM,
@@ -95,7 +96,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
             assert (
-                body.removesuffix(SALES_ANALYSIS_ADDENDUM)
+                body.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SALES_ANALYSIS_ADDENDUM)
                 .removesuffix(STOCK_TASK_ADDENDUM)
                 .removesuffix(SALES_REPORT_ADDENDUM)
                 .endswith(addendum)
@@ -114,6 +115,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         constant."""
         from app.services.chatbot_parser_prompt import (
             LAST_COST_ADDENDUM,
+            ESCALATION_CONFIRMATION_ADDENDUM,
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             STOCK_TASK_ADDENDUM,
@@ -122,7 +124,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
             assert (
-                body.removesuffix(SALES_ANALYSIS_ADDENDUM)
+                body.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SALES_ANALYSIS_ADDENDUM)
                 .removesuffix(STOCK_TASK_ADDENDUM)
                 .removesuffix(SALES_REPORT_ADDENDUM)
                 .removesuffix(addendum)

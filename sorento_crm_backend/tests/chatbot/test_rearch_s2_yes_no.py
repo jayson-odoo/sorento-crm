@@ -60,7 +60,12 @@ class TestAnAcceptedOfferNeverFallsThroughToAFetch:
         from app.services.chatbot.turn.apply import apply
 
         state = _team_pick_state(with_carried_focus=True)
-        v = verdict(is_affirmative=True)
+        # #1323: the parser reads a "yes" over the offer as BOTH the affirmation and the
+        # semantic escalation confirmation; the confirmation is what hands over.
+        v = verdict(
+            is_affirmative=True,
+            escalation={"is_escalation_confirmation": True, "escalation_declined": None, "company_pick": None},
+        )
 
         state2, plan = apply(state, v, build_policy())
 
