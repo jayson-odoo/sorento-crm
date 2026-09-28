@@ -2979,6 +2979,10 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         # The counted-set header alone (AC-1316/AC-1317), so a reader that renders its
         # own rows can still prefix the right line - see the note above `predicate`.
         "set_header": set_header,
+        # Integration round 11 on PR #833: whether that header names a DESCRIBED set
+        # (`predicate.description`), which is the one intro line of a carried set's
+        # follow-up ("cert" after "gunmetal basin") and so is never withheld with it.
+        "set_described": bool(predicate is not None and jsc.array(jsc.get(predicate, "description"))),
         # GROUPED: the flat `items` order and the NUMBERED order the customer just read
         # are two different orders, and `answers` is what a positional pick ("2") resolves
         # against - so a grouped answer used to hand back a different record than the one

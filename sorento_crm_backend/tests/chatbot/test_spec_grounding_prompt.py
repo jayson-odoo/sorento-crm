@@ -66,12 +66,20 @@ def test_a_word_staff_add_on_product_specifications_reaches_the_block():
 def test_the_prompt_teaches_the_kind_and_never_files_a_property_as_a_document():
     from app.services.chatbot_parser_prompt import (
         ESCALATION_CONFIRMATION_ADDENDUM,
+        KNOWN_BRANDS_ADDENDUM,
+        QUANTITY_ADDENDUM,
         SEMANTIC_PARSER_PROMPT,
         SPECIFICATION_ADDENDUM,
     )
 
     # Merge of origin/main 2e894c4c5 (#1323): the escalation addendum is newer, outermost.
-    assert SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).endswith(SPECIFICATION_ADDENDUM)
+    # Integration round 11 (#1301): the #1262 pair (QUANTITY, KNOWN_BRANDS) sits between.
+    assert (
+        SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+        .removesuffix(KNOWN_BRANDS_ADDENDUM)
+        .removesuffix(QUANTITY_ADDENDUM)
+        .endswith(SPECIFICATION_ADDENDUM)
+    )
     assert "entities[].spec_key" in SPECIFICATION_ADDENDUM
     assert "is NEVER an attachment_type" in SPECIFICATION_ADDENDUM
     assert '"gunmetal basin" -> category "basin" + specification' in SPECIFICATION_ADDENDUM

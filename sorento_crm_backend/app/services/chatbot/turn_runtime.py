@@ -3667,7 +3667,7 @@ def domain_denial_text(db: Session, domain: str) -> str | None:
 
 
 def _lane_text_without_withheld_header(
-    text: Any, set_header: Any, *, counted_set: bool
+    text: Any, set_header: Any, *, counted_set: bool, set_described: bool = False
 ) -> Any:
     """#1262 slice 6 (F6a): `header_override` (below) is already withheld when
     `counted_set` is False - this is the SAME withholding for the other carrier.
@@ -3678,8 +3678,13 @@ def _lane_text_without_withheld_header(
     have incoming stock." above the real ETA rows). Stripped by exact prefix, off
     the same `set_header` string `header_override` itself is built from - never a
     guess at the header's shape.
+
+    A header over a DESCRIBED set (`set_described`, integration round 11 on PR #833)
+    stays: it is the one intro line of that set's reply ("Certificates found for
+    gunmetal wash basins (2).") on a follow-up turn that carries the set, not a
+    count over leftover words.
     """
-    if counted_set or not isinstance(text, str) or not isinstance(set_header, str):
+    if counted_set or set_described or not isinstance(text, str) or not isinstance(set_header, str):
         return text
     prefix = set_header.strip()
     if prefix and text.startswith(prefix):
@@ -3751,6 +3756,7 @@ def envelope_of(
             denial_text if refused else fetched.get("response"),
             fetched.get("set_header"),
             counted_set=counted_set,
+            set_described=bool(fetched.get("set_described")),
         ),
         # A counted-set answer's own header ("10 taps have certificates.",
         # AC-1316) - unlike `lane_text` this travels ALONGSIDE rows, not
