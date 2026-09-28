@@ -14,6 +14,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getCompaniesSelect } from '@/app/(protected)/system-management/companies/services/companyService';
 import type { ScheduledTask } from '../types/scheduledTask.types';
 import { parseDateTimeAsUTC } from '@/lib/helpers';
+import { ScmReorderRunScopeFields } from './ScmReorderRunScopeFields';
 
 /** Format a Date as a `datetime-local` value in the browser's local timezone.
  *  start_at is serialized to UTC on submit (Date.toISOString), so the absolute
@@ -32,29 +33,94 @@ function formatGrace(seconds: number): string {
   return rem ? `${mins}m ${rem}s` : `${mins}m`;
 }
 
-const schema = z.object({
-  name: z.string().min(1).optional(),
-  description: z.string().nullable().optional(),
-  enabled: z.boolean(),
-  interval_value: z.number().min(1),
-  interval_unit: z.enum(['seconds', 'minutes', 'hours', 'days']),
-  timezone: z.string().optional(),
-  start_at: z.date().nullable().optional(),
-  // Empty = every company (the default for every task). Narrowing is opt-in.
-  company_ids: z.array(z.string()).optional(),
-  send_in_app: z.boolean().optional(),
-  send_email: z.boolean().optional(),
-  // Empty string = "use the global default". NaN is what an `Input type=number`
-  // yields for non-numeric text, so it must be rejected explicitly.
-  grace_percent: z
-    .union([z.literal(''), z.number().int().min(0).max(1000)])
-    .optional()
-    .refine((v) => v === '' || v === undefined || !Number.isNaN(v), {
-      message: 'Enter a whole number, or leave blank to use the global default',
-    }),
-});
+const schema = z
+  .object({
+    name: z.string().min(1).optional(),
+    description: z.string().nullable().optional(),
+    enabled: z.boolean(),
+    interval_value: z.number().min(1),
+    interval_unit: z.enum(['seconds', 'minutes', 'hours', 'days']),
+    timezone: z.string().optional(),
+    start_at: z.date().nullable().optional(),
+    // Empty = every company (the default for every task). Narrowing is opt-in.
+    company_ids: z.array(z.string()).optional(),
+    send_in_app: z.boolean().optional(),
+    send_email: z.boolean().optional(),
+    // Empty string = "use the global default". NaN is what an `Input type=number`
+    // yields for non-numeric text, so it must be rejected explicitly.
+    grace_percent: z
+      .union([z.literal(''), z.number().int().min(0).max(1000)])
+      .optional()
+      .refine((v) => v === '' || v === undefined || !Number.isNaN(v), {
+        message: 'Enter a whole number, or leave blank to use the global default',
+      }),
+    // #1340: the scm_reorder_run task's configurable scope - see
+    // `ScmReorderRunScopeFields`. Empty/undefined means the run's own today default
+    // for every one of these; other task keys never populate them.
+    warehouse_codes: z.array(z.string()).optional(),
+    product_codes: z.array(z.string()).optional(),
+    demand_class: z.enum(['', 'project', 'retail']).optional(),
+    horizon_start_days: z
+      .union([z.literal(''), z.number().int().min(-3650).max(3650)])
+      .optional()
+      .refine((v) => v === '' || v === undefined || !Number.isNaN(v), {
+        message: 'Enter a whole number of days',
+      }),
+    horizon_end_days: z
+      .union([z.literal(''), z.number().int().min(0).max(3650)])
+      .optional()
+      .refine((v) => v === '' || v === undefined || !Number.isNaN(v), {
+        message: 'Enter a whole number of days, 0 or more',
+      }),
+    budget: z
+      .union([z.literal(''), z.number().min(0)])
+      .optional()
+      .refine((v) => v === '' || v === undefined || !Number.isNaN(v), {
+        message: 'Enter an amount, or leave blank to fund every buy',
+      }),
+    include_market: z.boolean().optional(),
+  })
+  .refine(
+    (data) =>
+      typeof data.horizon_start_days !== 'number' ||
+      typeof data.horizon_end_days !== 'number' ||
+      data.horizon_start_days <= data.horizon_end_days,
+    {
+      message: 'From must be on or before To',
+      path: ['horizon_start_days'],
+    },
+  );
 
 export type FormValues = z.infer<typeof schema>;
+
+/** The scm_reorder_run scope block's own defaults, pre-filled from `task.metadata` - one
+ *  helper shared by `useForm`'s `defaultValues` and the reset-on-task-change effect below,
+ *  so the two never drift into a second reading of the same metadata. Any other task key
+ *  gets the same "nothing set" shape the block would render as blank anyway. */
+function scmReorderRunScopeDefaults(task: ScheduledTask) {
+  const meta = task.key === 'scm_reorder_run' ? (task.metadata ?? {}) : {};
+  const demandClass = meta.demand_class;
+  // Each assigned to its own const first - inlining the ternary as an object literal
+  // property widens it to `string` (TS drops the literal narrowing for a return-object
+  // property computed inline), which then fails against FormValues' `'' | 'project' |
+  // 'retail'` union.
+  const demand_class: '' | 'project' | 'retail' =
+    demandClass === 'project' || demandClass === 'retail' ? demandClass : '';
+  const horizon_start_days: number | '' =
+    typeof meta.horizon_start_days === 'number' ? meta.horizon_start_days : '';
+  const horizon_end_days: number | '' =
+    typeof meta.horizon_end_days === 'number' ? meta.horizon_end_days : '';
+  const budget: number | '' = typeof meta.budget === 'number' ? meta.budget : '';
+  return {
+    warehouse_codes: Array.isArray(meta.warehouse_codes) ? (meta.warehouse_codes as string[]) : [],
+    product_codes: Array.isArray(meta.product_codes) ? (meta.product_codes as string[]) : [],
+    demand_class,
+    horizon_start_days,
+    horizon_end_days,
+    budget,
+    include_market: meta.include_market === true,
+  };
+}
 
 interface ScheduledTaskFormProps {
   task: ScheduledTask;
@@ -96,6 +162,7 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
         typeof task.metadata?.grace_percent === 'number'
           ? (task.metadata.grace_percent as number)
           : '',
+      ...scmReorderRunScopeDefaults(task),
     },
   });
 
@@ -137,6 +204,7 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
         task.key === 'user_sla_daily_summary'
           ? (task.metadata?.send_email as boolean | undefined) !== false
           : true,
+      ...scmReorderRunScopeDefaults(task),
     });
   }, [task, reset]);
 
@@ -164,6 +232,15 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
         />
         <Label htmlFor="enabled">Enabled</Label>
       </div>
+
+      {task.key === 'scm_reorder_run' && (
+        <ScmReorderRunScopeFields
+          watch={watch}
+          setValue={setValue}
+          register={register}
+          errors={errors}
+        />
+      )}
 
       {task.key === 'user_sla_daily_summary' && (
         <div className="space-y-3 rounded-md border p-4">
