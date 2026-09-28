@@ -133,6 +133,15 @@ def after_answered_turn(
         db.query(Customer).filter(Customer.id == customer_id).first() if customer_id else None
     )
     company_id = _write_company_id(db, customer)
+    # Fix round 2 (AC-SA410): the salesperson's own allowed-to-send flag, checked here so
+    # no job is enqueued for a contact the send path would refuse anyway.
+    blocked_agent: Optional[str] = None
+    if (
+        notify_salesman
+        and customer is not None
+        and any(e["branch"] in NOTIFIED_BRANCHES for e in answered)
+    ):
+        blocked_agent = _agent_not_allowed_to_send(db, contact_id, customer.id)
 
     rows: list[tuple[StockAsk, dict[str, Any], bool]] = []
     for entry in answered:
@@ -143,6 +152,8 @@ def after_answered_turn(
             reason = "toggle_off"
         elif customer is None:
             reason = "no_customer"
+        elif blocked_agent:
+            reason = NOT_ALLOWED_TO_SEND
         else:
             reason = None
         ask = StockAsk(
@@ -165,6 +176,8 @@ def after_answered_turn(
 
     enqueued = []
     for ask, entry, notify in rows:
+        if ask.notify_skip_reason == NOT_ALLOWED_TO_SEND:
+            _log_not_allowed(db, ask, turn_id, blocked_agent or "")
         if not notify:
             continue
         facts = {
@@ -192,6 +205,52 @@ def after_answered_turn(
             continue
         enqueued.append(facts)
     return enqueued
+
+
+NOT_ALLOWED_TO_SEND = "contact_not_allowed_to_send"
+
+
+def _agent_not_allowed_to_send(
+    db: Session, contact_id: Optional[str], customer_id: str
+) -> Optional[str]:
+    """The salesperson's Respond id when the customer's salesperson has a Respond contact whose allowed-to-send
+    flag (`respond_contacts.outbound_enabled`) is off. The check is the send path's own
+    `assert_outbound_enabled`, not a copy of it. Any other outcome (no agent, no Respond
+    id, a failed read) is None: the job then records its own reason, and the send path
+    still refuses a switched-off contact."""
+    from app.services.error_handler import AppException
+    from app.services.respond_outbound_service import assert_outbound_enabled
+
+    try:
+        _dealer, _customer, agent_contact, _reason = _recipient(db, contact_id, customer_id)
+        if agent_contact is None or not agent_contact.respond_io_id:
+            return None
+        identifier = str(agent_contact.respond_io_id)
+        assert_outbound_enabled(identifier, db)
+    except AppException as exc:
+        if (getattr(exc, "detail", None) or {}).get("code") == "OUTBOUND_DISABLED":
+            return identifier
+        return None
+    except Exception:  # noqa: BLE001 - the rows must still be written
+        db.rollback()
+        logger.warning("stock ask: allowed-to-send check failed", exc_info=True)
+    return None
+
+
+def _log_not_allowed(db: Session, ask: Any, turn_id: str, identifier: str) -> None:
+    """One `skipped` integration log line per ask the gate held back."""
+    try:
+        _log(
+            db,
+            facts={"ask_id": ask.id, "turn_id": turn_id},
+            identifier=identifier,
+            status="skipped",
+            request_payload={},
+            error_message="not sent: contact not allowed to send",
+        )
+    except Exception:  # noqa: BLE001 - the ask row already says why
+        db.rollback()
+        logger.warning("stock ask %s: could not write the not-allowed log", ask.id)
 
 
 def _record_outcome(db: Session, facts: dict[str, Any], *, sent: bool, reason: Optional[str]) -> None:

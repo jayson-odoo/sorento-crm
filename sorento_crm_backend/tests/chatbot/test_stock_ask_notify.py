@@ -103,6 +103,7 @@ class LiveDealer:
                 # Fix round 2 (AC-SA410): a sales agent whose Respond contact carries the
                 # allowed-to-send flag (`respond_contacts.outbound_enabled`).
                 self.agent_contact_id = str(uuid.uuid4())
+                self.agent_respond_id = f"ZZT-agent-{uuid.uuid4().hex[:8]}"
                 db.execute(
                     text(
                         "INSERT INTO respond_contacts (id, respond_io_id, phone_number, name, "
@@ -111,7 +112,7 @@ class LiveDealer:
                     ),
                     {
                         "id": self.agent_contact_id,
-                        "rid": f"ZZT-agent-{uuid.uuid4().hex[:8]}",
+                        "rid": self.agent_respond_id,
                         "phone": f"+6003{uuid.uuid4().int % 10**7:07d}",
                         "ok": agent_allowed,
                     },
@@ -454,6 +455,7 @@ def test_ac_sa410_agent_not_allowed_to_send_enqueues_nothing_but_writes_and_logs
         assert log.error_message == "not sent: contact not allowed to send"
         assert log.integration_channel == "respond_io"
         assert log.direction == "outbound"
+        assert log.external_reference == dealer.agent_respond_id
 
 
 @pytest.mark.parametrize("console", [False, True], ids=["live", "console"])
