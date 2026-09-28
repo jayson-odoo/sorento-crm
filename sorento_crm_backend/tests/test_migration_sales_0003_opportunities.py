@@ -39,11 +39,11 @@ def _run(conn, fn):
         fn()
 
 
-def test_revision_fits_alembic_version_and_sits_on_merge_28sep_esc_fin():
-    # Merge round 3 re-parents S2 onto main's join revision from #1334.
+def test_revision_fits_alembic_version_and_sits_on_merge_28sep_batch2():
+    # Merge round re-parents S2 onto main's batch join revision from #1337.
     module = _load("sales_0003_opportunities")
     assert len(module.revision) <= 32
-    assert module.down_revision == "merge_28sep_esc_fin"
+    assert module.down_revision == "merge_28sep_batch2"
 
 
 def test_permission_slugs_are_registered_in_the_python_registry():

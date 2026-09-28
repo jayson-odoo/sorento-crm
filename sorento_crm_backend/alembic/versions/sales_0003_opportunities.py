@@ -18,7 +18,7 @@ with a rollback) and the numbering rule (a running number sequence is not undone
 schema rollback - the next upgrade would otherwise mint duplicates).
 
 Revision ID: sales_0003_opportunities
-Revises: merge_28sep_esc_fin
+Revises: merge_28sep_batch2
 Create Date: 2026-09-26
 """
 import uuid
@@ -28,7 +28,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "sales_0003_opportunities"
-down_revision = "merge_28sep_esc_fin"
+down_revision = "merge_28sep_batch2"
 branch_labels = None
 depends_on = None
 
