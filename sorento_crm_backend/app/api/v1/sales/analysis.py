@@ -89,8 +89,10 @@ def _validate(rows: str, cols: str, basis: Optional[str], date_from, date_to, n)
         )
     if rows == cols:
         raise _unprocessable("Rows and columns cannot be the same", "rows_equal_cols")
-    if basis not in ("ordered", "delivered"):
-        raise _unprocessable("Basis is ordered or delivered", "basis_required")
+    from app.services.reports.datasets.sales_order_lines import BASIS_WORDS
+
+    if basis not in BASIS_WORDS:
+        raise _unprocessable("Basis is ordered, delivered or invoiced", "basis_required")
     if date_from and date_to and date_from > date_to:
         raise _unprocessable("date_from is after date_to", "date_range_inverted")
     if n is not None and not 1 <= n <= _MAX_N:
