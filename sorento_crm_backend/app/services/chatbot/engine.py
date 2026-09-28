@@ -2876,34 +2876,11 @@ def _run_stages(  # noqa: PLR0915
                     raw=None,
                 )
             else:
-                # AC-1317: where the counted set got to, so "more" pages the SAME set
-                # next turn instead of counting it again from nothing.
-                #
-                # Written only for a SPEC-tier answer: the counted set is how that tier
-                # of the ONE product ladder renders, and a code-tier answer is a list,
-                # which leaves no page behind. `set_page_carry` refuses a set with no
-                # scope term of its own on top of that, so a "more" can never page the
-                # whole catalogue (turns 92d565a5 / b383d402 / 2e7ca929, 17 Sep 2026).
-                #
-                # Security B2 (re-check round): the carry records the ENTITLEMENT this
-                # page answered under, off the envelope's own `access_levels_used` (the
-                # recomposed list the tool call actually carried). The next "more"
-                # recounts the set by that, never by the parser's list, which a bare
-                # "more" leaves empty and which reads downstream as "no tier filter".
-                class_terms = turn_runtime.class_scope_terms(verdict)
-                if predicate is not None and plan.fetch and spec_tier:
-                    state_out.focus.set_page = turn_runtime.set_page_carry(
-                        predicate,
-                        plan.fetch[0],
-                        class_terms,
-                        access_levels=(
-                            envelopes[0].get("access_levels_used") if envelopes else None
-                        ),
-                    )
-                elif not any(isinstance(s.filters.get("set_page"), dict) for s in plan.fetch):
-                    # An answer that is not a counted set closes the page: the customer
-                    # has moved on, and "more" must not resume a set they left.
-                    state_out.focus.set_page = None
+                # Hotfix 28 Sep 2026: a counted-set answer lists every qualifying
+                # product (owner's rule: no "more", no "next", the full count stated),
+                # so no page is ever carried. Any fetched turn clears one a session
+                # saved before this deploy.
+                state_out.focus.set_page = None
                 # Ported from PR #1118 (not merged), D25: the open stock task is
                 # whatever the REPLY says is still owed - opened, updated and closed
                 # by one rule, read off the backend's own `needs_quantity` per

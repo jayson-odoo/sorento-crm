@@ -173,8 +173,9 @@ def test_fetch_spec_entities_only_carry_the_kinds_the_domain_declares():
 
 
 def test_set_page_survives_only_with_the_continuation_signal():
-    """(c) `focus.set_page` survives a turn only when the verdict carries the
-    continuation signal, and is dropped by a turn that produced a list answer.
+    """(c) `focus.set_page` is dropped by a turn that produced a list answer, and
+    (hotfix 28 Sep 2026) is never paged by a continuation either: the counted answer
+    lists every product, so there is no page to resume.
 
     Field name measured off the S3 paging test
     (`test_rearch_s3_attribute_first.py::TestPagingByFive::
@@ -200,8 +201,11 @@ def test_set_page_survives_only_with_the_continuation_signal():
         "offset": 5,
     }
 
-    # Survive: a continuation turn re-reads the SAME carried set_page value into its
-    # own fetch, untouched.
+    # Hotfix 28 Sep 2026 (owner: no "more", no "next", the full count stated): the
+    # SURVIVE half is retired. It asserted `survive_plan.fetch[0].filters.get(
+    # "set_page") == carried_set_page` and `new_survive_state.focus.set_page ==
+    # carried_set_page`; a continuation turn now never pages a carried set, even one
+    # a session saved before the deploy.
     survive_state = State(
         focus=Focus(set_page=dict(carried_set_page)), pending=None, profile=Profile()
     )
@@ -209,11 +213,11 @@ def test_set_page_survives_only_with_the_continuation_signal():
         message_type="clarification", user_goal="more", continuation=True
     )
     policy = build_policy()
-    new_survive_state, survive_plan = apply(survive_state, continuation_verdict, policy)
+    _new_survive_state, survive_plan = apply(survive_state, continuation_verdict, policy)
 
-    assert len(survive_plan.fetch) == 1, survive_plan.fetch
-    assert survive_plan.fetch[0].filters.get("set_page") == carried_set_page
-    assert new_survive_state.focus.set_page == carried_set_page
+    assert not any(
+        isinstance(s.filters.get("set_page"), dict) for s in survive_plan.fetch
+    ), survive_plan.fetch
 
     # Drop: an ordinary, non-continuation NEW_ASK for an unrelated product must not
     # carry the stale page position forward.

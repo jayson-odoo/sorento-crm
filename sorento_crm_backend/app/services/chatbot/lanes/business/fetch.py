@@ -955,17 +955,12 @@ def entity_ids_transformer(
         elif tool_name in ORDER_TOOLS or tool_name in GROUP_BY_TOOLS:
             out["limit"] = top_n
 
-    # E1 (attribute-first asks, fix round 11 Sep): a HAS turn - the resolver's
-    # `predicate` block rode through the gate untouched - shows the first FIVE
-    # qualifying PRODUCTS, never five ROWS: `limit` is the tool's own ROW cap
-    # (a stock answer can carry several warehouse rows per product, a cert
-    # answer several files per product), so setting `limit=5` there cut a
-    # 7-product answer down to 5 rows spanning 4 products under a header that
-    # said "Showing 5" - `limit` is left at the tool's own default entirely,
-    # and the PAGE is built by slicing `product_ids` itself. "more" (E3) pages
-    # the next five ids from the carried offer the same way.
-    if trig.get("predicate") is not None and isinstance(out.get("product_ids"), list):
-        out["product_ids"] = out["product_ids"][:5]
+    # E1 (attribute-first asks): a HAS turn - the resolver's `predicate` block rode
+    # through the gate untouched - fetches EVERY qualifying product. `limit` is the
+    # tool's own ROW cap (a stock answer carries several warehouse rows per product)
+    # and is left at the tool's default. Hotfix 28 Sep 2026: the five-id slice that
+    # used to sit here dropped MKT7820SS-GM-DIY from a "7820 stock" answer; the
+    # owner's rule is no paging, the full count stated.
 
     # R29/AC-1354: a scheme-narrowed certificate leg's own certificate ids
     # ride the SAME predicate block, straight through under the SAME arg

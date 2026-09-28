@@ -2850,28 +2850,9 @@ def apply(
     # rather than from the guess itself. Measured red in 11 of the 13 supported domains
     # before the deletion; the other two (promotion, ideate) never reached it.
 
-    # A continuation pages the set the LAST answer described: same domain, same
-    # description, one page further on (AC-1317). It never re-narrows and never re-asks -
-    # the customer has already answered every question this set needed.
-    if _is_continuation(verdict) and focus.set_page:
-        carried = focus.set_page.get("set_key") or {}
-        domain = carried.get("domain")
-        if domain:
-            trace.rules_fired.append("set_page_continuation")
-            return new_state, Plan(
-                domains=[domain],
-                fetch=[
-                    FetchSpec(
-                        domain=domain,
-                        entities=[],
-                        filters={"set_page": dict(focus.set_page)},
-                        date_window=None,
-                    )
-                ],
-                ask=None,
-                denied=[],
-                trace=trace,
-            )
+    # Hotfix 28 Sep 2026: a continuation ("more") no longer pages a counted set. The
+    # counted answer already listed every product, so a "more" runs the ordinary ladder
+    # below, and a `focus.set_page` saved before this deploy is never resumed.
 
     attributes = tuple(
         a for a in (verdict.get("requested_attributes") or []) if isinstance(a, str) and a

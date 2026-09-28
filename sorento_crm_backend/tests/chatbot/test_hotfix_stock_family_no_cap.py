@@ -117,6 +117,11 @@ def _state_with_a_page_left_behind():
 
 
 def test_more_after_a_counted_answer_is_not_a_page():
+    """With the carry gone a "more" runs the ordinary ladder: the carried domain is
+    re-fetched on whatever subject the focus still holds (a plain restatement of the
+    same full list), and with no subject at all the inventory no-subject guard
+    (`turn_runtime.make_tool_runner`, hotfix 22 Sep) answers the existing "which
+    product" miss. It never pages."""
     from app.services.chatbot.turn.apply import apply
 
     from tests.chatbot._turn_helpers import build_policy, verdict
@@ -128,4 +133,5 @@ def test_more_after_a_counted_answer_is_not_a_page():
     assert not any(isinstance(s.filters.get("set_page"), dict) for s in plan.fetch), [
         s.filters for s in plan.fetch
     ]
+    assert [s.domain for s in plan.fetch] == ["inventory"], plan.fetch
     assert new_state.focus.set_page is None, new_state.focus.set_page
