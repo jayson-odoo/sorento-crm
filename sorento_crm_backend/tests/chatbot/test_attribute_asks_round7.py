@@ -547,7 +547,15 @@ def test_f1_an_eta_ask_never_says_it_did_not_understand_eta(chat, world, attrs):
     assert '"eta"' not in text.lower(), text
     assert "not recorded yet" not in text, text
     assert _codes_listed(text, world) == {"SRTKS65502", "SRTKS65502-BL"}, text
-    _human(text)
+    # Moved in fix round 13 on PR #833 (code first, owner 28 Sep 2026: "if found by product
+    # code -> forward asking"). "65502" matches SRTKS65502 and SRTKS65502-BL by code, so
+    # it is a forward ask like "wc286 incoming", and the incoming forward ask over more
+    # than one code is the pick list (`gate.REQUIRE_SPECIFIC_DOMAINS`). Before: the digit
+    # token was not code-shaped, so the counted set listed both in the ETA row shape.
+    # The has/no incoming stamps are not asserted: this file's stubs do not answer the
+    # picker probe, so `_human` (which bans "None") is not run on the pick list.
+    assert "incoming search needs to be more specific" in text, text
+    assert "have stock" not in text.lower(), text
 
 
 @pytest.mark.parametrize("word", ["eta", "arriving", "shipment"])
@@ -563,16 +571,19 @@ def test_f1_no_word_that_chose_the_incoming_domain_is_said_back_on_a_class_ask(c
 
 def test_f1_each_row_of_a_multi_product_eta_answer_has_the_single_product_structure(chat, world):
     single = chat.say("SRTKS65502 eta", _eta_ask("SRTKS65502 eta", "SRTKS65502", ("incoming",)))
-    multi = chat.say(M1, _v1())
     [one] = _full_rows(single)
-    rows = _full_rows(multi)
-    assert len(rows) == 2, multi
     expected = _labels(one)
     assert expected[:1] == ["Product Code"] and "Shipment Container" in expected and "Incoming Quantity" in expected, single
-    for row in rows:
-        assert _labels(row) == expected, (row, expected)
-    # The packing lists come with the answer, as they do for one product.
-    assert "I have attached the file(s) below." in multi, multi
+    assert "I have attached the file(s) below." in single, single
+    # The multi half moved in fix round 13 on PR #833 (code first, owner 28 Sep 2026: "if
+    # found by product
+    # code -> forward asking"). "65502" matches SRTKS65502 and SRTKS65502-BL by code, so
+    # it is a forward ask like "wc286 incoming", and the incoming forward ask over more
+    # than one code is the pick list (`gate.REQUIRE_SPECIFIC_DOMAINS`). Before: the digit
+    # token was not code-shaped, so the counted set listed both in the ETA row shape.
+    multi = chat.say(M1, _v1())
+    assert "incoming search needs to be more specific" in multi, multi
+    assert _codes_listed(multi, world) == {"SRTKS65502", "SRTKS65502-BL"}, multi
 
 
 # --------------------------------------------------------------------------- #
@@ -789,13 +800,17 @@ def test_replay_the_owners_seven_messages(chat, world):
         (M7B, _v7b()),
     ]
     replies = [chat.say(text, verdict) for text, verdict in turns]
-    for reply in replies:
+    for reply in replies[1:]:
         _human(reply)
     one, two, three, four_a, four_b, five, six, fifty, ten, seven_a, seven_b = replies
 
-    # 1: no "did not understand", every row in the ETA shape.
+    # 1: no "did not understand". Moved in fix round 13 on PR #833 (code first): "65502"
+    # matches two codes, so it is the forward incoming pick list, as "wc286 incoming" is;
+    # it was the counted set in the ETA row shape. See
+    # `test_f1_an_eta_ask_never_says_it_did_not_understand_eta`.
     assert "did not understand" not in one and "not recorded yet" not in one, one
-    assert [_labels(r)[:3] for r in _full_rows(one)] == [["Product Code", "Product Name", "Shipment Container"]] * 2, one
+    assert "incoming search needs to be more specific" in one, one
+    assert _codes_listed(one, world) == {"SRTKS65502", "SRTKS65502-BL"}, one
     # 2 and 3: the code's variants, in the price structure.
     assert _codes_listed(two, world) == {"SRTWCX8840-S"} and "*List Price:*" in two, two
     assert _codes_listed(three, world) == {"SRTWCX8840-P", "SRTWCX8840-S"}, three

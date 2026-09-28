@@ -1669,10 +1669,20 @@ def _top_selling_verdict(
         hint = jsc.js_string(e.get("hint") or "")
         raw = " ".join(jsc.js_string(e.get("raw") or "").split())
         current = e.get("current_message") is not False and not e.get("uuid")
-        if not current or not raw or hint not in ("customer", "sales_agent", "category", "brand", "promotion", "product"):
+        if current and raw and hint == "specification" and not e.get("spec_key"):
+            # Merge of main into PR #833 (fix round 13): the specification kind splits
+            # "fanny water closet" into the class and an UNKNOWN specification "fanny"
+            # before this reading; inside a ranking such a word is a group like any other.
+            # A word that names nothing is the leftover said once ("marble").
+            kind = _classify_word_group(db, raw)
+            split = ([{"raw": raw, "hint": kind}], []) if kind else _split_noisy_token(db, raw)
+            if split is None:
+                split = ([], [w for w in raw.split() if len(w) >= 3 and w.lower() not in TOP_SELLING_WHO_WORDS])
+        elif not current or not raw or hint not in ("customer", "sales_agent", "category", "brand", "promotion", "product"):
             rebuilt.append(e)
             continue
-        split = _noisy_split(db, raw, hint)
+        else:
+            split = _noisy_split(db, raw, hint)
         if split is None:
             if hint == "customer" and says_agent and business_services.resolve_sales_agent_token(db, raw):
                 # "by sean salea agent": the message calls the name an agent (R2).
