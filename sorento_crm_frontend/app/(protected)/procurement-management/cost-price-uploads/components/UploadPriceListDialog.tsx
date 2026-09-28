@@ -40,9 +40,12 @@ function toDateOnly(date: Date | undefined): string | null {
 export function UploadPriceListDialog({
   open,
   onOpenChange,
+  onUploaded,
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
+  /** Runs once the upload is accepted, before the set opens (the Products page reloads its list). */
+  onUploaded?: () => void;
 }) {
   const router = useRouter();
   const [files, setFiles] = React.useState<File[]>([]);
@@ -110,6 +113,7 @@ export function UploadPriceListDialog({
         end_date: toDateOnly(endDate),
       });
       onOpenChange(false);
+      onUploaded?.();
       router.push(`/procurement-management/cost-price-uploads/${detail.id}`);
     } catch (error) {
       // Anything other than the open-set case already toasted once, from
