@@ -226,7 +226,8 @@ class TestContractVersion22:
         # code-wins deletion `codes`. Bumped again (ingest-stock-balances-2-5,
         # Foundryx SR5): "2.5" adds `stock_balances` - unrelated to the PO/SPO
         # link fields this test pins, only the version literal needed to move.
-        assert body["version"] == "2.5"
+        # Bumped again (finance S0, #1309): "2.6" adds `billing_documents`.
+        assert body["version"] == "2.6"
         wanted = {
             "from_so_line_ref", "from_so_external", "from_po_line_ref", "from_po_number",
         }

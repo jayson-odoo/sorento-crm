@@ -169,6 +169,9 @@ class IngestOutcome(str, enum.Enum):
     UPDATED = "updated"
     FAILED = "failed"
     RETRYABLE = "retryable"
+    # Contract 2.6 (finance S0, billing_documents only today): the record matched a stored
+    # row that already says exactly this, or a newer version of it, so nothing was written.
+    UNCHANGED = "unchanged"
 
 
 @dataclass
@@ -250,6 +253,10 @@ class IngestResult:
     def retryable(self) -> int:
         return sum(1 for r in self.records if r.outcome is IngestOutcome.RETRYABLE)
 
+    @property
+    def unchanged(self) -> int:
+        return sum(1 for r in self.records if r.outcome is IngestOutcome.UNCHANGED)
+
     def as_dict(self) -> dict[str, Any]:
         return {
             # Echoed so a caller can never mistake a preview for a completed
@@ -262,6 +269,10 @@ class IngestResult:
                 "updated": self.updated,
                 "failed": self.failed,
                 "retryable": self.retryable,
+                # Contract 2.6: only an entity that reports `unchanged` (billing_documents)
+                # ever makes this non-zero, so every other entity's summary keeps its
+                # pre-2.6 shape byte for byte.
+                **({"unchanged": self.unchanged} if self.unchanged else {}),
                 **(
                     {"book_repair_moves_dropped": self.book_repair_moves_dropped}
                     if self.book_repair_moves_dropped

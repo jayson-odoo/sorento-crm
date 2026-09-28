@@ -3,7 +3,9 @@ ingest-parity-standardisation; v2.2 adds the SO<->PO linkage fields below,
 ingest-contract-2-2-so-links; v2.3 adds `brands` as a first-class EntitySpec,
 autocount-brands-ingest; v2.4 adds products code-wins plus the deletions
 `codes` field, ingest-products-code-wins; v2.5 adds `stock_balances`, a push
-entity that upserts `stock.quantity_on_hand`, ingest-stock-balances-2-5).
+entity that upserts `stock.quantity_on_hand`, ingest-stock-balances-2-5; v2.6 adds
+`billing_documents`, AutoCount invoices, cash sales, credit and debit notes into
+`finance.billing_documents`, finance S0 #1309).
 
 The ESB gates every new key it sends behind `sorento_contract_version = 2` on
 its consumer connection, so it needs one endpoint to ask Sorento what version
@@ -40,6 +42,15 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.v1.external.ingest import CONTRACT_VERSION, SUPPORTED_ENTITIES
+from app.schemas.canonical_documents import (
+    CanonicalBillingDocument,
+    CanonicalBillingDocumentLine,
+)
+from app.services.finance.billing_document_ingest_service import (
+    WARN_AGENT_UNRESOLVED,
+    WARN_PRODUCT_UNRESOLVED,
+    WARN_STALE_IGNORED,
+)
 from app.services.master_ref_resolver import (
     WARN_AGENT_CREATED,
     WARN_CUSTOMER_CREATED,
@@ -95,6 +106,13 @@ FIELDS_ADDED: dict[str, list[str]] = {
     # so the ESB's own diff read sees it without special-casing "entities
     # that are new" apart from "fields that are new" on this endpoint.
     "stock_balances": ["item_code", "location_code", "qty", "item_description", "uom_code"],
+    # v2.6: every key of the record and of its lines (`lines.<key>`), read off the canonical
+    # schema itself so this list cannot drift from what the ingest accepts. `source_doc_no`
+    # is the `_Canonical` key every entity carries and is not new.
+    "billing_documents": [
+        *(key for key in CanonicalBillingDocument.model_fields if key != "source_doc_no"),
+        *(f"lines.{key}" for key in CanonicalBillingDocumentLine.model_fields),
+    ],
 }
 
 # D24 (captain 2026-09-06): per-entity notes on a field's meaning that
@@ -138,6 +156,17 @@ FIELD_NOTES: dict[str, str] = {
         "never removes it - and its body carries pairs (source_ref -> {item_code, "
         "location_code}) instead of codes."
     ),
+    "billing_documents": (
+        "v2.6. A push names the whole document: an omitted optional field is stored as null "
+        "and a line not sent is removed (the one exception to absent_vs_null on this "
+        "surface). The idempotency key is (company, document_type, source_ref); source_ref "
+        "is {database}:{IV|CS|CN|DN}:{DocKey}. A push identical to what is stored, or older "
+        "than it by source_modified_at (warning stale_ignored), answers unchanged and writes "
+        "nothing. Customer, agent and product are linked when they resolve inside the anchor "
+        "company, never created, never retryable: unresolved lands null with the code kept. "
+        "status is posted or cancelled; cancelled is an update. /deletions hard-deletes, or "
+        "sets cancelled (deactivated) when a credit or debit note still points at it."
+    ),
 }
 
 # D15 end state (AC-P0-4): these now FAIL validation (extra=forbid), never
@@ -155,6 +184,8 @@ STATUS_OPTIONAL: dict[str, bool] = {
     "sales_orders": True,
     "purchase_orders": True,
     "shipping_orders": True,
+    # Required: posted or cancelled, AutoCount's Cancelled flag.
+    "billing_documents": False,
 }
 
 # The fixed warning vocabulary, drawn from the constants each producing
@@ -182,6 +213,9 @@ WARNINGS: list[str] = sorted(
         WARN_CONTAINER_UNRESOLVED,
         WARN_RECEIVED_LOCKED,
         WARN_WAREHOUSE_INACTIVE,
+        WARN_AGENT_UNRESOLVED,
+        WARN_PRODUCT_UNRESOLVED,
+        WARN_STALE_IGNORED,
         "category_created",
         "uom_created",
         "brand_created",
