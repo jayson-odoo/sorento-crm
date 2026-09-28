@@ -48,7 +48,7 @@ _register(
             {"type": "heading", "text": "Reset your password"},
             {
                 "type": "intro",
-                "text": "Hi {{ recipient.name }},\n\nWe received a request to reset the password for your {{ company.name }} account. The button below is valid for 1 hour.",
+                "text": "Hi{% if recipient.name %} {{ recipient.name }}{% endif %},\n\nWe received a request to reset the password for your {{ company.name }} account. The button below is valid for 1 hour.",
             },
             {"type": "button", "label": "Reset password", "url": "{{ reset_link }}"},
             {"type": "link", "label": "Or paste this link into your browser:", "url": "{{ reset_link }}"},
@@ -156,7 +156,7 @@ _register(
             {"type": "heading", "text": "Your daily SLA summary"},
             {
                 "type": "intro",
-                "text": "Hi {{ recipient.name }},\n\nHere is where your conversations stand today, {{ summary_date }}.",
+                "text": "Hi{% if recipient.name %} {{ recipient.name }}{% endif %},\n\nHere is where your conversations stand today, {{ summary_date }}.",
             },
             {
                 "type": "facts",
