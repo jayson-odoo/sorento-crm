@@ -63,12 +63,7 @@ export function ForecastClient() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Forecast and reports">
-        <p className="text-sm text-muted-foreground">
-          What is on the table, what it is worth after probability, and what has actually
-          been ordered. Three numbers, kept apart.
-        </p>
-      </PageHeader>
+      <PageHeader title="Forecast and reports" />
 
       {!hasAnything ? (
         <div className="rounded-lg border border-dashed border-border px-6 py-12 text-center">

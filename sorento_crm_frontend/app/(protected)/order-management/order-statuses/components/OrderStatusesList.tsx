@@ -157,7 +157,6 @@ export default function OrderStatusesList() {
       isPlaceholderData={isPlaceholderData}
       onRowClick={handleRowClick}
       tableLayout={{ columnsVisibility: true }}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

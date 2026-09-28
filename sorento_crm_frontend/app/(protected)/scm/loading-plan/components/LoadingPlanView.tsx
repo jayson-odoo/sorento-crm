@@ -485,13 +485,12 @@ export function LoadingPlanView({ planId }: { planId: string }) {
                 </Button>
               </>
             }
-          >
-            <p className="w-full text-xs text-muted-foreground">
-              {describeWindow(plan.plan_horizon_start, plan.plan_horizon_date)}
-              {' · '}
-              {fmtInt(lines.length)} products · {fmtInt(totalQty)} units
-            </p>
-          </PageHeader>
+          />
+          <p className="w-full text-xs text-muted-foreground">
+            {describeWindow(plan.plan_horizon_start, plan.plan_horizon_date)}
+            {' · '}
+            {fmtInt(lines.length)} products · {fmtInt(totalQty)} units
+          </p>
           <Card className="p-4">
             {previewSheet ? (
               <SupplierSheet
