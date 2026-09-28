@@ -47,7 +47,7 @@ Downgrade drops the triggers and the function first, then deletes the EVENT rows
 CHECK would reject them), restores the old CHECK and drops the columns.
 
 Revision ID: aud_0001_audit_standard_s0
-Revises: merge_28sep_esc_fin
+Revises: merge_28sep_batch2
 Create Date: 2026-09-26
 """
 import time
@@ -119,7 +119,7 @@ APPEND_ONLY_TRIGGERS_SQL = (
 )
 
 revision = "aud_0001_audit_standard_s0"
-down_revision = "merge_28sep_esc_fin"
+down_revision = "merge_28sep_batch2"
 branch_labels = None
 depends_on = None
 
