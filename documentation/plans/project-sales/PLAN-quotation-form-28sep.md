@@ -1,8 +1,9 @@
 # PLAN: Project Sales quotation form page (add and edit), save creates it with its lines
 
-Status: fix round 2 in review on PR #1343 (build lane, issue #1341, branch
+Status: fix round 3 in review on PR #1343 (build lane, issue #1341, branch
 `feat/project-sales-quotation-form`): the owner's rulings below (Header and Lines tabs, Send to
-Customer, delete scope, header-only save, letter on create) built on top of the original scope.
+Customer, delete scope, header-only save, letter on create) built on top of the original scope,
+and round 3 puts the quotation page's existing lines editor back under the Lines tab.
 Track: full lane (diff well over 300 lines; no migration). One permission gate added in round 2:
 removing a saved scope asks for `projects.projects.delete`, mirroring the existing scope DELETE
 route, so `security-reviewer` ran on that surface.
@@ -74,6 +75,30 @@ What was built for them (AC-QF050 onward in the UAC):
   customer. The PATCH carries `remove_scope_ids`; the server refuses with 422
   `quotation_scope_issued` (naming the scope) if ANY version of it is in an issue, and nothing in
   that save lands.
+
+## Fix round 3: reuse the existing lines editor
+
+Owner hand test of round 2 (29 Sep 00:2x MYT, verbatim): "for #1343, we shouldn't revamp the
+Lines tab, it was good, we should reuse that, I am just rearranging the layout, not redesigning
+the quotation please". AC-QF070 to AC-QF073.
+
+- `QuotationLinesGrid` (S2 below) and `_shared/lib/quotationLineDraft.ts` are deleted. The lines
+  table on the quotation page and in the form is `InlineLineTable` inside `QuotationVersionEditor`,
+  restored from origin/main. This also reverses the S2 "this table needs to be datagrid" build;
+  the owner's round 3 words govern.
+- The form's Lines tab renders the quotation page's origin/main Lines tab pieces: `QuotationScopeTabs`
+  (Add a scope + at its end, `QuotationNameDialog`), the scope card with Edit scope
+  (`QuotationDialog`), and `QuotationVersionEditor` with `edit` set, bound to
+  `useQuotationEditSession` (restored) exactly as `QuotationScopesTab` bound it on origin/main.
+- Save builds the ONE POST/PATCH from the session: a new scope sends its staged lines; a saved
+  scope sends lines only if it is in `changedScopes`; removed lines are left out
+  (`stagedLinesToBody`); `unfinishedStagedLines` and a number check refuse before any request.
+- Minimum adaptation to work before the first save (the only changes to the restored editor
+  beyond the round 2 layout moves): `quotation: ProjectQuotation | null` (null seeds `[]`, skips
+  the version, lines and verdict reads, hides Revise when `edit` is set), a `seriesId` prop for
+  the staged series, and `QuotationDialog.onSubmit` so Edit scope stages instead of writing.
+- Kept from rounds 1 and 2 on the restored editor: no Issued by / Opened strip (Header details),
+  "Edit quotation opens vN" copy, and no "Press Edit" hint on an empty scope.
 
 ## Journey
 

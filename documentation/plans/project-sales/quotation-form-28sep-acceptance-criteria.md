@@ -23,11 +23,12 @@ Plan: `PLAN-quotation-form-28sep.md`. One AC per behaviour. "The form" is
   writes no row.
 - **AC-QF011** The create form shows the letterhead fields: recipient name, address and phone,
   attention, your ref, date (defaults to today), subject (defaults to the project title).
-- **AC-QF012** The create form starts with one scope holding a name field, a series dropdown
-  (the system `SearchableSelect`, clearable) and an empty lines datagrid, so a product can be
-  added straight away.
+- **AC-QF012** The create form starts with one scope ("Scope 1" until it is named) and its empty
+  lines table, so a product can be added straight away. (Round 3: the scope is named, and its
+  series set, through the quotation page's Edit scope dialog, see AC-QF070.)
 - **AC-QF013** Add a scope appends another scope to the form; a scope added in the form can be
-  removed before Save.
+  removed before Save. (Round 3: Add a scope is the + at the end of the scope strip and its name
+  dialog, as on the quotation page.)
 - **AC-QF014** Save sends ONE request carrying the header, every scope and every line; on success
   the page lands on the new quotation page.
 - **AC-QF015** The server creates the document, its scopes, each scope's version 1 and every line
@@ -56,6 +57,12 @@ Plan: `PLAN-quotation-form-28sep.md`. One AC per behaviour. "The form" is
   AC-QF058.)
 
 ## Lines datagrid
+
+**Superseded by round 3 (AC-QF070 to AC-QF073).** AC-QF030 to AC-QF034 described the round 1
+`QuotationLinesGrid`, which the owner rejected ("we shouldn't revamp the Lines tab"). It is
+deleted; the lines table on the quotation page and in the form is `InlineLineTable` again, as on
+origin/main. AC-QF035 (live footer total, rate-only excluded) and AC-QF036 (empty scope reads "No
+lines yet." with no "Press Edit" hint) still hold on that table.
 
 - **AC-QF030** The scope lines table, on the quotation page and in the form, is the system
   DataGrid (`PanelDataGrid`): fixed layout, resizable columns, column order from the listing
@@ -128,3 +135,30 @@ to Customer"; "header stays in header tab"; delete a saved scope: "yes can"; hea
   no name is still refused, and the refusal opens the Lines tab.
 - **AC-QF061** `/new` opens cleanly for a project with no quotation (no document fetched, no
   draft created), and its Cancel returns to the project's Quotations tab.
+
+## Fix round 3: reuse the existing lines editor (PR #1343, owner hand test 29 Sep 00:2x MYT)
+
+Owner, verbatim: "for #1343, we shouldn't revamp the Lines tab, it was good, we should reuse that,
+I am just rearranging the layout, not redesigning the quotation please".
+
+- **AC-QF070** The form's Lines tab (create and edit) is the quotation page's lines editing as it
+  was on origin/main before this PR, moved under the tab: the scope strip (`QuotationScopeTabs`)
+  with Add a scope at its end (`QuotationNameDialog`), the scope card (name, outcome, series, Edit
+  scope via `QuotationDialog`), and under it `QuotationVersionEditor` in its staged edit mode, on
+  `InlineLineTable`. The round 2 inline per-line editor (`QuotationLinesGrid`, its per-row Edit,
+  the line panel under the grid, Done) does not exist anywhere.
+- **AC-QF071** Add a line, Add a section, cell edits, reorder and Remove (struck through, "Removed
+  on save", restorable) go through the same `useQuotationEditSession` handlers (`seedScope`,
+  `stageScope`, `toggleRemoved`) the quotation page's Edit used, and nothing is written until the
+  form's Save, whose ONE request carries the staged lines (removed ones left out).
+- **AC-QF072** A saved scope is sent with its lines only when they moved on the form (the rule the
+  quotation page's Save kept: the write replaces the whole set). A scope nobody opened, or one the
+  customer holds (never staged), is sent without lines. Save no longer waits on every saved
+  scope's lines loading.
+- **AC-QF073** The minimum adaptation for a scope not saved yet: `QuotationVersionEditor` takes
+  `quotation: null`, starts with no lines, reads no version, lines or verdict (only Off-catalog
+  shows until Save), and offers no Revise (a revise writes at once; the quotation page's Edit
+  quotation already asks to revise first). It takes the form's staged series for the series price
+  fill. `QuotationDialog` takes `onSubmit`, so the form stages the scope's name, series and notes
+  instead of writing them.
+
