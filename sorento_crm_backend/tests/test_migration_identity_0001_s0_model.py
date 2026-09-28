@@ -88,13 +88,10 @@ def test_revision_id_fits_alembic_version_and_sits_on_its_parent():
 
 def test_placement_check_survives_a_later_migration_stacked_on_top(tmp_path):
     """Any PR that adds its own migration above this one (PR #1313) must not turn
-    this file red: the graph is still correct and single-headed there.
-
-    Stacked on the tree's current head, not on this migration directly: on a branch
-    that already carries its own migration above this one (PR #1301's
-    `chatbot_known_brands`), a second child of this revision would be a second head
-    of this test's own making."""
-    current_head = _script().get_current_head()
+    this file red: the graph is still correct and single-headed there. The throwaway
+    migration stacks on the real head, as a later PR's does: finance S0's
+    `fin_0001_billing_documents` already sits directly on this migration."""
+    (current_head,) = _script().get_heads()
     (tmp_path / "zzt_0001_on_top_of_identity.py").write_text(
         'revision = "zzt_0001_on_top_of_identity"\n'
         f'down_revision = "{current_head}"\n'
