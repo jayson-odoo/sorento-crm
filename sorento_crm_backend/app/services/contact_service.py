@@ -349,6 +349,8 @@ class ContactService:
             # default OFF, unlike chatbot_stock_allowed above.
             "notify_salesman": bool(getattr(contact, "notify_salesman", False)),
             "packing_list_allowed": bool(getattr(contact, "packing_list_allowed", False)),
+            # Issue #1328: default ON, like chatbot_stock_allowed.
+            "chatbot_eta_offset_applied": bool(getattr(contact, "chatbot_eta_offset_applied", True)),
             "created_at": contact.created_at,
             "updated_at": contact.updated_at,
             "created_by": contact.created_by,

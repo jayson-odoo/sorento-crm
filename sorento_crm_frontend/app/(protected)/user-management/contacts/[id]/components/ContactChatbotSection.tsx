@@ -115,6 +115,18 @@ export default function ContactChatbotSection({ contactId }: { contactId: string
           onCheckedChange={(checked) => save.mutate({ ...profile, packing_list_allowed: checked === true })}
         />
       </div>
+
+      <div className="flex items-center justify-between gap-4">
+        <Label htmlFor="contact-chatbot-eta-offset" className="cursor-pointer font-normal">
+          ETA buffer days
+        </Label>
+        <Switch
+          id="contact-chatbot-eta-offset"
+          checked={profile.eta_offset_applied}
+          disabled={save.isPending}
+          onCheckedChange={(checked) => save.mutate({ ...profile, eta_offset_applied: checked === true })}
+        />
+      </div>
     </div>
   );
 }

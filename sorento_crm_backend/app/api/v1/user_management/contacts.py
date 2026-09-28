@@ -235,6 +235,8 @@ class ContactChatbotUpdate(BaseModel):
     # alone, same rule as every other field on this card.
     notify_salesman: bool | None = None
     packing_list_allowed: bool | None = None
+    # Issue #1328: absent = leave alone.
+    chatbot_eta_offset_applied: bool | None = None
 
 
 @router.put("/{contact_id}/chatbot", response_model=RespondContactResponse)
@@ -267,6 +269,8 @@ async def update_contact_chatbot(
             contact.notify_salesman = body.notify_salesman
         if body.packing_list_allowed is not None:
             contact.packing_list_allowed = body.packing_list_allowed
+        if body.chatbot_eta_offset_applied is not None:
+            contact.chatbot_eta_offset_applied = body.chatbot_eta_offset_applied
         # `get_db` never commits (it only closes), so a flush here rolled back on
         # return: PUT 200, row untouched. Main's convention is the commit in the route.
         db.commit()

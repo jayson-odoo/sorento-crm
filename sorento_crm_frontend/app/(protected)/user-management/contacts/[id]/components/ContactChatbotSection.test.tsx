@@ -34,6 +34,7 @@ const BASE_PROFILE = {
   stock_allowed: true,
   notify_salesman: false,
   packing_list_allowed: false,
+  eta_offset_applied: true,
 };
 
 function renderWithClient(ui: React.ReactElement) {
@@ -144,5 +145,36 @@ describe('ContactChatbotSection - contact toggles (S2, AC-SA205)', () => {
 
     expect(mutate).toHaveBeenCalledTimes(1);
     expect(mutate.mock.calls[0][0]).toEqual({ ...loaded, packing_list_allowed: true });
+  });
+});
+
+/**
+ * Issue #1328 (AC-EO6): the per-contact ETA offset switch, default on, saved with the
+ * rest of the profile unchanged.
+ */
+describe('ContactChatbotSection - ETA buffer days switch (#1328)', () => {
+  it('renders the switch checked by default', () => {
+    useContactChatbotProfile.mockReturnValue({ data: BASE_PROFILE, isLoading: false, isError: false });
+    renderWithClient(<ContactChatbotSection contactId="c1" />);
+    expect(screen.getByLabelText(/eta buffer days/i)).toHaveAttribute('data-state', 'checked');
+  });
+
+  it('renders unchecked for a contact told the exact ETA', () => {
+    useContactChatbotProfile.mockReturnValue({
+      data: { ...BASE_PROFILE, eta_offset_applied: false },
+      isLoading: false,
+      isError: false,
+    });
+    renderWithClient(<ContactChatbotSection contactId="c1" />);
+    expect(screen.getByLabelText(/eta buffer days/i)).toHaveAttribute('data-state', 'unchecked');
+  });
+
+  it('flipping it saves eta_offset_applied with every other field unchanged', () => {
+    const loaded = { ...BASE_PROFILE, notify_salesman: true, packing_list_allowed: true };
+    useContactChatbotProfile.mockReturnValue({ data: loaded, isLoading: false, isError: false });
+    renderWithClient(<ContactChatbotSection contactId="c1" />);
+    fireEvent.click(screen.getByLabelText(/eta buffer days/i));
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate.mock.calls[0][0]).toEqual({ ...loaded, eta_offset_applied: false });
   });
 });

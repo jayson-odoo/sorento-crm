@@ -127,6 +127,26 @@ def test_incoming_list_allocation_flags_and_unallocated_field():
     assert c["flags"]["discontinued"] is False
 
 
+def test_incoming_list_with_container_and_quantity_denied_prints_no_number():
+    """Issue #1328: the backend strips the container number and every quantity for a
+    contact denied them (absent, not null). The row still names the product and the
+    warehouse, and never prints "None" where a quantity was."""
+    out = env("crm_incoming_stock_list", {
+        "data": [{
+            "shipment_number": "SH1",
+            "estimated_arrival_date": "2026-11-02",
+            "lines": [
+                {"product_code": "A", "warehouse_allocations": [{"warehouse_code": "BRW"}]},
+            ],
+        }],
+    })
+    fields = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
+    assert fields["Warehouse Allocations"] == "BRW"
+    assert "Container" not in fields
+    assert "Incoming Quantity" not in fields
+    assert "None" not in json.dumps(out["items"])
+
+
 def test_incoming_list_missing_gap_key_claims_no_partial():
     """Forward-compat: an older backend omits `unallocated_quantity`.
 

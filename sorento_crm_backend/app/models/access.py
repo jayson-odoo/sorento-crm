@@ -273,6 +273,11 @@ class RespondContact(Base):
     # packing_list_allowed - the shipment's packing list is attached on a B3 answer.
     notify_salesman = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     packing_list_allowed = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    # Issue #1328: whether the ETA this contact is told carries the product-or-category
+    # `chatbot_eta_offset_days`. One switch for every chat route that prints an ETA (the
+    # stock ask and the incoming routes, `app/services/eta_policy.py`). Default ON: the
+    # stock ask padded the ETA for everyone before the switch existed.
+    chatbot_eta_offset_applied = Column(Boolean, nullable=False, server_default=text("true"), default=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)

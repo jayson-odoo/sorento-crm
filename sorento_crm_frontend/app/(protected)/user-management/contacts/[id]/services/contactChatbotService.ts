@@ -9,7 +9,7 @@
  *     builders) - no dedicated GET route exists for the card alone.
  *   PUT /api/v1/user-management/contacts/{id}/chatbot
  *     { chatbot_profile?, chatbot_recall_enabled?, chatbot_stock_allowed?,
- *       notify_salesman?, packing_list_allowed? }
+ *       notify_salesman?, packing_list_allowed?, chatbot_eta_offset_applied? }
  *     Absent means "leave it alone", never "clear it" - a recall toggle must not
  *     switch off as a side effect of saving a language.
  *
@@ -25,6 +25,11 @@
  * Both are plain siblings of `chatbot_stock_allowed` (not nested in
  * `chatbot_profile`) and ride the GET contact / PUT .../chatbot payload as plain
  * fields.
+ *
+ * ---- chatbot_eta_offset_applied (issue #1328) ------------------------------------
+ *   respond_contacts.chatbot_eta_offset_applied   boolean NOT NULL DEFAULT true
+ * Whether the ETA this contact is told carries the product-or-category +x days, on the
+ * stock ask and the incoming routes alike (`app/services/eta_policy.py`).
  */
 
 import { apiFetch } from '@/lib/api';
@@ -45,6 +50,8 @@ export interface ContactChatbotProfile {
   notify_salesman: boolean;
   /** R7: the shipment's packing list is attached on a B3 answer. Default off. */
   packing_list_allowed: boolean;
+  /** #1328: the ETA this contact is told carries the +x days offset. Default on. */
+  eta_offset_applied: boolean;
 }
 
 function fromContact(contact: {
@@ -58,6 +65,7 @@ function fromContact(contact: {
   chatbot_stock_allowed?: boolean;
   notify_salesman?: boolean;
   packing_list_allowed?: boolean;
+  chatbot_eta_offset_applied?: boolean;
 }): ContactChatbotProfile {
   const profile = contact.chatbot_profile ?? null;
   return {
@@ -69,6 +77,7 @@ function fromContact(contact: {
     stock_allowed: contact.chatbot_stock_allowed !== false,
     notify_salesman: Boolean(contact.notify_salesman),
     packing_list_allowed: Boolean(contact.packing_list_allowed),
+    eta_offset_applied: contact.chatbot_eta_offset_applied !== false,
   };
 }
 
@@ -99,6 +108,7 @@ export async function saveContactChatbotProfile(
       chatbot_stock_allowed: input.stock_allowed,
       notify_salesman: input.notify_salesman,
       packing_list_allowed: input.packing_list_allowed,
+      chatbot_eta_offset_applied: input.eta_offset_applied,
     }),
   });
   if (!response.ok) {

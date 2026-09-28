@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
+from app.services.eta_policy import apply_to_incoming
 from app.services.field_access import CLEARANCE_PERMISSION, apply_field_access
 from app.services.error_handler import handle_internal_error
 from app.services.incoming_stock_service import IncomingStockService
@@ -32,6 +33,25 @@ from app.services.uuid_list_param import parse_uuid_list
 
 
 router = APIRouter()
+
+
+def _for_contact(db: Session, result, *, contact_id, space_id, current_user):
+    """Issue #1328: one gate for all three incoming routes. The contact's ETA offset and
+    packing list rule (`eta_policy.apply_to_incoming`), then the per-field reveals. With
+    no contact in play the payload is returned exactly as before - staff see the exact
+    date, and `/by-product` / `/shipments` never grew a `field_access` block."""
+    if not contact_id:
+        return result
+    result = apply_to_incoming(db, result, contact_id=contact_id, space_id=space_id)
+    return apply_field_access(
+        db,
+        result,
+        resource="incoming_stock",
+        current_user=current_user,
+        contact_id=contact_id,
+        space_id=space_id,
+        staff_permission=CLEARANCE_PERMISSION,
+    )
 
 
 @router.get("/by-product")
@@ -55,6 +75,19 @@ def get_incoming_for_product(
     eta_from: Optional[date] = Query(None, description="Include shipments with ETA on/after this date (YYYY-MM-DD)."),
     eta_to: Optional[date] = Query(None, description="Include shipments with ETA on/before this date (YYYY-MM-DD)."),
     limit: int = Query(10, ge=1, le=50),
+    contact_id: Optional[str] = Query(
+        None,
+        description=(
+            "The contact this question is being asked ON BEHALF OF (respond_contacts.id "
+            "or the Respond.io id). When set, the ETA carries that contact's +x days "
+            "offset when their switch is on, the packing list is sent only when their "
+            "packing list switch is on, and the container number / quantity follow "
+            "their Incoming Stock Enquiries field reveals."
+        ),
+    ),
+    space_id: Optional[str] = Query(
+        None, description="Respond.io workspace id, to disambiguate a Respond.io `contact_id`."
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -108,7 +141,9 @@ def get_incoming_for_product(
         )
         if entity_echo is not None and isinstance(result, dict):
             result["resolved_entities"] = entity_echo
-        return result
+        return _for_contact(
+            db, result, contact_id=contact_id, space_id=space_id, current_user=current_user
+        )
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -135,6 +170,19 @@ def get_incoming_shipments(
     eta_to: Optional[date] = Query(None, description="Include shipments with ETA on/before this date."),
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=50),
+    contact_id: Optional[str] = Query(
+        None,
+        description=(
+            "The contact this question is being asked ON BEHALF OF (respond_contacts.id "
+            "or the Respond.io id). When set, the ETA carries that contact's +x days "
+            "offset when their switch is on, the packing list is sent only when their "
+            "packing list switch is on, and the container number / quantity follow "
+            "their Incoming Stock Enquiries field reveals."
+        ),
+    ),
+    space_id: Optional[str] = Query(
+        None, description="Respond.io workspace id, to disambiguate a Respond.io `contact_id`."
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -178,7 +226,9 @@ def get_incoming_shipments(
         )
         if entity_echo is not None and isinstance(result, dict):
             result["resolved_entities"] = entity_echo
-        return result
+        return _for_contact(
+            db, result, contact_id=contact_id, space_id=space_id, current_user=current_user
+        )
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -264,12 +314,19 @@ def get_incoming_list(
         # LLM reading the response will narrate a null as the latter. The reason
         # rides along in a `field_access` block so the answer can say "I can't
         # share that" instead of inventing a status.
+        #
+        # Issue #1328: a contact's question also gets that contact's ETA offset and
+        # packing list rule, before the field reveals (`_for_contact`).
+        if contact_id:
+            return _for_contact(
+                db, result, contact_id=contact_id, space_id=space_id, current_user=current_user
+            )
         return apply_field_access(
             db,
             result,
             resource="incoming_stock",
             current_user=current_user,
-            contact_id=contact_id,
+            contact_id=None,
             space_id=space_id,
             staff_permission=CLEARANCE_PERMISSION,
         )

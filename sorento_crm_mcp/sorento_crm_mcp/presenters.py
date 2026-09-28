@@ -370,8 +370,14 @@ class _Builder:
 # per-tool builders
 # --------------------------------------------------------------------------
 def _wh_alloc(allocs: Any) -> str:
+    # Issue #1328: a contact denied the quantity gets the allocation with
+    # `allocated_quantity` ABSENT (`field_access.STRIP_WITH`) - the warehouse alone,
+    # never "BRW (None)".
     return ", ".join(
-        f"{a.get('warehouse_code')} ({a.get('allocated_quantity')})" for a in (allocs or [])
+        f"{a.get('warehouse_code')} ({a['allocated_quantity']})"
+        if a.get("allocated_quantity") is not None
+        else f"{a.get('warehouse_code')}"
+        for a in (allocs or [])
     )
 
 

@@ -78,8 +78,30 @@ GATED_FIELDS: dict[str, dict[str, str]] = {
             "stacked",
             "coa_permit_no",
             "source_sheet",
+            # Issue #1328: a dealer may not be told the container number or the
+            # quantity. Not clearance columns - see `NON_CLEARANCE_KEYS`.
+            "shipping_container_number",
+            "remaining_incoming_quantity",
         )
     }
+}
+
+#: Gated fields that are NOT `InboundShipment` clearance columns, so
+#: `incoming_stock_service.CLEARANCE_KEYS` (which selects each gated key as a
+#: shipment column) must leave them out: the container number is selected on its
+#: own, and the quantity is computed per line.
+NON_CLEARANCE_KEYS: frozenset[str] = frozenset(
+    {"shipping_container_number", "remaining_incoming_quantity"}
+)
+
+#: Denying one field also removes these keys, wherever they sit in the payload.
+#: "Quantity" is every number of units on the answer, not one key: a dealer denied
+#: the incoming quantity must not read it back off the unallocated gap, a warehouse
+#: allocation, or the `/shipments` total.
+STRIP_WITH: dict[str, frozenset[str]] = {
+    "remaining_incoming_quantity": frozenset(
+        {"unallocated_quantity", "allocated_quantity", "total_remaining_incoming_quantity"}
+    ),
 }
 
 #: Fields that ship ALLOWED rather than denied. Default-deny is right for a column
@@ -87,11 +109,17 @@ GATED_FIELDS: dict[str, dict[str, str]] = {
 #: `estimated_arrival_date` is the ETA the 53 contacts holding
 #: `incoming_stock_enquiries` ask about daily, so it is gated (an admin CAN revoke
 #: it) but seeded true, and the deploy changes nothing.
-DEFAULT_ALLOWED: frozenset[str] = frozenset({"estimated_arrival_date"})
+#: The container number and the quantity (#1328) ship allowed for the same reason:
+#: every contact reads them today, so an admin denies them on the agent (a dealer)
+#: rather than the deploy taking them from everyone.
+DEFAULT_ALLOWED: frozenset[str] = frozenset(
+    {"estimated_arrival_date", "shipping_container_number", "remaining_incoming_quantity"}
+)
 
 #: Never gated, and worth naming so nobody adds them by reflex: `shipment_number`,
-#: `shipping_container_number`, `lines` and `attachment` are the answer itself - a
-#: contact who may not see a gatepass date must still be told what is arriving.
+#: `lines` and `attachment` are the answer itself - a contact who may not see a
+#: gatepass date must still be told what is arriving. (The packing list attachment
+#: is governed by the contact's own `packing_list_allowed`, `app/services/eta_policy.py`.)
 
 #: Admin-facing labels. The column name is not what an admin deciding "may a
 #: dealer be told this" is thinking in, and `loc` / `etc_date` / `coa_permit_no`
@@ -118,6 +146,8 @@ FIELD_LABELS: dict[str, str] = {
     "stacked": "Stacked",
     "coa_permit_no": "COA permit no.",
     "source_sheet": "Source sheet",
+    "shipping_container_number": "Container number",
+    "remaining_incoming_quantity": "Quantity",
 }
 
 
@@ -560,7 +590,10 @@ def apply_field_access(
     if not denied:
         return payload
 
-    gated = _strip(payload, {d.field for d in denied})
+    drop = {d.field for d in denied}
+    for field in list(drop):
+        drop |= STRIP_WITH.get(field, frozenset())
+    gated = _strip(payload, drop)
     if isinstance(gated, dict):
         gated["field_access"] = {
             "denied": [d.as_dict() for d in denied],
