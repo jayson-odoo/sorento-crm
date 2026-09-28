@@ -492,3 +492,197 @@ def test_e_publish_adds_the_text_once_and_leaves_the_label(session_factory):
     finally:
         db.close()
 
+
+
+# =============================================================================== #
+# F. Successive picks keep the carried subject (PR #1353 fix round 1, AC-PK015)
+#
+# Owner hand test on the copy with parser v48 (29 Sep 00:2x MYT): "promotion for
+# srtwc286" -> tier roster -> "1" Office promotions for srtwc286 (correct) -> "2" three
+# Cabana office-use promotions, not srtwc286's Dealer ones. The v48 prompt keeps
+# `domain_hint` on a pick ("A pick never blanks domain_hint"), and three readers took the
+# carried "promotion" for a word of the message: the tier roster recorded no domain of its
+# own, `_roster_is_about` never read the code-only tier axis, and the resolver was handed
+# the carried domain with no token (the product was already settled), so its gate refused
+# "every promotion" and its tier gate re-asked the tier. Each reading below is a shape the
+# parser may emit for a bare "2"; every one must answer the SAME roster, in its domain,
+# about the SAME subject.
+# =============================================================================== #
+
+
+_SECOND_PICK_READINGS = {
+    "bare": {"domain_hint": None, "intent_hint": None},
+    # A stale hint from some earlier turn, `domain_in_message` false: still no word of
+    # this message.
+    "stale_other_domain": {"domain_hint": "master_products", "intent_hint": "check_product"},
+    "carried_domain": {"domain_hint": "promotion", "intent_hint": "check_promotion"},
+    "carried_domain_flagged": {
+        "domain_hint": "promotion", "intent_hint": "check_promotion", "domain_in_message": True,
+    },
+}
+
+
+def _promotion_double(captured: list[tuple[str, dict[str, Any]]]):
+    """The promotion tool through the real presenter: one file, named for the scope it was
+    asked for, so the reply itself says which product and which tier were fetched."""
+    from app.services.chatbot.lanes.business import fetch as fetch_mod
+    from tests.chatbot.test_outstanding_lane import _present_response
+
+    def call(name: str, args: dict[str, Any]) -> str:
+        captured.append((name, dict(args)))
+        if name != fetch_mod.TIER_PROBE_TOOL:
+            return json.dumps({"has_result": False, "items": []})
+        scope = "product" if args.get("product_ids") else "UNSCOPED"
+        levels = "+".join(args.get("access_levels") or ["ALL"]).replace(" ", "_")
+        fname = f"{scope}-{levels}.pdf"
+        body = {
+            "data": [{
+                "id": "p1", "company_name": "Sorento", "start_date": "2026-09-01", "end_date": "2026-12-31",
+                "attachments": [{
+                    "file_path": f"https://files.test/{fname}", "original_filename": fname,
+                    "stored_filename": fname, "mime_type": "application/pdf",
+                }],
+            }],
+            "pagination": {"total": 1, "page": 1, "limit": 50},
+        }
+        return _present_response()(name, json.dumps(body))
+
+    return call
+
+
+@pytest.mark.parametrize("shape", list(_SECOND_PICK_READINGS))
+def test_f_two_successive_tier_picks_keep_the_product(session_factory, monkeypatch, shape):
+    """AC-PK015, tier_pick: "promotion for <code>" -> "1" Office -> "2" Dealer, both for
+    the product the roster was asked about, the roster still stored after both."""
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.lanes.business import fetch as fetch_mod
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests._pg_fixture import unique_code
+    from tests.chatbot.test_engine import _parser_output
+    from tests.chatbot.test_engine_company_scope import _seed_product
+    from tests.chatbot.test_outstanding_lane import _session_of
+    from tests.chatbot.test_rearch_r5_production_decides import _seed_contact_and_get
+    from tests.chatbot.test_rearch_r6_review_round import (
+        _mark_workspace_default,
+        _run_turn_engine,
+        _seed_three_tiers_two_entitled,
+    )
+
+    traces: list[Any] = []
+    real_apply = engine_mod.turn_apply
+
+    def traced_apply(*args: Any, **kwargs: Any):
+        state_out, plan = real_apply(*args, **kwargs)
+        traces.append(plan.trace)
+        return state_out, plan
+
+    monkeypatch.setattr(engine_mod, "turn_apply", traced_apply)
+    _seed_contact_and_get(session_factory)
+    _mark_workspace_default(session_factory)
+    _seed_three_tiers_two_entitled(session_factory)
+    code = unique_code("ZZT1353TIER")
+    product_id = _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=code)
+
+    def turn(text: str, qf: dict[str, Any]) -> tuple[str, list[tuple[str, dict[str, Any]]]]:
+        captured: list[tuple[str, dict[str, Any]]] = []
+        result = _run_turn_engine(
+            session_factory, monkeypatch, qf=qf, text_body=text, msg_id=f"zzt-1353-{shape}-{text}",
+            mcp_call=_promotion_double(captured), real_entitlement=True,
+        )
+        return (result.reply or {}).get("text") or "", [
+            a for n, a in captured if n == fetch_mod.TIER_PROBE_TOOL
+        ]
+
+    ask = _parser_output(
+        domain_hint="promotion", intent_hint="check_promotion",
+        entities=[{"raw": code, "hint": "product", "canonical_code": None, "current_message": True, "confident": True}],
+    )
+    text, _ = turn(f"promotion for {code}", ask)
+    assert "1. Office - has promotion" in text and "2. Dealer - has promotion" in text, text
+
+    for position, level in ((1, "Sorento Office"), (2, "Sorento Dealer")):
+        reading = _parser_output(
+            entities=[], access_levels=[], reference_positions=[position], **_SECOND_PICK_READINGS[shape]
+        )
+        text, calls = turn(str(position), reading)
+        assert calls, f"'{position}' must fetch promotions: {text!r}"
+        assert calls[-1].get("product_ids") == [product_id], calls
+        assert calls[-1].get("access_levels") == [level], calls
+        assert f"product-{level.replace(' ', '_')}.pdf" in text, text
+        rules = traces[-1].rules_fired
+        assert "pick_in_roster_domain" in rules and "new_ask_closes_stale_roster" not in rules, rules
+        question = _session_of(session_factory).get("open_question") or {}
+        assert question.get("kind") == "tier_pick", question
+        assert (question.get("payload") or {}).get("answered_positions") == list(range(1, position + 1)), question
+
+
+_PRODUCT_SECOND_PICKS = {
+    "bare": lambda n: _bare_pick(n, carried_domain=None),
+    "carried_domain": lambda n: _bare_pick(n),
+    "carried_domain_flagged": lambda n: verdict(
+        message_type="business_query", domain_hint="incoming", domain_in_message=True,
+        reference_positions=[n], open_question_answer=answer("pick", picked=[n]),
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", list(_PRODUCT_SECOND_PICKS))
+def test_f_two_successive_product_picks_keep_the_roster_domain(session_factory, monkeypatch, stub_access, shape):
+    """AC-PK015, product_pick: "incoming srtwc286" -> "4" -> "7", each answered as incoming
+    for its own option, the roster stored with both positions."""
+    c = _console(session_factory, monkeypatch, stub_access, f"+6000001353{len(shape)}")
+    text, _ = _say(c, "incoming srtwc286", _incoming_ask())
+    assert text.startswith(FAMILY_HEAD), text
+    for position, code, answered in ((4, "SRTWC286-SH-NEW", [4]), (7, "SRTWC286-SH-NEW-P", [4, 7])):
+        _text, calls = _say(c, str(position), _PRODUCT_SECOND_PICKS[shape](position))
+        assert calls and calls[0] == (INCOMING, [code]), calls
+        rules = c.last_trace.rules_fired
+        assert "pick_in_roster_domain" in rules and "new_ask_closes_stale_roster" not in rules, rules
+        assert c.stored_question["kind"] == "product_pick" and _answered_positions(c) == answered
+
+
+_CUSTOMER_OPTIONS = [
+    {"position": 1, "label": "HANLIM TRADING SDN BHD", "code": "C-HAN-1", "uuid": "c-1", "uuids": ["c-1"], "payload": {}, "entity_type": "customer"},
+    {"position": 2, "label": "HANLIM TRADING (JB) SDN BHD", "code": "C-HAN-2", "uuid": "c-2", "uuids": ["c-2"], "payload": {}, "entity_type": "customer"},
+]
+_CARRIED_PRODUCT = {"raw": "SRTWC286", "hint": "product", "canonical_code": "SRTWC286", "uuid": "p-286", "current_message": False}
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{}, {"domain_hint": "order"}, {"domain_hint": "order", "domain_in_message": True}],
+    ids=["bare", "carried_domain", "carried_domain_flagged"],
+)
+def test_f_two_successive_customer_picks_keep_the_product(extra):
+    """AC-PK015, customer_pick: "orders for hanlim srtwc286" -> customer roster -> "1" ->
+    "2". Each pick settles the customer and keeps the carried product and the order domain;
+    the roster stays stored with both positions answered."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Profile, State
+    from tests.chatbot._turn_helpers import build_policy
+
+    state = State(
+        focus=Focus(products=[dict(_CARRIED_PRODUCT)], domains=["order"]),
+        pending=pending_ask("customer_pick", [dict(o) for o in _CUSTOMER_OPTIONS], asked_at_turn=1, payload={"domain": "order"}),
+        profile=Profile(),
+    )
+    for position, answered in ((1, [1]), (2, [1, 2])):
+        state, plan = apply(state, verdict(reference_positions=[position], **extra), build_policy())
+        rules = plan.trace.rules_fired
+        assert "pick_in_roster_domain" in rules and "new_ask_closes_stale_roster" not in rules, rules
+        assert state.focus.domains == ["order"], state.focus.domains
+        assert [c.get("uuid") for c in state.focus.customers] == [f"c-{position}"], state.focus.customers
+        assert [p.get("uuid") for p in state.focus.products] == ["p-286"], state.focus.products
+        assert state.pending is not None and state.pending.kind == "customer_pick"
+        assert state.pending.payload.get("answered_positions") == answered, state.pending.payload
+
+
+def test_f_a_tier_roster_records_the_promotion_domain():
+    """AC-PK015: the tier roster says which domain it was asked FOR, as every roster does
+    (contract 121), so a pick that repeats "promotion" is judged a plain pick (J1b)."""
+    from app.services.chatbot.answer_bridge import _tier_options
+
+    question = _tier_options(
+        [{"tier": "office", "label": "Office"}, {"tier": "dealer", "label": "Dealer"}], asked_at_turn=1
+    )
+    assert question is not None and question.payload.get("domain") == "promotion", question

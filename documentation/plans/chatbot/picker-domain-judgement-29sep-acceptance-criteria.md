@@ -43,6 +43,14 @@ SRTWC286 family seeded (10 variants).
   carried subject; the earlier roster stays stored underneath and a later bare pick reads it.
 - **AC-PK014** A bare number answering the stock task's "How many units of X?", asked after a
   product roster, is X's quantity and never a pick from that roster; the roster stays stored.
+- **AC-PK015** (fix round 1, owner hand test on v48, 29 Sep) Successive picks over the SAME
+  stored roster keep the carried subject and the roster's own filter, whatever domain the
+  parser carries on the pick (none, a stale one, the roster's own, or the roster's own with
+  `domain_in_message: true`). "promotion for srtwc286" -> "1" -> "2" answers Office then
+  Dealer promotions, both for srtwc286; the same shape holds on `product_pick` ("4" -> "7")
+  and `customer_pick` ("1" -> "2", the carried product kept). The roster stays stored with
+  every answered position. Main already had this defect; v48 keeping `domain_hint` on a pick
+  is what surfaced it.
 
 ## Prompt rules
 

@@ -168,6 +168,35 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _without_carried_domain_on_a_roster_pick(
+    parse_output: dict[str, Any], rules_fired: list[str]
+) -> dict[str, Any]:
+    """The resolver's verdict on a pick the engine answered in the ROSTER's domain.
+
+    PR #1353 fix round 1 (owner hand test, v48: "promotion for srtwc286" -> "1" -> "2"
+    answered with the wrong promotions). The parser now keeps `domain_hint` on a bare
+    pick, but on this path (`pick_in_roster_domain`, `decide.names_its_own_domain`
+    False) that hint is the roster's carried domain, not a word of this message, and the
+    plan already answers in it. The resolver read it as a fresh ask: a second pick over
+    an already-settled product hands it no token at all, and the gate's "no entities and
+    'promotion' requires a scoping entity" exit (`not_found`) then answered "That would
+    search every promotion we have" over the Dealer fetch that had just run for the
+    product, while its tier gate re-asked the tier the pick had settled. A bare pick
+    reaches the resolver with no domain of its own, exactly as a pick that named none
+    always did. A message that named its own entity is left alone.
+    """
+    if "pick_in_roster_domain" not in rules_fired:
+        return parse_output
+    if any(
+        isinstance(e, dict) and e.get("current_message") is True
+        for e in (parse_output.get("entities") or [])
+    ):
+        return parse_output
+    if not parse_output.get("domain_hint"):
+        return parse_output
+    return {**parse_output, "domain_hint": None}
+
+
 @contextmanager
 def _session(factory: SessionFactory) -> Iterator[Session]:
     db = factory()
@@ -2865,6 +2894,9 @@ def _run_stages(  # noqa: PLR0915
                 (ctx.get("parse") or {}).get("output") or {},
                 state_out.focus,
                 unsettled_only=plan.ask is None,
+            )
+            resolver_parse_output = _without_carried_domain_on_a_roster_pick(
+                resolver_parse_output, plan.trace.rules_fired
             )
             # PLAN-chatbot-top-x-hot-selling-24sep.md S4 point 4 (AC-1954): under `order`
             # the generic resolver re-types a category token as a customer

@@ -3504,6 +3504,15 @@ def _roster_is_about(pending: Pending, focus: Focus) -> bool:
         if not code:
             continue
         for row in _kind_field(focus, str(kind)):
+            if isinstance(row, str):
+                # PR #1353 fix round 1: a code-only axis (`_CODE_ONLY_FIELDS`: the tier,
+                # the brand) holds plain codes, never rows. Skipping them read a tier
+                # roster the customer had just picked "office" off as "about something
+                # else", so a pick whose verdict carried `domain_in_message` closed it
+                # (`new_ask_closes_stale_roster`) and the next "2" had nothing to answer.
+                if row.strip().casefold() == code:
+                    return True
+                continue
             if not isinstance(row, dict):
                 continue
             for name in ("canonical_code", "code", "raw"):
@@ -3513,7 +3522,9 @@ def _roster_is_about(pending: Pending, focus: Focus) -> bool:
 
 
 def _kind_field(focus: Focus, kind: str) -> list[Any]:
-    attr = KIND_FIELD_MAP.get(kind)
+    # The read side of `_set_kind_field`'s code-only write: a tier pick lands on
+    # `focus.tier`, never on `focus.extra["tier"]` (PR #1353 fix round 1).
+    attr = _CODE_ONLY_FIELDS.get(kind) or KIND_FIELD_MAP.get(kind)
     if attr:
         value = getattr(focus, attr, [])
         return list(value) if isinstance(value, list) else []
