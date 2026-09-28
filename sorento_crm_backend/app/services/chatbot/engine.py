@@ -1715,6 +1715,11 @@ def _run_stages(  # noqa: PLR0915
             current_date=_current_date_directive(),
             override_version_id=_prompt_override(envelope, parser.PROMPT_KEY, dry_run=dry_run),
         )
+        # #1262 slice 9 (F1a): the live brand list for the `Known brands:` line,
+        # read in the SAME session as the config above (already scoped to this
+        # contact's companies, `_scoped_factory` at the top of this function) -
+        # no cache, so an operator's table edit reaches the very next turn.
+        brands = turn_runtime.active_brands(db)
 
     # -- B PARSER (NO DB SESSION IS OPEN HERE) ------------------------------ #
     # One call, one schema. What comes back IS the verdict - a plain dict, validated once
@@ -1736,6 +1741,7 @@ def _run_stages(  # noqa: PLR0915
         pending_options=pending_options,
         profile_block=profile_words,
         focus=state_in.focus,
+        brands=brands,
         open_question=open_question,
         recent_exchanges=recent,
     )
@@ -1823,6 +1829,7 @@ def _run_stages(  # noqa: PLR0915
                 profile_block=profile_words,
                 episodes_block=memory_mod.episodes_block(recalled),
                 focus=state_in.focus,
+                brands=brands,
                 open_question=open_question,
                 recent_exchanges=recent,
             )
@@ -1960,6 +1967,17 @@ def _run_stages(  # noqa: PLR0915
         enabled_lanes = _enabled_lanes(db, settings_row)
         s7_mode = _s7_mode(db, settings_row)
         space_id_for_turn = business_services.fetch_space_id(db)
+
+        # #1262 fix lane round 7 (R3 to R5): inside an order list the message is read
+        # against the list before the parser's reading can send it anywhere else.
+        from app.services.chatbot import order_list as order_list_mod
+
+        order_list_was_open = order_list_mod.is_open_order_list(state_in.focus)
+        verdict, state_in, order_list_rule = order_list_mod.order_list_verdict(
+            db, verdict, state_in, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+        )
+        if order_list_rule:
+            turn_trace.add("order_list", {"verdict_rule": order_list_rule})
 
         # C APPLY, first pass: state and plan from the verdict alone.
         state_out, plan = turn_apply(state_in, verdict, policy)
@@ -2743,6 +2761,9 @@ def _run_stages(  # noqa: PLR0915
                         # than replacing it - the same rule `turn_compose.compose`
                         # already applies on its own miss arm below.
                         carried_pending=state_out.pending,
+                        # #1262 slice 11 (F8): same ladder-rung audience gate as the
+                        # HIT arm below.
+                        profile=state_out.profile,
                         dealer_stock_ask=_dealer_stock_ask(state_out, plan),
                     )
                     if answer is not None:
@@ -2785,6 +2806,7 @@ def _run_stages(  # noqa: PLR0915
                         and not envelopes[0].get("own_header")
                     ):
                         from app.services.chatbot import answer_bridge
+                        from app.services.chatbot.tail import scope_block as scope_block_mod
 
                         # Hand pass 12 round 3, Group F (owner ruling): a bare positional
                         # pick runs no resolver of its own (`resolver_payload is None`),
@@ -2808,10 +2830,13 @@ def _run_stages(  # noqa: PLR0915
                             answer,
                             domain=fetch_plan.fetch[0].domain,
                             qf=(ctx.get("parse") or {}).get("output"),
-                            gate_json=(
-                                resolver_payload.get("gate")
-                                if isinstance(resolver_payload, dict)
-                                else None
+                            gate_json=scope_block_mod.with_brand_names(
+                                (
+                                    resolver_payload.get("gate")
+                                    if isinstance(resolver_payload, dict)
+                                    else None
+                                ),
+                                envelopes[0],
                             ),
                             resolver_json=(
                                 resolver_payload.get("resolved")
@@ -2859,6 +2884,9 @@ def _run_stages(  # noqa: PLR0915
                             # and no incoming for" the Sorento rows before it (round 7
                             # on PR #833, owner hand test item 6).
                             focus_products=None if set_page_turn else state_out.focus.products,
+                            # #1262 slice 11 (F8): the ladder rung's own audience
+                            # gate reads the SAME profile the composer's arm does.
+                            profile=state_out.profile,
                         )
                         # BRIDGE (hand pass 11, defect 3): a HIT in one of several
                         # searched companies still offers the SILENT company's own
@@ -2996,6 +3024,15 @@ def _run_stages(  # noqa: PLR0915
                     fetch_plan,
                     verdict,
                     turn_no=turn_no,
+                )
+                # #1262 fix lane round 7, R6: inside an order list no escalate offer and
+                # no routing picker; an empty list says so in one line.
+                answer = order_list_mod.list_reply(
+                    answer,
+                    was_open=order_list_was_open,
+                    fetch_plan=fetch_plan,
+                    envelopes=envelopes,
+                    order_status=parsed_output.get("order_status"),
                 )
                 # Chatbot stock ask v2 S3, AC-SA314: an `incoming` entry answered
                 # with its own packing list attaches it to THIS reply. `answer.files`

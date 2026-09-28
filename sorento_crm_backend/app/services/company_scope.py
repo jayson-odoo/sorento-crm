@@ -387,7 +387,15 @@ def stamp_lookup_companies(
 
         company_ids: set[str] = set()
         names: dict = {}
-        ids = {str(pid) for pid in (product_ids or []) if pid}
+        # Fix lane round 2, N3: a brand filter arrives as a `Product.id` subquery
+        # (`order_service.narrow_product_ids_by_brand`), used as is, never read out.
+        from sqlalchemy.sql import Select
+
+        ids = (
+            product_ids
+            if isinstance(product_ids, Select)
+            else {str(pid) for pid in (product_ids or []) if pid}
+        )
         # Both queries run inside a SAVEPOINT. Swallowing the exception is only
         # half of "never fatal": on Postgres a failed statement (a non-UUID
         # product id is the realistic one) aborts the WHOLE transaction, so a
@@ -395,7 +403,7 @@ def stamp_lookup_companies(
         # where every later query dies with "current transaction is aborted".
         # The savepoint rolls the failure back locally instead.
         with db.begin_nested():
-            if ids:
+            if isinstance(ids, Select) or ids:
                 from app.models.product import Product
 
                 company_ids.update(
