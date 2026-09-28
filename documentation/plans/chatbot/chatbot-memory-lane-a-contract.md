@@ -277,3 +277,34 @@ chatbot parser row.
     earlier runs, 52 of 52 on a fresh database); chatbot set plus the touched files 3,710
     passed, 0 failed; touched vitest 13 files 62 passed (touched directories 35 files 242
     passed); `tsc --noEmit` the same 73 errors as main, none new.
+
+## 9. S4 build notes (fix lane round 4, 28 Sep 2026)
+
+S4 was built on this PR after the owner's go ("yeah i want S4 for memory"). What the build
+decided where the plan left room, so a reviewer can check it against sections 7 and 9 S4:
+
+- **The clarifier contract.** The clarifier's system prompt is unchanged. The engine appends
+  a `reply_format` instruction plus the memory slice and `first_name` to its user message
+  (`lanes/fallback.clarifier_tail`), asking for `{"ack", "language"}`. A prompt version that
+  still answers `{"response"}` is the whole reply, as before; only a history question uses
+  it as the ack.
+- **The history list.** The open conversation comes first (level "This conversation" and
+  up), then the closed conversations (level "Past conversations" and up), newest first, up
+  to 5. The owner's case needs the open one: after "check stock srtwc286" then "incoming", the
+  incoming ask is still open, not a frame. Every line is a deterministic summary with no
+  figure in it.
+- **Kinds.** `history_question` (history), `unknown` (a message the bot cannot place: the
+  customer's outstanding DOs or the order team, two numbered options, when the contact is
+  linked to a customer), and everything else in `low_signal` (small talk: last time plus a
+  re-run offer, or the usual products and site at Full, or the domain menu).
+- **Live CRM, every level.** The customer and the salesperson are read live off the primary
+  customer link, never memory, so they are named at every level. Plan 7.3 lists example 4
+  as red under ablation; it is not, and its case says why.
+- **Who a handover names.** The Q13 rule: the salesperson only for a commercial ask (the
+  parser's new `intent_hint: "commercial_request"`), the lane's team otherwise. Example 10
+  therefore names the team, not Aina. Routing, assignment, SLA and the comment's own lines
+  are the lane's; the engine adds `Salesperson:` and `Conversation so far:` to the comment
+  and swaps the "routed to the respective PIC" line for the salesperson line.
+- **`escalation_declined` copy.** It keeps "Escalation declined." (19 recorded replay cases,
+  4 engine pins and the node fixtures carry it, and the plan keeps existing copy untouched).
+  AC-MEM084's switch to `offer_declined` is left for the owner.
