@@ -15,7 +15,14 @@ of 27 Sep 01:04 MYT to build without further alignment); the orchestrator's revi
 13 in the PR body. The plan rides in that PR. Main 52b0ac24 merged into it (27 Sep 2026):
 `identity_0001_s0_model` now chains on main's single head `sales_s1_reports_module` instead of
 merging 527 and spec_0003 itself. Main af86bcfd merged into it (27 Sep 2026, round 2): it now
-chains on main's single head `sales_0005_commission_tiers`. S1, S2 and S3 not started.
+chains on main's single head `sales_0005_commission_tiers`. S0 merged to main (#1303).
+S3 built on PR #1306 (stacked on S0; no migration); the reviewer pass at 6a7f0bcd (needs work:
+B1, S1 to S5, N1 to N6) is addressed by S3 fix lane round 2 on the same PR (27 Sep 2026), ready
+for the orchestrator's review; the retarget round (28 Sep 2026) merged main 9d150067 into it and
+moved its base to main (single alembic head `identity_0001_s0_model`, S3 adds no migration;
+backend, migration, serial_ddl, SCM and touched vitest green on the merged tree); the merge-main
+round (28 Sep 2026) merged main cd220251 (#1318, #1325, #1278) cleanly, single head
+`fin_0001_billing_documents`, the same suites green again. S1 and S2 per their own lanes.
 UAC: `identity-unified-login-acceptance-criteria.md` (same folder; the Journey is there, and every
 AC traces to a step in it).
 Classification: CORE (auth and users are base-platform), tables stay in `public`.
@@ -683,6 +690,11 @@ and routes to `/invite`, which creates and emails in one request). After S3:
   migration (AC-04). That is not creation and not new behaviour: `respond_link_service.py:25-48`
   already caches exactly this link at runtime today. The S0 PR lists every link it wrote so the
   owner can see them; any the owner rejects are unlinked with the S3 Unlink.
+- It never links at runtime (S3 fix round 2, reviewer B1 at 6a7f0bcd): the runtime phone-match
+  cache in `respond_link_service.py` re-linked a contact the owner had just unlinked on the next
+  notification, SLA summary, banner or WhatsApp task. It is removed, and the phone fallback with
+  it: every sender reaches a user only through `users.respond_contact_id`, so an unlinked user
+  gets no WhatsApp until the owner links one (`tests/test_identity_s3_unlink_holds.py`).
 
 ### 6.6 Dealer contacts and every other portal contact (Q3, Q4)
 
@@ -943,7 +955,12 @@ phone-differs state moved to S3 (6.3). AC-50 and AC-51 are withdrawn.
   already watches the worker; no new mechanism.
 - **Phone sign-in for admins** (Q10, ruled yes). A WhatsApp code is weaker than a password for
   `superadmin` accounts (SIM swap). The owner accepted it; excluding admins later is one check in
-  request-code.
+  request-code. **For S1 (from the S3 security review, 27 Sep 2026):** once phone sign-in exists,
+  a `user_management.users.edit` holder can set an admin's phone and link their own WhatsApp
+  contact, then sign in as that admin by code. Not new privilege (`users.edit` can already assign
+  any role), but it needs no email link. Recommended with S1: refuse `contact_number` /
+  `respond_contact_id` edits on a protected, `superadmin` or `admin` user unless the caller is a
+  superadmin.
 - **A Respond.io phone change blocks a set-up person's phone sign-in** until the owner confirms the
   new number (5.3). Chosen over following the sync silently, because the code would otherwise go
   to a number nobody approved. Email + password, where the user has one, still works meanwhile.

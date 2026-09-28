@@ -65,9 +65,9 @@ export function IntegrationFormDialog({
     () =>
       (users ?? []).map((u) => ({
         value: u.id,
-        label: u.name || u.email,
-        description: u.name ? u.email : undefined,
-        searchText: `${u.name ?? ''} ${u.email}`,
+        label: u.name || u.email || 'Unnamed user',
+        description: u.name ? (u.email ?? undefined) : undefined,
+        searchText: `${u.name ?? ''} ${u.email ?? ''}`,
       })),
     [users],
   );
