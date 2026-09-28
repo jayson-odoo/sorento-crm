@@ -70,7 +70,7 @@ outside alembic (e.g. to publish against the shared dev database without an
 ``--prompt-version``).
 
 Revision ID: chatbot_known_brands
-Revises: chatbot_esc_confirm_1323, fin_0002_billing_demand_class
+Revises: merge_28sep_esc_fin
 """
 import logging
 
@@ -81,7 +81,7 @@ from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from app.services.ai_prompt_registry import PROMPT_KEYS
 
 revision = "chatbot_known_brands"
-down_revision = ("chatbot_esc_confirm_1323", "fin_0002_billing_demand_class")
+down_revision = "merge_28sep_esc_fin"
 branch_labels = None
 depends_on = None
 
