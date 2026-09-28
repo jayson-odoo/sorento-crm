@@ -178,7 +178,7 @@ the `tests/scm` route-test pattern (`as_company_user`, `_grant`).
   `upgrade()` in a rolled back transaction (the `test_autocount_pull_sr1` pattern); roles holding
   `scm.proforma_invoice.upload` and `admin`, `superadmin` get `.upload`, `.view`, `.verify`; no
   `integration_%` role gets any; a second run adds nothing.
-- **AC-AU-01** `test_new_tables_and_product_suppliers_are_audit_tracked`.
+- **AC-AU-01** `test_new_tables_are_audit_tracked`; `product_suppliers` keeps main's `__audit_skip__` per the owner ruling on #1305 (28 Sep 2026, "ok keep skip now"), pinned by `test_product_suppliers_keeps_the_audit_skip`.
 - **AC-AU-02** `test_named_events_written` for upload, apply (with verified flag, dates and the
   change list), submit, return, hand edit.
 - **AC-AU-03** `test_apply_audit_rows_share_one_trace_id`.

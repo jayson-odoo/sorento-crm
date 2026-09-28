@@ -95,8 +95,8 @@ class Supplier(Base, CompanyScopedMixin):
 
 class ProductSupplier(Base, CompanyScopedMixin):
     __tablename__ = "product_suppliers"
-    # AC-AU-01: today a price can change with no trace at all - cost-price Lane A closes that.
-    __audit_track__ = True
+    # Owner ruling on #1305 (28 Sep 2026, "ok keep skip now"): the skip wins over AC-AU-01's
+    # tracking. A cost change is still traced through product_supplier_costs.
     __audit_skip__ = "product to supplier link from the master sync, 264 to 4,865 rows a day (measured 27 Sep 2026, review B3)"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))

@@ -21,20 +21,26 @@ from tests.support.cost_price_env import (
 # --------------------------------------------------------------------------------- AC-AU-01
 
 
-def test_new_tables_and_product_suppliers_are_audit_tracked():
+def test_new_tables_are_audit_tracked():
     from app.models.cost_price import (
         CostPriceChangeLine,
         CostPriceChangeSet,
         ProductSupplierCost,
         SupplierPriceLink,
     )
+
+    for model in (ProductSupplierCost, CostPriceChangeSet, CostPriceChangeLine, SupplierPriceLink):
+        assert getattr(model, "__audit_track__", False) is True, model.__name__
+
+
+def test_product_suppliers_keeps_the_audit_skip():
+    """Owner ruling on #1305 (28 Sep 2026), verbatim "ok keep skip now": main's measured
+    `__audit_skip__` (audit backbone #1299, review B3) wins over AC-AU-01's opt-in, so the
+    link table is not tracked; its cost history lives in `product_supplier_costs`."""
     from app.models.procurement import ProductSupplier
 
-    for model in (
-        ProductSupplierCost, CostPriceChangeSet, CostPriceChangeLine,
-        SupplierPriceLink, ProductSupplier,
-    ):
-        assert getattr(model, "__audit_track__", False) is True, model.__name__
+    assert not getattr(ProductSupplier, "__audit_track__", False)
+    assert getattr(ProductSupplier, "__audit_skip__", "")
 
 
 # --------------------------------------------------------------------------------- AC-AU-02

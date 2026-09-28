@@ -16,7 +16,7 @@ from pathlib import Path
 
 from tests.fixtures.cost_price.taiyang_shapes import LETTERHEAD_TEXT, simple_price_list_workbook
 from tests.support.cost_price_env import (
-    AUDIT_ACTION_CHECK_MIGRATION,
+    AUDIT_ACTION_CHECK_MIGRATIONS,
     BASE,
     PS_ADD_PERM,
     PS_DELETE_PERM,
@@ -29,15 +29,16 @@ from tests.support.cost_price_env import (
     cost_price_env,
 )
 
-ADMITTED = {"CREATE", "READ", "UPDATE", "DELETE", "IMPORT"}
+ADMITTED = {"CREATE", "READ", "UPDATE", "DELETE", "IMPORT", "EVENT"}
 
 
-def test_only_migration_271_defines_the_action_check():
-    """The fixture copies the constraint from 271; a later migration redefining it would
-    make that copy stale, so this names the file to update when that happens."""
+def test_only_the_known_migrations_define_the_action_check():
+    """The fixture copies the constraint from its newest definition (aud_0001, main's audit
+    backbone #1299, which superseded 271); a later migration redefining it would make that
+    copy stale, so this names the files to update when that happens."""
     versions = Path(__file__).resolve().parents[1] / "alembic" / "versions"
     defining = sorted(p.name for p in versions.glob("*.py") if "audit_logs_action_check" in p.read_text())
-    assert defining == [AUDIT_ACTION_CHECK_MIGRATION]
+    assert defining == sorted(AUDIT_ACTION_CHECK_MIGRATIONS)
     assert {a.strip("'") for a in admitted_audit_actions().strip("()").split(",")} == ADMITTED
 
 

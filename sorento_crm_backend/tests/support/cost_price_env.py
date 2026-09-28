@@ -421,12 +421,15 @@ def _wire_overrides(e: "CostPriceEnv", db) -> None:
     app.dependency_overrides[apply_company_scope] = _override_scope
 
 
-AUDIT_ACTION_CHECK_MIGRATION = "271_audit_action_allow_import.py"
+# 271 first defined the constraint; main's audit backbone (#1299) redefines it in aud_0001
+# (adds EVENT), so the fixture copies the newest definition.
+AUDIT_ACTION_CHECK_MIGRATIONS = ("271_audit_action_allow_import.py", "aud_0001_audit_standard_s0.py")
+AUDIT_ACTION_CHECK_MIGRATION = AUDIT_ACTION_CHECK_MIGRATIONS[-1]
 
 
 def admitted_audit_actions() -> str:
     """The `CHECK (action IN (...))` list production's `audit_logs_action_check` carries,
-    read from the migration that defines it (`_ALLOWED`), so this copy cannot drift."""
+    read from the migration that last defines it (`_NEW_ALLOWED`), so this copy cannot drift."""
     import importlib.util
     from pathlib import Path
 
@@ -434,14 +437,14 @@ def admitted_audit_actions() -> str:
     spec = importlib.util.spec_from_file_location("_audit_action_check_migration", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module._ALLOWED
+    return module._NEW_ALLOWED
 
 
 def install_audit_action_check(db) -> None:
     """Put production's `audit_logs_action_check` on the scratch `audit_logs`.
 
     `blank_session()` (and CI's `scripts.bootstrap_env`) build the schema from the ORM
-    models, and that constraint exists only in migration 271, so without this an audit row
+    models, and that constraint exists only in migrations (271, aud_0001), so without this an audit row
     with an action production rejects (round 3's `COST_SET_UPLOAD`, a 500 on every real
     upload) passes the suite. The ALTER runs inside the test's own transaction, which is
     rolled back at teardown, on this process's private scratch schema.
