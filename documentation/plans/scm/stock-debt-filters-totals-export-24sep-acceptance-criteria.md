@@ -138,7 +138,7 @@ changed it.
   Delivered = `qty_delivered`, Outstanding = today's `open_qty` (Ordered minus Delivered,
   floored at 0) - unchanged, just relabelled from "Open". The backend cell line gains
   `qty_ordered` and `qty_delivered`; `open_qty` stays.
-- R23 (owner, 24 Sep, third red batch) Stock Debt counts SUPPLY as on hand + SPO only.
+- R23 **[SUPERSEDED 28 Sep 2026 by plan v7 R42, AC-PO-1..AC-PO-8 (#1331)]** (owner, 24 Sep, third red batch) Stock Debt counts SUPPLY as on hand + SPO only.
   Purchase orders are not supply ("got PO doesn't mean got supply"): no PO event enters
   the stock debt walk, free or pinned, so a line covered only by a PO reads Short, its
   month books the shortfall, and the drill's Supply tab lists no PO rows. The fulfilment
