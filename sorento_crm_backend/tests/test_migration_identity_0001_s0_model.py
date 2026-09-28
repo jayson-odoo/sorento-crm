@@ -88,10 +88,13 @@ def test_revision_id_fits_alembic_version_and_sits_on_its_parent():
 
 def test_placement_check_survives_a_later_migration_stacked_on_top(tmp_path):
     """Any PR that adds its own migration above this one (PR #1313) must not turn
-    this file red: the graph is still correct and single-headed there."""
+    this file red: the graph is still correct and single-headed there. Stacked on the
+    graph's current head, which is this migration on main and a later one on a branch
+    that already carries its own (one head either way)."""
+    (current_head,) = _script().get_heads()
     (tmp_path / "zzt_0001_on_top_of_identity.py").write_text(
         'revision = "zzt_0001_on_top_of_identity"\n'
-        f'down_revision = "{MODULE_NAME}"\n'
+        f'down_revision = "{current_head}"\n'
         "branch_labels = None\n"
         "depends_on = None\n\n\n"
         "def upgrade():\n    pass\n\n\n"
