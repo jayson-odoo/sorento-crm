@@ -1,0 +1,48 @@
+{
+  "rank_by": "quantity",
+  "basis": "delivered",
+  "group": "item",
+  "n": 10,
+  "date_from": "2026-07-01",
+  "date_to": "2026-09-30",
+  "filters": {
+    "customer_name": "HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD [A/C I]",
+    "category_name": null,
+    "sales_agent": null,
+    "channel": null,
+    "dealer_scoped": false
+  },
+  "total_count": 4,
+  "rows": [
+    {
+      "rank": 1,
+      "code": "SRTWT7445",
+      "quantity": 180,
+      "amount": 12600.0
+    },
+    {
+      "rank": 2,
+      "code": "SRTKT39SS",
+      "quantity": 150,
+      "amount": 4800.0
+    },
+    {
+      "rank": 3,
+      "code": "SRTBS1020",
+      "quantity": 40,
+      "amount": 2400.0
+    },
+    {
+      "rank": 4,
+      "code": "SRTSH2201",
+      "quantity": 12,
+      "amount": 0
+    }
+  ],
+  "totals": {
+    "quantity": 382,
+    "amount": 19800.0
+  },
+  "sales_agent_fill_rate": null,
+  "detail": null
+}

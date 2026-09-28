@@ -108,10 +108,19 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     # read by `turn/apply.py::_open_question_answer` before any shape rule. 37 -> 38.
     # Merged with #1267's two rows above: 38 + 2 -> 40.
     "open_question_answer": "app/services/chatbot/turn/apply.py",
+    # 26 Sep 2026 (PLAN-chatbot-top-x-hot-selling-24sep.md S4): the top selling ask's
+    # three axes, read by `turn/apply.py::_top_selling_rules` onto `Focus.top_selling`.
+    # 38 declared keys -> 41.
+    "rank_by": "app/services/chatbot/turn/apply.py",
+    "basis": "app/services/chatbot/turn/apply.py",
+    "rank_group": "app/services/chatbot/turn/apply.py",
+    # Fix lane round 4 (owner retest, 27 Sep 2026): "cold selling", "least sold".
+    # 41 declared keys -> 42.
+    "rank_direction": "app/services/chatbot/turn/apply.py",
 }
 
 
-def test_measured_read_set_matches_the_40_declared_keys():
+def test_measured_read_set_matches_the_44_declared_keys():
     """The table above is complete and has no typo - every declared key is measured read
     exactly once, and the table names nothing DECLARED_KEYS does not also carry. Catches a
     stale table before it can hide a real drift in the two tests below."""
