@@ -4,23 +4,18 @@ One `stock_asks` row per stock ask the chatbot answered for an "Availability onl
 Exactly R9's fields; `customer_id` nullable (R8 "record the ask": a contact with no
 resolvable customer still gets a row). Deleting a customer removes its asks (AC-SA512).
 
-**Also the merge point of main's two heads.** origin/main 77d083a2 carried two heads,
-`chatbot_esc_confirm_1323` and `fin_0002_billing_demand_class`, both on
-`fin_0001_billing_documents`; this revision names both as its parents, so the branch has one
-head again. Neither parent touches `stock_asks`, so the order they run in does not matter.
-
 `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` keep this re-runnable against a
 schema `Base.metadata.create_all` already built (`scripts.bootstrap_env`).
 
 Revision ID: sa2_0004_stock_asks
-Revises: chatbot_esc_confirm_1323, fin_0002_billing_demand_class
+Revises: merge_28sep_batch2
 Create Date: 2026-09-28
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "sa2_0004_stock_asks"
-down_revision = ("chatbot_esc_confirm_1323", "fin_0002_billing_demand_class")
+down_revision = "merge_28sep_batch2"
 branch_labels = None
 depends_on = None
 
