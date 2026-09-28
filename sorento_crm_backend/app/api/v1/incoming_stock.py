@@ -53,6 +53,48 @@ class _Contact:
     def eta_from(self, db: Session, eta_from: Optional[date]) -> Optional[date]:
         return query_eta_from(db, self.rules, eta_from)
 
+    def windowed(self, eta_from: Optional[date], eta_to: Optional[date]) -> bool:
+        """Is this answer judged on the PADDED date? Then the service's own paging (on the
+        real date, over a widened window) cannot be trusted: a page of rows that pad out of
+        the window would read as "nothing arriving" while a later page holds the answer."""
+        return bool(
+            self.rules is not None
+            and self.rules.offset_applied
+            and (eta_from is not None or eta_to is not None)
+        )
+
+
+#: How many rows a windowed contact answer reads before judging them on the padded date:
+#: _WINDOW_PAGES service pages of the service's own maximum (50). A contact asking about
+#: a date window past this many shipments is answered from the earliest of them.
+_WINDOW_PAGES = 10
+_SERVICE_MAX_LIMIT = 50
+
+
+def _fetch_window(
+    fetch, contact: _Contact, *, eta_from, eta_to, page: int, limit: int, pageable: bool = True
+):
+    """Fetch the page the caller asked for - or, when the answer is judged on the padded
+    date, every row of the widened window (up to `_WINDOW_PAGES` service pages), so
+    `_for_contact` can filter them and page the survivors itself."""
+    if not contact.windowed(eta_from, eta_to):
+        return fetch(page, limit), None
+    first = fetch(1, _SERVICE_MAX_LIMIT)
+    rows = list(first.get("data") or []) if isinstance(first, dict) else []
+    n = 1
+    while pageable and isinstance(first, dict) and n < _WINDOW_PAGES:
+        if len(rows) >= int((first.get("pagination") or {}).get("total") or 0):
+            break
+        n += 1
+        more = fetch(n, _SERVICE_MAX_LIMIT)
+        chunk = (more or {}).get("data") or []
+        if not chunk:
+            break
+        rows.extend(chunk)
+    if isinstance(first, dict):
+        first["data"] = rows
+    return first, (page, limit)
+
 
 def _for_contact(
     db: Session,
@@ -62,6 +104,7 @@ def _for_contact(
     current_user,
     eta_from: Optional[date] = None,
     eta_to: Optional[date] = None,
+    paged: Optional[tuple[int, int]] = None,
 ):
     """One gate for every incoming route: the contact's ETA offset and packing list rule
     (`eta_policy.apply_to_incoming`), then the per-field reveals. Both read the SAME
@@ -71,6 +114,13 @@ def _for_contact(
     if contact.rules is None:
         return result
     result = apply_to_incoming(db, result, contact.rules, eta_from=eta_from, eta_to=eta_to)
+    if paged is not None and isinstance(result, dict) and isinstance(result.get("data"), list):
+        # `_fetch_window` read the whole widened window: page it on the padded date here.
+        page, limit = paged
+        rows = result["data"]
+        result["data"] = rows[(page - 1) * limit : page * limit]
+        result["pagination"] = {"total": len(rows), "page": page, "limit": limit}
+        result["empty"] = not result["data"]
     return apply_field_access(
         db,
         result,
@@ -164,17 +214,33 @@ def get_incoming_for_product(
     try:
         svc = IncomingStockService(db)
         contact = _Contact(db, contact_id, space_id)
-        result = svc.incoming_for_product(
-            product_ids=resolved_product_filter or None,
-            query=query,
-            eta_from=contact.eta_from(db, eta_from),
+        # A windowed contact answer reads the service's maximum and pages the products
+        # that survive the padded window itself (`_fetch_window`); this route has no page.
+        result, paged = _fetch_window(
+            lambda _page, page_limit: svc.incoming_for_product(
+                product_ids=resolved_product_filter or None,
+                query=query,
+                eta_from=contact.eta_from(db, eta_from),
+                eta_to=eta_to,
+                limit=page_limit,
+            ),
+            contact,
+            eta_from=eta_from,
             eta_to=eta_to,
+            page=1,
             limit=limit,
+            pageable=False,
         )
         if entity_echo is not None and isinstance(result, dict):
             result["resolved_entities"] = entity_echo
         return _for_contact(
-            db, result, contact, current_user=current_user, eta_from=eta_from, eta_to=eta_to
+            db,
+            result,
+            contact,
+            current_user=current_user,
+            eta_from=eta_from,
+            eta_to=eta_to,
+            paged=paged,
         )
     except Exception as e:
         raise handle_internal_error(str(e))
@@ -237,11 +303,18 @@ def get_incoming_shipments(
     try:
         svc = IncomingStockService(db)
         contact = _Contact(db, contact_id, space_id)
-        result = svc.incoming_shipments(
-            query=extra_query,
-            shipment_ids=shipment_uuid_list,
-            supplier_ids=supplier_uuid_list,
-            eta_from=contact.eta_from(db, eta_from),
+        result, paged = _fetch_window(
+            lambda p, n: svc.incoming_shipments(
+                query=extra_query,
+                shipment_ids=shipment_uuid_list,
+                supplier_ids=supplier_uuid_list,
+                eta_from=contact.eta_from(db, eta_from),
+                eta_to=eta_to,
+                page=p,
+                limit=n,
+            ),
+            contact,
+            eta_from=eta_from,
             eta_to=eta_to,
             page=page,
             limit=limit,
@@ -249,7 +322,13 @@ def get_incoming_shipments(
         if entity_echo is not None and isinstance(result, dict):
             result["resolved_entities"] = entity_echo
         return _for_contact(
-            db, result, contact, current_user=current_user, eta_from=eta_from, eta_to=eta_to
+            db,
+            result,
+            contact,
+            current_user=current_user,
+            eta_from=eta_from,
+            eta_to=eta_to,
+            paged=paged,
         )
     except Exception as e:
         raise handle_internal_error(str(e))
@@ -322,12 +401,19 @@ def get_incoming_list(
         contact = _Contact(db, contact_id, space_id)
         # product_ids may be UUIDs or product_codes; the service resolves both, so
         # pass through raw rather than via parse_uuid_list (which rejects codes).
-        result = svc.incoming_list(
-            product_ids=flat_product_ids or None,
-            shipment_ids=parse_uuid_list(shipment_ids, param_name="shipment_ids"),
-            supplier_ids=parse_uuid_list(supplier_ids, param_name="supplier_ids"),
-            query=query,
-            eta_from=contact.eta_from(db, eta_from),
+        result, paged = _fetch_window(
+            lambda p, n: svc.incoming_list(
+                product_ids=flat_product_ids or None,
+                shipment_ids=parse_uuid_list(shipment_ids, param_name="shipment_ids"),
+                supplier_ids=parse_uuid_list(supplier_ids, param_name="supplier_ids"),
+                query=query,
+                eta_from=contact.eta_from(db, eta_from),
+                eta_to=eta_to,
+                page=p,
+                limit=n,
+            ),
+            contact,
+            eta_from=eta_from,
             eta_to=eta_to,
             page=page,
             limit=limit,
@@ -342,7 +428,13 @@ def get_incoming_list(
         # packing list rule, before the field reveals (`_for_contact`).
         if contact.asked:
             return _for_contact(
-                db, result, contact, current_user=current_user, eta_from=eta_from, eta_to=eta_to
+                db,
+                result,
+                contact,
+                current_user=current_user,
+                eta_from=eta_from,
+                eta_to=eta_to,
+                paged=paged,
             )
         return apply_field_access(
             db,

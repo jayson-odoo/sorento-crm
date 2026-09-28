@@ -703,9 +703,14 @@ class StockService:
             # (one cheap extra lookup) so `_apply_stock_visibility` can read that
             # contact's own `packing_list_allowed` toggle without threading a bigger
             # change through `resolve_policy`'s other callers.
-            from app.services.field_access import resolve_contact_id
+            #
+            # Issue #1328: resolved through `eta_policy.resolve_request_contact` (with the
+            # NULL-workspace fallback), the SAME resolution the incoming routes use, so a
+            # contact's ETA and packing list switches read identically on both. Only the
+            # switches read this id; the policy above keeps its own lookup.
+            from app.services.eta_policy import resolve_request_contact
 
-            resolved_contact_id = resolve_contact_id(self.db, contact_id, space_id)
+            resolved_contact_id = resolve_request_contact(self.db, contact_id, space_id)
             if policy is None:
                 return {
                     "data": [],

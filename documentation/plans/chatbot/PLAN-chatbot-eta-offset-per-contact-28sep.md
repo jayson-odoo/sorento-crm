@@ -1,6 +1,6 @@
 # PLAN: chatbot ETA +x days from one per-contact switch; container and quantity deniable; packing list gate on incoming
 
-Status: IN PROGRESS - issue #1328, full track (migration), cloud lane (28 Sep 2026)
+Status: IN REVIEW - issue #1328, full track (migration), cloud lane, PR #1329 (28 Sep 2026)
 Domain: chatbot / incoming stock / contacts
 UAC: `chatbot-eta-offset-per-contact-28sep-acceptance-criteria.md`
 
@@ -42,8 +42,38 @@ UAC: `chatbot-eta-offset-per-contact-28sep-acceptance-criteria.md`
   the agent, with per-contact exceptions). Denying quantity also strips the sibling quantity
   keys (`unallocated_quantity`, `allocated_quantity`, `total_remaining_incoming_quantity`) so
   no number leaks through a neighbour.
-- All three incoming routes accept `contact_id` / `space_id` and run the same gate
-  (`apply_incoming_contact_rules`).
+- All five incoming routes (`/list`, `/by-product`, `/shipments`, `/shipments/{id}/products`,
+  `/shipments/{id}/attachment`) accept `contact_id` / `space_id` and run one gate
+  (`incoming_stock._for_contact`). The contact is resolved ONCE per request, with the
+  NULL-workspace fallback the chatbot's own access check uses, and both the ETA rules and
+  the field reveals read that id. The stock ask reads its switches through the same resolver.
+- **ETA windows** (`eta_from` / `eta_to`) are judged on the date the contact is told: the SQL
+  lower bound widens by the largest offset any product or category carries, the widened set
+  is read (up to 10 service pages of 50) and filtered on the padded date, then paged. Rows are
+  re-ordered on the padded date.
+- **A row naming several products** is padded by the LARGEST offset among them (`/list` asked
+  for two products on one container, `/shipments`); a code carried by two companies' products
+  takes the larger too. The stock ask answers one product and uses that product's own offset,
+  so the two agree whenever one product is asked about. A `/shipments` row counts only its
+  still-incoming lines, keyed by (company, shipment number); a row with no shipment number is
+  padded by the largest offset there is.
+
+## Behaviour changes on deploy (stated, not hidden)
+
+- A contact that resolves to nobody (wrong `space_id`, unknown id) on `/by-product` and
+  `/shipments` now gets every gated field withheld (ETA, container, quantity) and no packing
+  list - fail closed, the rule `/list` already followed. Before, those two routes returned the
+  whole payload for any `contact_id`.
+- Contacts that DO resolve see no change on container and quantity (shipped allowed) and see
+  the padded ETA on incoming (the switch defaults on, matching the stock ask).
+
+## Out of scope (named so it is not assumed covered)
+
+- The outstanding / order reports that print container numbers or incoming quantities
+  (`sorento_crm_mcp/catalog.py` outstanding report) do not read the new incoming reveals.
+- The Container Status workbook carries the raw ETA; it is `sorento_office` only.
+- A contact can still confirm a guessed container number by searching for it on `/list` /
+  `/shipments` `query`; the MCP tool specs do not expose `query` to the chatbot.
 
 ## Migration
 

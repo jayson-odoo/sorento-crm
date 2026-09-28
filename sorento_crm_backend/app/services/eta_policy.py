@@ -97,8 +97,8 @@ def visible_eta(eta: Optional[date], offset: int, rules: ContactEtaRules) -> Opt
 
 
 def _offsets_by_product_code(db: Session, codes: Iterable[str]) -> dict[str, int]:
-    """`{lower(product_code): offset}`. A code carried by two companies' products takes the
-    larger of their offsets - the same rule a multi-product row follows."""
+    """`{lower(trimmed product_code): offset}`. A code carried by two companies' products
+    takes the larger of their offsets - the same rule a multi-product row follows."""
     from sqlalchemy import func
 
     from app.models.product import Product, ProductCategory
@@ -109,7 +109,7 @@ def _offsets_by_product_code(db: Session, codes: Iterable[str]) -> dict[str, int
     rows = (
         db.query(Product, ProductCategory)
         .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
-        .filter(func.lower(Product.product_code).in_(wanted))
+        .filter(func.lower(func.trim(Product.product_code)).in_(wanted))
         .all()
     )
     out: dict[str, int] = {}
@@ -120,28 +120,35 @@ def _offsets_by_product_code(db: Session, codes: Iterable[str]) -> dict[str, int
     return out
 
 
-def _offsets_by_shipment_number(db: Session, numbers: Iterable[str]) -> dict[str, int]:
-    """`{shipment_number: offset}` over each shipment's own product lines, for the
-    `/shipments` row that names no product at all."""
+def _offsets_by_shipment(
+    db: Session, rows: Iterable[dict[str, Any]]
+) -> dict[tuple[Optional[str], str], int]:
+    """`{(company_id, shipment_number): offset}` for rows that name no product (`/shipments`),
+    over each shipment's STILL-INCOMING lines - the same lines `/list` answers with.
+    Shipment numbers are unique per company only, so the company is part of the key;
+    `(None, number)` carries the largest across companies for a row with no company."""
     from app.models.procurement import InboundShipment, InboundShipmentLine
     from app.models.product import Product
+    from app.services.incoming_stock_service import _still_incoming_filter
 
-    wanted = {n for n in numbers if isinstance(n, str) and n}
+    wanted = {r.get("shipment_number") for r in rows}
+    wanted = {n for n in wanted if isinstance(n, str) and n}
     if not wanted:
         return {}
-    pairs = (
-        db.query(InboundShipment.shipment_number, Product.product_code)
+    triples = (
+        db.query(InboundShipment.company_id, InboundShipment.shipment_number, Product.product_code)
         .join(InboundShipmentLine, InboundShipmentLine.shipment_id == InboundShipment.id)
         .join(Product, Product.id == InboundShipmentLine.product_id)
-        .filter(InboundShipment.shipment_number.in_(wanted))
+        .filter(InboundShipment.shipment_number.in_(wanted), _still_incoming_filter())
         .distinct()
         .all()
     )
-    by_code = _offsets_by_product_code(db, {code for _, code in pairs if code})
-    out: dict[str, int] = {}
-    for number, code in pairs:
+    by_code = _offsets_by_product_code(db, {code for _, _, code in triples if code})
+    out: dict[tuple[Optional[str], str], int] = {}
+    for company_id, number, code in triples:
         y = by_code.get((code or "").strip().lower(), 0)
-        out[number] = max(out.get(number, 0), y)
+        for key in ((str(company_id) if company_id else None, number), (None, number)):
+            out[key] = max(out.get(key, 0), y)
     return out
 
 
@@ -237,17 +244,22 @@ def apply_to_incoming(
         return payload
 
     by_code: dict[str, int] = {}
-    by_shipment: dict[str, int] = {}
+    by_shipment: dict[tuple[Optional[str], str], int] = {}
+    unnumbered = 0
     if rules.offset_applied:
         by_code = _offsets_by_product_code(
             db, [c for row in rows if isinstance(row, dict) for c in _codes_of(row)]
         )
         bare = [
-            row.get("shipment_number")
+            row
             for row in rows
             if isinstance(row, dict) and not _codes_of(row) and "shipments" not in row
         ]
-        by_shipment = _offsets_by_shipment_number(db, bare)
+        by_shipment = _offsets_by_shipment(db, bare)
+        if any(not row.get("shipment_number") for row in bare):
+            # No number to find its lines by: pad by the largest offset there is, so the
+            # contact is never promised it sooner than any product could be.
+            unnumbered = max_offset_days(db)
 
     windowed = rules.offset_applied and (eta_from is not None or eta_to is not None)
     kept: list[Any] = []
@@ -258,8 +270,13 @@ def apply_to_incoming(
         codes = _codes_of(row)
         if codes:
             offset = max((by_code.get((c or "").strip().lower(), 0) for c in codes), default=0)
+        elif not row.get("shipment_number"):
+            offset = unnumbered
         else:
-            offset = by_shipment.get(row.get("shipment_number"), 0)
+            offset = by_shipment.get(
+                (row.get("company_id"), row["shipment_number"]),
+                by_shipment.get((None, row["shipment_number"]), 0),
+            )
         _pad(row, offset, rules)
         if not rules.packing_list_allowed:
             row.pop("attachment", None)
@@ -286,8 +303,18 @@ def apply_to_incoming(
             continue
         kept.append(row)
 
-    if isinstance(data, list) and len(kept) != len(rows):
+    if isinstance(data, list) and rules.offset_applied:
+        # The service orders shipment rows on the REAL ETA; two offsets can swap them,
+        # so re-order on the date the contact reads (no ETA last, ties keep their order).
+        if all(isinstance(r, dict) and "shipments" not in r for r in kept):
+            kept.sort(
+                key=lambda r: (
+                    not isinstance(r.get("estimated_arrival_date"), date),
+                    r.get("estimated_arrival_date") or date.max,
+                )
+            )
         payload["data"] = kept
+    if isinstance(data, list) and len(kept) != len(rows):
         pagination = payload.get("pagination")
         if isinstance(pagination, dict) and isinstance(pagination.get("total"), int):
             pagination["total"] = max(0, pagination["total"] - (len(rows) - len(kept)))

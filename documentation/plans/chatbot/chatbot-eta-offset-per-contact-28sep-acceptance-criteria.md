@@ -17,3 +17,8 @@ Plan: `PLAN-chatbot-eta-offset-per-contact-28sep.md` (issue #1328)
   keys (absent, not null); a per-contact "allowed" exception restores them for that contact.
 - AC-EO9: an incoming answer for a contact whose "Packing list allowed" is off carries no
   attachment; for one whose switch is on it carries the packing list.
+- AC-EO10: an incoming ETA window ("arriving before X") is judged on the date the contact is
+  told, and a full page of rows that pad out of the window never hides a later match.
+- AC-EO11: a row naming several products is padded by the largest of their offsets.
+- AC-EO12: the single-shipment routes (`/shipments/{id}/products`, `/shipments/{id}/attachment`)
+  follow the same contact rules.

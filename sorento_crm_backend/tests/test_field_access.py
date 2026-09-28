@@ -636,9 +636,22 @@ def test_the_gate_runs_on_the_route_not_only_in_the_service():
 
     from app.api.v1 import incoming_stock
 
-    source = inspect.getsource(incoming_stock.get_incoming_list)
-    assert "apply_field_access" in source
-    assert "contact_id=contact_id" in source
+    # #1328: every incoming route answering a contact goes through ONE gate,
+    # `_for_contact`, which applies the field reveals for the resolved contact.
+    # `tests/test_incoming_contact_rules.py` pins the behaviour through the routes.
+    gate = inspect.getsource(incoming_stock._for_contact)
+    assert "apply_field_access" in gate
+    assert "contact_id=contact.resolved or _UNRESOLVED_CONTACT" in gate
+    for route in (
+        incoming_stock.get_incoming_list,
+        incoming_stock.get_incoming_for_product,
+        incoming_stock.get_incoming_shipments,
+        incoming_stock.get_incoming_shipment_products,
+        incoming_stock.get_incoming_shipment_attachment,
+    ):
+        assert "_for_contact(" in inspect.getsource(route), route.__name__
+    # The staff (no contact) path on /list still runs the RBAC gate.
+    assert "apply_field_access" in inspect.getsource(incoming_stock.get_incoming_list)
 
 
 def test_every_gated_field_is_a_real_column():

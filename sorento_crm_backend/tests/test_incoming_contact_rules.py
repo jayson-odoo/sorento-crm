@@ -614,3 +614,109 @@ def test_a_contact_in_another_workspace_fails_closed(client, db):
     assert not keys & {"attachment", "shipping_container_number", "estimated_arrival_date"}
     outcomes = {d["outcome"] for d in body["field_access"]["denied"]}
     assert outcomes == {"contact_not_found"}
+
+
+# ============================================================== code review round 1
+
+
+def _second_shipment(db, *, offset, eta):
+    """Another product (own category, own offset) on its own shipment."""
+    other = product(db, company_id=DEFAULT_COMPANY_ID)
+    _category_of(db, other).chatbot_eta_offset_days = offset
+    shipment = _incoming_shipment(db, eta=eta)
+    _incoming_line(db, shipment_id=shipment.id, product_id=other.id, shipped=5)
+    db.flush()
+    return other, shipment
+
+
+def test_a_windowed_answer_is_paged_on_the_padded_date(client, db):
+    """Blocker 1, reproduced by the reviewer: offsets 0 and 30, shipments 25 Oct and
+    10 Nov, eta_from 1 Nov, limit 1. The widened SQL window's first page is the 25 Oct
+    shipment, which pads out of the window - the answer must still be the 10 Nov one,
+    never "nothing arriving"."""
+    early_p, early = _seed(db, offset=0, eta=date(2026, 10, 25))
+    late_p, late = _second_shipment(db, offset=30, eta=date(2026, 11, 10))
+    # One shipment row needs its own container so `/list` can be asked by supplier-free
+    # window alone: ask by both products.
+    contact = _contact(db, offset_applied=True)
+
+    res = client.get(
+        "/api/v1/incoming-stock/list",
+        params={
+            "product_ids": f"{early_p.product_code},{late_p.product_code}",
+            "contact_id": contact.id,
+            "eta_from": "2026-11-01",
+            "limit": 1,
+        },
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert [r["shipment_number"] for r in body["data"]] == [late.shipment_number]
+    assert body["data"][0]["estimated_arrival_date"] == "2026-12-10"
+    assert body["pagination"]["total"] == 1
+    assert body["empty"] is False
+
+    ships = client.get(
+        "/api/v1/incoming-stock/shipments",
+        params={
+            "shipment_ids": f"{early.id},{late.id}",
+            "contact_id": contact.id,
+            "eta_from": "2026-11-01",
+            "limit": 1,
+        },
+    ).json()
+    assert [r["shipment_number"] for r in ships["data"]] == [late.shipment_number]
+    assert ships["pagination"]["total"] == 1
+
+
+def test_padded_rows_are_ordered_on_the_date_the_contact_reads(client, db):
+    """Real 20 Oct + 30 = 19 Nov; real 25 Oct + 0 = 25 Oct. The service orders on the real
+    date; the contact must read them in the order of the dates they are shown."""
+    _p1, s1 = _seed(db, offset=30, eta=date(2026, 10, 20))
+    _p2, s2 = _second_shipment(db, offset=0, eta=date(2026, 10, 25))
+    rows = client.get(
+        "/api/v1/incoming-stock/shipments",
+        params={"shipment_ids": f"{s1.id},{s2.id}", "contact_id": _contact(db).id},
+    ).json()["data"]
+    assert [r["estimated_arrival_date"] for r in rows] == ["2026-10-25", "2026-11-19"]
+
+
+def test_a_shipment_offset_counts_only_its_still_incoming_lines(client, db):
+    """Should-fix 4: a line already received is not what `/list` answers with, so its
+    product's offset must not pad the `/shipments` row either."""
+    _p, shipment = _seed(db, offset=2)
+    received = product(db, company_id=DEFAULT_COMPANY_ID)
+    _category_of(db, received).chatbot_eta_offset_days = 40
+    _incoming_line(
+        db, shipment_id=shipment.id, product_id=received.id, shipped=5, received=5,
+        status="received",
+    )
+    db.flush()
+    row = _shipments(client, shipment, _contact(db))["data"][0]
+    assert row["estimated_arrival_date"] == "2026-10-30"
+
+
+def test_the_stock_ask_reads_the_switch_of_a_contact_asked_by_respond_io_id(db):
+    """Should-fix 3: the stock ask reads the contact's switches through the same
+    `eta_policy.resolve_request_contact` the incoming routes use. (A NULL-workspace
+    contact never reaches this point on a stock ask: `stock_visibility.resolve_policy`
+    resolves without the fallback and answers nothing for one, before any switch is
+    read - so the two resolutions cannot disagree on an answered stock ask.)"""
+    p, _ = _seed(db)
+    space = unique_code("SPACE")[:30]
+    contact = _contact(db, offset_applied=False)
+    contact.respond_io_id = unique_code("RIO")
+    contact.workspace_id = _workspace(db, space).id
+    db.flush()
+    brw = _wh(db, unique_code("ZZTW")[:20])
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=0)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+
+    result = StockService(db).list_stock(
+        product_ids=[p.id],
+        contact_id=contact.respond_io_id,
+        space_id=space,
+        requested_quantities={p.id: 150},
+    )
+    assert _entry(result, p.id)["eta"] == "28/10/2026"
