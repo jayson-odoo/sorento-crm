@@ -434,7 +434,8 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
     const skip = (line: CostPriceChangeLine, reason: string) =>
       void patchLine.mutateAsync({ lineId: line.id, patch: { skipped: true, skip_reason: reason } });
     // Widths (1280, round 6 R2): every cell is one line, and a verifier's Decision column
-    // (150) still lands inside ~950px: 70 + 240 + 70 + 150 + 100 + 100 + 70 + 150 = 950.
+    // (150) still lands inside ~950px: 85 + 225 + 70 + 150 + 100 + 100 + 70 + 150 = 950.
+    // Round 7: Sheet / row took 15 from Supplier code so its header fits beside the sort icon.
     // The supplier code column is the widest: it carries the note and the duplicate rows.
     const base: ColumnDef<CostPriceChangeLine>[] = [
       {
@@ -445,7 +446,7 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
           (sheetIndex.get(a.original.sheet) ?? 0) - (sheetIndex.get(b.original.sheet) ?? 0) ||
           a.original.row_no - b.original.row_no,
         header: ({ column }) => <DataGridColumnHeader title="Sheet / row" column={column} />,
-        size: 70,
+        size: 85,
         cell: ({ row }) => (
           <div className={`${ONE_LINE} text-xs`} title={`${row.original.sheet}, row ${row.original.row_no}`}>
             <span className="truncate font-medium">{row.original.sheet}</span>
@@ -457,7 +458,7 @@ export function CostPriceLinesTab({ changeSet }: { changeSet: CostPriceChangeSet
         id: 'supplier_code',
         accessorFn: (l) => l.supplier_code ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Supplier code" column={column} />,
-        size: 240,
+        size: 225,
         cell: ({ row }) => {
           const line = row.original;
           const others = duplicateRowsText(line);
