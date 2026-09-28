@@ -1,0 +1,178 @@
+# Parser eval cases for issue #1323: escalation acceptance is the parser's semantic
+# verdict (`escalation.is_escalation_confirmation`), never `is_affirmative`.
+#
+# Production turn 9d9c417d-5c51-424a-b345-05da1b120c04 (28 Sep 2026, n8n execution
+# 18185302): a photo of ten product codes captioned "Check stocks level", sent while the
+# bot's "Would you like me to escalate to warehouse team?" offer was open, came back
+# `is_affirmative: true` and was handed to the warehouse team. Every case below injects
+# that open offer (a `team_pick`, `expects: yes_no`, one option "Yes") as
+# `previous_conversation_state`, so the parser reads each message against it.
+#
+# `live_only: true` on every case: these grade the REAL parser LLM and run by hand, once
+# per prompt change, never in CI. Pin the unpromoted version the migration published:
+#
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-28-escalation-confirmation.yaml \
+#       --base-url http://127.0.0.1:8000 \
+#       --prompt-version <id of the chatbot_esc_confirm_1323 row>
+#
+# `expect.parser` objects grade only the keys they name (`_grade_parser`), so an entity is
+# pinned by code, hint and current_message, and `escalation` by its one verdict.
+
+contact: '437264483'
+cases:
+- name: '#1323 photo codes captioned Check stocks level over the open warehouse offer is a stock ask,
+    not a confirmation'
+  live_only: true
+  previous_conversation_state:
+    focus:
+      domains:
+      - inventory
+    open_question:
+      kind: team_pick
+      expects: yes_no
+      team: warehouse
+      asked_at_turn: 4
+      payload:
+        agent: general_enquiries
+      options:
+      - position: 1
+        label: 'Yes'
+        entity_type: team
+        payload:
+          team: warehouse
+          agent: general_enquiries
+    ideation: null
+    access_levels: []
+    contains_flyer: false
+  text: |-
+    Check stocks level
+    CB110
+    CB114
+    CB112
+    CB01
+    CB07
+    CB2320
+    CB2340
+    CB1198
+    CB1198-DIY
+    CBST15-SS
+  expect:
+    parser:
+      escalation:
+        is_escalation_confirmation: false
+      entities:
+      - canonical_code: CB110
+        hint: product
+        current_message: true
+      - canonical_code: CB114
+        hint: product
+        current_message: true
+      - canonical_code: CB112
+        hint: product
+        current_message: true
+      - canonical_code: CB01
+        hint: product
+        current_message: true
+      - canonical_code: CB07
+        hint: product
+        current_message: true
+      - canonical_code: CB2320
+        hint: product
+        current_message: true
+      - canonical_code: CB2340
+        hint: product
+        current_message: true
+      - canonical_code: CB1198
+        hint: product
+        current_message: true
+      - canonical_code: CB1198-DIY
+        hint: product
+        current_message: true
+      - canonical_code: CBST15-SS
+        hint: product
+        current_message: true
+- name: '#1323 yes over the open warehouse offer confirms the handover'
+  live_only: true
+  previous_conversation_state:
+    focus:
+      domains:
+      - inventory
+    open_question:
+      kind: team_pick
+      expects: yes_no
+      team: warehouse
+      asked_at_turn: 4
+      payload:
+        agent: general_enquiries
+      options:
+      - position: 1
+        label: 'Yes'
+        entity_type: team
+        payload:
+          team: warehouse
+          agent: general_enquiries
+    ideation: null
+    access_levels: []
+    contains_flyer: false
+  text: 'yes'
+  expect:
+    parser:
+      escalation:
+        is_escalation_confirmation: true
+- name: '#1323 ok escalate over the open warehouse offer confirms the handover'
+  live_only: true
+  previous_conversation_state:
+    focus:
+      domains:
+      - inventory
+    open_question:
+      kind: team_pick
+      expects: yes_no
+      team: warehouse
+      asked_at_turn: 4
+      payload:
+        agent: general_enquiries
+      options:
+      - position: 1
+        label: 'Yes'
+        entity_type: team
+        payload:
+          team: warehouse
+          agent: general_enquiries
+    ideation: null
+    access_levels: []
+    contains_flyer: false
+  text: ok escalate
+  expect:
+    parser:
+      escalation:
+        is_escalation_confirmation: true
+- name: '#1323 boleh, escalate over the open warehouse offer confirms the handover'
+  live_only: true
+  previous_conversation_state:
+    focus:
+      domains:
+      - inventory
+    open_question:
+      kind: team_pick
+      expects: yes_no
+      team: warehouse
+      asked_at_turn: 4
+      payload:
+        agent: general_enquiries
+      options:
+      - position: 1
+        label: 'Yes'
+        entity_type: team
+        payload:
+          team: warehouse
+          agent: general_enquiries
+    ideation: null
+    access_levels: []
+    contains_flyer: false
+  text: boleh, escalate
+  expect:
+    parser:
+      escalation:
+        is_escalation_confirmation: true

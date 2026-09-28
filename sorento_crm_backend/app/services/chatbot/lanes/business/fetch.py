@@ -401,6 +401,9 @@ SCALAR_PARAMS: frozenset[str] = frozenset()
 #: The sales analysis's `group_by` -> the route's `rows` (the years are always across).
 #: "month" is months down the side; "year" and no axis said are one line per channel.
 SALES_ANALYSIS_GROUP_BY = {"": "channel", "year": "channel", "month": "month"}
+#: The bases `GET /sales/analysis` answers (finance S1 added invoiced); anything else,
+#: or none, is Delivered, the report's default.
+SALES_ANALYSIS_BASES = ("ordered", "delivered", "invoiced")
 
 DATE_PARAMS: dict[str, tuple[str, str]] = {
     "crm_order_management_orders_list": ("actual_delivery_date_from", "actual_delivery_date_to"),
@@ -826,7 +829,7 @@ def entity_ids_transformer(
         if channel in ("dealer", "project"):
             out["channel"] = channel
         basis = jsc.get(semantic_input, "sales_basis")
-        out["basis"] = basis if basis in ("ordered", "delivered") else "delivered"
+        out["basis"] = basis if basis in SALES_ANALYSIS_BASES else "delivered"
         company = jsc.get(semantic_input, "sales_company")
         if jsc.truthy(company):
             out["company"] = jsc.js_string(company).strip()
