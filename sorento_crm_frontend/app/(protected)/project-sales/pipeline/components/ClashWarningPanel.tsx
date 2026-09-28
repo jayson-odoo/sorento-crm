@@ -8,8 +8,8 @@ import { cn } from '@/lib/utils';
 import type { ClashCandidate } from '../../_shared/types/project.types';
 
 /**
- * Shows what the system already knows about this development, while the user is
- * still typing the title.
+ * Shows what the system already knows about this development, once the user checks
+ * the title (the Check button beside it) or submits.
  *
  * Two visually distinct halves, because the two cases need different actions:
  *

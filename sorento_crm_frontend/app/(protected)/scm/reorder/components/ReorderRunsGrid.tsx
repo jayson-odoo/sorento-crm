@@ -344,7 +344,6 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
         onRowClick={(row) => router.push(`/scm/reorder/${row.run_id}`)}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         listingKey="scm.reorder.run"
-        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">

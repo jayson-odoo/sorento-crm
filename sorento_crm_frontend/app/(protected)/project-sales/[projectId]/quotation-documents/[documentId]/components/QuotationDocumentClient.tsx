@@ -450,8 +450,9 @@ export function QuotationDocumentClient({
     <div className="space-y-5">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
+          {/* No document number here: the page title above already is that number, and a
+              second copy under the breadcrumb is repeated information (#1335). */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm text-muted-foreground">{record.document_no}</span>
             {/* The SAME reading as the project's quotation list. This badge used to be its own
                 `is_issued ? Issued : Draft`, which is why a quotation the customer had accepted
                 read "Accepted" in the list and "Issued" here - the two surfaces answered the same

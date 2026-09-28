@@ -165,7 +165,20 @@ describe('AwaitingAcceptanceClient', () => {
     expect(
       await screen.findByText('Every assigned lead has been accepted'),
     ).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Go to leads' })).toBeInTheDocument();
+    // #1335: the header's "All leads" is the one way to the leads list; the empty
+    // state keeps its hint but does not repeat it, and there is no subtitle.
+    expect(screen.queryByRole('link', { name: 'Go to leads' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: /leads/i })).toHaveLength(1);
+    expect(screen.getByRole('link', { name: 'All leads' })).toHaveAttribute(
+      'href',
+      '/project-sales/leads',
+    );
+    expect(
+      screen.getByText(/Assign a lead from the leads list/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/who has not accepted them yet/i),
+    ).not.toBeInTheDocument();
   });
 
   it('distinguishes an empty filter result from an empty worklist', async () => {

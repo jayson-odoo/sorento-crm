@@ -45,6 +45,7 @@ from app.services.chatbot_parser_prompt import (
     SALES_ANALYSIS_ADDENDUM,
     SALES_REPORT_ADDENDUM,
     STOCK_TASK_ADDENDUM,
+    TOP_SELLING_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
 )
 
@@ -158,10 +159,12 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         FULL body and dev's is on the SLIM one.
 
         The strong `.endswith` form is restored (review S4, 12 Sep 2026) by stripping the
-        LATER addenda first, newest outermost: `KNOWN_BRANDS_ADDENDUM` (issue #1262
-        slice 9, 26 Sep 2026), then `QUANTITY_ADDENDUM` (issue #1262 slice 5,
-        26 Sep 2026), then `SALES_ANALYSIS_ADDENDUM` (#1267 S1), then
-        `STOCK_TASK_ADDENDUM` (chatbot-stock-ask-v2 S3), then `SALES_REPORT_ADDENDUM`
+        LATER addenda first, outermost first: `ESCALATION_CONFIRMATION_ADDENDUM` (#1323,
+        the tail), `TOP_SELLING_ADDENDUM` (PLAN-chatbot-top-x-hot-selling-24sep.md S4),
+        then `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep 2026), then
+        `QUANTITY_ADDENDUM` (issue #1262 slice 5, 26 Sep 2026), then
+        `SALES_ANALYSIS_ADDENDUM` (#1267 S1), then `STOCK_TASK_ADDENDUM`
+        (chatbot-stock-ask-v2 S3), then `SALES_REPORT_ADDENDUM`
         (PLAN-chatbot-sales-report.md S4 wiring point 1), then `LOW_STOCK_ADDENDUM`
         (PLAN-low-stock-report.md S7, 14 Sep 2026), then `LAST_COST_ADDENDUM`. Each stacks
         AFTER `GROWTH_R1_ADDENDUM` on both bodies, the same way this addendum itself
@@ -169,8 +172,10 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         once the later ones are off."""
         for body in (SEMANTIC_PARSER_PROMPT,):
             assert body.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(
-                KNOWN_BRANDS_ADDENDUM
-            ).removesuffix(QUANTITY_ADDENDUM).removesuffix(SALES_ANALYSIS_ADDENDUM).removesuffix(
+                TOP_SELLING_ADDENDUM
+            ).removesuffix(KNOWN_BRANDS_ADDENDUM).removesuffix(QUANTITY_ADDENDUM).removesuffix(
+                SALES_ANALYSIS_ADDENDUM
+            ).removesuffix(
                 STOCK_TASK_ADDENDUM
             ).removesuffix(
                 SALES_REPORT_ADDENDUM

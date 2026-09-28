@@ -492,7 +492,6 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
             )}
           </div>
         }
-        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">

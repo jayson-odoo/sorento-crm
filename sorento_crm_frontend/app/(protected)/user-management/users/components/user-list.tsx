@@ -755,7 +755,6 @@ const UserList = () => {
     <>
       <DataGrid
         table={table}
-        emptyAction={addUserButton}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
         isPlaceholderData={isPlaceholderData}
