@@ -374,6 +374,23 @@ def _harness_value(envelope: Envelope, key: str) -> Any:
     return (envelope.model_extra or {}).get(key)
 
 
+def _chat_console(envelope: Envelope) -> bool:
+    """A dry run the chat console page sent (owner ruling 28 Sep 2026, chatbot stock ask
+    v2): D14's `dry_run`, `ingress == "console"`, and the `console_origin` extra that only
+    `console_service`'s two envelope builders set. The Prompts screen's "Run a turn" also
+    says `ingress: console` but never sets the extra, so it is not one.
+
+    `console_origin` is an extra rather than a declared field for the reason `HARNESS_KEYS`
+    gives, and so the pinned external contract (AC-1507) is unchanged. Only the stock ask
+    hooks read this (`_run_answer`); every other D14 guard still reads `dry_run` alone.
+    """
+    return bool(
+        envelope.dry_run
+        and envelope.ingress == "console"
+        and _harness_value(envelope, "console_origin") is True
+    )
+
+
 def _inject_harness_session(
     session_block: dict[str, Any], envelope: Envelope
 ) -> dict[str, Any]:
@@ -3048,7 +3065,7 @@ def _run_stages(  # noqa: PLR0915
             verdict=verdict,
             recalled=recalled,
             stock_ask_entries=stock_ask_entries,
-            chat_console=envelope.chat_console,
+            chat_console=_chat_console(envelope),
         )
 
     with _session(session_factory) as db:
