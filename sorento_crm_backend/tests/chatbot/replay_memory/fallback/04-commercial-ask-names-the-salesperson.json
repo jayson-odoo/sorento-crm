@@ -1,0 +1,86 @@
+{
+  "name": "04-commercial-ask-names-the-salesperson",
+  "about": "Plan 7.3 example 4, AC-MEM087: a commercial ask (discount) is handed over naming the linked salesperson; routing is the existing escalation lane.",
+  "needs_memory": true,
+  "console": true,
+  "given": {
+    "memory_level": "full",
+    "first_name": "Tan",
+    "frames": [
+      {
+        "days_ago": 3,
+        "domain": "inventory",
+        "summary": "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined."
+      },
+      {
+        "days_ago": 5,
+        "domain": "order",
+        "summary": "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      }
+    ],
+    "profile_facts": [
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ],
+        "source": "tallied",
+        "source_ref": null,
+        "first_seen": "2026-09-01",
+        "last_seen": "2026-09-25",
+        "seen_count": 5,
+        "set_by": null
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ],
+        "source": "tallied",
+        "source_ref": null,
+        "first_seen": "2026-09-01",
+        "last_seen": "2026-09-25",
+        "seen_count": 4,
+        "set_by": null
+      }
+    ],
+    "customer": {
+      "name": "Chin Chun Trading",
+      "code": "CC001",
+      "salesperson": "Aina"
+    }
+  },
+  "turn": {
+    "message": "can give 10% discount for SO-2409-0112?",
+    "verdict": {
+      "message_type": "request_for_help",
+      "intent_hint": "commercial_request",
+      "domain_hint": null,
+      "user_goal": "asking for a discount",
+      "entities": [
+        {
+          "raw": "SO-2409-0112",
+          "hint": "order",
+          "canonical_code": "SO-2409-0112",
+          "current_message": true,
+          "confident": true,
+          "hint_confident": true
+        }
+      ],
+      "routing": {
+        "suggested_team": "customer_service",
+        "suggested_agent": null
+      }
+    }
+  },
+  "expected": {
+    "branch_kind": "out_of_scope",
+    "reply_contains": [
+      "Aina"
+    ],
+    "comment_contains": [
+      "Salesperson: Aina"
+    ]
+  }
+}

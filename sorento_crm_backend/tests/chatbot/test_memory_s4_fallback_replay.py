@@ -133,7 +133,7 @@ def _seed_customer(session_factory, contact_pk: str, customer: dict[str, Any]) -
     """The contact's primary linked customer and its salesperson: the live CRM link
     `profile_facts.crm_view` reads."""
     from app.models.access import RespondContactCustomer
-    from app.models.customer import Customer
+    from app.models.order import Customer
     from app.models.sales_agent import SalesAgent
 
     db = session_factory()
@@ -158,7 +158,7 @@ def _seed_customer(session_factory, contact_pk: str, customer: dict[str, Any]) -
     db.commit()
 
 
-def _seed_frames(session_factory, frames: list[dict[str, Any]]) -> None:
+def _seed_frames(session_factory, frames: list[dict[str, Any]], *, is_test: bool) -> None:
     db = session_factory()
     for f in frames:
         when = datetime.now() - timedelta(days=f.get("days_ago", 1))
@@ -170,6 +170,7 @@ def _seed_frames(session_factory, frames: list[dict[str, Any]]) -> None:
                 channel="whatsapp",
                 domain=f.get("domain", "inventory"),
                 status="closed",
+                is_test=is_test,
                 close_reason="topic_switch",
                 summary=f["summary"],
                 entities=f.get("entities") or {},
@@ -183,7 +184,7 @@ def _seed_frames(session_factory, frames: list[dict[str, Any]]) -> None:
     db.commit()
 
 
-def _run_turn(session_factory, stub_access, *, message: str, verdict_overrides: dict, n: int):
+def _run_turn(session_factory, stub_access, *, message: str, verdict_overrides: dict, n: int, console: bool):
     from unittest import mock
 
     from app.services.chatbot import engine as engine_mod
@@ -206,7 +207,7 @@ def _run_turn(session_factory, stub_access, *, message: str, verdict_overrides: 
     with mock.patch.object(parser_mod, "resolve_config", fake_resolve_config), mock.patch.object(
         parser_mod, "parse", fake_parse
     ):
-        envelope = _envelope()
+        envelope = _envelope(**({"is_test": True, "ingress": "console"} if console else {}))
         envelope.message["message"]["messageId"] = f"ZZT-s4-{uuid.uuid4().hex[:8]}-{n}"
         envelope.message["message"]["message"]["text"] = message
         result = engine_mod.run_turn(envelope, session_factory=session_factory)
@@ -239,17 +240,33 @@ def comment_text(result: Any) -> str:
 def _play(session_factory, stub_access, lane: _Lane, case: dict[str, Any], message: str, *, ablate: bool):
     given = case.get("given") or {}
     level = "off" if ablate else given.get("memory_level")
+    # A console case plays every turn as a Chatbot Console dry run (its own `is_test`
+    # world, D14's console exception): the escalation lane previews its actions there
+    # instead of reaching the round robin and the SLA seams.
+    console = bool(case.get("console"))
     contact_pk = _seed_contact(session_factory, given, level=level)
     if given.get("frames"):
-        _seed_frames(session_factory, given["frames"])
+        _seed_frames(session_factory, given["frames"], is_test=console)
     for i, live in enumerate(given.get("live_turns") or []):
-        _run_turn(session_factory, stub_access, message=live["message"], verdict_overrides=live.get("verdict") or {}, n=i)
+        _run_turn(
+            session_factory,
+            stub_access,
+            message=live["message"],
+            verdict_overrides=live.get("verdict") or {},
+            n=i,
+            console=console,
+        )
     turn = case["turn"]
     lane.clarifier_answer = dict(turn.get("clarifier") or DEFAULT_CLARIFIER)
     lane.clarifier_prompts.clear()
     lane.tool_calls.clear()
     result, prompt = _run_turn(
-        session_factory, stub_access, message=message, verdict_overrides=turn.get("verdict") or {}, n=20
+        session_factory,
+        stub_access,
+        message=message,
+        verdict_overrides=turn.get("verdict") or {},
+        n=20,
+        console=console,
     )
     return result, prompt, contact_pk
 
@@ -287,10 +304,9 @@ def _grade(case_name: str, expected: dict[str, Any], result: Any, prompt: str, l
             misses.append(f"escalation comment lacks {phrase!r}")
     if expected.get("no_tool_call") and lane.tool_calls:
         misses.append(f"the lane called tools {lane.tool_calls}")
-    if expected.get("one_send") is not None:
-        sends = [a for a in (result.actions or []) if isinstance(a, dict) and a.get("kind") == "send_message"]
-        if len(sends) < 1:
-            misses.append("no send_message action")
+    # AC-MEM085: every turn that reaches the reply stage sends a visible line.
+    if not sent.strip():
+        misses.append("no visible send_message action")
     return [f"{case_name}: {m}" for m in misses] + ([f"{case_name}: sent was:\n{sent}"] if misses else [])
 
 
@@ -315,7 +331,11 @@ def test_needs_memory_case_fails_under_ablation(
 ) -> None:
     case = _load_case(case_path)
     expected = case.get("expected") or {}
-    graded = {k: expected[k] for k in ("reply_contains", "prompt_contains") if expected.get(k)}
+    graded = {
+        k: expected[k]
+        for k in ("reply_contains", "reply_starts_with", "prompt_contains", "clarifier_prompt_contains", "comment_contains")
+        if expected.get(k)
+    }
     assert graded, f"{case_path.name}: a needs_memory case must grade the reply or the prompt"
     result, prompt, _pk = _play(session_factory, stub_access, lane, case, message, ablate=True)
     assert _grade(case_path.name, graded, result, prompt, lane), (

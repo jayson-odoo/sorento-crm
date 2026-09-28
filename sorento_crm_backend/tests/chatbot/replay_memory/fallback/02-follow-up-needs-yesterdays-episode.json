@@ -1,0 +1,79 @@
+{
+  "name": "02-follow-up-needs-yesterdays-episode",
+  "about": "Plan 7.3 example 2, AC-MEM083: a follow-up the parser resolved from Recent conversations opens its answer with one line naming what was carried.",
+  "needs_memory": true,
+  "given": {
+    "memory_level": "full",
+    "first_name": "Tan",
+    "frames": [
+      {
+        "days_ago": 3,
+        "domain": "inventory",
+        "summary": "Thu 25 Sep: stock SRTWB1455 (answered); incoming M486-75-BL (not found); offered Stock team, declined."
+      },
+      {
+        "days_ago": 5,
+        "domain": "order",
+        "summary": "Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading (answered)."
+      }
+    ],
+    "profile_facts": [
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ],
+        "source": "tallied",
+        "source_ref": null,
+        "first_seen": "2026-09-01",
+        "last_seen": "2026-09-25",
+        "seen_count": 5,
+        "set_by": null
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ],
+        "source": "tallied",
+        "source_ref": null,
+        "first_seen": "2026-09-01",
+        "last_seen": "2026-09-25",
+        "seen_count": 4,
+        "set_by": null
+      }
+    ],
+    "customer": {
+      "name": "Chin Chun Trading",
+      "code": "CC001",
+      "salesperson": "Aina"
+    }
+  },
+  "turn": {
+    "message": "any update on that DO?",
+    "verdict": {
+      "message_type": "business_query",
+      "domain_hint": "order",
+      "intent_hint": "check_order",
+      "status": "outstanding",
+      "entities": [
+        {
+          "raw": "CC001",
+          "hint": "customer",
+          "canonical_code": "CC001",
+          "current_message": false,
+          "confident": true,
+          "hint_confident": true
+        }
+      ]
+    }
+  },
+  "expected": {
+    "reply_starts_with": "Carrying on from Tue 23 Sep: outstanding DO for CC001 Chin Chun Trading",
+    "prompt_contains": [
+      "Recent conversations:",
+      "Tue 23 Sep: outstanding DO for CC001"
+    ]
+  }
+}
