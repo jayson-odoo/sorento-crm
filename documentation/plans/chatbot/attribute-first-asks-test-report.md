@@ -395,3 +395,23 @@ Live parser: not run (no parser key on this VM).
 - Console verification on the prod copy needed a minted integration key that is ALSO the `.env`
   `EXTERNAL_API_KEY` (scope resolver drift, issue #831, outside this lane).
 - Alias and scheme lookup sets are created empty; the owner enters options on System > Lookup Sets.
+
+## Round 9: one reply structure for every attribute ask (28 Sep 2026)
+
+Red first: `17057c431` (`tests/chatbot/test_attribute_asks_round9.py`, the five turns of the
+owner's 28 Sep test, all five red on `ac9c51157`). Green from `34da650ff`.
+
+| Suite (CI way: `scripts/cloud-env-setup.sh`, `.env.ci-tests`) | Result |
+|---|---|
+| `test_attribute_asks_round9.py` | 9 passed |
+| `test_spec_grounding_prompt.py` (spk_0002 publish, idempotence, chain) | 10 passed |
+| `tests/chatbot` + predicate + spec search, xdist, at `a7c33311b` | 3,572 passed, 0 failed, 213 skipped, 33 xfailed |
+| Backend main job (xdist, ci_excluded, no scm, not serial_ddl) on the main merge `e392a1c71` | 19,125 passed, 0 failed, 250 skipped, 33 xfailed |
+| Migration tests, serial | 458 passed, 1 skipped |
+| serial_ddl | 1 passed |
+| Vitest: pre-push touched (3 brands files) + chatbot-console and brands | 56 passed (10 files) |
+
+Earlier-round assertions of the retired sentences (near miss "I looked for", "I don't know ...
+I know ...", "did you mean", "too many to list ... how many should I show", the default brand
+and its "Other brands" line, the leg said twice in the intro) are amended to the round 9 ruling,
+each with a note naming it.
