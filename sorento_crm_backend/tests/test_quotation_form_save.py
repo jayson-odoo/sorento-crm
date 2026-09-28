@@ -388,3 +388,45 @@ def test_edit_of_a_scope_on_another_document_is_refused(api):
         {"scopes": [{"id": second["scopes"][0]["id"], "scope_label": "Stolen"}]},
     )
     assert response.status_code == 404, response.text
+
+
+def test_a_scope_id_that_is_not_an_id_is_a_404_not_a_500(api):
+    client, db, _company_id, _user_id, project, _party = api
+    product = _seed_product(db)
+    document = _created(client, db, project.id, product)
+
+    response = _patch(
+        client, project.id, document["id"], {"scopes": [{"id": "not-a-uuid", "scope_label": "X"}]}
+    )
+    assert response.status_code in (404, 422), response.text
+
+
+def test_lines_written_by_the_form_raise_the_below_floor_alert(api, monkeypatch):
+    """The form's create and edit tell management about below-floor lines exactly as the bulk
+    line route does: every line written is handed to the same notifier."""
+    from app.api.v1.projects import quotation_documents as route
+
+    seen = []
+    monkeypatch.setattr(route, "_notify_breaches", lambda db, line, actor: seen.append(line.id))
+    client, db, _company_id, _user_id, project, _party = api
+    product = _seed_product(db)
+
+    document = _created(client, db, project.id, product)
+    assert len(seen) == 2
+
+    townhouse = document["scopes"][0]
+    response = _patch(
+        client,
+        project.id,
+        document["id"],
+        {
+            "scopes": [
+                {
+                    "id": townhouse["id"],
+                    "lines": [{"product_id": product.id, "unit_price": "1.00", "quantity": "1"}],
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert len(seen) == 3

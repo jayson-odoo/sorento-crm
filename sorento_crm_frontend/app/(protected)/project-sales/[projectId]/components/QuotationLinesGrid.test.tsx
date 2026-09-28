@@ -246,6 +246,36 @@ describe('QuotationLinesGrid read', () => {
     expect(footer).not.toMatch(/1,720\.00/);
   });
 
+  it('AC-QF035: the footer sums the WHOLE scope, whatever the search is showing', async () => {
+    renderGrid([
+      line({
+        id: 'l1',
+        unit_price: '250.00',
+        quantity: '4.00',
+        line_total: '1000.00',
+      }),
+      line({
+        id: 'l2',
+        product_code: 'BM107',
+        description: 'Basin tap body',
+        unit_price: '100.00',
+        quantity: '2.00',
+        line_total: '200.00',
+        sort_order: 1,
+      }),
+    ]);
+    await screen.findByText('Wall-hung WC');
+    expect(document.querySelector('tfoot')?.textContent).toMatch(/1,200\.00/);
+
+    fireEvent.change(screen.getByRole('searchbox', { name: /Search lines/i }), {
+      target: { value: 'bm107' },
+    });
+    await waitFor(() =>
+      expect(screen.queryByText('Wall-hung WC')).not.toBeInTheDocument(),
+    );
+    expect(document.querySelector('tfoot')?.textContent).toMatch(/1,200\.00/);
+  });
+
   it('AC-QF036: an empty scope is an empty grid, with no Press Edit hint', async () => {
     renderGrid([]);
 

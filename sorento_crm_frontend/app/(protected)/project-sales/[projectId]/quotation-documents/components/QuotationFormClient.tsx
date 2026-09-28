@@ -32,6 +32,7 @@ import {
   formLinesToBody,
   formLinesTotal,
   lineToFormLine,
+  invalidNumberLines,
   unfinishedLines,
   type QuotationFormLine,
 } from '../../../_shared/lib/quotationLineDraft';
@@ -128,6 +129,20 @@ export function QuotationFormClient({
   const [scopes, setScopes] = React.useState<FormScope[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [isSaving, setIsSaving] = React.useState(false);
+  /** Anything typed since the page opened. Drives the warning on leaving the site. */
+  const [dirty, setDirty] = React.useState(false);
+
+  // Everything on this page lives only in the browser until Save, so a refresh or a closed tab
+  // would lose it silently. Warn while there is something to lose.
+  React.useEffect(() => {
+    if (!dirty || isSaving) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty, isSaving]);
 
   // The starting point, taken ONCE: a refetch landing mid-edit must not overwrite what somebody
   // is typing.
@@ -171,8 +186,21 @@ export function QuotationFormClient({
     }
   }, [header, isEdit, project.data, quotations.data, saved.data]);
 
+  /** A saved scope's lines arriving from the server: a starting point, not an edit. */
+  const seedScope = React.useCallback(
+    (key: string, patch: Partial<FormScope>) => {
+      setScopes((previous) =>
+        (previous ?? []).map((scope) =>
+          scope.key === key ? { ...scope, ...patch } : scope,
+        ),
+      );
+    },
+    [],
+  );
+
   const updateScope = React.useCallback(
     (key: string, patch: Partial<FormScope>) => {
+      setDirty(true);
       setScopes((previous) =>
         (previous ?? []).map((scope) =>
           scope.key === key ? { ...scope, ...patch } : scope,
@@ -210,6 +238,15 @@ export function QuotationFormClient({
       return unfinished === 1
         ? 'One line still needs a product or a description.'
         : `${unfinished} lines still need a product or a description.`;
+    }
+    // Caught here rather than as a 422 toast: the field already says "Must be a number".
+    const badNumbers = list
+      .filter((scope) => scope.editable)
+      .reduce((total, scope) => total + invalidNumberLines(scope.lines), 0);
+    if (badNumbers > 0) {
+      return badNumbers === 1
+        ? 'One line has a quantity or unit price that is not a number.'
+        : `${badNumbers} lines have a quantity or unit price that is not a number.`;
     }
     return null;
   }
@@ -330,9 +367,10 @@ export function QuotationFormClient({
           <QuotationDocumentHeader
             document={shownDocument}
             liveGrandTotal={liveTotal}
-            onChange={(patch) =>
-              setHeader((previous) => ({ ...(previous ?? {}), ...patch }))
-            }
+            onChange={(patch) => {
+              setDirty(true);
+              setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
+            }}
           />
 
           <div className="space-y-4">
@@ -345,6 +383,7 @@ export function QuotationFormClient({
                   .filter((row) => row.is_active || row.id === scope.series_id)
                   .map((row) => ({ value: row.id, label: row.name }))}
                 onChange={(patch) => updateScope(scope.key, patch)}
+                onSeed={(patch) => seedScope(scope.key, patch)}
                 onRemove={
                   scope.id
                     ? undefined
@@ -360,9 +399,10 @@ export function QuotationFormClient({
             <Button
               type="button"
               variant="outline"
-              onClick={() =>
-                setScopes((previous) => [...(previous ?? []), newScope()])
-              }
+              onClick={() => {
+                setDirty(true);
+                setScopes((previous) => [...(previous ?? []), newScope()]);
+              }}
             >
               <Plus className="size-4" aria-hidden />
               Add a scope
@@ -373,18 +413,20 @@ export function QuotationFormClient({
             <>
               <QuotationCoverLetterPanel
                 html={letter.cover_letter_html ?? saved.data.cover_letter_html}
-                onChange={(html) =>
+                onChange={(html) => {
+                  setDirty(true);
                   setLetter((previous) => ({
                     ...previous,
                     cover_letter_html: html,
-                  }))
-                }
+                  }));
+                }}
               />
               <QuotationTermsPanel
                 html={letter.terms_html ?? saved.data.terms_html}
-                onChange={(html) =>
-                  setLetter((previous) => ({ ...previous, terms_html: html }))
-                }
+                onChange={(html) => {
+                  setDirty(true);
+                  setLetter((previous) => ({ ...previous, terms_html: html }));
+                }}
               />
             </>
           )}
@@ -428,12 +470,14 @@ function ScopeSection({
   scope,
   seriesOptions,
   onChange,
+  onSeed,
   onRemove,
 }: {
   index: number;
   scope: FormScope;
   seriesOptions: { value: string; label: string }[];
   onChange: (patch: Partial<FormScope>) => void;
+  onSeed: (patch: Partial<FormScope>) => void;
   onRemove?: () => void;
 }) {
   const nameId = `quotation-scope-${scope.key}-name`;
@@ -487,7 +531,7 @@ function ScopeSection({
           </div>
 
           {scope.id && !scope.seeded ? (
-            <SavedScopeLines scope={scope} onSeed={onChange} />
+            <SavedScopeLines scope={scope} onSeed={onSeed} />
           ) : (
             <>
               {!scope.editable && (
@@ -528,7 +572,13 @@ function SavedScopeLines({
     (versions.data ?? []).find((version) => version.is_current) ?? null;
   const lines = useQuotationLines(current?.id);
 
+  const noVersion = !versions.isLoading && !versions.isError && !current;
   React.useEffect(() => {
+    // A scope with no version has nowhere to put a line: it is saved as named, lines untouched.
+    if (noVersion) {
+      onSeed({ lines: [], editable: false, seeded: true });
+      return;
+    }
     if (!current || !lines.data) return;
     const sorted: QuotationLine[] = [...lines.data].sort(
       (a, b) => a.sort_order - b.sort_order,
@@ -538,11 +588,16 @@ function SavedScopeLines({
       editable: Boolean(current.is_editable ?? current.is_current),
       seeded: true,
     });
-  }, [current, lines.data, onSeed]);
+  }, [current, lines.data, noVersion, onSeed]);
 
-  if (!versions.isLoading && !current) {
-    // A scope with no version at all has nowhere to put a line; it is saved as named only.
-    return <p className="text-sm text-muted-foreground">No lines yet</p>;
+  if (versions.isError || lines.isError) {
+    // Save stays off: sending this scope without its lines would be a guess about them.
+    return (
+      <p role="alert" className="text-sm text-destructive">
+        This scope&apos;s lines could not be loaded. Reload the page to try
+        again.
+      </p>
+    );
   }
   return <Skeleton className="h-32 w-full" />;
 }

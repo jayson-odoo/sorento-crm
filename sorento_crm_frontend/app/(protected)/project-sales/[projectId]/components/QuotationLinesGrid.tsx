@@ -155,10 +155,10 @@ export function QuotationLinesGrid({
   const onChangeRef = React.useRef(onChange);
   onChangeRef.current = onChange;
 
-  const indexByKey = React.useMemo(
-    () => new Map(lines.map((line, index) => [line.key, index])),
-    [lines],
-  );
+  // Through a ref too, for the same reason: the item number is read at render time, so the
+  // columns do not have to be rebuilt for it.
+  const indexByKey = React.useRef(new Map<string, number>());
+  indexByKey.current = new Map(lines.map((line, index) => [line.key, index]));
 
   const uoms = useUOMSelectQuery();
   const uomOptions = React.useMemo<SearchableSelectOption[]>(
@@ -267,7 +267,7 @@ export function QuotationLinesGrid({
     // One editor open at a time: the new line's, so the next thing typed lands in it.
     setExpanded({ [added.key]: true });
     setFocusRowId(added.key);
-    setFocusBandKey(withSection ? added.key : null);
+    setFocusBandKey(withSection ? `band:${added.key}` : `first:${added.key}`);
   }, []);
 
   const toggleRow = React.useCallback((key: string) => {
@@ -318,7 +318,7 @@ export function QuotationLinesGrid({
 
   const columns = React.useMemo<ColumnDef<QuotationFormLine>[]>(() => {
     const itemNo = (row: QuotationFormLine) =>
-      (indexByKey.get(row.key) ?? 0) + 1;
+      (indexByKey.current.get(row.key) ?? 0) + 1;
     const defs: ColumnDef<QuotationFormLine>[] = [
       {
         // The row's position in the scope, counted straight through the sections, the way the
@@ -556,7 +556,13 @@ export function QuotationLinesGrid({
                   : undefined
               }
               uomOptions={uomOptions}
-              focusBand={focusBandKey === row.key}
+              focus={
+                focusBandKey === `band:${row.key}`
+                  ? 'band'
+                  : focusBandKey === `first:${row.key}`
+                    ? 'first'
+                    : null
+              }
               onPatch={(patch) => patchLine(row.key, patch)}
               onPickProduct={(productId) =>
                 patchLine(
@@ -603,7 +609,6 @@ export function QuotationLinesGrid({
     fetchProducts,
     fillFromProduct,
     focusBandKey,
-    indexByKey,
     openPreview,
     patchLine,
     productLabel,
@@ -694,7 +699,7 @@ function LineEditor({
   fetchProducts,
   selectedProduct,
   uomOptions,
-  focusBand,
+  focus,
   onPatch,
   onPickProduct,
   onRemove,
@@ -705,7 +710,7 @@ function LineEditor({
   fetchProducts: (query: string) => Promise<SearchableSelectOption[]>;
   selectedProduct?: SearchableSelectOption;
   uomOptions: SearchableSelectOption[];
-  focusBand: boolean;
+  focus: 'band' | 'first' | null;
   onPatch: (patch: InlineDraft) => void;
   onPickProduct: (productId: string) => void;
   onRemove: () => void;
@@ -715,9 +720,14 @@ function LineEditor({
   const errors = lineErrors(draft);
   const idFor = (field: string) => `quotation-line-${row.key}-${field}`;
   const bandRef = React.useRef<HTMLInputElement>(null);
+  // A new line puts the caret in it: on the heading for Add a section, otherwise on the product
+  // picker, the first thing a line is filled in by.
   React.useEffect(() => {
-    if (focusBand) bandRef.current?.focus();
-  }, [focusBand]);
+    if (focus === 'band') bandRef.current?.focus();
+    if (focus === 'first')
+      document.getElementById(idFor('product_id'))?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus]);
 
   const numberError = (value: string) =>
     value.trim() === '' || isDecimalString(value) ? null : 'Must be a number';

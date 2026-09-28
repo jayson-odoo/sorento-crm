@@ -192,6 +192,9 @@ async def update_quotation_document(
         # The form's edit Save (#1341): header and scopes in ONE commit. A scope the customer
         # holds refuses new lines with the existing 422, and the header change goes back too.
         if scopes is not None:
+            for item in scopes:
+                if item.get("id"):
+                    validate_uuid_path(str(item["id"]), resource="Scope")
             lines = svc.apply_form_scopes(
                 db, document=document, actor_user_id=current_user["id"], scopes=scopes
             )

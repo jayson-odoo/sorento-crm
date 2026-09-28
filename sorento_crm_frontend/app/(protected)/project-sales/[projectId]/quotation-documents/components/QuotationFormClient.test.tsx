@@ -553,4 +553,70 @@ describe('QuotationFormClient edit', () => {
       within(scope).queryByRole('button', { name: 'Remove scope' }),
     ).toBeNull();
   });
+
+  it('keeps Save off until a saved scope has its lines, so it never sends a guessed set', async () => {
+    let answer: (lines: QuotationLine[]) => void = () => {};
+    listQuotationLines.mockReturnValue(
+      new Promise<QuotationLine[]>((resolve) => {
+        answer = resolve;
+      }),
+    );
+    renderForm('d1');
+    await waitFor(() =>
+      expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'),
+    );
+
+    expect(
+      screen.getByRole('button', { name: 'Save quotation' }),
+    ).toBeDisabled();
+
+    answer([LINE]);
+    await within(scopeSection(0)).findByText('Wall-hung WC');
+    expect(
+      screen.getByRole('button', { name: 'Save quotation' }),
+    ).toBeEnabled();
+  });
+});
+
+describe('QuotationFormClient guards', () => {
+  it('refuses a quantity that is not a number before any request', async () => {
+    renderForm();
+    const scope = await waitFor(() => scopeSection(0));
+    fireEvent.change(within(scope).getByLabelText('Scope name'), {
+      target: { value: 'Townhouse' },
+    });
+    fireEvent.click(within(scope).getByRole('button', { name: /Add a line/i }));
+    const editor = await within(scope).findByRole('group', { name: 'Line 1' });
+    fireEvent.change(within(editor).getByLabelText('Description'), {
+      target: { value: 'Grab bar' },
+    });
+    fireEvent.change(within(editor).getByLabelText('Qty'), {
+      target: { value: 'two' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+
+    expect(
+      await screen.findByText(
+        /One line has a quantity or unit price that is not a number/i,
+      ),
+    ).toBeInTheDocument();
+    expect(createQuotationDocument).not.toHaveBeenCalled();
+  });
+
+  it('warns before the browser throws typed work away, and not before anything is typed', async () => {
+    renderForm();
+    await waitFor(() => scopeSection(0));
+
+    const untouched = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(untouched);
+    expect(untouched.defaultPrevented).toBe(false);
+
+    fireEvent.change(screen.getByLabelText('Your Ref'), {
+      target: { value: 'NC/21' },
+    });
+    const touched = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(touched);
+    expect(touched.defaultPrevented).toBe(true);
+  });
 });

@@ -8,7 +8,7 @@ import type {
   QuotationLineBulkItem,
   UnitType,
 } from '../types/project.types';
-import { multiplyMoney, sumMoney } from './money';
+import { isDecimalString, multiplyMoney, sumMoney } from './money';
 
 /**
  * One quotation line as the form page holds it before Save (#1341).
@@ -99,6 +99,16 @@ export function lineErrors(draft: InlineDraft): Record<string, string> {
 export function unfinishedLines(lines: QuotationFormLine[]): number {
   return lines.filter((line) => Object.keys(lineErrors(line.draft)).length > 0)
     .length;
+}
+
+/** Lines whose quantity or unit price is typed but is not a number: the server would 422. */
+export function invalidNumberLines(lines: QuotationFormLine[]): number {
+  return lines.filter((line) =>
+    [line.draft.quantity, line.draft.unit_price].some(
+      (value) =>
+        (value ?? '').trim() !== '' && !isDecimalString((value ?? '').trim()),
+    ),
+  ).length;
 }
 
 /** Draft to the body the line write takes. `brand_snapshot` is the request's name for `brand`. */
