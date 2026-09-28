@@ -21,6 +21,7 @@ from app.database import Base
 
 class ApiCallLog(Base):
     __tablename__ = "api_call_log"
+    __audit_skip__ = "external request log, itself a trail; retention is owned by api_call_log_prune"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
 

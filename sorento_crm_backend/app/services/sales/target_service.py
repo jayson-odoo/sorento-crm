@@ -1363,3 +1363,111 @@ def targets_now_by_team(db: Session, team_ids: Iterable[str], on: date) -> Dict[
     )
     return {team_id: count for team_id, count in rows}
 
+
+
+def agent_progress(db: Session, agent_id: str, *, on: Optional[date] = None) -> dict:
+    """The portal's My target panel (fix lane round 2, F2): each active target of one agent,
+    what it asks for over its whole range, what is achieved so far, and what the agent's open
+    opportunities closing on or before its end date would add if won.
+
+    Achievement is `achievement_service.achieved_by_period` over every period of the target,
+    summed, so the panel and the target page can never disagree. An opportunity adds its
+    `expected_amount` to an amount target and its lines' quantity to a quantity target, in
+    full whatever the target's product scope (the "what counts" line names that scope; the
+    trigger to filter by scope is a scoped target whose forecast misleads).
+    """
+    from app.models.sales import SalesOpportunity, SalesOpportunityLine
+    from app.services.sales import opportunity_service
+
+    on = on or _today()
+    targets = (
+        db.query(SalesTarget)
+        .filter(
+            SalesTarget.subject_kind == "agent",
+            SalesTarget.sales_agent_id == agent_id,
+            SalesTarget.start_date <= on,
+            SalesTarget.end_date >= on,
+        )
+        .order_by(SalesTarget.end_date, SalesTarget.name)
+        .all()
+    )
+    if not targets:
+        return {"today": on, "targets": []}
+
+    last_end = max(t.end_date for t in targets)
+    opportunities = (
+        db.query(SalesOpportunity)
+        .filter(
+            SalesOpportunity.sales_agent_id == agent_id,
+            SalesOpportunity.outcome == "open",
+            SalesOpportunity.expected_close_date <= last_end,
+        )
+        .order_by(SalesOpportunity.expected_close_date, SalesOpportunity.opportunity_no)
+        .all()
+    )
+    serialized = {row["id"]: row for row in opportunity_service.serialize_list(db, opportunities)}
+    qty_by_opportunity: Dict[str, Decimal] = {}
+    if opportunities:
+        for opportunity_id, qty in (
+            db.query(SalesOpportunityLine.opportunity_id, func.sum(SalesOpportunityLine.qty))
+            .filter(SalesOpportunityLine.opportunity_id.in_([o.id for o in opportunities]))
+            .group_by(SalesOpportunityLine.opportunity_id)
+        ):
+            qty_by_opportunity[opportunity_id] = Decimal(qty or 0)
+
+    periods_by_target = {t.id: _periods(db, t.id) for t in targets}
+    achieved: Dict[str, Decimal] = {}
+    for company_id in {t.company_id for t in targets}:
+        pairs = [(t, p) for t in targets if t.company_id == company_id for p in periods_by_target[t.id]]
+        achieved.update(ach.achieved_by_period(db, _specs(db, company_id, pairs), company_id))
+    labels = _scope_labels(db, [t.id for t in targets])
+
+    rows = []
+    for target in targets:
+        periods = periods_by_target[target.id]
+        target_value = sum((Decimal(p.target_value) for p in periods), Decimal("0"))
+        achieved_value = sum((achieved.get(p.id, Decimal("0")) for p in periods), Decimal("0"))
+        before_end = [o for o in opportunities if o.expected_close_date <= target.end_date]
+        items = []
+        for opportunity in before_end:
+            value = (
+                Decimal(opportunity.expected_amount)
+                if target.metric == "amount"
+                else qty_by_opportunity.get(opportunity.id, Decimal("0"))
+            )
+            row = serialized.get(opportunity.id, {})
+            items.append(
+                {
+                    "id": opportunity.id,
+                    "opportunity_no": opportunity.opportunity_no,
+                    "title": opportunity.title,
+                    "customer_or_prospect": row.get("customer_name") or opportunity.prospect_name,
+                    "stage_label": row.get("stage_label"),
+                    "expected_close_date": opportunity.expected_close_date,
+                    "value": value,
+                }
+            )
+        pipeline = sum((i["value"] for i in items), Decimal("0"))
+        projected = achieved_value + pipeline
+        rows.append(
+            {
+                "target_id": target.id,
+                "target_no": target.target_no,
+                "name": target.name,
+                "metric": target.metric,
+                "basis": target.basis,
+                "counts_label": counts_label(db, target.basis, target.company_id),
+                "product_scope": target.product_scope,
+                "scope_labels": [label for _id, label in labels.get(target.id, [])],
+                "start_date": target.start_date,
+                "end_date": target.end_date,
+                "target_value": target_value,
+                "achieved_value": achieved_value,
+                "gap_value": max(target_value - achieved_value, Decimal("0")),
+                "pipeline_value": pipeline,
+                "projected_value": projected,
+                "short_value": max(target_value - projected, Decimal("0")),
+                "opportunities": items,
+            }
+        )
+    return {"today": on, "targets": rows}

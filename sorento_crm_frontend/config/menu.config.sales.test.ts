@@ -29,17 +29,23 @@ describe.each([
   ['MENU_SIDEBAR', MENU_SIDEBAR],
   ['MENU_SIDEBAR_COMPACT', MENU_SIDEBAR_COMPACT],
 ] as const)('%s - Sales group', (_name, menu) => {
-  it('holds Targets first, then Sales Teams, then Sales Agents, each gated by its own module (S1)', () => {
+  it('holds Targets, Opportunities, Sales Teams then Sales Agents, each gated by its own module', () => {
     const group = salesGroup(menu);
     expect(group).toBeDefined();
     expect(group!.moduleKey).toBeUndefined();
-    // The retail sales reports (#1267) append their own items after these three, in
+    // The retail sales reports (#1267) append their own items after these four, in
     // MENU_SIDEBAR only; config/menu.sales.test.ts pins them.
-    expect(group!.children!.slice(0, 3)).toEqual([
+    expect(group!.children!.slice(0, 4)).toEqual([
       {
         title: 'Targets',
         path: '/sales/targets',
         permission: 'sales.targets.view',
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Opportunities',
+        path: '/sales/opportunities',
+        permission: 'sales.opportunities.view',
         moduleKey: 'sales',
       },
       {
@@ -78,10 +84,11 @@ describe('filterMenuByModule - Sales group', () => {
     expect(kept.children!.map((c) => c.title)).toEqual(['Sales Agents']);
   });
 
-  it('shows Targets and Sales Teams once the sales module is installed (S1)', () => {
+  it('shows Targets, Opportunities and Sales Teams once the sales module is installed', () => {
     const [kept] = filterMenuByModule([group], new Set(['base', 'product', 'sales']));
     expect(kept.children!.map((c) => c.title)).toEqual([
       'Targets',
+      'Opportunities',
       'Sales Teams',
       'Sales Agents',
       'Yearly comparison',
