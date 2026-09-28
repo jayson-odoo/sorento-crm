@@ -216,6 +216,7 @@ class ProductSpecifications(Base):
     """
 
     __tablename__ = "product_specifications"
+    __audit_skip__ = "derived from products by derive_product_specs, 513 to 5,220 rows a day (measured 27 Sep 2026, review B3)"
 
     # Surrogate uuid PK, per ADR-PRODUCT-STANDARDS: the polymorphic key columns can
     # only be typed uuid if every id is one. `product_id` stays the key people use - it is
@@ -292,6 +293,7 @@ class ProductFindabilityRun(Base):
     """
 
     __tablename__ = "product_findability_runs"
+    __audit_skip__ = "findability test run, recomputed"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     source_id = Column(String(64), nullable=True)
@@ -315,6 +317,7 @@ class ProductFindabilityResult(Base):
     """One card, and every way of asking for it."""
 
     __tablename__ = "product_findability_results"
+    __audit_skip__ = "findability test result, recomputed"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     run_id = Column(

@@ -277,6 +277,10 @@ _COMPANY_ID_ALLOWLIST = {
     "forms",
     "import_logs",
     "audit_logs",
+    # The audit trail's own failure ledger (best-effort capture, owner ruling 28 Sep 2026):
+    # written by the global audit listener for whichever company's write lost its trail,
+    # counted company-wide on the system health page, like audit_logs.
+    "audit_trail_gaps",
     # Conversation / form SLA trackers carry the company that decides WHICH escalation
     # ladder the tracker climbs, not who may read the row. Scoping it would break the
     # two readers that have no company: the overdue scan (a scheduler tick with no

@@ -382,6 +382,7 @@ class ExportRequest(Base):
     """
 
     __tablename__ = "export_request"
+    __audit_skip__ = "export job state; downloads get @audit_event in S1"
     __table_args__ = (
         UniqueConstraint("download_id", name="uq_dealer_kit_export_request_download"),
         Index("ix_dealer_kit_export_request_page_id", "page_id"),
@@ -452,6 +453,7 @@ class FlyerReadingRecord(Base, CompanyScopedMixin):
     """
 
     __tablename__ = "flyer_reading"
+    __audit_skip__ = "flyer read job state"
     __table_args__ = (
         Index("ix_dealer_kit_flyer_reading_company_created", "company_id", "created_at"),
         # ONE read in flight per source, enforced by the database rather than by

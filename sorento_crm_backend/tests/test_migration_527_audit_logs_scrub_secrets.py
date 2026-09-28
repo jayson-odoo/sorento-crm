@@ -72,6 +72,9 @@ def test_upgrade_strips_password_and_sign_token_and_keeps_the_rest():
             clean = _insert(conn, {"status": "a"}, {"status": "b"})
             scalar = _insert(conn, None, ["password"])  # non-object JSON is left alone
 
+            # In the chain 527 runs before aud_0001 adds the append-only trigger, but this
+            # blank schema is create_all's, which builds the trigger with the table (#1281 S0).
+            conn.execute(sa.text("SET LOCAL sorento.audit_maintenance = 'on'"))
             ctx = MigrationContext.configure(conn)
             with Operations.context(ctx):
                 module.upgrade()

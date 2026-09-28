@@ -173,6 +173,7 @@ class PromotionGroup(Base, CompanyScopedMixin):
 
 class PromotionProduct(Base, CompanyScopedMixin):
     __tablename__ = "promotion_products"
+    __audit_skip__ = "link table, up to 4,705 rows a day (measured 27 Sep 2026, review B3)"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     promotion_id = Column(UUID(as_uuid=False), ForeignKey("promotions.id", ondelete="CASCADE"), nullable=False)

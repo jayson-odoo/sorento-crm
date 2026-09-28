@@ -156,9 +156,11 @@ def get_portal_token(
     # Stamped on the SHARED db.info as well as the contextvar: FastAPI runs this sync
     # dependency in a different threadpool thread than the path op + flush, so the
     # contextvar alone would not be visible at flush time (see app.audit_context).
-    from app.audit_context import stamp_actor
+    from app.audit_context import set_source, stamp_actor
 
     stamp_actor(_portal_actor(db, resolved, request), db=db, request=request)
+    # The channel, whoever the actor is (an admin viewing as the contact too): #1281 S0.
+    set_source("portal")
     return resolved
 
 
