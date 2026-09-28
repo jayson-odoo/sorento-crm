@@ -11,7 +11,6 @@ from typing import Callable, Dict
 
 from sqlalchemy.orm import Session
 
-from app.models.audit import AuditLog
 from app.models.complaints import Complaint, ComplaintAttachment, ComplaintManualAttachment
 from app.models.forms import Form, FormField, FormSection, FormSubmission, FormVersion
 from app.models.workflow_forms import (
@@ -47,7 +46,10 @@ def purge_notifications(db: Session) -> Dict[str, int]:
 
 
 def purge_audit(db: Session) -> Dict[str, int]:
-    return {"audit_logs": _count_deleted(db, AuditLog, "audit_logs")}
+    """Deletes nothing (#1281 S0): an uninstalled module's history is exactly what an auditor
+    asks for, and audit_logs is append-only in the database. Retention is the S3 job's."""
+    logger.info("Purge audit_logs: kept (append-only; retention job owns deletion)")
+    return {"audit_logs": 0}
 
 
 def purge_sla(db: Session) -> Dict[str, int]:
