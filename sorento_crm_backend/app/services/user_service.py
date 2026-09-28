@@ -1,5 +1,4 @@
 """User management service for business logic."""
-import html as html_module
 import secrets
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, joinedload
@@ -199,48 +198,20 @@ class UserService:
     ) -> None:
         """Queue outgoing mail to the new address via notification deliveries."""
         base = self._resolve_crm_base_url()
-        safe_old = html_module.escape(old_email)
-        safe_new = html_module.escape(new_email)
-        safe_link = html_module.escape(base) if base else ""
-        link_html = (
-            f'<p><a href="{safe_link}">{safe_link}</a></p>'
-            if base
-            else "<p>Sign in using the CRM web address your organization uses.</p>"
-        )
-        title = "Your sign-in email was updated"
-        sign_in_line = f"Sign in: {base}\n\n" if base else ""
-        body_text = (
-            f"Your account sign-in email for Sorento CRM was changed.\n\n"
-            f"Previous email: {old_email}\n"
-            f"New email: {new_email}\n\n"
-            f"{sign_in_line}"
-            f"Your password is unchanged. Continue to use your existing password to sign in.\n\n"
-            f"If you did not expect this change, contact your administrator immediately."
-        )
-        body_html = (
-            "<!DOCTYPE html><html><body style=\"font-family:system-ui,Segoe UI,sans-serif;"
-            'line-height:1.5;color:#1a1a1a;">'
-            "<p>Hello,</p>"
-            "<p>Your <strong>sign-in email</strong> for Sorento CRM has been updated by an administrator.</p>"
-            '<table cellpadding="6" style="border-collapse:collapse;margin:12px 0;">'
-            f'<tr><td style="color:#666;">Previous</td><td>{safe_old}</td></tr>'
-            f'<tr><td style="color:#666;">New</td><td><strong>{safe_new}</strong></td></tr>'
-            "</table>"
-            f"{link_html}"
-            "<p><strong>Your password is unchanged.</strong> Use the same password you used before to "
-            "access the system; only the email used for sign-in was updated.</p>"
-            '<p style="color:#666;font-size:13px;">If you did not expect this change, contact your '
-            "administrator immediately.</p>"
-            "</body></html>"
+        from app.services.email_template_service import EmailTemplateService
+
+        rendered = EmailTemplateService(self.db).render_code(
+            "account_email_changed",
+            {"old_email": old_email, "new_email": new_email, "sign_in_link": base or ""},
         )
         from app.services.notification_service import NotificationService
 
         NotificationService(self.db).create_with_channel_preferences(
             user_id=user_id,
             type="account_email_changed",
-            title=title,
-            body=body_text,
-            data={"body_html": body_html},
+            title=rendered["subject"],
+            body=rendered["body_text"],
+            data={"body_html": rendered["body_html"]},
             source_entity_type="user",
             source_entity_id=f"email_change:{user_id}:{secrets.token_hex(8)}",
             event_type="email_changed",

@@ -342,6 +342,42 @@ SYSTEM = json.loads(r'''{
   "preheader": "Your password is unchanged.",
   "subject": "Your sign-in email was updated"
  },
+ "attachment_linked": {
+  "body_text": null,
+  "description": "Notifies an uploader (or the explicit notify user) when an external API used their file(s) to create or link an entity - product photo, form, packing list. Multiple callbacks within the coalesce window re-render this with every attachment collected so far.",
+  "layout": {
+   "blocks": [
+    {
+     "type": "brand_header"
+    },
+    {
+     "text": "{{ title }}",
+     "type": "heading"
+    },
+    {
+     "html": "{{ summary_html }}",
+     "type": "custom_text"
+    },
+    {
+     "label": "{{ entity_link_text }}",
+     "type": "button",
+     "url": "{{ entity_url }}"
+    },
+    {
+     "html": "{% if attachment_items %}<p>Your attachment(s):</p><ul>{% for a in attachment_items %}<li><a href=\"{{ a.url }}\">{{ a.name }}</a></li>{% endfor %}</ul>{% endif %}",
+     "type": "custom_text"
+    },
+    {
+     "note": "This is a system-generated email. Please do not reply.",
+     "type": "footer"
+    }
+   ],
+   "version": 1
+  },
+  "name": "Attachment linked (external)",
+  "preheader": null,
+  "subject": "{{ title }}"
+ },
  "auth_password_reset": {
   "body_text": null,
   "description": "Sent when someone asks to reset their password from the sign-in page.",
@@ -355,7 +391,7 @@ SYSTEM = json.loads(r'''{
      "type": "heading"
     },
     {
-     "text": "Hi {{ recipient.name }},\n\nWe received a request to reset the password for your {{ company.name }} account. The button below is valid for 1 hour.",
+     "text": "Hi{% if recipient.name %} {{ recipient.name }}{% endif %},\n\nWe received a request to reset the password for your {{ company.name }} account. The button below is valid for 1 hour.",
      "type": "intro"
     },
     {
@@ -382,6 +418,74 @@ SYSTEM = json.loads(r'''{
   "name": "Password reset",
   "preheader": "Use this link within 1 hour to choose a new password.",
   "subject": "Reset your password"
+ },
+ "complaint_created": {
+  "body_text": "Dear Complaint Team,\n\n{{ sentence }}\n\n{{ view_url }}\n\nThis is a system-generated email. Please do not reply.",
+  "description": "Notifies the Complaint team when a new complaint is created externally, or a previously rejected one is resubmitted.",
+  "layout": {
+   "blocks": [
+    {
+     "type": "brand_header"
+    },
+    {
+     "text": "{{ title }}",
+     "type": "heading"
+    },
+    {
+     "text": "Dear Complaint Team,\n\n{{ sentence }}",
+     "type": "intro"
+    },
+    {
+     "label": "Open complaint",
+     "type": "button",
+     "url": "{{ view_url }}"
+    },
+    {
+     "note": "This is a system-generated email. Please do not reply.",
+     "type": "footer"
+    }
+   ],
+   "version": 1
+  },
+  "name": "Complaint created / resubmitted",
+  "preheader": null,
+  "subject": "{{ title }}"
+ },
+ "complaint_do_delivered": {
+  "body_text": "Dear Complaint Team,\n\n{{ headline }}{% if items_block %}\n\n{{ items_block }}{% endif %}\n\n{{ view_url }}\n\nThis is a system-generated email. Please do not reply.",
+  "description": "Notifies the Complaint team (Tier 1 + 2) that a replacement DO has been delivered.",
+  "layout": {
+   "blocks": [
+    {
+     "type": "brand_header"
+    },
+    {
+     "text": "{{ title }}",
+     "type": "heading"
+    },
+    {
+     "text": "Dear Complaint Team,\n\n{{ headline }}",
+     "type": "intro"
+    },
+    {
+     "html": "{% if item_lines %}<p>Items delivered:</p><ul>{% for l in item_lines %}<li>{{ l }}</li>{% endfor %}</ul>{% endif %}",
+     "type": "custom_text"
+    },
+    {
+     "label": "Open complaint",
+     "type": "button",
+     "url": "{{ view_url }}"
+    },
+    {
+     "note": "This is a system-generated email. Please do not reply.",
+     "type": "footer"
+    }
+   ],
+   "version": 1
+  },
+  "name": "Replacement delivery order delivered",
+  "preheader": null,
+  "subject": "{{ title }}"
  },
  "notification_generic": {
   "body_text": null,
@@ -414,6 +518,356 @@ SYSTEM = json.loads(r'''{
   "preheader": null,
   "subject": "{{ title }}"
  },
+ "onboarding_completed": {
+  "body_text": null,
+  "description": "Sent to the requester once every approved person in the batch has been processed.",
+  "layout": {
+   "blocks": [
+    {
+     "type": "brand_header"
+    },
+    {
+     "text": "Onboarding complete",
+     "type": "heading"
+    },
+    {
+     "text": "Hello {{ requester_name }},\n\nYour onboarding submission '{{ request_title }}' has been processed.",
+     "type": "intro"
+    },
+    {
+     "hide_empty": false,
+     "rows": [
+      {
+       "label": "Accounts created",
+       "value": "{{ created }}"
+      },
+      {
+       "label": "Already existed",
+       "value": "{{ skipped }}"
+      }
+     ],
+     "type": "facts"
+    },
+    {
+     "rows": [
+      {
+       "label": "Could not be created",
+       "value": "{{ failed if failed else '' }}"
+      }
+     ],
+     "type": "facts"
+    },
+    {
+     "html": "{% if failed %}<p>Somebody from the team will be in touch about the ones that failed.</p>{% endif %}<p>Anybody who received an account has been emailed a link to set their password.</p>",
+     "type": "custom_text"
+    },
+    {
+     "note": "This is a system-generated email. Please do not reply.",
+     "type": "footer"
+    }
+   ],
+   "version": 1
+  },
+  "name": "Onboarding completed",
+  "preheader": null,
+  "subject": "Onboarding complete: {{ request_title }}"
+ },
+ "onboarding_intake_link": {
+  "body_text": null,
+  "description": "Sent to the requester with the link to submit their team for onboarding.",
+  "layout": {
+   "blocks": [
+    {
+     "type": "brand_header"
+    },
+    {
+     "text": "Submit your team for onboarding",
+     "type": "heading"
+    },
+    {
+     "text": "Hello {{ requester_name }},\n\nSorento asks you to submit your team for onboarding. Open the link below, type the names in, and submit it once.",
+     "type": "intro"
+    },
+    {
+     "label": "Open onboarding intake",
+     "type": "button",
+     "url": "{{ intake_url }}"
+    },
+    {
+     "label": "Or paste this link into your browser:",
+     "type": "link",
+     "url": "{{ intake_url }}"
+    },
+    {
+     "html": "<p>The link works until {{ expires_date }} and you can come back to it as often as you like until you submit.</p>",
+     "type": "custom_text"
+    },
+    {
+     "note": "This is a system-generated email. Please do not reply.",
+     "type": "footer"
+    }
+   ],
+   "version": 1
+  },
+  "name": "Onboarding intake link",
+  "preheader": null,
+  "subject": "Submit your team for onboarding: {{ request_title }}"
+ },
+ "onboarding_submitted": {
+  "body_text": null,
+  "description": "Confirms to the requester that their onboarding batch was received.",
+  "layout": {
+   "blocks": [
+    {
+     "type": "brand_header"
+    },
+    {
+     "text": "We received your submission",
+     "type": "heading"
+    },
+    {
+     "text": "Hello {{ requester_name }},\n\nWe have received your onboarding submission '{{ request_title }}' with {{ people_count }} {{ 'person' if people_count == 1 else 'people' }}.\n\nSomebody will review it and you will get one more email when it is done. Your original link now shows the status of each person.",
+     "type": "intro"
+    },
+    {
+     "note": "This is a system-generated email. Please do not reply.",
+     "type": "footer"
+    }
+   ],
+   "version": 1
+  },
+  "name": "Onboarding submitted",
+  "preheader": null,
+  "subject": "Received: {{ request_title }}"
+ },
+ "promotion_created": {
+  "body_text": null,
+  "description": "Notifies an uploader (or the explicit notify user) when an external API created a promotion using their file(s).",
+  "layout": {
+   "blocks": [
+    {
+     "type": "brand_header"
+    },
+    {
+     "text": "{{ title }}",
+     "type": "heading"
+    },
+    {
+     "html": "{{ summary_html }}",
+     "type": "custom_text"
+    },
+    {
+     "label": "{{ entity_link_text }}",
+     "type": "button",
+     "url": "{{ entity_url }}"
+    },
+    {
+     "html": "{% if attachment_items %}<p>Your attachment(s):</p><ul>{% for a in attachment_items %}<li><a href=\"{{ a.url }}\">{{ a.name }}</a></li>{% endfor %}</ul>{% endif %}",
+     "type": "custom_text"
+    },
+    {
+     "note": "This is a system-generated email. Please do not reply.",
+     "type": "footer"
+    }
+   ],
+   "version": 1
+  },
+  "name": "Promotion created (external)",
+  "preheader": null,
+  "subject": "{{ title }}"
+ },
+ "purchase_request_approval_link": {
+  "body_text": null,
+  "description": "Sent to an approver with a one-time link to review and approve or reject a purchase request or sponsorship form.",
+  "layout": {
+   "blocks": [
+    {
+     "type": "brand_header"
+    },
+    {
+     "text": "Review and approve",
+     "type": "heading"
+    },
+    {
+     "text": "You have been sent a one-time approval link for a {{ purchase_request.type_label|lower }}. Open the button below to approve or reject it (the link expires after use or after the expiry time).",
+     "type": "intro"
+    },
+    {
+     "rows": [
+      {
+       "label": "Reference",
+       "value": "{{ purchase_request.request_number }}"
+      },
+      {
+       "label": "Project",
+       "value": "{{ purchase_request.project_title }}"
+      }
+     ],
+     "type": "facts"
+    },
+    {
+     "label": "Review and approve",
+     "type": "button",
+     "url": "{{ approval_url }}"
+    },
+    {
+     "label": "Or paste this link into your browser:",
+     "type": "link",
+     "url": "{{ approval_url }}"
+    },
+    {
+     "type": "footer"
+    }
+   ],
+   "version": 1
+  },
+  "name": "Purchase request / sponsorship form approval link",
+  "preheader": "Review and approve {{ purchase_request.request_number }}.",
+  "subject": "{{ purchase_request.type_label }} - Approval link"
+ },
+ "purchase_request_requester_approved": {
+  "body_text": null,
+  "description": "Sent to the user who requested approval when the purchase request or sponsorship form is approved.",
+  "layout": {
+   "blocks": [
+    {
+     "type": "brand_header"
+    },
+    {
+     "text": "{{ purchase_request.type_label }} approved",
+     "type": "heading"
+    },
+    {
+     "text": "Your {{ purchase_request.type_label|lower }} has been approved.",
+     "type": "intro"
+    },
+    {
+     "rows": [
+      {
+       "label": "Reference",
+       "value": "{{ purchase_request.request_number }}"
+      },
+      {
+       "label": "Project",
+       "value": "{{ purchase_request.project_title }}"
+      }
+     ],
+     "type": "facts"
+    },
+    {
+     "label": "View form",
+     "type": "button",
+     "url": "{{ view_url }}"
+    },
+    {
+     "label": "Or paste this link into your browser:",
+     "type": "link",
+     "url": "{{ view_url }}"
+    },
+    {
+     "type": "footer"
+    }
+   ],
+   "version": 1
+  },
+  "name": "Purchase request / sponsorship form approved (requester)",
+  "preheader": "{{ purchase_request.type_label }} {{ purchase_request.request_number }} has been approved.",
+  "subject": "{{ purchase_request.type_label }} approved"
+ },
+ "purchase_request_requester_rejected": {
+  "body_text": null,
+  "description": "Sent to the user who requested approval when the purchase request or sponsorship form is rejected.",
+  "layout": {
+   "blocks": [
+    {
+     "type": "brand_header"
+    },
+    {
+     "text": "{{ purchase_request.type_label }} rejected",
+     "type": "heading"
+    },
+    {
+     "text": "Your {{ purchase_request.type_label|lower }} has been rejected.",
+     "type": "intro"
+    },
+    {
+     "rows": [
+      {
+       "label": "Reference",
+       "value": "{{ purchase_request.request_number }}"
+      },
+      {
+       "label": "Project",
+       "value": "{{ purchase_request.project_title }}"
+      }
+     ],
+     "type": "facts"
+    },
+    {
+     "label": "View form",
+     "type": "button",
+     "url": "{{ view_url }}"
+    },
+    {
+     "label": "Or paste this link into your browser:",
+     "type": "link",
+     "url": "{{ view_url }}"
+    },
+    {
+     "type": "footer"
+    }
+   ],
+   "version": 1
+  },
+  "name": "Purchase request / sponsorship form rejected (requester)",
+  "preheader": "{{ purchase_request.type_label }} {{ purchase_request.request_number }} has been rejected.",
+  "subject": "{{ purchase_request.type_label }} rejected"
+ },
+ "purchase_request_submitted": {
+  "body_text": null,
+  "description": "Sent to the Project Sales team, one email to all, when a purchase request or sponsorship form is created or updated by an external integration.",
+  "layout": {
+   "blocks": [
+    {
+     "type": "brand_header"
+    },
+    {
+     "text": "{{ heading }}",
+     "type": "heading"
+    },
+    {
+     "text": "Dear Project Sales Team,\n\n{{ intro }}",
+     "type": "intro"
+    },
+    {
+     "rows": [
+      {
+       "label": "Reference",
+       "value": "{{ purchase_request.request_number }}"
+      },
+      {
+       "label": "Project",
+       "value": "{{ purchase_request.project_title }}"
+      }
+     ],
+     "type": "facts"
+    },
+    {
+     "label": "Open request",
+     "type": "button",
+     "url": "{{ view_url }}"
+    },
+    {
+     "note": "This is a system-generated email. Please do not reply.",
+     "type": "footer"
+    }
+   ],
+   "version": 1
+  },
+  "name": "Purchase request / sponsorship form submitted",
+  "preheader": "{{ intro }}",
+  "subject": "{{ heading }}"
+ },
  "sla_daily_summary": {
   "body_text": null,
   "description": "Daily digest of a staff member's outstanding assigned conversations.",
@@ -427,7 +881,7 @@ SYSTEM = json.loads(r'''{
      "type": "heading"
     },
     {
-     "text": "Hi {{ recipient.name }},\n\nHere is where your conversations stand today, {{ summary_date }}.",
+     "text": "Hi{% if recipient.name %} {{ recipient.name }}{% endif %},\n\nHere is where your conversations stand today, {{ summary_date }}.",
      "type": "intro"
     },
     {
@@ -471,6 +925,38 @@ SYSTEM = json.loads(r'''{
   "name": "Daily SLA summary",
   "preheader": "{{ outstanding_count }} outstanding conversation{% if outstanding_count != 1 %}s{% endif %} as of {{ summary_date }}.",
   "subject": "Your daily SLA summary ({{ summary_date }})"
+ },
+ "stock_inquiry_created": {
+  "body_text": null,
+  "description": "Sent to a team (e.g. purchasing) one email to all when a stock inquiry needs its review.",
+  "layout": {
+   "blocks": [
+    {
+     "type": "brand_header"
+    },
+    {
+     "text": "{{ heading }}",
+     "type": "heading"
+    },
+    {
+     "text": "{{ intro }}",
+     "type": "intro"
+    },
+    {
+     "label": "Open stock inquiry",
+     "type": "button",
+     "url": "{{ view_url }}"
+    },
+    {
+     "note": "This is a system-generated email. Please do not reply.",
+     "type": "footer"
+    }
+   ],
+   "version": 1
+  },
+  "name": "Stock inquiry team notice",
+  "preheader": "{{ intro }}",
+  "subject": "{{ heading }}"
  },
  "user_invitation": {
   "body_text": null,
