@@ -1,6 +1,6 @@
 """Audit log schemas."""
 from uuid import UUID
-from pydantic import BaseModel, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 from typing import Optional, Any
 from datetime import datetime
 
@@ -35,6 +35,14 @@ class AuditLogResponse(BaseModel):
     integration_id: Optional[str] = None
     job_id: Optional[str] = None
     actor_label: Optional[str] = None
+    # Audit standard S0 (#1281): the business action. request_id IS the trace_id column.
+    request_id: Optional[str] = Field(default=None, validation_alias=AliasChoices("request_id", "trace_id"))
+    correlation_id: Optional[str] = None
+    event: Optional[str] = None
+    source: Optional[str] = None
+    reason: Optional[str] = None
+    root_entity_type: Optional[str] = None
+    root_entity_id: Optional[str] = None
 
     _normalize_id = field_validator("id", mode="before")(_str_or_uuid)
     _normalize_entity_id = field_validator("entity_id", mode="before")(_str_or_uuid)
