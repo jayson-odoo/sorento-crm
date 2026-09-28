@@ -1,6 +1,6 @@
 # PLAN - Borrow ladder v7 and the Stock Debt view
 
-Status: **APPROVED 2026-08-29** (captain: "the logic is robust, let's proceed"; scenario table on SRTWB242 signed off). Grilled in session (R1-R23), lavish review rounds 1-6 (R24-R36). Tickets: S1 #385, S2 #386, S3 #387, S4 #388 (jayson-odoo/sorento-crm). Lane: `feat/scm-borrow-ladder-v7-stock-debt`. S1 = PR #389 (29 Aug, CI green). S2 = PR #391 (30 Aug, stacked on #389: `supply_assignment`, `_po_rows`, the stock-debt service + routes, the page). S4 = PR #409 (30 Aug, stacked on #400; all four slices delivered). S3 = PR #400 (30 Aug, stacked on #391; R37-R40 landed during captain testing; `tests/scm/test_ladder_v7_borrow.py` + 3.2's own notes). S4 built 30 Aug on `feat/scm-supply-borrow`, stacked on S3: step 3 + the placement moves + `tests/scm/test_ladder_v7_supply_borrow.py`; three deviations recorded in 3.2 step 3 and one in AC-S4-5. UAC: `scm-borrow-ladder-v7-stock-debt-acceptance-criteria.md`. R42 (28 Sep 2026, #1331, purchase orders as Stock Debt supply, section 3.4b): in progress on `feat/stock-debt-po-supply`, small fix track. Sits on `PLAN-scm-order-unit-ladder-v6.md` (units, donor ledger), `PLAN-demo-followups-19aug-ladder-v2.md` section E (ownership groups, window, coverage date), `PLAN-scm-planning-inline-decisions.md` (board editor, one Confirm), ADR-0011 (no bucketed arithmetic).
+Status: **APPROVED 2026-08-29** (captain: "the logic is robust, let's proceed"; scenario table on SRTWB242 signed off). Grilled in session (R1-R23), lavish review rounds 1-6 (R24-R36). Tickets: S1 #385, S2 #386, S3 #387, S4 #388 (jayson-odoo/sorento-crm). Lane: `feat/scm-borrow-ladder-v7-stock-debt`. S1 = PR #389 (29 Aug, CI green). S2 = PR #391 (30 Aug, stacked on #389: `supply_assignment`, `_po_rows`, the stock-debt service + routes, the page). S4 = PR #409 (30 Aug, stacked on #400; all four slices delivered). S3 = PR #400 (30 Aug, stacked on #391; R37-R40 landed during captain testing; `tests/scm/test_ladder_v7_borrow.py` + 3.2's own notes). S4 built 30 Aug on `feat/scm-supply-borrow`, stacked on S3: step 3 + the placement moves + `tests/scm/test_ladder_v7_supply_borrow.py`; three deviations recorded in 3.2 step 3 and one in AC-S4-5. UAC: `scm-borrow-ladder-v7-stock-debt-acceptance-criteria.md`. R42 (28 Sep 2026, #1331, purchase orders as Stock Debt supply, section 3.4b): built on PR #1332, small fix track. Sits on `PLAN-scm-order-unit-ladder-v6.md` (units, donor ledger), `PLAN-demo-followups-19aug-ladder-v2.md` section E (ownership groups, window, coverage date), `PLAN-scm-planning-inline-decisions.md` (board editor, one Confirm), ADR-0011 (no bucketed arithmetic).
 
 ## 0. The captain's ask (29 Aug 2026, after the client demo)
 
@@ -127,8 +127,9 @@ On Confirm of a `supply_borrow`: an `order_inquiry_links` row for the asker's OR
 
 ### 3.4b Purchase orders as Stock Debt supply (R42, owner, 28 Sep 2026, issue #1331)
 
-Status: in progress, lane `feat/stock-debt-po-supply`. Track: small fix (no migration, no
-auth/RBAC change, no new ingest surface).
+Status: built on PR #1332 (lane `feat/stock-debt-po-supply`), reviewed and browser-verified,
+awaiting CI and the owner's hand test. Track: small fix (no migration, no auth/RBAC change, no
+new ingest surface).
 
 **The owner's words, verbatim from chat (28 Sep 2026, 15:4x MYT):** "for our stock debt ah, PO
 needs to be counted as supply to the sales order also ... so the covered by should consider PO
