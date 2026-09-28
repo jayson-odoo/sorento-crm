@@ -889,3 +889,75 @@ def test_cross_repo_contract_carries_section_13():
                    "/api/v1/external/ingest/branches", "doc_keys", "`book`",
                    "stale_ignored", "adopted_by_doc_no", "FromDocDtlKey", "Never deleted"):
         assert needle in section, needle
+
+
+# ======================================================================= company isolation
+def test_push_to_a_never_adopts_company_b_row(env):
+    """AC-AG080: a company B DO with the same DocNo is not adopted by a push anchored to A."""
+    b_row = Order(order_number="ZZDO-0001", company_id=env.company_b, debtor_code="B-ONLY")
+    env.db.add(b_row)
+    env.db.commit()
+    r = _records(env.push_do([do_records()[0]]))["db1:DO:900001"]
+    assert r["outcome"] == "created" and r["entity_id"] != str(b_row.id)
+    env.db.expire_all()
+    b_row = env.db.get(Order, b_row.id)
+    assert b_row.doc_key is None and b_row.debtor_code == "B-ONLY"
+
+
+def test_deletions_under_a_do_not_reach_company_b(env):
+    """AC-AG081: B's DocKey is `not_found` under A's anchor and B's row is untouched."""
+    b_row = Order(order_number="ZZDO-B9", company_id=env.company_b, source_book="db1",
+                  doc_key=900001, order_date=date(2026, 9, 27))
+    env.db.add(b_row)
+    env.db.commit()
+    res = env.delete(DO_DELETE, [900001], "2026-09-01", "2026-09-30")
+    assert res.json()["records"][0]["outcome"] == "not_found"
+    env.db.expire_all()
+    b_row = env.db.get(Order, b_row.id)
+    assert b_row.is_cancelled is False and b_row.source_vanished_at is None
+
+
+def test_links_never_resolve_to_company_b(env):
+    """AC-AG082: an SO / PO of company B never links a company A line."""
+    so = SalesOrder(so_number="ZZSO-0001", company_id=env.company_b)
+    env.db.add(so)
+    env.db.flush()
+    env.db.add(SalesOrderLine(sales_order_id=so.id, product_id=env.p1, qty_ordered=1,
+                              source_ref="SRT_DB:4001:5001", company_id=env.company_b))
+    env.db.add(PurchaseOrder(po_number="ZZPO-B", company_id=env.company_b))
+    env.db.commit()
+    do = _with_from(copy.deepcopy(do_records()[0]), 0, "SO", "ZZSO-0001", 5001)
+    do["RefDocNo"] = "ZZSO-0001"
+    r = _records(env.push_do([do]))["db1:DO:900001"]
+    assert {"so_line_unresolved", "sales_order_unresolved"} <= set(r["warnings"])
+    o = env.order(900001)
+    assert o.sales_order_id is None
+    assert env.order_lines(o.id)[0].sales_order_line_id is None
+    grn = copy.deepcopy(grn_records()[0])
+    grn["Details"][0]["OurPONo"] = "ZZPO-B"
+    r = _records(env.push_grn([grn]))["db1:GRN:800001"]
+    assert "purchase_order_unresolved" in r["warnings"]
+
+
+def test_branch_push_to_a_never_renames_company_b_orders(env):
+    """AC-AG083."""
+    b_order = Order(order_number="ZZDO-B1", company_id=env.company_b, source_book="db1",
+                    doc_key=777001, debtor_code="300-ZZAC01", branch_code="KL01",
+                    branch_name="B NAME")
+    env.db.add(b_order)
+    env.db.commit()
+    env.post(BR_INGEST, [_branch()])
+    env.db.expire_all()
+    assert env.db.get(Order, b_order.id).branch_name == "B NAME"
+
+
+def test_oversized_branch_and_doc_key_are_refused_per_record(env):
+    """AC-AG084: a branch row over its cap fails alone; a DocKey beyond BIGINT is a
+    per-key `failed` on /deletions, never a 500."""
+    big = _branch(code="BIG1", Notes="x" * 40_000)
+    body = env.post(BR_INGEST, [big, _branch()]).json()["records"]
+    assert body[0]["outcome"] == "failed" and "record" in body[0]["errors"]
+    assert body[1]["outcome"] == "created"
+    res = env.delete(DO_DELETE, [10 ** 30])
+    assert res.status_code == 200
+    assert res.json()["records"][0]["outcome"] == "failed"

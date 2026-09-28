@@ -85,8 +85,10 @@ BOOK_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,20}$")
 MALAYSIA = timezone(timedelta(hours=8))
 MAX_LINES = 2000
 MAX_RECORD_BYTES = 1_000_000
+# A branchbypage row is one address record; 32 KB is far above any real one.
+MAX_BRANCH_BYTES = 32_000
 # Waiting links re-tried per kind at the end of a batch; the rest wait for the next batch.
-MAX_WAITING_LINKS = 5000
+MAX_WAITING_LINKS = 500
 
 _DOC_PREFIX = {DELIVERY_ORDERS_ENTITY: "DO", GOODS_RECEIVE_NOTES_ENTITY: "GRN"}
 
@@ -151,15 +153,21 @@ def _text(value: Any, limit: Optional[int] = None) -> Optional[str]:
     return out[:limit] if limit else out
 
 
+_INT8_MAX = 2**63 - 1
+
+
 def _int(value: Any) -> Optional[int]:
+    """An integer that fits the BIGINT key columns, else None."""
     if value is None or isinstance(value, bool):
         return None
-    if isinstance(value, int):
-        return value
     if isinstance(value, float):
-        return int(value) if value.is_integer() else None
-    text = str(value).strip()
-    return int(text) if re.fullmatch(r"-?\d{1,18}", text) else None
+        value = int(value) if value.is_integer() else None
+    elif not isinstance(value, int):
+        text = str(value).strip()
+        value = int(text) if re.fullmatch(r"-?\d{1,18}", text) else None
+    if value is None or not -_INT8_MAX <= value <= _INT8_MAX:
+        return None
+    return value
 
 
 def _dec(value: Any, exp: Decimal) -> Optional[Decimal]:
@@ -218,6 +226,18 @@ def _truthy(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     return str(value or "").strip().upper() in {"T", "Y", "1", "TRUE", "YES"}
+
+
+def _safe_error(exc: Exception) -> str:
+    """What to log for an unexpected failure: the type and, for a database error, its
+    SQLSTATE and the innermost frame. Never the message: a driver message carries the bound
+    parameters, which are the record as sent."""
+    code = getattr(getattr(exc, "orig", None), "pgcode", None)
+    frame = exc.__traceback__
+    while frame is not None and frame.tb_next is not None:
+        frame = frame.tb_next
+    where = f"{frame.tb_frame.f_code.co_filename.rsplit('/', 1)[-1]}:{frame.tb_lineno}" if frame else "?"
+    return f"{type(exc).__name__} pgcode={code} at={where}"
 
 
 def _joined(*values: Any) -> Optional[str]:
@@ -534,14 +554,16 @@ class AutocountDocIngestService(MasterRefResolver):
                                 errors=exc.errors)
         except IntegrityError as exc:
             savepoint.rollback()
-            logger.warning("ingest.integrity_conflict entity=%s source_ref=%s", entity,
-                           source_ref, exc_info=True)
+            # Never `exc_info`: the driver message carries the bound parameters, i.e. the
+            # delivery address and the record as sent (ingest.py `_log_record_outcomes` rule).
+            logger.warning("ingest.integrity_conflict entity=%s source_ref=%s errors=%s", entity,
+                           source_ref, json.dumps(integrity_conflict_errors(exc)))
             return RecordResult(source_ref=source_ref, outcome=IngestOutcome.FAILED,
                                 errors=integrity_conflict_errors(exc))
-        except Exception:  # noqa: BLE001 - one document's failure, not the batch's
+        except Exception as exc:  # noqa: BLE001 - one document's failure, not the batch's
             savepoint.rollback()
-            logger.warning("ingest.document_failed entity=%s source_ref=%s", entity,
-                           source_ref, exc_info=True)
+            logger.warning("ingest.document_failed entity=%s source_ref=%s error=%s", entity,
+                           source_ref, _safe_error(exc))
             return RecordResult(source_ref=source_ref, outcome=IngestOutcome.FAILED,
                                 errors={"_": INTERNAL_ERROR_MESSAGE})
 
@@ -1003,16 +1025,23 @@ class AutocountDocIngestService(MasterRefResolver):
 
     # ------------------------------------------------------------ waiting links
     def _fill_waiting_links(self, entity: str) -> None:
-        """Fill every null link in the anchor company that now resolves (Q10 a): the SO or
-        PO a document named has arrived since it landed. Through the ORM, one row at a time,
-        so the audit listener sees the header changes."""
+        """Fill null links in the anchor company that now resolve (Q10 a): the SO or PO a
+        document named has arrived since it landed. Through the ORM, one row at a time, so
+        the audit listener sees the header changes.
+
+        Bounded (security review): the newest `MAX_WAITING_LINKS` per kind, and only lines
+        that name their source document (`FromDocNo`), so every lookup is narrowed by an
+        indexed document number, never a company-wide `LIKE`. A line naming only a DtlKey
+        is resolved when it is pushed and again when it is pushed next."""
         if entity == DELIVERY_ORDERS_ENTITY:
             waiting_lines = (
                 self.db.query(OrderLine)
                 .filter(OrderLine.company_id == self.company_id,
                         OrderLine.sales_order_line_id.is_(None),
                         OrderLine.from_dtl_key.isnot(None),
+                        OrderLine.from_doc_no.isnot(None),
                         or_(OrderLine.from_doc_type.is_(None), OrderLine.from_doc_type == "SO"))
+                .order_by(OrderLine.created_at.desc())
                 .limit(MAX_WAITING_LINKS)
                 .all()
             )
@@ -1024,6 +1053,7 @@ class AutocountDocIngestService(MasterRefResolver):
                 self.db.query(Order)
                 .filter(Order.company_id == self.company_id, Order.doc_key.isnot(None),
                         Order.sales_order_id.is_(None), Order.ref_doc_no.isnot(None))
+                .order_by(Order.created_at.desc())
                 .limit(MAX_WAITING_LINKS)
                 .all()
             )
@@ -1037,7 +1067,9 @@ class AutocountDocIngestService(MasterRefResolver):
                 .filter(PickingLine.company_id == self.company_id,
                         PickingLine.po_line_id.is_(None),
                         PickingLine.spo_allocation_id.is_(None),
-                        PickingLine.from_dtl_key.isnot(None))
+                        PickingLine.from_dtl_key.isnot(None),
+                        PickingLine.from_doc_no.isnot(None))
+                .order_by(PickingLine.created_at.desc())
                 .limit(MAX_WAITING_LINKS)
                 .all()
             )
@@ -1054,6 +1086,7 @@ class AutocountDocIngestService(MasterRefResolver):
                         PickingLine.purchase_order_id.is_(None),
                         PickingLine.from_dtl_key.is_(None),
                         PickingLine.our_po_no.isnot(None))
+                .order_by(PickingLine.created_at.desc())
                 .limit(MAX_WAITING_LINKS)
                 .all()
             )
@@ -1135,6 +1168,13 @@ class AutocountDocIngestService(MasterRefResolver):
         if code is None:
             return RecordResult(source_ref=None, outcome=IngestOutcome.FAILED,
                                 errors={"BranchCode": "required"})
+        try:
+            size = len(json.dumps(raw, default=str))
+        except (TypeError, ValueError):
+            size = MAX_BRANCH_BYTES + 1
+        if size > MAX_BRANCH_BYTES:
+            return RecordResult(source_ref=source_ref, outcome=IngestOutcome.FAILED,
+                                errors={"record": f"larger than {MAX_BRANCH_BYTES} bytes"})
         values = {"branch_name": _text(raw.get("BranchName"), 255), "source_record": raw}
         savepoint = self.db.begin_nested()
         try:
@@ -1164,9 +1204,10 @@ class AutocountDocIngestService(MasterRefResolver):
                 self._refresh_branch_names(acc_no, code, values["branch_name"])
             savepoint.commit()
             return RecordResult(source_ref=source_ref, outcome=outcome, entity_id=str(row.id))
-        except Exception:  # noqa: BLE001 - one record's failure, not the batch's
+        except Exception as exc:  # noqa: BLE001 - one record's failure, not the batch's
             savepoint.rollback()
-            logger.warning("ingest.branch_failed source_ref=%s", source_ref, exc_info=True)
+            logger.warning("ingest.branch_failed source_ref=%s error=%s", source_ref,
+                           _safe_error(exc))
             return RecordResult(source_ref=source_ref, outcome=IngestOutcome.FAILED,
                                 errors={"_": INTERNAL_ERROR_MESSAGE})
 
@@ -1177,9 +1218,20 @@ class AutocountDocIngestService(MasterRefResolver):
             Order.doc_key.isnot(None), Order.branch_code == code,
             or_(Order.branch_name.is_(None), Order.branch_name != name),
         )
+        exact_debtors: set[str] = set()
         if acc_no:
             query = query.filter(Order.debtor_code == acc_no)
+        else:
+            # A branch row with no AccNo never overrides a debtor's own exact branch row.
+            exact_debtors = {
+                acc for (acc,) in self.db.query(Branch.acc_no).filter(
+                    Branch.company_id == self.company_id, Branch.source_book == self.book,
+                    Branch.branch_code == code, Branch.acc_no != "",
+                )
+            }
         for order in query.all():
+            if order.debtor_code in exact_debtors:
+                continue
             order.branch_name = name
         self.db.flush()
 

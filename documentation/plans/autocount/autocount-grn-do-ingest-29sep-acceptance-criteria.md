@@ -126,6 +126,15 @@ payloads' field lists (issue #1354, orchestrator comment) with anonymised values
   `branch_name`.
 - **AC-AG064** A record without `BranchCode` is `failed` with `errors.BranchCode`.
 
+## Company isolation (security review)
+
+- **AC-AG080** A push anchored to company A never adopts company B's DO with the same number.
+- **AC-AG081** `/deletions` anchored to A answers `not_found` for B's DocKey and leaves B's row.
+- **AC-AG082** An SO, SO line or PO of company B never links a company A line or header.
+- **AC-AG083** A branch pushed to A never renames B's delivery orders.
+- **AC-AG084** A branch row over 32 KB fails alone; a DocKey beyond BIGINT on `/deletions` is a
+  per-key `failed`, never a 500.
+
 ## Migration
 
 - **AC-AG070** The migration creates `branches`, adds every column in plan 2.2 to 2.5 (nullable)

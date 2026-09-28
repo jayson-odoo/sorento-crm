@@ -404,7 +404,17 @@ The CRM never deletes an AutoCount DO or GRN. A vanished DocKey is cancelled in 
    from the payload), warning `restored`.**
 9. GRN status for an AutoCount GRN: **`approved`** (what the Excel import writes, so SPO receipts
    count it), `cancelled` when cancelled.
-10. A branch rename: **every AutoCount DO with that branch takes the new name.**
+10. A branch rename: **every AutoCount DO with that branch takes the new name** (a branch row
+    with no AccNo never overrides a debtor's own exact branch row).
+11. (security review) An exact link by `FromDocDtlKey` with no `FromDocNo` matches the SO / PO
+    line whose `source_ref` ends in that DtlKey anywhere in the company, and DtlKeys are per
+    book, so with a second book a lone match could be another book's line. **Accept while
+    there is one book (db1, ruling V9); when a second book is pushed, require `FromDocNo` or
+    map the book to the DB transfer's `{database}` prefix.** The waiting-link fill already
+    only retries lines that carry `FromDocNo`.
+12. (security review) `POST /ingest/branches` (slug `order_management.customers.edit`) also
+    refreshes `orders.branch_name`, a display column on AutoCount DOs. **Accept: it is the
+    branch's own name, and the DO push itself sets the same column.**
 
 ## 7. Not built, and the trigger for each
 
