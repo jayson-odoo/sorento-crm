@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import uuid
 
+import pytest
 from sqlalchemy import text
 
 from app.models.integration import IntegrationLog
@@ -97,11 +98,82 @@ def test_ac_sa501_a_live_turn_writes_one_open_row_per_answered_product(
         assert str(row.company_id) == SORENTO
 
 
-def test_ac_sa501_dry_run_and_console_write_no_row(session_factory, monkeypatch, stub_access):
+def test_ac_sa501_a_live_turn_marks_its_rows_live(session_factory, monkeypatch, stub_access):
     dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
-    out = dealer.ask_all_four(is_test=True)
+    dealer.ask_all_four()
+    assert {a.source for a in _asks(session_factory)} == {"live"}
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"is_test": True},
+        {"test_run_id": "ZZT-clone-run"},
+        {"is_test": True, "ingress": "console"},
+        {"is_test": True, "console_origin": True},
+    ],
+    ids=["is_test", "test_run_id", "prompt_screen_run_a_turn", "marker_without_console_ingress"],
+)
+def test_ac_sa501_a_dry_run_that_is_not_the_chat_console_writes_no_row(
+    session_factory, monkeypatch, stub_access, extra
+):
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
+    out = dealer.ask_all_four(**extra)
     assert out.error is None, out.error
     assert _asks(session_factory) == []
+
+
+def test_ac_sa501_a_chat_console_turn_writes_console_rows_on_the_asks_tab_and_portal(
+    session_factory, monkeypatch, stub_access
+):
+    """Owner ruling 28 Sep 2026: a console turn writes its `stock_asks` rows like a live
+    turn, marked `source = console` so staff can tell a hand test from a real dealer, and
+    they read back through the CRM Asks tab and the portal Customer asks page."""
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
+    agent = _give_customer_an_agent(session_factory, dealer.customer_id)
+    out = dealer.ask_all_four(console=True)
+    assert out.error is None, out.error
+
+    rows = _by_code(session_factory)
+    assert set(rows) == {"ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI", "ZZTSA-INC"}
+    for code, row in rows.items():
+        assert row.source == "console", code
+        assert row.customer_id == dealer.customer_id
+        assert row.state == "open"
+    assert {f["ask_id"] for f in dealer.notified} == {
+        rows[c].id for c in ("ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI")
+    }
+
+    db = session_factory()
+    db.info["company_scope"] = None
+    tab = stock_ask_service.list_for_customer(db, dealer.customer_id, page=1, limit=50)
+    assert {r.source for r in tab["data"]} == {"console"}
+    assert len(tab["data"]) == 4
+    portal = stock_ask_service.list_for_agent(db, agent.id, page=1, limit=50)
+    assert {r.source for r in portal["data"]} == {"console"}
+    assert len(portal["data"]) == 4
+
+
+def test_ac_sa501_a_console_reply_is_never_sent_to_whatsapp(
+    session_factory, monkeypatch, stub_access, respond
+):
+    """What stays dry run on a console turn: the dealer-facing reply. Every action the turn
+    hands back carries `dry_run: true` (the console never executes them), and when the
+    queued jobs run, the only Respond send is the salesperson's, never the dealer's."""
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
+    _give_customer_an_agent(session_factory, dealer.customer_id, respond_io_id="ZZT-agent-rid")
+    out = dealer.ask_all_four(console=True)
+    assert out.error is None, out.error
+    assert out.is_test is True
+    assert out.actions, "the reply is handed back as actions"
+    for action in out.actions:
+        assert action.get("dry_run") is True, action
+
+    _window(monkeypatch, open_=True)
+    results = _run_jobs(session_factory, dealer)
+    assert [r["status"] for r in results] == ["sent", "sent", "sent"]
+    assert {ident for ident, _text in _FakeRespond.sent} == {"ZZT-agent-rid"}
+    assert all("ZZTSA-" in text_ for _ident, text_ in _FakeRespond.sent)
 
 
 def test_ac_sa501_toggle_off_still_records_every_ask(session_factory, monkeypatch, stub_access):

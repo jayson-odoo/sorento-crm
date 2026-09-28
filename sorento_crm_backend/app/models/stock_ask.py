@@ -32,6 +32,8 @@ from app.models.base import CompanyScopedMixin
 
 STOCK_ASK_BRANCHES = ("too_big", "in_stock", "incoming", "no_incoming")
 STOCK_ASK_STATES = ("open", "done")
+#: `console`: written by a chat console hand test (owner ruling 28 Sep 2026), not a dealer.
+STOCK_ASK_SOURCES = ("live", "console")
 
 
 class StockAsk(Base, CompanyScopedMixin):
@@ -42,6 +44,7 @@ class StockAsk(Base, CompanyScopedMixin):
             name="ck_stock_asks_branch",
         ),
         CheckConstraint("state IN ('open', 'done')", name="ck_stock_asks_state"),
+        CheckConstraint("source IN ('live', 'console')", name="ck_stock_asks_source"),
         Index("ix_stock_asks_customer_created", "customer_id", text("created_at DESC")),
     )
 
@@ -59,6 +62,7 @@ class StockAsk(Base, CompanyScopedMixin):
     notify_skip_reason = Column(String(80), nullable=True)
     state = Column(String(10), nullable=False, default="open", server_default=text("'open'"))
     note = Column(Text, nullable=True)
+    source = Column(String(10), nullable=False, default="live", server_default=text("'live'"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False

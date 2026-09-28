@@ -19,6 +19,8 @@ class StockAskResponse(BaseModel):
     notified_agent: bool
     notify_skip_reason: Optional[str] = None
     state: str
+    #: `live` or `console` (a chat console hand test); shown as "Console" on both lists.
+    source: str = "live"
     note: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None

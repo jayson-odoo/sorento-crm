@@ -611,6 +611,11 @@ class Envelope(BaseModel):
     mode: str | None = None
     scope: str | None = None
     ingress: IngressKind = "webhook"
+    # Owner ruling 28 Sep 2026 (chatbot stock ask v2, PR #1333): set ONLY by the chat
+    # console's two envelope builders (`console_service`). With `ingress == "console"` and a
+    # dry run it lets the stock ask hooks alone (`engine._run_answer`) write the ask row and
+    # enqueue the salesman message; nothing else reads it, so D14 holds everywhere else.
+    console_origin: bool = False
     # Gate 4 (shadow mode). Same reason as `messageId`: it lands in a VARCHAR(128).
     shadow_of: str | None = Field(default=None, max_length=128)
     # PLAN-chatbot-media-into-turn.md, AC-1805 (review round S3): n8n's OWN transition-
@@ -666,6 +671,13 @@ class Envelope(BaseModel):
         (H37: n8n called next-assignee first and guarded second).
         """
         return bool(self.is_test or self.test_run_id or (self.mode and self.mode != "live"))
+
+    @property
+    def chat_console(self) -> bool:
+        """A dry run the chat console page sent: both console markers and D14's dry run.
+        The Prompts screen's "Run a turn" also says `ingress: console` but never sets
+        `console_origin`, so it is not one."""
+        return bool(self.dry_run and self.ingress == "console" and self.console_origin)
 
 
 # `Action` and `Reply` are deliberately NOT modelled. `TurnResponse` carries both as plain

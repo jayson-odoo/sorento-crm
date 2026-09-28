@@ -3048,6 +3048,7 @@ def _run_stages(  # noqa: PLR0915
             verdict=verdict,
             recalled=recalled,
             stock_ask_entries=stock_ask_entries,
+            chat_console=envelope.chat_console,
         )
 
     with _session(session_factory) as db:
@@ -3343,6 +3344,7 @@ def _run_answer(
     verdict: dict[str, Any],
     recalled: list[dict[str, Any]],
     stock_ask_entries: list[dict[str, Any]] | None = None,
+    chat_console: bool = False,
 ) -> TurnResult:
     """G TAIL for a turn the composer answered: persist, record, hand the actions back.
 
@@ -3415,11 +3417,13 @@ def _run_answer(
             response={"ctx": ctx, "item": item, "actions": lane_actions, "reply": reply},
         )
 
-    if stock_ask_entries and not dry_run:
-        # Chatbot stock ask v2 S4 (AC-SA401, AC-SA402): AFTER the turn row is closed,
-        # never before, and only on a live turn - a dry run or console turn sends no
-        # salesman message. The dealer's reply is already built; the send is a queued
-        # job, so Respond never holds it up.
+    if stock_ask_entries and (not dry_run or chat_console):
+        # Chatbot stock ask v2 S4 / S5 (AC-SA401, AC-SA402, AC-SA501): AFTER the turn row
+        # is closed, never before. A live turn, and (owner ruling 28 Sep 2026) a CHAT
+        # CONSOLE turn, write the ask rows and enqueue the real salesman job; every other
+        # dry run does neither (D14). The console's own reply stays a dry run: its
+        # actions carry `dry_run: true` and nothing here sends them. The send is a
+        # queued job, so Respond never holds the dealer's reply up.
         _after_stock_ask_turn(
             session_factory,
             turn_id=turn_id,
@@ -3427,6 +3431,7 @@ def _run_answer(
             state=state,
             entries=stock_ask_entries,
             reply_text=reply.get("text") or "",
+            source="console" if dry_run else "live",
         )
 
     return TurnResult(
@@ -4791,6 +4796,7 @@ def _after_stock_ask_turn(
     state: Any,
     entries: list[dict[str, Any]],
     reply_text: str,
+    source: str = "live",
 ) -> None:
     """Hand the answered stock ask to `stock_ask_service` once the turn is closed. Never
     raises: the turn is answered and recorded, and a failure here must not turn it into
@@ -4811,6 +4817,7 @@ def _after_stock_ask_turn(
                 notify_salesman=bool(getattr(profile, "notify_salesman", False)),
                 entries=entries,
                 reply_text=reply_text,
+                source=source,
             )
     except Exception:  # noqa: BLE001 - the dealer's answer is already recorded
         logger.exception("chatbot turn %s: stock ask follow-up failed", turn_id)

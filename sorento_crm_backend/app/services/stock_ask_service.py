@@ -109,8 +109,11 @@ def after_answered_turn(
     entries: Iterable[Any],
     reply_text: str = "",
     now: Optional[datetime] = None,
+    source: str = "live",
 ) -> list[dict[str, Any]]:
-    """Run once a LIVE turn's row is closed (the engine never calls this on a dry run).
+    """Run once a live or chat console turn's row is closed (the engine calls this on no
+    other dry run). `source` is `live` or `console` (owner ruling 28 Sep 2026: a console
+    turn records and notifies too, and its rows say so on the Asks tab and portal page).
 
     S5: one `stock_asks` row per answered entry, state open, with the exact line the dealer
     was sent. S4: one `notify_salesman` job per B1 / B2 / B4 row when the contact's toggle
@@ -154,6 +157,7 @@ def after_answered_turn(
             notified_agent=False,
             notify_skip_reason=reason,
             state="open",
+            source=source,
         )
         db.add(ask)
         rows.append((ask, entry, reason is None))
@@ -450,6 +454,7 @@ def serialize(db: Session, rows: list[Any]) -> list[Any]:
             notified_agent=bool(r.notified_agent),
             notify_skip_reason=r.notify_skip_reason,
             state=r.state,
+            source=r.source or "live",
             note=r.note,
             created_at=r.created_at,
             updated_at=r.updated_at,

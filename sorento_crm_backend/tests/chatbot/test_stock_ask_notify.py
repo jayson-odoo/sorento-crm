@@ -186,27 +186,49 @@ class LiveDealer:
         monkeypatch.setattr(MCPRuntimeClient, "call_tool", fake_call_tool)
         monkeypatch.setattr(stock_ask_service, "enqueue_job", record_job)
 
-    def say(self, message: str, v: dict[str, Any], *, is_test: bool = False):
+    def say(
+        self,
+        message: str,
+        v: dict[str, Any],
+        *,
+        is_test: bool = False,
+        console: bool = False,
+        **extra: Any,
+    ):
+        """`console=True` builds the envelope the chat console builds
+        (`console_service._build_envelope`), so the test pins the marker the console sets
+        rather than a hand-made copy of it. `extra` adds envelope fields (`ingress`,
+        `test_run_id`, ...) to a non-console envelope."""
         self._next = v
-        return engine_mod.run_turn(
-            _envelope(
-                is_test=is_test,
-                message={
-                    "event_type": "message.received",
-                    "contact": {"id": CONTACT_ID},
-                    "message": {
-                        "messageId": f"ZZT-sa4-{uuid.uuid4().hex[:10]}",
-                        "contactId": CONTACT_ID,
-                        "channelId": "whatsapp",
-                        "traffic": "incoming",
-                        "message": {"type": "text", "text": message},
-                    },
-                },
-            ),
-            session_factory=self.session_factory,
-        )
+        inbound = {
+            "event_type": "message.received",
+            "contact": {"id": CONTACT_ID},
+            "message": {
+                "messageId": f"ZZT-sa4-{uuid.uuid4().hex[:10]}",
+                "contactId": CONTACT_ID,
+                "channelId": "whatsapp",
+                "traffic": "incoming",
+                "message": {"type": "text", "text": message},
+            },
+        }
+        if console:
+            from app.services.chatbot import console_service
+            from app.services.chatbot.contracts import TurnRequest
 
-    def ask_all_four(self, *, is_test: bool = False):
+            built = console_service._build_envelope(
+                _envelope(message=inbound).model_dump(mode="json"),
+                contact_respond_id=str(CONTACT_ID),
+                message_text=message,
+                run_id=f"ZZT-console-{uuid.uuid4().hex[:8]}",
+                session_vars=None,
+                prompt_version_id=None,
+            )
+            envelope = TurnRequest(envelope=built).envelope
+        else:
+            envelope = _envelope(is_test=is_test, message=inbound, **extra)
+        return engine_mod.run_turn(envelope, session_factory=self.session_factory)
+
+    def ask_all_four(self, *, is_test: bool = False, console: bool = False, **extra: Any):
         return self.say(
             "ZZTSA-BIG 300, ZZTSA-INS 50, ZZTSA-INC 150, ZZTSA-NOI 20",
             stock(
@@ -216,6 +238,8 @@ class LiveDealer:
                 product("ZZTSA-NOI", 20),
             ),
             is_test=is_test,
+            console=console,
+            **extra,
         )
 
     def uuid_of(self, code: str) -> str:
@@ -255,14 +279,62 @@ def test_ac_sa401_toggle_off_enqueues_nothing(session_factory, monkeypatch, stub
     assert dealer.notified == []
 
 
-def test_ac_sa401_dry_run_or_console_turn_enqueues_nothing(
-    session_factory, monkeypatch, stub_access
+@pytest.mark.parametrize(
+    "extra",
+    [
+        # A plain test envelope (n8n's own test mode, the clone's replay).
+        {"is_test": True},
+        {"test_run_id": "ZZT-clone-run"},
+        # The Prompts screen's "Run a turn" (`chat.run_prompt_dry_run_turn`): ingress
+        # console, but not the chat console, so no marker.
+        {"is_test": True, "ingress": "console"},
+        # The marker alone, off a caller that is not the console, is not enough.
+        {"is_test": True, "console_origin": True},
+    ],
+    ids=["is_test", "test_run_id", "prompt_screen_run_a_turn", "marker_without_console_ingress"],
+)
+def test_ac_sa401_a_dry_run_that_is_not_the_chat_console_enqueues_nothing(
+    session_factory, monkeypatch, stub_access, extra
 ):
+    """Owner ruling 28 Sep 2026: only the CHAT CONSOLE's dry run notifies; every other
+    dry run stays D14 (zero writes outside `chatbot.turns`)."""
     dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
-    out = dealer.ask_all_four(is_test=True)
+    out = dealer.ask_all_four(**extra)
     assert out.error is None, out.error
+    assert out.is_test is True
     assert "ZZTSA-BIG x 300" in ((out.reply or {}).get("text") or "")
     assert dealer.jobs == []
+
+
+def test_ac_sa401_a_chat_console_turn_enqueues_the_real_notify_job(
+    session_factory, monkeypatch, stub_access
+):
+    """Owner ruling 28 Sep 2026 ("it should work using chat console also"): a console turn
+    that answers a stock ask enqueues the SAME `notify_salesman` job on `respond_io` a live
+    turn does, one per B1 / B2 / B4, so the owner can hand test the salesperson message
+    from the console. The turn itself is still a dry run."""
+    from app.tasks import stock_ask_tasks
+
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=True)
+    out = dealer.ask_all_four(console=True)
+    assert out.error is None, out.error
+    assert out.is_test is True
+
+    facts = dealer.notified
+    assert sorted(f["branch"] for f in facts) == ["in_stock", "no_incoming", "too_big"]
+    assert {f["product_code"] for f in facts} == {"ZZTSA-BIG", "ZZTSA-INS", "ZZTSA-NOI"}
+    for func, _args, kwargs in dealer.jobs:
+        assert func is stock_ask_tasks.notify_salesman
+        assert kwargs.get("queue_name") == "respond_io"
+
+
+def test_ac_sa401_a_chat_console_turn_with_the_toggle_off_enqueues_nothing(
+    session_factory, monkeypatch, stub_access
+):
+    dealer = LiveDealer(session_factory, monkeypatch, stub_access, notify=False)
+    out = dealer.ask_all_four(console=True)
+    assert out.error is None, out.error
+    assert dealer.notified == []
 
 
 def test_ac_sa401_an_ask_still_owing_a_quantity_enqueues_nothing(
