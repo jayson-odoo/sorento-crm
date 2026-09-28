@@ -1,59 +1,37 @@
 """Resolve a CRM user to the WhatsApp contact (respond_io_id) they're reachable on.
 
-Resolution order (TCK-2026-000031):
-  1. explicit link  -> users.respond_contact_id
-  2. phone match    -> single RespondContact whose phone_number == normalised contact_number
-  3. None
+The link is the only way from a user to a contact: ``users.respond_contact_id``,
+set by the owner (create from a contact, Link existing user, Edit profile) or, once,
+by the identity S0 migration for every exact unique phone match (AC-04). No link,
+no contact.
 
-A successful phone match is cached onto users.respond_contact_id so later sends
-are an O(1) FK lookup. Matching is via the single E.164 normaliser used on both
-sides, so the link is deterministic. A non-unique match (0 or >1) returns None
-rather than guessing.
+Identity S3 fix round 2 (#1280, reviewer B1): this used to fall back to a unique
+phone match between ``users.contact_number`` and ``respond_contacts.phone_number``
+and cache it onto the user (TCK-2026-000031). That undid the owner's Unlink on the
+next notification, SLA summary, banner or WhatsApp task, and sent to the contact
+the owner had detached. Plan 6.5 and AC-43 say nothing links by itself, and the
+owner ruled (Q3/Q4, 26 Sep 2026 23:45 MYT) that setting users up "should be
+controlled by me", so the fallback is gone rather than made read-only.
 """
-import logging
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.user import User
 from app.models.access import RespondContact
-from app.services.phone_utils import normalize_msisdn
-
-logger = logging.getLogger(__name__)
 
 
-def resolve_user_respond_contact(db: Session, user: User, *, cache: bool = True) -> Optional[RespondContact]:
-    """Return the linked RespondContact (explicit or phone-matched) or None."""
+def resolve_user_respond_contact(db: Session, user: User) -> Optional[RespondContact]:
+    """Return the user's linked RespondContact, or None when there is no link."""
     if user is None:
         return None
-    if getattr(user, "respond_contact_id", None):
-        return db.query(RespondContact).filter(RespondContact.id == user.respond_contact_id).first()
-    n = normalize_msisdn(getattr(user, "contact_number", None))
-    if not n:
+    contact_id = getattr(user, "respond_contact_id", None)
+    if not contact_id:
         return None
-    matches = db.query(RespondContact).filter(RespondContact.phone_number == n).all()
-    if len(matches) != 1:
-        return None
-    rc = matches[0]
-    # One WhatsApp contact == one user (identity S0, AC-01): a contact another user
-    # already holds is returned for this call but never cached onto this user.
-    held_by_other = (
-        db.query(User.id)
-        .filter(User.respond_contact_id == rc.id, User.id != user.id)
-        .first()
-        is not None
-    )
-    if cache and not held_by_other:
-        try:
-            user.respond_contact_id = rc.id
-            db.commit()
-        except Exception as exc:  # best-effort cache; never block the caller
-            logger.warning("Failed to cache respond_contact_id for user %s: %s", getattr(user, "id", "?"), exc)
-            db.rollback()
-    return rc
+    return db.query(RespondContact).filter(RespondContact.id == contact_id).first()
 
 
-def resolve_user_respond_io_id(db: Session, user: User, *, cache: bool = True) -> Optional[str]:
+def resolve_user_respond_io_id(db: Session, user: User) -> Optional[str]:
     """Return the user's WhatsApp respond_io_id, or None if unreachable."""
-    rc = resolve_user_respond_contact(db, user, cache=cache)
+    rc = resolve_user_respond_contact(db, user)
     return rc.respond_io_id if rc else None

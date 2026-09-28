@@ -134,6 +134,9 @@ async def get_users_select(
         description="Only users holding a grant for this company. Used by the team-member "
         "picker, since team membership requires the grant.",
     ),
+    phone: Optional[str] = Query(None, description="S3: exact match on contact_number (normalised)."),
+    respond_contact_id: Optional[str] = Query(None, description="S3: exact match on the linked WhatsApp contact."),
+    unlinked: Optional[bool] = Query(None, description="S3: only users with no linked WhatsApp contact."),
     current_user: dict = Depends(require_permission("user_management.users.view")),
     db: Session = Depends(get_db)
 ):
@@ -146,6 +149,9 @@ async def get_users_select(
             status=status,
             trashed=trashed or "exclude",
             company_id=company_id,
+            phone=phone,
+            respond_contact_id=respond_contact_id,
+            unlinked=unlinked,
         )
         return [UserSelectResponse.model_validate(user) for user in users]
     except Exception as e:
@@ -261,22 +267,32 @@ async def bulk_users_action(
         if body.action == "resend_invite":
             success = 0
             failed = 0
+            skipped = 0
             for user_id in body.user_ids:
                 try:
                     user = service.get_user(user_id)
+                    # Skipped BEFORE calling the sender (S3 1.6) - there is
+                    # nowhere to send it, and it is not a failure.
+                    if not (getattr(user, "email", None) or "").strip():
+                        skipped += 1
+                        continue
                     _send_invitation_link_for_user(db, user)
                     success += 1
                 except HTTPException:
                     failed += 1
                 except Exception:
                     failed += 1
+            message = f"Invitation links sent to {success} user(s)."
+            if skipped:
+                message += f" {skipped} skipped (no email)."
             if failed:
-                return {
-                    "message": f"Invitation links sent to {success} user(s). {failed} failed.",
-                    "success": success,
-                    "failed": failed,
-                }
-            return {"message": f"Invitation links sent to {success} user(s).", "success": success, "failed": 0}
+                message += f" {failed} failed."
+            return {
+                "message": message,
+                "success": success,
+                "failed": failed,
+                "skipped": skipped,
+            }
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid action")
     except HTTPException:
         raise
@@ -363,6 +379,8 @@ async def get_current_user_profile(
 ):
     """Get current user's profile."""
     try:
+        from app.services.user_contact_link import sign_in_summary
+
         service = UserService(db)
         user_id = current_user["id"]
         user = service.get_user(user_id)
@@ -394,6 +412,10 @@ async def get_current_user_profile(
             "notify_email_on_handling": getattr(user, "notify_email_on_handling", True),
             "notify_whatsapp_on_handling": getattr(user, "notify_whatsapp_on_handling", False),
             "notify_email_on_mention": getattr(user, "notify_email_on_mention", True),
+            # S3 1.7 - the Sign-in section's five fields, on THIS dict too (LESSONS
+            # 93: a field added to one manual builder and not the other never
+            # reaches whichever route it was forgotten on).
+            **sign_in_summary(db, user),
             # A new User column reaches the FE only through these manual dicts -
             # inheriting it on UserResponse is not enough (UAC AC-M26).
             "notify_push_message_scope": getattr(
@@ -514,6 +536,8 @@ async def get_user(
 ):
     """Get a single user by ID."""
     try:
+        from app.services.user_contact_link import sign_in_summary
+
         validate_uuid_path(user_id, resource="User")
         service = UserService(db)
         user = service.get_user(user_id)
@@ -545,6 +569,10 @@ async def get_user(
             "notify_email_on_handling": getattr(user, "notify_email_on_handling", True),
             "notify_whatsapp_on_handling": getattr(user, "notify_whatsapp_on_handling", False),
             "notify_email_on_mention": getattr(user, "notify_email_on_mention", True),
+            # S3 1.7 - the Sign-in section's five fields, on THIS dict too (LESSONS
+            # 93: a field added to one manual builder and not the other never
+            # reaches whichever route it was forgotten on).
+            **sign_in_summary(db, user),
             # A new User column reaches the FE only through these manual dicts -
             # inheriting it on UserResponse is not enough (UAC AC-M26).
             "notify_push_message_scope": getattr(
@@ -566,24 +594,6 @@ async def get_user(
             "product_discontinued_scopes": serialize_scopes(db, str(user.id)),
         }
         return UserResponse(**user_dict)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
-@router.post("/invite", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def invite_user(
-    user_data: UserCreate,
-    current_user: dict = Depends(require_permission("user_management.users.add")),
-    db: Session = Depends(get_db)
-):
-    """Create a user and send an invitation email so they can set their password and sign in."""
-    try:
-        service = UserService(db)
-        user = service.invite_user(user_data, invited_by_user_id=current_user["id"])
-        _send_invitation_link_for_user(db, user)
-        return user
     except HTTPException:
         raise
     except Exception as e:

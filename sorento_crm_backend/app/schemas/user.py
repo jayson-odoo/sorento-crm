@@ -65,6 +65,15 @@ class RespondContactResponse(RespondContactBase):
     # Chatbot stock ask v2 S2 (PLAN-chatbot-stock-ask-v2-24sep.md, R7): both default off.
     notify_salesman: bool = False
     packing_list_allowed: bool = False
+    # Identity S3 1.7. List rows: linked_user_id/name only (one batched query per
+    # page - see `ContactService.list_contacts`). Detail additionally carries
+    # is_salesperson/suggested_role_slug and the full linked_user. Both the id/name
+    # pair and linked_user are null without `user_management.users.view`.
+    linked_user_id: Optional[str] = None
+    linked_user_name: Optional[str] = None
+    is_salesperson: bool = False
+    suggested_role_slug: str = "portal_user"
+    linked_user: Optional[dict] = None
 
     class Config:
         from_attributes = True
@@ -193,7 +202,10 @@ DEFAULT_MESSAGE_PUSH_SCOPE: MessagePushScope = "assigned_and_coverage"
 
 
 class UserBase(BaseModel):
-    email: str
+    # Optional since S3 (Q5): a user needs at least one of email or phone, not
+    # necessarily both. `create_user` raises `EMAIL_OR_PHONE_REQUIRED` when
+    # neither is present after any linked contact's phone is applied.
+    email: Optional[str] = None
     name: Optional[str] = None
     contact_number: Optional[str] = None
     status: str = "INACTIVE"
@@ -307,6 +319,15 @@ class UserResponse(UserBase):
     # user. Populated by every manual UserResponse builder (see users.py) - the
     # field is not an ORM attribute, so inheritance alone would never fill it.
     product_discontinued_scopes: List[ProductDiscontinuedScopeOut] = []
+    # The Sign-in section's five fields (S3 1.7). Populated by
+    # `app.services.user_contact_link.sign_in_summary` in BOTH manual dict
+    # builders (`get_user`, `get_current_user_profile`) - like the scopes above,
+    # these are not ORM attributes, so a builder that forgets one silently drops it.
+    phone_verified_at: Optional[datetime] = None
+    linked_contact: Optional[dict] = None
+    phone_differs_from_contact: bool = False
+    last_sign_in_method: Optional[str] = None
+    needs_invitation: bool = False
 
     class Config:
         from_attributes = True

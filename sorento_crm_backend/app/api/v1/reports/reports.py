@@ -202,7 +202,7 @@ def get_report_meta(
             ReportCatalogColumn(
                 key=c.key, label=c.label, type=c.type, tag=c.tag, size=c.size
             )
-            for c in definition.dataset.columns
+            for c in definition.catalog()
         ],
         default_view=default_view,
         can_publish=_holds(db, current_user, PUBLISH_PERMISSION),
@@ -285,7 +285,7 @@ def export_report(
         params = {**params, company_param: ctx.values.get(company_param) or []}
 
     view = body.view or engine.view_config(definition)
-    engine.validate_view(definition, view)
+    engine.validate_view(definition, view, ctx.dataset)
     download = DownloadService(db).create(
         user_id=str(current_user["id"]),
         kind="report_xlsx",

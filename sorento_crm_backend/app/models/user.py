@@ -68,7 +68,7 @@ class User(Base):
     tier = Column(Integer, nullable=True)  # Conversation SLA policy tier (1, 2, ...)
     daily_sla_summary_subscribed = Column(Boolean, default=True, nullable=False)  # email summary opt-in
     # Link to the WhatsApp contact this user is reachable on (resolves respond_io_id).
-    # Set explicitly by an admin, or auto-cached by a unique phone match (see respond_link_service).
+    # Set by the owner (or once by the identity S0 migration); nothing links it at runtime (see respond_link_service).
     respond_contact_id = Column(String, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True)
     # When the user last proved they hold `contact_number` (phone sign-in code). Naive UTC.
     phone_verified_at = Column(DateTime(timezone=False), nullable=True)

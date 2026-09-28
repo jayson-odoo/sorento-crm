@@ -384,6 +384,9 @@ class UserService:
         status: Optional[str] = None,
         trashed: str = "exclude",
         company_id: Optional[str] = None,
+        phone: Optional[str] = None,
+        respond_contact_id: Optional[str] = None,
+        unlinked: Optional[bool] = None,
     ):
         """List users for select dropdowns. Defaults to non-trashed only.
 
@@ -391,6 +394,10 @@ class UserService:
         SHARED across companies, so the default stays unfiltered; the team-member
         picker passes it because team membership requires the grant (AC-G1) - and
         offering a user who cannot be added is just an error waiting to happen.
+
+        ``phone``/``respond_contact_id``/``unlinked`` (S3 1.7): resolve the OTHER
+        user a 409 named ("Open user" / "Link this contact to <name> instead"),
+        or offer users with no linked contact ("Link existing user").
         """
         q = self.db.query(User)
 
@@ -418,6 +425,20 @@ class UserService:
                     User.email.ilike(f"%{query}%")
                 )
             )
+        if phone:
+            from app.services.phone_utils import normalize_msisdn
+
+            normalized_phone = normalize_msisdn(phone)
+            if normalized_phone is None:
+                # Junk input normalises to nothing usable - answer no rows.
+                # `User.contact_number == None` would otherwise compile to
+                # `IS NULL` and match every PHONELESS user instead.
+                return []
+            filters.append(User.contact_number == normalized_phone)
+        if respond_contact_id:
+            filters.append(User.respond_contact_id == respond_contact_id)
+        if unlinked:
+            filters.append(User.respond_contact_id.is_(None))
 
         if filters:
             from sqlalchemy import and_
@@ -476,14 +497,18 @@ class UserService:
         raise handle_conflict(msg)
 
     def _check_contact_number_unique(self, contact_number: str, exclude_user_id: Optional[str]) -> None:
-        """Reject a phone already claimed by another user. Expects normalised E.164 digits."""
+        """409 PHONE_BELONGS_TO_USER when another user already holds this phone
+        (S3 1.2/1.3). Expects normalised E.164 digits. Names the holder
+        (`user_label`), never their id or the phone itself (AC-42)."""
         q = self.db.query(User).filter(User.contact_number == contact_number)
         if exclude_user_id:
             q = q.filter(User.id != exclude_user_id)
         existing = q.first()
         if existing:
-            raise handle_conflict(
-                f"Phone number {contact_number} is already used by another user."
+            raise AppException(
+                status_code=409,
+                message=f"This phone already belongs to {user_label(existing)}",
+                code="PHONE_BELONGS_TO_USER",
             )
 
     def _check_email_free(self, email: Optional[str], exclude_user_id: Optional[str]) -> None:
@@ -515,6 +540,40 @@ class UserService:
                 message=f"WhatsApp contact already linked to {user_label(other)}",
                 code="CONTACT_ALREADY_LINKED",
             )
+
+    def _audit_contact_link(self, user_id: str, description: str) -> None:
+        """One `log_audit` UPDATE row for a create-from-contact, link, or unlink
+        (S3 1.2 step 10, 1.3, 1.4), its description naming the contact. Best-effort
+        in its OWN transaction, after the caller's own commit: an audit-write failure
+        must never undo the link itself.
+
+        `log_audit` derives `real_user_id`/`actor_type` from the ambient actor
+        automatically, but NOT its `user_id` column - that is only ever whatever
+        a caller passes explicitly. Read here so the row's `user_id` also names
+        whoever is stamped (the deferred `user.unlink_contact` executor runs
+        inside `actor_scope`, so this is the requester, not the sweep/commit).
+        """
+        import logging
+
+        from app.audit_context import get_actor
+
+        logger = logging.getLogger(__name__)
+        try:
+            from app.services.audit_service import log_audit
+
+            actor = get_actor(self.db)
+            log_audit(
+                self.db,
+                "user",
+                user_id,
+                "UPDATE",
+                description=description,
+                user_id=actor.user_id if actor else None,
+            )
+            self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            logger.warning("Failed to write the contact-link audit row for user %s: %s", user_id, e)
 
     def _other_user(self, condition, exclude_user_id: Optional[str]):
         q = self.db.query(User).filter(condition)
@@ -553,8 +612,8 @@ class UserService:
     def _grant_companies(self, user, company_ids: Optional[list[str]]) -> None:
         """Grant the user access to the given companies (skipping unknown ids).
 
-        A single company becomes the user's landing default (last_active_company_id).
-        Caller commits.
+        The FIRST id becomes the user's landing default (last_active_company_id) -
+        S3 1.2 widens this from "only when there is exactly one". Caller commits.
         """
         from app.models.company import Company, UserCompany
         cids = [
@@ -564,21 +623,56 @@ class UserService:
         ]
         for cid in cids:
             self.db.add(UserCompany(company_id=cid, user_id=user.id))
-        if len(cids) == 1:
+        if cids:
             user.last_active_company_id = cids[0]
 
     def create_user(self, user_data: UserCreate):
-        """Create a new user and assign roles via user_role_assignments."""
+        """Create a new user and assign roles via user_role_assignments (S3 1.2).
+
+        The owner may create from a WhatsApp contact (`respond_contact_id`): the
+        contact's own phone wins over anything in the body, the server alone
+        decides status/password, and nothing is ever sent (AC-41, AC-56).
+        """
+        from app.models.access import RespondContact
+        from app.services.phone_utils import normalize_msisdn
+
         data = self._user_create_data(user_data)
         data["email"] = normalize_email(data.get("email"))
+
+        respond_contact_id = data.get("respond_contact_id")
+        contact = None
+        if respond_contact_id:
+            contact = (
+                self.db.query(RespondContact)
+                .filter(RespondContact.id == respond_contact_id)
+                .first()
+            )
+            if contact is None:
+                raise handle_not_found("Contact", respond_contact_id)
+            self._check_contact_free(respond_contact_id, exclude_user_id=None)
+            # The contact's own phone wins; a phone in the body is ignored.
+            data["contact_number"] = normalize_msisdn(contact.phone_number)
+
+        if not data.get("email") and not data.get("contact_number"):
+            raise AppException(
+                status_code=422,
+                message="Enter an email or a phone number",
+                code="EMAIL_OR_PHONE_REQUIRED",
+            )
+
         self._check_email_free(data["email"], exclude_user_id=None)
-        self._check_contact_free(data.get("respond_contact_id"), exclude_user_id=None)
         rid = _normalize_respond_user_id(data.get("respond_user_id"))
         if rid:
             self._check_respond_user_id_unique(rid, exclude_user_id=None)
             data["respond_user_id"] = rid
         if data.get("contact_number"):
             self._check_contact_number_unique(data["contact_number"], exclude_user_id=None)
+
+        # The server decides status and password; anything the body sent for
+        # either is ignored (AC-41).
+        data["status"] = "ACTIVE" if data.get("contact_number") else "INACTIVE"
+        data["password"] = None
+
         try:
             user = User(**data)
             self.db.add(user)
@@ -599,10 +693,23 @@ class UserService:
                 exc, email=data.get("email"), respond_contact_id=data.get("respond_contact_id"), exclude_user_id=None
             )
         self.db.refresh(user)
+
+        if contact is not None:
+            self._audit_contact_link(
+                user.id,
+                f"Created from WhatsApp contact {contact.name or contact.phone_number}",
+            )
         return user
 
     def invite_user(self, user_data: UserCreate, invited_by_user_id: str):
-        """Create a user without a password and mark them as invited. Used for invitation flow."""
+        """Create a user without a password and mark them as invited.
+
+        The onboarding provisioning task (`app/tasks/onboarding_tasks.py`) is the
+        one caller left: the plan removed the `POST /users/invite` ROUTE and its
+        Next proxy (AC-58, the create-and-email path from the Add user modal is
+        gone), not this method - onboarding still creates-and-invites in one step
+        for an approved person the reviewer already saw.
+        """
         data = self._user_create_data(user_data)
         data["email"] = normalize_email(data.get("email"))
         self._check_email_free(data["email"], exclude_user_id=None)
@@ -633,10 +740,10 @@ class UserService:
         return user
 
     def update_user(self, user_id: str, user_data: UserUpdate):
-        """Update a user."""
+        """Update a user, including the S3 1.3 contact-link and phone rules."""
         import logging
         logger = logging.getLogger(__name__)
-        
+
         user = self.get_user(user_id)
 
         # Get all fields that were explicitly set in the request
@@ -669,10 +776,54 @@ class UserService:
                     user.email = new_email
                     user.email_verified_at = None
                     email_changed = True
-        
-        # One WhatsApp contact == one user (AC-01); the unique index is the backstop.
-        if update_data.get("respond_contact_id"):
-            self._check_contact_free(update_data["respond_contact_id"], exclude_user_id=user_id)
+
+        # --- WhatsApp contact link / unlink / switch (S3 1.3) ---------------
+        # Handled entirely here and popped out of update_data so the generic
+        # field loop below never touches it a second time.
+        contact_audit: Optional[str] = None  # the audit description
+        should_unlink = False
+        if "respond_contact_id" in update_data:
+            from app.models.access import RespondContact
+
+            raw_new_id = update_data.pop("respond_contact_id")
+            new_contact_id = raw_new_id or None  # "" and None both mean "unlink"
+            current_contact_id = user.respond_contact_id
+
+            if new_contact_id and new_contact_id != current_contact_id:
+                contact = (
+                    self.db.query(RespondContact)
+                    .filter(RespondContact.id == new_contact_id)
+                    .first()
+                )
+                if contact is None:
+                    raise handle_not_found("Contact", new_contact_id)
+                self._check_contact_free(new_contact_id, exclude_user_id=user_id)
+                if current_contact_id:
+                    # Already linked to a DIFFERENT contact - the owner unlinks
+                    # first (AC-43). Nothing changes.
+                    existing = (
+                        self.db.query(RespondContact)
+                        .filter(RespondContact.id == current_contact_id)
+                        .first()
+                    )
+                    raise AppException(
+                        status_code=409,
+                        message=(
+                            f"{user_label(user)} is already linked to WhatsApp contact "
+                            f"{existing.name if existing else 'another contact'}"
+                        ),
+                        code="USER_ALREADY_LINKED",
+                    )
+                # First link: saved, no role added, nothing sent, sessions NOT
+                # revoked (owner ruling, AC-54).
+                user.respond_contact_id = new_contact_id
+                contact_audit = f"Linked WhatsApp contact {contact.name or contact.phone_number}"
+            elif not new_contact_id and current_contact_id:
+                # `unlink_contact` is the one implementation (S3 1.4) - it does
+                # its own commit, session revoke and audit row, run AFTER the
+                # rest of this PUT's fields commit below.
+                should_unlink = True
+            # else: unchanged value, or unlink of an already-unlinked user - no-op.
 
         # Enforce Respond User ID uniqueness before applying any updates
         if "respond_user_id" in update_data:
@@ -681,17 +832,26 @@ class UserService:
                 self._check_respond_user_id_unique(rid, exclude_user_id=user_id)
 
         # Enforce phone uniqueness (one phone == one user). Value is already
-        # E.164-normalised by the schema validator.
-        if update_data.get("contact_number"):
-            self._check_contact_number_unique(update_data["contact_number"], exclude_user_id=user_id)
+        # E.164-normalised by the schema validator (blank/null both come through
+        # as None). Only a value that actually DIFFERS from today's counts as a
+        # change (AC-54 ruling: unchanged does nothing extra) - clears
+        # phone_verified_at and revokes sessions. That includes CLEARING the
+        # phone: `None` still differs from a previously-held number, and the
+        # uniqueness check only makes sense for a truthy new value.
+        phone_changed = False
+        if "contact_number" in update_data:
+            new_phone = update_data["contact_number"]
+            if new_phone:
+                self._check_contact_number_unique(new_phone, exclude_user_id=user_id)
+            phone_changed = new_phone != (user.contact_number or None)
 
         # Convert empty strings to None for optional fields to avoid foreign key violations
-        optional_fields = ['superior_id', 'respond_user_id', 'country', 'timezone', 'avatar', 'tier', 'contact_number', 'respond_contact_id']
-        
+        optional_fields = ['superior_id', 'respond_user_id', 'country', 'timezone', 'avatar', 'tier', 'contact_number']
+
         # Log what we received
         logger.info(f"Received update_data keys: {list(update_data.keys())}")
         logger.info(f"Received update_data: {update_data}")
-        
+
         for key, value in update_data.items():
             logger.info(f"Processing field '{key}' with value: {repr(value)} (type: {type(value).__name__})")
             if key in optional_fields and value == '':
@@ -708,7 +868,10 @@ class UserService:
             else:
                 setattr(user, key, value)
                 logger.info(f"✓ Set {key} = {repr(value)}")
-        
+
+        if phone_changed:
+            user.phone_verified_at = None
+
         if scopes_provided:
             from app.services.product_discontinued_scope_service import replace_scopes
 
@@ -717,13 +880,15 @@ class UserService:
         logger.info(f"Before commit - respond_user_id: {user.respond_user_id}, superior_id: {user.superior_id}")
         # Read before the commit: after a failed flush the instance is expired.
         email_for_conflict = user.email
+        # From the instance, not update_data: the S3 link branch above pops the key.
+        contact_for_conflict = user.respond_contact_id
         try:
             self.db.commit()
         except IntegrityError as exc:
             self._raise_identity_conflict(
                 exc,
                 email=email_for_conflict,
-                respond_contact_id=update_data.get("respond_contact_id"),
+                respond_contact_id=contact_for_conflict,
                 exclude_user_id=user_id,
             )
         self.db.refresh(user)
@@ -749,7 +914,46 @@ class UserService:
                 )
             except Exception as e:
                 logger.warning("Failed to queue email change notification: %s", e)
+
+        # Side effects that need the row committed - each best-effort (S3 1.3/1.4).
+        if contact_audit is not None:
+            self._audit_contact_link(user.id, contact_audit)
+        if should_unlink:
+            self.unlink_contact(user_id)
+            self.db.refresh(user)
+        if phone_changed:
+            from app.services import user_session_service
+
+            try:
+                user_session_service.revoke_all_for_user(self.db, user_id)
+            except Exception as e:
+                logger.warning("Failed to revoke sessions for user %s: %s", user_id, e)
+
         return user
+
+    def unlink_contact(self, user_id: str) -> None:
+        """Unlink a user's WhatsApp contact - the one implementation the PUT
+        `respond_contact_id: null` path and the deferred `user.unlink_contact`
+        action both call (S3 1.4). A no-op when nothing is linked."""
+        from app.models.access import RespondContact
+        from app.services import user_session_service
+
+        user = self.get_user(user_id)
+        if not user.respond_contact_id:
+            return
+        contact = (
+            self.db.query(RespondContact)
+            .filter(RespondContact.id == user.respond_contact_id)
+            .first()
+        )
+        user.respond_contact_id = None
+        self.db.commit()
+
+        user_session_service.revoke_all_for_user(self.db, user_id)
+        self._audit_contact_link(
+            user_id,
+            f"Unlinked WhatsApp contact {(contact.name or contact.phone_number) if contact else 'contact'}",
+        )
 
     def delete_user(self, user_id: str) -> None:
         """Soft-delete a user (set is_trashed=True)."""
