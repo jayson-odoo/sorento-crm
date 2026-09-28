@@ -95,13 +95,17 @@ class TestBothPublishedBodiesCarryTheVocabulary:
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             STOCK_TASK_ADDENDUM,
+            TOP_SELLING_ADDENDUM,
         )
 
 
+        # `TOP_SELLING_ADDENDUM` (PLAN-chatbot-top-x-hot-selling-24sep.md S4) is newer
+        # still, peeled right after ESCALATION_CONFIRMATION_ADDENDUM, the tail.
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
             assert (
                 body.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+                .removesuffix(TOP_SELLING_ADDENDUM)
                 .removesuffix(KNOWN_BRANDS_ADDENDUM)
                 .removesuffix(QUANTITY_ADDENDUM)
                 .removesuffix(SALES_ANALYSIS_ADDENDUM)
@@ -129,12 +133,14 @@ class TestBothPublishedBodiesCarryTheVocabulary:
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             STOCK_TASK_ADDENDUM,
+            TOP_SELLING_ADDENDUM,
         )
 
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
             assert (
                 body.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+                .removesuffix(TOP_SELLING_ADDENDUM)
                 .removesuffix(KNOWN_BRANDS_ADDENDUM)
                 .removesuffix(QUANTITY_ADDENDUM)
                 .removesuffix(SALES_ANALYSIS_ADDENDUM)

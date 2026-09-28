@@ -81,8 +81,10 @@ PURCHASE_ORDER_PROBE_TOOL = "crm_procurement_po_placed_list"
 #: is added because that table deliberately omits it (the field-reveal gate resolves
 #: it), and `sales_report` for the SAME reason as the outstanding asks: the probe
 #: measures DELIVERED DOs, a population this report does not read at all.
+#: `top_selling` joins for the same reason (PLAN-chatbot-top-x-hot-selling-24sep.md S4
+#: point 10): the ranking reads sales order lines, never delivered DOs.
 OUTSTANDING_ORDER_STATUS: frozenset[str] = frozenset(
-    {"outstanding", "sales_report", *fetch_mod.ORDER_STATUS_TO_SCOPE}
+    {"outstanding", "sales_report", "top_selling", *fetch_mod.ORDER_STATUS_TO_SCOPE}
 )
 
 # The probe's injected default window, from `probe-customer-orders`' semantic_input
