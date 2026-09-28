@@ -821,7 +821,7 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
     # rows must not ride along with the next one.
     for key in ("audit_rows", "audit_pending_new", "audit_failure"):
         session.info.pop(key, None)
-    if session.info.get("audit_flushing") or not capture_enabled():
+    if not capture_enabled():
         return
     try:
         from app.audit_context import current_audit_context, get_actor
@@ -1122,8 +1122,6 @@ def _session_do_orm_execute(state: Any) -> None:
         return
     session = state.session
     params = state.parameters if isinstance(state.parameters, dict) else {}
-    if session.info.get("audit_flushing"):
-        return
     statement = state.statement
     table = getattr(statement, "table", None)
     # An ORM statement names its mapper; Core DML on a mapped table is looked up by table.
@@ -1311,17 +1309,29 @@ def register_audit_listeners() -> None:
 
     from sqlalchemy import event
 
+    # The last guard of the best-effort contract (owner ruling 28 Sep 2026 19:1x MYT): each
+    # hook already runs its database work in a savepoint and records its own failures, so
+    # what can reach here is a Python error outside that work. It is recorded, never raised.
     @event.listens_for(Session, "before_flush")
     def before_flush(session, flush_context, instances):
-        _session_before_flush(session, flush_context, instances)
+        try:
+            _session_before_flush(session, flush_context, instances)
+        except Exception as exc:  # noqa: BLE001
+            _record_capture_failure(session, exc, [])
 
     @event.listens_for(Session, "after_flush")
     def after_flush(session, flush_context):
-        _session_after_flush(session, flush_context)
+        try:
+            _session_after_flush(session, flush_context)
+        except Exception as exc:  # noqa: BLE001
+            _record_capture_failure(session, exc, [])
 
     @event.listens_for(Session, "do_orm_execute")
     def do_orm_execute(orm_execute_state):
-        _session_do_orm_execute(orm_execute_state)
+        try:
+            _session_do_orm_execute(orm_execute_state)
+        except Exception as exc:  # noqa: BLE001
+            _record_capture_failure(orm_execute_state.session, exc, [])
 
     # Set last: if registering ever raises, a retry must be able to finish the job
     # rather than find the flag already claiming the listeners are installed.

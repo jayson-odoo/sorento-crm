@@ -67,6 +67,12 @@ def _failures(db):
     return db.execute(select(IntegrationLog).where(IntegrationLog.integration_channel == "audit")).scalars().all()
 
 
+def _new_failures(db, before):
+    """The audit-channel rows written since ``before`` (a list from ``_failures``)."""
+    seen = {f.id for f in before}
+    return [f for f in _failures(db) if f.id not in seen]
+
+
 def _gaps(db, entity_id):
     return db.query(AuditTrailGap).filter(AuditTrailGap.entity_id == str(entity_id)).all()
 
@@ -84,7 +90,7 @@ class TestBestEffort:
         stamp_actor(AuditActor(actor_type="user", user_id="00000000-0000-4000-8000-000000000001"), db=db)
         brand = _new_brand(db)
         db.expire_all()
-        failures_before = len(_failures(db))
+        failures_before = _failures(db)
         brand = db.get(Brand, brand.id)
         brand.brand_name = "Beta"
         db.commit()  # must not raise
@@ -92,7 +98,7 @@ class TestBestEffort:
         db.expire_all()
         assert db.get(Brand, brand.id).brand_name == "Beta"
         assert not [r for r in _audit_rows(db, brand.id) if r.action == "UPDATE"]
-        failures = _failures(db)[failures_before:]
+        failures = _new_failures(db, failures_before)
         assert len(failures) == 1, failures
         log = failures[0]
         assert log.status == "failed"
@@ -116,24 +122,24 @@ class TestBestEffort:
             mp.setattr(audit_service, "_redact", lambda v: v)
             brand = _new_brand(db)
             db.commit()
-        failures_before = len(_failures(db))
+        failures_before = _failures(db)
         db.query(Brand).filter(Brand.id == brand.id).update({"brand_name": "Gamma"}, synchronize_session=False)
         db.commit()
 
         db.expire_all()
         assert db.get(Brand, brand.id).brand_name == "Gamma"
         assert not [r for r in _audit_rows(db, brand.id) if r.action == "UPDATE"]
-        assert len(_failures(db)) == failures_before + 1
+        assert len(_new_failures(db, failures_before)) == 1
         assert [g.action for g in _gaps(db, brand.id)] == ["UPDATE"]
 
     def test_be04_a_healthy_capture_writes_no_failure(self, db):
         """The savepoint changes nothing on the happy path."""
-        failures_before = len(_failures(db))
+        failures_before = _failures(db)
         brand = _new_brand(db)
         brand.brand_name = "Delta"
         db.commit()
         assert {r.action for r in _audit_rows(db, brand.id)} == {"CREATE", "UPDATE"}
-        assert len(_failures(db)) == failures_before
+        assert _new_failures(db, failures_before) == []
         assert not _gaps(db, brand.id)
 
     def test_be05_the_health_summary_counts_open_gaps(self, db, poisoned):
@@ -150,11 +156,30 @@ class TestBestEffort:
         assert after == before + 1
 
 
+    def test_be15_a_python_error_in_a_hook_is_recorded_not_raised(self, db, monkeypatch):
+        """AC-S0-30: the registered listeners guard what the savepoints cannot, a Python
+        error outside the database work, in all three hooks."""
+        def _boom(*a, **k):
+            raise TypeError("hook bug")
+
+        failures_before = _failures(db)
+        monkeypatch.setattr(audit_service, "_session_before_flush", _boom)
+        monkeypatch.setattr(audit_service, "_session_after_flush", _boom)
+        monkeypatch.setattr(audit_service, "_session_do_orm_execute", _boom)
+        brand = _new_brand(db)
+        db.query(Brand).filter(Brand.id == brand.id).update({"brand_name": "Theta"}, synchronize_session=False)
+        db.commit()
+        db.expire_all()
+        assert db.get(Brand, brand.id).brand_name == "Theta"
+        new = _new_failures(db, failures_before)
+        assert new and all(f.error_code == "TypeError" for f in new)
+
+
 class TestOffSwitch:
     def test_be06_capture_off_writes_no_audit_row_and_no_failure(self, db, monkeypatch):
         """AC-S0-32: AUDIT_CAPTURE_ENABLED=false skips capture, read at write time."""
         monkeypatch.setattr(settings, "audit_capture_enabled", False)
-        failures_before = len(_failures(db))
+        failures_before = _failures(db)
         brand = _new_brand(db)
         brand.brand_name = "Epsilon"
         db.flush()
@@ -162,7 +187,7 @@ class TestOffSwitch:
         audit_service.record(db, event="test.off", entity_type="brands", entity_id=str(brand.id))
         db.commit()
         assert _audit_rows(db, brand.id) == []
-        assert len(_failures(db)) == failures_before
+        assert _new_failures(db, failures_before) == []
         assert not _gaps(db, brand.id)
 
         monkeypatch.setattr(settings, "audit_capture_enabled", True)
