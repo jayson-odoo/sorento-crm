@@ -1,8 +1,8 @@
 # PLAN: finance module, billing documents from AutoCount through the shared service (#1309)
 
-Status: **S0 built on PR #1314 (in review); S1 built, in review on draft PR #1321 (branch
-`claude/finance-billing-documents-s1-ntho1h`, stacked on #1314, retargeted to main after S0
-merges; migration `fin_0002_billing_demand_class`). Round 3 (27 Sep): the
+Status: **S0 merged on main via PR #1314 (fcbfa379); S1 built, in review on PR #1321 (branch
+`claude/finance-billing-documents-s1-ntho1h`, base main, main fcbfa379 merged in; migration
+`fin_0002_billing_demand_class` on `fin_0001_billing_documents`). Round 3 (27 Sep): the
 owner's round 2 answers are folded in (section 0.1): Q5 No, Q14 the sales order type, Q15 the
 invoice's own agent, Q16 the Roles screen. Section 3.4 and UAC S1-4, S1-5, S1-9, S1-10 are
 rewritten to the sales order type grouping.** S2 to S4 not started.
