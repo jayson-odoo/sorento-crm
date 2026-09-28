@@ -1,5 +1,5 @@
 import { Metadata } from 'next';
-import { QuotationCoverLetterTab } from '../components/QuotationDocumentTabPanels';
+import { QuotationCoverLetterTab } from '../../components/QuotationDocumentTabPanels';
 
 export const metadata: Metadata = {
   title: 'Quotation cover letter',
