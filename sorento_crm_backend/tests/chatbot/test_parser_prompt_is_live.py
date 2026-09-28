@@ -178,14 +178,14 @@ def _without_growth_r1_addendum(text: str) -> str:
     tail once `LAST_COST_ADDENDUM` is off lives in
     `test_parser_growth_r1_reachability.py::test_the_addendum_is_appended_to_both_bodies`.
     """
-    # PLAN-chatbot-top-x-hot-selling-24sep.md S4: `TOP_SELLING_ADDENDUM` is the newest,
-    # so it is peeled first; ESCALATION_CONFIRMATION_ADDENDUM (#1323) sits beneath it,
-    # then SALES_ANALYSIS_ADDENDUM (#1267 S1), then STOCK_TASK_ADDENDUM (ported from
-    # PR #1118, not merged, chatbot-stock-ask-v2 S3).
-    if text.endswith(TOP_SELLING_ADDENDUM):
-        text = text[: -len(TOP_SELLING_ADDENDUM)]
+    # ESCALATION_CONFIRMATION_ADDENDUM (#1323) is the prompt's tail (main's rule since
+    # #1324), so it is peeled first; `TOP_SELLING_ADDENDUM` (PLAN-chatbot-top-x-hot-
+    # selling-24sep.md S4) sits beneath it, then SALES_ANALYSIS_ADDENDUM (#1267 S1), then
+    # STOCK_TASK_ADDENDUM (ported from PR #1118, not merged, chatbot-stock-ask-v2 S3).
     if text.endswith(ESCALATION_CONFIRMATION_ADDENDUM):
         text = text[: -len(ESCALATION_CONFIRMATION_ADDENDUM)]
+    if text.endswith(TOP_SELLING_ADDENDUM):
+        text = text[: -len(TOP_SELLING_ADDENDUM)]
     if text.endswith(SALES_ANALYSIS_ADDENDUM):
         text = text[: -len(SALES_ANALYSIS_ADDENDUM)]
     if text.endswith(STOCK_TASK_ADDENDUM):

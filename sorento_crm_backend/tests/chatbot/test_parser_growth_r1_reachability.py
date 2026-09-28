@@ -157,8 +157,9 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         FULL body and dev's is on the SLIM one.
 
         The strong `.endswith` form is restored (review S4, 12 Sep 2026) by stripping the
-        LATER addenda first, newest outermost: `TOP_SELLING_ADDENDUM`
-        (PLAN-chatbot-top-x-hot-selling-24sep.md S4), `SALES_ANALYSIS_ADDENDUM` (#1267 S1),
+        LATER addenda first, outermost first: `ESCALATION_CONFIRMATION_ADDENDUM` (#1323,
+        the tail), `TOP_SELLING_ADDENDUM` (PLAN-chatbot-top-x-hot-selling-24sep.md S4),
+        `SALES_ANALYSIS_ADDENDUM` (#1267 S1),
         then `SALES_REPORT_ADDENDUM`
         (PLAN-chatbot-sales-report.md S4 wiring point 1), then `LOW_STOCK_ADDENDUM`
         (PLAN-low-stock-report.md S7, 14 Sep 2026), then `LAST_COST_ADDENDUM`. Each stacks
@@ -166,7 +167,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         stacked after the live text, so `GROWTH_R1_ADDENDUM` is still exactly the tail
         once the later ones are off."""
         for body in (SEMANTIC_PARSER_PROMPT,):
-            assert body.removesuffix(TOP_SELLING_ADDENDUM).removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SALES_ANALYSIS_ADDENDUM).removesuffix(
+            assert body.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(TOP_SELLING_ADDENDUM).removesuffix(SALES_ANALYSIS_ADDENDUM).removesuffix(
                 STOCK_TASK_ADDENDUM
             ).removesuffix(
                 SALES_REPORT_ADDENDUM

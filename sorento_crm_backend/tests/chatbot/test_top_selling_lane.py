@@ -1056,7 +1056,9 @@ class TestParser:
         text = prompt_mod.TOP_SELLING_ADDENDUM
         for needle in ('order_status "top_selling"', '"rank_by"', '"basis"', '"rank_group"', "top_n"):
             assert needle in text, needle
-        assert prompt_mod.SEMANTIC_PARSER_PROMPT.endswith(text)
+        assert prompt_mod.SEMANTIC_PARSER_PROMPT.removesuffix(
+            prompt_mod.ESCALATION_CONFIRMATION_ADDENDUM
+        ).endswith(text)
         for banned in (chr(0x2014), chr(0x2013)):
             assert banned not in text
 

@@ -207,11 +207,11 @@ def test_the_stock_task_addendum_teaches_the_last_answered_line():
     assert '"Last answered:"' in STOCK_TASK_ADDENDUM
     assert '"how about 100?"' in STOCK_TASK_ADDENDUM
     assert "correction true" in STOCK_TASK_ADDENDUM
-    # SALES_ANALYSIS_ADDENDUM (#1267 S1), ESCALATION_CONFIRMATION_ADDENDUM (#1323) and
-    # then the top selling addendum (PR #1273) stack after this one, newest outermost.
+    # SALES_ANALYSIS_ADDENDUM (#1267 S1), the top selling addendum (PR #1273) and then
+    # ESCALATION_CONFIRMATION_ADDENDUM (#1323, always the tail) stack after this one.
     assert (
-        SEMANTIC_PARSER_PROMPT.removesuffix(TOP_SELLING_ADDENDUM)
-        .removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+        SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+        .removesuffix(TOP_SELLING_ADDENDUM)
         .removesuffix(SALES_ANALYSIS_ADDENDUM)
         .endswith(STOCK_TASK_ADDENDUM)
     )
