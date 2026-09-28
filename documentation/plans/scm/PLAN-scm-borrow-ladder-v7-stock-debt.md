@@ -1,6 +1,6 @@
 # PLAN - Borrow ladder v7 and the Stock Debt view
 
-Status: **APPROVED 2026-08-29** (captain: "the logic is robust, let's proceed"; scenario table on SRTWB242 signed off). Grilled in session (R1-R23), lavish review rounds 1-6 (R24-R36). Tickets: S1 #385, S2 #386, S3 #387, S4 #388 (jayson-odoo/sorento-crm). Lane: `feat/scm-borrow-ladder-v7-stock-debt`. S1 = PR #389 (29 Aug, CI green). S2 = PR #391 (30 Aug, stacked on #389: `supply_assignment`, `_po_rows`, the stock-debt service + routes, the page). S4 = PR #409 (30 Aug, stacked on #400; all four slices delivered). S3 = PR #400 (30 Aug, stacked on #391; R37-R40 landed during captain testing; `tests/scm/test_ladder_v7_borrow.py` + 3.2's own notes). S4 built 30 Aug on `feat/scm-supply-borrow`, stacked on S3: step 3 + the placement moves + `tests/scm/test_ladder_v7_supply_borrow.py`; three deviations recorded in 3.2 step 3 and one in AC-S4-5. UAC: `scm-borrow-ladder-v7-stock-debt-acceptance-criteria.md`. Sits on `PLAN-scm-order-unit-ladder-v6.md` (units, donor ledger), `PLAN-demo-followups-19aug-ladder-v2.md` section E (ownership groups, window, coverage date), `PLAN-scm-planning-inline-decisions.md` (board editor, one Confirm), ADR-0011 (no bucketed arithmetic).
+Status: **APPROVED 2026-08-29** (captain: "the logic is robust, let's proceed"; scenario table on SRTWB242 signed off). Grilled in session (R1-R23), lavish review rounds 1-6 (R24-R36). Tickets: S1 #385, S2 #386, S3 #387, S4 #388 (jayson-odoo/sorento-crm). Lane: `feat/scm-borrow-ladder-v7-stock-debt`. S1 = PR #389 (29 Aug, CI green). S2 = PR #391 (30 Aug, stacked on #389: `supply_assignment`, `_po_rows`, the stock-debt service + routes, the page). S4 = PR #409 (30 Aug, stacked on #400; all four slices delivered). S3 = PR #400 (30 Aug, stacked on #391; R37-R40 landed during captain testing; `tests/scm/test_ladder_v7_borrow.py` + 3.2's own notes). S4 built 30 Aug on `feat/scm-supply-borrow`, stacked on S3: step 3 + the placement moves + `tests/scm/test_ladder_v7_supply_borrow.py`; three deviations recorded in 3.2 step 3 and one in AC-S4-5. UAC: `scm-borrow-ladder-v7-stock-debt-acceptance-criteria.md`. R42 (28 Sep 2026, #1331, purchase orders as Stock Debt supply, section 3.4b): built on PR #1332, small fix track. Sits on `PLAN-scm-order-unit-ladder-v6.md` (units, donor ledger), `PLAN-demo-followups-19aug-ladder-v2.md` section E (ownership groups, window, coverage date), `PLAN-scm-planning-inline-decisions.md` (board editor, one Confirm), ADR-0011 (no bucketed arithmetic).
 
 ## 0. The captain's ask (29 Aug 2026, after the client demo)
 
@@ -124,6 +124,90 @@ On Confirm of a `supply_borrow`: an `order_inquiry_links` row for the asker's OR
 - Route `GET /api/v1/project-sales/stock-debt` (list, paginated by product, `query`, `group`, `only_debt`) and `GET /project-sales/stock-debt/{product_id}/cell?month=` returning `{demand: [...], supply: [...]}` (R28). The drill foots with the cell (R37): each demand row carries `short_qty` (what it went without on its own date) and each supply row `free_qty` (what nobody took; 0 for an overdue document), and their difference over one month IS that month's balance. Service `stock_debt_service.py` builds the supply/demand inputs for the page of products in one read each (no per-product queries) and calls `assign()`. Tone per month: `red` when the month starts before `as_of + lead` (cannot buy in time), `amber` when negative later, `green` otherwise. Past a row's own last event the months read 0 rather than carrying the last balance forward (R37). Permission `projects.stock_debt.view`, grant sweep from `projects.projects.view` (pattern of `419_stock_transfers.py`).
 - FE `app/(protected)/project-sales/stock-debt/`: `page.tsx` (RequireAccess), `StockDebtClient.tsx` (DataGrid, fixed layout, product column PINNED through the grid's own `columnPinning` with `columnsDraggable` off, in a plain `overflow-x-auto` container rather than the shared `ScrollArea`; month columns generated from the payload, then TBA / No date / No location; `useStockDebtQuery`, `stockDebtService.ts` with the contract at the top), `StockDebtCellDialog.tsx` (the SCM family's lightbox - the shell of `scm/components/PlanRowDialog.tsx`, copied the way that file copied it from the reorder lane rather than importing six data hooks for a frame - holding two TABS: `Demand (n)` first with the Plan link and shared status pills, `Supply (n)` with source, arrival and assigned-to, each with a footer line (`Uncovered` / `Free`) whose difference is the cell; carries the board's `group` so the drill foots with the cell). Menu entry under Project Demand after Fulfilment Planning (`menu.config.tsx:242` and the second nav at `:1829`). Empty state CTA flips `only_debt` off. No explanation copy on screen.
 - Cell tone uses the DataGrid cell class, not a new component; the toggle and the group select are the shared toolbar's.
+
+### 3.4b Purchase orders as Stock Debt supply (R42, owner, 28 Sep 2026, issue #1331)
+
+Status: built on PR #1332 (lane `feat/stock-debt-po-supply`), reviewed and browser-verified,
+awaiting CI and the owner's hand test. Track: small fix (no migration, no auth/RBAC change, no
+new ingest surface).
+
+**The owner's words, verbatim from chat (28 Sep 2026, 15:4x MYT):** "for our stock debt ah, PO
+needs to be counted as supply to the sales order also ... so the covered by should consider PO
+also, please make the change, i am just htinking for this PO that has no linkage to the sales
+order ..., cause it is not linked to SO we can't really know hwich month should this go to right
+unless we follwo the PO line delivery date and park it as like a supply?"
+
+Screens the ruling was made on: ACC6001 Dec 26 reads -156 (SO395635 LEENA BRW-BB due 16/12/2026
+108 short, SO398322 due 21/12/2026 48 short, Supply (0)); PO 202609-S0029 lines for CSK14A-NL: 41
+to BRW with S/O "-" delivery 10/09/2026, 1,305 to BRW-BB with S/O SO419208 delivery 14/09/2026,
+4 to BRW-BB with S/O SO419208 and Placed 4, delivery 14/09/2026.
+
+**R42.** Supersedes the 24 Sep plan's R23 ("got PO doesn't mean got supply") for the Stock Debt
+VIEW. The board and the ladder do not change.
+
+1. **A PO line is supply in the view.** Every open PO line at a bin in the view's span (the same
+   `_po_rows` read the board uses: `qty_ordered - qty_received`, open PO status, `crm_spo`
+   documents excluded) is a supply event of kind `po` in its location's ownership group.
+2. **Dated on the PO line's Delivery date.** The owner's "follow the PO line delivery date" is
+   the column the PO lines tab labels Delivery date, which is `purchase_order_lines.expected_date`
+   (`PurchaseOrderDetail.tsx`, id `expected_date`). The view therefore dates a PO line on
+   `expected_date`, and on `issue_date + supplier lead` (R29's arrival) only when the line states
+   no delivery date. This is a deliberate departure from R29/R30 for the view only: R29 read
+   `expected_date` as "bought for", display only; the owner now parks the PO on it. The board
+   and the ladder keep R29 (`issue + lead`). Recorded because the issue's own summary wrote
+   "delivery date (`arrival_date`)", and on `_PoRow` those are two different fields.
+3. **A PO line naming a sales order covers that order first.** The S/O column is the AutoCount
+   book's own link, `purchase_order_lines.from_so_line_ref`, resolved at DOCUMENT level against
+   `sales_orders.source_ref` (the one reader `order_link_service` already has for that column).
+   A line whose ref resolves to a sales order held here is a PINNED hold (`supply_assignment.Hold`)
+   on that order's open lines for the same product, earliest required date first, each up to
+   what the line still needs, the whole capped at the PO line's outstanding LESS what placement
+   links (`order_inquiry_links.po_line_id`) already hold on it. It binds before the walk exactly
+   as a placement does. The remainder of the PO line, every PO line with no S/O, and every ref
+   that does not resolve ("Linked, not held") go into the free pile on the delivery date and are
+   assigned first-come by required date like any other supply.
+   - **Why a Hold from the S/O reference, and not the placement link alone:** the owner's own
+     case (1,305 to BRW-BB for SO419208) has an S/O and NO placement (the Placed column is
+     empty), so reading placements only would leave the owner's example unpinned.
+   - **Why the placement link is still read, and first:** it is a decision somebody confirmed
+     (R21) and it may name a DIFFERENT line than the book does. It binds first; the book pin
+     takes only what is left of the PO line. On the owner's 4-unit line (S/O SO419208, Placed 4)
+     the placement takes 4 and the book pin takes 0, so nothing is counted twice. The walk
+     itself caps every pin by what the event has left, which is the second guard.
+   - A book pin is made only for a PO line INSIDE the read span, so it names a real dated event
+     that the overdue rule has already read. A placement outside the span keeps AC-S2-1b's
+     stood-up branch; a book S/O is not a confirmed decision and does not get one.
+   - **Three limits, added by the lane's own review (28 Sep), all from that same fact (a book S/O
+     is the book's statement, not a Confirm):**
+     - It pins only a PO line the walk COUNTS (`counted_event`). A dead or undated PO is not
+       supply, and a pin on it takes the line out of the walk, so the line read short beside
+       free stock in its own bin. It pins nothing until it is re-dated or the grace is raised.
+     - It pins only inside the PO's own ownership group (a site pool is its own group). Only a
+       Confirm moves supply across a group (R40).
+     - It decides WHO gets the PO, never WHEN the line had it: a PO landing after the line's own
+       date still leaves that quantity short in the line's own month (R37). A placement or a
+       confirmed allocation keeps pinning at any date, as before.
+   - A TBA, undated or unlocated sales-order line draws nothing (R14), so it is never given a
+     book pin; its share stays free.
+4. **Covered by and the Supply tab.** A demand line covered by a PO prints the PO in Covered by
+   as the same `OrderInquiryDocumentLink` an SPO uses (kind `po`, the PO number, opened on that
+   PO line). The Supply tab lists PO lines (kind `po`) beside on hand and SPO: Document is the
+   PO link, the date column is the delivery date the walk used, Qty = ordered, Received,
+   Outstanding = what the walk counts, Assigned to and Free as for an SPO.
+5. **Overdue is the SPO rule, unchanged (R-O).** A PO line whose delivery date has passed counts
+   on `as_of + overdue_grace_days`, and past `overdue_dead_days` it counts as nothing and is
+   listed as `overdue, not counted`. A dead PO pins nothing through its S/O (point 3); a
+   PLACEMENT on a dead PO keeps naming it and its month still books the quantity (the SPO
+   precedent, AC-S2-7). The policy ships at 0 / 0 on
+   `scm.priority_policy`, so with no change to the settings every PO line whose delivery date is
+   before today counts as nothing. Raise the two numbers on `/scm/policies` (Fulfilment priority
+   panel, `PUT` through the `scm.priority_policy` settings route); 14 / 90 is the recommended
+   pair (R-O).
+6. **Months unchanged (R37).** A PO's free quantity is credited to the month of its delivery date
+   (or its assumed date under the grace), and a line's shortfall to its own month.
+7. **The board path is pinned unchanged.** `assignments_for` (the ladder and the board) keeps
+   `issue + lead` dating and reads no book S/O pins. A test runs both paths on one fixture and
+   compares them.
 
 ### 3.5 Flag and policy (S1, R17, R20)
 

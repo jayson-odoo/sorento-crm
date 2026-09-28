@@ -1171,11 +1171,15 @@ class TestParserPromptAndContractsTeachSalesReport:
         stays RETIRED on this lane (S0 dropped the dev/prod dual-body split; only ONE
         body ships now, `SEMANTIC_PARSER_PROMPT`) - main's own edit to the SLIM body
         is deliberately dropped, so the original "both texts ship" premise (dev vs
-        prod split) no longer applies. `SALES_ANALYSIS_ADDENDUM` (#1267 S1) now stacks
-        after it, newest outermost, so `SALES_REPORT_ADDENDUM` is the tail of the one
-        body that exists once that is stripped."""
+        prod split) no longer applies. `STOCK_TASK_ADDENDUM`, `SALES_ANALYSIS_ADDENDUM`
+        (#1267 S1), `QUANTITY_ADDENDUM` (issue #1262 slice 5, 26 Sep 2026) then
+        `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep 2026) now stack after it,
+        newest outermost, so it is checked by `.removesuffix` rather than a bare
+        `.endswith`."""
         from app.services.chatbot_parser_prompt import (
             ESCALATION_CONFIRMATION_ADDENDUM,
+            KNOWN_BRANDS_ADDENDUM,
+            QUANTITY_ADDENDUM,
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
@@ -1183,14 +1187,22 @@ class TestParserPromptAndContractsTeachSalesReport:
         )
 
         # `STOCK_TASK_ADDENDUM` (ported from PR #1118, not merged, chatbot-stock-ask-v2
-        # S3) and then `SALES_ANALYSIS_ADDENDUM` (#1267 S1) stacked after this one,
+        # S3), `SALES_ANALYSIS_ADDENDUM` (#1267 S1), the #1262 pair and then
+        # `ESCALATION_CONFIRMATION_ADDENDUM` (#1323) stacked after this one,
         # newest outermost, so they come off first.
-        assert SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).endswith(SALES_ANALYSIS_ADDENDUM)
-        assert SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SALES_ANALYSIS_ADDENDUM).removesuffix(
-            STOCK_TASK_ADDENDUM
-        ).endswith(SALES_REPORT_ADDENDUM), (
+        assert SEMANTIC_PARSER_PROMPT.endswith(ESCALATION_CONFIRMATION_ADDENDUM)
+        assert (
+            SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+            .removesuffix(KNOWN_BRANDS_ADDENDUM)
+            .removesuffix(QUANTITY_ADDENDUM)
+            .removesuffix(SALES_ANALYSIS_ADDENDUM)
+            .removesuffix(STOCK_TASK_ADDENDUM)
+            .endswith(SALES_REPORT_ADDENDUM)
+        ), (
             "SEMANTIC_PARSER_PROMPT does not end with SALES_REPORT_ADDENDUM once the "
-            "newer SALES_ANALYSIS_ADDENDUM and STOCK_TASK_ADDENDUM are stripped"
+            "newer KNOWN_BRANDS_ADDENDUM/QUANTITY_ADDENDUM/SALES_ANALYSIS_ADDENDUM/"
+            "STOCK_TASK_ADDENDUM are stripped - SALES_REPORT_ADDENDUM must stay the tail "
+            "beneath them"
         )
 
     def test_the_addendum_stacks_after_low_stock(self) -> None:
@@ -1201,8 +1213,10 @@ class TestParserPromptAndContractsTeachSalesReport:
         `SEMANTIC_PARSER_PROMPT_SLIM` stays retired on this lane (see
         `test_the_addendum_is_appended_to_the_single_body` above) - one body, not two."""
         from app.services.chatbot_parser_prompt import (
+            KNOWN_BRANDS_ADDENDUM,
             LOW_STOCK_ADDENDUM,
             ESCALATION_CONFIRMATION_ADDENDUM,
+            QUANTITY_ADDENDUM,
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
@@ -1210,7 +1224,10 @@ class TestParserPromptAndContractsTeachSalesReport:
         )
 
         assert (
-            SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SALES_ANALYSIS_ADDENDUM)
+            SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+            .removesuffix(KNOWN_BRANDS_ADDENDUM)
+            .removesuffix(QUANTITY_ADDENDUM)
+            .removesuffix(SALES_ANALYSIS_ADDENDUM)
             .removesuffix(STOCK_TASK_ADDENDUM)
             .removesuffix(SALES_REPORT_ADDENDUM)
             .endswith(LOW_STOCK_ADDENDUM)

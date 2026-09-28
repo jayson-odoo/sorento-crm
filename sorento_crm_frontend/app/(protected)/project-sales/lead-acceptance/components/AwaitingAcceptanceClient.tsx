@@ -334,7 +334,7 @@ export function AwaitingAcceptanceClient() {
                           clearable
                           options={(users.data ?? []).map((user) => ({
                             value: user.id,
-                            label: user.name || user.email,
+                            label: user.name || user.email || 'Unnamed user',
                           }))}
                           placeholder="Anyone"
                         />

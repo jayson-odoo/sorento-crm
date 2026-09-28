@@ -5,7 +5,6 @@ import { useSession } from 'next-auth/react';
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
 import { isSuperadminUser } from '@/lib/is-superadmin';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Badge, BadgeDot, BadgeProps } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -149,9 +148,13 @@ const UserProfile = ({
             </div>
             <div className="grid grid-cols-subgrid col-span-2 items-baseline">
               <dt>Email address:</dt>
-              <dd className="flex items-center gap-2.5">
-                <span>{user.email}</span>
-                {user.emailVerifiedAt ? (
+              <dd className="flex min-w-0 flex-wrap items-center gap-2.5">
+                {!user.email ? (
+                  <span className="text-muted-foreground">No email</span>
+                ) : (
+                  <span className="min-w-0 break-all">{user.email}</span>
+                )}
+                {!user.email ? null : user.emailVerifiedAt ? (
                   <Badge variant="secondary" appearance="light">
                     Verified
                   </Badge>
@@ -206,12 +209,6 @@ const UserProfile = ({
                     </Badge>
                   )}
                 </div>
-              </dd>
-            </div>
-            <div className="grid grid-cols-subgrid col-span-2 items-baseline">
-              <dt>Last Sign In:</dt>
-              <dd>
-                {user.lastSignInAt ? formatDateTimeInMalaysia(user.lastSignInAt) : 'Never'}
               </dd>
             </div>
             <div className="grid grid-cols-subgrid col-span-2 items-baseline">

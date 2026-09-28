@@ -1,16 +1,22 @@
 'use client';
 
 /**
- * The Users action set (D15): Impersonate, Send invitation link, Delete.
+ * The Users action set (D15): Impersonate, Send invitation email, Delete.
  *
- * One definition, two surfaces - the list row's "..." menu and the record page's
- * gear both render this array, in this order, so Impersonate is no longer
+ * One definition, three surfaces - the list row's "..." menu, the record page's
+ * gear, and the record's own Sign-in section (S3 2.2) all render this array (or,
+ * for the section, just call the same hook), so Impersonate is no longer
  * list-only and Delete is no longer record-only. Permissions are resolved here,
  * once: an action the user may not run is not in the array.
  *
  * Trashing asks nothing (D7): it parks `user.delete` for ten seconds and the
  * countdown takes the primary button's place, or goes to a toast when the action
  * came from a list row. The email the old dialog made you retype is gone with it.
+ *
+ * Sending the invitation (Q17, AC-57) is the one action here that DOES ask
+ * first: it is a deliberate, off-by-default send, not a deferred window - a
+ * cancelled countdown reads as "changed my mind before it happened", but this
+ * would have to describe a possible email that already left.
  */
 
 import { useState } from 'react';
@@ -47,10 +53,17 @@ export interface UseUserActionsOptions {
   surface?: 'inline' | 'toast';
 }
 
+export interface UseUserActionsResult extends RecordActionSet {
+  /** The `user.resend_invite` entry, so the Sign-in section's own "Send
+   *  invitation email" button (S3 2.2) can run the exact same handler and
+   *  confirmation instead of reimplementing the "has no email" gate. */
+  resendInviteAction: RecordAction | null;
+}
+
 export function useUserActions(
   user: User | undefined | null,
   { onDeleted, surface = 'inline' }: UseUserActionsOptions = {},
-): RecordActionSet {
+): UseUserActionsResult {
   const queryClient = useQueryClient();
   const { data: nextAuthSession } = useSession();
   const currentUserId = nextAuthSession?.user?.id;
@@ -59,6 +72,7 @@ export function useUserActions(
   const canDelete = useHasPermission('user_management.users.delete');
 
   const [impersonateOpen, setImpersonateOpen] = useState(false);
+  const [inviteConfirmOpen, setInviteConfirmOpen] = useState(false);
   const [invitePending, setInvitePending] = useState(false);
 
   const deletion = useDeferredAction({
@@ -74,7 +88,7 @@ export function useUserActions(
     onCommitted: onDeleted,
   });
 
-  const sendInvitationLink = async () => {
+  const sendInvitationEmail = async () => {
     if (!user) return;
     setInvitePending(true);
     try {
@@ -83,21 +97,22 @@ export function useUserActions(
         { method: 'POST' },
       );
       if (!res.ok) {
-        toast.error(await extractApiError(res, 'Failed to send invitation link.'));
+        toast.error(await extractApiError(res, 'Failed to send the invitation email.'));
         return;
       }
       const data = await res.json();
-      toast.success(data.message ?? 'Invitation link sent.');
+      toast.success(data.message ?? 'Invitation email sent.');
       queryClient.invalidateQueries({ queryKey: ['user-user', user.id] });
     } catch {
-      toast.error('Failed to send invitation link.');
+      toast.error('Failed to send the invitation email.');
     } finally {
       setInvitePending(false);
+      setInviteConfirmOpen(false);
     }
   };
 
   const actions: RecordAction[] = [];
-  if (!user) return { actions, dialogs: null, pending: null };
+  if (!user) return { actions, dialogs: null, pending: null, resendInviteAction: null };
 
   // Impersonating yourself is a no-op, a deactivated account has nothing to
   // browse, and a protected account is off limits (the server enforces all three).
@@ -117,13 +132,15 @@ export function useUserActions(
     });
   }
 
-  if (canEdit) {
+  // Hidden entirely for a user with no email - there is nowhere to send it
+  // (AC-52, AC-57).
+  if (canEdit && user.email) {
     actions.push({
       key: 'user.resend_invite',
-      label: 'Send invitation link',
+      label: 'Send invitation email',
       icon: Mail,
       disabled: invitePending,
-      run: () => void sendInvitationLink(),
+      run: () => setInviteConfirmOpen(true),
     });
   }
 
@@ -184,10 +201,45 @@ export function useUserActions(
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Send invitation email? (AC-57): Cancel is the default focus, Escape and
+          closing send nothing - only "Send email" calls the endpoint. */}
+      <AlertDialog open={inviteConfirmOpen} onOpenChange={setInviteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Send invitation email?</AlertDialogTitle>
+            <AlertDialogDescription>
+              An email with a link to set a password goes to <strong>{user.email}</strong>.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel autoFocus disabled={invitePending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void sendInvitationEmail();
+              }}
+              disabled={invitePending}
+            >
+              {invitePending && <LoaderCircleIcon className="size-4 animate-spin" />}
+              Send email
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 
-  return { actions, dialogs, pending: deletion.countdown };
+  return {
+    actions,
+    dialogs,
+    pending: deletion.countdown,
+    // The Sign-in section's own header button (S3 2.2) runs the SAME action,
+    // rather than duplicating the "has no email" gate and the confirmation.
+    resendInviteAction: actions.find((a) => a.key === 'user.resend_invite') ?? null,
+  };
 }
 
 /**

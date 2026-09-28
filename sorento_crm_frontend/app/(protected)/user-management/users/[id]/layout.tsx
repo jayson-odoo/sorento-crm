@@ -91,9 +91,18 @@ export default function UserLayout({
 
       const data = await response.json();
       const roles = Array.isArray(data.roles) ? data.roles : [];
+
       // Transform snake_case from backend to camelCase for frontend
       return {
         ...data,
+        // S3 1.7 - the server is the one source of the phone comparison
+        // (its own `normalize_msisdn` compare), not this layout.
+        phoneVerifiedAt: data.phone_verified_at ?? data.phoneVerifiedAt ?? null,
+        linkedContact: data.linked_contact ?? data.linkedContact ?? null,
+        phoneDiffersFromContact:
+          data.phone_differs_from_contact ?? data.phoneDiffersFromContact ?? false,
+        lastSignInMethod: data.last_sign_in_method ?? data.lastSignInMethod ?? null,
+        needsInvitation: data.needs_invitation ?? data.needsInvitation ?? false,
         roles,
         roleId: roles[0]?.id ?? data.role_id ?? data.roleId,
         respondUserId: data.respond_user_id || data.respondUserId,

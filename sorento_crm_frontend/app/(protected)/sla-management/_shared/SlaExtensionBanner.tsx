@@ -15,9 +15,9 @@ import { formatDateTime, formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/
  * spawned next stage carries no `extend` event, so nothing shows there either.
  * Renders nothing if the current stage has never been extended.
  *
- * WHO = the current assignee, linked to wa.me when resolvable (PersonLink).
- * WHEN = the extend event time (`eventAt`) in Malaysia time. The new due date
- * keeps its existing `formatDateTime` rendering.
+ * WHO = the assignee when the extension was made, linked to wa.me when resolvable
+ * (PersonLink). WHEN = the extend event time (`eventAt`) in Malaysia time. `newDue`
+ * is the live resolution deadline and keeps its `formatDateTime` rendering.
  */
 export function SlaExtensionBanner({
   reason,
