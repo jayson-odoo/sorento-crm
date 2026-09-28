@@ -1,6 +1,6 @@
 # PLAN: a pick never overrides the message's own domain; the parser reports, the engine judges
 
-Issue #1352. Status: in progress, small fix track by rule shape (no auth, no RBAC, no new
+Issue #1352. Status: in review (PR #1353); the parser version publish waits on the owner's label move. Small fix track by rule shape (no auth, no RBAC, no new
 ingest surface) but carries one prompt-version data migration, so it runs the migration
 gates of the standard track. UAC: `picker-domain-judgement-29sep-acceptance-criteria.md`.
 
