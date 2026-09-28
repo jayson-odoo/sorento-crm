@@ -26,6 +26,7 @@ import {
   type SearchableMultiSelectOption,
 } from '@/components/common/SearchableMultiSelect';
 import { useTableDeepLinkHighlight } from '@/hooks/useTableDeepLinkHighlight';
+import { useSoLineAttachmentLookup } from '../../../_shared/hooks/useSoLineAttachments';
 import { STATE_LABEL } from '../../../_shared/components/OrderInquiryVerbPill';
 import { DEFAULT_HIDDEN_COLUMNS } from '../../components/orderInquiryWorklistColumns';
 import {
@@ -130,6 +131,7 @@ export function OrderInquiryLinesTab({
   onAmendReserve,
   onLineHistoryClick,
   onUndoStaged,
+  canEditAttachments,
 }: {
   lines: OrderInquiryWorklistRow[];
   isLoading: boolean;
@@ -146,6 +148,9 @@ export function OrderInquiryLinesTab({
   /** AC-ND-13/14: the line's one History icon. */
   onLineHistoryClick?: (line: OrderInquiryLine) => void;
   onUndoStaged?: (rowId: string) => void;
+  /** #1312 (Q6): `projects.projects.edit` - gates the State cell's own paperclip
+   * upload/remove, resolved by the caller (`OrderInquiryDetail.tsx`). */
+  canEditAttachments?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -160,6 +165,13 @@ export function OrderInquiryLinesTab({
   const [stateFilter, setStateFilter] = useState<string[]>(() =>
     searchParams.get('reserve') ? [RESERVE_REQUESTED_FILTER_VALUE] : [],
   );
+  // #1312 (AC-U6): ONE lookup call for every line's attachments, never one per row -
+  // the same shape the fulfilment board's own list view reads.
+  const attachmentLineIds = useMemo(
+    () => lines.map((row) => row.core_line_id).filter((id): id is string => Boolean(id)),
+    [lines],
+  );
+  const { data: attachmentsByLine } = useSoLineAttachmentLookup(attachmentLineIds);
   const columns = useOrderInquiryHeaderLinesColumns({
     canReserve,
     stagedByRowId,
@@ -168,6 +180,8 @@ export function OrderInquiryLinesTab({
     onAmendReserve,
     onLineHistoryClick,
     onUndoStaged,
+    attachmentsByLine,
+    canEditAttachments,
   });
 
   function handleStateFilterChange(next: string[]) {

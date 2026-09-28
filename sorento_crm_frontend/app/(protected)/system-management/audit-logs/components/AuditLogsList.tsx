@@ -391,8 +391,8 @@ export default function AuditLogsList() {
                           { value: '', label: 'Any user' },
                           ...(users?.map((u) => ({
                             value: u.id,
-                            label: u.name || u.email,
-                            searchText: `${u.name ?? ''} ${u.email}`.trim(),
+                            label: u.name || u.email || 'Unnamed user',
+                            searchText: `${u.name ?? ''} ${u.email ?? ''}`.trim(),
                           })) ?? []),
                         ]}
                         placeholder="Any user"

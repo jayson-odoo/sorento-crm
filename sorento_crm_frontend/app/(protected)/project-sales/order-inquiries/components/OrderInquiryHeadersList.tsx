@@ -193,7 +193,7 @@ export function OrderInquiryHeadersList() {
     () => ({
       raisedBy: (usersQuery.data ?? []).map((user) => ({
         value: user.id,
-        label: user.name || user.email,
+        label: user.name || user.email || 'Unnamed user',
       })),
       agents: (worklistSummary.data?.agents ?? []).map((entry) => ({
         value: entry.label,

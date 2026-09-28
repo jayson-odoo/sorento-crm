@@ -70,10 +70,9 @@ import { StockDebtCellDialog } from './StockDebtCellDialog';
 // fixture states the WIRE shape the coder is adding without an excess-property error
 // blocking the whole file from compiling in the meantime.
 //
-// R23: the second supply row used to be a `kind: 'po'` (a PO's own `bought_for` date,
-// tested separately below) - Stock Debt's own walk never emits one any more ("got PO
-// doesn't mean got supply"), so the SHARED fixture carries only `on_hand`/`spo` kinds
-// now, matching what the real service actually sends. `free_qty` on BOTH rows stays 0:
+// The SHARED fixture carries `on_hand`/`spo` kinds only; the PO kind (R42, 28 Sep 2026,
+// superseding R23's "got PO doesn't mean got supply") has its own tests below.
+// `free_qty` on BOTH rows stays 0:
 // the R37 footing test below (`Free 0`) depends on the shared fixture's total free
 // quantity being zero, so a Free-sum fixture with real free stock lives in its own
 // dedicated test instead of here.
@@ -352,11 +351,9 @@ describe('StockDebtCellDialog', () => {
   });
 
   it('says an overdue document counts as nothing, and only a PO says what it was bought for', async () => {
-    // R23 retired `kind: 'po'` from Stock Debt's own SERVICE, not from the shared
-    // `SupplyKind` schema - a `po` event stays a legal shape for the dialog to render if
-    // one is ever passed, so this pins the DIALOG's own display rule on its own fixture
-    // rather than the shared `CELL` (which now carries only `on_hand`/`spo`, matching
-    // what the real service sends).
+    // A `po` row whose `bought_for` differs from its date (the board's reading, R29):
+    // the dialog states it as what it is. Under R42 the view parks a PO on its delivery
+    // date and sends no `bought_for`, which the R42 Supply test below pins.
     renderDialog({
       demand: CELL.demand,
       supply: [
@@ -801,5 +798,117 @@ describe('StockDebtCellDialog', () => {
     expect(within(documentCell).queryByText(/line 4/)).not.toBeInTheDocument();
 
     expect(screen.getByText('SO382618 line 2 (100)')).toBeInTheDocument();
+  });
+  it('prints a covering PO in Covered by as the PO document link, opened on its own line (R42)', async () => {
+    // R42 (owner, 28 Sep 2026): "the covered by should consider PO also". The PO entry is
+    // the SAME `OrderInquiryDocumentLink` an SPO uses, kind `po`, the PO number as the
+    // trigger, opened on the PO line (`poLineId`), which marks the line and offers the jump.
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-202609-S0029',
+      po_number: '202609-S0029',
+      supplier_name: 'CHAOSHENG',
+      status: 'confirmed',
+      expected_date: '2026-09-14',
+      lines: [
+        {
+          id: 'pol-41', sku: 'CSK14A-NL', product_name: 'Basin', qty_ordered: '41',
+          qty_received: '0', remaining: '41', location: 'BRW',
+        },
+        {
+          id: 'pol-1305', sku: 'CSK14A-NL', product_name: 'Basin', qty_ordered: '1305',
+          qty_received: '0', remaining: '1305', location: 'BRW-BB',
+        },
+      ],
+      allocations: [],
+    });
+    renderDialog({
+      demand: [
+        {
+          so_number: 'SO419208',
+          agent_code: 'LEENA',
+          warehouse_code: 'BRW-BB',
+          required_date: '2026-10-20',
+          open_qty: 1305,
+          qty_ordered: 1305,
+          qty_delivered: 0,
+          assigned_qty: 1305,
+          assigned_source: null,
+          status: 'pinned',
+          short_qty: 0,
+          sales_order_id: 'so-419208',
+          assigned_from: [
+            {
+              kind: 'po', ref: 'PO 202609-S0029 line 2', spo_number: null,
+              spo_line_number: null, qty: 1305, oi_number: null, oi_id: null,
+              po_number: '202609-S0029', po_line_number: 2,
+              po_id: 'po-202609-S0029', po_line_id: 'pol-1305',
+            },
+          ],
+        } as StockDebtDemandLine,
+      ],
+      supply: [],
+      demand_total_qty: 1305,
+      supply_total_qty: 0,
+    } as StockDebtCell);
+    const row = (await screen.findByText('SO419208')).closest('tr') as HTMLElement;
+
+    const trigger = within(row).getByTestId('document-detail-trigger-202609-S0029');
+    // The line rides beside the number: one PO often covers one order from two lines.
+    expect(within(row).getByText('line 2')).toBeInTheDocument();
+    fireEvent.click(trigger);
+
+    expect(await screen.findByText('Purchase order')).toBeInTheDocument();
+    expect(getOrderInquiryPoDetail).toHaveBeenCalledWith('po-202609-S0029');
+    const lines = (await screen.findAllByText('CSK14A-NL')).map(
+      (cell) => cell.closest('tr') as HTMLElement,
+    );
+    const linked = lines.filter((line) => line.getAttribute('data-linked-line') === 'true');
+    expect(linked).toHaveLength(1);
+    expect(within(linked[0]).getByText('BRW-BB')).toBeInTheDocument();
+  });
+
+  it('lists a PO line on the Supply tab with its delivery date, Qty, Received and Outstanding (R42)', async () => {
+    renderDialog({
+      demand: [],
+      supply: [
+        {
+          kind: 'po',
+          ref: 'PO 202609-S0029 line 1',
+          spo_number: null,
+          spo_line_number: null,
+          po_number: '202609-S0029',
+          po_line_number: 1,
+          po_id: 'po-202609-S0029',
+          po_line_id: 'pol-41',
+          warehouse_code: 'BRW',
+          date: '2026-10-12',
+          stated_date: '2026-09-10',
+          days_late: 18,
+          bought_for: null,
+          qty: 45,
+          received_qty: 4,
+          outstanding_qty: 41,
+          free_qty: 41,
+          overdue: false,
+          assigned_to: [],
+        } as StockDebtSupplyEvent,
+      ],
+      demand_total_qty: 0,
+      supply_total_qty: 41,
+    } as StockDebtCell);
+    await screen.findByText('Nothing is due here');
+    switchTab('Supply (41)');
+
+    const trigger = await screen.findByTestId('document-detail-trigger-202609-S0029');
+    const row = trigger.closest('tr') as HTMLElement;
+    expect(within(row).getByText('PO')).toBeInTheDocument();
+    expect(within(row).getByText('line 1')).toBeInTheDocument();
+    expect(within(row).getByText('12/10/2026')).toBeInTheDocument();
+    expect(within(row).getByText('45')).toBeInTheDocument();
+    expect(within(row).getByText('4')).toBeInTheDocument();
+    expect(within(row).getAllByText('41').length).toBeGreaterThan(0);
+    expect(within(row).getByText('Free')).toBeInTheDocument();
+    // Parked on its delivery date, the PO has no separate "bought for" to state.
+    expect(within(row).queryByText(/bought for/)).not.toBeInTheDocument();
   });
 });

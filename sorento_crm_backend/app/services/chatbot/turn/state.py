@@ -25,8 +25,24 @@ def focus_row_label(row: Mapping[str, Any]) -> Any:
     ladder (`name or canonical_code or raw`, no `display_name` at all), so a caller
     that HAD filled `display_name` onto a fresh roster's carried rows still printed
     the customer ROLLUP code instead of naming every ledger.
+
+    #1262 slice 5 (F4), AC-S5-4: a row carrying the parser's own `quantity` prints
+    it beside the code, "M210-GM (x5)" - the ONE place this reads, never a second
+    regex pulling a quantity back out of `raw` (owner ruling 1). A row with no
+    quantity at all (every row before this slice) prints exactly as it always did.
+
+    Only a row THIS message named prints it (the S1 nit, fix lane round 2): a CARRIED
+    row (`current_message: False`, `focus_from_wire`) keeps its `quantity` for the
+    stock task's per-product loop (main, chatbot-stock-ask-v2 S3), but a later subject
+    line never repeats an earlier message's "(x5)".
     """
-    return row.get("display_name") or row.get("name") or row.get("raw") or row.get("canonical_code")
+    label = row.get("display_name") or row.get("name") or row.get("raw") or row.get("canonical_code")
+    quantity = row.get("quantity")
+    if row.get("current_message") is False:
+        return label
+    if label and isinstance(quantity, (int, float)) and not isinstance(quantity, bool) and quantity:
+        return f"{label} (x{quantity:g})"
+    return label
 
 
 def fold_token(value: str) -> str:
@@ -94,6 +110,14 @@ class Focus:
     customers: list[dict[str, Any]] = field(default_factory=list)
     warehouse: list[dict[str, Any]] = field(default_factory=list)
     brands: list[str] = field(default_factory=list)
+    # #1262 slice 9 (F1a) follow-up: the outstanding report's OWN brand carry - already
+    # RESOLVED uuids (never re-resolved, D10), settled by `_settle_question_subject` off
+    # the scope-ask's stored filters and read back by `turn_runtime.outstanding_carry`.
+    # A dedicated slot, deliberately NOT `brands` above: that field holds plain CODE
+    # strings for the tier-gate's own brand x tier entitlement recompose
+    # (`turn_runtime.py`'s `recompose(tiers, focus.brands, entitled)`), an unrelated
+    # consumer this must never disturb.
+    outstanding_brand_ids: list[str] = field(default_factory=list)
     tier: list[str] = field(default_factory=list)
     domains: list[str] = field(default_factory=list)
     document: list[str] = field(default_factory=list)
@@ -153,6 +177,16 @@ class Profile:
     stock_availability_only: bool = False
 
 
+def is_staff_profile(profile: "Profile | None") -> bool:
+    """#1262 slice 11 (F8), owner ruling 2: staff (a Mocha CS sales rep) is
+    `respond_contacts.chatbot_profile.tier == "office"`. The ONE check every
+    bot-initiated escalation offer site reads (`turn/compose.py`'s own composer
+    offer, `answer_bridge.py`'s cross-domain ladder offer) - staff get no offer,
+    dealer/end_user keep R6 (22 Sep) unchanged.
+    """
+    return getattr(profile, "tier", None) == "office"
+
+
 @dataclass
 class State:
     focus: Focus
@@ -175,7 +209,10 @@ class State:
 # lose a ledger family on the way (journey step 5, D7).
 # --------------------------------------------------------------------------- #
 
-FOCUS_LIST_FIELDS = ("products", "customers", "warehouse", "brands", "tier", "domains", "document")
+FOCUS_LIST_FIELDS = (
+    "products", "customers", "warehouse", "brands", "outstanding_brand_ids",
+    "tier", "domains", "document",
+)
 
 
 def focus_to_wire(focus: Focus) -> dict[str, Any]:
@@ -214,7 +251,7 @@ def focus_from_wire(raw: Any) -> Focus:
         value = raw.get(name)
         if not isinstance(value, list):
             continue
-        if name in ("brands", "tier", "domains", "document"):
+        if name in ("brands", "outstanding_brand_ids", "tier", "domains", "document"):
             setattr(focus, name, [v for v in value if isinstance(v, str)])
         else:
             setattr(focus, name, [_entity(v) for v in value if v is not None])
@@ -260,5 +297,8 @@ def _entity(value: Any) -> dict[str, Any]:
         # Read back from the session, so named by an EARLIER message - see the docstring
         # above. A copy, never the caller's dict: the wire payload is read by other
         # readers too and this rule is about the STATE, not about the stored row.
+        # #1262 fix lane round 2 (S1's nit) keeps `quantity` on a carried row for the
+        # stock task (main, chatbot-stock-ask-v2 S3); `focus_row_label` is what never
+        # prints a carried row's "(x5)" in a later subject line.
         return {**value, "current_message": False}
     return {"raw": value, "canonical_code": value, "current_message": False}
