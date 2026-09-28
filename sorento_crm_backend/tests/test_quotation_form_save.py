@@ -134,6 +134,8 @@ def test_create_writes_the_document_its_scopes_and_every_line_in_one_request(api
     assert townhouse_lines[1].band_label == "BILL NO 3"
     # The product fill is the server's, exactly as the bulk line route does it.
     assert townhouse_lines[0].description_snapshot
+    # And the unit: a product line sent with no UOM takes the product's base unit.
+    assert townhouse_lines[0].uom
 
 
 def test_a_refused_line_rolls_the_whole_create_back(api):

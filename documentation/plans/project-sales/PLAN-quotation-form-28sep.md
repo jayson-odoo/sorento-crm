@@ -1,6 +1,6 @@
 # PLAN: Project Sales quotation form page (add and edit), save creates it with its lines
 
-Status: in progress (build lane, issue #1341, branch `feat/project-sales-quotation-form`). Track:
+Status: in review on PR #1343 (build lane, issue #1341, branch `feat/project-sales-quotation-form`). Track:
 full lane (diff expected well over 300 lines; no migration; no auth or RBAC change).
 
 UAC: `quotation-form-28sep-acceptance-criteria.md` (beside this file).

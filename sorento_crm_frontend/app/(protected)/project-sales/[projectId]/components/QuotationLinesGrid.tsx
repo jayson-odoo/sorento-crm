@@ -814,7 +814,7 @@ function LineEditor({
             onChange={(value) => onPatch({ uom: value })}
             options={uomOptions}
             clearable
-            placeholder="PCS"
+            placeholder="Pick a unit"
           />
         </div>
         <div className="min-w-0 space-y-1.5">
