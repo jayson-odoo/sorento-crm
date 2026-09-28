@@ -14,6 +14,7 @@
 import { apiFetch } from '@/lib/api';
 import {
   buildDataGridParams,
+  codedError,
   extractApiError,
   type DataGridParamsInput,
 } from '@/lib/api-client';
@@ -101,4 +102,61 @@ export async function setDailySlaSummarySubscription(
       await extractApiError(response, 'Failed to update the conversation summary setting'),
     );
   }
+}
+
+export interface CreateUserInput {
+  name: string;
+  email?: string | null;
+  contact_number?: string | null;
+  respond_contact_id?: string | null;
+  role_ids: string[];
+  superior_id?: string | null;
+  company_ids: string[];
+}
+
+/**
+ * Create a user (S3, AC-41 / AC-58): no invitation checkbox, no `/invite`
+ * branch - this is the only way the Add user modal saves. `codedError` so the
+ * dialog can branch on `CONTACT_ALREADY_LINKED` / `PHONE_BELONGS_TO_USER` /
+ * `EMAIL_TAKEN` instead of just showing the message.
+ */
+export async function createUser(input: CreateUserInput): Promise<User> {
+  const response = await apiFetch('/api/user-management/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw await codedError(response, 'Failed to add user');
+  }
+  return (await response.json()) as User;
+}
+
+/** Link or unlink a user's WhatsApp contact (S3 1.3): `null` unlinks. */
+export async function updateUserContactLink(
+  userId: string,
+  respondContactId: string | null,
+): Promise<User> {
+  const response = await apiFetch(`/api/user-management/users/${userId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ respond_contact_id: respondContactId }),
+  });
+  if (!response.ok) {
+    throw await codedError(response, 'Failed to update the linked contact');
+  }
+  return (await response.json()) as User;
+}
+
+/** "Use new number" (AC-46 / AC-54): takes the linked contact's own phone. */
+export async function useNewNumber(userId: string, phoneNumber: string): Promise<User> {
+  const response = await apiFetch(`/api/user-management/users/${userId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contact_number: phoneNumber }),
+  });
+  if (!response.ok) {
+    throw await codedError(response, 'Failed to update the phone number');
+  }
+  return (await response.json()) as User;
 }

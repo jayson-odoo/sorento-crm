@@ -105,9 +105,15 @@ class ContactService:
         limit: int = 50,
         query: Optional[str] = None,
         sort_field: str = "created_at",
-        sort_dir: str = "asc"
+        sort_dir: str = "asc",
+        include_linked_users: bool = False,
     ):
-        """List contacts with pagination and filtering."""
+        """List contacts with pagination and filtering.
+
+        ``include_linked_users`` (S3 1.7): the caller holds `users.view`, so
+        each row's `linked_user_id`/`linked_user_name` are filled from ONE
+        batched query for the whole page - never one query per row.
+        """
         q = self.db.query(RespondContact)
         
         if query:
@@ -139,15 +145,23 @@ class ContactService:
             sort_attr = sort_attr.asc()
         
         contacts = q.order_by(sort_attr).offset((page - 1) * limit).limit(limit).all()
-        
+
+        linked_map: dict[str, dict] = {}
+        if include_linked_users and contacts:
+            from app.services.user_contact_link import linked_user_map
+
+            linked_map = linked_user_map(self.db, [str(c.id) for c in contacts])
+
         # Validate and convert contacts to response models
         # Explicitly convert UUID to string to ensure Pydantic validation works
         contact_responses = []
         for contact in contacts:
             try:
-                contact_responses.append(
-                    RespondContactResponse.model_validate(self.contact_to_response_dict(contact))
-                )
+                data = self.contact_to_response_dict(contact)
+                linked = linked_map.get(str(contact.id))
+                data["linked_user_id"] = linked["id"] if linked else None
+                data["linked_user_name"] = linked["name"] if linked else None
+                contact_responses.append(RespondContactResponse.model_validate(data))
             except Exception as e:
                 logger.error(f"Error validating contact {contact.id}: {str(e)}", exc_info=True)
                 raise

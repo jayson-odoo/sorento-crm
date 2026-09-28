@@ -708,9 +708,9 @@ export default function FormSLATrackerDetail({
                 { value: '', label: 'No assignee' },
                 ...usersSelect.map((user) => ({
                   value: user.id,
-                  label: user.name || user.email,
-                  searchText: `${user.name ?? ''} ${user.email}`.trim(),
-                  description: user.email,
+                  label: user.name || user.email || 'Unnamed user',
+                  searchText: `${user.name ?? ''} ${user.email ?? ''}`.trim(),
+                  description: user.email ?? undefined,
                 })),
               ]}
               placeholder="No assignee"
