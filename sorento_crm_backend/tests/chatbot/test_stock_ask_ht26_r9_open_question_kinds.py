@@ -782,6 +782,33 @@ def test_h_last_answer(session_factory, monkeypatch, stub_access, message, obj, 
     assert c.say(message, reply(correction=True, open_question_answer=obj)) == _answered(*zip(three, qtys))
 
 
+def test_h_family_order_survives_a_reshuffled_heap(session_factory, monkeypatch, stub_access):
+    """Deploy of d79b46c5 (shard 1, `test_h_last_answer[全部五个]`): "1 2 3" picked
+    SRTWC286-SH-NEW-P, -P and -PP, because the product probes had no ORDER BY and the
+    family came back in the order its rows sat on disk. Move the first six rows to the
+    end of the heap (a non-HOT update: the code changes and changes back, so each gets a
+    new row position and new index entries) and the list must not move."""
+    from sqlalchemy import text
+
+    c = EngineConsole(session_factory, monkeypatch, stub_access, phone="+60000009207")
+    db = session_factory()
+    moved = OWNER_FAMILY[:6]
+    db.execute(
+        text("UPDATE products SET product_code = product_code || '~' WHERE product_code = ANY(:codes)"),
+        {"codes": moved},
+    )
+    db.execute(
+        text("UPDATE products SET product_code = left(product_code, -1) WHERE product_code = ANY(:codes)"),
+        {"codes": [f"{code}~" for code in moved]},
+    )
+    db.commit()
+    assert c.say("check stock srtwc286", stock(product("srtwc286"))) == LIST
+    c.say("1 2 3", reply(open_question_answer=answer("pick", picked=[1, 2, 3])))
+    assert c.say("3 each", reply(open_question_answer=answer("all", qty_for_all=3))) == _answered(
+        *[(code, 3) for code in OWNER_FAMILY[:3]]
+    )
+
+
 #: A brand roster (choose_brand), at the apply seam: no dealer stock ask mints one,
 #: the operator's Chatbot Domains policy can (`pending.is_roster`).
 BRAND_PICKS = [
