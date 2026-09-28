@@ -214,6 +214,8 @@ class TestCertificateMissOffersPurchasingCertification:
             _parser_output(
                 message_type="casual", intent_hint=None, domain_hint=None, entities=[],
                 is_affirmative=True,
+                # #1323: a "yes" over an escalation offer is the parser's semantic verdict.
+                escalation={"is_escalation_confirmation": True, "company_pick": None},
             ),
             text="yes", msg_id="ZZT-r11-cert-yes-2",
         )
