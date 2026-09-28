@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoCount GRN and DO</title>
+<style>
+:root{
+  --bg:#f7f7f5;--surface:#ffffff;--ink:#1d1d1f;--muted:#5f6368;--line:#dcdcd8;
+  --accent:#1f6feb;--accent-soft:#e6efff;--ok:#1a7f37;--warn:#9a6700;--warn-soft:#fff5d6;
+  --ac:#7a3cc8;--ac-soft:#f1e8fc;--crm:#0b7a75;--crm-soft:#dff5f3;--ss:#b35900;--ss-soft:#fdeedd;
+  --code:#f0f0ec;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#121314;--surface:#1b1c1e;--ink:#ececec;--muted:#a0a4a8;--line:#34363a;
+    --accent:#6ea8fe;--accent-soft:#1c2a42;--ok:#4ac26b;--warn:#e3b341;--warn-soft:#2e2712;
+    --ac:#c49bff;--ac-soft:#2a2038;--crm:#4fd1c5;--crm-soft:#12302e;--ss:#ffa657;--ss-soft:#33230f;
+    --code:#25272a;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#121314;--surface:#1b1c1e;--ink:#ececec;--muted:#a0a4a8;--line:#34363a;
+  --accent:#6ea8fe;--accent-soft:#1c2a42;--ok:#4ac26b;--warn:#e3b341;--warn-soft:#2e2712;
+  --ac:#c49bff;--ac-soft:#2a2038;--crm:#4fd1c5;--crm-soft:#12302e;--ss:#ffa657;--ss-soft:#33230f;
+  --code:#25272a;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:1.7rem;margin:0 0 4px}
+h2{font-size:1.25rem;margin:40px 0 12px;padding-top:12px;border-top:1px solid var(--line)}
+h3{font-size:1.02rem;margin:22px 0 8px}
+p,li{max-width:74ch}
+.sub{color:var(--muted);margin:0 0 20px}
+nav.toc{display:flex;flex-wrap:wrap;gap:6px;margin:16px 0 8px}
+nav.toc a{font-size:.85rem;padding:4px 10px;border:1px solid var(--line);border-radius:999px;color:var(--ink);text-decoration:none;background:var(--surface)}
+nav.toc a:hover{border-color:var(--accent)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:12px 0}
+blockquote{margin:0;padding:12px 16px;background:var(--surface);border-left:4px solid var(--ac);border-radius:6px;font-style:italic}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.84rem}
+code{background:var(--code);padding:1px 5px;border-radius:4px}
+pre{background:var(--code);padding:12px;border-radius:8px;overflow-x:auto;margin:10px 0}
+.tw{overflow-x:auto;margin:10px 0;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--line)}
+th{background:var(--code);font-weight:600;white-space:nowrap}
+tr:last-child td{border-bottom:0}
+.tag{display:inline-block;font-size:.75rem;font-weight:600;padding:1px 8px;border-radius:999px;white-space:nowrap}
+.t-ac{background:var(--ac-soft);color:var(--ac)}
+.t-crm{background:var(--crm-soft);color:var(--crm)}
+.t-ss{background:var(--ss-soft);color:var(--ss)}
+.t-new{background:var(--accent-soft);color:var(--accent)}
+.t-warn{background:var(--warn-soft);color:var(--warn)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:720px){.grid2{grid-template-columns:1fr}}
+svg{width:100%;height:auto;display:block}
+svg text{fill:var(--ink);font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+svg .m{fill:var(--muted);font-size:11.5px}
+svg .b-ac{fill:var(--ac-soft);stroke:var(--ac)}
+svg .b-ss{fill:var(--ss-soft);stroke:var(--ss)}
+svg .b-crm{fill:var(--crm-soft);stroke:var(--crm)}
+svg .b-n{fill:var(--surface);stroke:var(--line)}
+svg .ln{stroke:var(--muted);stroke-width:1.5;fill:none}
+svg .ln-a{stroke:var(--accent);stroke-width:2;fill:none}
+svg .ln-d{stroke:var(--muted);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+svg .ah{fill:var(--muted)} svg .ah-a{fill:var(--accent)}
+.diagram{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;margin:12px 0;overflow-x:auto}
+.diagram svg{min-width:640px}
+ol.q>li{margin:0 0 14px}
+ol.q b{color:var(--accent)}
+.foot{color:var(--muted);font-size:.82rem;margin-top:40px}
+</style>
+</head>
+<body>
+<main>
+<h1>AutoCount GRN and DO</h1>
+<p class="sub">Scout for issue #1354, 29 Sep 2026. Design only, no code. Built on <code>origin/main</code> 484d0364. Full report: <code>documentation/plans/autocount/SCOUT-autocount-grn-do-29sep.md</code>.</p>
+
+<nav class="toc">
+<a href="#ask">The ask</a><a href="#api">API list</a><a href="#today">Today's flow</a><a href="#sync">Proposed sync</a><a href="#do">DO model</a><a href="#grn">GRN model</a><a href="#track">DO + tracking</a><a href="#vendor">Vendor questions</a><a href="#slices">Slices</a><a href="#open">Open questions</a>
+</nav>
+
+<h2 id="ask">1. The ask, in your words</h2>
+<blockquote>"just got a list of API from the autocount ... think the useful one will be just GRN and DO for now, need to learn how we did for products, stock balance, CRM side need to have a pull from autocount button for verification, and also ingestion endpoint for automated push from shared service after pull is verified, this one for GRN and DO i think abit tricky cause it is by doc date, so meaning we need to loop by doc date to check? any design we can do to cater this ah? and the DO is abit tricky also cause yeah DO has a lot of field and we need to store pretty much everything there ya, including the branch name, also the reference to the sales order line also need to store, the GRN the reference to SPO/PO also need to store, but i think the API macam tak ada I am asking the vendor, basically we need to link the DO back to the SO and GRN back to the PO / SPO, the uploading of order tracking is still needed after the integration cause only the order tracking stores the transporter, actual delivery time and date, driver, lorry number etc i believe"</blockquote>
+
+<div class="card">
+<b>The short answer.</b>
+<ul>
+<li><b>No looping by doc date on every run.</b> JustNow every 10 minutes, a LastModified sweep of yesterday and today every night, and a cursor so an outage only replays the days it missed. Doc date is only for the one-off backfill and a "re-pull this day" button.</li>
+<li><b>Same two steps as products and stock.</b> A pull-for-verification screen in the CRM, then you switch the push on in the shared service. Same endpoint family and the same verdicts.</li>
+<li><b>The DO lands on the delivery order you already have</b>, the same row the tracking upload writes. Every field is kept, including the branch code and name, and each DO line links to its SO line.</li>
+<li><b>The GRN lands on the GRN you already have</b>, and each line links to its PO or SPO line.</li>
+<li><b>The link depends on one vendor answer.</b> AutoCount records "transferred from" on every line (<code>FromDocType</code>, <code>FromDocNo</code>, <code>FromDocDtlKey</code>). If the API returns those, the link is exact.</li>
+<li><b>The tracking upload stays</b> and owns transporter, driver, lorry, the actual delivery date and time, checker and trips.</li>
+</ul>
+</div>
+
+<h2 id="api">2. The vendor's API list (verbatim)</h2>
+<pre>(11) Branch table , maximum pageSize is 1000
+  GET  https://hapi.sorento.cc.cd/api/db1/branchbypage?page=2&amp;pageSize=1000
+
+(12) Purchase Order, Shipping PO is same table with Purchase Order
+  GET  https://hapi.sorento.cc.cd/api/db1/purchaseorderbydocdate?DocDate=20260717
+  GET  https://hapi.sorento.cc.cd/api/db1/purchaseorderbyLastModified?lastModified=20260717
+  GET  https://hapi.sorento.cc.cd/api/db1/purchaseorderJustnow
+   purchaseorderbydocdate , filter with DocDate field, Date format : yyyyMMdd
+   purchaseorderbyLastModified , filter with LastModified field, Date format : yyyyMMdd
+   purchaseorderJustnow, filter on recent 1 hour
+  For Shipping PO , normally ShippingPO field is 'T' , and Ref field is Container Number , and DocNo start with SPO.
+  But user may forget to check the ShippingPO field in AutoCount , and issue a SPO without fill in the container number (or fill in later after confirmed) ...
+
+(13) Goods Receive Note
+  GET  https://hapi.sorento.cc.cd/api/db1/goodsreceivenotebydocdate?DocDate=20260718
+  GET  https://hapi.sorento.cc.cd/api/db1/goodsreceivenotebyLastModified?lastModified=20260927
+  GET  https://hapi.sorento.cc.cd/api/db1/goodsreceivenoteJustnow
+
+(14) Sales Order
+  GET  https://hapi.sorento.cc.cd/api/db1/salesorderbydocdate?DocDate=20260723
+  GET  https://hapi.sorento.cc.cd/api/db1/salesorderbyLastModified?lastModified=20260723
+  GET  https://hapi.sorento.cc.cd/api/db1/salesorderJustNow
+
+(15) Delivery Order
+  GET  https://hapi.sorento.cc.cd/api/db1/deliveryorderbydocdate?DocDate=20260816
+  GET  https://hapi.sorento.cc.cd/api/db1/deliveryorderbyLastModified?lastModified=20260927
+  GET  https://hapi.sorento.cc.cd/api/db1/deliveryorderJustNow</pre>
+
+<h2 id="today">3. Today: products and stock balance, end to end</h2>
+<p>One integration row (<code>foundryx-esb</code>) carries both directions. <span class="tag t-crm">CRM</span> <span class="tag t-ss">Shared service</span> <span class="tag t-ac">AutoCount</span></p>
+<div class="diagram">
+<svg viewBox="0 0 900 360" role="img" aria-label="Today's pull and push flow">
+<defs>
+<marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" class="ah"/></marker>
+<marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" class="ah-a"/></marker>
+</defs>
+<rect x="20" y="40" width="170" height="280" rx="10" class="b-ac"/>
+<text x="105" y="66" text-anchor="middle" font-weight="600">AutoCount</text>
+<text x="105" y="88" text-anchor="middle" class="m">book per company</text>
+
+<rect x="270" y="40" width="230" height="280" rx="10" class="b-ss"/>
+<text x="385" y="66" text-anchor="middle" font-weight="600">Shared service (FoundryX)</text>
+<rect x="290" y="90" width="190" height="60" rx="8" class="b-n"/>
+<text x="385" y="115" text-anchor="middle">Snapshot store</text>
+<text x="385" y="134" text-anchor="middle" class="m">kept 24 h, paged rows</text>
+<rect x="290" y="210" width="190" height="80" rx="8" class="b-n"/>
+<text x="385" y="236" text-anchor="middle">Push mode per entity</text>
+<text x="385" y="255" text-anchor="middle" class="m">pull or push, per entity</text>
+<text x="385" y="273" text-anchor="middle" class="m">SorentoSink</text>
+
+<rect x="580" y="40" width="300" height="280" rx="10" class="b-crm"/>
+<text x="730" y="66" text-anchor="middle" font-weight="600">Sorento CRM</text>
+<rect x="600" y="86" width="260" height="92" rx="8" class="b-n"/>
+<text x="730" y="108" text-anchor="middle">Pull from AutoCount (button)</text>
+<text x="730" y="127" text-anchor="middle" class="m">import_jobs row, 30 s scheduler tick</text>
+<text x="730" y="145" text-anchor="middle" class="m">dry-run ingest -> Review screen</text>
+<text x="730" y="163" text-anchor="middle" class="m">Changes / Excel view / Compare -> Confirm</text>
+<rect x="600" y="210" width="260" height="80" rx="8" class="b-n"/>
+<text x="730" y="234" text-anchor="middle">POST /external/ingest/{entity}</text>
+<text x="730" y="253" text-anchor="middle" class="m">companyCode, records[], source_ref</text>
+<text x="730" y="271" text-anchor="middle" class="m">always 200, verdict per record</text>
+
+<path d="M190 120 H290" class="ln" marker-end="url(#a1)"/>
+<text x="240" y="112" text-anchor="middle" class="m">read</text>
+<path d="M600 120 H480" class="ln-a" marker-end="url(#a2)"/>
+<text x="540" y="112" text-anchor="middle" class="m">1 pull</text>
+<path d="M190 250 H290" class="ln" marker-end="url(#a1)"/>
+<path d="M480 250 H600" class="ln-a" marker-end="url(#a2)"/>
+<text x="540" y="242" text-anchor="middle" class="m">2 push</text>
+<text x="450" y="345" text-anchor="middle" class="m">The owner switches the push on in the shared service after a clean pull. The CRM holds no "verified" flag.</text>
+</svg>
+</div>
+<div class="tw"><table>
+<tr><th>Piece</th><th>Where (file:line)</th></tr>
+<tr><td>Pull button</td><td><code>ProductsList.tsx:183</code>, <code>StockBalanceGrid.tsx:92</code>, hook <code>useAutocountPull.ts:224-248</code></td></tr>
+<tr><td>Pull routes</td><td><code>be/app/api/v1/integrations/autocount_pull.py:147-302</code> (start, current, status, rows, xlsx, compare, confirm, discard)</td></tr>
+<tr><td>Client to the shared service</td><td><code>foundryx_autocount_client.py:166, 176, 185</code> (snapshots, X-API-Key)</td></tr>
+<tr><td>Preview / apply</td><td><code>be/app/tasks/autocount_pull_tasks.py:119, 182</code> on the <code>imports</code> queue</td></tr>
+<tr><td>Discard</td><td><code>autocount_pull_service.py:786-809</code>, immediate, no dialog</td></tr>
+<tr><td>Ingest</td><td><code>be/app/api/v1/external/ingest.py:722</code>, contract 2.6 at <code>:251</code>, anchor <code>company_anchor.py:135-174</code></td></tr>
+<tr><td>Idempotency</td><td><code>integration_references</code> unique (source_system, entity_type, source_ref, company_id), <code>integration_reference.py:77-97</code>; lines by <code>source_ref</code> = <code>{db}:{DocKey}:{DtlKey}</code></td></tr>
+<tr><td>Stale guard (billing only)</td><td><code>source_modified_at</code>, verdict <code>unchanged</code> + <code>stale_ignored</code>, <code>models/finance.py:125</code></td></tr>
+<tr><td>Mirror tables</td><td>None. Every entity writes straight into the CRM table.</td></tr>
+</table></div>
+
+<h2 id="sync">4. Proposed sync: a cursor, not a doc-date loop</h2>
+<div class="diagram">
+<svg viewBox="0 0 900 400" role="img" aria-label="Proposed sync schedule with cursor and backfill">
+<defs>
+<marker id="b1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" class="ah"/></marker>
+<marker id="b2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" class="ah-a"/></marker>
+</defs>
+<text x="20" y="28" font-weight="600">Time axis (days)</text>
+<line x1="60" y1="70" x2="860" y2="70" class="ln"/>
+<g class="m">
+<text x="60" y="92" text-anchor="middle" class="m">1 Jan 2023</text>
+<text x="420" y="92" text-anchor="middle" class="m">go-live</text>
+<text x="700" y="92" text-anchor="middle" class="m">cursor - 1</text>
+<text x="760" y="92" text-anchor="middle" class="m">cursor</text>
+<text x="840" y="92" text-anchor="middle" class="m">today</text>
+</g>
+<line x1="60" y1="62" x2="60" y2="78" class="ln"/><line x1="420" y1="62" x2="420" y2="78" class="ln"/>
+<line x1="700" y1="62" x2="700" y2="78" class="ln"/><line x1="760" y1="62" x2="760" y2="78" class="ln-a"/><line x1="840" y1="62" x2="840" y2="78" class="ln"/>
+
+<rect x="60" y="110" width="360" height="44" rx="8" class="b-n"/>
+<text x="240" y="130" text-anchor="middle">Backfill by DocDate, oldest first</text>
+<text x="240" y="147" text-anchor="middle" class="m">one call per day, resumable, run once</text>
+
+<rect x="640" y="170" width="200" height="54" rx="8" class="b-ss"/>
+<text x="740" y="192" text-anchor="middle">Nightly LastModified sweep</text>
+<text x="740" y="210" text-anchor="middle" class="m">cursor-1 .. today, then move cursor</text>
+
+<rect x="770" y="240" width="90" height="54" rx="8" class="b-ss"/>
+<text x="815" y="262" text-anchor="middle">JustNow</text>
+<text x="815" y="280" text-anchor="middle" class="m">every 10 min</text>
+
+<rect x="440" y="240" width="310" height="54" rx="8" class="b-n"/>
+<text x="595" y="262" text-anchor="middle">Deletion sweep by DocDate</text>
+<text x="595" y="280" text-anchor="middle" class="m">nightly, trailing 45 days, missing DocKeys</text>
+
+<rect x="60" y="240" width="200" height="54" rx="8" class="b-n"/>
+<text x="160" y="262" text-anchor="middle">Re-pull one day</text>
+<text x="160" y="280" text-anchor="middle" class="m">manual, by DocDate</text>
+
+<rect x="300" y="320" width="300" height="60" rx="8" class="b-crm"/>
+<text x="450" y="344" text-anchor="middle">CRM ingest (contract 2.7)</text>
+<text x="450" y="362" text-anchor="middle" class="m">source_ref + source_modified_at: replay is safe</text>
+
+<path d="M740 224 C740 300 620 300 600 320" class="ln-a" marker-end="url(#b2)"/>
+<path d="M815 294 C815 340 700 350 600 350" class="ln-a" marker-end="url(#b2)"/>
+<path d="M595 294 V320" class="ln" marker-end="url(#b1)"/>
+<path d="M160 294 C160 340 250 350 300 350" class="ln" marker-end="url(#b1)"/>
+<path d="M240 154 C240 220 330 300 330 320" class="ln-d" marker-end="url(#b1)"/>
+</svg>
+</div>
+<div class="tw"><table>
+<tr><th>Door</th><th>When</th><th>Why it is enough</th></tr>
+<tr><td><code>...JustNow</code></td><td>every 10 min</td><td>covers the last hour, so 50 minutes of overlap; a missed tick costs nothing</td></tr>
+<tr><td><code>...byLastModified</code></td><td>nightly, from cursor - 1 day to today</td><td>catches anything JustNow missed; after an outage, one call per missed day, not per document. The cursor moves only after a complete sweep.</td></tr>
+<tr><td><code>...bydocdate</code></td><td>backfill once; manual one-day re-pull; deletion sweep</td><td>the only place doc dates are looped, and it is bounded</td></tr>
+</table></div>
+<p><b>Edits after posting</b> bump LastModified, so the whole document is re-sent and upserted by its keys; line ids survive. <b>Cancelled</b> is an update. <b>Deleted</b> documents cannot be seen by LastModified, so until the vendor offers a delete log, a nightly sweep compares the last 45 days of DocKeys by doc date and sends the missing ones to <code>/deletions</code>. <b>Reruns</b> are safe: the CRM answers <code>unchanged</code> to an identical or older push.</p>
+<p><b>Before the push is on:</b> the operator presses <b>Pull from AutoCount</b> on the Delivery Orders or GRN list, picks a date range (default yesterday), and sees the same review screen as products: Changes, an Excel view in the upload template's columns, Compare with my Excel, and a new headline, <b>"N of M lines linked to a sales order line"</b> (or "to a PO or SPO line").</p>
+
+<h2 id="do">5. Delivery Order model</h2>
+<p>Lands on the existing <code>orders</code> / <code>order_lines</code>. <span class="tag t-new">new</span> marks a new column. Every field AutoCount sends is also kept whole in <code>source_payload</code> (JSON), so nothing is lost and a new vendor field needs no migration.</p>
+<div class="grid2">
+<div class="tw"><table>
+<tr><th colspan="2">Header (<code>orders</code>)</th></tr>
+<tr><td><code>source_ref</code> <span class="tag t-new">new</span></td><td><code>{db}:DO:{DocKey}</code>, the idempotency key</td></tr>
+<tr><td><code>source_modified_at</code> <span class="tag t-new">new</span></td><td>LastModified, stale guard</td></tr>
+<tr><td><code>source_payload</code> <span class="tag t-new">new</span></td><td>whole header as sent</td></tr>
+<tr><td><code>order_number</code></td><td>DocNo; the tracking upload's match key</td></tr>
+<tr><td><code>order_date</code></td><td>DocDate</td></tr>
+<tr><td><code>debtor_code</code>, <code>debtor_name</code>, <code>customer_id</code></td><td>DebtorCode / Name, resolved within company</td></tr>
+<tr><td><code>branch_code</code>, <code>branch_name</code> <span class="tag t-new">new</span></td><td>BranchCode on the DO; name from branch table (11)</td></tr>
+<tr><td><code>delivery_address</code> <span class="tag t-new">new</span></td><td>deliver address block as sent</td></tr>
+<tr><td><code>agent</code>, <code>salesman</code></td><td>SalesAgent</td></tr>
+<tr><td><code>customer_ref</code>, <code>remarks</code></td><td>Ref, Description / Remarks</td></tr>
+<tr><td><code>is_cancelled</code></td><td>Cancelled</td></tr>
+<tr><td>money + <code>currency_code</code>, <code>currency_rate</code> <span class="tag t-new">new</span></td><td>NetTotal, Tax, Total, currency</td></tr>
+<tr><td><code>so_numbers</code> <span class="tag t-new">new</span></td><td>distinct FromDocNo of the lines (display)</td></tr>
+</table></div>
+<div class="tw"><table>
+<tr><th colspan="2">Line (<code>order_lines</code>)</th></tr>
+<tr><td><code>source_ref</code> <span class="tag t-new">new</span></td><td><code>{db}:DO:{DocKey}:{DtlKey}</code></td></tr>
+<tr><td><code>line_sequence</code></td><td>Seq</td></tr>
+<tr><td><code>product_id</code> + <code>item_code</code> <span class="tag t-new">new</span></td><td>ItemCode</td></tr>
+<tr><td><code>warehouse_id</code> + <code>location_code</code> <span class="tag t-new">new</span></td><td>Location</td></tr>
+<tr><td><code>quantity</code>, <code>uom</code> <span class="tag t-new">new</span></td><td>Qty, UOM</td></tr>
+<tr><td>price, discount, tax, totals</td><td>existing columns</td></tr>
+<tr><td><code>from_doc_type</code>, <code>from_doc_no</code>, <code>from_line_ref</code> <span class="tag t-new">new</span></td><td>FromDocType, FromDocNo, <code>{db}:{FromDocKey}:{FromDocDtlKey}</code>, kept as sent</td></tr>
+<tr><td><code>sales_order_line_id</code></td><td><b>the SO line link</b>: existing FK, declared for this and never written until now</td></tr>
+<tr><td><code>source_payload</code> <span class="tag t-new">new</span></td><td>whole line as sent</td></tr>
+</table></div>
+</div>
+
+<h2 id="grn">6. Goods Receive Note model</h2>
+<p>Lands on the existing <code>picking_headers</code> (<code>picking_type='goods_received'</code>) / <code>picking_lines</code>.</p>
+<div class="grid2">
+<div class="tw"><table>
+<tr><th colspan="2">Header (<code>picking_headers</code>)</th></tr>
+<tr><td><code>source_ref</code>, <code>source_modified_at</code>, <code>source_payload</code> <span class="tag t-new">new</span></td><td><code>{db}:GRN:{DocKey}</code>, LastModified, whole header</td></tr>
+<tr><td><code>picking_number</code>, <code>picking_date</code></td><td>DocNo, DocDate</td></tr>
+<tr><td><code>supplier_id</code>, <code>creditor_code</code>, <code>creditor_name</code> <span class="tag t-new">new</span></td><td>CreditorCode / Name</td></tr>
+<tr><td><code>ref</code>, <code>container_number</code> <span class="tag t-new">new</span></td><td>Ref; container via the existing SPO rule</td></tr>
+<tr><td><code>supplier_do_no</code> <span class="tag t-new">new</span></td><td>SupplierDONo</td></tr>
+<tr><td><code>spo_number</code></td><td>SPO numbers of the lines (display, as today)</td></tr>
+<tr><td><code>picking_status</code></td><td>Cancelled -> cancelled</td></tr>
+</table></div>
+<div class="tw"><table>
+<tr><th colspan="2">Line (<code>picking_lines</code>)</th></tr>
+<tr><td><code>source_ref</code> <span class="tag t-new">new</span></td><td><code>{db}:GRN:{DocKey}:{DtlKey}</code></td></tr>
+<tr><td>product, warehouse, <code>quantity_picked</code></td><td>ItemCode, Location, Qty</td></tr>
+<tr><td><code>from_doc_type</code>, <code>from_doc_no</code>, <code>from_line_ref</code> <span class="tag t-new">new</span></td><td>as sent</td></tr>
+<tr><td><code>po_line_id</code></td><td><b>the PO line link</b>: existing FK, never written until now</td></tr>
+<tr><td><code>spo_allocation_id</code></td><td><b>the SPO line link</b>: exact, because SPO lines already carry the DtlKey</td></tr>
+<tr><td><code>spo_number_raw</code></td><td>FromDocNo; feeds today's matcher only when there is no line key</td></tr>
+</table></div>
+</div>
+<div class="tw"><table>
+<tr><th>Link</th><th>Exact</th><th>Fallback if the API lacks it</th></tr>
+<tr><td>DO line -> SO line</td><td>FromDocDtlKey on the DO line</td><td>FromDocNo + ItemCode (breaks when one SO has the same item twice); then Ref / Description text</td></tr>
+<tr><td>GRN line -> PO / SPO line</td><td>FromDocDtlKey on the GRN line</td><td>FromDocNo + ItemCode through today's FIFO matcher; then container in Ref + item</td></tr>
+<tr><td>DO -> branch name</td><td>BranchCode + branch table (11)</td><td>the DO's delivery address block</td></tr>
+</table></div>
+
+<h2 id="track">7. DO and the order tracking upload: one delivery record</h2>
+<div class="tw"><table>
+<tr><th>Owner</th><th>Columns on the same <code>orders</code> row</th></tr>
+<tr><td><span class="tag t-ac">AutoCount push</span></td><td>DO number, date, customer, branch, delivery address, agent, Ref, remarks, money, cancelled, all lines and their SO links, provenance</td></tr>
+<tr><td><span class="tag t-crm">Tracking upload</span></td><td>actual delivery date and time, transporter, driver, lorry plate, checker, trips, delivery days, KPI warning, delivered status</td></tr>
+</table></div>
+<ul>
+<li>Matched on the DO number, in either order. Tracking first: the Master sheet creates the row and the push adopts it by number. DO first: the tracking row finds it as it does today.</li>
+<li>Neither writer touches the other's columns; a test pins each list.</li>
+<li>The DO detail (lines) upload retires once the push runs clean. The tracking upload stays.</li>
+<li>Found while measuring: <code>actual_delivery_date</code> is declared as a date while the upload builds date + time; the time is kept in <code>pickup_time</code>. The plan confirms the live column type.</li>
+</ul>
+
+<h2 id="vendor">8. Questions for the vendor</h2>
+<ol>
+<li><b>V1</b> <code>byLastModified</code>: modified ON that day, or on and AFTER it? Which time zone is LastModified in? Is the full timestamp in the response?</li>
+<li><b>V2</b> Do the document endpoints page (<code>page</code>, <code>pageSize</code>)? If not, what is the most rows per call?</li>
+<li><b>V3</b> Are detail lines in the same response, with <code>DocKey</code>, <code>DtlKey</code>, <code>Seq</code>, <code>Cancelled</code>? <b>Please add per line <code>FromDocType</code>, <code>FromDocNo</code>, <code>FromDocKey</code>, <code>FromDocDtlKey</code></b>: they link DO to SO and GRN to PO / SPO.</li>
+<li><b>V4</b> Do the SO and PO endpoints return <code>DocKey</code> and each line's <code>DtlKey</code>?</li>
+<li><b>V5</b> Does <code>JustNow</code> include edits, or only new documents? Does editing only a line update the header's LastModified?</li>
+<li><b>V6</b> Can deleted GRNs / DOs be seen anywhere (a log or an endpoint)? What are the Cancelled field's name and values?</li>
+<li><b>V7</b> Which DO field holds the branch, and is the branch table keyed by (AccNo, BranchCode)? What are the delivery address field names?</li>
+<li><b>V8</b> Does the GRN carry CreditorCode, Ref, SupplierDONo? Is the container ever on the GRN Ref?</li>
+<li><b>V9</b> Which company book is <code>db1</code>, and what is the path for the other?</li>
+<li><b>V10</b> Rate limits and auth: can we call every 10 minutes per document type per book?</li>
+<li><b>V11</b> Can one DO line come from more than one SO line (combined)? Same for GRN lines and PO lines.</li>
+</ol>
+
+<h2 id="slices">9. Slices</h2>
+<div class="tw"><table>
+<tr><th>#</th><th>Slice</th><th>Repo</th><th>Waits on vendor</th><th>Size</th></tr>
+<tr><td>V0</td><td>Send V1 to V11; get one real DO and one real GRN record per book</td><td>owner</td><td>-</td><td>0</td></tr>
+<tr><td>S1</td><td>HTTP source for branch, GRN and DO; cursor store; date-range snapshots</td><td><span class="tag t-ss">shared</span></td><td>V1 V2 V3 V9</td><td>1 lane</td></tr>
+<tr><td>S2</td><td>Contract 2.7: ingest / read / deletions for <code>delivery_orders</code> and <code>goods_receive_notes</code>; migration; line links; adopt by number; column ownership with tracking</td><td><span class="tag t-crm">CRM</span></td><td>V3 (can start on the proposed shape)</td><td>1.5 lanes</td></tr>
+<tr><td>S3</td><td>Pull for verification: date range, Excel view, compare, link coverage headline</td><td><span class="tag t-crm">CRM</span></td><td>S1 snapshot shape</td><td>1 lane</td></tr>
+<tr><td>S4</td><td>Sink, JustNow, nightly sweeps, deletion sweep, backfill, one-day re-pull</td><td><span class="tag t-ss">shared</span></td><td>V5 V6 V10</td><td>1 lane</td></tr>
+<tr><td>S5</td><td>DO and GRN pages show the line links; retire the DO lines and GRN lines uploads</td><td><span class="tag t-crm">CRM</span></td><td>none</td><td>0.5 lane</td></tr>
+</table></div>
+<p><b>About 5 lanes:</b> 3 CRM, 2 shared service. Top risks: the API has no transfer-from fields (V3), <code>byLastModified</code> is date-only (V1), no paging (V2), and deletions are invisible (V6). The shared-service side of this scout could not be read from this session (repository scope) and is marked as assumed in the report.</p>
+
+<h2 id="open">10. Open questions (my recommendation in bold)</h2>
+<ol class="q">
+<li>How do we store "pretty much everything"? (a) Typed columns for what the CRM uses, plus the full record in one JSON column. (b) A column for every API field. <b>(a): nothing is lost, and there is no migration per new vendor field.</b></li>
+<li>Branch name: (a) the shared service looks it up and the DO stores code + name. (b) A CRM branch table. <b>(a); a table waits for a screen that needs it.</b></li>
+<li>Where does the DO land? (a) The existing delivery order that the tracking upload writes. (b) A new table. <b>(a): one delivery record.</b></li>
+<li>Where does the GRN land? (a) The existing GRN. (b) A new table. <b>(a).</b></li>
+<li>Who holds the push switch? (a) The shared service, per entity and company, as for products. (b) A CRM flag. <b>(a).</b></li>
+<li>Backfill start: (a) 1 Jan 2023, same as invoices. (b) Go-live only. <b>(a): invoice lines point at DO lines.</b></li>
+<li>Retire the DO lines upload and the GRN lines upload? <b>(a) Yes, after a week of push with the verification pull showing no differences.</b> (b) Keep both.</li>
+<li>A tracking row for a DO not yet synced: (a) create it as today, and the push adopts it. (b) Refuse it. <b>(a): tracking is never blocked by sync timing.</b></li>
+<li>Deletions with no vendor log: (a) a nightly sweep of the last 45 days. (b) Also a monthly sweep of older months. (c) Accept the gap. <b>(a); add (b) only if an older deletion is ever found.</b></li>
+<li>A DO line whose SO line has not arrived: (a) land it unlinked, and the SO's push links it. (b) Hold the DO. <b>(a).</b></li>
+<li>SO delivered quantity: (a) keep taking it from the SO push. (b) Recompute it from DOs. <b>(a); (b) only if the two are measured apart.</b></li>
+<li>JustNow cadence: <b>every 10 minutes</b>.</li>
+</ol>
+
+<p class="foot">Scout lane #1354. Report: <code>documentation/plans/autocount/SCOUT-autocount-grn-do-29sep.md</code>. No code, no migration, no PR.</p>
+</main>
+</body>
+</html>
