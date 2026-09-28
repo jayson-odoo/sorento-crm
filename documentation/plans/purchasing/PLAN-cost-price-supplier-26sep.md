@@ -1,6 +1,10 @@
 # PLAN: Cost price from the supplier's price list, as dated cost lists, verified when suppliers submit (#1288)
 
-Status: Lane A (S1 + S2) built on PR #1305, full track for round 8 (migration
+Status: Lane A (S1 + S2) built on PR #1305. Round 9 done (owner hand test of round 8, 28 Sep
+2026 20:5x MYT, UI only, no API or migration change): the product Suppliers tab is a supplier
+data grid whose row opens that supplier's cost prices as a second grid (Packaging method, Cost as
+"CNY 40.60", Date start, Date end; no set code, no "Always"), AC-CL-11 to AC-CL-15; evidence in
+`evidence/round9-suppliers-tab/`. Full track for round 8 (migration
 `cpc4_cost_packaging_method`), fix lane round 8 done, awaiting the orchestrator's review and the
 owner's hand test (owner ruling of 28 Sep 2026, 15:2x and 15:3x MYT: cost per packaging method,
 Q9 reversed, section 12; main d79b46c5 merged, cpc1 re-parented onto `merge_28sep_batch2`,

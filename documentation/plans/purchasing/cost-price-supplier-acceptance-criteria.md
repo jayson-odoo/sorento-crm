@@ -271,6 +271,21 @@ yeah correct, yeah correct PO keep their own unit cost yeah"):
   force and its cost lists (same columns as AC-CL-07, each cost row naming its packaging), with search by supplier name or set code;
   the price renders in the link's own currency (fixes `ProductDetail.tsx` formatting every cost
   as MYR, for the supplier price only).
+  Round 9 (owner hand test of round 8, 28 Sep 2026 20:5x MYT) replaces the cards and inline cost
+  lines of this AC with AC-CL-11 to AC-CL-15; the set code search is dropped with the set code.
+- **AC-CL-11** `[FE]` (J15) The product Suppliers tab lists suppliers in the system data grid
+  (`PanelDataGrid`), columns Supplier code, Supplier name, Primary, Lead time (days), Unit cost,
+  Currency, Minimum order, Order multiple, Their code; the search box matches supplier code,
+  name or their code. No subtitle under the title, no call to action.
+- **AC-CL-12** `[FE]` (J15) Clicking a supplier row opens that supplier's cost prices under the row
+  as a second data grid (the expandable row, `PanelDataGrid` `expanded` + `meta.expandedContent`);
+  a second click closes it. Columns Packaging method, Cost, Date start, Date end. A supplier with
+  no cost prices shows the grid's empty state, "No cost prices for this supplier."
+- **AC-CL-13** `[FE]` (J15) Cost reads currency first, two decimals: "CNY 40.60".
+- **AC-CL-14** `[FE]` (J15) An open-ended price shows its start date and a dash in Date end; the tab
+  never shows "Always", "no end" or a status pill.
+- **AC-CL-15** `[FE]` (J15) No upload code (CPC-nnnn) and no "Edited by hand" source anywhere on the
+  product Suppliers tab.
 - **AC-CL-09** `[BE]` `[T]` (J8, Q16) Given a purchase order is revised (a line re-priced, a line
   added) or confirmed, then the product-supplier link's `unit_cost` and `currency` and the
   product's `cost_price` are unchanged, and the PO keeps its own line prices. Given the product
@@ -411,7 +426,7 @@ yeah correct, yeah correct PO keep their own unit cost yeah"):
 - **AC-SR-02** `[FE]` Review page: search by supplier code, configuration, matched product code or
   sheet, combined with the active stat filter and sheet tab; the stat card counts follow the
   search (AC-S1-20).
-- **AC-SR-03** `[FE]` Supplier Prices tab and product Suppliers tab: search as AC-CL-07, AC-CL-08.
+- **AC-SR-03** `[FE]` Supplier Prices tab and product Suppliers tab: search as AC-CL-07, AC-CL-11.
 - **AC-SR-04** `[FE]` Supplier's own page: search on Prices and History (AC-S3-14, AC-S3-18).
 - **AC-SR-05** `[FE]` `[T]` Every single-select on these screens is `SearchableSelect` and every
   multi-select is `SearchableMultiSelect`; a test over the new files fails on a native `<select>`
