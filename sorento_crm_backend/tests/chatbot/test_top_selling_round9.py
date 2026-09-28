@@ -141,8 +141,9 @@ class TestOwnerTranscript:
         # 12:17:38: "salesman" is the agent too.
         text, captured = c.say(_low_signal(), "salesman")
         assert GREETING not in text, text
-        if text == ASK_METRIC:
-            text, captured = c.say(_answer(rank_by="amount"), "by amount")
+        assert text == ASK_METRIC, text
+        # 12:18:00
+        text, captured = c.say(_answer(rank_by="amount"), "by amount")
         (args,) = _calls(captured)
         assert sorted(args["sales_agent_ids"]) == c.seeded.agents("WT"), args
         assert "customer_ids" not in args, args
