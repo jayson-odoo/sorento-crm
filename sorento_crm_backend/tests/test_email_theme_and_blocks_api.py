@@ -15,13 +15,26 @@ from fastapi.testclient import TestClient
 from app.models.email_template import EmailTemplate
 from app.models.user import SystemSetting
 from app.services.email_layout import has_layout
-from tests._pg_fixture import pg_session, unique_code
+from tests._pg_fixture import unique_code
 
 
 @pytest.fixture
 def db():
-    with pg_session() as session:
+    # Routes under test commit; create_savepoint keeps each commit inside the outer
+    # transaction the fixture rolls back, so nothing leaks to later test files.
+    from sqlalchemy.orm import Session
+
+    from app.database import engine
+
+    connection = engine.connect()
+    transaction = connection.begin()
+    session = Session(bind=connection, join_transaction_mode="create_savepoint")
+    try:
         yield session
+    finally:
+        session.close()
+        transaction.rollback()
+        connection.close()
 
 
 def _settings(db) -> SystemSetting:
@@ -65,7 +78,10 @@ ADD = "email_templates.templates.add"
 def stop_patches():
     started: list = []
     yield started
-    for c in started:
+    # Reverse order: patches stacked on the same attribute must unwind last-in first-out,
+    # or stopping the first one restores the ORIGINAL and stopping the second then puts
+    # the first test's fake permission check back for every later test file.
+    for c in reversed(started):
         c._perm_patch.stop()
 
 

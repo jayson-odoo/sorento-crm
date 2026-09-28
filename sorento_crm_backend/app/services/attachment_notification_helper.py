@@ -142,6 +142,9 @@ def notify_uploaders_after_external_attachment_event(
             for n, x in zip(names, user_atts)
         ]
 
+        # Kept for an in-flight outbox row enqueued by pre-#1349 code (its coalesce
+        # metadata has no `attachment_items`, so `_enqueue_coalesced_attachment_email`
+        # falls back to rebuilding these strings the old way).
         intro_plain = f"{summary_plain}\n\n{entity_link_text}:\n{entity_url}\n\nYour attachment(s):"
         intro_html = (
             f"{summary_html}"
@@ -154,8 +157,27 @@ def notify_uploaders_after_external_attachment_event(
             "Please do not reply.</p>"
         )
 
-        body_plain = f"{intro_plain}\n" + "\n".join(att_plain_items) + f"\n\n{footer_plain}"
-        body_html = f"{intro_html}<ul>{''.join(att_html_items)}</ul>{footer_html}"
+        # #1349: the mail is rendered through the `attachment_linked` template - the
+        # producer passes CONTEXT, never HTML.
+        attachment_items = [
+            {"name": n, "url": build_attachment_detail_url(str(x.id))}
+            for n, x in zip(names, user_atts)
+        ]
+        from app.services.email_template_service import EmailTemplateService
+        from markupsafe import Markup
+
+        rendered = EmailTemplateService(db).render_code(
+            "attachment_linked",
+            {
+                "title": title,
+                "summary_html": Markup(summary_html),
+                "entity_url": entity_url,
+                "entity_link_text": entity_link_text,
+                "attachment_items": attachment_items,
+            },
+        )
+        body_plain = rendered["body_text"]
+        body_html = rendered["body_html"]
 
         # batch_id (when set on the uploaded attachment row) drives
         # _enqueue_coalesced_attachment_email's coalesce_id ahead of entity_url, so per-attachment
@@ -171,6 +193,12 @@ def notify_uploaders_after_external_attachment_event(
             "entity_url": entity_url,
             "attachment_ids": [str(x.id) for x in user_atts],
             "email_coalesce": {
+                "template_code": "attachment_linked",
+                "title": title,
+                "summary_html": summary_html,
+                "entity_url": entity_url,
+                "entity_link_text": entity_link_text,
+                "attachment_items": attachment_items,
                 "intro_plain": intro_plain,
                 "intro_html": intro_html,
                 "footer_plain": footer_plain,
@@ -358,17 +386,18 @@ def notify_after_external_attachment_entity(
     nu = _user_id_str(notify_user_id)
     if nu and nu not in uploaders:
         try:
-            entity_href = html.escape(entity_url, quote=True)
-            link_label_esc = html.escape(entity_link_text)
-            explicit_plain = (
-                f"{summary_plain}\n\n{entity_link_text}:\n{entity_url}\n\n"
-                "This is a system generated email. Please do not reply."
-            )
-            explicit_html = (
-                f"{summary_html}"
-                f'<p><a href="{entity_href}">{link_label_esc}</a></p>'
-                f'<p style="color:#666;font-size:12px;margin-top:1.5em;">This is a system generated email. '
-                "Please do not reply.</p>"
+            from app.services.email_template_service import EmailTemplateService
+            from markupsafe import Markup
+
+            rendered = EmailTemplateService(db).render_code(
+                "attachment_linked",
+                {
+                    "title": title,
+                    "summary_html": Markup(summary_html),
+                    "entity_url": entity_url,
+                    "entity_link_text": entity_link_text,
+                    "attachment_items": [],
+                },
             )
             ids.extend(
                 notify_external_api_explicit_user(
@@ -377,9 +406,9 @@ def notify_after_external_attachment_entity(
                     notification_batch_id=batch_id,
                     notif_type=notif_type,
                     title=title,
-                    body_plain=explicit_plain,
-                    body_html=explicit_html,
-                    data={"body_html": explicit_html, "entity_url": entity_url},
+                    body_plain=rendered["body_text"],
+                    body_html=rendered["body_html"],
+                    data={"body_html": rendered["body_html"], "entity_url": entity_url},
                 )
             )
         except Exception as e:
@@ -483,8 +512,28 @@ def notify_uploaders_after_external_promotion_created(
             "Please do not reply.</p>"
         )
 
-        body_plain = f"{intro_plain}\n" + "\n".join(att_plain_items) + f"\n\n{footer_plain}"
-        body_html = f"{intro_html}<ul>{''.join(att_html_items)}</ul>{footer_html}"
+        # #1349: rendered through the `promotion_created` template - the button place
+        # the "View promotion" link the legacy `intro_html` used to spell out by hand.
+        summary_html = f"{warn_html}<p>A promotion <strong>{html.escape(promo_name)}</strong> was created in Sorento CRM using your uploaded file(s).</p>"
+        attachment_items = [
+            {"name": n, "url": build_attachment_detail_url(str(x.id))}
+            for n, x in zip(names, user_atts)
+        ]
+        from app.services.email_template_service import EmailTemplateService
+        from markupsafe import Markup
+
+        rendered = EmailTemplateService(db).render_code(
+            "promotion_created",
+            {
+                "title": title,
+                "summary_html": Markup(summary_html),
+                "entity_url": promo_url,
+                "entity_link_text": "Open promotion in Sorento CRM",
+                "attachment_items": attachment_items,
+            },
+        )
+        body_plain = rendered["body_text"]
+        body_html = rendered["body_html"]
 
         # batch_id (when set on the uploaded attachment row) wins over promotion_id in
         # _enqueue_coalesced_attachment_email's coalesce lookup, so multi-file submits where n8n
@@ -500,6 +549,12 @@ def notify_uploaders_after_external_promotion_created(
             "promotion_id": promo_id,
             "attachment_ids": [str(x.id) for x in user_atts],
             "email_coalesce": {
+                "template_code": "promotion_created",
+                "title": title,
+                "summary_html": summary_html,
+                "entity_url": promo_url,
+                "entity_link_text": "Open promotion in Sorento CRM",
+                "attachment_items": attachment_items,
                 "intro_plain": intro_plain,
                 "intro_html": intro_html,
                 "footer_plain": footer_plain,
@@ -583,20 +638,22 @@ def notify_external_promotion_explicit_user(
 
     title = f"Promotion created: {promo_name}"
     warn_plain, warn_html = _format_warnings_block(warnings)
-    body_plain = (
-        f"{warn_plain}"
-        f'A promotion "{promo_name}" was created in Sorento CRM. '
-        f"View promotion:\n{promo_url}\n\n"
-        f"This is a system generated email. Please do not reply."
+    summary_html = f"{warn_html}<p>A promotion <strong>{html.escape(promo_name)}</strong> was created in Sorento CRM.</p>"
+    from app.services.email_template_service import EmailTemplateService
+    from markupsafe import Markup
+
+    rendered = EmailTemplateService(db).render_code(
+        "promotion_created",
+        {
+            "title": title,
+            "summary_html": Markup(summary_html),
+            "entity_url": promo_url,
+            "entity_link_text": "Open promotion in Sorento CRM",
+            "attachment_items": [],
+        },
     )
-    body_html = (
-        f"{warn_html}"
-        f"<p>A promotion <strong>{html.escape(promo_name)}</strong> "
-        f"was created in Sorento CRM "
-        f'<p><a href="{html.escape(promo_url, quote=True)}">Open promotion in Sorento CRM</a></p>'
-        f'<p style="color:#666;font-size:12px;margin-top:1.5em;">This is a system generated email. '
-        f"Please do not reply.</p>"
-    )
+    body_plain = rendered["body_text"]
+    body_html = rendered["body_html"]
     data = {"body_html": body_html, "promotion_url": promo_url, "promotion_id": promo_id}
     notify_source_id = f"{promo_id}_{notification_batch_id}"
 

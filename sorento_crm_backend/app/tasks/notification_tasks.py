@@ -249,6 +249,39 @@ def _enqueue_email_for_delivery(db, notification: Notification, user, delivery: 
     from_name = data.get("from_name")
     body_html = data.get("body_html")
 
+    # #1349 AC-EM076: a notification with only a title and body (no producer-built
+    # HTML - e.g. NotificationService callers, external/* endpoints) renders through
+    # the branded generic template instead of the outbox safety net's plain layout,
+    # so it gets the same heading + button shape as every other mail. The subject
+    # stays the notification title regardless.
+    if not body_html:
+        try:
+            from app.services.email_template_service import EmailTemplateService
+
+            link = str(data.get("link") or data.get("entity_url") or "")
+            if link and not link.lower().startswith(("http://", "https://")):
+                from app.config import settings as app_settings
+
+                base = (getattr(app_settings, "frontend_base_url", "") or "").strip().rstrip("/")
+                link = f"{base}{link}" if base else ""
+            rendered = EmailTemplateService(db).render_code(
+                "notification_generic",
+                {
+                    "title": notification_title,
+                    "body": notification_body or "",
+                    "link": link,
+                    "link_label": data.get("link_label") or "",
+                },
+            )
+            body_text = rendered["body_text"]
+            body_html = rendered["body_html"]
+        except Exception:
+            logger.warning(
+                "notification_generic render failed for notification %s, sending the plain body",
+                notification.id,
+                exc_info=True,
+            )
+
     if data.get("single_email_to_all") and data.get("recipient_emails"):
         recipients = [str(e) for e in data.get("recipient_emails", []) if e]
         if not recipients:
@@ -362,8 +395,16 @@ def _enqueue_coalesced_attachment_email(
     from_name,
     coalesce_meta: dict,
 ) -> tuple[str, bool]:
-    """Coalesce-aware enqueue for attachment-linkage events. Multiple n8n callbacks within the
-    event's coalesce window collapse into one outbox row whose body lists every attachment.
+    """Coalesce-aware enqueue for attachment-linkage / promotion events. Multiple n8n
+    callbacks within the event's coalesce window collapse into one outbox row.
+
+    #1349: when the notice carries structured `attachment_items`, the body is
+    RE-RENDERED through its branded template (`attachment_linked` / `promotion_created`,
+    named by `template_code`) on every merge, so the mail always lists every attachment
+    collected so far inside the layout. An outbox row already in flight from before this
+    landed has no `attachment_items` in its metadata, so it keeps rebuilding the legacy
+    plain strings it was created with - the coalesce keys and merge semantics are
+    otherwise unchanged.
     """
     from app.services.email_outbox_service import enqueue_or_merge
 
@@ -373,16 +414,40 @@ def _enqueue_coalesced_attachment_email(
     footer_html = str(coalesce_meta.get("footer_html") or "")
     att_plain_items = list(coalesce_meta.get("attachment_plain_items") or [])
     att_html_items = list(coalesce_meta.get("attachment_html_items") or [])
+    attachment_items = list(coalesce_meta.get("attachment_items") or [])
+    template_code = coalesce_meta.get("template_code")
+
+    def _render(items: list) -> tuple[str, str]:
+        from app.services.email_template_service import EmailTemplateService
+        from markupsafe import Markup
+
+        rendered = EmailTemplateService(db).render_code(
+            str(template_code),
+            {
+                "title": coalesce_meta.get("title") or subject,
+                "summary_html": Markup(str(coalesce_meta.get("summary_html") or "")),
+                "entity_url": str(coalesce_meta.get("entity_url") or ""),
+                "entity_link_text": str(coalesce_meta.get("entity_link_text") or ""),
+                "attachment_items": items,
+            },
+        )
+        return rendered["body_text"], rendered["body_html"]
 
     def _rebuild(merged_meta: dict) -> tuple[str, str]:
+        items = list(merged_meta.get("attachment_items") or [])
+        if template_code and items:
+            return _render(items)
         plain_items = list(merged_meta.get("attachment_plain_items") or [])
         html_items = list(merged_meta.get("attachment_html_items") or [])
         rebuilt_plain = f"{intro_plain}\n" + "\n".join(plain_items) + f"\n\n{footer_plain}"
         rebuilt_html = f"{intro_html}<ul>{''.join(html_items)}</ul>{footer_html}"
         return rebuilt_plain, rebuilt_html
 
-    initial_plain = f"{intro_plain}\n" + "\n".join(att_plain_items) + f"\n\n{footer_plain}"
-    initial_html = f"{intro_html}<ul>{''.join(att_html_items)}</ul>{footer_html}"
+    if template_code and attachment_items:
+        initial_plain, initial_html = _render(attachment_items)
+    else:
+        initial_plain = f"{intro_plain}\n" + "\n".join(att_plain_items) + f"\n\n{footer_plain}"
+        initial_html = f"{intro_html}<ul>{''.join(att_html_items)}</ul>{footer_html}"
 
     coalesce_id = None
     raw_data = getattr(notification, "data", None)
@@ -398,7 +463,13 @@ def _enqueue_coalesced_attachment_email(
         body_html=initial_html,
         from_name=from_name,
         coalesce_id=str(coalesce_id) if coalesce_id else None,
-        merge_metadata_list_keys=["attachment_plain_items", "attachment_html_items", "attachment_ids", "notification_delivery_ids"],
+        merge_metadata_list_keys=[
+            "attachment_plain_items",
+            "attachment_html_items",
+            "attachment_items",
+            "attachment_ids",
+            "notification_delivery_ids",
+        ],
         rebuild_body=_rebuild,
         metadata={
             "notification_id": str(notification.id),
@@ -407,6 +478,7 @@ def _enqueue_coalesced_attachment_email(
             "user_id": str(getattr(user, "id", "") or ""),
             "attachment_plain_items": att_plain_items,
             "attachment_html_items": att_html_items,
+            "attachment_items": attachment_items,
             "attachment_ids": list(raw_data.get("attachment_ids", [])) if isinstance(raw_data, dict) else [],
         },
     )

@@ -167,23 +167,25 @@ def onboarding_submit(
 def _notify_submission(db: Session, request: OnboardingRequest) -> None:
     """Confirm to the requester, and put it in front of the captain."""
     from app.services import email_outbox_service
+    from app.services.email_template_service import EmailTemplateService
     from app.services.notification_service import NotificationService
 
     count = len(request.people)
-    body = (
-        f"Hello {request.requester_name},\n\n"
-        f"We have received your onboarding submission '{request.title}' "
-        f"with {count} {'person' if count == 1 else 'people'}.\n\n"
-        "Somebody will review it and you will get one more email when it is done. "
-        "Your original link now shows the status of each person.\n\n"
-        "This is a system-generated email. Please do not reply."
+    rendered = EmailTemplateService(db).render_code(
+        "onboarding_submitted",
+        {
+            "requester_name": request.requester_name,
+            "request_title": request.title,
+            "people_count": count,
+        },
     )
     email_outbox_service.enqueue(
         db,
         event_key="onboarding_submitted",
         to=request.requester_email,
-        subject=f"Received: {request.title}",
-        body_text=body,
+        subject=rendered["subject"],
+        body_text=rendered["body_text"],
+        body_html=rendered["body_html"],
         from_name="Sorento AI System",
         metadata={"onboarding_request_id": str(request.id), "people": count},
     )
