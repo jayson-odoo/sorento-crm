@@ -19,7 +19,9 @@ chains on main's single head `sales_0005_commission_tiers`. S0 merged to main (#
 S3 built on PR #1306 (stacked on S0; no migration); the reviewer pass at 6a7f0bcd (needs work:
 B1, S1 to S5, N1 to N6) is addressed by S3 fix lane round 2 on the same PR (27 Sep 2026), ready
 for the orchestrator's review; the retarget round (28 Sep 2026) merged main 9d150067 into it and
-moved its base to main. S1 and S2 per their own lanes.
+moved its base to main (single alembic head `identity_0001_s0_model`, S3 adds no migration;
+backend, migration, serial_ddl, SCM and touched vitest green on the merged tree). S1 and S2 per
+their own lanes.
 UAC: `identity-unified-login-acceptance-criteria.md` (same folder; the Journey is there, and every
 AC traces to a step in it).
 Classification: CORE (auth and users are base-platform), tables stay in `public`.
