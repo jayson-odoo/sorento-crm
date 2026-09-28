@@ -91,3 +91,13 @@ def test_no_row_is_a_no_op(db):
     assert db.execute(
         text("SELECT count(*) FROM scheduled_tasks WHERE key = 'scm_reorder_run'")
     ).scalar_one() == 0
+
+
+def test_old_description_is_exactly_what_284_seeded():
+    """The guard only matches the seeded row if OLD_DESCRIPTION is 284's text to the byte;
+    read it out of 284's SQL (adjacent literals concatenate) rather than trust a copy."""
+    import re
+
+    seed = (MIGRATION.parent / "284_seed_scm_reorder_run_task.py").read_text()
+    block = seed.split("'SCM Daily Reorder Run',")[1].split("true,")[0]
+    assert "".join(re.findall(r"'([^']*)'", block)) == _load_migration().OLD_DESCRIPTION

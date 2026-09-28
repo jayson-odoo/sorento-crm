@@ -321,9 +321,11 @@ def update_task(
             except ValidationError as exc:
                 first = exc.errors()[0]
                 field = ".".join(str(p) for p in first.get("loc", ()))
+                # A model_validator's own sentence arrives as "Value error, <sentence>".
+                msg = str(first.get("msg", "Invalid metadata")).removeprefix("Value error, ")
                 raise AppException(
                     status_code=422,
-                    message=f"{field}: {first.get('msg')}" if field else first.get("msg", "Invalid metadata"),
+                    message=f"{field}: {msg}" if field else msg,
                     code="invalid_task_metadata",
                 )
 

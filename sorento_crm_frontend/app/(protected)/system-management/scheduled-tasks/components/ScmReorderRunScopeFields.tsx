@@ -114,8 +114,9 @@ export function ScmReorderRunScopeFields({
       </div>
 
       <div>
-        <Label className="mb-1 block">Warehouses</Label>
+        <Label htmlFor="scm-warehouses" className="mb-1 block">Warehouses</Label>
         <SearchableMultiSelect
+          id="scm-warehouses"
           value={watch('warehouse_codes') ?? []}
           onChange={(v) => setValue('warehouse_codes', v, { shouldDirty: true })}
           options={warehouseOptions ?? []}
@@ -126,8 +127,9 @@ export function ScmReorderRunScopeFields({
       </div>
 
       <div>
-        <Label className="mb-1 block">Products</Label>
+        <Label htmlFor="scm-products" className="mb-1 block">Products</Label>
         <SearchableMultiSelect
+          id="scm-products"
           value={productCodes}
           onChange={(v) => setValue('product_codes', v, { shouldDirty: true })}
           fetchOptions={fetchProductOptions}

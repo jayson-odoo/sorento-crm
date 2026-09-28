@@ -483,18 +483,19 @@ def _handler_scm_reorder_run(db, task):
     """
     from zoneinfo import ZoneInfo
 
-    from app.schemas.scheduled_task import ScmReorderRunTaskMetadata
     from app.services.scm import reorder_run_service as reorder_svc
 
     metadata = getattr(task, "metadata_", None)
     md = metadata if isinstance(metadata, dict) else {}
-    # Budget read off the validated model, not the raw dict - same rule as every
-    # other key here.
-    budget = ScmReorderRunTaskMetadata(**md).budget
 
+    # The run day is the task's own local day: the run fires at 06:00 KL, which is 22:00
+    # UTC the day before, so a UTC "today" would put a 0-day window on yesterday.
     run_day = datetime.now(ZoneInfo(getattr(task, "timezone", None) or "UTC")).date()
+    # Validates every key first; a bad stored value fails the run here, before anything
+    # is created, rather than planning a scope nobody asked for.
     kwargs = _scm_reorder_run_kwargs(md, run_day)
     include_market = kwargs["include_market"]
+    budget = md.get("budget")  # validated above: a non-negative number or absent
 
     created = reorder_svc.create_run(db, **kwargs)
     run_id = created["run_id"]

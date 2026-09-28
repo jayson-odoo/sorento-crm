@@ -233,6 +233,25 @@ def test_handler_with_every_key_threads_them_all_to_create_run(db, monkeypatch):
     assert len(captured["dispatch_calls"]) == 1
 
 
+@pytest.mark.parametrize("tz", ["Pacific/Kiritimati", "Etc/GMT+12"])
+def test_handler_run_day_is_the_tasks_own_local_day(db, monkeypatch, tz):
+    """UTC+14 and UTC-12: at any moment at least one of them sits on a different calendar
+    day from UTC, so a handler that resolved the window in UTC fails one of these whenever
+    the suite runs (review K1). The real task fires at 06:00 KL, 22:00 UTC the day before."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    captured = _stub_pipeline(monkeypatch, str(uuid.uuid4()))
+    task = _Task(metadata={"horizon_start_days": 0, "horizon_end_days": 0}, timezone=tz)
+    expected = datetime.now(ZoneInfo(tz)).date()
+
+    _handler_scm_reorder_run(db, task)
+
+    kwargs = captured["create_run_kwargs"]
+    assert kwargs["plan_horizon_start"] == expected
+    assert kwargs["plan_horizon_date"] == expected
+
+
 def test_handler_absent_budget_funds_in_full(db, monkeypatch):
     run_id = str(uuid.uuid4())
     captured = _stub_pipeline(monkeypatch, run_id)

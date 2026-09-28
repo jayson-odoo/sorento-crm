@@ -49,6 +49,8 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   }) => {
     const rows = clearable ? [{ value: '', label: placeholder ?? 'All' }, ...options] : options;
     return (
+      // A jsdom stand-in for SearchableSelect itself, not a product dropdown.
+      // eslint-disable-next-line no-restricted-syntax
       <select
         id={id}
         data-testid={id}
