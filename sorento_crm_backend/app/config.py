@@ -199,11 +199,13 @@ class Settings(BaseSettings):
     rate_limit_portal_otp_max: int = 30        # portal OTP requests per window per IP
     rate_limit_portal_otp_window_seconds: int = 60
 
-    # identity S1 (#1280): the WhatsApp template use case a phone sign-in code
-    # sends under, once an approved one is mapped in the template defaults
-    # screen. Falls back to "portal_otp" (send_login_otp_respond_message) when
-    # nothing is mapped yet, so phone sign-in works on day one.
-    phone_signin_otp_use_case: str = "login_otp"
+    # identity S1 (#1280): an optional override for the WhatsApp template use
+    # case a phone sign-in code sends under. Ships empty: owner ruling of
+    # 27 Sep 2026 reuses the approved portal_otp template for CRM sign-in, so
+    # no new template goes to Meta. Set it (e.g. "login_otp") only once an
+    # approved template is mapped for that use case; an unmapped override
+    # still falls back to "portal_otp" (send_login_otp_respond_message).
+    phone_signin_otp_use_case: str = ""
 
     # Presigned-URL hardening (external API) - see PLAN-fix-security-cluster Sub-plan B.
     # When True, /external/presigned-url only signs a file_path that resolves to a

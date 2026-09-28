@@ -264,10 +264,10 @@ def send_login_otp_respond_message(
 ) -> dict:
     """Worker-side: window-aware Respond.io send for a phone sign-in OTP (identity S1, #1280).
 
-    Sends under the ``login_otp`` use case once an approved template is
-    mapped for it; falls back to ``portal_otp`` so phone sign-in works on day
-    one with the existing portal template (see
-    ``settings.phone_signin_otp_use_case``). Logged in the Respond outbox
+    Sends under the approved ``portal_otp`` template (owner ruling, 27 Sep
+    2026: CRM sign-in reuses it, no new template goes to Meta). Only when
+    ``settings.phone_signin_otp_use_case`` is set AND has a mapped default
+    does the send use that override instead. Logged in the Respond outbox
     exactly like the portal's own OTP send (``business_table=
     'portal_otp_codes'``), and likewise not mirrored into the CRM chat thread.
     The code itself is REDACTED from that row (security round B1, #1280) -
@@ -277,15 +277,15 @@ def send_login_otp_respond_message(
     from app.database import SessionLocal
     from app.services.respond_template_service import get_default_row
 
-    db = SessionLocal()
-    try:
-        use_case = (
-            settings.phone_signin_otp_use_case
-            if get_default_row(db, settings.phone_signin_otp_use_case) is not None
-            else "portal_otp"
-        )
-    finally:
-        db.close()
+    use_case = "portal_otp"
+    override = settings.phone_signin_otp_use_case
+    if override:
+        db = SessionLocal()
+        try:
+            if get_default_row(db, override) is not None:
+                use_case = override
+        finally:
+            db.close()
 
     return _send_and_log(
         use_case=use_case,

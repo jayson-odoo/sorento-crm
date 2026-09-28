@@ -12,15 +12,16 @@ Phase 1 contract for slice S1 of `PLAN-unified-identity-26sep.md` (section 10 S1
   described as "Login verification code sent when a contact opens the portal on a new device"
   (`services/whatsappTemplateService.ts`), and the in-window free text is "Your Sorento portal
   verification code is {code}..." (`app/services/portal_service.py`). Both name the portal.
-- So S1 builds against a new use case `login_otp` behind the setting
-  `phone_signin_otp_use_case` (default `"login_otp"`). At send time, when no default template is
-  configured for that use case, the send falls back to `portal_otp`. Phone sign-in therefore works
-  on day one with the portal template, and switches to a sign-in template the moment the owner
-  maps an approved one in the template defaults screen. The in-window free text for sign-in names
-  no portal: "Your Sorento sign-in code is {code}. It expires in 10 minutes. Please do not share it
-  with anyone."
-- `login_otp` joins `TEMPLATE_DEFAULT_USE_CASES` and `REQUIRED_PARAM_VARIABLE` (`otp_code`), and
-  the FE template list gains "Sign-in OTP".
+- Owner ruling (27 Sep 2026, on PR #1307): CRM phone sign-in reuses the approved `portal_otp`
+  template; no `login_otp` template goes to Meta. Out of the 24h window a sign-in code is sent
+  under `portal_otp`, in that template's wording.
+- The setting `phone_signin_otp_use_case` stays as an override but ships empty (`""`). Only when it
+  names a use case that has a mapped default template does the send use that instead; otherwise
+  it is `portal_otp`. `login_otp` stays in `TEMPLATE_DEFAULT_USE_CASES` and
+  `REQUIRED_PARAM_VARIABLE` (`otp_code`) for that override, but the WhatsApp Templates screen does
+  not list it.
+- The in-window free text for sign-in names no portal: "Your Sorento sign-in code is {code}. It
+  expires in 10 minutes. Please do not share it with anyone."
 
 ## Backend
 

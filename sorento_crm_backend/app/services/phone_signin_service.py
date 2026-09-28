@@ -37,9 +37,9 @@ from app.services.portal_service import (
 logger = logging.getLogger(__name__)
 
 # The in-window free text (S1 "First task"): names no portal, unlike the
-# portal's own OTP text. The use case (``login_otp``, falling back to
-# ``portal_otp`` until an approved template is mapped) lives in the RQ task,
-# `app.tasks.respond_io_tasks.send_login_otp_respond_message`.
+# portal's own OTP text. Out of the window the code goes out under the approved
+# ``portal_otp`` template (owner ruling, 27 Sep 2026); the optional override
+# lives in the RQ task, `app.tasks.respond_io_tasks.send_login_otp_respond_message`.
 SIGNIN_OTP_TEXT = (
     "Your Sorento sign-in code is {code}. It expires in 10 minutes. "
     "Please do not share it with anyone."

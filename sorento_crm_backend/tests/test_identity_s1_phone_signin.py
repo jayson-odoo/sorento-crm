@@ -529,10 +529,27 @@ def test_ac22_set_default_login_otp_without_otp_code_is_rejected():
             svc.set_default(db, "login_otp", template_id=str(tpl.id), param_mapping={"1": "message"})
 
 
-def test_ac22_task_uses_login_otp_when_a_default_row_exists():
+def test_ac22_setting_ships_empty_so_sign_in_reuses_portal_otp():
+    """Owner ruling (27 Sep 2026): CRM sign-in reuses the approved portal_otp
+    template; the override ships empty, so no template lookup even runs."""
+    from app.config import Settings
     from app.tasks.respond_io_tasks import send_login_otp_respond_message
 
-    with patch(
+    assert Settings.model_fields["phone_signin_otp_use_case"].default == ""
+    with patch("app.config.settings.phone_signin_otp_use_case", ""), patch(
+        "app.services.respond_template_service.get_default_row", return_value=MagicMock()
+    ) as mock_lookup, patch("app.tasks.respond_io_tasks._send_and_log") as mock_send:
+        send_login_otp_respond_message("ZZT-otp-0", "ZZT-respond-id-0", "text", "123456", "space-0")
+
+    assert mock_lookup.call_count == 0
+    _, kwargs = mock_send.call_args
+    assert kwargs.get("use_case") == "portal_otp", kwargs
+
+
+def test_ac22_task_uses_login_otp_override_when_set_and_a_default_row_exists():
+    from app.tasks.respond_io_tasks import send_login_otp_respond_message
+
+    with patch("app.config.settings.phone_signin_otp_use_case", "login_otp"), patch(
         "app.services.respond_template_service.get_default_row", return_value=MagicMock()
     ), patch("app.tasks.respond_io_tasks._send_and_log") as mock_send:
         send_login_otp_respond_message("ZZT-otp-1", "ZZT-respond-id-1", "text", "123456", "space-1")
@@ -545,7 +562,7 @@ def test_ac22_task_uses_login_otp_when_a_default_row_exists():
 def test_ac22_task_falls_back_to_portal_otp_when_no_default_row():
     from app.tasks.respond_io_tasks import send_login_otp_respond_message
 
-    with patch(
+    with patch("app.config.settings.phone_signin_otp_use_case", "login_otp"), patch(
         "app.services.respond_template_service.get_default_row", return_value=None
     ), patch("app.tasks.respond_io_tasks._send_and_log") as mock_send:
         send_login_otp_respond_message("ZZT-otp-2", "ZZT-respond-id-2", "text", "654321", "space-2")

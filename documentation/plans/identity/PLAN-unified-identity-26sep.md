@@ -878,7 +878,8 @@ Every slice runs the full track and `security-reviewer` (AC-62).
 - UAC: AC-20 to AC-29.
 - First task: read the approved `portal_otp` WhatsApp template's text; if it names the portal, ask
   the owner whether it may be reused for CRM sign-in or a `login_otp` template must be approved
-  first (Meta approval lead time is the slice's longest pole).
+  first (Meta approval lead time is the slice's longest pole). Answered (owner ruling 27 Sep 2026,
+  on PR #1307): reuse `portal_otp`; no `login_otp` template goes to Meta.
 - Done when: a staff user, an admin (Q10) and a phone-only user each sign in by code through the
   real worker and a real WhatsApp send on the lane stack; a user whose phone differs from its
   linked contact's is refused; enumeration tests green; Email mode is pixel-for-pixel today's page
