@@ -124,6 +124,13 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # naming the idea's title. Unmapped -> the send is skipped and logged, the
     # draft still closes on schedule (AC-1405).
     "ideation_draft_reminder",
+    # Chatbot stock ask v2 S4 (PLAN-chatbot-stock-ask-v2-24sep.md, R8). Sent to the
+    # customer's SALES AGENT when a dealer's stock ask is answered too big / in stock /
+    # no stock no incoming and the dealer contact's "Notify salesman" is on. Map params to
+    # ``customer_name`` / ``contact_name`` (the dealer who asked) / ``product`` /
+    # ``quantity`` / ``outcome`` / ``asked_at``. Unmapped out-of-window -> the send is
+    # skipped and logged failed; in-window it sends the default one-line wording.
+    "stock_ask_salesman",
 )
 
 # Chat reply use cases - a *_chat / conversation_chat default MUST map a slot to the

@@ -246,10 +246,10 @@ def test_ac_sa402_the_job_is_enqueued_after_the_turn_row_is_closed(
     statuses: list[str] = []
 
     def record_job(func, *args, **kwargs):
+        from app.models.chatbot_turn import ChatbotTurn
+
         db = session_factory()
-        row = db.execute(
-            text("SELECT status FROM chatbot.turns ORDER BY created_at DESC LIMIT 1")
-        ).first()
+        row = db.query(ChatbotTurn.status).order_by(ChatbotTurn.created_at.desc()).first()
         statuses.append(row[0] if row else None)
         dealer.jobs.append((func, args, kwargs))
 
