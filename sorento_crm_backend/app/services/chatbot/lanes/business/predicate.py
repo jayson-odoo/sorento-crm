@@ -123,8 +123,45 @@ _LEG_BY_ATTRIBUTE_WORD: dict[str, str] = {
 }
 
 
+#: The routing domains whose ask IS a leg (`turn/policy_rows.py`): the domain the parser
+#: routed to, and every `switch_words` entry the registry lists for it, name that leg.
+#: `master_products` is absent on purpose: its words ("spec", "dimension") ask about the
+#: product, never for a figure it has.
+_LEG_BY_DOMAIN: dict[str, str] = {"inventory": "stock", "incoming": "incoming", "promotion": "promotion"}
+
+#: The intents a leg may be read into from an attribute word or the domain: the product
+#: ask, no intent at all, and each leg's own. An order, sales or form ask that happens to
+#: request "quantity" is never turned into a stock set.
+_LEG_READABLE_INTENTS = frozenset({"", "check_product", *_BARE_LEG_BY_INTENT})
+
+
+def _leg_of_word(word: str) -> str | None:
+    """The leg one word names: `_LEG_BY_ATTRIBUTE_WORD`, else the registry's own switch
+    word for a leg's domain ("arriving", "eta", "stok", "promosi")."""
+    from app.services.chatbot.turn.policy import default_policy, domain_switch_words
+
+    w = word.strip().lower()
+    if not w:
+        return None
+    if w in _LEG_BY_ATTRIBUTE_WORD:
+        return _LEG_BY_ATTRIBUTE_WORD[w]
+    return _LEG_BY_DOMAIN.get(domain_switch_words(default_policy()).get(w, ""))
+
+
+def _leg_in_words(raw: str) -> str | None:
+    """The leg a phrase names through any one of its words ("in stock", "have stock",
+    "stock level", "incoming stock", "still arriving"). Fix round 12 on PR #833: read by
+    the word the registry knows, never by the phrase, so a new wording around a known
+    word needs no new entry. "incoming stock" is the incoming leg's own label, so a
+    phrase naming both says incoming."""
+    legs = [leg for leg in (_leg_of_word(w) for w in re.split(r"[^\w]+", raw) if w) if leg]
+    if not legs:
+        return None
+    return "incoming" if "incoming" in legs else legs[0]
+
+
 def _require_from_attributes(parser_output: dict[str, Any]) -> dict[str, Any] | None:
-    """`{leg: True}` for the first `requested_attributes` word that names a leg.
+    """`{leg: True}` for the first `requested_attributes` entry that names a leg.
 
     An attribute word the table does not know is NOT guessed into a leg: it stays a
     plain requested attribute and the ordinary answer projects it, which is what a
@@ -135,7 +172,12 @@ def _require_from_attributes(parser_output: dict[str, Any]) -> dict[str, Any] | 
     bare cert word is removed. Without it the phrase missed the one-word table, fell to
     the bare leg, and "PPS" was then stripped from the remainder as a predicate word, so
     nothing downstream could recover the scheme either.
+
+    Fix round 12 on PR #833 (owner: "why the fix that we applied for incoming cannot work
+    for stock? this is too fragile"): any other phrase names a leg through one of its
+    words (`_leg_in_words`), on a product ask or the leg's own ask only.
     """
+    readable = str(parser_output.get("intent_hint") or "") in _LEG_READABLE_INTENTS
     for raw in parser_output.get("requested_attributes") or []:
         if not isinstance(raw, str):
             continue
@@ -146,6 +188,9 @@ def _require_from_attributes(parser_output: dict[str, Any]) -> dict[str, Any] | 
         if len(words) > 1 and _CERT_RE.search(raw):
             scheme = _cert_scheme_from_raw(raw)
             return {"certificate": {"scheme": scheme}} if scheme else {"certificate": True}
+        leg = _leg_in_words(raw) if readable else None
+        if leg:
+            return {leg: True}
     return None
 
 
@@ -218,6 +263,12 @@ def derive_require(
     intent = parser_output.get("intent_hint")
     if intent in _BARE_LEG_BY_INTENT:
         return {_BARE_LEG_BY_INTENT[intent]: True}
+
+    # Fix round 12 on PR #833: the domain the parser routed a product ask to is the leg
+    # too ("inventory" is stock), whatever the verb around it was.
+    domain_leg = _LEG_BY_DOMAIN.get(str(parser_output.get("domain_hint") or ""))
+    if domain_leg and str(intent or "") in _LEG_READABLE_INTENTS:
+        return {domain_leg: True}
 
     if intent == "check_product_attachment":
         raws = _attachment_type_raws(parser_output)
@@ -344,3 +395,60 @@ def names_a_leg(word: str) -> bool:
     """Is `word` one of the customer's own words for a leg or its domain ("eta",
     "incoming", "stock", "cert")?"""
     return str(word or "").strip().lower() in _leg_words({leg: True for leg in _DOMAIN_BY_LEG})
+
+
+#: The intent each leg's own ask carries (`_BARE_LEG_BY_INTENT` read backwards, plus the
+#: two document legs).
+_INTENT_BY_LEG: dict[str, str] = {
+    **{leg: intent for intent, leg in _BARE_LEG_BY_INTENT.items()},
+    "certificate": "check_product_attachment",
+    "attachment_type": "check_product_attachment",
+}
+_DOMAIN_OF_DOCUMENT_LEGS: dict[str, str] = {"certificate": "product_attachment", "attachment_type": "product_attachment"}
+
+
+def describes_a_product_set(verdict: dict[str, Any]) -> bool:
+    """The verdict describes products by what they are or have: a product type, category
+    or specification entity of this message, and no product code typed. The set's own
+    test, the one `resolve_gate.resolve_entity_body` sends a `require` for."""
+    from app.services.chatbot.lanes.business.resolve_gate import _names_a_typed_code
+
+    entities = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
+    described = any(
+        str(e.get("hint") or "").strip().lower() in ("product_type", "category", "specification", "spec")
+        and e.get("current_message") is not False
+        for e in entities
+    )
+    return described and not _names_a_typed_code(verdict)
+
+
+def with_set_leg(verdict: dict[str, Any], *, message_text: str | None = None) -> dict[str, Any]:
+    """Fix round 12 on PR #833 (owner, 28 Sep 2026: "why the fix that we applied for
+    incoming cannot work for stock? this is too fragile, that means our solution is not
+    right"). An ask that describes a product set is the attribute-first lane's, and the
+    stock, incoming, promotion or document word in it chooses only which figures the rows
+    show. So the leg (`derive_require`, read off the intent, the domain and every
+    requested attribute's words through the registry) sets the verdict's domain and
+    intent before APPLY plans the turn: the plan, the gate, the tool, the rows and the
+    escalation team all follow the leg, whichever verb carried it. A product ask that
+    requested "stock" listed product rows under a stock header before this.
+
+    Unchanged: a verdict that describes no set, a leg-less set (a product ask about it,
+    `{"price": "described"}`), and a verdict already on the leg's domain."""
+    intent_now = str(verdict.get("intent_hint") or "")
+    if intent_now not in _LEG_READABLE_INTENTS and intent_now != "check_product_attachment":
+        # A low stock report, an order or a sales ask is its own answer, never a set.
+        return verdict
+    if not describes_a_product_set(verdict):
+        return verdict
+    require = derive_require(verdict, message_text=message_text) or {}
+    leg = next(iter(require), None)
+    if leg is None or leg == "price":
+        return verdict
+    domain = _DOMAIN_OF_DOCUMENT_LEGS.get(leg) or _DOMAIN_BY_LEG.get(leg)
+    intent = _INTENT_BY_LEG.get(leg)
+    if not domain or not intent:
+        return verdict
+    if verdict.get("domain_hint") == domain and verdict.get("intent_hint") == intent:
+        return verdict
+    return {**verdict, "domain_hint": domain, "intent_hint": intent}

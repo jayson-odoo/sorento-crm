@@ -2935,7 +2935,6 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             shown,
             set_noun,
             require,
-            intro=e.get("intro"),
             description=jsc.get(predicate, "description"),
             not_understood=jsc.get(predicate, "unrecognized_terms"),
             offset=offset,

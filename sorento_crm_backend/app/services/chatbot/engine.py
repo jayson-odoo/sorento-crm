@@ -1925,6 +1925,18 @@ def _run_stages(  # noqa: PLR0915
         )
     if grounding_notes:
         turn_trace.add("grounding", {"changes": grounding_notes})
+    # Fix round 12 on PR #833 (owner ruling 28 Sep 2026): once grounding has read the ask
+    # as a described product set, the set's leg (stock, incoming, promotion, a document)
+    # is the turn's domain, whatever verb carried it; APPLY plans from that.
+    from app.services.chatbot.lanes.business.predicate import with_set_leg
+
+    leg_verdict = with_set_leg(verdict, message_text=latest_user_message if isinstance(latest_user_message, str) else None)
+    if leg_verdict is not verdict:
+        turn_trace.add(
+            "set_leg",
+            {"from": [verdict.get("domain_hint"), verdict.get("intent_hint")], "to": [leg_verdict.get("domain_hint"), leg_verdict.get("intent_hint")]},
+        )
+        verdict = leg_verdict
 
     # -- access, C APPLY, D ROUTE ------------------------------------------- #
     stage[0] = "access"

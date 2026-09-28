@@ -2624,23 +2624,13 @@ def not_understood_line(words: Any) -> str:
     return f"Couldn't find: {quoted}."
 
 
-#: The sentence a set answer opens with, per leg, when the tool's own intro does not
-#: name "the requested products" (fix round 8 on PR #833): the product-code answer's
-#: sentence, so the set reads as that answer about the described set.
-_SET_INTRO_BY_LEG: dict[str, str] = {
-    "stock": "Stock summary for the requested products.",
-    "incoming": "Incoming stock found for the requested products.",
-    "certificate": "Certificates found for the requested products.",
-    "attachment_type": "Files found for the requested products.",
-    "promotion": "Promotions found for the requested products.",
-    "price": "Prices for the requested products.",
-}
-_REQUESTED = "the requested products"
-#: The legs whose intro sentence already says what the set has.
-_LEGS_THE_INTRO_NAMES = frozenset({"stock", "incoming", "certificate", "promotion", "price"})
-#: A product ask about a described set (`predicate.derive_require`'s `{"price":
-#: "described"}`): the products tool's own intro, about the described set.
-_DESCRIBED_INTRO = "Here are the requested products."
+#: The one opener of every described-set answer, hit or miss (fix round 12 on PR #833, owner
+#: ruling 28 Sep 2026: "why the fix that we applied for incoming cannot work for stock? this
+#: is too fragile"). Before this a hit opened with its leg's tool sentence ("Stock summary
+#: for gunmetal wash basins (2).") and only a zero set opened with this line, so the reply
+#: shape followed the COUNT and the leg word, not the ask. The leg now chooses only what the
+#: rows under it show (stock figures, incoming lines, files); the opener is the same.
+SET_OPENER = "Here's what you want:"
 
 #: What "But no ... matched these" names per leg: the product-code miss's own words
 #: ("But no incoming matched these.").
@@ -2803,7 +2793,6 @@ def build_set_header(
     set_noun: str,
     require: dict[str, Any],
     *,
-    intro: Any = None,
     description: Any = None,
     not_understood: Any = None,
     offset: int = 0,
@@ -2811,50 +2800,35 @@ def build_set_header(
     exhausted: bool = False,
     breakdown: Any = None,
 ) -> str:
-    """A counted set's ONE intro line (fix round 8 on PR #833, owner retest of round 7):
-    the product-code answer's own intro with "the requested products" replaced by the
-    described set and its count, so the rows under it are exactly the product-code rows:
+    """A counted set's ONE intro line, the same opener a set that qualified nothing has
+    (`what_you_want_reply`), with the described set, what it has and its count; the rows
+    under it are exactly the product-code rows:
 
-        Stock summary for Sorento wash basins with stock (276, showing 1 to 10).
+        Here's what you want: Sorento wash basins with stock (276, showing 1 to 10)
 
-    `intro` is the tool's own intro for these rows (the detailed and compact stock modes
-    say different ones); a tool intro that names no products ("Here are the product
-    files I found.") gives way to the leg's own sentence. No paging (owner ruling, 26 Sep
-    2026): every qualifying product listed says the count alone; a named count says
-    which ones; none listed (a set longer than `SET_LIST_MAX`) asks how many to show.
+    Fix round 12 on PR #833: the leg's word is in the phrase and nowhere else, so a stock,
+    incoming, certificate or promotion ask gets one shape and the leg picks only the rows.
+    No paging (owner ruling, 26 Sep 2026): every qualifying product listed says the count
+    alone; a named count says which ones; none listed (a set longer than `SET_LIST_MAX`)
+    gives the breakdown by the next attribute.
 
     A pure string function: `qualifying_total` and `shown` are counts the caller already
     has, never re-derived here."""
-    tool_intro = jsc.js_string(intro or "").strip() if isinstance(intro, str) else ""
-    leg = next(iter(require or {}), "")
-    described_only = (require or {}).get("price") == "described"
-    if described_only:
-        base = _DESCRIBED_INTRO
-    elif _REQUESTED in tool_intro:
-        base = tool_intro
-    else:
-        base = _SET_INTRO_BY_LEG.get(leg, "Here are the results for the requested products.")
-    # Fix round 9 on PR #833 (owner: "no repeats"): the intro already names its own leg
-    # ("Incoming stock found for ..."), so the phrase does not say that leg again. What
-    # the intro does not name stays: a document type ("Files found for taps with product
-    # photos"), a certificate scheme, a second leg ("... with stock").
-    said_by_intro = leg in _LEGS_THE_INTRO_NAMES and not (
-        leg == "certificate" and isinstance((require or {}).get(leg), dict)
-    )
-    rest = {k: v for k, v in (require or {}).items() if not (k == leg and said_by_intro)}
-    phrase = described_set_phrase(description, set_noun, rest)
+    # The leg is part of the phrase ("gunmetal wash basins with stock"); a product ask
+    # about a described set (`{"price": "described"}`) names no leg at all.
+    phrase = described_set_phrase(description, set_noun, require or {})
     withheld = not exhausted and shown <= 0 and qualifying_total > 0
     if withheld or exhausted or shown >= qualifying_total - offset:
         count = f"{qualifying_total:,}"
     else:
         count = f"{qualifying_total:,}, showing {offset + 1} to {offset + shown}"
-    header = base.replace(_REQUESTED, f"{phrase} ({count})")
+    header = f"{SET_OPENER} {phrase} ({count})"
     if previous_total and previous_total != qualifying_total:
         # W4: the page re-counted and the set moved since the question; say so.
-        header += f" It was {previous_total:,} when you asked."
+        header += f". It was {previous_total:,} when you asked."
     if exhausted:
         # Round 3 W2: a count after the last page; every product was already listed.
-        header += f" That is all {qualifying_total:,}."
+        header += f"{'' if header.endswith('.') else '.'} That is all {qualifying_total:,}."
     elif withheld:
         # Fix round 9 on PR #833 (owner: "no cap", "always break it down"): the full count
         # and the set broken down by the next attribute, one line each, never a paging
