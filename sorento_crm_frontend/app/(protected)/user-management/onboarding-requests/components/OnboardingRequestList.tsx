@@ -290,7 +290,6 @@ export function OnboardingRequestList() {
         return `/user-management/onboarding-requests/${id}${qs ? `?${qs}` : ''}`;
       }}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

@@ -193,6 +193,20 @@ describe('PipelineClient', () => {
     await waitFor(() => expect(listProjects).toHaveBeenCalled());
   });
 
+  // #1335: no subtitle under the title, and the empty board offers no second
+  // CTA beside the header's Start menu.
+  it('carries no subtitle, and the empty board repeats no header CTA', async () => {
+    renderClient();
+
+    const empty = (await screen.findByText('No projects registered yet'))
+      .parentElement as HTMLElement;
+    expect(within(empty).queryByRole('button')).toBeNull();
+    expect(within(empty).queryByRole('link')).toBeNull();
+    expect(
+      screen.queryByText(/so nobody works a development twice/i),
+    ).not.toBeInTheDocument();
+  });
+
   it('carries no separate filter card above the grid', async () => {
     renderClient();
     switchToGrid();

@@ -206,7 +206,6 @@ export default function ComplaintRootCausesList() {
           router.push(`/complaint-management/complaint-root-causes/${row.id}`)
         }
         tableLayout={{ width: 'fixed', columnsResizable: true }}
-        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">

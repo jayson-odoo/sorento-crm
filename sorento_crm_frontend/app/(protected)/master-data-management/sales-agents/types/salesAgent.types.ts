@@ -14,6 +14,9 @@ export interface SalesAgent {
   follow_up: boolean;
   /** Who the codes belong to. Metadata, never identity. */
   person_label: string | null;
+  /** "Also known as": the other names the person goes by, comma separated. The chatbot
+   *  matches a typed agent name against these too, for every account of the person. */
+  aliases: string | null;
   /** What this agent's orders are for. Null = nobody has decided yet. */
   demand_class: string | null;
   /** Which warehouse-suffix ownership group this agent's stock lives in (e.g. `BB` for
@@ -49,6 +52,7 @@ export interface ContactSelectOption {
  */
 export interface MirrorAnnotationPayload {
   person_label?: string | null;
+  aliases?: string | null;
   demand_class?: string | null;
   location_group?: string | null;
   internal_note?: string | null;

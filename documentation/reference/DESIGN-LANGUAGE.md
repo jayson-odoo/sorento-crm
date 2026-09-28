@@ -198,8 +198,13 @@ coarse-pointer `::after` hit area supplies the 44px target invisibly.
 - No UUIDs in the UI - resolve to human-readable identifiers.
 - Datetimes render via `formatDateTimeInMalaysia`, never `formatDateTime(new Date())`.
 - Empty value rendering follows `ADR-PRODUCT-STANDARDS.md` section 1e.
-- Every detail section renders, including when empty, with an explicit empty state + CTA -
-  never hide a section on missing data.
+- Every detail section renders, including when empty, with an explicit empty state - never
+  hide a section on missing data.
+- **One CTA, no subtitle (owner ruling, PR #1336, CRM-wide):** a page has exactly one primary
+  CTA, in its `PageHeader` actions, and no subtitle or description line under a page or dialog
+  title. An empty state is heading and hint text only, never a button or link, and the typecheck
+  enforces both: `PageHeader` has no `children` slot and `DataGrid` / `PanelDataGrid` have no
+  `emptyAction`.
 
 ## 7. Responsive
 

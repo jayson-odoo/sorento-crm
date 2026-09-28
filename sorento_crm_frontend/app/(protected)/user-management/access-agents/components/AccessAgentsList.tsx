@@ -173,7 +173,6 @@ export default function AccessAgentsList() {
       isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       tableLayout={{ columnsVisibility: true }}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

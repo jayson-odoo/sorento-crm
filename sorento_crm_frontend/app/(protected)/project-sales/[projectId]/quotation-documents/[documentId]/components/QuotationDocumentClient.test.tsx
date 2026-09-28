@@ -434,6 +434,21 @@ describe('QuotationDocumentClient header total', () => {
   });
 });
 
+/**
+ * No repeated information under a page title (#1335). The page title is the document number and
+ * the record header names the project, so neither is said a second time on the screen.
+ */
+describe('QuotationDocumentClient header dedupe', () => {
+  // The number and project title specs live on the Header tab below ("#1336 kept, AC-QF054").
+  it('leaves no subject read in the card, but keeps the Subject input in an edit session', () => {
+    const { rerender } = render(<QuotationDocumentHeader document={quotationDocument()} />);
+    expect(screen.queryByText('CADANGAN MEMBINA PANGSAPURI')).toBeNull();
+
+    rerender(<QuotationDocumentHeader document={quotationDocument()} onChange={() => {}} />);
+    expect(screen.getByLabelText('Subject')).toHaveValue('CADANGAN MEMBINA PANGSAPURI');
+  });
+});
+
 describe('QuotationDocumentClient signing gate', () => {
   it('refuses to offer Issue until the quotation is signed, and says why', async () => {
     getQuotationDocument.mockResolvedValue(quotationDocument());

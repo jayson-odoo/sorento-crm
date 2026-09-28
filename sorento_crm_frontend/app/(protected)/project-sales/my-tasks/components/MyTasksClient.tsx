@@ -41,11 +41,7 @@ export function MyTasksClient() {
             Include unassigned work on my projects
           </label>
         }
-      >
-        <p className="text-sm text-muted-foreground">
-          Open project work assigned to you, or escalated to you, soonest first.
-        </p>
-      </PageHeader>
+      />
 
       {query.isLoading ? (
         <div className="space-y-2">

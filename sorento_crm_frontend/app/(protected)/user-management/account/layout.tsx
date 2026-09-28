@@ -122,27 +122,26 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <AccountProvider user={user}>
       <Container>
-        <PageHeader title={user.name || user.email} titleClassName="truncate">
-          <div className="flex items-center gap-2">
-            <Avatar key={user.avatar ?? 'no-avatar'} className="size-6 shrink-0">
-              {user.avatar ? (
-                <AvatarImage src={user.avatar} alt={user.name || ''} />
-              ) : null}
-              <AvatarFallback className="text-2sm">
-                {getInitials(user.name || user.email)}
-              </AvatarFallback>
-            </Avatar>
-            <div className="truncate text-2sm text-muted-foreground">
-              {user.email}
-              {(() => {
-                const roles = user.roles?.length
-                  ? user.roles.map((r: { name: string }) => r.name).join(', ')
-                  : (user.role?.name ?? '');
-                return roles ? ` · ${roles}` : '';
-              })()}
-            </div>
+        <PageHeader title={user.name || user.email} titleClassName="truncate" />
+        <div className="mb-5 flex items-center gap-2">
+          <Avatar key={user.avatar ?? 'no-avatar'} className="size-6 shrink-0">
+            {user.avatar ? (
+              <AvatarImage src={user.avatar} alt={user.name || ''} />
+            ) : null}
+            <AvatarFallback className="text-2sm">
+              {getInitials(user.name || user.email)}
+            </AvatarFallback>
+          </Avatar>
+          <div className="truncate text-2sm text-muted-foreground">
+            {user.email}
+            {(() => {
+              const roles = user.roles?.length
+                ? user.roles.map((r: { name: string }) => r.name).join(', ')
+                : (user.role?.name ?? '');
+              return roles ? ` · ${roles}` : '';
+            })()}
           </div>
-        </PageHeader>
+        </div>
         <Tabs defaultValue={activeTab} value={activeTab} className="mb-5">
           <TabsList variant="line">
             {Object.entries(navRoutes).map(
