@@ -250,7 +250,7 @@ def test_security_b1_a_dealer_is_refused_under_the_empty_scope_production_gives(
         ({"rows": "agent_shoe_size"}, "unknown_axis"),
         ({"date_from": "2026-05-01", "date_to": "2026-04-01"}, "date_range_inverted"),
         ({"basis": None}, "basis_required"),
-        ({"basis": "invoiced"}, "basis_required"),
+        ({"basis": "shipped"}, "basis_required"),
         ({"n": 0}, "n_out_of_range"),
         ({"n": 101}, "n_out_of_range"),
     ],

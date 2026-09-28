@@ -231,7 +231,7 @@ def _build_json_schema() -> dict[str, Any]:
             # PLAN-retail-sales-reports-26sep S1: the sales analysis's basis and the
             # company named. Required for strict mode and tolerated absent, exactly as
             # `sales_channel` above (no recorded emission carries them).
-            "sales_basis": {"type": ["string", "null"], "enum": ["ordered", "delivered", None]},
+            "sales_basis": {"type": ["string", "null"], "enum": ["ordered", "delivered", "invoiced", None]},
             "sales_company": string_or_null,
             "correction": {"type": ["boolean", "null"]},
             "routing": {
