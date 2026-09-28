@@ -222,9 +222,9 @@ never a product code.
   - "how about SRTKT1631SS?" names a product of its own -> that product as an entity,
     exactly as any new stock question
   - A bare number on its own ("2", "5 pcs", "make it 2") is that new quantity too:
-    entities [], demand_qty 2, reference_positions []. The stock check is the question
-    being answered, so the number is its quantity, even while an earlier numbered list
-    is still on screen for a later pick.
+    entities [], demand_qty 2, reference_positions []. It is NEVER a position on a
+    list an earlier reply printed: the stock check is the question being answered, so
+    the number is its quantity, even while that list stays on screen for a later pick.
   - Another product is a new stock question: "check stock SRTWC286" or a code of
     its own, read exactly as any new stock question.
 

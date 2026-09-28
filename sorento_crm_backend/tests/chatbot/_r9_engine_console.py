@@ -107,6 +107,8 @@ class EngineConsole:
         #: Every `turn_apply` Plan's trace, in call order (issue #1352: the judgement a
         #: turn made - its decision and the rules that fired - read off the real apply).
         self.traces: list[Any] = []
+        #: The LAST apply trace of each turn, one per `say` (a turn can run apply twice).
+        self.turn_traces: list[Any] = []
         self._next: dict[str, Any] | None = None
         #: Issue #1352: set to a number and the stock tool answers in the `compact`
         #: shape (a staff contact who may see quantities: "Total: <n>"), so a stock
@@ -239,6 +241,7 @@ class EngineConsole:
         assert out.error is None, out.error
         self.state = out.session_patch
         text = (out.reply or {}).get("text") or ""
+        self.turn_traces.append(self.traces[-1] if self.traces else None)
         self.transcript += [message, f"-> {text}"]
         return text
 

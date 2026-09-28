@@ -65,6 +65,7 @@ named (`domain_hint`, or `asks`). `asks` alone also counts (hand pass 6 defect 1
 | J2 | domain word, no pick ("check stock") | an ordinary ask on that domain over the carried subject | stored unchanged, for a later pick |
 | J3 | pick AND domain word ("4 stock", "stock for the 4th", or "check stock" with the pick replayed) | the pick, in the MESSAGE's own domain | stored, position recorded |
 | J4 | a typed option label ("SRTWC286-SH-NEW", "B") | the parser's reference position, judged by J1 / J3 | as J1 / J3 |
+| J1b | pick AND a domain word naming the roster's own domain ("incoming for the 4th" over an incoming roster) | exactly J1, the roster's carried status included (AC-1704) | stored, position recorded |
 | J5 | `domain_in_message: true` but no domain named (an inconsistent verdict; the new prompt rule forbids it) | nothing to judge against, so J1 (today's behaviour) | as J1 |
 
 J4 detail: the parser resolves the typed label to its position (owner ruling 3, 01:0x). The
@@ -90,6 +91,13 @@ Where each row lives:
 - `apply.apply` domain chain: the branch that fired `domain_locked_by_pick` and ignored
   `domain_hint` is replaced by the J1 branch `pick_in_roster_domain`, reachable only when
   the message named no domain of its own. `domain_locked_by_pick` is retired.
+- `apply._narrow_and_plan`: a kind a pick just settled is fetched as the picked option,
+  never re-read from the resolver's candidates for the same message's typed code. This is
+  AC-1704's existing focus rule ("a kind a pick just settled is not replaced again by this
+  same turn's own entities") applied at the fetch seam too. It became reachable because a
+  typed option code is now its position AND its entity (J4): measured, "stoick
+  SRTWC286-SH-NEW" with position 4 fetched four variants (the resolver's prefix match on
+  the code) until this line.
 
 ## Chained questions
 

@@ -28,6 +28,8 @@ SRTWC286 family seeded (10 variants).
   stored roster, in the roster's domain (incoming for SRTWC286-SH-NEW-P).
 - **AC-PK006 (J5)** `domain_in_message: true` with no domain named is judged as no domain
   word: the pick answers in the roster's domain (today's behaviour).
+- **AC-PK007** A pick whose own domain word is the roster's own domain ("incoming for the
+  4th" over an incoming roster) answers exactly as J1, the roster's carried status included.
 
 ## Chained questions
 

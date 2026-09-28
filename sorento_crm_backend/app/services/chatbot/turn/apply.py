@@ -822,13 +822,13 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
         # carried status (a sales report's, an outstanding ask's) stays behind with the
         # roster's domain. Re-domaining that turn to the roster is what answered "check
         # stock" with the same incoming reply (case 1).
-        own_domain = decision.own_domain
+        asked_for = pending.payload.get("domains") or (
+            [pending.payload["domain"]] if pending.payload.get("domain") else []
+        )
+        own_domain = decision.own_domain and not _names_only_the_roster_domain(verdict or {}, asked_for)
         if own_domain:
             trace.rules_fired.append("pick_in_message_domain")
         else:
-            asked_for = pending.payload.get("domains") or (
-                [pending.payload["domain"]] if pending.payload.get("domain") else []
-            )
             if asked_for:
                 focus.domains = [d for d in asked_for if isinstance(d, str) and d]
             # AC-1704: the SAME carry `_answer_outstanding` does for its own detail
@@ -951,6 +951,15 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
     # naming its own business subject over an escalation offer (growth r1).
     trace.rules_fired.append("answer_pending_not_an_answer")
     return focus, pending, None, False
+
+
+def _names_only_the_roster_domain(verdict: dict[str, Any], asked_for: list[Any]) -> bool:
+    """A pick whose own domain word is the roster's own ("incoming for the 4th" over an
+    incoming roster) answers exactly as a bare pick does, carried status included
+    (AC-1704): the message named no OTHER domain to answer in."""
+    named = [a.get("domain") for a in (verdict.get("asks") or []) if isinstance(a, dict)]
+    named = [d for d in named if d] or ([verdict["domain_hint"]] if verdict.get("domain_hint") else [])
+    return bool(named) and bool(asked_for) and set(named) <= set(asked_for)
 
 
 def _focus_rules(

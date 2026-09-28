@@ -278,6 +278,25 @@ def test_b_a_domain_flag_with_no_domain_named_keeps_the_roster_domain(session_fa
     assert "pick_in_roster_domain" in c.last_trace.rules_fired
 
 
+def test_b_a_pick_naming_the_roster_domain_is_a_plain_pick(session_factory, monkeypatch, stub_access):
+    """AC-PK007: "incoming for the 4th" over an incoming roster names the roster's own
+    domain, so it answers exactly as the bare pick does (the roster's carried status
+    included, AC-1704)."""
+    c = _console(session_factory, monkeypatch, stub_access, "+60000013528")
+    _say(c, "incoming srtwc286", _incoming_ask())
+    reading = verdict(
+        domain_hint="incoming",
+        intent_hint="check_incoming",
+        domain_in_message=True,
+        reference_positions=[4],
+        open_question_answer=answer("pick", picked=[4]),
+    )
+    _text, calls = _say(c, "incoming for the 4th", reading)
+    assert calls and calls[0] == (INCOMING, ["SRTWC286-SH-NEW"]), calls
+    assert "pick_in_roster_domain" in c.last_trace.rules_fired
+    assert "pick_in_message_domain" not in c.last_trace.rules_fired
+
+
 # =============================================================================== #
 # C. Chained questions (AC-PK010, AC-PK011, AC-PK014)
 # =============================================================================== #
@@ -358,15 +377,14 @@ from tests.chatbot.test_top_selling_round6 import _assert_ranking, console  # no
 
 
 def test_c_top_selling_metric_then_top_x(console):
-    """AC-PK011: "top selling item" -> "By quantity or by amount?" -> "amount" -> the count
-    question -> "20" -> the ranking by amount, top 20."""
+    """AC-PK011: "top selling item" -> "By quantity or by amount?" -> "amount" ranks by
+    amount and asks how many to show -> "20" is the top X, never a pick or a new ask."""
     turn1, captured = console(_ask(), "top selling item", {})
     assert turn1.reply_text == ASK_METRIC and not captured, turn1.reply_text
     turn2, captured = console(_answer(rank_by="amount"), "amount", turn1.session_vars)
-    if captured:
-        # No count question on this path: the ranking ran at its default count.
-        _assert_ranking(turn2.reply_text, captured, rank_by="amount", top_n=None)
-        return
+    call = _assert_ranking(turn2.reply_text, captured, rank_by="amount", top_n=None)
+    assert call.get("n") is None, call
+    assert "How many items do you want to see?" in turn2.reply_text, turn2.reply_text
     turn3, captured = console(_answer(top_n=20), "20", turn2.session_vars)
     _assert_ranking(turn3.reply_text, captured, rank_by="amount", top_n=20)
 
