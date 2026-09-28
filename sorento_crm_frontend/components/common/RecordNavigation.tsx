@@ -105,3 +105,8 @@ export default function RecordNavigation({
     </div>
   );
 }
+
+// Named alongside the default export so a caller that prefers a named import
+// (the sales opportunity detail page's test mocks it that way) still resolves
+// the same component - not a second implementation.
+export { RecordNavigation };

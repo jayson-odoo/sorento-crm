@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 import app.main  # noqa: F401  registers every router (dependencies import from here)
@@ -296,6 +297,8 @@ def test_ac10_worker_drain_stamps_actor_type_worker_with_job_id():
         assert row.user_id == enqueuing_user_id
         assert row.job_id == job.id
     finally:
+        # audit_logs is append-only (#1281 S0): the cleanup runs under the maintenance flag.
+        session.execute(text("SET LOCAL sorento.audit_maintenance = 'on'"))
         session.query(AuditLog).filter(AuditLog.entity_type == "users", AuditLog.entity_id == user_id).delete()
         session.query(User).filter(User.id.in_([user_id, enqueuing_user_id])).delete(synchronize_session=False)
         session.commit()

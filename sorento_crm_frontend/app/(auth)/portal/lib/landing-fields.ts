@@ -52,6 +52,11 @@ const KIND_FIELDS: Record<PortalLandingKind, LandingField[]> = {
     { key: 'customer_name', label: 'Customer', type: 'text' },
     { key: 'needed_by_date', label: 'Need by', type: 'date' },
   ],
+  sales_opportunity: [
+    { key: 'title', label: 'Title', type: 'text' },
+    { key: 'customer_name', label: 'Customer or prospect', type: 'text' },
+    { key: 'expected_close_date', label: 'Expected close', type: 'date' },
+  ],
 };
 
 export function landingFieldsFor(kind: PortalLandingKind): LandingField[] {
@@ -61,6 +66,7 @@ export function landingFieldsFor(kind: PortalLandingKind): LandingField[] {
 /** Draft or the real status label - same rule the card badge already uses. */
 export function submissionStatusLabel(row: PortalSubmissionSummary): string {
   if (row.is_draft) return 'Draft';
+  if (row.status_label) return row.status_label;
   return row.kind === 'complaint'
     ? complaintStatusLabel(row.status)
     : statusLabel(row.status);

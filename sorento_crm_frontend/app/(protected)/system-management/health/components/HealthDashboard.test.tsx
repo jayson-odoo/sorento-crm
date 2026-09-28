@@ -64,6 +64,26 @@ describe('HealthDashboard', () => {
     expect(screen.getByText('respond_io')).toBeInTheDocument();
   });
 
+  it('shows no missing-trail badge while every audit capture succeeded', () => {
+    mockedHook.mockReturnValue(hookState({ data: fullSummary }));
+    render(<HealthDashboard />);
+    expect(screen.queryByTestId('health-audit-missing-trail')).toBeNull();
+  });
+
+  it('links the missing-trail count to the audit channel failures', () => {
+    mockedHook.mockReturnValue(
+      hookState({
+        data: { ...fullSummary, audit_activity: { ...fullSummary.audit_activity!, missing_trail: 3 } },
+      }),
+    );
+    render(<HealthDashboard />);
+    const link = screen.getByTestId('health-audit-missing-trail');
+    expect(link).toHaveTextContent('3 missing trail');
+    expect(link.getAttribute('href')).toBe(
+      '/integration-management/integration-logs?integration_channel=audit&status=failed',
+    );
+  });
+
   it('renders empty state for a null metric block', () => {
     mockedHook.mockReturnValue(
       hookState({ data: { ...fullSummary, integrations: null } }),

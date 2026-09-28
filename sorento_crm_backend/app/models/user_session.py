@@ -27,6 +27,7 @@ import uuid
 
 class UserSession(Base):
     __tablename__ = "user_sessions"
+    __audit_skip__ = "login session; auth events come in S1"
 
     # String (not pg UUID) to match the migration column (sa.String) and the
     # sibling String keys (token / user_id). A pg UUID model type emits a

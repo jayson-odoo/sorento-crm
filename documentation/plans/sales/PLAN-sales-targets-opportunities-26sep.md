@@ -3,8 +3,13 @@
 Status: **building, wave 2.** S1 built on PR #1297 (track: full; build contract section 16; reviewer and security-reviewer clean); owner hand test 27 Sep returned F1 to F6, fixed in fix lane round 2 on the same PR (section 17); the retest (27 Sep 14:25 MYT) returned F1 to F3, fixed in fix lane round 3 (section 18), awaiting the owner's re-test; S6 merged (#1260). Wave 1, S6, was on PR #1260 (wave 1: the `sales` module and schema, Sales Teams with dated
 membership, the Sales menu with Sales Agents moved in; section 15). S6 accepted on the owner's
 hand test (26 Sep ~13:25Z); fix lane round 2 on the same PR adds the team leader (W1) and lists
-a returning agent once (W2), section 15. Track: full. Next: wave 2,
-S1 beside S2. Ready to build since the owner accepted V1 to V3 as recommended (Owner ruling
+a returning agent once (W2), section 15. Track: full. Wave 2: S2
+(opportunities) built on PR #1296 beside S1, contract in section 16, build record in section 17;
+merge-main round 3 (main 12c3a07a, 28 Sep) brought #1316 and #1320 in with no conflict and no
+behaviour change, single alembic head `sales_0005_opp_line_price`; merge-main round 4 (main
+fcbfa379, 28 Sep) brought #1300, #1322 and #1314 in, re-parented `sales_0003_opportunities` onto
+`fin_0001_billing_documents` and ported main's test-only #1325, with no behaviour change, single
+alembic head `sales_0005_opp_line_price`. Ready to build since the owner accepted V1 to V3 as recommended (Owner ruling
 26 Sep ~09:05, section 14).
 Earlier status: grilled, round 5 (the owner's answers to R1 to R5 and T1 to T5, PR #1260 comment
 5843775673 of 26 Sep 06:09Z, folded in as "Owner ruling 26 Sep 06:09" lines; section 13 says how
@@ -600,7 +605,7 @@ flagged in the count, never guessed at 50 (the engine's own rule, `status.py:105
   `NOT_A_SALES_AGENT`. The agent is taken from the token, never from the request body.
 - Router `app/api/v1/public/portal_sales_opportunity.py`, mounted before `portal.router` like
   `portal_price_tag` (`public/__init__.py:32`): list mine, create, get mine, update mine
-  (title, amount, close month, note, stage move along allowed edges, lost reason). An agent sees
+  (title, amount, close month, note, stage move along allowed edges, lost reason; round 4: close date, no note, product lines, section 16). An agent sees
   only opportunities whose `sales_agent_id` is theirs; anything else is 404, not 403, so ids
   cannot be probed. The customer picker offers only the agent's own customers
   (`customers.sales_agent_id`), plus a prospect name when the buyer is not a customer yet (round
@@ -1814,7 +1819,166 @@ taken while building, each the direct reading of the plan unless it says otherwi
   old team's leader cleared), both committed through the API, so the deferred rule ran at a real
   commit; a direct `UPDATE` naming a non-member as leader was refused by it.
 
-## 16. S1 build contract (wave 2, 26 Sep)
+## 16. S2 build contract (wave 2, beside S1; branch `claude/sales-opportunities-s2-32eppn`)
+
+Track: full (migration, new permissions, a new portal ingest surface). Built exactly to 3.4, 3.5,
+3.7 and the S2 slice: UAC S2-1 to S2-16. Nothing here touches S1's tables, services or routes;
+the Sales menu gains Opportunities only, and S1 adds Targets above it. S3's pipeline join waits
+for wave 3. Decisions below are the direct reading of the plan unless marked.
+
+**Phases.** As S6 did: the contract below stands in for the Phase 1 mock contract, because the
+plan and mockup already fix every screen; the tester writes the red tests from it, then the coder
+builds backend then frontend. Recorded in the PR body.
+
+**Agent contact coverage (section 7, "measure at the start of S2").** Not measurable in this cloud
+lane (no prod copy, `documentation/agents/cloud-lanes.md` "The one rule"). Run on the dev DB
+before the owner grants the portal kind:
+`SELECT count(*) FILTER (WHERE contact_id IS NOT NULL), count(*) FROM sales_agents WHERE is_active;`
+
+### Backend
+
+- **Migration `sales_0003_opportunities`** on `sales_0002_team_leader`: `sales.opportunities`,
+  `sales.opportunity_lines` (columns exactly as 3.4, `expected_close_date`, no `product_note` or
+  `product_category_id`); check `customer_id IS NOT NULL OR prospect_name IS NOT NULL`; check
+  `outcome IN ('open','won','lost')`, `source IN ('portal','crm')`, `qty > 0`; unique
+  `(company_id, opportunity_no)`; the four `sales.opportunities.*` slugs granted to admin and
+  superadmin; the `OPP-` numbering rule (`doc_type = 'sales_opportunity'`, 6 digits) when absent.
+  Downgrade drops both tables, leaves slugs and the rule.
+- **Models** in `app/models/sales.py`: `SalesOpportunity` (`__audit_track__`,
+  `__audit_entity_type__ = "sales_opportunities"`) and `SalesOpportunityLine` (relationship
+  `lines`, ordered by `sort_order`, cascade delete-orphan; attach through the relationship,
+  LESSONS 111).
+- **Stages** `app/modules/sales/status_entities.py` registers `sales_opportunity` (3.4). Startup
+  seed `app/services/sales/sales_seed_service.py` `run(db)`: `seed_default_opportunity_graph`
+  (New 10 initial and default, Qualified 25, Proposal 50 `is_active=false`, Negotiation 75, Won
+  100 terminal, Lost 0 terminal; edges New to Qualified, Qualified to Proposal, Proposal to
+  Negotiation, Qualified to Negotiation, back one step Qualified to New, Proposal to Qualified,
+  Negotiation to Proposal, Negotiation to Qualified, and every live stage to Won and to Lost; the
+  lead seed's wholesale guard), `seed_opportunity_lost_reasons` (set
+  `sales_opportunity_lost_reasons`: price, competitor, project_cancelled, no_response, other) and
+  the numbering rule; called from `app/main.py` startup beside the Project Sales seed.
+- **Outcome** follows the stage key: `won`, `lost`, else `open`. `stage_changed_at` stamped on
+  every move. Lost needs an active option value of the lost reason set (422
+  `LOST_REASON_REQUIRED`); leaving Lost is impossible (terminal). Won takes an optional
+  `sales_order_id` whose `customer_id` equals the opportunity's (422
+  `SALES_ORDER_OTHER_CUSTOMER`); only the CRM sends it. On a prospect (no customer) any
+  non-cancelled sales order is accepted and the opportunity takes that order's customer
+  (`customer_id` set, `prospect_name` kept as history): the "linked when Won" of 3.5 and round 4
+  Q2. The order select then searches all sales orders by number or customer name (`q`). Moves go through `status_service.assert_transition_allowed` (422
+  `status_transition_not_allowed` / `status_inactive`).
+- **Customer or prospect (S2-15).** Names compare lower-cased with runs of whitespace collapsed
+  and ends trimmed. `customer_options(q)` returns
+  `{items: [{customer_id, customer_code, customer_name}], prospect: {name} | null,
+  blocked: {name, message} | null}`: portal items are the agent's own customers
+  (`customers.sales_agent_id`) whose code or name contains `q`; CRM items are all customers.
+  `prospect` is the typed name when no customer of the company has it exactly; `blocked` (portal
+  only) is set instead when another agent's customer has it exactly, message
+  `"<customer name> is another agent's customer"`. A create or update whose `prospect_name`
+  matches any customer's name exactly is 422 `PROSPECT_IS_A_CUSTOMER`; `customer_id` and
+  `prospect_name` together is 422; neither is 422 `CUSTOMER_OR_PROSPECT_REQUIRED`; a portal
+  `customer_id` that is not the agent's own is 422 `CUSTOMER_NOT_YOURS`. No customer row is ever
+  created.
+- **Lines (S2-16).** `lines: [{product_id, qty}]` on POST and PATCH (PATCH replaces the set when
+  sent), stored in entered order (`sort_order` 0..n); qty <= 0 is 422; zero lines valid;
+  `expected_amount` required on create, never computed.
+- **Agent.** Portal: from the token only (`app/services/sales/portal_agent.py`
+  `agent_for_contact(db, contact_id)`, lifted from `price_tag_request_service.py`
+  `lookup_debtors_for_agent`, which now calls it). CRM: `sales_agent_id` from the payload when
+  sent, else the customer's (null accepted).
+- **Company.** Portal: the customer's company, else the agent's, else the first active company
+  (`portal_price_tag._resolve_company`); writes run under `company_scope`. CRM: the acting
+  company (`team_service.acting_company_id`).
+- **Portal router** `app/api/v1/public/portal_sales_opportunity.py`, mounted before
+  `portal.router`, prefix `/portal`: `GET /sales-opportunities` (mine, `{items}`),
+  `POST /sales-opportunities` (201), `GET|PATCH /sales-opportunities/{id}`,
+  `GET /sales-opportunities/customer-options?q=`, `GET /sales-opportunities/meta`
+  (`{stages, lost_reasons}`). Gates in order: module `sales` off under strict mode 403
+  `MODULE_NOT_ENABLED` (same semantics as `require_module_enabled`), kind not visible 403
+  `FORM_TYPE_NOT_VISIBLE` (`require_form_visible`), no active linked agent 403
+  `NOT_A_SALES_AGENT`; another agent's id 404. Body fields `sales_agent_id`, `source`,
+  `sales_order_id` are not in the portal schemas (ignored). `sales_opportunity` joins
+  `GRANTABLE_PORTAL_FORM_TYPES` and `_KIND_LABELS` ("Sales Opportunities"), not the base kinds.
+- **CRM router** `app/api/v1/sales/opportunities.py` at `/sales/opportunities`:
+  `GET ""` (list: `page, limit, sort, dir, query, status_id, sales_agent_id, customer_id,
+  close_from, close_to, outcome`; `ListResponse`), `POST ""` (201), `GET /meta`,
+  `GET /customer-options?q=`, `GET /agent-options`, `GET /{id}`, `PATCH /{id}`,
+  `DELETE /{id}` (hard), `GET /{id}/sales-order-options?q=` (that customer's non-cancelled sales
+  orders, newest first; for a prospect, all non-cancelled orders matching `q`). Slugs view / add / edit / delete. List-query adapter
+  `sales_opportunities`.
+- **Detail shape** (both sides): `id, opportunity_no, title, customer_id, customer_code,
+  customer_name, prospect_name, sales_agent_id, sales_agent_label, status_id, stage_key,
+  stage_label, win_probability, outcome, expected_amount, expected_close_date, lost_reason,
+  lost_reason_label, sales_order_id, sales_order_no, source, created_by_label, created_at,
+  updated_at, stage_changed_at, lines: [{id, product_id, product_code, product_name, qty}],
+  available_transitions: [{to_status_id, key, label}]`.
+- **Audit (S2-9)** through `__audit_track__`: a portal write carries `actor_contact_id` (set by
+  `get_portal_token`), a CRM write the user id.
+- **Migration heads.** S1 adds its own migration beside this one; whichever lane merges second
+  runs `./scripts/alembic-reparent.sh` so main keeps one head.
+- **Purge**: both tables join `PURGE_ORDER` (lines first) and `purge_tables.json`.
+
+### Frontend
+
+- **Portal** `app/(auth)/portal/sales_opportunity/` (list, `new`, `[id]`), mobile first at 375:
+  list cards (number, title, customer or prospect, stage `Badge`, amount, close date) with **New**;
+  form sections Customer or prospect (one searchable select: own customers, then **Add "..." as a
+  new prospect** or the disabled blocked line), Title, Expected amount, Expected close date,
+  Products (product search and qty per row, Add product, remove, "No products yet"); detail has
+  the same form plus stage buttons from `available_transitions`, Lost revealing a required reason
+  select. A **Sales Opportunities** card on the landing only when `visible_form_types` has the
+  kind; the kind joins the Market Segments grantable list and the kind labels. No horizontal
+  scroll at 375 (S2-10). S2-14 is a recorded agent-browser run (portal at 375, CRM at 1280), no
+  new Playwright spec.
+- **CRM** Sales > **Opportunities** (`/sales/opportunities`, `sales.opportunities.view`,
+  `moduleKey: 'sales'`, both sidebars, above Sales Teams): `PageHeader` with **Log opportunity**;
+  DataGrid (fixed layout, resizable, `size` on every column, `truncate` + `title`, scrolls in its
+  own container) with Number, Title, Customer or prospect, Agent, Stage `Badge`, Amount, Close
+  date, Source (Portal or CRM); filters Stage, Agent, Customer (clearable `SearchableSelect`),
+  close date range (`DateRangePicker`), search; `rowHref` to `/sales/opportunities/[id]`. One
+  modal to log. Detail page: header (number, title, stage `Badge`; Created and Updated in the meta
+  strip), `RecordNavigation`, sections Opportunity, Products, Stage (moves; Lost reason; Won's
+  optional sales order select limited to the customer), every section rendered with an empty
+  state; Edit in place; Delete deferred. Customer page: an **Opportunities** section in view and
+  edit, "No opportunities yet" with **Log opportunity** (modal preset to the customer).
+
+## 17. S2 build record (26 Sep, PR #1296)
+
+Built to section 16: UAC S2-1 to S2-16. Subagents: planner (a brief contract check against the
+UAC), tester (red tests first, then two browser passes), one coder kept for the lane (backend,
+frontend, two fix rounds), reviewer (twice, with kill tests), security-reviewer (portal ingest,
+RBAC, company scope). Decisions taken while building, each the direct reading of the plan
+unless it says otherwise:
+
+- **Phases.** As S6: section 16 stood in for the Phase 1 mock contract; red tests came first.
+- **A relaunched session** rebased the lane onto main after #1260 merged (17:27Z) and added red
+  tests for the portal list and detail, the CRM hooks, the portal product lookup id and the grid
+  census (3da75d70). This lane's work was rebased onto it and pushed as a fast-forward; those
+  tests are green against it unchanged.
+- **Won on a prospect** takes the sales order's customer and keeps `prospect_name` (3.5,
+  round 4 Q2); the order select searches all non-cancelled orders of the company by `q`.
+- **Revision configs.** `sales_opportunity` joins `GRANTABLE_PORTAL_FORM_TYPES` but not
+  `REVISABLE_PORTAL_FORM_TYPES` (`revision_configs.py`): nothing reads a revision setting for
+  this kind, so the settings screen does not list it.
+- **Portal company.** A portal write stays inside the contact's own company scope: the
+  customer's company, else the agent's when it is inside that scope, else the scope's single
+  company (security review S2; a shared agent never widens it).
+- **Bounds.** Amounts `0 <= x < 10^13` at 2 dp, quantities `0 < q < 10^10`, prospect 200 and
+  lost reason 150 characters, ids as UUIDs, at most 100 lines (security review S3).
+- **Closed is closed.** Once Won or Lost, field edits are 422 `OPPORTUNITY_CLOSED` on both sides
+  and neither screen offers Edit.
+- **Stage pills** use `Badge status`; `lib/status-badge.ts` gains `qualified`, `proposal`,
+  `negotiation`, `won`, `lost`, which also colours any other screen whose status key is one of
+  them (a Qualified project lead was grey).
+- **Customer page.** The Opportunities section renders only with `sales.opportunities.view`
+  and the `sales` module on; Log opportunity needs `.add`.
+- **`SearchableSelect`** gains an optional `aria-label`.
+- **The portal product lookup** returns `product_id` (additive), which the opportunity lines
+  need.
+- **Agent contact coverage** (section 7) is still to be measured on the dev DB (section 16).
+- **Evidence:** `documentation/plans/sales/evidence/s2/` (portal at 375, CRM at 1280 and 375;
+  S2-14's recorded run is 01 to 11, then 12 to 24; after the fix rounds 25 onward).
+
+## 16 (S1). S1 build contract (numbered 16 on PR #1297; S2 took 16 and 17 on PR #1296) (wave 2, 26 Sep)
 
 Branch `claude/sales-targets-s1-ex0fyg` on origin/main dc10a1afb (#1260, S6, merged 26 Sep 14:19Z). Track: full (migration, new
 slugs). The tester and the coder both build against this section; every ruling above binds.
@@ -2117,6 +2281,80 @@ line to `app/api/v1/sales/__init__.py`; append models to `app/models/sales.py`; 
 and `ck_sales_targets_subject` to `dealer` with `customer_id`; S4 adds `commission_method` and
 the tiers table (the Commission section and Add tier are waiting); S3 adds the Pipeline cells
 and `pipeline_value`, `pipeline_count` on each row.
+
+
+## 18. S2 fix lane round 2: the owner's hand test (27 Sep, PR #1296)
+
+Owner rulings, verbatim on the PR ("Owner ruling from the hand test of sales S2 opportunities"
+and its addendum). Track: full (a migration, `sales_0005_opp_line_price`). Branch
+`claude/sales-opportunities-s2-32eppn`, started at 576c2c829.
+
+- **S1 merged in, never rebased.** The portal target panel reuses S1's achievement query, so
+  `origin/claude/sales-targets-s1-ex0fyg` (aa907f53) is merged into this branch, and so is
+  origin/main (d8395cb8). `sales_0003_opportunities` now sits on `sales_0003_targets`. origin/main
+  carried three alembic heads on `sales_0002_team_leader`; `sales_0003m_merge_main_heads` (no
+  schema change) joined them with the sales chain so the branch had one head. Relaunch (27 Sep,
+  from 59432501): S1's head 133b88cc and origin/main 11bf373e merged in (merges, never
+  rebases). S1 now sits on main's `merge_27sep_three_heads` (PR #1308), so
+  `sales_0003m_merge_main_heads` is dropped and the chain is `merge_27sep_three_heads` ->
+  `sales_0003_targets` -> `sales_0004_target_brands` -> `sales_0003_opportunities` ->
+  `sales_0005_opp_line_price`. Before the final push origin/main (9751e55d) was merged again; it
+  carried two heads of its own (`527_audit_logs_scrub_secrets`, `spec_0003_rules_null_brand_pol`),
+  so `sales_0005m_merge_main_heads` (no schema change) joins them with the sales chain: one head.
+  Merge round (27 Sep, origin/main 52b0ac24): main's `sales_s1_reports_module` now joins those
+  two heads itself, so `sales_0005m_merge_main_heads` is deleted and `sales_0003_targets` sits on
+  `sales_s1_reports_module`: one head, `sales_0005_opp_line_price`.
+- **Browser pass** (`evidence/s2-r2/01` to `43`, portal at 375 and 1280, CRM at 1280 and 375,
+  seeded private DB): it caught the slug-tree New 404 (pages added) and a picked prospect
+  showing its option text (`customerTriggerLabel`). Two findings stand as ruled: a partial
+  name of another agent's customer is offered as a prospect (only an exact name is blocked,
+  S2-15), and an edit keeps a typed amount that differs from the stored lines' sum.
+- **F1, one kind like Price Tag Request.** `sales_opportunity` joins `LANDING_KINDS` after
+  `price_tag_request` (label "Sales Opportunity", singular like every kind), so it gets the
+  same selector, count badge, search, filter, sort, list and grid toggles and New button. The
+  separate "Sales Opportunities / Open" card is removed. The list route takes no search term, so
+  the landing's search is applied client-side over number, title, customer or prospect and stage
+  (an agent holds tens of rows). The opportunity pages stay at `/portal/sales_opportunity/...`
+  and gain `/portal/c/{slug}/sales_opportunity/...` like Price Tag Request.
+- **F2, My target.** `GET /api/v1/public/portal/sales-opportunities/my-targets`
+  (`target_service.agent_progress`): each ACTIVE target (start <= today <= end) whose subject is
+  the contact's agent. Target is the sum of its periods; achieved is
+  `achievement_service.achieved_by_period` over every period, summed (the target page's own
+  figure); gap = target - achieved, floored at 0. An open opportunity of the agent counts when
+  its expected close date is on or before the end date (an overdue open one still counts),
+  at its expected amount for an amount target and its lines' quantity for a quantity target,
+  in full whatever the product scope (trigger to filter by scope: a scoped target whose
+  forecast the owner finds misleading). Projected = achieved + those; short = target -
+  projected, floored at 0. Layout: the mockup's option 1 (timeline plus bar towards the target),
+  posted on the PR before building.
+- **Owner's notes on the mockup** ("the wording too long already", "make it structured and
+  simple"). The sentence is gone. Each target card shows four labelled figures (Target,
+  Achieved, Open (n), Short), one bar (achieved, then open), a bare timeline (start and end
+  dates, a today tick, one pin per opportunity) and the opportunity rows. The figures' colour
+  dots are the legend. `MyTargetPanel.tsx`.
+- **F3, no customers.** The scope stays the agent's own customers (the widening question is
+  still open on the PR). With nothing typed and no customers, the dropdown says "You have no
+  customers linked yet; type a name to add a prospect" (`NO_CUSTOMERS_MESSAGE`).
+- **F4, the system dropdown.** The portal opportunity screens drop `AsyncCombobox` for
+  `SearchableSelect` (customer or prospect, product, lost reason); the blocked name renders
+  disabled. Transition labels are the seeded ones (Qualify, Mark won, Mark lost), never keys.
+- **F5, the CRM record.** A header card (title, stage badge, number, created, updated, pager,
+  gear, Edit), then `Tabs variant="line"`: Details (customer or prospect, amount, close date,
+  agent, and once set the sales order or lost reason) and Products. The Stage card is gone.
+  Same tabs in view and edit (`SalesAgentDetail` shape).
+- **F6, one CTA plus the gear.** CRM and portal: Edit is the one primary button. The stage
+  moves are gear items (`RecordAction`, before Delete on the CRM), shown only with
+  `sales.opportunities.edit` and only while open. Non-terminal moves run on click. Mark won
+  (CRM: optional sales order) and Mark lost (required reason) open a small form dialog, since
+  both close the record for good. The list row menu is unchanged.
+- **F7, line prices.** `sales.opportunity_lines.unit_price` numeric(15,2) null, check `>= 0`
+  (`sales_0005_opp_line_price`). A line written without a price takes
+  `dealer_kit.pricing.flyer_price(product.list_price)`, the price the dealer flyer prints (zero
+  means none, 46% of the catalogue). Responses carry `unit_price` and `line_amount`
+  (qty x price, 2 dp, null when unpriced). `expected_amount` left out on create is the sum of
+  the line amounts. The CRM select and the portal lookup carry `list_price`, so the forms
+  prefill it. In the forms the amount follows the sum until the user types one (on edit, it
+  follows only if the stored amount equals the stored lines' sum).
 
 
 ## 17. S1 fix lane round 2 (27 Sep, the owner's hand test; UAC S1-30 to S1-35)

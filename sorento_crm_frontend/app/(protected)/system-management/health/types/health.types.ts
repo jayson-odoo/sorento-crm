@@ -75,6 +75,8 @@ export interface AuditTrendPoint {
 export interface AuditActivityHealth {
   count_last_24h: number;
   daily_trend: AuditTrendPoint[];
+  // Records saved without their audit trail (open audit_trail_gaps rows), as of now.
+  missing_trail?: number;
 }
 
 export interface HealthSummary {

@@ -25,6 +25,7 @@ class DownloadStatus(str, enum.Enum):
 
 class UserDownload(Base):
     __tablename__ = "user_downloads"
+    __audit_skip__ = "download job rows purged at 30 days; download events come in S1"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, nullable=False, index=True)
