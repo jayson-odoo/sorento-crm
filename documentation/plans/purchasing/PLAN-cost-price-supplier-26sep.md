@@ -2,7 +2,8 @@
 
 Status: Lane A (S1 + S2) built on PR #1305, small fix track, fix lane round 7 done (owner hand
 test of round 6, 28 Sep 2026: sticky footer bar removed, the lines table is the system DataGrid
-with sorting and the list views' pager, sheet tabs show row counts; no migration). Round 6 done (owner hand test of 28 Sep
+with sorting and the list views' pager, sheet tabs show row counts; no migration; evidence
+in `evidence/round7-set-page/`; main cd220251 merged, single head cpc3_lead_time_nullable). Round 6 done (owner hand test of 28 Sep
 2026: Apply N changes as the header call to action with Download file and Discard in the gear,
 one-line rows with the currency beside both costs, no lead time input and Apply never blocked on
 it, duplicate codes collapsed to the first row, every "price" label reads "cost"; migration
