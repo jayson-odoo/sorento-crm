@@ -1,5 +1,6 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import { listCustomerAsks, updateCustomerAsk } from '@/services/stockAskService';
 import type { StockAskPatch } from '@/lib/stock-asks';
 
@@ -9,9 +10,9 @@ export function useCustomerAsksQuery(
   pagination: { pageIndex: number; pageSize: number },
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['customer-asks', customerId, pagination.pageIndex, pagination.pageSize],
     queryFn: () => listCustomerAsks(customerId, pagination),
-    placeholderData: keepPreviousData,
     enabled: Boolean(customerId),
   });
 }
