@@ -6,9 +6,13 @@ from typing import Callable, Optional, Any, Dict
 
 from sqlalchemy.orm import Session
 
+from pydantic import ValidationError
+
 from app.database import SessionLocal
 from app.models.base import set_company_scope
 from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
+from app.schemas.scheduled_task import ScmReorderRunTaskMetadata
+from app.services.error_handler import AppException
 
 # Module-level UTC handle: update_task() shadows the imported `timezone` with its
 # `timezone: str` parameter, so reference UTC through this instead.
@@ -297,6 +301,34 @@ def update_task(
     task = get_task(db, task_id)
     if not task:
         return None
+
+    metadata_map: Optional[Dict[str, Any]] = None
+    if metadata is not None:
+        task_metadata = getattr(task, "metadata_", None)
+        metadata_map = dict(task_metadata) if isinstance(task_metadata, dict) else {}
+        for k, v in metadata.items():
+            if v is None:
+                metadata_map.pop(k, None)
+            else:
+                metadata_map[k] = v
+        # Validated against the MERGED map, not just the patch, so a patch that only
+        # touches one key still gets refused when it conflicts with a value already
+        # stored (e.g. a new start_days pushed past a stored end_days). Nothing on the
+        # task is written until this passes - a refused PATCH stores nothing.
+        if _task_key(task) == "scm_reorder_run":
+            try:
+                ScmReorderRunTaskMetadata(**metadata_map)
+            except ValidationError as exc:
+                first = exc.errors()[0]
+                field = ".".join(str(p) for p in first.get("loc", ()))
+                # A model_validator's own sentence arrives as "Value error, <sentence>".
+                msg = str(first.get("msg", "Invalid metadata")).removeprefix("Value error, ")
+                raise AppException(
+                    status_code=422,
+                    message=f"{field}: {msg}" if field else msg,
+                    code="invalid_task_metadata",
+                )
+
     if name is not None:
         setattr(task, "name", name)
     if description is not None:
@@ -316,15 +348,6 @@ def update_task(
             start_at = start_at.astimezone(_UTC).replace(tzinfo=None)
         setattr(task, "start_at", start_at)
     if metadata is not None:
-        task_metadata = getattr(task, "metadata_", None)
-        metadata_map: Dict[str, Any] = (
-            dict(task_metadata) if isinstance(task_metadata, dict) else {}
-        )
-        for k, v in metadata.items():
-            if v is None:
-                metadata_map.pop(k, None)
-            else:
-                metadata_map[k] = v
         setattr(task, "metadata_", metadata_map or None)
     # Recompute next_run_at from current schedule
     now = datetime.utcnow()

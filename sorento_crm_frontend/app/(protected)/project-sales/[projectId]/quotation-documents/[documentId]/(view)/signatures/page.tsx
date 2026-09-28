@@ -1,5 +1,5 @@
 import { Metadata } from 'next';
-import { QuotationSignaturesTab } from '../components/QuotationDocumentTabPanels';
+import { QuotationSignaturesTab } from '../../components/QuotationDocumentTabPanels';
 
 export const metadata: Metadata = {
   title: 'Quotation signatures',

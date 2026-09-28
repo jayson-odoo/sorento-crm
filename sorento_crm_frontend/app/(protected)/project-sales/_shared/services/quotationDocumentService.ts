@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import type { QuotationLineBulkItem } from '../types/project.types';
 import type { StatusGraph } from '@/app/(protected)/system-management/status-graphs/types/statusGraph.types';
 
 /**
@@ -206,7 +207,38 @@ export type QuotationDocumentBody = Partial<{
   recipient_name_snapshot: string | null;
   recipient_address_snapshot: string | null;
   recipient_phone_snapshot: string | null;
+  /**
+   * The quotation form page's scopes (#1341), on the POST and the PATCH alike. The create writes
+   * the document, these scopes and their lines in ONE transaction; the edit applies them in one
+   * too. On a PATCH a saved scope carries its `id`, and a saved scope left out is not touched.
+   */
+  scopes: QuotationFormScopeBody[];
+  /**
+   * Saved scopes Edit quotation deletes (#1341, owner on Q2: "yes can"), PATCH only. The server
+   * refuses with 422 `quotation_scope_issued` for a scope any version of which was sent to the
+   * customer, and nothing in that save lands.
+   */
+  remove_scope_ids: string[];
 }>;
+
+/** The company's letter and terms as written, for the create form's own tabs (#1341). */
+export type QuotationLetterTemplates = {
+  cover_letter_html: string | null;
+  terms_html: string | null;
+};
+
+/**
+ * One scope as the form sends it. `lines` is the FULL line set of the scope's current version
+ * (whole-set: a stored line left out is deleted); leave it out to keep a scope's lines as they are,
+ * which is what the form does for a version the customer holds.
+ */
+export type QuotationFormScopeBody = {
+  id?: string;
+  scope_label?: string;
+  series_id?: string | null;
+  notes?: string | null;
+  lines?: QuotationLineBulkItem[];
+};
 
 type Envelope<T> = { data: T[]; pagination: { total: number }; empty: boolean };
 
@@ -229,6 +261,17 @@ export async function getQuotationDocument(
   );
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load this quotation'));
+  return response.json();
+}
+
+export async function getQuotationLetterTemplates(
+  projectId: string,
+): Promise<QuotationLetterTemplates> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/letter-templates`,
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the letter templates'));
   return response.json();
 }
 
@@ -311,7 +354,7 @@ export async function issueQuotationDocument(
     { method: 'POST' },
   );
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to issue this quotation'));
+    throw new Error(await extractApiError(response, 'Failed to send this quotation to the customer'));
   return response.json();
 }
 

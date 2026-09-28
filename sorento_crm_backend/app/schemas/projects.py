@@ -1702,13 +1702,57 @@ class ProjectQuotationDocumentBase(BaseModel):
     signatory_phone: Optional[str] = None
 
 
+class ProjectQuotationFormScopeCreate(BaseModel):
+    """One scope as the quotation form page sends it on create (#1341): its name, its series
+    and the lines already priced under it. Written with the document in the SAME transaction,
+    so a save either lands whole or not at all."""
+
+    scope_label: str = Field(
+        min_length=1, max_length=150, description="e.g. Townhouse, Guard House, Reception."
+    )
+    series_id: Optional[str] = None
+    notes: Optional[str] = None
+    lines: List["ProjectQuotationLineBulkItem"] = Field(
+        default_factory=list,
+        description="The scope's lines in display order. Empty means an empty scope, never a "
+        "placeholder line.",
+    )
+
+
+class ProjectQuotationFormScopeUpdate(BaseModel):
+    """One scope as the form sends it on edit (#1341).
+
+    With an ``id`` it is a scope already on this document: the name and series are applied when
+    present, and ``lines`` (when present) is the FULL line set of its current version, under the
+    same whole-set rule and the same 422 on a frozen or issued version as the bulk line route.
+    Without an ``id`` it is a new scope, which needs a name. A saved scope the payload leaves out
+    is not touched.
+    """
+
+    id: Optional[str] = None
+    scope_label: Optional[str] = Field(default=None, max_length=150)
+    series_id: Optional[str] = None
+    notes: Optional[str] = None
+    lines: Optional[List["ProjectQuotationLineBulkItem"]] = None
+
+
 class ProjectQuotationDocumentCreate(ProjectQuotationDocumentBase):
     """Every field optional on purpose (AC-A2).
 
     The document arrives already filled in: the reference from the numbering rule, the recipient
     off the project's developer party, the subject from the project title. A create form that
     asked for them would be asking for facts the system already holds.
+
+    The quotation form page (#1341) sends the scopes and their lines with the letterhead, so Add a
+    quotation writes nothing until the salesperson presses Save. A recipient value it sends is a
+    CORRECTION applied over the party snapshot in the same transaction (the result create-then-edit
+    gave before); a blank one keeps the snapshot.
     """
+
+    recipient_name_snapshot: Optional[str] = None
+    recipient_address_snapshot: Optional[str] = None
+    recipient_phone_snapshot: Optional[str] = None
+    scopes: Optional[List[ProjectQuotationFormScopeCreate]] = None
 
 
 class ProjectQuotationDocumentUpdate(ProjectQuotationDocumentBase):
@@ -1727,6 +1771,15 @@ class ProjectQuotationDocumentUpdate(ProjectQuotationDocumentBase):
     recipient_name_snapshot: Optional[str] = None
     recipient_address_snapshot: Optional[str] = None
     recipient_phone_snapshot: Optional[str] = None
+    scopes: Optional[List[ProjectQuotationFormScopeUpdate]] = Field(
+        default=None,
+        description="The quotation form's scopes (#1341). Absent leaves every scope as it is.",
+    )
+    remove_scope_ids: Optional[List[str]] = Field(
+        default=None,
+        description="Saved scopes Edit quotation deletes (#1341). Refused with 422 "
+        "quotation_scope_issued for a scope any version of which has been issued.",
+    )
 
 
 class ProjectQuotationScopeCreate(BaseModel):
