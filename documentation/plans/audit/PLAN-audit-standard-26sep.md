@@ -10,7 +10,8 @@ today (section "Measurement"). Owner confirmed the B3 exclusion list as built (2
 Merge round: origin/main 721ca398 merged, aud_0001 chains on identity_0001_s0_model, single head
 aud_0001_audit_standard_s0, up-down-up clean. Round 3 runs: the touched and audit, identity, queue, worker,
 scheduler, ingest and import suites (178 files) 2981 passed, 73 skipped, 0 failed; kill tests
-K1 to K15 all red. S1, S2, S3 not started.
+K1 to K15 all red. Hardening round (owner ruling 28 Sep 19:1x MYT): capture best-effort and
+loud, migration lock timeout, off switch; in progress on PR #1299. S1, S2, S3 not started.
 Plan created: 2026-09-26 (from the investigation report on #1281, comment 5846914028, sections 7
 to 10, investigated at `51d30ccc5`).
 Domain: audit (CORE, not a module: every install needs a trail; the `audit` App Store key keeps
@@ -31,6 +32,18 @@ UAC: `audit-standard-26sep-acceptance-criteria.md` alongside.
   product and master ingest, scheduled feed jobs) and pure line and link child tables are
   EXCLUDED from default-on; staff-driven business writes stay on. Built in fix round 3 as the
   sync writer context (7.2 item 1) plus the model opt-out list in "Measurement".
+
+- **28 Sep 2026 19:1x MYT, audit capture is best-effort (supersedes "a failed capture fails
+  the write"):** owner's words, verbatim: "hmm if writing to audit fails, the save shouldn't
+  fail, right? for business flow shouldn't fail if the audit writing fail?" and, on the
+  hardening round, "go". Until this ruling the hooks wrote their rows in the business write's
+  own transaction, so a failed capture failed the write ("a failed capture fails the write
+  rather than leaving a change with no trail", `_session_do_orm_execute`). That contract is
+  superseded. Built in fix lane round 3 (section "Best-effort capture" below): the automatic
+  hooks never raise into the business transaction; a failure is never silent (one
+  `integration_log` row, channel `audit`; one `audit_trail_gaps` row per record left without
+  its trail; a count on the system health page). The same round adds a lock timeout to the
+  migration and an emergency off switch (`AUDIT_CAPTURE_ENABLED`, default on).
 
 Every other decision in the report is still open and is listed as a grill question at the end.
 Where S0 has to pick a side to be buildable at all (decisions 3 and 11), it builds the report's
@@ -269,6 +282,45 @@ Dependencies: S-1 first; S0 blocks S1, S2 and #1280's auth slice; S1 and S2 in p
   channel: `ui` for a user, `portal` for any portal route, by integration type for a key
   (`automation` -> `n8n`, `mcp` -> `mcp`, anything else -> `external_api`) except
   `/api/v1/external/chat/*` -> `chatbot`.
+
+## Best-effort capture (owner ruling 28 Sep 2026 19:1x MYT)
+
+- **Where the rows go.** `before_flush` no longer adds `AuditLog` objects to the business flush:
+  it builds the rows (the same columns `log_audit` fills) and hands them to `after_flush`, which
+  inserts them, plus the CREATE rows whose key was unknown before the INSERT, inside a
+  **SAVEPOINT** on the flush's own connection (`Connection.begin_nested()`), released before
+  the flush returns. The collection itself (the parent-company lookups, the old-value reads)
+  runs in its own savepoint too, because a failed SELECT aborts a Postgres transaction just as
+  a failed INSERT does. The bulk hook (`do_orm_execute`) runs its pre-select and INSERT in one
+  savepoint before the statement executes.
+- **Why a savepoint, not an after-commit write.** The trail row still commits atomically with
+  the business row and disappears with it when the business write rolls back for its own
+  reason, so there is never a trail for a change that did not happen and never a lost row when
+  the process dies between the two commits. `Session.begin_nested()` is not usable here (it
+  flushes, and these hooks run inside a flush); the Connection-level savepoint is. Cost: one
+  SAVEPOINT / RELEASE pair per audited flush, skipped on a flush with nothing audited.
+- **Loud failure.** On any exception the savepoint is rolled back and, in a second savepoint:
+  one `integration_log` row (`integration_channel = 'audit'`, `status = 'failed'`,
+  `business_table` = entity type, `external_reference` = entity id, `error_code` / `error_message`
+  = the exception, `request_payload` = actor, source, trace id and every affected entity), and
+  one `audit_trail_gaps` row per affected record (a side table, not a column on every audited
+  table: `entity_type`, `entity_id`, `action`, `company_id`, `integration_log_id`, `error`,
+  `occurred_at`, `backfilled_at`; migration `aud_0002_audit_trail_gaps` over `aud_0001`). A later
+  slice backfills from it and stamps `backfilled_at`. The system health page's Audit Activity
+  card shows the open-gap count, and the `audit` channel appears in its Integrations table with
+  its failed count. If recording the failure fails too, it is logged at ERROR and the business
+  write still proceeds.
+- **Scope.** The three automatic hooks. An explicit `log_audit` / `record()` row stays in the
+  caller's flush (the caller wrote it on purpose; the 38 call sites move onto the hook in S1,
+  7.2 item 7); `log_import_audit` callers already wrap it best-effort by contract.
+- **Off switch.** `AUDIT_CAPTURE_ENABLED` (`settings.audit_capture_enabled`, default true), read
+  on every write, not at startup: false skips the three hooks and makes `log_audit` / `record()`
+  write nothing. For an incident only; every write while it is off has no trail and no gap row.
+- **Migration lock timeout.** `aud_0001` sets `lock_timeout = 5s` and `statement_timeout = 60s`
+  (transaction-local, restored at the end) for its transactional DDL on `audit_logs`, takes the
+  table lock first with `LOCK TABLE` in a savepoint, and retries up to 5 times with a backoff;
+  the fifth miss raises a RuntimeError naming the fix. No timeout is set inside the autocommit
+  block, where the CONCURRENTLY builds and the VALIDATE scan run.
 
 ## Measurement (before the default-on flip merges)
 

@@ -177,8 +177,32 @@ ACs pin that S0's rows carry them on every write path (fix round 2, review B2).
   (`response_model` would otherwise drop them).
   (4)
 
+### Best-effort capture (owner ruling 28 Sep 2026 19:1x MYT)
+
+Owner's words, verbatim: "hmm if writing to audit fails, the save shouldn't fail, right? for
+business flow shouldn't fail if the audit writing fail?" then "go". This supersedes the S0
+contract "a failed capture fails the write": every AC above that says a row "is written" now
+reads "is written, or its failure is recorded per AC-S0-30".
+
+- **AC-S0-30 [BE]** Given an audited write (ORM flush or bulk `update()` / `delete()`) whose audit
+  INSERT fails in Postgres, then the business write commits, no audit row for it exists, exactly
+  one `integration_log` row is written with `integration_channel = 'audit'`, `status = 'failed'`,
+  the error, the entity type and id and the actor, and one `audit_trail_gaps` row per affected
+  record (open: `backfilled_at` null). A healthy write records neither. (Journey 5)
+- **AC-S0-31 [BE/FE]** The system health summary's `audit_activity.missing_trail` is the count
+  of open `audit_trail_gaps` rows, shown on the Audit Activity card when above zero; the
+  Integrations table lists the `audit` channel's failures like any other channel. (5)
+- **AC-S0-32 [BE]** Given `AUDIT_CAPTURE_ENABLED=false` (default true), read at write time, then
+  no hook writes a row, `log_audit` / `record()` write nothing, and no failure is recorded;
+  turning it back on resumes capture without a restart. (5)
+
 ### Migration
 
 - **AC-S0-24 [T]** `aud_0001_audit_standard_s0` chains onto the current single head, its id is at
   most 32 characters, its upgrade adds the nine columns, widens the action CHECK with `EVENT` and
   installs the trigger; its downgrade removes them. The graph has one head. (5)
+- **AC-S0-24b [T]** The migration's transactional DDL on `audit_logs` runs under
+  `lock_timeout = 5s` and `statement_timeout = 60s`, set before the first lock and restored
+  after; the table lock is retried up to 5 times and then fails with a message naming
+  `lock_timeout`, never a silent wait. No timeout applies to the CONCURRENTLY builds.
+  `aud_0002_audit_trail_gaps` creates `audit_trail_gaps` over `aud_0001`; one head. (5)
