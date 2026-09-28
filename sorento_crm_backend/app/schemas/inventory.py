@@ -221,16 +221,38 @@ class StockSummaryEntry(BaseModel):
     flags: Dict[str, Any] = {}
 
 
+class StockAvailabilityPackingList(BaseModel):
+    """AC-SA311: the R5 shipment's own packing list attachment, present on an
+    `incoming` entry only when the asking contact's `packing_list_allowed` is true."""
+
+    filename: Optional[str] = None
+    file_path: Optional[str] = None
+    mime_type: Optional[str] = None
+
+
 class StockAvailabilityEntry(BaseModel):
-    """One `availability` answer. Deliberately carries NO quantity: `requested_qty`
-    is the contact's own number echoed back, and `available` is the whole reply."""
+    """One `availability` answer (chatbot stock ask v2 S3, R6/R14). Deliberately
+    carries NO quantity of ours - not the on-hand figure, not incoming, not a PO
+    line: `requested_qty` is the contact's own number echoed back, `branch` is the
+    one of four fixed answers (`too_big` / `in_stock` / `incoming` / `no_incoming`,
+    `app.services.stock_ask_branch.branch`), `cap_unset` says whether X resolved
+    from NULLs (the B1 "no cap set for <category>" agent-notification reason),
+    `eta` is `estimated_arrival_date + Y` as dd/mm/yyyy (incoming only), and
+    `packing_list` is the R5 shipment's own attachment (incoming only, AC-SA311).
+
+    AC-SA310: `verdict` / `running_low` / `disclaimer` / `available` (#1118's dealer
+    stock verdict shape) are gone - this is the v2 shape, not a #1118 read."""
 
     product_id: str
     product_code: Optional[str] = None
     product_name: Optional[str] = None
     needs_quantity: bool
     requested_qty: Optional[int] = None
-    available: Optional[bool] = None
+    branch: Optional[str] = None
+    cap_unset: Optional[bool] = None
+    category_name: Optional[str] = None
+    eta: Optional[str] = None
+    packing_list: Optional[StockAvailabilityPackingList] = None
 
 
 class StockBalanceListResponse(ListResponse[StockResponse]):

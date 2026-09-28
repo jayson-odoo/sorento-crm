@@ -238,6 +238,17 @@ def apply_crossdomain_hit(
             return answer
         figures = envelope.get("figures")
         item = {"answers": [r for r in figures if isinstance(r, dict)]} if isinstance(figures, list) else {}
+        # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner
+        # ruling 24 Sep 2026) for chatbot-stock-ask-v2 S3, D17, review round 10: the
+        # DEALER's availability block rides along with the rows, because it is what
+        # turns the whole ladder off (`crossdomain_zeroset`'s own `stock_availability`
+        # gate). Rebuilt from `figures` alone, this item lost the block, so that gate
+        # never saw it on a HIT and the ladder listed rungs beside the verdict and
+        # offered an escalation the dealer had not asked for. A stray offer also
+        # competes with the dealer's own open stock task.
+        availability = envelope.get("stock_availability")
+        if isinstance(availability, list) and availability:
+            item["stock_availability"] = availability
         result = _run_crossdomain_ladder(
             parser=parser,
             resolved=_hit_ladder_resolved(resolved, focus_products),
@@ -304,6 +315,8 @@ def apply_silent_company_offer(
     gate: Mapping[str, Any] | None = None,
     asked_at_turn: int | None = None,
     turn_id: str | None = None,
+    db: Any = None,
+    ctx: Any = None,
 ) -> turn_compose.Answer:
     """Hand pass 11, defect 3 (multi-company HIT parity): a HIT in ONE of several
     searched companies still offers to escalate to the SILENT company's own team -
@@ -430,12 +443,96 @@ def apply_silent_company_offer(
         )
         from dataclasses import replace
 
+        picker = _miss_company_picker(
+            answer.text,
+            offer,
+            company=company,
+            routing=routing or {},
+            db=db,
+            ctx=ctx,
+            asked_at_turn=asked_at_turn,
+            brand=gate.get("routing_brand") if isinstance(gate, Mapping) else None,
+        )
+        if picker is not None:
+            return replace(answer, text=f"{answer.text}\n\n{picker[0]}", question=picker[1])
         return replace(answer, text=f"{answer.text}\n\n{offer}", question=question)
     except Exception:  # noqa: BLE001 - a disclosure bug must never block the answer
         logger.warning(
             "chatbot turn %s: the silent-company escalate offer did not render", turn_id, exc_info=True
         )
         return answer
+
+
+#: n8n `miss-roster-gate` LANE rev-3/rev-4: the member picker is for customer order
+#: enquiries ONLY ("there is no need to get the members for incoming lol, this only applies
+#: for customer order enquiries"); every other lane keeps the plain company-named phrase.
+_MISS_PICKER_ROUTING = ("customer_service", "order_enquiries")
+
+_NUMBERED_LINE = re.compile(r"^(\d+)\.\s", re.MULTILINE)
+
+
+def _miss_company_picker(
+    text: str,
+    offer: str,
+    *,
+    company: Mapping[str, Any],
+    routing: Mapping[str, Any],
+    db: Any,
+    ctx: Any,
+    asked_at_turn: int | None,
+    brand: Any,
+) -> tuple[str, pending.Pending] | None:
+    """#865 round 6 (R1), n8n `build-miss-member-offer` (UAC M1): a partial miss on an
+    order enquiry offers the MISS company's own customer service members, numbered on
+    from the reply's own numbered blocks ("a stray 2 must still pick the right row"),
+    then the single-company yes sentence. `(text, member_offer pending)`, or None - off
+    the order routing pair, without a session, or when that company has no member - in
+    which case the plain offer stands.
+    """
+    if (routing.get("suggested_team"), routing.get("suggested_agent")) != _MISS_PICKER_ROUTING or db is None:
+        return None
+    from app.services.chatbot.tail import member_offer as member_mod
+
+    plan = [
+        {
+            "plan_idx": 0,
+            "company_id": company.get("id"),
+            "company_name": company["name"],
+            "brand_code": None,
+            "codes": [],
+            "multi_company": False,
+            "companies": [company["name"]],
+        }
+    ]
+    built = member_mod.build_cs_member_offer(
+        {"response": offer}, plan, member_mod.fetch_rosters(db, plan, ctx if isinstance(ctx, Mapping) else {})
+    )
+    rows = built.get("cs_last_result_set") or []
+    if built.get("member_offer") is not True or not rows:
+        return None
+    offset = max((int(n) for n in _NUMBERED_LINE.findall(text or "")), default=0)
+    options = [
+        option
+        for option in (member_option({**row, "idx": offset + i + 1}, offset + i + 1) for i, row in enumerate(rows))
+        if option
+    ]
+    lines = "\n".join(f"{o['position']}. {o['label']}" for o in options)
+    picker_text = (
+        f"{offer}\n\nPlease choose who to route to (reply with the number):\n{lines}\n\n"
+        "If you have no preference, just reply 'yes' and we'll assign automatically."
+    )
+    question = pending.ask(
+        "member_offer",
+        options,
+        team=routing.get("suggested_team"),
+        asked_at_turn=asked_at_turn,
+        payload={
+            "agent": routing.get("suggested_agent"),
+            "brand_code": brand,
+            "roster_plan": [{"company_id": company.get("id"), "company_name": company["name"], "brand_code": None}],
+        },
+    )
+    return picker_text, question
 
 
 def _compose_text(lane_item: dict[str, Any], *, ctx: Any, canned: Any, db: Any, **values: Any) -> str:
@@ -758,8 +855,31 @@ def member_option(row: dict[str, Any], position: int) -> dict[str, Any] | None:
         "label": row.get("label"),
         "entity_type": "member",
         "uuid": row.get("uuid"),
-        "payload": {"respond_user_id": row.get("respond_user_id")},
+        "payload": {
+            "respond_user_id": row.get("respond_user_id"),
+            # #865 round 6: the company whose roster listed this member, so picking them
+            # routes to that company (`turn/apply.py::_answer_offer` hands it on as the
+            # company pick) - n8n's `picked_member` arm, the row's own pair verbatim.
+            "company": row.get("company_name"),
+            "company_id": row.get("company_id"),
+            "brand_code": row.get("brand_code"),
+        },
     }
+
+
+def roster_plan_of(member: Any) -> list[dict[str, Any]]:
+    """The companies a built member picker printed rosters for, as pool rows
+    (`tail/member_offer.build_cs_member_offer` keeps its plan on `routing_companies`)."""
+    plan = member.get("routing_companies") if isinstance(member, Mapping) else None
+    return [
+        {
+            "company_id": row.get("company_id") or None,
+            "company_name": row.get("company_name"),
+            "brand_code": row.get("brand_code") or None,
+        }
+        for row in (plan if isinstance(plan, list) else [])
+        if isinstance(row, Mapping) and row.get("company_name")
+    ]
 
 
 def _cs_offer_eligible(catalog: Any, routing: Mapping[str, Any], gate: Any) -> bool:
@@ -1039,8 +1159,12 @@ def _miss_question(
             return pending.ask(
                 "member_offer",
                 options,
+                # #865 round 6: the team the picker was fetched for, and the companies whose
+                # rosters it printed - the pool a bare "yes" clarifies over and a company
+                # word picks from (`turn.pending.offered_companies`).
+                team=team,
                 asked_at_turn=asked_at_turn,
-                payload={"agent": agent, "brand_code": brand},
+                payload={"agent": agent, "brand_code": brand, "roster_plan": roster_plan_of(member)},
             )
 
     if roster_options:
@@ -1415,35 +1539,13 @@ def _apply_crossdomain_render(
     return merged_text if isinstance(merged_text, str) and merged_text else text
 
 
-def answer_for(
-    payload: dict[str, Any] | None,
-    *,
-    envelope: dict[str, Any] | None,
-    parser: dict[str, Any] | None,
-    ctx: Any,
-    canned: Any,
-    services: AnswerServices,
-    db: Any,
-    asked_at_turn: int | None,
-    roster_caps: Mapping[str, int] | None = None,
-    crossdomain_ladder: Mapping[str, Any] | None = None,
-    turn_id: str | None = None,
-    trace: Any = None,
-    dry_run: bool = True,
-    carried_pending: Any = None,
-) -> turn_compose.Answer | None:
-    """The MISS seam (R4): `None` outside its own two triggers (see module docstring),
-    so a hit, an `access_denied` refusal, an infrastructure error and a multi-domain plan
-    all fall through to the caller's own fallback (`turn/compose.py`, or R5's own hit
-    arm).
-
-    `carried_pending` is `state.pending` as `apply()` left it, BEFORE this miss's own
-    question overwrites it (`engine.py`'s own `state_out.pending`) - the same value
-    `turn/compose.py::compose`'s identical carried-roster check reads. Optional and
-    `None` on every caller that predates hand pass 9 (a missing carry just means the
-    roster-preservation rule below never fires, same as before it existed)."""
-    if not isinstance(payload, dict):
-        return None
+def _miss_triggers(
+    payload: dict[str, Any], envelope: dict[str, Any] | None
+) -> tuple[Any, Any, tuple[bool, bool, bool]]:
+    """`(raw_fragment, fetch_item, (via_resolver_exit, via_error_fragment,
+    via_fetched_empty))`: `answer_for`'s three triggers, read off the payload and the
+    envelope alone. Shared with `answers_a_miss`, so the engine can ask BEFORE it builds
+    anything the miss would need (#865 fix round 2, N2)."""
     raw_fragment = envelope.get("raw_fragment") if isinstance(envelope, dict) else None
     fragment_outcome = raw_fragment.get("outcome") if isinstance(raw_fragment, dict) else None
     fetch_item = None
@@ -1475,6 +1577,49 @@ def answer_for(
         and raw_fragment.get("kind") == "result"
         and isinstance(fetch_item, Mapping)
         and not fetch_item.get("has_result")
+    )
+    return raw_fragment, fetch_item, (via_resolver_exit, via_error_fragment, via_fetched_empty)
+
+
+def answers_a_miss(payload: dict[str, Any], envelope: dict[str, Any] | None) -> bool:
+    """Will `answer_for` answer this envelope as a miss? Its own trigger rule, nothing
+    else: the engine reads the focus product's brand for a resolver-less miss only when
+    this is true, so a hit never pays for that read (#865 fix round 2, N2)."""
+    return any(_miss_triggers(payload, envelope)[2])
+
+
+def answer_for(
+    payload: dict[str, Any] | None,
+    *,
+    envelope: dict[str, Any] | None,
+    parser: dict[str, Any] | None,
+    ctx: Any,
+    canned: Any,
+    services: AnswerServices,
+    db: Any,
+    asked_at_turn: int | None,
+    roster_caps: Mapping[str, int] | None = None,
+    crossdomain_ladder: Mapping[str, Any] | None = None,
+    turn_id: str | None = None,
+    trace: Any = None,
+    dry_run: bool = True,
+    carried_pending: Any = None,
+    dealer_stock_ask: bool = False,
+) -> turn_compose.Answer | None:
+    """The MISS seam (R4): `None` outside its own two triggers (see module docstring),
+    so a hit, an `access_denied` refusal, an infrastructure error and a multi-domain plan
+    all fall through to the caller's own fallback (`turn/compose.py`, or R5's own hit
+    arm).
+
+    `carried_pending` is `state.pending` as `apply()` left it, BEFORE this miss's own
+    question overwrites it (`engine.py`'s own `state_out.pending`) - the same value
+    `turn/compose.py::compose`'s identical carried-roster check reads. Optional and
+    `None` on every caller that predates hand pass 9 (a missing carry just means the
+    roster-preservation rule below never fires, same as before it existed)."""
+    if not isinstance(payload, dict):
+        return None
+    raw_fragment, fetch_item, (via_resolver_exit, via_error_fragment, via_fetched_empty) = (
+        _miss_triggers(payload, envelope)
     )
     if not (via_resolver_exit or via_error_fragment or via_fetched_empty):
         return None
@@ -1548,6 +1693,20 @@ def answer_for(
         space_id=space_id,
         trace=trace,
         dry_run=dry_run,
+        # Ported from PR #1118 (not merged), D17, review round 10: the dealer's
+        # availability block turns the whole ladder off (`crossdomain_zeroset`'s own
+        # gate). The MISS arm hands the ladder an empty item, so the block has to
+        # travel here too - measured unreachable on this shape today (an availability
+        # reply carries an entry per named product, so it is a HIT), carried anyway
+        # because "no rung on a dealer reply" is a rule about the REPLY, not about
+        # which arm composed it.
+        item=(
+            {"stock_availability": envelope["stock_availability"]}
+            if isinstance(envelope, Mapping)
+            and isinstance(envelope.get("stock_availability"), list)
+            and envelope.get("stock_availability")
+            else None
+        ),
     )
 
     miss_gate = _scope_gate(raw_fragment)
@@ -1695,4 +1854,50 @@ def answer_for(
             payload={**carried_pending.payload, "escalate_offered": True},
         )
     text = _apply_crossdomain_render(text, crossdomain_result)
+    if dealer_stock_ask:
+        # Owner ruling 26 Sep 2026 (hand test F1): a dealer's stock ask never offers
+        # an escalation. The did-you-mean is a pick of the suggested code(s), carrying
+        # the quantity the dealer typed - one candidate included, which AC-1691's
+        # two-option minimum above would otherwise turn into a team offer. With no
+        # candidate at all, `engine._dealer_refers_to_salesman` strips the offer.
+        dealer = _dealer_did_you_mean(offer, parser, asked_at_turn)
+        if dealer is not None:
+            return turn_compose.Answer(text=dealer[0], question=dealer[1])
     return turn_compose.Answer(text=text, question=question)
+
+
+def _dealer_did_you_mean(
+    offer: Any, parser: Mapping[str, Any] | None, asked_at_turn: int | None
+) -> tuple[str, pending.Pending] | None:
+    from app.services.chatbot import dealer_stock as dealer_mod
+
+    if not isinstance(offer, Mapping):
+        return None
+    rows = [row for row in (offer.get("suggest_last_result_set") or []) if isinstance(row, Mapping)]
+    if not rows:
+        return None
+    named = [
+        e
+        for e in ((parser or {}).get("entities") or [])
+        if isinstance(e, Mapping) and e.get("hint") in (None, "product")
+    ]
+    typed = next(
+        (
+            c.get("for_raw")
+            for c in (offer.get("dym_candidates") or [])
+            if isinstance(c, Mapping) and c.get("for_raw")
+        ),
+        None,
+    ) or next((e.get("raw") for e in named if e.get("raw")), "")
+    quantities = {
+        int(e["quantity"])
+        for e in named
+        if isinstance(e.get("quantity"), (int, float)) and not isinstance(e.get("quantity"), bool)
+    }
+    quantity = next(iter(quantities)) if len(quantities) == 1 else (parser or {}).get("demand_qty")
+    return dealer_mod.did_you_mean(
+        str(typed),
+        [dict(row) for row in rows],
+        quantity=quantity,
+        asked_at_turn=asked_at_turn,
+    )

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -41,7 +42,10 @@ def _seed_contact(db, *, name: str) -> RespondContact:
 
 
 def _fetch_row(client, entity_id: str) -> dict:
-    resp = client.get("/api/v1/audit/logs/", params={"entity_id": entity_id})
+    # The full audit list is superadmin/admin only since #1298; these tests are about
+    # the actor's words, so the caller reads as an audit admin.
+    with patch("app.api.v1.audit.audit_logs._is_audit_admin", return_value=True):
+        resp = client.get("/api/v1/audit/logs/", params={"entity_id": entity_id})
     assert resp.status_code == 200, resp.text
     data = resp.json()["data"]
     assert len(data) == 1, data

@@ -1,11 +1,12 @@
-"""Request and response shapes of the `sales` module (plan 3.7, 3.8; slice S6)."""
+"""Request and response shapes of the `sales` module (plan 3.7, 3.8; slices S6 and S1)."""
 from __future__ import annotations
 
+import uuid
 from datetime import date as DateType
 from datetime import datetime
-from typing import List, Optional
+from typing import Annotated, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
 
 def _clean_name(value: Optional[str]) -> Optional[str]:
@@ -83,6 +84,8 @@ class SalesTeamListItem(BaseModel):
     leader_sales_agent_id: Optional[str] = None
     member_count: int
     members: List[SalesTeamAgentRef]
+    #: Team targets with a period containing today (S1, "Targets now" column).
+    targets_now: int = 0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -112,3 +115,360 @@ class SalesTeamAgentOption(BaseModel):
     #: The team the agent is in now, so the picker can say "(now in Central)".
     team_id: Optional[str] = None
     team_name: Optional[str] = None
+
+
+# --------------------------------------------------------------------------------------
+# Targets (slice S1; plan 3.1, 3.2, 3.8, 16.3)
+# --------------------------------------------------------------------------------------
+
+def _uuid_str(value):
+    """A UUID, kept as the canonical string the models use. Anything else is a 422."""
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if not isinstance(value, str):
+        raise ValueError("must be a UUID")
+    try:
+        return str(uuid.UUID(value))
+    except ValueError as exc:
+        raise ValueError("must be a UUID") from exc
+
+
+#: An id sent by the client: validated as a UUID so a bad one is 422, never a database error.
+UuidStr = Annotated[str, BeforeValidator(_uuid_str)]
+
+Metric = Literal["amount", "quantity"]
+Basis = Literal["ordered", "delivered"]
+ProductScope = Literal["all", "categories", "products", "brands"]
+SplitUnit = Literal["day", "week", "month"]
+
+
+def _clean_target_name(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError("Target name is required.")
+    return cleaned
+
+
+class SalesTargetAgentFigure(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sales_agent_id: UuidStr
+    #: The agent's figure for each period of the team target.
+    target_value: float = Field(..., ge=0)
+
+
+CommissionMethod = Literal["none", "marginal", "retroactive"]
+
+
+class SalesTargetTierIn(BaseModel):
+    """One commission tier (plan 3.3, UAC S4-1)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: The achievement % the tier starts at; 0 is "from the first ringgit".
+    from_pct: float = Field(..., ge=0, le=99999)
+    #: Amount target: % of the achieved amount. Quantity target: RM per unit.
+    rate: float = Field(0, ge=0, le=99999)
+    #: RM paid once per period when `from_pct` is reached.
+    bonus_amount: Optional[float] = Field(None, ge=0)
+
+
+class SalesTargetFigureIn(BaseModel):
+    """One period's figure in the batched save (the owner's retest of 27 Sep, F1)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    period_id: UuidStr
+    target_value: float = Field(..., ge=0)
+
+
+class SalesTargetNewAgentFigure(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    period_start: DateType
+    target_value: float = Field(..., ge=0)
+
+
+class SalesTargetNewAgent(BaseModel):
+    """A member of the team with no figure yet, given one in the batched save (F1)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sales_agent_id: UuidStr
+    #: By the team period's start; a period left out starts at 0.
+    figures: List[SalesTargetNewAgentFigure] = Field(default_factory=list, max_length=104)
+
+
+class SalesTargetCreate(BaseModel):
+    """`extra="forbid"`: the round 3 fields `start_month`, `months`, `periodicity` are 422 (S1-1)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject_kind: Literal["agent", "team"]
+    sales_agent_id: Optional[UuidStr] = None
+    sales_team_id: Optional[UuidStr] = None
+    name: str = Field(..., max_length=120)
+    metric: Metric
+    basis: Basis = "ordered"
+    product_scope: ProductScope = "all"
+    category_ids: List[UuidStr] = Field(default_factory=list, max_length=500)
+    product_ids: List[UuidStr] = Field(default_factory=list, max_length=500)
+    brand_ids: List[UuidStr] = Field(default_factory=list, max_length=500)
+    #: Both required; optional here only so a missing one is refused by the service in plain
+    #: words ("A target needs both a start date and an end date."), not "Field required".
+    start_date: Optional[DateType] = None
+    end_date: Optional[DateType] = None
+    split_every: Optional[int] = Field(None, ge=1, le=99)
+    split_unit: Optional[SplitUnit] = None
+    #: Agent targets: the figure written to every period. Rejected on a team target (T3).
+    target_value: Optional[float] = Field(None, ge=0)
+    #: Team targets: one child agent target per entry; the team figure is their sum (S1-27).
+    agent_figures: Optional[List[SalesTargetAgentFigure]] = Field(None, max_length=200)
+    commission_method: CommissionMethod = "none"
+    tiers: List[SalesTargetTierIn] = Field(default_factory=list, max_length=20)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value):
+        return _clean_target_name(value)
+
+
+#: What a person reads for each header field a PATCH may not empty (no snake_case in the UI).
+_REQUIRED_HEADER_LABELS = {
+    "name": "Target name",
+    "metric": "Measure",
+    "basis": "Counts",
+    "product_scope": "Applies to",
+    "commission_method": "How tiers pay",
+    "tiers": "Tiers",
+    "figures": "Figures",
+    "new_agents": "Agent figures",
+}
+
+
+class SalesTargetUpdate(BaseModel):
+    """The header. The subject is not editable (not in this schema, so it is 422)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(None, max_length=120)
+    metric: Optional[Metric] = None
+    basis: Optional[Basis] = None
+    product_scope: Optional[ProductScope] = None
+    category_ids: Optional[List[UuidStr]] = Field(None, max_length=500)
+    product_ids: Optional[List[UuidStr]] = Field(None, max_length=500)
+    brand_ids: Optional[List[UuidStr]] = Field(None, max_length=500)
+    start_date: Optional[DateType] = None
+    end_date: Optional[DateType] = None
+    #: Sent as null (both): the split is turned off.
+    split_every: Optional[int] = Field(None, ge=1, le=99)
+    split_unit: Optional[SplitUnit] = None
+    commission_method: Optional[CommissionMethod] = None
+    #: Replaces every tier; `[]` removes them.
+    tiers: Optional[List[SalesTargetTierIn]] = Field(None, max_length=20)
+    #: Every changed figure in one request (F1): this target's periods, or on a team target its
+    #: agents' periods. Applied before the header, so a date change keeps them (S1-5).
+    figures: Optional[List[SalesTargetFigureIn]] = Field(None, max_length=5000)
+    #: Team targets: members with no figure yet, given one (F1).
+    new_agents: Optional[List[SalesTargetNewAgent]] = Field(None, max_length=200)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value):
+        return _clean_target_name(value)
+
+    @model_validator(mode="after")
+    def _no_null_for_required(self):
+        # Leaving a field out keeps it; sending null for one the header cannot be without is
+        # a 422 here, never a NOT NULL violation at the database. Only the split may be null
+        # (it turns the split off).
+        # The dates are the service's (one plain-words message for either end, F6).
+        for key, label in _REQUIRED_HEADER_LABELS.items():
+            if key in self.model_fields_set and getattr(self, key) is None:
+                raise ValueError(f"{label} cannot be empty.")
+        return self
+
+
+class SalesTargetPeriodUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target_value: float = Field(..., ge=0)
+
+
+class SalesTargetChildCreate(BaseModel):
+    """Add figure: a member of the team with no figure yet gets their own child (S1-28)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sales_agent_id: UuidStr
+    target_value: float = Field(0, ge=0)
+
+
+class SalesTargetMemberRef(BaseModel):
+    sales_agent_id: str
+    label: str
+
+
+class SalesTargetRow(BaseModel):
+    """One target period containing `on`, or a "No target" row (every target field null)."""
+
+    target_id: Optional[str] = None
+    target_no: Optional[str] = None
+    name: Optional[str] = None
+    subject_kind: str
+    sales_agent_id: Optional[str] = None
+    sales_team_id: Optional[str] = None
+    subject_label: str
+    #: Agent rows: the team whose membership covers `on`. Team rows: the team itself.
+    team_id: Optional[str] = None
+    team_name: Optional[str] = None
+    #: Agent rows under a team filter: the last day of a stay that ended on or before `on`.
+    left_on: Optional[DateType] = None
+    #: Team rows: the members on `on`, for the Agents pills. Null on agent rows.
+    members: Optional[List[SalesTargetMemberRef]] = None
+    metric: Optional[str] = None
+    basis: Optional[str] = None
+    product_scope: Optional[str] = None
+    scope_labels: List[str] = Field(default_factory=list)
+    period_id: Optional[str] = None
+    period_start: Optional[DateType] = None
+    period_end: Optional[DateType] = None
+    #: The whole list (`all=true`): the target's own first day. Its last day is `end_date`.
+    start_date: Optional[DateType] = None
+    end_date: Optional[DateType] = None
+    target_value: Optional[float] = None
+    achieved_value: Optional[float] = None
+    achieved_pct: Optional[float] = None
+    parent_target_id: Optional[str] = None
+
+
+class SalesTargetList(BaseModel):
+    on: DateType
+    rows: List[SalesTargetRow]
+    #: Non-cancelled lines with no agent, ordered in the calendar month of `on` (S1-14).
+    unassigned_amount: float
+    #: Active agents with no team membership covering `on`.
+    no_team_count: int
+
+
+class SalesTargetScopeItem(BaseModel):
+    #: The category, product or brand id.
+    id: str
+    #: `category`, `product` or `brand`, so the record's pickers can seed their selected names.
+    kind: str
+    #: "CODE - Name", never an id.
+    label: str
+
+
+class SalesTargetParentRef(BaseModel):
+    id: str
+    name: str
+    target_no: str
+
+
+class SalesTargetPeriodOut(BaseModel):
+    id: str
+    period_start: DateType
+    period_end: DateType
+    target_value: float
+    achieved_value: float
+    achieved_pct: Optional[float] = None
+    #: The period containing `on`.
+    is_current: bool
+    #: Plan 3.3: null when the target has no tiers.
+    commission_earned: Optional[float] = None
+    bonus_earned: Optional[float] = None
+
+
+class SalesTargetTierOut(BaseModel):
+    from_pct: float
+    rate: float
+    bonus_amount: Optional[float] = None
+
+
+class SalesTargetChildPeriod(BaseModel):
+    id: str
+    period_start: DateType
+    target_value: float
+
+
+class SalesTargetChild(BaseModel):
+    target_id: str
+    target_no: str
+    sales_agent_id: str
+    label: str
+    periods: List[SalesTargetChildPeriod]
+
+
+class SalesTargetDetail(BaseModel):
+    id: str
+    target_no: str
+    name: str
+    subject_kind: str
+    sales_agent_id: Optional[str] = None
+    sales_team_id: Optional[str] = None
+    subject_label: str
+    #: Agent targets: the team the agent is in on `on`.
+    subject_team_name: Optional[str] = None
+    parent: Optional[SalesTargetParentRef] = None
+    metric: str
+    basis: str
+    product_scope: str
+    start_date: DateType
+    end_date: DateType
+    split_every: Optional[int] = None
+    split_unit: Optional[str] = None
+    #: "Ordered", "Delivered", or "Delivered (by DO date)" once any DO line is linked.
+    counts_label: str
+    scope: List[SalesTargetScopeItem]
+    periods: List[SalesTargetPeriodOut]
+    children: List[SalesTargetChild]
+    members_without_figure: List[SalesTargetMemberRef]
+    child_count: int
+    commission_method: str = "none"
+    tiers: List[SalesTargetTierOut] = Field(default_factory=list)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class SalesTargetOptionAgent(BaseModel):
+    id: str
+    code: str
+    label: str
+    team_id: Optional[str] = None
+    team_name: Optional[str] = None
+
+
+class SalesTargetOptionMember(BaseModel):
+    sales_agent_id: str
+    label: str
+    valid_from: Optional[DateType] = None
+    valid_to: Optional[DateType] = None
+
+
+class SalesTargetOptionTeam(BaseModel):
+    id: str
+    name: str
+    is_active: bool
+    #: Every stay, so the modal can offer the members overlapping the chosen range.
+    members: List[SalesTargetOptionMember]
+
+
+class SalesTargetOptionCategory(BaseModel):
+    id: str
+    label: str
+    parent_category_id: Optional[str] = None
+
+
+class SalesTargetOptionBrand(BaseModel):
+    id: str
+    label: str
+
+
+class SalesTargetOptions(BaseModel):
+    agents: List[SalesTargetOptionAgent]
+    teams: List[SalesTargetOptionTeam]
+    categories: List[SalesTargetOptionCategory]
+    brands: List[SalesTargetOptionBrand]

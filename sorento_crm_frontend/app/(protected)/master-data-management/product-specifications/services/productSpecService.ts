@@ -176,6 +176,7 @@ import type {
   ProductSpecDetail,
   SpecPreviewResult,
   SpecRegistryKey,
+  SpecRegistryKeyUpdateResult,
 } from '../types/productSpec.types';
 
 /**
@@ -404,7 +405,7 @@ export async function updateSpecKey(
      * redesign). Trimmed and validated server-side; an empty label drops the key. */
     value_labels?: Record<string, string>;
   },
-): Promise<SpecRegistryKey> {
+): Promise<SpecRegistryKeyUpdateResult> {
   const response = await apiFetch(
     `/api/v1/master-data/spec-registry/${specKey}`,
     {
@@ -466,10 +467,15 @@ export interface SpecKeyProducts {
   products: SpecKeyProduct[];
 }
 
-/** How many products carry each key right now. Not `measured_coverage`. */
-export async function getSpecCoverage(): Promise<{
+/** How many products carry each key right now (not `measured_coverage`), and when
+ *  a product carrying it was last read - what the record header shows. */
+export interface SpecCoverage {
   coverage: Record<string, number>;
-}> {
+  /** spec_key -> ISO time of the newest read among the products carrying it. */
+  last_read: Record<string, string>;
+}
+
+export async function getSpecCoverage(): Promise<SpecCoverage> {
   const response = await apiFetch('/api/v1/master-data/spec-registry/coverage');
   if (!response.ok) {
     throw new Error(

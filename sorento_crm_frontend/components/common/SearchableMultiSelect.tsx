@@ -81,7 +81,24 @@ export type SearchableMultiSelectProps = {
   }) => React.ReactNode;
   /** Notified whenever the search text changes, in both modes. */
   onSearchChange?: (query: string) => void;
+  /**
+   * A first row offering to add the typed text as a value not yet in the list -
+   * mirrors `SearchableSelect.createOption`. Opt-in, so every existing caller is
+   * untouched: a picker over a fixed vocabulary must never invite someone to
+   * invent a member of it. Rendered ABOVE the option list (the words a rule
+   * multi-select offers are found by scanning, so the one action a search text
+   * does not already match belongs first, not buried under it). Picking it adds
+   * the value and clears the search box so the trigger's chips show it at once;
+   * the popover stays open, matching how every other pick here behaves.
+   */
+  createOption?: {
+    label: (query: string) => React.ReactNode | null;
+    onCreate: (query: string) => void;
+  };
 };
+
+/** cmdk needs a unique value per item; this one names no real option. */
+const CREATE_ITEM_VALUE = '__searchable-multi-select-create__';
 
 export function SearchableMultiSelect({
   value,
@@ -101,6 +118,7 @@ export function SearchableMultiSelect({
   renderOption,
   renderTrigger,
   onSearchChange,
+  createOption,
 }: SearchableMultiSelectProps) {
   const isAsync = typeof fetchOptions === 'function';
   const [open, setOpen] = React.useState(false);
@@ -252,6 +270,25 @@ export function SearchableMultiSelect({
     onSearchChange?.(q);
   };
 
+  // Resolved once per render so the empty-state branch and the row itself cannot
+  // disagree, same reasoning as `SearchableSelect`. Never offered for a word the
+  // list already holds, in any case - as an option or as a chip already chosen.
+  const createQuery = query.trim();
+  const folded = createQuery.toLowerCase();
+  const alreadyThere =
+    !!folded &&
+    (value.some((v) => v.toLowerCase() === folded) ||
+      baseOptions.some((o) => o.value.toLowerCase() === folded || o.label.toLowerCase() === folded) ||
+      (selectedOptions ?? []).some((o) => o.value.toLowerCase() === folded || o.label.toLowerCase() === folded));
+  const createLabel =
+    createOption && createQuery && !alreadyThere ? createOption.label(createQuery) : null;
+  const createValue = createOption
+    ? () => {
+        createOption.onCreate(createQuery);
+        setQuery('');
+      }
+    : undefined;
+
   return (
     // See `needsDialogScrollLock` above - the two halves of this standard are kept
     // identical on purpose.
@@ -360,11 +397,26 @@ export function SearchableMultiSelect({
               once. Saying so is what tells a reader that a tick on one row does
               not cancel the tick on another. */}
           <CommandList aria-multiselectable className="min-h-0 flex-1 overflow-y-auto">
+            {/* A real list item, first, so it is the one cmdk highlights and Enter
+                in the search box adds the typed word (N-10) - a plain button above
+                the list was reachable only by mouse. */}
+            {!loading && createLabel ? (
+              <CommandGroup className="border-b">
+                <CommandItem
+                  value={CREATE_ITEM_VALUE}
+                  data-slot="searchable-multi-select-create"
+                  onSelect={() => createValue?.()}
+                  className="flex w-full items-center gap-2 text-start"
+                >
+                  {createLabel}
+                </CommandItem>
+              </CommandGroup>
+            ) : null}
             {loading ? (
               <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" /> Searching...
               </div>
-            ) : visibleOptions.length === 0 ? (
+            ) : visibleOptions.length === 0 && !createLabel ? (
               <CommandEmpty>{emptyMessage}</CommandEmpty>
             ) : null}
             {grouped.map(([groupKey, opts]) => (
