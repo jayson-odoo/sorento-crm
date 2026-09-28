@@ -238,9 +238,11 @@ def _picks_a_member_option(pending: Pending, decision: Decision) -> bool:
 def _answer_offer(pending: Pending, decision: Decision, focus: Focus, trace: Trace):
     """An escalation offer, ACCEPTED - the mirror of `answer_pending_decline`.
 
-    "Would you like me to escalate?" is answered three ways and every one of them is an
-    acceptance: a bare "yes" (`is_affirmative`), the parser's own escalation flag, and a
-    NUMBER off a multi-team roster (an explicit `reference_positions` entry). The
+    "Would you like me to escalate?" is answered two ways and each of them is an
+    acceptance: the parser's own semantic verdict (`is_escalation_confirmation`, which
+    covers "yes", "ok escalate" and "boleh" alike; `is_affirmative` alone never hands
+    over, #1323), and a NUMBER off a multi-team roster (an explicit
+    `reference_positions` entry). The
     third is why this runs before the roster path below: an accepted offer's option is a
     TEAM, not an entity to fetch with, and the roster path turned "yes" into a product
     pick, restored `payload.domain` and re-ran the very lookup that had just missed

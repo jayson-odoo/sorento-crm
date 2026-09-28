@@ -22,6 +22,7 @@ E the publish migration.
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,7 @@ from tests.chatbot.test_escalation_agent_carry import (
     _capture_next_assignee,
     _capture_sla,
     _seed_contact,
+    _seed_product,
     _write_open_question,
 )
 
@@ -96,7 +98,6 @@ def _recorded_verdict(**overrides: Any) -> dict[str, Any]:
         domain_hint="inventory",
         is_affirmative=True,
         domain_in_message=True,
-        entity_op="replace",
         entities=[entity(code, hint="product") for code in PHOTO_CODES],
         open_question_answer={"mode": "yes", "picked": [], "items": [], "qty_for_all": None},
         escalation={
@@ -184,25 +185,40 @@ class TestDecide:
 
 
 # =============================================================================== #
-# B. apply(): the stock ask runs, and the offer stays open
+# B. apply(): the stock ask runs; the offer is not consumed
 # =============================================================================== #
 
 
 class TestApply:
-    def test_the_recorded_turn_runs_the_stock_ask_and_keeps_the_offer_open(self) -> None:
+    def test_the_recorded_turn_plans_the_stock_ask_for_the_ten_codes(self) -> None:
         new_state, plan = apply(_state(_offer()), _recorded_verdict(), build_policy())
         assert plan.trace.lane != "escalation", plan.trace.rules_fired
         assert "answer_pending_accept" not in plan.trace.rules_fired
-        assert "inventory" in plan.domains, plan.domains
-        assert new_state.pending is not None and new_state.pending.kind == "team_pick"
-        assert new_state.pending.team == "warehouse"
+        # The offer is not an answer to this message: the question stays open at
+        # the pending arm, exactly as for any aside.
+        assert "answer_pending_not_an_answer" in plan.trace.rules_fired
+        assert plan.trace.decision == {"kind": NEW_ASK, "why": "domain_in_message"}
+        assert plan.domains == ["inventory"], plan.domains
         carried = [e.get("canonical_code") for e in new_state.focus.products]
         assert carried == PHOTO_CODES, carried
+
+    def test_the_offer_is_left_to_the_existing_stale_offer_rule(self) -> None:
+        """#1323 changes WHETHER the message accepts the offer, nothing after it. The
+        stock ask fetches, so the pre-existing `new_ask_closes_stale_roster` rule (a
+        new ask that got its own answer closes an offer about something else; measured
+        17 Sep 2026, a bare "1" under a later list handed a conversation to purchasing)
+        still decides the offer's survival, and the stock answer re-offers the handover
+        itself when it misses (section C)."""
+        new_state, plan = apply(_state(_offer()), _recorded_verdict(), build_policy())
+        assert plan.fetch, plan
+        assert "new_ask_closes_stale_roster" in plan.trace.rules_fired
+        assert new_state.pending is None
 
     def test_the_semantic_confirmation_hands_over_to_the_offered_team(self) -> None:
         _new, plan = apply(_state(_offer()), _confirmation_verdict(), build_policy())
         assert plan.trace.lane == "escalation", plan.trace.rules_fired
         assert plan.trace.team == "warehouse"
+        assert plan.trace.decision == {"kind": ANSWER, "why": "escalation_confirmation"}
 
 
 # =============================================================================== #
@@ -218,9 +234,42 @@ class TestRunTurn:
         _write_open_question(session_factory, open_question=dict(OFFER_WIRE))
         return bodies
 
-    def test_the_recorded_turn_is_not_handed_to_a_human(
+    def _stock_tool(self, monkeypatch) -> list[tuple[str, dict[str, Any]]]:
+        """Every MCP call, recorded; each answers "nothing" (no network)."""
+        from app.services.ai_assistant_service import MCPRuntimeClient
+
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        def fake_call_tool(self, name: str, arguments: dict[str, Any]) -> str:
+            calls.append((name, dict(arguments)))
+            return json.dumps({"answers": []})
+
+        monkeypatch.setattr(MCPRuntimeClient, "call_tool", fake_call_tool)
+        return calls
+
+    def test_the_recorded_turn_runs_the_stock_ask_and_is_not_handed_to_a_human(
         self, session_factory, stub_parser, stub_access, monkeypatch
     ) -> None:
+        bodies = self._plant(session_factory, monkeypatch)
+        for code in PHOTO_CODES:
+            _seed_product(session_factory, code=code)
+        calls = self._stock_tool(monkeypatch)
+        stub_parser(_recorded_verdict())
+        stub_access()
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert result.branch_kind != "out_of_scope", result.branch_kind
+        assert bodies == [], "no assignee may be drawn for a stock ask"
+        stock = [args for name, args in calls if name == "crm_inventory_stock_balance_list"]
+        assert stock and stock[0]["product_ids"], calls
+
+    def test_unresolved_codes_ask_nothing_of_a_human_and_leave_the_warehouse_offer_open(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        """The same verdict with the codes not in the catalogue: the stock ask runs,
+        misses, and the turn ends with the warehouse offer open for the customer to
+        answer, never with a handover nobody agreed to."""
         from sqlalchemy import text
 
         bodies = self._plant(session_factory, monkeypatch)
