@@ -112,6 +112,7 @@ class ContactMediaUsage(Base):
     """One row per media item, including every refusal. The metered fact."""
 
     __tablename__ = "contact_media_usage"
+    __audit_skip__ = "usage counter"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
 
@@ -179,6 +180,7 @@ class MediaExtractionJob(Base):
     """The queued extraction, 1:1 with an accepted ledger row."""
 
     __tablename__ = "media_extraction_job"
+    __audit_skip__ = "job state"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     usage_id = Column(

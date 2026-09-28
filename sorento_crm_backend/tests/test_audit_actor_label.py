@@ -13,6 +13,8 @@ import re
 import uuid
 from unittest.mock import patch
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 import app.main  # noqa: F401  registers routers
@@ -25,6 +27,14 @@ from app.models.user import User
 from tests._pg_fixture import blank_session, unique_code
 
 _UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+
+
+@pytest.fixture(autouse=True)
+def _audit_admin_reader():
+    """The read gate is S-1's (#1298, tests/test_audit_read_gate.py); these tests are about
+    the actor words, so the reader is simply an audit admin."""
+    with patch("app.api.v1.audit.audit_logs._is_audit_admin", return_value=True):
+        yield
 
 
 def _seed_user(db, *, name: str) -> User:
@@ -42,10 +52,7 @@ def _seed_contact(db, *, name: str) -> RespondContact:
 
 
 def _fetch_row(client, entity_id: str) -> dict:
-    # The full audit list is superadmin/admin only since #1298; these tests are about
-    # the actor's words, so the caller reads as an audit admin.
-    with patch("app.api.v1.audit.audit_logs._is_audit_admin", return_value=True):
-        resp = client.get("/api/v1/audit/logs/", params={"entity_id": entity_id})
+    resp = client.get("/api/v1/audit/logs/", params={"entity_id": entity_id})
     assert resp.status_code == 200, resp.text
     data = resp.json()["data"]
     assert len(data) == 1, data

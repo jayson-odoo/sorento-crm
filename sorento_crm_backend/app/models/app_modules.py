@@ -62,6 +62,7 @@ class ModuleInstallEvent(Base):
     """Audit trail for module install / enable / disable."""
 
     __tablename__ = "module_install_events"
+    __audit_skip__ = "module install log, itself a trail"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     tenant_id = Column(String(64), nullable=False, index=True)
