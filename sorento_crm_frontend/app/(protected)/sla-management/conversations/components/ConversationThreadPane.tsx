@@ -11,6 +11,7 @@ import InternalCommentComposer from '@/components/common/conversation/InternalCo
 import SharedConversationComposer from '@/components/common/conversation/SharedConversationComposer';
 import { useConversationEvents } from '@/components/common/conversation/useConversationEvents';
 import { useConversationThread } from '@/components/common/conversation/useConversationThread';
+import { useReplyTarget } from '@/components/common/conversation/useReplyTarget';
 import { cn } from '@/lib/utils';
 
 import {
@@ -56,6 +57,9 @@ export default function ConversationThreadPane({
 }: ConversationThreadPaneProps) {
   const contactRef = contact?.contact_ref ?? null;
   const [mode, setMode] = useState<'reply' | 'note'>('reply');
+  // #1317: the message the next Reply quotes. A Note never carries it (the
+  // Reply composer is not mounted then); another contact never inherits it.
+  const { replyTo, startReply, clearReplyTo } = useReplyTarget(contactRef);
 
   const queryClient = useQueryClient();
 
@@ -207,6 +211,16 @@ export default function ConversationThreadPane({
             // "Replying to" quote whose target scrolled out of the loaded
             // window still jumps, on this surface too.
             onJumpToMessage={thread.jumpToMessage}
+            // #1317: Reply (menu + swipe) where this viewer may answer; it
+            // brings the Reply composer back if Note was selected.
+            onReply={
+              canReply
+                ? (target) => {
+                    startReply(target);
+                    setMode('reply');
+                  }
+                : undefined
+            }
           />
         </>
       )}
@@ -298,6 +312,8 @@ export default function ConversationThreadPane({
           // real row and the placeholder are never both missing at once.
           pendingBubble={{ add: thread.addPending, remove: thread.removePending }}
           onSent={() => threadQuery.refetch()}
+          replyTo={canReply ? replyTo : null}
+          onClearReplyTo={clearReplyTo}
           notAvailableMessage="You do not have permission to reply to contacts."
         />
       )}
