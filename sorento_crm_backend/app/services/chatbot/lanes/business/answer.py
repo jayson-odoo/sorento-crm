@@ -3739,8 +3739,19 @@ def not_found_error_message(
                     for e in entities_list
                     if jsc.get(e, "hint") in ("category", "product_type", "specification") and jsc.truthy(jsc.get(e, "raw"))
                 ) or terms[0]
+                # The nearest product types stay on offer as the lines (a reply naming one
+                # re-runs the ask, `turn_runtime.with_clarify_answer`).
+                near = [
+                    jsc.js_string(x).strip()
+                    for x in (
+                        jsc.array(jsc.get(predicate, "suggestions"))
+                        or jsc.array(jsc.get(predicate, "common_class_labels"))
+                    )
+                    if jsc.truthy(x)
+                ]
+                lines = [f"• {set_noun_for([x]).capitalize()}" for x in near]
                 escalate_message = what_you_want_reply(
-                    asked, [], missing=_and_list([f'"{t}"' for t in terms]), team=team
+                    asked, lines, missing=_and_list([f'"{t}"' for t in terms]), team=team
                 )
             elif (
                 described_set_answers

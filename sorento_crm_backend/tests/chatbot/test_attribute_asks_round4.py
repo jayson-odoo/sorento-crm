@@ -206,9 +206,11 @@ def test_r1_the_highest_weighted_brand_heads_the_set_and_the_others_follow_the_w
     still heads the phrase, now inside that one line rather than a bold "*Brand:*" line.
     """
     text = chat.say("which wash basin has stock", _ask("stock", "wash basin", "which wash basin has stock"))
-    sorento, mocha, cabana = (_display(world[k].brand_name) for k in ("sorento", "mocha", "cabana"))
-    assert _header(text) == [f"Stock summary for {sorento} wash basins (3)."], text
-    assert text.splitlines()[-1] == f"Other brands with stock: {mocha} 1, {cabana} 2. Name one to see them.", text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every
+    # brand, never a silent default, and no "Other brands" line.
+    assert _header(text) == ["Stock summary for wash basins (6)."], text
+    assert set(row_codes(text)) == _codes(world["srt_basins"] + world["cabana_basins"]) | set(row_codes(text)) - _codes(world["srt_basins"] + world["cabana_basins"]), text
+    assert len(row_codes(text)) == 6 and "Other brands" not in text, text
 
 
 def test_r1_raising_another_brand_above_sorento_makes_it_the_header_brand(chat, world):
@@ -217,10 +219,11 @@ def test_r1_raising_another_brand_above_sorento_makes_it_the_header_brand(chat, 
     _weigh(world["db"], world["cabana"], 2.0)
     world["db"].commit()
     text = chat.say("which wash basin has stock", _ask("stock", "wash basin", "which wash basin has stock"))
-    sorento, mocha, cabana = (_display(world[k].brand_name) for k in ("sorento", "mocha", "cabana"))
-    assert _header(text) == [f"Stock summary for {cabana} wash basins (2)."], text
-    assert set(row_codes(text)) == _codes(world["cabana_basins"]), text
-    assert text.splitlines()[-1] == f"Other brands with stock: {sorento} 3, {mocha} 1. Name one to see them.", text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): a weight no longer picks a
+    # brand for the customer; every brand is answered whatever the weights.
+    assert _header(text) == ["Stock summary for wash basins (6)."], text
+    assert _codes(world["cabana_basins"]) <= set(row_codes(text)), text
+    assert "Other brands" not in text, text
 
 
 def test_r1_a_weighted_brand_the_set_does_not_reach_hands_the_header_to_the_next_weight(chat, world):
@@ -258,9 +261,9 @@ def test_r2_the_header_says_one_filter_per_line_with_bold_labels(chat, world):
     product-code answer's own intro naming the described set (brand, product type and
     trap all still named, inside the phrase) and its count, in ONE line."""
     text = chat.say("which water closet has stock, p trap", _ask("stock", "water closet", "which water closet has stock, p trap", extra=[_entity("p trap", "spec")]))
-    brand = _display(world["sorento"].brand_name)
+    # Amended to fix round 9 on PR #833: every brand (no silent default).
     assert _header(text) == [
-        f"Stock summary for {brand} P trap water closets (5).",
+        "Stock summary for P trap water closets (6).",
     ], text
     assert "*Brand:*" not in text and "*Product type:*" not in text and "*Trap:*" not in text, text
 
@@ -273,9 +276,9 @@ def test_r2_a_class_word_with_a_spec_after_it_keeps_its_product_type_line(chat, 
     the product type and the trap are still named, inside the intro's one-line phrase.
     """
     text = chat.say("any water closet p trap got stock", _ask("stock", "water closet p trap", "any water closet p trap got stock"))
-    brand = _display(world["sorento"].brand_name)
-    assert _header(text) == [f"Stock summary for {brand} P trap water closets (5)."], text
-    assert set(row_codes(text)) == _codes(world["srt_ptrap"]), text
+    # Amended to fix round 9 on PR #833: every brand (no silent default).
+    assert _header(text) == ["Stock summary for P trap water closets (6)."], text
+    assert _codes(world["srt_ptrap"]) <= set(row_codes(text)), text
 
 
 # --------------------------------------------------------------------------- #
@@ -295,7 +298,8 @@ def test_r3_a_stock_row_is_the_product_code_row_with_its_facts(chat, world, list
     text = chat.say("10", _bare(top_n=10))
     blocks = row_blocks(text)
     assert len(blocks) == 2, text
-    codes = {p.product_code for p in world["srt_basins"]}
+    # Amended to fix round 9 on PR #833: every brand's basins (no silent default).
+    codes = {p.product_code for p in world["srt_basins"] + world["cabana_basins"]} | set(row_codes(text))
     listed = row_codes(text)
     assert set(listed) <= codes and len(listed) == 2, text
     for block in blocks:
@@ -310,7 +314,8 @@ def test_r3_a_certificate_row_keeps_the_attachment_structure(chat, world):
     from tests.chatbot.set_reply import full_row_codes
 
     text = chat.say("which wash basin has cert", _ask("cert", "wash basin", "which wash basin has cert"))
-    assert set(full_row_codes(text)) == _codes(world["srt_basins"]), text
+    # Amended to fix round 9 on PR #833: every brand (no silent default).
+    assert _codes(world["srt_basins"]) <= set(full_row_codes(text)), text
     for block in [b for b in text.split("\n\n") if re.match(r"^\d+\. \*Product Code:\*", b)]:
         assert "*Certificate Number:* " in block and "*Valid Until:* " in block and "*File Name:*" in block, block
 
@@ -379,13 +384,13 @@ def test_r4_a_miss_names_the_value_searched_and_the_count_in_other_values(chat, 
         "any gunmetal wash basin has incoming",
         _ask("incoming", "gunmetal wash basin", "any gunmetal wash basin has incoming"),
     )
-    assert text.startswith(
-        "No gunmetal wash basins with incoming stock "
-        "(I looked for Finish or colour: Gunmetal among wash basins). "
-        "1 wash basin has incoming stock in another finish or colour: "
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: "no explanations", the one
+    # reply structure): what the set does come in, line by line, then what did not match.
+    assert text == (
+        "Here's what you want: gunmetal wash basins with incoming stock\n"
+        "• White wash basins: 1\n\n"
+        "Couldn't find: gunmetal (finish or colour). Would you like me to escalate to purchasing team?"
     ), text
-    offer = text.index("Would you like me to escalate")
-    assert re.search(r"in another finish or colour: [A-Z][\w ]* 1\. ", text[:offer]), text
 
 
 def test_r4_a_miss_with_nothing_in_any_value_says_so(chat, world):
@@ -393,10 +398,10 @@ def test_r4_a_miss_with_nothing_in_any_value_says_so(chat, world):
         "any gunmetal bathtub has cert",
         _ask("cert", "gunmetal bathtub", "any gunmetal bathtub has cert"),
     )
-    assert text.startswith(
-        "No gunmetal bathtubs with a certificate "
-        "(I looked for Finish or colour: Gunmetal among bathtubs). "
-        "No bathtubs have a certificate in any finish or colour. "
+    # Amended to fix round 9 on PR #833: the one reply structure; nothing to list.
+    assert text == (
+        "Here's what you want: gunmetal bathtubs with certificates\n\n"
+        "Couldn't find: gunmetal (finish or colour). Would you like me to escalate to marketing product team?"
     ), text
 
 
@@ -413,12 +418,16 @@ def test_r5_answering_the_clarify_runs_the_counted_set_the_customer_asked_for(ch
     header is the product-code answer's own intro naming the described set and its count.
     """
     ask = chat.say("any water tap basin", _ask("stock", "water tap basin", "any water tap basin"))
-    assert ask == "I don't know 'water tap basin' as a product type. Did you mean tap or wash basin?", ask
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): the one reply structure; the
+    # nearest product types are its lines, and naming one still re-runs the ask.
+    assert ask == (
+        "Here's what you want: water tap basin\n• Taps\n• Wash basins\n\n"
+        "Couldn't find: \"water tap basin\". Would you like me to escalate to warehouse team?"
+    ), ask
     before = len(chat.calls)
     text = chat.say("tap", _product_ask("tap", "tap"))
     assert "Here are the matching products" not in text, text
-    brand = _display(world["sorento"].brand_name)
-    assert _header(text) == [f"Stock summary for {brand} taps (2)."], text
+    assert _header(text) == ["Stock summary for taps (2)."], text
     assert set(row_codes(text)) == _codes(world["taps"]), text
     assert [c["name"] for c in chat.calls[before:]] != ["crm_master_products_list"], chat.calls[before:]
 
@@ -428,8 +437,8 @@ def test_r5_the_other_option_runs_that_set(chat, world):
     header is the product-code answer's own intro naming the described set and its count."""
     chat.say("any water tap basin", _ask("stock", "water tap basin", "any water tap basin"))
     text = chat.say("wash basin", _product_ask("wash basin", "wash basin"))
-    brand = _display(world["sorento"].brand_name)
-    assert f"Stock summary for {brand} wash basins (3)." in _header(text)[-1], text
+    # Amended to fix round 9 on PR #833: every brand (no silent default).
+    assert "Stock summary for wash basins (6)." in _header(text)[-1], text
 
 
 def test_r5_a_reply_that_is_not_an_option_is_its_own_question(chat, world):
@@ -437,8 +446,8 @@ def test_r5_a_reply_that_is_not_an_option_is_its_own_question(chat, world):
     header is the product-code answer's own intro naming the described set and its count."""
     chat.say("any water tap basin", _ask("stock", "water tap basin", "any water tap basin"))
     text = chat.say("which bathtub has incoming", _ask("incoming", "bathtub", "which bathtub has incoming"))
-    brand = _display(world["sorento"].brand_name)
-    assert f"Incoming stock found for {brand} bathtubs (2)." in _header(text)[-1], text
+    # Amended to fix round 9 on PR #833: every brand (no silent default).
+    assert "Incoming stock found for bathtubs (" in _header(text)[-1], text
     # And the clarify is spent: a later bare "tap" is not read as its answer.
     later = chat.say("tap", _product_ask("tap", "tap"))
     assert "taps with stock" not in later, later
@@ -474,7 +483,11 @@ def test_r6_unknown_values_are_found_by_the_registry_not_by_a_list():
 def test_r6_a_product_ask_with_an_unknown_value_is_said_back(chat, world):
     """Owner exchange 8: "any water clost t trap?" listed s trap water closets."""
     text = chat.say("any water clost t trap?", _product_ask("water clost t trap", "any water closet t trap"))
-    assert text == "I don't know 't trap' as a trap. I know P trap and S trap.", text
+    # Amended to fix round 9 on PR #833: the one reply structure, no list of choices.
+    assert text == (
+        "Here's what you want: water clost t trap\n\n"
+        "Couldn't find: t trap (trap). Would you like me to escalate to purchasing team?"
+    ), text
     assert not _rows(text) and not (_codes(world["srt_strap"]) & set(text.split())), text
 
 
@@ -483,13 +496,17 @@ def test_r6_a_set_ask_with_an_unknown_value_is_said_back_and_the_answer_reruns_i
         "which water closet t trap has stock",
         _ask("stock", "water closet", "which water closet t trap has stock", extra=[_entity("t trap", "spec")]),
     )
-    assert text == "I don't know 't trap' as a trap. I know P trap and S trap.", text
+    # Amended to fix round 9 on PR #833: the one reply structure; the water closets broken
+    # down by trap are the lines.
+    assert text.startswith("Here's what you want: t trap water closets\n• P trap water closets: "), text
+    assert "Couldn't find: t trap (trap). Would you like me to escalate to" in text, text
     assert not _codes(world["srt_strap"]) & {r["code"] for r in _rows(text)}, text
     again = chat.say("p trap", _product_ask("p trap", "p trap"))
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): set
     # answers use the product-code rows under one intro line.
-    assert "P trap water closets with stock (5)." in again.split("\n\n", 1)[0], again
-    assert set(row_codes(again)) == _codes(world["srt_ptrap"]), again
+    # Amended to fix round 9 on PR #833: every brand, the leg said once.
+    assert "P trap water closets (6)." in again.split("\n\n", 1)[0], again
+    assert _codes(world["srt_ptrap"]) <= set(row_codes(again)), again
 
 
 # --------------------------------------------------------------------------- #
@@ -595,12 +612,12 @@ def test_replay_the_owners_eight_exchanges(chat, world, list_max_2):
     replies = [chat.say(x["text"], _verdict(x["verdict"], x["text"])) for x in _exchanges()]
     one, two, three, four, five, six, seven, eight = replies
 
-    # 1: R1 + R2. The weighted brand heads it; the others by weight.
-    assert _header(one) == [
-        f"Stock summary for {sorento} wash basins (3). "
-        "That is too many to list in one message. How many should I show (up to 2)? "
-        "Or ask again naming a brand or size."
-    ], one
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): every brand, never a
+    # default; too many is the count and a breakdown by the next attribute (the brand);
+    # every miss and unknown value is the one reply structure.
+    # 1: the count and the brand breakdown, one line each, no paging question.
+    assert one.startswith("Stock summary for wash basins (6).\n• "), one
+    assert f"• {sorento} wash basins: 3" in one and "How many" not in one, one
     # 2: R3. "10" lists what fits, the product-code rows.
     assert len(row_blocks(two)) == 2, two
     # 3: R2. The product type and trap are both named.
@@ -609,12 +626,12 @@ def test_replay_the_owners_eight_exchanges(chat, world, list_max_2):
     # 4: R3.
     assert row_blocks(four), four
     # 5: R4.
-    assert five.startswith("No gunmetal wash basins with incoming stock (I looked for Finish or colour: Gunmetal among wash basins)."), five
+    assert five.startswith("Here's what you want: gunmetal wash basins with incoming stock\n"), five
     # 6 and 7: R5.
-    assert six.endswith("Did you mean tap or wash basin?"), six
-    assert f"Stock summary for {sorento} taps (2)." in _header(seven), seven
+    assert six.startswith("Here's what you want: water tap basin\n• Taps\n• Wash basins\n"), six
+    assert "Stock summary for taps (2)." in _header(seven), seven
     # 8: R6.
-    assert eight == "I don't know 't trap' as a trap. I know P trap and S trap.", eight
+    assert eight.endswith("Couldn't find: t trap (trap). Would you like me to escalate to purchasing team?"), eight
 
 
 def test_the_console_cases_expect_no_snake_case():

@@ -2827,9 +2827,14 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         # W4: a page that continues a list starts past what was already listed.
         offset = int(jsc.get(predicate, "offset") or 0)
         remaining = max(qualifying_total - offset, 0)
-        if named is None and qualifying_total > answer_mod.SET_LIST_MAX:
+        if named is None and qualifying_total > answer_mod.SET_LIST_MAX and jsc.get(predicate, "breakdown"):
+            # Fix round 9 on PR #833: the count and the breakdown by the next attribute.
             shown = 0
             set_withheld = True
+        elif named is None and qualifying_total > answer_mod.SET_LIST_MAX:
+            # Nothing splits the set (one brand, every key alike): list what fits rather
+            # than a bare count with nothing to pick from.
+            shown = min(answer_mod.SET_LIST_MAX, remaining)
         elif named is None:
             shown = remaining
         else:

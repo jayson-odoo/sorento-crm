@@ -353,7 +353,9 @@ def test_w2_a_word_that_was_not_understood_is_said_never_silently_dropped(chat, 
     )
     first = one_line_header(text)
     assert "Stock summary for wash basins" in first, text
-    assert "I did not understand \"zzqx\"" in first, text
+    # Amended to fix round 9 on PR #833 (owner: "no explanations"): the word is the "did
+    # not match" line of the reply, never how the search was run.
+    assert 'Couldn\'t find: "zzqx".' in text and "did not understand" not in text, text
 
 
 # --------------------------------------------------------------------------- #
@@ -422,16 +424,19 @@ def test_w4_a_bare_count_after_the_count_question_keeps_the_brand_set(chat, worl
         f"which {brand.lower()} wash basin has stock",
         _stock_verdict(_brand_entity_shapes(brand.lower(), "wash basin")[shape], "which wash basin has stock"),
     )
-    assert f"Stock summary for {_display(brand)} wash basins (5). That is too many to list" in ask, ask
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: never a paging question):
+    # one brand named and nothing else splits the 5, so the first 3 are listed.
+    assert one_line_header(ask) == f"Stock summary for {_display(brand)} wash basins (5, showing 1 to 3).", ask
+    assert "How many" not in ask, ask
 
     page = chat.say("2", _bare())
 
+    # The last 2 of the 5: every product now shown, so the count is bare.
     first = one_line_header(page)
-    assert first == (
-        f"Stock summary for {_display(brand)} wash basins (5, showing 1 to 2)."
-    ), page
+    assert first == f"Stock summary for {_display(brand)} wash basins (5).", page
     listed = _listed(page, world)
     assert len(listed) == 2 and set(listed) <= _codes(world["srt_basins"][:3] + world["srt_wall"]), page
+    assert not set(listed) & set(_listed(ask, world)), (ask, page)
 
 
 @pytest.mark.parametrize("parser_top_n", [None, 2], ids=["parser_null", "parser_reads_the_count"])
@@ -445,28 +450,27 @@ def test_w4_another_n_continues_from_where_the_list_stopped(chat, world, small_l
     M.".
     """
     brand = world["sorento"].brand_name
-    chat.say(
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: never a paging question): one
+    # brand named and nothing else splits the 5, so the ask itself lists the first 3.
+    page1 = chat.say(
         f"which {brand.lower()} wash basin has stock",
         _stock_verdict(_brand_entity_shapes(brand.lower(), "wash basin")[0], "which wash basin has stock"),
     )
-    page1 = chat.say("2", _bare())
+    assert one_line_header(page1) == f"Stock summary for {_display(brand)} wash basins (5, showing 1 to 3).", page1
     page2 = chat.say("can give another 2?", _bare(top_n=parser_top_n))
 
     first = one_line_header(page2)
-    assert first == (
-        f"Stock summary for {_display(brand)} wash basins (5, showing 3 to 4)."
-    ), page2
-    # The rows are numbered where the list stands, 3 and 4, not 1 and 2 again.
-    assert [ln.split(".")[0] for ln in page2.splitlines()[1:] if re.match(r"^\d+\. ", ln)] == ["3", "4"], page2
+    assert first == f"Stock summary for {_display(brand)} wash basins (5).", page2
+    # The rows are numbered where the list stands, 4 and 5, not 1 and 2 again.
+    assert [ln.split(".")[0] for ln in page2.splitlines()[1:] if re.match(r"^\d+\. ", ln)] == ["4", "5"], page2
     one, two = _listed(page1, world), _listed(page2, world)
     assert len(two) == 2 and not set(one) & set(two), (page1, page2)
     every = sorted(_codes(world["srt_basins"][:3] + world["srt_wall"]))
-    assert one + two == every[:4], (page1, page2)
+    assert one + two == every, (page1, page2)
 
-    # And again: the last one - every product now shown, so the count is bare again.
+    # And again: every product is shown already.
     page3 = chat.say("another 2", _bare())
-    assert f"Stock summary for {_display(brand)} wash basins (5)." in one_line_header(page3), page3
-    assert _listed(page3, world) == every[4:], page3
+    assert one_line_header(page3) == f"Stock summary for {_display(brand)} wash basins (5). That is all 5.", page3
 
 
 def test_w4_another_n_after_a_listed_page_never_offers_more_itself(chat, world, small_list):
@@ -491,7 +495,8 @@ def test_w4_a_count_that_moved_between_the_ask_and_the_page_is_said(chat, world,
         f"which {brand.lower()} wash basin has stock",
         _stock_verdict(_brand_entity_shapes(brand.lower(), "wash basin")[0], "which wash basin has stock"),
     )
-    assert f"Stock summary for {_display(brand)} wash basins (5)." in ask, ask
+    # Amended to fix round 9 on PR #833: the ask lists what fits.
+    assert f"Stock summary for {_display(brand)} wash basins (5, showing 1 to 3)." in ask, ask
     db = world["db"]
     wh = _warehouse(db)
     _stock_for(db, product_id=world["srt_basins"][3].id, warehouse_id=wh.id)
@@ -551,11 +556,11 @@ def test_w5_no_brand_named_answers_the_default_brand_first_and_names_the_others(
         _stock_verdict([{"raw": "wash basin", "hint": "product_type"}], "which wash basin has stock"),
     )
     first = one_line_header(text)
-    brand, other = _display(world["sorento"].brand_name), _display(world["mocha"].brand_name)
-    # Round 3 W4: no "(default)"; the other brands close the reply.
-    assert first == f"Stock summary for {brand} wash basins (5).", text
-    assert text.splitlines()[-1] == f"Other brands with stock: {other} 3. Name one to see them.", text
-    assert _codes_in(text, world) == _codes(world["srt_basins"][:3] + world["srt_wall"]), text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every
+    # brand, whatever the weights, and no "Other brands" line.
+    assert first == "Stock summary for wash basins (8).", text
+    assert "Other brands" not in text, text
+    assert _codes(world["srt_basins"][:3] + world["srt_wall"] + world["mch_basins"] + world["mch_wall"]) <= set(row_codes(text)), text
 
 
 def test_w5_naming_a_brand_answers_that_brand_only(chat, sorento_default):
@@ -599,10 +604,10 @@ def test_w5_a_page_of_the_default_brand_set_keeps_the_default(chat, sorento_defa
     )
     page = chat.say("2", _bare())
     first = one_line_header(page)
-    assert first.startswith(
-        f"Stock summary for {_display(world['sorento'].brand_name)} wash basins (5, showing 1 to 2)."
-    ), page
-    assert set(_listed(page, world)) <= _codes(world["srt_basins"][:3] + world["srt_wall"]), page
+    # Amended to fix round 9 on PR #833: no default brand; the count typed after the
+    # breakdown lists that many of the whole set.
+    assert first.startswith("Stock summary for wash basins (8, showing 1 to 2)."), page
+    assert len(row_codes(page)) == 2, page
 
 
 # --------------------------------------------------------------------------- #

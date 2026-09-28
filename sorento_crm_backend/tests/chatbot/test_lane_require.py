@@ -455,7 +455,9 @@ def test_resolve_entity_body_adds_require_and_predicate_words_only_when_derived(
     assert "require" not in body_order
     assert "predicate_words" not in body_order
 
-    keys = (set(body_stock) | set(body_order)) - {"require", "predicate_words"}
+    # Fix round 9 on PR #833: `set_list_max` travels with the require, like its words.
+    assert body_stock.get("set_list_max") == 50 and "set_list_max" not in body_order
+    keys = (set(body_stock) | set(body_order)) - {"require", "predicate_words", "set_list_max"}
     for key in keys:
         assert body_stock.get(key) == body_order.get(key), key
 
@@ -1579,9 +1581,12 @@ def test_unknown_term_clarifies_with_nearest_names():
         msg = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
         text = (msg.get("escalate_message") or "").strip()
 
-    assert "I don't know 'water tap' as a product type" in text, text
-    assert "Did you mean" in text, text
-    assert "Couldn't find" not in text, text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: the one reply structure, no
+    # explanations): the word is the "Couldn't find" line and the product types on offer
+    # are the lines; naming one still re-runs the ask.
+    assert text.startswith("Here's what you want: water tap\n• Taps"), text
+    assert 'Couldn\'t find: "water tap".' in text, text
+    assert "Did you mean" not in text and "I don't know" not in text, text
 
 
 def test_stock_set_answer_matches_forward_block_for_a_dealer():
@@ -2147,7 +2152,8 @@ def test_unresolved_word_token_is_the_description_not_a_miss():
     # and its count (1) rather than "1 <noun> has <leg>.".
     lines = legacy_lines(reply)
     assert lines and "(1)" in lines[0], reply
-    assert "certificates" in lines[0], reply
+    # Amended to fix round 9 on PR #833: the intro names its leg once.
+    assert lines[0].startswith("Certificates found for "), reply
     assert "ZZTWT5875" in reply, reply
     assert "Couldn't find" not in reply, reply
     assert "no certificate matched" not in reply, reply
@@ -2268,8 +2274,12 @@ def test_common_product_types_fallback_is_never_empty_under_contact_scope():
         msg = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
         text = (msg.get("escalate_message") or "").strip()
 
-    assert "Try a product type such as tap, wash basin, water closet" in text, text
-    assert "a class or product type I know" not in text, text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: the one reply structure, no
+    # explanations): the word is the "Couldn't find" line and the product types on offer
+    # are the lines; naming one still re-runs the ask.
+    for label in ("• Taps", "• Wash basins", "• Water closets"):
+        assert label in text, text
+    assert "a class or product type I know" not in text and "Try a product type" not in text, text
 
 
 def test_shown_counts_products_not_rows():
@@ -3157,8 +3167,11 @@ def test_clarify_with_no_candidate_offers_common_product_types():
         msg = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
         text = (msg.get("escalate_message") or "").strip()
 
-    assert "I don't know 'zzqx' as a product type" in text, text
-    assert "Try a product type such as" in text, text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: the one reply structure, no
+    # explanations): the word is the "Couldn't find" line and the product types on offer
+    # are the lines; naming one still re-runs the ask.
+    assert text.startswith("Here's what you want: zzqx\n"), text
+    assert 'Couldn\'t find: "zzqx".' in text, text
     for label in ("tap", "wash basin", "water closet"):
         assert label in text.lower(), text
     assert "Did you mean the product types I know?" not in text, text

@@ -162,15 +162,13 @@ def test_every_leg_past_the_list_limit_states_the_count_and_asks(require, base):
     from app.services.chatbot.lanes.business.answer import SET_LIST_MAX, build_set_header
 
     assert SET_LIST_MAX == 50
-    header = build_set_header(1256, 0, "taps", require)
-    assert header.startswith(f"{base} (1,256). "), header
-    assert "too many to list in one message" in header, header
-    assert "How many should I show (up to 50)" in header, header
-    assert "brand" in header, header
-    # Reviewer S2 on PR #833: only the wired path is offered - a full re-ask, never a
-    # bare narrowing reply the carry does not read.
-    assert header.endswith("How many should I show (up to 50)? Or ask again naming a brand or size."), header
-    assert "narrow it to" not in header, header
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: "no cap", "always break it
+    # down"): the full count and the resolver's breakdown by the next attribute, one line
+    # each, never a paging question.
+    breakdown = {"key": "brand", "label": "Brand", "rows": [{"value": "Sorento", "count": 1000}, {"value": "Mocha", "count": 256}]}
+    header = build_set_header(1256, 0, "taps", require, breakdown=breakdown)
+    assert header == f"{base} (1,256).\n• Sorento taps: 1,000\n• Mocha taps: 256", header
+    assert "How many" not in header and "too many" not in header, header
     assert "Showing" not in header
 
 
@@ -245,10 +243,11 @@ def test_a_longer_set_states_the_count_asks_and_lists_nothing(
 
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
     # header is the product-code answer's own intro naming the described set and its count.
-    assert one_line_header(text).startswith("Certificates found for taps (7)."), text
-    assert "too many to list in one message" in text, text
-    assert "How many should I show (up to 5)" in text, text
-    assert _s4_codes_in(text) == set(), text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: never a paging question): the
+    # seven taps are one brand and nothing else splits them, so what fits is listed.
+    assert one_line_header(text) == "Certificates found for taps (7, showing 1 to 5).", text
+    assert "How many" not in text, text
+    assert len(_s4_codes_in(text)) == 5, text
     assert "Showing" not in text, text
 
 
@@ -270,15 +269,18 @@ def test_answering_how_many_lists_that_many_and_then_more_pages_nothing(
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): a
     # named count says which ones inside the intro's parenthetical, never "Here are the
     # first N.".
-    assert one_line_header(text).startswith("Certificates found for taps (7, showing 1 to 3)."), text
-    assert len(_s4_codes_in(text)) == 3, text
-    assert len(calls) == before + 1 and len(calls[-1]["args"]["product_ids"]) == 3, calls
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026: never a paging question): the
+    # first answer listed what fits (5 of 7, nothing splits them), so the count typed next
+    # continues from there: the last 2, and the count is bare again.
+    assert one_line_header(text) == "Certificates found for taps (7).", text
+    assert len(_s4_codes_in(text)) == 2, text
+    assert len(calls) == before + 1 and len(calls[-1]["args"]["product_ids"]) == 2, calls
     # W4 (owner hand test round 2): the set stays carried past what was listed, so the
     # customer's own "another N" continues it; a bare "more" still pages nothing.
     import json
 
     stored = json.dumps(_s4_session_vars(session_factory, contact_id))
-    assert '"shown": 3' in stored, stored
+    assert '"shown": 7' in stored, stored
 
     stub_parser(_bare_verdict(message_type="clarification", user_goal="more", continuation=True))
     text3 = _turn(engine_mod, session_factory, contact_id=contact_id, n=3, text="more")

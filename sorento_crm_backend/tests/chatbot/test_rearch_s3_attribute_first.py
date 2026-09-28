@@ -425,7 +425,9 @@ class TestUnknownAttributeClarify:
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
         text = (result.reply or {}).get("text", "")
-        assert "don't know" in text.lower() or "did you mean" in text.lower(), text
+        # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): the one reply structure;
+        # the word the catalogue could not read is its "Couldn't find" line.
+        assert 'couldn\'t find: "water tap"' in text.lower(), text
 
 
 class TestAnyXIncomingLeg:

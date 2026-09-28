@@ -2627,6 +2627,17 @@ def _run_stages(  # noqa: PLR0915
                     and spec_tier
                     and qualifying > business_answer.SET_LIST_MAX
                     and asked is None
+                    and bool((predicate or {}).get("breakdown"))
+                )
+                # Fix round 9 on PR #833: a long set nothing splits lists what fits, and
+                # is carried like a named count so "another N" continues it.
+                listed_to_the_limit = (
+                    predicate is not None
+                    and plan.fetch
+                    and spec_tier
+                    and qualifying > business_answer.SET_LIST_MAX
+                    and asked is None
+                    and not withheld
                 )
                 # W4 (owner hand test round 2): a set listed only in part (the customer
                 # named fewer than qualify) is carried too, so their own "another N"
@@ -2642,7 +2653,7 @@ def _run_stages(  # noqa: PLR0915
                 if paged:
                     # A page of a carried set: the runner hands back where it stopped.
                     state_out.focus.set_page = envelopes[0].get("set_carry") if envelopes else None
-                elif withheld or partly_listed:
+                elif withheld or partly_listed or listed_to_the_limit:
                     state_out.focus.set_page = turn_runtime.set_page_carry(
                         predicate,
                         plan.fetch[0],
@@ -2650,7 +2661,13 @@ def _run_stages(  # noqa: PLR0915
                         access_levels=(
                             envelopes[0].get("access_levels_used") if envelopes else None
                         ),
-                        shown=0 if withheld else min(asked, business_answer.SET_LIST_MAX),
+                        shown=(
+                            0
+                            if withheld
+                            else business_answer.SET_LIST_MAX
+                            if listed_to_the_limit
+                            else min(asked, business_answer.SET_LIST_MAX)
+                        ),
                     )
                 elif predicate is not None and plan.fetch and spec_tier and (
                     predicate.get("other_brands") or predicate.get("set_brands")

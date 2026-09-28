@@ -313,10 +313,12 @@ def test_w1_a_stock_row_is_a_vertical_block_led_by_the_product_code(chat, world)
     text = chat.say("which water closet has stock, p trap", _wc_ptrap())
 
     assert "|" not in text, text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every
+    # brand, never a silent default; the Mocha P trap water closet is listed too.
     blocks = row_blocks(text)
-    assert len(blocks) == 5, text
+    assert len(blocks) == 6, text
     codes = row_codes(text)
-    by_code = {p.product_code: p for p in world["srt_ptrap"]}
+    by_code = {p.product_code: p for p in world["srt_ptrap"] + world["mch_ptrap"]}
     assert set(codes) == set(by_code), text
     for block in blocks:
         assert block[1:] == ["*Total:* 10", f"*{world['warehouse'].warehouse_code}:* 10"], block
@@ -331,9 +333,10 @@ def test_w1_the_header_is_one_short_line(chat, world):
     naming the described set (brand, product type and trap all still named, inside the
     phrase) and its count, in ONE line."""
     text = chat.say("which water closet has stock, p trap", _wc_ptrap())
-    brand = _display(world["sorento"].brand_name)
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every
+    # brand, never a silent default.
     assert text.split("\n\n", 1)[0].splitlines() == [
-        f"Stock summary for {brand} P trap water closets (5).",
+        "Stock summary for P trap water closets (6).",
     ], text
     assert "*Brand:*" not in text and "*Product type:*" not in text and "*Trap:*" not in text, text
 
@@ -348,7 +351,9 @@ def test_w1_a_certificate_row_is_a_vertical_block_too(chat, world):
     # the normal attachment row, one field per line, led by its Product Code.
     from tests.chatbot.set_reply import full_row_codes
 
-    assert set(full_row_codes(text)) == {p.product_code for p in world["srt_basins"]}, text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every
+    # brand, never a silent default.
+    assert set(full_row_codes(text)) == _codes(world["srt_basins"] + world["mch_basins"]), text
     for block in [b for b in text.split("\n\n") if re.match(r"^\d+\. \*Product Code:\*", b)]:
         assert all(ln.startswith("*") or re.match(r"^\d+\. \*", ln) or "EXPIRED" in ln for ln in block.splitlines()), block
         assert "*Certificate Number:* " in block, block
@@ -384,28 +389,27 @@ def test_w2_a_count_after_a_listed_page_continues_the_same_set(chat, world, smal
     a named count says which ones inside the intro's parenthetical, never "Here are N to
     M.".
     """
-    brand = _display(world["sorento"].brand_name)
     ask = chat.say("which water closet has stock, p trap", _wc_ptrap())
-    assert f"Stock summary for {brand} P trap water closets (5). That is too many to list" in ask, ask
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every
+    # brand, never a silent default, and too many is the count and a breakdown
+    # by the next attribute, never a paging question. A count typed after it still lists.
+    assert ask.startswith("Stock summary for P trap water closets (6).\n• "), ask
+    assert "How many" not in ask, ask
 
     page1 = chat.say("2", _bare(top_n=2))
     page2 = chat.say("2", _bare(**parser_reads))
 
-    head = f"Stock summary for {brand} P trap water closets (5"
+    head = "Stock summary for P trap water closets (6"
     assert one_line_header(page2) == f"{head}, showing 3 to 4).", page2
     assert "Stock summary for the requested products" not in page2, page2
     assert [b[0].split(".")[0] for b in _blocks(page2)] == ["3", "4"], page2
     one, two = _listed(page1), _listed(page2)
-    every = sorted(_codes(world["srt_ptrap"]))
-    assert one + two == every[:4], (page1, page2)
-
-    page3 = chat.say("2", _bare(**parser_reads))
-    assert one_line_header(page3) == f"{head}).", page3
-    assert _listed(page3) == every[4:], page3
+    every = sorted(_codes(world["srt_ptrap"] + world["mch_ptrap"]))
+    assert sorted(one + two + _listed(chat.say("2", _bare(**parser_reads)))) == every, (page1, page2)
 
     before = len(chat.calls)
     done = chat.say("2", _bare(**parser_reads))
-    assert one_line_header(done) == f"{head}). That is all 5.", done
+    assert one_line_header(done) == f"{head}). That is all 6.", done
     assert _blocks(done) == [], done
     assert len(chat.calls) == before, chat.calls[before:]
 
@@ -424,8 +428,9 @@ def test_w2_the_owner_sequence_30_then_10_lists_31_to_40(chat, world, monkeypatc
     chat.say("which water closet has stock, p trap", _wc_ptrap())
     chat.say("3", _bare(top_n=3))
     page = chat.say("10", _bare(top_n=10))
-    assert one_line_header(page).endswith("with stock (5)."), page
-    assert len(_blocks(page)) == 2, page
+    # Amended to fix round 9 on PR #833: every brand (6), the leg said once.
+    assert one_line_header(page).endswith("P trap water closets (6)."), page
+    assert len(_blocks(page)) == 3, page
 
 
 # --------------------------------------------------------------------------- #
@@ -454,12 +459,17 @@ def test_w3_which_basin_has_cert_after_a_water_closet_set_is_a_new_certificate_s
 
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
     # header is the product-code answer's own intro naming the described set and its count.
-    brand = _display(world["sorento"].brand_name)
-    assert one_line_header(text) == f"Certificates found for {brand} wash basins (3).", text
-    assert _codes_in(text, world) == _codes(world["srt_basins"]), text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every
+    # brand, never a silent default.
+    assert one_line_header(text) == "Certificates found for wash basins (4).", text
+    # With the list limit of 3 the 4 basins are too many for one reply: the count and the
+    # brand breakdown, and nothing of the old water closet set.
+    sorento, mocha = _display(world["sorento"].brand_name), _display(world["mocha"].brand_name)
+    assert text.splitlines()[1:] == [f"• {sorento} wash basins: 3", f"• {mocha} wash basins: 1"], text
+    assert not _codes_in(text, world), text
     assert not text.startswith("Product:"), text
     calls = chat.calls[before:]
-    assert [c["name"] for c in calls] == ["crm_master_product_attachments_list"], calls
+    assert "crm_master_products_list" not in [c["name"] for c in calls], calls
 
 
 @pytest.mark.parametrize(
@@ -487,8 +497,14 @@ def test_w3_a_new_class_word_replaces_the_carried_set_whatever_the_parser_carrie
     text = chat.say("which basin has cert", _ask("cert", "basin", "which basin has cert", extra=old))
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
     # header is the product-code answer's own intro naming the described set and its count.
-    assert "wash basins with certificates (3)" in one_line_header(text), text
-    assert _codes_in(text, world) == _codes(world["srt_basins"]), text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every
+    # brand, never a silent default.
+    assert "Certificates found for wash basins (4)." == one_line_header(text), text
+    # With the list limit of 3 the 4 basins are too many for one reply: the count and the
+    # brand breakdown, and nothing of the old water closet set.
+    sorento, mocha = _display(world["sorento"].brand_name), _display(world["mocha"].brand_name)
+    assert text.splitlines()[1:] == [f"• {sorento} wash basins: 3", f"• {mocha} wash basins: 1"], text
+    assert not _codes_in(text, world), text
 
 
 def test_w3_a_new_attribute_word_on_the_same_class_starts_a_new_set(chat, world, small_list):
@@ -499,7 +515,8 @@ def test_w3_a_new_attribute_word_on_the_same_class_starts_a_new_set(chat, world,
     text = chat.say("which bathtub has incoming", _ask("incoming", "bathtub", "which bathtub has incoming"))
     # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
     # header is the product-code answer's own intro naming the described set and its count.
-    assert "bathtubs with incoming stock (2)" in one_line_header(text), text
+    # Amended to fix round 9 on PR #833: the leg is said once.
+    assert "Incoming stock found for bathtubs (2)." == one_line_header(text), text
     assert _codes_in(text, world) == _codes(world["srt_tubs"]), text
 
 
@@ -521,12 +538,13 @@ def test_w4_the_default_brand_reads_plainly_and_the_other_brands_close_the_reply
     """Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
     header is the product-code answer's own intro naming the described set and its count."""
     text = chat.say(f"which {class_word} has {kind}", _ask(kind, class_word, f"which {class_word} has {kind}"))
-    brand, other = _display(world["sorento"].brand_name), _display(world["mocha"].brand_name)
     base = "Stock summary for" if kind == "stock" else "Certificates found for"
-    noun = "stock" if kind == "stock" else "certificates"
-    assert one_line_header(text) == f"{base} {brand} wash basins with {noun} (3).", text
-    assert "(default)" not in text, text
-    assert text.splitlines()[-1] == f"{closing}: {other} 1. Name one to see them.", text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every
+    # brand, never a silent default, so no default brand is named and no
+    # "Other brands" line closes the reply; the Mocha basin is in the set.
+    assert one_line_header(text) == f"{base} wash basins (4).", text
+    assert "(default)" not in text and closing not in text, text
+    assert world["mch_basins"][0].product_code in text, text
 
 
 def test_w4_incoming_names_the_other_brands_with_incoming(chat, world):
@@ -543,14 +561,23 @@ def test_w4_incoming_names_the_other_brands_with_incoming(chat, world):
     _incoming_for(db, product_id=mocha_tub.id)
     db.commit()
     text = chat.say("which bathtub has incoming", _ask("incoming", "bathtub", "which bathtub has incoming"))
-    assert text.splitlines()[-1] == f"Other brands with incoming: {_display(world['mocha'].brand_name)} 1. Name one to see them.", text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every
+    # brand, never a silent default: the Mocha tub is in the set.
+    assert one_line_header(text) == "Incoming stock found for bathtubs (3).", text
+    assert mocha_tub.product_code in text and "Other brands" not in text, text
 
 
 def test_w4_a_withheld_set_still_closes_with_the_other_brands(chat, world, small_list):
     text = chat.say("which water closet has stock, p trap", _wc_ptrap())
-    assert "(default)" not in text, text
-    assert "How many should I show (up to 3)?" in one_line_header(text), text
-    assert text.splitlines()[-1] == f"Other brands with stock: {_display(world['mocha'].brand_name)} 1. Name one to see them.", text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every
+    # brand, never a silent default; a set too long for one reply is the
+    # count and a breakdown by the brand, one line each.
+    sorento, mocha = _display(world["sorento"].brand_name), _display(world["mocha"].brand_name)
+    assert text == (
+        "Stock summary for P trap water closets (6).\n"
+        f"• {sorento} water closets: 5\n"
+        f"• {mocha} water closets: 1"
+    ), text
 
 
 def test_w4_a_named_brand_answers_that_brand_only(chat, world):
@@ -583,26 +610,30 @@ def test_w5_every_listed_product_belongs_to_the_header_brand(chat, world, kind):
     off `Product.brand_id` through the brands table, so a GB-coded product of another
     brand is never listed under the default brand; one that IS that brand's is."""
     text = chat.say("which wash basin has x", _ask(kind, "wash basin", f"which wash basin has {kind}"))
-    brand = world["sorento"].brand_name
-    # Amended to the round 8 ruling on PR #833 (owner retest of round 7, 27 Sep 2026): the
-    # header is the product-code answer's own intro naming the described set.
-    assert f"{_display(brand)} wash basins with" in one_line_header(text), text
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): no brand named means every
+    # brand, never a silent default. Membership is still read off `Product.brand_id`:
+    # every listed product is one of the set's brands, each of them listed.
+    assert one_line_header(text).endswith(" wash basins (4)."), text
     # Round 7 on PR #833: a certificate set lists rows in the attachment structure.
     from tests.chatbot.set_reply import full_row_codes
 
     listed = _listed(text) or full_row_codes(text)
-    assert listed and {_brand_of(world["db"], c) for c in listed} == {brand}, (listed, text)
+    brands = {world["sorento"].brand_name, world["mocha"].brand_name}
+    assert listed and {_brand_of(world["db"], c) for c in listed} == brands, (listed, text)
     assert world["srt_basins"][2].product_code in listed, text
-    assert world["mch_basins"][0].product_code not in text, text
+    assert world["mch_basins"][0].product_code in listed, text
 
 
 def test_w5_a_page_of_the_default_brand_set_stays_in_that_brand(chat, world, small_list):
     """Owner turn 6 was a page ("10") of the default brand set."""
     chat.say("which water closet has stock, p trap", _wc_ptrap())
-    page = chat.say("5", _bare(top_n=5))
+    # Amended to fix round 9 on PR #833 (owner, 28 Sep 2026): there is no default brand
+    # any more; the brand named after the breakdown narrows the same set to that brand.
+    mocha = world["mocha"].brand_name
+    page = chat.say(_display(mocha).lower(), _bare(entities=[_entity(_display(mocha).lower(), "brand")]))
     listed = _listed(page)
-    assert listed and {_brand_of(world["db"], c) for c in listed} == {world["sorento"].brand_name}, page
-    assert world["mch_ptrap"][0].product_code not in page, page
+    assert listed and {_brand_of(world["db"], c) for c in listed} == {mocha}, page
+    assert one_line_header(page) == f"Stock summary for {_display(mocha)} P trap water closets (1).", page
 
 
 def test_w3_a_question_after_a_set_never_names_the_old_set_as_its_subject(chat, world, small_list):
