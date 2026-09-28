@@ -7,7 +7,7 @@ Only the row still carrying that seeded wording is updated: a description an adm
 rewrote on the page is theirs and stays. Data only, no schema change.
 
 Revision ID: scm_reorder_run_scope_desc
-Revises: merge_28sep_batch2
+Revises: merge_28sep_batch3
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from alembic import op
 from sqlalchemy import text
 
 revision = "scm_reorder_run_scope_desc"
-down_revision = "merge_28sep_batch2"
+down_revision = "merge_28sep_batch3"
 branch_labels = None
 depends_on = None
 
