@@ -61,7 +61,9 @@ beside it:
   range, brands, architect, main contractor), "Salesperson and lead" (salesperson, lead). In create
   mode Details opens by itself once Who and what is filled (the portal price tag form's
   `openSectionOnce`); in edit mode every section starts open because every field already has a
-  value to review.
+  value to review. (Phase 2: the coder moved filing reference, value and delivery into Who and
+  what to satisfy four tests that read them with Details folded; the captain kept this layout and
+  fixed the tests to open Details first instead.)
 - D2. One primary CTA per page: Register project (create) or Save changes (edit), at the foot of
   the form. The page header carries the title, the crumbs and Back only; no subtitle.
 - D3. Salesperson is a `SearchableSelect` of active users (`services/userSelectService`),

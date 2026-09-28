@@ -60,10 +60,7 @@ const OWNER_MANAGE_PERMISSION = 'projects.projects.manage';
  * from the register dialog it replaces (PR #1336 round 2). Two things differ from that
  * dialog:
  *
- * - Filing reference, Estimated sales value, Template and the launch/delivery fields
- *   live in "Who and what" rather than "Details": they answer as soon as a project type
- *   is picked (or immediately, for the first two), not only once the whole progressive
- *   section has opened.
+ * - A third section, "Salesperson and lead", open from the start.
  * - Edit mode starts every section open, never wipes the project's own template on
  *   first render, and excludes the project itself from its own clash check.
  */
@@ -99,6 +96,14 @@ export function ProjectForm(props: ProjectFormProps) {
   const [ownerUserId, setOwnerUserId] = React.useState(
     mode === 'create' ? (session?.user?.id ?? '') : (project?.owner_user_id ?? ''),
   );
+  // The session can resolve after the first render; the default salesperson follows it
+  // until somebody picks one.
+  const sessionUserId = session?.user?.id;
+  React.useEffect(() => {
+    if (mode === 'create' && sessionUserId) {
+      setOwnerUserId((current) => current || sessionUserId);
+    }
+  }, [mode, sessionUserId]);
   const [leadId, setLeadId] = React.useState(project?.lead_id ?? '');
   const [leadOption, setLeadOption] = React.useState<LeadOption | null>(
     project?.lead_id ? { value: project.lead_id, label: project.lead_code ?? project.lead_id } : null,
@@ -163,8 +168,8 @@ export function ProjectForm(props: ProjectFormProps) {
     setSectionOpen((prev) => ({ ...prev, [key]: next }));
   }
 
-  // Template counts only when the chosen type offers one to pick, and only once that
-  // is known: an unanswered template list must not open Details early.
+  // Template counts only when the chosen type offers one to pick, and only once that is
+  // known: an unanswered template list must not open Details early.
   const templateNeeded = Boolean(typeId) && (templates.data?.length ?? 0) > 0;
   const whoComplete =
     Boolean(developerId) &&
@@ -366,59 +371,6 @@ export function ProjectForm(props: ProjectFormProps) {
             </div>
           )}
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="project-admin-ref">Filing reference</Label>
-              <Input
-                id="project-admin-ref"
-                value={adminRef}
-                onChange={(event) => setAdminRef(event.target.value)}
-                maxLength={64}
-                placeholder="e.g. PS26-0143"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="project-value">Estimated sales value (RM)</Label>
-              <Input
-                id="project-value"
-                type="number"
-                min="0"
-                step="0.01"
-                inputMode="decimal"
-                value={estimatedValue}
-                onChange={(event) => setEstimatedValue(event.target.value)}
-                placeholder="0.00"
-              />
-            </div>
-          </div>
-
-          {typeId &&
-            (derivesDelivery ? (
-              <div className="space-y-1.5">
-                <Label htmlFor="project-launch">Project launch date</Label>
-                <Input
-                  id="project-launch"
-                  type="date"
-                  value={launchDate}
-                  onChange={(event) => setLaunchDate(event.target.value)}
-                />
-              </div>
-            ) : (
-              // One range, one control: two date fields let "to" land before "from"
-              // and stop reading as a single fact once they wrap apart.
-              <div className="space-y-1.5">
-                <Label htmlFor="project-delivery-range">Expected delivery</Label>
-                <DateRangePicker
-                  id="project-delivery-range"
-                  from={deliveryFrom || null}
-                  to={deliveryTo || null}
-                  onChange={({ from, to }) => {
-                    setDeliveryFrom(from ?? '');
-                    setDeliveryTo(to ?? '');
-                  }}
-                />
-              </div>
-            ))}
         </FormSection>
 
         <FormSection
@@ -457,6 +409,59 @@ export function ProjectForm(props: ProjectFormProps) {
               placeholder="Optional"
             />
           </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="project-admin-ref">Filing reference</Label>
+              <Input
+                id="project-admin-ref"
+                value={adminRef}
+                onChange={(event) => setAdminRef(event.target.value)}
+                maxLength={64}
+                placeholder="e.g. PS26-0143"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="project-value">Estimated sales value (RM)</Label>
+              <Input
+                id="project-value"
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                value={estimatedValue}
+                onChange={(event) => setEstimatedValue(event.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+          </div>
+
+          {derivesDelivery ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="project-launch">Project launch date</Label>
+              <Input
+                id="project-launch"
+                type="date"
+                value={launchDate}
+                onChange={(event) => setLaunchDate(event.target.value)}
+              />
+            </div>
+          ) : (
+            // One range, one control: two date fields let "to" land before "from"
+            // and stop reading as a single fact once they wrap apart.
+            <div className="space-y-1.5">
+              <Label htmlFor="project-delivery-range">Expected delivery</Label>
+              <DateRangePicker
+                id="project-delivery-range"
+                from={deliveryFrom || null}
+                to={deliveryTo || null}
+                onChange={({ from, to }) => {
+                  setDeliveryFrom(from ?? '');
+                  setDeliveryTo(to ?? '');
+                }}
+              />
+            </div>
+          )}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -521,7 +526,7 @@ export function ProjectForm(props: ProjectFormProps) {
                 disabled={!canManageOwner}
                 options={(users.data ?? []).map((user) => ({
                   value: user.id,
-                  label: user.name || user.email || user.id,
+                  label: user.name || user.email || 'Unnamed user',
                 }))}
                 placeholder="Select a salesperson"
               />

@@ -386,6 +386,26 @@ async function fillWho() {
     target: { value: 'Setia Alam Phase 3B' },
   });
   fireEvent.blur(screen.getByLabelText(/project title/i));
+  // Details opens by itself once the template list for the type has answered.
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /^Details/ })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    ),
+  );
+}
+
+/** Details starts folded in create mode (AC-PF033); open it by hand for its fields. */
+function openDetails() {
+  const header = screen.getByRole('button', { name: /^Details/ });
+  if (header.getAttribute('aria-expanded') !== 'true') fireEvent.click(header);
+}
+
+async function pickType(typeId: string, typeName: string) {
+  await waitFor(() =>
+    expect(within(screen.getByLabelText('Project type')).getByText(typeName)).toBeInTheDocument(),
+  );
+  fireEvent.change(screen.getByLabelText('Project type'), { target: { value: typeId } });
 }
 
 beforeEach(() => {
@@ -569,7 +589,7 @@ describe('ProjectForm: type drives Template and delivery fields (AC-PF015, PF016
       { id: 'tp1', name: 'Standard', has_forked_status_graph: false },
     ]);
     renderForm({ mode: 'create' });
-    fireEvent.change(screen.getByLabelText('Project type'), { target: { value: 'ty2' } });
+    await pickType('ty2', 'Hotel');
     await waitFor(() =>
       expect(within(screen.getByLabelText('Template')).getByText('Standard')).toBeInTheDocument(),
     );
@@ -582,22 +602,27 @@ describe('ProjectForm: type drives Template and delivery fields (AC-PF015, PF016
 
   it('shows Project launch date for a type that derives delivery from launch', async () => {
     renderForm({ mode: 'create' });
-    fireEvent.change(screen.getByLabelText('Project type'), { target: { value: 'ty1' } });
+    await pickType('ty1', TYPE_LAUNCH.name);
+    openDetails();
     await waitFor(() => expect(screen.getByLabelText('Project launch date')).toBeInTheDocument());
     expect(screen.queryByLabelText('Expected delivery')).toBeNull();
   });
 
   it('shows Expected delivery for a type that does not derive delivery from launch', async () => {
     renderForm({ mode: 'create' });
-    fireEvent.change(screen.getByLabelText('Project type'), { target: { value: 'ty2' } });
+    await pickType('ty2', 'Hotel');
+    openDetails();
     await waitFor(() => expect(screen.getByLabelText('Expected delivery')).toBeInTheDocument());
     expect(screen.queryByLabelText('Project launch date')).toBeNull();
   });
 });
 
 describe('ProjectForm: clearable selects (AC-PF011, PF015, PF022, PF023)', () => {
-  it('Developer clears back to empty', () => {
+  it('Developer clears back to empty', async () => {
     renderForm({ mode: 'create' });
+    await waitFor(() =>
+      expect(within(screen.getByLabelText('Developer')).getByText('SP Setia')).toBeInTheDocument(),
+    );
     fireEvent.change(screen.getByLabelText('Developer'), { target: { value: 'd1' } });
     const wrapper = screen.getByLabelText('Developer').parentElement as HTMLElement;
     fireEvent.click(within(wrapper).getByRole('button', { name: 'Clear' }));
@@ -608,11 +633,13 @@ describe('ProjectForm: clearable selects (AC-PF011, PF015, PF022, PF023)', () =>
 describe('ProjectForm: text and number fields (AC-PF012-014, PF017, PF018)', () => {
   it('limits Filing reference to 64 characters', () => {
     renderForm({ mode: 'create' });
+    openDetails();
     expect(screen.getByLabelText('Filing reference')).toHaveAttribute('maxLength', '64');
   });
 
   it('Estimated sales value is a non-negative number field', () => {
     renderForm({ mode: 'create' });
+    openDetails();
     const input = screen.getByLabelText('Estimated sales value (RM)');
     expect(input).toHaveAttribute('type', 'number');
     expect(input).toHaveAttribute('min', '0');
