@@ -1,0 +1,192 @@
+# Console cases for the Samantha case (issue #1262), slices 1 to 11.
+#
+# `documentation/plans/chatbot/PLAN-chatbot-samantha-slices-26sep.md` /
+# `chatbot-samantha-slices-26sep-acceptance-criteria.md`.
+#
+# NOT collected by pytest. Run against a LOCAL lane backend on the prod-copy DB, with the
+# parser prompt version this PR publishes (it lands unlabelled; pass its id):
+#
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-26-samantha.yaml \
+#       --base-url http://127.0.0.1:8000 \
+#       --prompt-version <new chatbot_semantic_parser version id>
+#
+# `--mock-parser` feeds each turn's own `parser:` block below as the verdict (no LLM call),
+# which grades the engine alone. The owner's run drops the flag and passes the new prompt
+# version, so the live parser is graded too (the T5 `expect.parser` lines).
+#
+# Export EXTERNAL_API_KEY from the backend .env before running. The MCP tool search needs
+# OPENAI_API_KEY (chatbot-verification.md).
+#
+# WORDING: the scout report quotes only fragments of T2 to T4 ("brand Sorento", "Dealer :",
+# Cheng Huat Sentul), so those texts are reconstructions. The photo turns are sent as the
+# text the CRM now hands the parser for a photo (caption and code on separate lines), since
+# the console runner posts text; T10's code (M210-GM) and T9's (M488-75-PVD-GM) are real.
+#
+# DATA FACTS (prod copy): brand Sorento is an active brand; Cheng Huat Sentul is one
+# customer; M210-GM and M488-75-PVD-GM are Mocha products. Contact 477071892 is Samantha
+# (profile tier office, per the F8 ruling assumed in the PR).
+#
+
+# The parser emission every mock block below starts from (`<<: *emission`), as the v3
+# schema declares it. Not read by the runner (it reads `contact` and `cases` only).
+x-emission: &emission
+  message_type: "business_query"
+  intent_hint: "check_order"
+  domain_hint: "order"
+  scope_intent: "specific"
+  is_affirmative: null
+  user_goal: "checking orders"
+  continuation: null
+  access_levels: []
+  broaden_axis: null
+  broaden_to: null
+  date_mode: null
+  date_filter_start: null
+  date_filter_end: null
+  match_mode: "and"
+  demand_qty: null
+  entities: []
+  entity_op: "replace_combine"
+  scope_exclusive: false
+  domain_in_message: true
+  requested_attributes: []
+  contains_flyer: false
+  reference_positions: []
+  reference_target: null
+  person_mention: null
+  is_active: null
+  order_status: null
+  group_by: null
+  top_n: null
+  sales_channel: null
+  correction: false
+  routing: {suggested_team: null, suggested_agent: null}
+  escalation: {is_escalation_confirmation: null, company_pick: null}
+  document: null
+  status: null
+  asks: []
+  topic_reset: false
+  anaphora: {backward_reference: false}
+
+x-outstanding-sorento-cheng-huat: &outstanding_sorento_cheng_huat
+  <<: *emission
+  status: "outstanding"
+  order_status: "outstanding"
+  entities:
+    - {raw: "Sorento", hint: "brand", canonical_code: null, current_message: true, confident: true}
+    - {raw: "Cheng Huat Sentul", hint: "customer", canonical_code: null, current_message: true, confident: true}
+
+contact: "477071892"
+
+cases:
+  - name: T2 to T4 - brand Sorento and a dealer, no customer pick, no kind pick (S7, S8, S9)
+    cold: true
+    turns:
+      - text: "outstanding brand Sorento dealer Cheng Huat Sentul"
+        parser: *outstanding_sorento_cheng_huat
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Sorento", "CHENG HUAT"]
+          reply_not_contains: ["Which customer do you mean?", "(transporter)", "(customer)", "escalate", "Customer: all"]
+
+  # Fix lane round 2, S2 (reviewer pass at 4719a829): T5 has the same shape as T7 (a
+  # product-list photo, no domain word) but arrives while the outstanding offer is still
+  # OPEN, so it must narrow the report. Slice 4 reads the parser's own domain_hint: a
+  # "inventory" or "incoming" hint here makes it a new ask and the report stops
+  # narrowing. Run live with the new prompt version BEFORE the label moves, and pin the
+  # domain_hint it emits here (null or "order" passes slice 4; anything else is a
+  # prompt defect to fix before promoting). Fix lane round 3, N9: graded as
+  # `{one_of: [null, "order"]}`, the harness's own form for "either value is correct".
+  - name: T5 - a product-list photo under the open outstanding offer narrows the report (S2, S4, S5)
+    cold: true
+    turns:
+      - text: "outstanding brand Sorento dealer Cheng Huat Sentul"
+        parser: *outstanding_sorento_cheng_huat
+        expect:
+          branch_kind: business_query
+          reply_contains: ["CHENG HUAT"]
+      - text: "SRTBF 11502 x3\nSRTBF 11503 x4"
+        parser:
+          <<: *emission
+          intent_hint: null
+          domain_hint: null
+          domain_in_message: false
+          entities:
+            - {raw: "SRTBF 11502", hint: "product", canonical_code: null, current_message: true, confident: true, quantity: 3}
+            - {raw: "SRTBF 11503", hint: "product", canonical_code: null, current_message: true, confident: true, quantity: 4}
+        expect:
+          branch_kind: business_query
+          parser:
+            domain_in_message: false
+            domain_hint: {one_of: [null, "order"]}
+          reply_contains: ["CHENG HUAT", "SRTBF 11502", "SRTBF 11503"]
+          reply_not_contains: ["Incoming", "incoming stock", "Error executing tool", "Customer: all"]
+
+  - name: T6 - got eta closes the outstanding offer and prints no zero header (S4, S6)
+    cold: true
+    turns:
+      - text: "outstanding for M210-GM"
+        parser:
+          <<: *emission
+          status: "outstanding"
+          order_status: "outstanding"
+          entities:
+            - {raw: "M210-GM", hint: "product", canonical_code: null, current_message: true, confident: true}
+        expect:
+          branch_kind: business_query
+          reply_contains: ["M210-GM"]
+      - text: "got eta"
+        parser:
+          <<: *emission
+          intent_hint: "check_incoming"
+          domain_hint: "incoming"
+          user_goal: "asking for the ETA"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["M210-GM"]
+          reply_not_contains: ["0 products have incoming stock", "Error executing tool"]
+      - text: "X4\nM488-75-PVD-GM"
+        parser:
+          <<: *emission
+          intent_hint: "check_incoming"
+          domain_hint: "incoming"
+          domain_in_message: false
+          entities:
+            - {raw: "M488-75-PVD-GM", hint: "product", canonical_code: null, current_message: true, confident: true, quantity: 4}
+        expect:
+          branch_kind: business_query
+          reply_contains: ["M488-75-PVD-GM"]
+          reply_not_contains: ["Error executing tool", "INVALID_UUID", "X4:", "Outstanding for which document?"]
+
+  - name: T9 - caption quantity is not part of the code (S5)
+    cold: true
+    turns:
+      - text: "X4\nM488-75-PVD-GM"
+        parser:
+          <<: *emission
+          intent_hint: "check_incoming"
+          domain_hint: "incoming"
+          domain_in_message: false
+          entities:
+            - {raw: "M488-75-PVD-GM", hint: "product", canonical_code: null, current_message: true, confident: true, quantity: 4}
+        expect:
+          branch_kind: business_query
+          reply_contains: ["M488-75-PVD-GM (x4)"]
+          reply_not_contains: ["I could not find X4", "Error executing tool"]
+
+  - name: T10 - one-letter code, one answer, no sweep, no staff escalation (S3, S5, S11)
+    cold: true
+    turns:
+      - text: "X5\nM210-GM"
+        parser:
+          <<: *emission
+          intent_hint: "check_incoming"
+          domain_hint: "incoming"
+          domain_in_message: false
+          entities:
+            - {raw: "M210-GM", hint: "product", canonical_code: null, current_message: true, confident: true, quantity: 5}
+        expect:
+          branch_kind: business_query
+          reply_contains: ["M210-GM (x5)"]
+          reply_not_contains: ["5,857", "Showing", "no stock records found for product", "escalate to warehouse team"]
