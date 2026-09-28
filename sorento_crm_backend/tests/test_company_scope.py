@@ -579,7 +579,8 @@ def test_every_company_id_table_is_registered():
     # PLAN-finance-billing-documents-27sep.md (S0, #1309) adds 2: `finance.billing_documents`
     # and `finance.billing_document_lines` are one company's own AutoCount billing documents,
     # pushed under that company's anchor; the read-back loads a document BY ID.
-    expected_owned = 148
+    # +1 (#1354 S2): `branches`, the AutoCount branch table.
+    expected_owned = 149
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

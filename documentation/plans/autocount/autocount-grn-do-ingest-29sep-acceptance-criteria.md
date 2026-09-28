@@ -36,7 +36,8 @@ payloads' field lists (issue #1354, orchestrator comment) with anonymised values
   typed values and lines for known refs and lists unknown and other-company refs in `not_found`.
 - **AC-AG014** `GET /external/contract` answers version `2.7` and lists `delivery_orders`,
   `goods_receive_notes`, `branches`.
-- **AC-AG015** The doors take the existing slugs: without `order_management.orders.edit` the DO
+- **AC-AG015** The DO and GRN doors take the existing slugs, `branches` its own
+  `order_management.branches.*`: without `order_management.orders.edit` the DO
   ingest is 403; `branches` has no read door (404).
 
 ## Column groups

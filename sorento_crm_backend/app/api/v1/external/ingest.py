@@ -122,7 +122,7 @@ INGEST_PERMISSIONS = {
     # and the customer master already use. Branches are the debtors' delivery branches.
     "delivery_orders": "order_management.orders.edit",
     "goods_receive_notes": "procurement.grn.edit",
-    "branches": "order_management.customers.edit",
+    "branches": "order_management.branches.edit",
 }
 READ_PERMISSIONS = {
     "product_categories": "master_data.product_categories.view",
@@ -140,6 +140,8 @@ READ_PERMISSIONS = {
     "billing_documents": "finance.billing_documents.view",
     "delivery_orders": "order_management.orders.view",
     "goods_receive_notes": "procurement.grn.view",
+    # Mapped so every map covers every entity; the route itself answers 404 (no read door).
+    "branches": "order_management.branches.view",
 }
 # Deleting through the ESB is its own act, so it takes its own slug on top of the
 # ingest guard the router already carries (group A4 mounts the route). Declared
@@ -163,6 +165,7 @@ DELETE_PERMISSIONS = {
     # 2.7: the DO / GRN "deletions" never delete; they cancel what the sweep says vanished.
     "delivery_orders": "order_management.orders.delete",
     "goods_receive_notes": "procurement.grn.delete",
+    "branches": "order_management.branches.delete",
 }
 
 # A batch cap the ESB can design against. Exceeding it errors rather than
@@ -801,6 +804,16 @@ def _cancel_vanished(entity: str, payload: dict, dry_run: bool, db: Session, cur
     return result.as_dict()
 
 
+def _no_branch_door(entity: str) -> None:
+    """Contract 2.7: `branches` is ingest only; its read and deletions doors do not exist."""
+    if entity in AUTOCOUNT_BRANCH_ENTITIES:
+        raise AppException(
+            status_code=404,
+            message="'branches' has no read or deletions door",
+            code="UNKNOWN_ENTITY",
+        )
+
+
 def _entity(entity: str) -> str:
     if entity not in SUPPORTED_ENTITIES:
         raise AppException(
@@ -996,6 +1009,7 @@ def delete_records(
     that is not left to the database to decide.
     """
     entity = _entity(entity)
+    _no_branch_door(entity)
 
     if entity in AUTOCOUNT_DOC_ENTITIES:
         return _cancel_vanished(entity, payload, dry_run, db, current_user)
@@ -1127,6 +1141,7 @@ def read_current_state(
     become a few hundred round trips.
     """
     entity = _entity(entity)
+    _no_branch_door(entity)
 
     source_refs = payload.get("source_refs")
     if not isinstance(source_refs, list):

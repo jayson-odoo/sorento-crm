@@ -83,6 +83,10 @@ class TestCoverage:
             INGEST_PERMISSIONS,
             READ_PERMISSIONS,
         )
+        from app.services.autocount_doc_ingest_service import (
+            AUTOCOUNT_BRANCH_ENTITIES,
+            AUTOCOUNT_DOC_ENTITIES,
+        )
         from app.services.document_ingest_service import DOCUMENT_ENTITIES
         from app.services.finance.billing_document_ingest_service import (
             BILLING_DOCUMENT_ENTITIES,
@@ -102,6 +106,9 @@ class TestCoverage:
             | set(SHIPPING_ORDER_ENTITIES)
             | set(STOCK_BALANCE_ENTITIES)
             | set(BILLING_DOCUMENT_ENTITIES)
+            # Contract 2.7 (#1354 S2): AutoCount DOs, GRNs and branches, same route.
+            | set(AUTOCOUNT_DOC_ENTITIES)
+            | set(AUTOCOUNT_BRANCH_ENTITIES)
         )
         assert set(INGEST_PERMISSIONS) == served
         assert set(READ_PERMISSIONS) == served

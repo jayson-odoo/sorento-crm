@@ -60,17 +60,17 @@ This section is copied verbatim into `PLAN-autocount-cross-repo-contract.md` sec
 
 ### 1.1 Doors
 
-| Call | Slug (all existing) | Body |
+| Call | Slug (existing, except the new `order_management.branches.*`) | Body |
 | --- | --- | --- |
 | `POST /api/v1/external/ingest/delivery_orders` (`?dry_run=true` optional) | `order_management.orders.edit` | `{"companyCode", "book", "records": [DO, ...]}` |
 | `POST /api/v1/external/ingest/goods_receive_notes` (`?dry_run=true`) | `procurement.grn.edit` | `{"companyCode", "book", "records": [GRN, ...]}` |
-| `POST /api/v1/external/ingest/branches` (`?dry_run=true`) | `order_management.customers.edit` | `{"companyCode", "book", "records": [Branch, ...]}` |
+| `POST /api/v1/external/ingest/branches` (`?dry_run=true`) | `order_management.branches.edit` (new) | `{"companyCode", "book", "records": [Branch, ...]}` |
 | `POST /api/v1/external/ingest/delivery_orders/deletions` (`?dry_run=true`) | `.edit` + `order_management.orders.delete` | `{"companyCode", "book", "doc_date_from", "doc_date_to", "doc_keys": [..]}` |
 | `POST /api/v1/external/ingest/goods_receive_notes/deletions` (`?dry_run=true`) | `.edit` + `procurement.grn.delete` | same |
 | `POST /api/v1/external/read/delivery_orders` | `order_management.orders.view` | `{"companyCode", "source_refs": ["db1:DO:55120", ...]}` |
 | `POST /api/v1/external/read/goods_receive_notes` | `procurement.grn.view` | `{"companyCode", "source_refs": ["db1:GRN:771", ...]}` |
 
-`branches` has no read and no deletions door (404 `unknown_entity`); trigger for adding them: a
+`branches` has no read and no deletions door (404 `UNKNOWN_ENTITY`; its `.view` / `.delete` slugs exist only so every permission map covers every entity); trigger for adding them: a
 branch deleted in AutoCount that must disappear from the CRM.
 
 `GET /api/v1/external/contract` answers `"version": "2.7"` and lists the three entities.
@@ -392,9 +392,12 @@ The CRM never deletes an AutoCount DO or GRN. A vanished DocKey is cancelled in 
 4. Adopting an Excel-imported GRN whose lines are linked to SPO allocations: **carry the link to
    the matching AutoCount line by (product, quantity), delete the rest, recompute the SPO receipt,
    warning `legacy_links_released`**; the alternative is to refuse adoption of a linked GRN.
-5. Permissions: the three doors use existing slugs. **Grant `order_management.orders.{view,edit,
-   delete}`, `procurement.grn.{view,edit,delete}` and `order_management.customers.edit` by hand to
-   the foundryx integration's act-as role, no migration grant** (a sweep over roles holding
+5. Permissions: the DO and GRN doors use existing slugs; `branches` gets its own
+   `order_management.branches.{view,add,edit,delete}` (registry, created by `sync_permissions` on
+   boot; the external permission guard requires a distinct slug per entity, so it cannot share
+   `order_management.customers.edit`). **Grant `order_management.orders.{view,edit,delete}`,
+   `procurement.grn.{view,edit,delete}` and `order_management.branches.edit` by hand to the
+   foundryx integration's act-as role, no migration grant** (a sweep over roles holding
    `scm.sales_orders.edit`, the billing precedent, would give human SCM roles DO and GRN delete).
 6. DO / GRN header totals: **`subtotal_amount = Total`, `tax_amount = Tax`, `total_amount =
    NetTotal` (falling back to `Total + Tax`)**; confirm against one live record's numbers.
@@ -412,7 +415,7 @@ The CRM never deletes an AutoCount DO or GRN. A vanished DocKey is cancelled in 
     there is one book (db1, ruling V9); when a second book is pushed, require `FromDocNo` or
     map the book to the DB transfer's `{database}` prefix.** The waiting-link fill already
     only retries lines that carry `FromDocNo`.
-12. (security review) `POST /ingest/branches` (slug `order_management.customers.edit`) also
+12. (security review) `POST /ingest/branches` (slug `order_management.branches.edit`) also
     refreshes `orders.branch_name`, a display column on AutoCount DOs. **Accept: it is the
     branch's own name, and the DO push itself sets the same column.**
 

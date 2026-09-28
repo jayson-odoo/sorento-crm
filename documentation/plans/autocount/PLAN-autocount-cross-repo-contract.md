@@ -583,17 +583,17 @@ section is the contract of record for them. References to 2.1 and 2.3 below are 
 
 ### 13.1 Doors
 
-| Call | Slug (all existing) | Body |
+| Call | Slug (existing, except the new `order_management.branches.*`) | Body |
 | --- | --- | --- |
 | `POST /api/v1/external/ingest/delivery_orders` (`?dry_run=true` optional) | `order_management.orders.edit` | `{"companyCode", "book", "records": [DO, ...]}` |
 | `POST /api/v1/external/ingest/goods_receive_notes` (`?dry_run=true`) | `procurement.grn.edit` | `{"companyCode", "book", "records": [GRN, ...]}` |
-| `POST /api/v1/external/ingest/branches` (`?dry_run=true`) | `order_management.customers.edit` | `{"companyCode", "book", "records": [Branch, ...]}` |
+| `POST /api/v1/external/ingest/branches` (`?dry_run=true`) | `order_management.branches.edit` (new) | `{"companyCode", "book", "records": [Branch, ...]}` |
 | `POST /api/v1/external/ingest/delivery_orders/deletions` (`?dry_run=true`) | `.edit` + `order_management.orders.delete` | `{"companyCode", "book", "doc_date_from", "doc_date_to", "doc_keys": [..]}` |
 | `POST /api/v1/external/ingest/goods_receive_notes/deletions` (`?dry_run=true`) | `.edit` + `procurement.grn.delete` | same |
 | `POST /api/v1/external/read/delivery_orders` | `order_management.orders.view` | `{"companyCode", "source_refs": ["db1:DO:55120", ...]}` |
 | `POST /api/v1/external/read/goods_receive_notes` | `procurement.grn.view` | `{"companyCode", "source_refs": ["db1:GRN:771", ...]}` |
 
-`branches` has no read and no deletions door (404 `unknown_entity`); trigger for adding them: a
+`branches` has no read and no deletions door (404 `UNKNOWN_ENTITY`; its `.view` / `.delete` slugs exist only so every permission map covers every entity); trigger for adding them: a
 branch deleted in AutoCount that must disappear from the CRM.
 
 `GET /api/v1/external/contract` answers `"version": "2.7"` and lists the three entities.

@@ -448,10 +448,13 @@ def test_slugs_and_branch_read_door(env):
 
     assert INGEST_PERMISSIONS["delivery_orders"] == "order_management.orders.edit"
     assert INGEST_PERMISSIONS["goods_receive_notes"] == "procurement.grn.edit"
-    assert INGEST_PERMISSIONS["branches"] == "order_management.customers.edit"
+    assert INGEST_PERMISSIONS["branches"] == "order_management.branches.edit"
     assert READ_PERMISSIONS["delivery_orders"] == "order_management.orders.view"
     assert DELETE_PERMISSIONS["goods_receive_notes"] == "procurement.grn.delete"
     res = env.client.post("/api/v1/external/read/branches",
+                          json={"companyCode": env.company_code, "source_refs": []})
+    assert res.status_code == 404
+    res = env.client.post("/api/v1/external/ingest/branches/deletions",
                           json={"companyCode": env.company_code, "source_refs": []})
     assert res.status_code == 404
 
