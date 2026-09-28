@@ -51,6 +51,7 @@ BUSINESS_TABLE = "ideation_status_events"
 _FEED_PATH = "/ideation/intake/status-events"
 _PAGE_LIMIT = 100
 _TIMEOUT_SECONDS = 15
+_REF_MAX = 255  # integration_log.external_reference is String(255)
 _KINDS = ("status_changed", "merged", "unmerged")
 
 # Log row outcomes. Never "pending"/"processing": the integration-log retry sweeper
@@ -112,12 +113,17 @@ def set_cursor(db: Session, base_url: str, seq: int) -> None:
 
 
 def _seq(event: Any) -> int | None:
+    """An int ``seq``, or a string of digits; anything else (floats, bools) is unusable."""
     if not isinstance(event, dict):
         return None
-    try:
-        return int(event.get("seq"))
-    except (TypeError, ValueError):
+    raw = event.get("seq")
+    if isinstance(raw, bool):
         return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str) and raw.strip().isdigit():
+        return int(raw.strip())
+    return None
 
 
 def _event_uuid(raw: Any) -> str:
@@ -161,7 +167,8 @@ def build_context_vars(event: dict[str, Any]) -> dict[str, Any]:
     if kind == "merged":
         status = f"combined with {_idea_ref(event.get('merged_into'))}"
     elif kind == "unmerged":
-        status = f"handled separately again from {_idea_ref(event.get('separated_from'))}, now {status}"
+        separated = f"handled separately again from {_idea_ref(event.get('separated_from'))}"
+        status = f"{separated}, now {status}" if status else separated
     idea = _idea_label(event)
     track_url = str(event.get("track_url") or "").strip()
     message = f"Update on your idea {idea}: it is now {status}."
@@ -184,9 +191,11 @@ def _find_contact(db: Session, phone: str) -> RespondContact | None:
     digits = normalize_phone(phone)
     if not digits:
         return None
+    # Two rows can differ only in formatting; the oldest is the deterministic pick.
     return (
         db.query(RespondContact)
         .filter(func.regexp_replace(RespondContact.phone_number, r"\D", "", "g") == digits)
+        .order_by(RespondContact.created_at, RespondContact.id)
         .first()
     )
 
@@ -293,7 +302,7 @@ def _commit_handled(db: Session, base_url: str, event: dict[str, Any], row: dict
             integration_channel="respond_io",
             business_table=BUSINESS_TABLE,
             business_id=_event_uuid(event.get("event_id")),
-            external_reference=(_idea_label(event) or None),
+            external_reference=(_idea_label(event)[:_REF_MAX] or None),
             direction="outbound",
             endpoint=USE_CASE,
             http_method="POST",
@@ -302,7 +311,31 @@ def _commit_handled(db: Session, base_url: str, event: dict[str, Any], row: dict
             status_code=200 if row["status"] == _SUCCESS else None,
             response_payload=(json.dumps(response, default=str) if response is not None else None),
             error_code=row.get("error_code"),
-            error_message=row.get("error_message"),
+            error_message=(row.get("error_message") or None) and str(row["error_message"])[:2000],
+        )
+    )
+    set_cursor(db, base_url, _seq(event))
+    db.commit()
+
+
+def _commit_sent_fallback(db: Session, base_url: str, event: dict[str, Any], row: dict[str, Any]) -> None:
+    """A template already went out but its full row would not commit. Record a
+    minimal, capped row plus the cursor move, so the next tick never sends it again
+    (reviewer round 1: an unrecordable success was re-sent every tick)."""
+    db.add(
+        IntegrationLog(
+            integration_channel="respond_io",
+            business_table=BUSINESS_TABLE,
+            business_id=_event_uuid(event.get("event_id")),
+            direction="outbound",
+            endpoint=USE_CASE,
+            http_method="POST",
+            request_payload=json.dumps(
+                {"event_id": str(event.get("event_id"))[:100], "seq": _seq(event), "use_case": USE_CASE}
+            ),
+            status=_SUCCESS,
+            error_code="LOG_DEGRADED",
+            error_message="sent; the full log row could not be written, see the application log",
         )
     )
     set_cursor(db, base_url, _seq(event))
@@ -321,13 +354,12 @@ def poll_ideation_status_events(
 ) -> dict[str, Any]:
     """One page of the feed, handled in ascending ``seq``. Never raises."""
     summary: dict[str, Any] = {"sent": 0, "skipped": 0, "failed": 0, "seen": 0, "stopped": False}
-    config = _resolve_ideation_config(db)
-    if not (config.base_url and config.api_key):
-        return summary
-    base_url = config.base_url
     fetch = fetch or fetch_status_events
-
     try:
+        config = _resolve_ideation_config(db)
+        if not (config.base_url and config.api_key):
+            return summary
+        base_url = config.base_url
         after = get_cursor(db, base_url)
         page = fetch(base_url, config.api_key, after=after, limit=_PAGE_LIMIT)
         template_name = _mapped_template_name(db)
@@ -347,6 +379,7 @@ def poll_ideation_status_events(
     events.sort(key=_seq)
 
     for event in events:
+        row = None
         try:
             if _already_seen(db, _event_uuid(event.get("event_id"))):
                 set_cursor(db, base_url, _seq(event))
@@ -359,11 +392,24 @@ def poll_ideation_status_events(
         except Exception:  # noqa: BLE001 - cannot record it: stop, cursor stays put
             db.rollback()
             logger.exception(
-                "ideation status update: could not record event %s (seq %s); stopping this tick",
+                "ideation status update: could not record event %s (seq %s)",
                 event.get("event_id"),
                 _seq(event),
             )
-            summary["stopped"] = True
-            break
+            recorded = False
+            if row is not None and row.get("status") == _SUCCESS:
+                try:
+                    _commit_sent_fallback(db, base_url, event, row)
+                    recorded = True
+                except Exception:  # noqa: BLE001
+                    db.rollback()
+                    logger.exception(
+                        "ideation status update: event %s was SENT but could not be recorded; "
+                        "the next tick may send it again",
+                        event.get("event_id"),
+                    )
+            if not recorded:
+                summary["stopped"] = True
+                break
         summary[{"success": "sent", "skipped": "skipped", "failed": "failed"}[row["status"]]] += 1
     return summary

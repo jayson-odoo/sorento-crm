@@ -35,13 +35,36 @@ def _has_table() -> bool:
     return sa.inspect(op.get_bind()).has_table(_TABLE)
 
 
-def _has_index() -> bool:
-    return any(
-        ix["name"] == _INDEX for ix in sa.inspect(op.get_bind()).get_indexes("integration_log")
+def _index_valid(bind):
+    """None when the index is absent, else whether Postgres marks it valid."""
+    return bind.execute(
+        sa.text(
+            "SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
+            "WHERE c.relname = :n AND c.relnamespace = current_schema()::regnamespace"
+        ),
+        {"n": _INDEX},
+    ).scalar()
+
+
+def _ensure_index(bind, concurrently: bool) -> None:
+    """Build the partial unique index. CONCURRENTLY in production so the build never
+    holds a SHARE lock over every integration_log write; an interrupted concurrent
+    build leaves an INVALID index, which is dropped and rebuilt (aud_0001's pattern)."""
+    c = "CONCURRENTLY" if concurrently else ""
+    drop = f"DROP INDEX {c} IF EXISTS {_INDEX}"
+    create = (
+        f"CREATE UNIQUE INDEX {c} IF NOT EXISTS {_INDEX} ON integration_log (business_id) "
+        "WHERE business_table = 'ideation_status_events'"
     )
+    if _index_valid(bind) is False:
+        bind.execute(sa.text(drop))
+    bind.execute(sa.text(create))
+    if _index_valid(bind) is False:
+        bind.execute(sa.text(drop))
+        bind.execute(sa.text(create))
 
 
-def upgrade() -> None:
+def _upgrade(concurrently: bool) -> None:
     if not _has_table():
         op.create_table(
             _TABLE,
@@ -49,18 +72,18 @@ def upgrade() -> None:
             sa.Column("after_seq", sa.BigInteger(), nullable=False, server_default="0"),
             sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
         )
-    if not _has_index():
-        op.create_index(
-            _INDEX,
-            "integration_log",
-            ["business_id"],
-            unique=True,
-            postgresql_where=sa.text("business_table = 'ideation_status_events'"),
-        )
+    if concurrently:
+        with op.get_context().autocommit_block():
+            _ensure_index(op.get_bind(), True)
+    else:
+        _ensure_index(op.get_bind(), False)
+
+
+def upgrade() -> None:
+    _upgrade(concurrently=True)
 
 
 def downgrade() -> None:
-    if _has_index():
-        op.drop_index(_INDEX, table_name="integration_log")
+    op.execute(f"DROP INDEX IF EXISTS {_INDEX}")
     if _has_table():
         op.drop_table(_TABLE)

@@ -32,10 +32,16 @@ def _load():
 
 
 def _run(db, direction: str = "upgrade"):
+    """``upgrade()`` builds the index CONCURRENTLY in an autocommit block, which would
+    commit this test's outer transaction; ``_upgrade(concurrently=False)`` is the same
+    DDL inside it (aud_0001's test pattern)."""
     module = _load()
     ctx = MigrationContext.configure(db.connection())
     with Operations.context(ctx):
-        getattr(module, direction)()
+        if direction == "upgrade":
+            module._upgrade(concurrently=False)
+        else:
+            module.downgrade()
 
 
 @pytest.fixture
@@ -115,6 +121,12 @@ def test_upgrade_is_rerunnable(db):
     _run(db)
     _run(db)
     assert _table_exists(db) and _index_exists(db)
+
+
+def test_upgrade_is_the_concurrent_build():
+    source = MIGRATION.read_text()
+    assert "_upgrade(concurrently=True)" in source
+    assert "autocommit_block()" in source
 
 
 def test_downgrade_drops_both(db):

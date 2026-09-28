@@ -609,7 +609,7 @@ def _ideation_status_events_tick():
     try:
         from app.services import ideation_status_update_service
 
-        with scheduler_session() as db:
+        with scheduler_session("ideation_status_events_poll") as db:
             ideation_status_update_service.poll_ideation_status_events(db)
     except Exception as e:
         logger.error("Ideation status events tick failed: %s", e, exc_info=True)

@@ -69,7 +69,9 @@ def db(monkeypatch) -> Session:
     FakeRespondClient.sent = []
     FakeRespondClient.fail_with = None
     monkeypatch.setattr(integration_service, "RespondClient", FakeRespondClient)
-    # Window OPEN on purpose: the send must still be the template (AC-IS050).
+    # The template path never reads the window. It is held OPEN anyway so that a drift
+    # to send_text_or_template would take the free-text branch and hit the
+    # send_message trap above (AC-IS050).
     monkeypatch.setattr(
         messaging,
         "get_window_state",
@@ -599,6 +601,60 @@ def test_ac_is013_failed_log_write_keeps_the_cursor_and_does_not_raise(db, monke
     assert [r.external_reference for r in _rows(db)] == ["IDEA-0070"]
 
 
+def test_ac_is013_a_sent_event_that_cannot_be_fully_logged_is_never_resent(db, monkeypatch):
+    """Reviewer round 1 blocker: a success whose full row fails to commit must still
+    be recorded (minimal row + cursor), or every tick re-sends it."""
+    _map_template(db)
+    c = _contact(db)
+    ev = _event(74, phone=c.phone_number)
+    real_commit = svc._commit_handled
+
+    def always_fails(db_, base_url, event, row):
+        raise RuntimeError("row rejected")
+
+    monkeypatch.setattr(svc, "_commit_handled", always_fails)
+    first = svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+    monkeypatch.setattr(svc, "_commit_handled", real_commit)
+    svc.set_cursor(db, BASE_URL, 0)  # even a rewound cursor must not re-send it
+    db.commit()
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+
+    assert len(FakeRespondClient.sent) == 1
+    assert first["stopped"] is False
+    (row,) = _rows(db, ev["event_id"])
+    assert (row.status, row.error_code) == ("success", "LOG_DEGRADED")
+
+
+def test_ac_is023_an_overlong_title_is_logged_and_sent_once(db):
+    """The title fallback can exceed external_reference's 255 chars."""
+    _map_template(db)
+    c = _contact(db)
+    ev = _event(75, phone=c.phone_number, idea_number=None, idea_title="T" * 300)
+
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+    svc.set_cursor(db, BASE_URL, 0)
+    db.commit()
+    svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
+
+    assert len(FakeRespondClient.sent) == 1
+    (row,) = _rows(db, ev["event_id"])
+    assert row.status == "success"
+    assert len(row.external_reference) == 255
+
+
+def test_ac_is022_unmerged_with_no_status_label_reads_cleanly(db):
+    ev = _event(76, phone=None, kind="unmerged", status_label="",
+                separated_from={"idea_number": "IDEA-0012", "title": "x"})
+    assert svc.build_context_vars(ev)["status_label"] == "handled separately again from IDEA-0012"
+
+
+def test_ac_is011_seq_must_be_an_int(db):
+    assert svc._seq({"seq": 5}) == 5
+    assert svc._seq({"seq": "6"}) == 6
+    assert svc._seq({"seq": 5.7}) is None
+    assert svc._seq({"seq": True}) is None
+
+
 def test_ac_is014_feed_outage_keeps_the_cursor(db):
     svc.set_cursor(db, BASE_URL, 80)
     db.commit()
@@ -623,6 +679,14 @@ def test_ac_is014_http_error_becomes_feed_error(monkeypatch):
     )
     with pytest.raises(svc.IdeationFeedError):
         svc.fetch_status_events(BASE_URL, API_KEY, after=0, limit=100)
+
+
+def test_ac_is015_config_error_does_not_raise(db, monkeypatch):
+    def boom(_db):
+        raise RuntimeError("cannot decrypt")
+
+    monkeypatch.setattr(svc, "_resolve_ideation_config", boom)
+    assert svc.poll_ideation_status_events(db, fetch=FakeFeed([]))["sent"] == 0
 
 
 def test_ac_is015_not_configured_does_nothing(db, monkeypatch):
