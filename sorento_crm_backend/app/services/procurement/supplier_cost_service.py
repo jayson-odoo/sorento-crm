@@ -285,10 +285,15 @@ def _sources_for(db: Optional[Session], rows: Iterable) -> dict:
     line_ids = {str(r.source_change_line_id) for r in rows if r.source_change_line_id}
     if db is None or not line_ids:
         return {}
+    # `sheet` + `row_no`: which row of the file the cost came from (#1288 round 6, R6 - a
+    # duplicate code's other rows are not applied, so the cost list says which one was).
     return {
-        str(line_id): {"change_set_id": str(set_id), "code": code}
-        for line_id, set_id, code in (
-            db.query(CostPriceChangeLine.id, CostPriceChangeSet.id, CostPriceChangeSet.code)
+        str(line_id): {"change_set_id": str(set_id), "code": code, "sheet": sheet, "row_no": row_no}
+        for line_id, set_id, code, sheet, row_no in (
+            db.query(
+                CostPriceChangeLine.id, CostPriceChangeSet.id, CostPriceChangeSet.code,
+                CostPriceChangeLine.sheet, CostPriceChangeLine.row_no,
+            )
             .join(CostPriceChangeSet, CostPriceChangeSet.id == CostPriceChangeLine.change_set_id)
             .filter(CostPriceChangeLine.id.in_(line_ids))
             .all()

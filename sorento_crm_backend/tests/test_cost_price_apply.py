@@ -169,7 +169,11 @@ def test_new_link_lead_time_is_the_suppliers_most_common(cost_price_env):
     assert new_link.standard_lead_time_days == 30
 
 
-def test_new_link_without_default_needs_lead_time(cost_price_env):
+def test_new_link_without_default_applies_with_no_lead_time(cost_price_env):
+    """AC-S2-05 as amended (owner, 28 Sep 2026, round 6 R3): "don't need Lead time (days)".
+    With no link to take a lead time from, Apply goes through and the new link has none."""
+    from app.models.procurement import ProductSupplier
+
     e = cost_price_env
     user = e.user(UPLOAD_PERM, VIEW_PERM)
     e.as_user(user)
@@ -184,16 +188,10 @@ def test_new_link_without_default_needs_lead_time(cost_price_env):
     assert upload.status_code == 201, upload.text
     set_id = upload.json()["id"]
 
-    blocked = e.apply(set_id)
-    assert blocked.status_code == 422, blocked.text
-    assert blocked.json().get("detail", {}).get("code") == "lead_time_required"
-
-    line_id = e.lines(set_id).json()["data"][0]["id"]
-    patched = e.patch_line(set_id, line_id, {"new_link_lead_time_days": 21})
-    assert patched.status_code == 200, patched.text
-
     r = e.apply(set_id)
     assert r.status_code == 200, r.text
+    new_link = e.db.query(ProductSupplier).filter_by(product_id=new_product.id).one()
+    assert new_link.standard_lead_time_days is None
 
 
 # --------------------------------------------------------------------------------- AC-S2-06

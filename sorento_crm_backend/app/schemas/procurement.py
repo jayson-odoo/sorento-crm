@@ -200,6 +200,8 @@ class ProductSupplierCostUpdate(BaseModel):
 class ProductSupplierResponse(ProductSupplierBase):
     id: str
     created_at: datetime
+    # A link the cost upload created may have no lead time (#1288 round 6, R3).
+    standard_lead_time_days: Optional[int] = None
     # Read off `scm.supplier_product_code_alias` (product + supplier, non-dismissed), not a
     # column on this table (S4, AC-D2): the alias is the single writer, so a manual match and
     # this field can never drift apart. Declared on the RESPONSE only - a create or update

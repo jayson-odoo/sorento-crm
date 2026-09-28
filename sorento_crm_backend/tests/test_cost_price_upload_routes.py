@@ -260,7 +260,7 @@ def test_unlinked_product_is_new_link(cost_price_env):
 # --------------------------------------------------------------------------------- AC-S1-10
 
 
-def test_two_lines_binding_one_product_are_both_duplicate(cost_price_env):
+def test_two_lines_binding_one_product_collapse_into_one(cost_price_env):
     from app.models.scm import SupplierProductCodeAlias
 
     e = cost_price_env
@@ -282,13 +282,17 @@ def test_two_lines_binding_one_product_are_both_duplicate(cost_price_env):
     assert r.status_code == 201, r.text
     set_id = r.json()["id"]
 
+    # AC-S1-10 as amended (owner, 28 Sep 2026, round 6 R6): the two rows collapse into one
+    # line carrying the first row's cost, the other row rides on it, Apply is not blocked.
     lines = e.lines(set_id).json()["data"]
-    assert len(lines) == 2
-    for line in lines:
-        assert "duplicate_code" in line["flags"], line
+    assert len(lines) == 1, lines
+    (line,) = lines
+    assert "duplicate_code" in line["flags"], line
+    assert line["supplier_code"] == "ZZCPC-DUP-001"
+    assert [d["supplier_code"] for d in line["duplicate_rows"]] == ["DUP-ALIAS-CODE"]
 
-    blocked = e.apply(set_id)
-    assert blocked.status_code == 422, blocked.text
+    r = e.apply(set_id)
+    assert r.status_code == 200, r.text
 
 
 # --------------------------------------------------------------------------------- AC-S1-11
@@ -332,9 +336,8 @@ def test_manual_map_is_stored_and_aliases_written_only_on_apply(cost_price_env_l
     exact_product = e.product(code="ZZCPC-MANUAL-EXACT")
     manual_target = e.product(code="ZZCPC-MANUAL-TARGET")
     # Every line below binds a product with no existing link to this supplier (a
-    # `new_link` line, AC-S1-09), so without this the supplier has zero links and
-    # AC-S2-05 blocks Apply on `lead_time_required` - not what this test is pinning.
-    # One existing link gives the supplier a lead time to default new links to.
+    # `new_link` line, AC-S1-09). One existing link gives the supplier a lead time to
+    # default new links to (AC-S2-05); Apply no longer blocks without one (round 6, R3).
     e.link(e.product(code="ZZCPC-MANUAL-EXISTING"), supplier, unit_cost=50, currency="CNY", lead_time_days=30)
 
     data = simple_price_list_workbook(

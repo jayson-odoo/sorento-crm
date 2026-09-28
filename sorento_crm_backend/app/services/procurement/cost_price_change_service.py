@@ -153,7 +153,7 @@ def _resolve_currency(db, parsed, *, requested: Optional[str], supplier_id: Opti
     if parsed.header_currency:
         if requested and requested != parsed.header_currency:
             raise AppException(
-                422, f"The price column says {parsed.header_currency}; you picked {requested}.",
+                422, f"The cost column says {parsed.header_currency}; you picked {requested}.",
                 detail={"code": "currency_conflict"}, code="currency_conflict",
             )
         return parsed.header_currency, "header"
@@ -168,7 +168,7 @@ def _resolve_currency(db, parsed, *, requested: Optional[str], supplier_id: Opti
 
 def probe(db: Session, data: bytes, filename: str, *, company_scope=None) -> dict:
     if company_scope is not None and len(company_scope) != 1:
-        raise AppException(422, "Pick one company before uploading a price list.", detail={"code": "pick_one_company"}, code="pick_one_company")
+        raise AppException(422, "Pick one company before uploading a cost list.", detail={"code": "pick_one_company"}, code="pick_one_company")
     parsed = read_supplier_price_list(data, filename)
     suggested = _suggest_supplier(db, parsed.letterhead)
     code, source = _resolve_currency(db, parsed, requested=None, supplier_id=(str(suggested.id) if suggested else None))
@@ -250,7 +250,6 @@ def _build_lines(db: Session, parsed, *, supplier_id: str, set_currency: str, ha
             links_by_product[str(link.product_id)] = link
 
     lines: list[dict] = []
-    product_line_idx: dict[str, list[int]] = {}
     for sheet_name, row in all_rows:
         match = matches.get(row.supplier_code) if row.supplier_code else None
         product_id = match["product_id"] if match else None
@@ -287,15 +286,76 @@ def _build_lines(db: Session, parsed, *, supplier_id: str, set_currency: str, ha
             "line_state": line_state,
         }
         lines.append(line)
-        if product_id:
-            product_line_idx.setdefault(str(product_id), []).append(len(lines) - 1)
 
-    for product_id, idxs in product_line_idx.items():
-        if len(idxs) > 1:
-            for i in idxs:
-                lines[i]["flags"].add("duplicate_code")
+    for group in _duplicate_groups(
+        lines, code=lambda ln: ln["supplier_code"], product=lambda ln: ln["product_id"]
+    ):
+        used = choose_duplicate_row(group)
+        for ln in group:
+            ln["flags"].add("duplicate_code")
+            if ln is not used:
+                ln["flags"].add(DUPLICATE_ROW_FLAG)
+                ln["skipped"] = True
+                ln["skip_reason"] = DUPLICATE_SKIP_REASON
 
     return lines
+
+
+# ------------------------------------------------------------------ duplicate codes (round 6)
+
+# A row that lost to another row of the same code: stored skipped, shown inline on the line
+# that was used (owner ruling of 28 Sep 2026, R6 of the round 6 work list on PR #1305).
+DUPLICATE_ROW_FLAG = "duplicate_row"
+DUPLICATE_SKIP_REASON = "Duplicate code"
+
+
+def choose_duplicate_row(rows: list):
+    """Which of a duplicate code's rows (in file order) supplies the cost: the FIRST row.
+
+    The one place this rule lives. The owner may later want the lower cost, the last row
+    or a per-line choice; that is a change here and nowhere else."""
+    return rows[0]
+
+
+def _duplicate_groups(items: list, *, code, product) -> list[list]:
+    """Groups (each in the order of `items`, which is file order) of 2+ rows that land on
+    the same supplier code or the same product - the CRM keeps one cost per product per
+    set, so two codes bound to one product collapse the same way (AC-S1-10)."""
+    parent = list(range(len(items)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    first_by_key: dict[tuple, int] = {}
+    for i, item in enumerate(items):
+        keys = []
+        c = code(item)
+        if c:
+            keys.append(("code", c.upper()))
+        p = product(item)
+        if p:
+            keys.append(("product", str(p)))
+        for key in keys:
+            if key in first_by_key:
+                a, b = find(first_by_key[key]), find(i)
+                if a != b:
+                    parent[max(a, b)] = min(a, b)
+            else:
+                first_by_key[key] = i
+
+    groups: dict[int, list] = {}
+    for i, item in enumerate(items):
+        groups.setdefault(find(i), []).append(item)
+    return [g for g in groups.values() if len(g) > 1]
+
+
+def _file_order(cs, lines: list) -> list:
+    """`lines` sorted the way they stand in the uploaded file: sheet order, then row."""
+    sheet_index = {s.get("name"): i for i, s in enumerate((cs.source_meta or {}).get("sheets", []))}
+    return sorted(lines, key=lambda ln: (sheet_index.get(ln.sheet, len(sheet_index)), ln.sheet, ln.row_no))
 
 
 def _create_change_set_code(db: Session, company_id: Optional[str]) -> str:
@@ -360,7 +420,7 @@ def upload(
     from app.models.procurement import Supplier
 
     if not company_scope or len(company_scope) != 1:
-        raise AppException(422, "Pick one company before uploading a price list.", detail={"code": "pick_one_company"}, code="pick_one_company")
+        raise AppException(422, "Pick one company before uploading a cost list.", detail={"code": "pick_one_company"}, code="pick_one_company")
     company_id = next(iter(company_scope))
 
     supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
@@ -377,7 +437,7 @@ def upload(
     )
     if open_set is not None:
         raise AppException(
-            409, "This supplier already has an open price change.",
+            409, "This supplier already has an open cost change.",
             detail={"code": "open_set_exists", "open_set": {"id": _u(open_set.id), "code": open_set.code}},
             code="open_set_exists",
         )
@@ -385,7 +445,7 @@ def upload(
     parsed = read_supplier_price_list(data, filename)
     resolved_currency, _source = _resolve_currency(db, parsed, requested=currency, supplier_id=supplier_id)
     if not resolved_currency:
-        raise AppException(422, "Enter the currency this price list is in.", detail={"code": "currency_required"}, code="currency_required")
+        raise AppException(422, "Enter the currency this cost list is in.", detail={"code": "currency_required"}, code="currency_required")
 
     try:
         start = date.fromisoformat(start_date) if start_date else None
@@ -412,7 +472,7 @@ def upload(
         # above hits `uq_cost_price_change_sets_open_per_supplier` here.
         db.rollback()
         raise AppException(
-            409, "This supplier already has an open price change.",
+            409, "This supplier already has an open cost change.",
             detail={"code": "open_set_exists"}, code="open_set_exists",
         )
 
@@ -428,6 +488,7 @@ def upload(
             product_id=line["product_id"],
             current_unit_cost=line["current_unit_cost"], current_currency=line["current_currency"],
             new_unit_cost=line["new_unit_cost"], line_state=line["line_state"],
+            skipped=line.get("skipped", False), skip_reason=line.get("skip_reason"),
         ))
 
     cs.source_file_bytes = data
@@ -459,7 +520,7 @@ def _get_set_or_404(db: Session, set_id: str, *, for_update: bool = False):
         q = q.with_for_update()
     cs = q.first()
     if cs is None:
-        raise AppException(404, "This price change was not found. It may have been discarded.", code="NOT_FOUND")
+        raise AppException(404, "This cost change was not found. It may have been discarded.", code="NOT_FOUND")
     return cs
 
 
@@ -586,7 +647,7 @@ def _unresolved_count(db: Session, set_id: str) -> int:
         .filter(CostPriceChangeLine.change_set_id == set_id, CostPriceChangeLine.skipped.is_(False))
         .all()
     ):
-        if ln.line_state == "needs_attention" or (ln.flags and "duplicate_code" in ln.flags):
+        if ln.line_state == "needs_attention":
             n += 1
     return n
 
@@ -791,7 +852,15 @@ def list_sets(db: Session, *, page: int, limit: int, sort: str, dir: str, query:
     return {"data": data, "total": total, "page": page, "limit": limit}
 
 
-def _serialize_line(db: Session, line) -> dict:
+def _serialize_duplicate_row(line) -> dict:
+    return {
+        "id": _u(line.id), "sheet": line.sheet, "row_no": line.row_no,
+        "supplier_code": line.supplier_code, "code_note": line.code_note,
+        "new_unit_cost": float(line.new_unit_cost) if line.new_unit_cost is not None else None,
+    }
+
+
+def _serialize_line(db: Session, line, duplicate_rows: Optional[list] = None) -> dict:
     from app.models.product import Product
 
     product = db.query(Product).filter(Product.id == line.product_id).first() if line.product_id else None
@@ -808,6 +877,8 @@ def _serialize_line(db: Session, line) -> dict:
         "change_pct": _change_pct(line.current_unit_cost, line.new_unit_cost),
         "line_state": line.line_state, "skipped": line.skipped, "skip_reason": line.skip_reason,
         "new_link_lead_time_days": line.new_link_lead_time_days,
+        # R6: the other rows of this line's code, shown inline on it ("吊卡 9.40 · OPP 9.90").
+        "duplicate_rows": [_serialize_duplicate_row(d) for d in (duplicate_rows or [])],
         "decision": line.decision, "decision_reason": line.decision_reason,
         "decided_by_name": _display_name(db, line.decided_by_user_id),
         "stale": (
@@ -820,31 +891,68 @@ def _serialize_line(db: Session, line) -> dict:
 def get_lines(db: Session, set_id: str) -> dict:
     from app.models.cost_price import CostPriceChangeLine
 
-    _get_set_or_404(db, set_id)
-    lines = (
-        db.query(CostPriceChangeLine)
-        .filter(CostPriceChangeLine.change_set_id == set_id)
-        .order_by(CostPriceChangeLine.sheet, CostPriceChangeLine.row_no)
-        .all()
+    cs = _get_set_or_404(db, set_id)
+    lines = _file_order(
+        cs, db.query(CostPriceChangeLine).filter(CostPriceChangeLine.change_set_id == set_id).all()
     )
-    return {"data": [_serialize_line(db, ln) for ln in lines]}
+    # A row that lost to another row of its code is not a line of its own: it rides on the
+    # line that was used (R6). Which line that is, `_recompute_duplicates` decided.
+    rows_of: dict[str, list] = {}
+    for group in _duplicate_groups(
+        [ln for ln in lines if _in_duplicate_pool(ln)],
+        code=lambda ln: ln.supplier_code, product=lambda ln: ln.product_id,
+    ):
+        used = next((ln for ln in group if DUPLICATE_ROW_FLAG not in (ln.flags or [])), group[0])
+        rows_of[str(used.id)] = [ln for ln in group if ln is not used]
+    return {
+        "data": [
+            _serialize_line(db, ln, rows_of.get(str(ln.id)))
+            for ln in lines
+            if DUPLICATE_ROW_FLAG not in (ln.flags or [])
+        ]
+    }
+
+
+def _in_duplicate_pool(line) -> bool:
+    """A row the user skipped by hand is out of its code's group; a row skipped only
+    because another row of its code was used is still in it."""
+    return not line.skipped or DUPLICATE_ROW_FLAG in (line.flags or [])
 
 
 def _recompute_duplicates(db: Session, set_id: str) -> None:
+    """Re-run the duplicate collapse after a map or skip: every group picks its row with
+    `choose_duplicate_row`, the others are skipped as duplicates; a row whose group
+    dissolved comes back as a line of its own."""
     from app.models.cost_price import CostPriceChangeLine
 
-    lines = db.query(CostPriceChangeLine).filter(CostPriceChangeLine.change_set_id == set_id).all()
-    groups: dict[str, list] = {}
-    for ln in lines:
-        if ln.product_id and not ln.skipped:
-            groups.setdefault(str(ln.product_id), []).append(ln)
-    dup_ids = {pid for pid, group in groups.items() if len(group) > 1}
+    cs = _get_set_or_404(db, set_id)
+    lines = _file_order(
+        cs, db.query(CostPriceChangeLine).filter(CostPriceChangeLine.change_set_id == set_id).all()
+    )
+    pool = [ln for ln in lines if _in_duplicate_pool(ln)]
+    grouped: dict[str, bool] = {}
+    for group in _duplicate_groups(pool, code=lambda ln: ln.supplier_code, product=lambda ln: ln.product_id):
+        used = choose_duplicate_row(group)
+        for ln in group:
+            grouped[str(ln.id)] = ln is used
     for ln in lines:
         flags = set(ln.flags or [])
-        if ln.product_id and not ln.skipped and str(ln.product_id) in dup_ids:
+        was_duplicate_row = DUPLICATE_ROW_FLAG in flags
+        key = str(ln.id)
+        if key in grouped:
             flags.add("duplicate_code")
+            if grouped[key]:
+                flags.discard(DUPLICATE_ROW_FLAG)
+                if was_duplicate_row:
+                    ln.skipped, ln.skip_reason = False, None
+            else:
+                flags.add(DUPLICATE_ROW_FLAG)
+                ln.skipped, ln.skip_reason = True, DUPLICATE_SKIP_REASON
         else:
             flags.discard("duplicate_code")
+            if was_duplicate_row:
+                flags.discard(DUPLICATE_ROW_FLAG)
+                ln.skipped, ln.skip_reason = False, None
         ln.flags = sorted(flags)
 
 
@@ -932,6 +1040,8 @@ def patch_line(
         mapped_now = True
     if "skipped" in body:
         line.skipped = bool(body["skipped"])
+        # A hand skip or unskip is the user's; `_recompute_duplicates` below regroups.
+        line.flags = sorted(set(line.flags or []) - {DUPLICATE_ROW_FLAG})
         mapped_now = True
         if line.skipped:
             reason = body.get("skip_reason") or line.skip_reason
@@ -969,9 +1079,10 @@ def patch_line(
     _recompute_duplicates(db, set_id)
     db.commit()
 
+    shown = {ln["id"]: ln for ln in get_lines(db, set_id)["data"]}
     line = db.query(CostPriceChangeLine).filter(CostPriceChangeLine.id == line_id).first()
     return {
-        "line": _serialize_line(db, line),
+        "line": shown.get(_u(line.id)) or _serialize_line(db, line),
         "counts": _counts(db, set_id),
         "actions": get_detail(db, set_id, current_user)["actions"],
     }
@@ -1044,7 +1155,7 @@ def submit(db: Session, set_id: str, current_user: dict, *, request: Optional[Re
     _notify_users(
         db, _verifier_user_ids(db, cs.company_id, exclude=actor_id), cs, event_type="submitted",
         title=f"{cs.code} needs verification",
-        body=f"A supplier price change ({cs.code}) is waiting for you to verify.",
+        body=f"A supplier cost change ({cs.code}) is waiting for you to verify.",
     )
     return get_detail(db, set_id, current_user)
 
@@ -1193,11 +1304,16 @@ def _default_lead_time(db: Session, supplier_id: str) -> Optional[int]:
 
     from app.models.procurement import ProductSupplier
 
+    # AC-S2-05 as amended (round 6, R3): the supplier's most common lead time across its
+    # links that have one, else None - the new link then simply has no lead time.
     rows = (
         db.query(ProductSupplier.standard_lead_time_days, func.count())
-        .filter(ProductSupplier.supplier_id == supplier_id)
+        .filter(
+            ProductSupplier.supplier_id == supplier_id,
+            ProductSupplier.standard_lead_time_days.isnot(None),
+        )
         .group_by(ProductSupplier.standard_lead_time_days)
-        .order_by(func.count().desc())
+        .order_by(func.count().desc(), ProductSupplier.standard_lead_time_days.asc())
         .all()
     )
     return rows[0][0] if rows else None
@@ -1265,7 +1381,6 @@ def apply(db: Session, set_id: str, current_user: dict, *, request: Optional[Req
 
     links_by_line: dict[str, Optional["ProductSupplier"]] = {}
     stale: list[tuple] = []
-    lead_time_missing = False
     for ln in lines:
         link = (
             db.query(ProductSupplier)
@@ -1274,20 +1389,11 @@ def apply(db: Session, set_id: str, current_user: dict, *, request: Optional[Req
             .first()
         )
         links_by_line[str(ln.id)] = link
-        if link is None:
-            if not ln.new_link_lead_time_days and _default_lead_time(db, cs.supplier_id) is None:
-                lead_time_missing = True
-        else:
+        if link is not None:
             live_cost, live_currency = link.unit_cost, link.currency
             recorded_cost, recorded_currency = ln.current_unit_cost, ln.current_currency
             if live_cost != recorded_cost or (live_currency or None) != (recorded_currency or None):
                 stale.append((ln, live_cost, live_currency, recorded_cost, recorded_currency))
-
-    if lead_time_missing:
-        raise AppException(
-            422, "Set a lead time for the new supplier link before applying.",
-            detail={"code": "lead_time_required"}, code="lead_time_required",
-        )
 
     if stale:
         for ln, live_cost, live_currency, _rc, _rcc in stale:
@@ -1295,7 +1401,7 @@ def apply(db: Session, set_id: str, current_user: dict, *, request: Optional[Req
             ln.stale_live_currency = live_currency
         db.commit()
         raise AppException(
-            409, "Some prices changed after this set was parsed. Refresh and try again.",
+            409, "Some costs changed after this set was parsed. Refresh and try again.",
             detail={
                 "code": "stale_lines",
                 "lines": [
@@ -1325,7 +1431,12 @@ def apply(db: Session, set_id: str, current_user: dict, *, request: Optional[Req
     for ln in lines:
         link = links_by_line.get(str(ln.id))
         if link is None:
-            lead_time = ln.new_link_lead_time_days or _default_lead_time(db, cs.supplier_id)
+            # R3: never blocks; a lead time an API caller set on the line still wins.
+            lead_time = (
+                ln.new_link_lead_time_days
+                if ln.new_link_lead_time_days is not None
+                else _default_lead_time(db, cs.supplier_id)
+            )
             link = ProductSupplier(
                 product_id=ln.product_id, supplier_id=cs.supplier_id,
                 standard_lead_time_days=lead_time,
@@ -1365,6 +1476,8 @@ def apply(db: Session, set_id: str, current_user: dict, *, request: Optional[Req
                     product_id=ln.product_id, source="manual", matched_by="cost_price_set",
                 ))
         changes_summary.append({
+            # R6: which row of the file this cost came from.
+            "sheet": ln.sheet, "row_no": ln.row_no,
             "supplier_code": ln.supplier_code,
             "product_code": product_codes.get(str(ln.product_id)),
             "start_date": cs.start_date.isoformat() if cs.start_date else None,

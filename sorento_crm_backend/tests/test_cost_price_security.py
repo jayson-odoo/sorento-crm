@@ -97,9 +97,9 @@ def test_apply_refuses_line_bound_to_foreign_product(cost_price_env):
     db_line.product_id = foreign_product.id
     db_line.match_outcome = "manual"
     db_line.line_state = "new_link"
-    # A `new_link` line with no lead time and no supplier default would ALSO be blocked
-    # by `lead_time_required` (AC-S2-05) - a different check, satisfied here so the ONLY
-    # refusal Apply can raise is the one this test pins.
+    # Before round 6 a `new_link` line with no lead time was ALSO blocked by
+    # `lead_time_required`; Apply no longer blocks on lead time (AC-S2-05 as amended), and
+    # the lead time set here stays harmless.
     db_line.new_link_lead_time_days = 45
     e.db.commit()
 
@@ -428,9 +428,8 @@ def test_remap_of_alias_bound_line_applies(cost_price_env):
     supplier = e.supplier(name=LETTERHEAD_TEXT)
     original_target = e.product(code="ZZCPC-REMAP-ORIGINAL")
     new_target = e.product(code="ZZCPC-REMAP-NEW")
-    # A lead time for this supplier already exists (AC-S2-05), so remapping to a product
-    # with no link of its own does not ALSO trip `lead_time_required` - a different,
-    # already-covered gap (`test_new_link_without_default_needs_lead_time`), not this one.
+    # A lead time for this supplier already exists (AC-S2-05), so the new link takes it;
+    # Apply no longer blocks on lead time either way (round 6, R3).
     e.link(e.product(code="ZZCPC-REMAP-LEADTIME-SEED"), supplier, lead_time_days=30)
     e.db.add(SupplierProductCodeAlias(
         id=str(uuid.uuid4()), supplier_id=supplier.id, supplier_code="REMAP-RAW-CODE",
