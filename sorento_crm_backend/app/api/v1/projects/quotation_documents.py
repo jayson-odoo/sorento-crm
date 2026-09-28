@@ -203,9 +203,13 @@ async def update_quotation_document(
         document = svc.get_document_or_404(db, project_id, document_id)
         body = payload.model_dump(exclude_unset=True)
         scopes = body.pop("scopes", None)
-        removed = body.pop("remove_scope_ids", None) or []
-        for scope_id in removed:
-            validate_uuid_path(str(scope_id), resource="Scope")
+        # Normalised and de-duplicated before any write: a repeated id is one removal.
+        removed = list(
+            dict.fromkeys(
+                validate_uuid_path(str(scope_id), resource="Scope")
+                for scope_id in body.pop("remove_scope_ids", None) or []
+            )
+        )
         if removed:
             # A hard delete of the scope, its versions and lines: the same grant the scope
             # DELETE route asks for, not merely edit.
@@ -215,8 +219,8 @@ async def update_quotation_document(
                     message="You can edit this quotation but not remove its scopes.",
                     code="quotation_scope_remove_forbidden",
                 )
-            edited = {str(item.get("id")) for item in (scopes or []) if item.get("id")}
-            if edited & {str(scope_id) for scope_id in removed}:
+            edited = {str(item.get("id")).lower() for item in (scopes or []) if item.get("id")}
+            if edited & set(removed):
                 raise AppException(
                     status_code=422,
                     message="A scope cannot be removed and edited in the same save.",

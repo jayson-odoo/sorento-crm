@@ -689,3 +689,20 @@ def test_a_scope_both_removed_and_edited_in_one_save_is_refused_up_front(api):
     assert response.json().get("code") == "quotation_scope_removed_and_edited"
     db.expire_all()
     assert db.get(ProjectQuotation, townhouse["id"]) is not None
+
+
+def test_a_scope_id_sent_twice_or_in_capitals_is_removed_once(api):
+    """The ids are normalised before anything runs: a repeat is one removal, not a 500."""
+    client, db, _company_id, _user_id, project, _party = api
+    product = _seed_product(db)
+    document = _created(client, db, project.id, product)
+    townhouse, guard = document["scopes"]
+
+    response = _patch(
+        client,
+        project.id,
+        document["id"],
+        {"remove_scope_ids": [townhouse["id"], townhouse["id"].upper()]},
+    )
+    assert response.status_code == 200, response.text
+    assert [scope["id"] for scope in response.json()["scopes"]] == [guard["id"]]
