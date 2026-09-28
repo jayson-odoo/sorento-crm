@@ -30,7 +30,10 @@ sales agent "Also known as" names (`sales_agent_aliases_r7`); no parser words ch
 built (fix lane round 7)"). Fix lane round 8 (28 Sep, owner hand test of round 7 at
 b992353c): an outstanding ask after a ranking is the ordinary outstanding ask with the
 ranked codes as its products, and the "Filters from the ranking" header and dropped filter
-lines are gone; no parser words change ("As built (fix lane round 8)"). S5 (sales
+lines are gone; no parser words change ("As built (fix lane round 8)"). Fix lane
+round 9 (28 Sep, owner hand test after round 8): word answers to the customer or sales
+agent question ("salesman", "saleman", "client", the agent code) bind like 1 or 2; no
+parser words change, no migration ("As built (fix lane round 9)"). S5 (sales
 agent) is built by round 4 as a lane-side resolver; S6 (review + live console) and S7 (per-month breakdown) open. Track: full track (new route + MCP tool = a new external
 ingest surface, one policy-row migration, one prompt migration, one entity-kind migration;
 the diff will pass 300 lines).
@@ -716,6 +719,26 @@ run_console_turn`, dry run, the second turn sent the `session_vars` the first re
   answer to the ranking's own question as `domain_in_message false`, never an order list.
   Republished unlabelled by `chatbot_top_selling_vocab_r6` as the next version after
   whatever the database holds (v40 on a database whose newest is v39).
+
+### As built (fix lane round 9, owner hand test after round 8, 28 Sep 2026)
+
+After "Do you mean customer SAMPLE - WILLIAM or sales agent WT I, WT III, WT IV? Reply 1
+for the customer, 2 for the sales agent." the owner typed "saleman" and "salesman" and got
+the low signal greeting. `engine._top_selling_who_answer` knew only "customer", "sales"
+and "agent" as whole words.
+
+* `TOP_SELLING_WHO_WORDS` gains "client" (1) and "salesman", "salesmen", "salesperson",
+  "rep" (2). "sales man", "sales person" and "sales rep" already carried "sales".
+* A reply of at most four words is also read for a typo one edit away (insertion,
+  deletion, substitution or a swap of two neighbours) of an option word of five letters
+  or more, so "saleman", "sale man", "slaesman", "agnet", "custmer", "clinet" answer.
+  "rep" is matched exactly. A longer message (a new ranking ask) is read for the exact
+  words only, as before.
+* A short reply that resolves to the question's own agents only ("WT", "wt i", the
+  person label) is 2, to its own customers only ("SAMPLE - WILLIAM") is 1; a word naming
+  both ("william") is not an answer, as before.
+* No parser prompt change, no migration. Pinned by
+  `tests/chatbot/test_top_selling_round9.py` (the owner transcript replay plus every word).
 
 ### As built (fix lane round 8, owner hand test of round 7, 28 Sep 2026)
 
