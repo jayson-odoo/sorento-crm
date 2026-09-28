@@ -1769,6 +1769,11 @@ class ProjectQuotationDocumentUpdate(ProjectQuotationDocumentBase):
         default=None,
         description="The quotation form's scopes (#1341). Absent leaves every scope as it is.",
     )
+    remove_scope_ids: Optional[List[str]] = Field(
+        default=None,
+        description="Saved scopes Edit quotation deletes (#1341). Refused with 422 "
+        "quotation_scope_issued for a scope any version of which has been issued.",
+    )
 
 
 class ProjectQuotationScopeCreate(BaseModel):

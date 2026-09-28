@@ -324,6 +324,15 @@ def create_document_with_scopes(
     body = dict(payload)
     scopes = body.pop("scopes", None) or []
     corrections = {field: body.pop(field, None) for field in _RECIPIENT_FIELDS}
+    # The letter typed in the create form's own tabs (#1341, "show them on create as well"). Held
+    # back from ``create_document`` so the company template renders there as it always did, and
+    # the typed text replaces it once the scopes exist: its merge fields then quote the real
+    # number and total, not the ones a half-made quotation would give.
+    letter = {
+        field: body.pop(field)
+        for field in ("cover_letter_html", "terms_html")
+        if (body.get(field) or "").strip()
+    }
 
     document = create_document(db, project=project, actor_user_id=actor_user_id, payload=body)
     # A typed recipient CORRECTS the party snapshot (the result create-then-edit gave before); a
@@ -338,7 +347,62 @@ def create_document_with_scopes(
         written.extend(
             _add_form_scope(db, document=document, actor_user_id=actor_user_id, item=item)
         )
+    if letter:
+        from app.services import project_quotation_template_service as templates
+
+        db.flush()
+        context = templates.build_document_context(db, document=document)
+        for field, text in letter.items():
+            setattr(document, field, templates.render(text, context))
+        db.flush()
     return document, written
+
+
+def letter_templates(db: Session, *, project: Project) -> Dict[str, Optional[str]]:
+    """The company's active cover letter and terms, as written, for the create form (#1341).
+
+    Unrendered on purpose: before Save there is no quotation number and no total, so a merge
+    field rendered now would bake in a blank. The tokens are filled when the quotation is saved.
+    """
+    from app.services import project_quotation_template_service as templates
+
+    out: Dict[str, Optional[str]] = {}
+    for field, kind in (
+        ("cover_letter_html", templates.TEMPLATE_KIND_COVER_LETTER),
+        ("terms_html", templates.TEMPLATE_KIND_TERMS),
+    ):
+        template = templates.active_template(db, company_id=project.company_id, kind=kind)
+        out[field] = template.body_html if template is not None else None
+    return out
+
+
+def remove_form_scopes(
+    db: Session, *, document: ProjectQuotationDocument, scope_ids: List[str]
+) -> None:
+    """Edit quotation deletes saved scopes (#1341, owner on Q2: "yes can").
+
+    Only while nothing in the scope has been issued: ANY version of it in any issue, not only the
+    open one, because the customer holds that paper and a revision opened since does not change
+    that. Refused before anything is deleted, so one issued scope in the list stops them all.
+    """
+    scopes = [get_scope_or_404(db, document, str(scope_id)) for scope_id in scope_ids]
+    for scope in scopes:
+        issued = (
+            db.query(ProjectQuotationIssueScope.id)
+            .filter(ProjectQuotationIssueScope.quotation_id == scope.id)
+            .first()
+        )
+        if issued is not None:
+            raise AppException(
+                status_code=422,
+                message=(
+                    f"{scope.scope_label} has been sent to the customer and cannot be removed "
+                    "from this quotation."
+                ),
+                code="quotation_scope_issued",
+            )
+    for scope in scopes:
+        scope_service.delete_quotation(db, scope)
 
 
 def apply_form_scopes(

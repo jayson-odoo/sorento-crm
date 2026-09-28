@@ -149,6 +149,21 @@ async def create_quotation_document(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+@router.get("/projects/{project_id}/quotation-documents/letter-templates")
+async def get_quotation_letter_templates(
+    project_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """The company's cover letter and terms for the create form's own tabs (#1341). Declared
+    before ``/{document_id}`` so the literal segment is not read as a document id."""
+    try:
+        project = _editable_project(db, project_id, current_user)
+        return svc.letter_templates(db, project=project)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 @router.get(
     "/projects/{project_id}/quotation-documents/{document_id}",
     response_model=ProjectQuotationDocumentResponse,
@@ -188,7 +203,13 @@ async def update_quotation_document(
         document = svc.get_document_or_404(db, project_id, document_id)
         body = payload.model_dump(exclude_unset=True)
         scopes = body.pop("scopes", None)
+        removed = body.pop("remove_scope_ids", None) or []
+        for scope_id in removed:
+            validate_uuid_path(str(scope_id), resource="Scope")
         svc.update_document(db, document=document, payload=body)
+        # Edit quotation may delete a saved scope nothing in which was issued (#1341, Q2).
+        if removed:
+            svc.remove_form_scopes(db, document=document, scope_ids=removed)
         # The form's edit Save (#1341): header and scopes in ONE commit. A scope the customer
         # holds refuses new lines with the existing 422, and the header change goes back too.
         if scopes is not None:
