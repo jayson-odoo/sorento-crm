@@ -155,6 +155,15 @@ describe('MyTasksClient', () => {
     expect(screen.getByText(/escalates one to you/i)).toBeInTheDocument();
   });
 
+  // #1335: no subtitle line under the page title.
+  it('carries no subtitle under the page title', async () => {
+    renderClient();
+
+    await screen.findByText(/Nothing open against your name/i);
+    expect(screen.getByText('My tasks')).toBeInTheDocument();
+    expect(screen.queryByText(/soonest first/i)).not.toBeInTheDocument();
+  });
+
   it('reports a load failure instead of looking empty', async () => {
     listMyTasks.mockRejectedValue(new Error('Backend is down'));
 
