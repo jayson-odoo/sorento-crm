@@ -93,7 +93,8 @@ def test_upgrade_creates_the_cursor_table_and_index(db):
     assert _index_exists(db)
     db.execute(
         text(
-            "INSERT INTO ideation_status_event_cursors (feed_base_url) VALUES ('https://x')"
+            "INSERT INTO ideation_status_event_cursors (id, feed_base_url) "
+            "VALUES (gen_random_uuid(), 'https://x')"
         )
     )
     assert (

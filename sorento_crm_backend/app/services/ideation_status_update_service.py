@@ -92,15 +92,23 @@ def _feed_key(base_url: str) -> str:
     return (base_url or "").strip().rstrip("/")
 
 
+def _cursor_row(db: Session, key: str) -> IdeationStatusEventCursor | None:
+    return (
+        db.query(IdeationStatusEventCursor)
+        .filter(IdeationStatusEventCursor.feed_base_url == key)
+        .first()
+    )
+
+
 def get_cursor(db: Session, base_url: str) -> int:
-    row = db.get(IdeationStatusEventCursor, _feed_key(base_url))
+    row = _cursor_row(db, _feed_key(base_url))
     return int(row.after_seq) if row is not None else 0
 
 
 def set_cursor(db: Session, base_url: str, seq: int) -> None:
     """Stage the cursor move; the caller commits it with the event's log row."""
     key = _feed_key(base_url)
-    row = db.get(IdeationStatusEventCursor, key)
+    row = _cursor_row(db, key)
     if row is None:
         db.add(IdeationStatusEventCursor(feed_base_url=key, after_seq=int(seq)))
     else:

@@ -4,8 +4,8 @@ The CRM pulls the shared service's idea status-event feed every 60 s and sends t
 ``ideation_status_update`` template to the requester
 (documentation/plans/ideation/PLAN-ideation-status-update-29sep.md).
 
-- ``ideation_status_event_cursors``: one row per feed base URL, ``after_seq`` moved
-  in the same commit as each handled event's log row.
+- ``ideation_status_event_cursors``: uuid ``id``, one row per feed base URL (unique),
+  ``after_seq`` moved in the same commit as each handled event's log row.
 - ``uq_integration_log_ideation_status_event``: a partial unique index on
   ``integration_log (business_id) WHERE business_table = 'ideation_status_events'``,
   so the feed's at-least-once redelivery can never produce a second row (or send)
@@ -21,6 +21,7 @@ Revises: sales_agent_aliases_r7, scm_reorder_run_scope_desc
 """
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
 revision = "ideation_status_events_s1"
 down_revision = ("sales_agent_aliases_r7", "scm_reorder_run_scope_desc")
@@ -80,9 +81,11 @@ def _upgrade(concurrently: bool) -> None:
     if not _has_table():
         op.create_table(
             _TABLE,
-            sa.Column("feed_base_url", sa.Text(), primary_key=True),
+            sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
+            sa.Column("feed_base_url", sa.Text(), nullable=False),
             sa.Column("after_seq", sa.BigInteger(), nullable=False, server_default="0"),
             sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
+            sa.UniqueConstraint("feed_base_url", name="uq_ideation_status_event_cursors_feed"),
         )
     if concurrently:
         with op.get_context().autocommit_block():

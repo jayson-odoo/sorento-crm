@@ -94,8 +94,9 @@ Registered exactly like `ideation_draft_reminder`:
 
 ### Cursor storage: a small table, and why
 
-New table `ideation_status_event_cursors (feed_base_url TEXT PRIMARY KEY, after_seq BIGINT NOT NULL
-DEFAULT 0, updated_at)`.
+New table `ideation_status_event_cursors (id UUID PRIMARY KEY, feed_base_url TEXT NOT NULL UNIQUE,
+after_seq BIGINT NOT NULL DEFAULT 0, updated_at)` (uuid `id` per the data-model principle,
+`tests/test_schema_uuid_id_principle.py`).
 
 - Not the scheduled task's metadata: this job is an APScheduler interval job like the idle sweep,
   so there is no `scheduled_tasks` row to hold it, and adding one would drag in the heartbeat's
