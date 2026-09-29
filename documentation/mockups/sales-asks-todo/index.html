@@ -27,7 +27,7 @@ section>h2{font-size:15px;margin:0 0 4px}
 section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:820px}
 .row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
 .note{font-size:12px;color:var(--muted-fg);border-left:2px solid var(--border);padding:2px 0 2px 10px;margin:8px 0 0;max-width:820px}
-.num{display:inline-block;min-width:18px;height:18px;border-radius:9px;background:var(--foreground);color:#fff;font-size:11px;line-height:18px;text-align:center;margin-right:6px}
+.nb{display:inline-block;min-width:18px;height:18px;border-radius:9px;background:var(--foreground);color:#fff;font-size:11px;line-height:18px;text-align:center;margin-right:6px}
 
 /* phone frame 375 */
 .phone{width:375px;flex:none;background:#fff;border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.04)}
@@ -99,7 +99,8 @@ section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:82
 .card.done .who,.card.done .ask,.card.done .ans{opacity:.65}
 .doneby{font-size:12px;color:var(--success);margin-top:6px}
 
-/* list view rows (DataGrid look) */
+/* list view (DataGrid look); on the phone the grid scrolls sideways in its own container */
+.gridwrap{overflow-x:auto;border-radius:var(--radius)}
 .table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;background:#fff;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
 .table th{font-weight:500;color:var(--muted-fg);text-align:left;padding:8px 10px;background:var(--muted);border-bottom:1px solid var(--border);white-space:nowrap}
 .table td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:top}
@@ -108,10 +109,6 @@ section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:82
 .table .ell{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .table tr.sec td{background:var(--muted);font-weight:600;font-size:12px;color:var(--muted-fg);padding:6px 10px}
 .table tr.sec.red td{color:var(--destructive)}
-.rowlist .r{display:flex;gap:8px;align-items:center;background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;margin-bottom:6px;font-size:13px}
-.rowlist .r .m{min-width:0;flex:1}
-.rowlist .r .m .a{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted-fg);font-size:12px}
-.rowlist .r .m .b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* popover / menu */
 .pop{position:absolute;z-index:3;background:#fff;border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 10px 30px rgba(0,0,0,.12);padding:12px;width:300px;font-size:13px}
@@ -179,7 +176,7 @@ kbd{font:inherit}
 <!-- ============================================================ PORTAL CARDS -->
 <section id="p-cards">
 <h2>Portal, phone 375, cards view (default)</h2>
-<p class="why">The same shell as Price Tag Request: Welcome, search, kind selector with its open count, then the toolbar (Filter, Sort by Created, list/cards toggle). No New button: asks come from the chatbot. Date-first groups as agreed: Needs attention pinned (open, asked before today), then Today. A card shows only the customer and contact, what was asked, what the system answered, and when.</p>
+<p class="why">The same shell as Price Tag Request: Welcome, search, kind selector with its open count, then the toolbar (Filter, Sort by Created, list/cards toggle). No New button: asks come from the chatbot. Date-first groups as agreed: Needs attention pinned (open, asked before today, one sub-heading per day), then Today. A card shows only the customer and contact, what was asked, what the system answered, and when. The whole card is the tap target: it opens the conversation panel; Done is the one button on it.</p>
 <div class="row">
 <div class="phone"><div class="screen"><div class="pwrap">
   <div class="welcome"><b>Welcome, Sean Tan</b><span class="btn sm">Log out</span></div>
@@ -192,7 +189,6 @@ kbd{font:inherit}
     </div>
     <span class="toggle"><span>&#8801;</span><span class="on">&#9638;</span></span>
   </div>
-  <p class="counts">Open <b>5</b> &middot; Needs attention <b class="red">2</b> &middot; Done today <b>1</b></p>
 
   <div class="gh red">Needs attention</div>
   <div class="dh">Sat 27 Sep</div>
@@ -200,18 +196,16 @@ kbd{font:inherit}
     <div class="who">Hock Lee Trading <span>Ah Seng</span></div>
     <div class="ask"><span class="lbl">Asked: </span>SRT5674 x 50</div>
     <div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div>
-    <div class="when">27/09/2026, 11:00 am <span class="age">2 days ago</span></div>
+    <div class="when">27/09/2026, 11:00 am</div>
     <div class="top"><span class="btn sm primary">Done</span></div>
-    <div class="open">Open &rsaquo;</div>
   </div>
   <div class="dh">Yesterday</div>
   <div class="card">
     <div class="who">Kim Hong Hardware <span>Mei Ling</span></div>
     <div class="ask"><span class="lbl">Asked: </span>BLT2210 x 20</div>
     <div class="ans"><span class="lbl">Answered: </span>No stock and no incoming at the moment, please refer to your salesman.</div>
-    <div class="when">28/09/2026, 3:00 pm <span class="age">Yesterday</span></div>
+    <div class="when">28/09/2026, 3:00 pm</div>
     <div class="top"><span class="btn sm primary">Done</span></div>
-    <div class="open">Open &rsaquo;</div>
   </div>
 
   <div class="gh">Today</div>
@@ -221,7 +215,6 @@ kbd{font:inherit}
     <div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div>
     <div class="when">29/09/2026, 10:40 am</div>
     <div class="top"><span class="btn sm primary">Done</span></div>
-    <div class="open">Open &rsaquo;</div>
   </div>
   <div class="card">
     <div class="who">Hock Lee Trading <span>Ah Seng</span></div>
@@ -229,7 +222,6 @@ kbd{font:inherit}
     <div class="ans"><span class="lbl">Answered: </span>The quantity is more than what I can confirm here, please refer to your salesman.</div>
     <div class="when">29/09/2026, 10:25 am</div>
     <div class="top"><span class="btn sm primary">Done</span></div>
-    <div class="open">Open &rsaquo;</div>
   </div>
   <div class="card">
     <div class="who">Seri Indah Renovation <span>Mei Ling</span></div>
@@ -237,7 +229,6 @@ kbd{font:inherit}
     <div class="ans"><span class="lbl">Answered: </span>No stock at the moment, ETA 19/10/2026.</div>
     <div class="when">29/09/2026, 9:12 am</div>
     <div class="top"><span class="btn sm primary">Done</span></div>
-    <div class="open">Open &rsaquo;</div>
   </div>
 
   <div class="gh">Done today</div>
@@ -250,13 +241,13 @@ kbd{font:inherit}
     <div class="top"><span class="btn sm">Reopen</span></div>
   </div>
   <div style="text-align:center;margin:8px 0 16px"><span class="btn ghost sm">Show done</span></div>
-</div></div><div class="cap">Portal, 375 x 812, cards. Tap a card to open it; Done clears it in place.</div></div>
+</div></div><div class="cap">Portal, 375 x 812, cards. Tap anywhere on a card to open the conversation panel; Done clears it in place.</div></div>
 
 <div style="max-width:420px">
-  <p class="note"><span class="num">1</span>Card content is only: customer + contact, the ask, the system's answer, the datetime. No Sent / Not sent / Console / Pending chips, no branch badge: the answer sentence already says in stock, too big, no stock, ETA.</p>
-  <p class="note"><span class="num">2</span>The card shell, tint and top-right slot are the Price Tag Request card's; the status badge slot holds the one CTA, Done.</p>
-  <p class="note"><span class="num">3</span>Needs attention is pinned and split by day, oldest day first; Today below it. Done today stays visible, greyed, with Reopen; the full history is behind Show done.</p>
-  <p class="note"><span class="num">4</span>Toolbar is the landing's own: Filter (with an active count), Sort (Created by default, remembered per contact / per user like the DataGrid listing preference), list / cards toggle.</p>
+  <p class="note"><span class="nb">1</span>Card content is only: customer + contact, the ask, the system's answer, the datetime. No Sent / Not sent / Console / Pending chips, no branch badge: the answer sentence already says in stock, too big, no stock, ETA.</p>
+  <p class="note"><span class="nb">2</span>The card shell, tint and top-right slot are the Price Tag Request card's; the status badge slot holds the one CTA, Done. Tapping anywhere else on the card opens the conversation panel (no separate Open link).</p>
+  <p class="note"><span class="nb">3</span>Needs attention is pinned and split by day, oldest day first (the day heading is the age; no "2 days ago" label and no counts line); Today below it. Done today stays visible, greyed, with Reopen; the full history is behind Show done.</p>
+  <p class="note"><span class="nb">4</span>Toolbar is the landing's own: Filter (with an active count), Sort (Created by default, remembered per contact / per user like the DataGrid listing preference), list / cards toggle.</p>
 </div>
 </div>
 </section>
@@ -264,7 +255,7 @@ kbd{font:inherit}
 <!-- ============================================================ PORTAL LIST -->
 <section id="p-list">
 <h2>Portal, phone 375, list view</h2>
-<p class="why">The landing's list view is the DataGrid. On a phone that grid scrolls sideways, so the to-do's list view keeps one line per ask with the same four facts and the Done button, under the same day headings. On the desktop the CRM list view is the real grid (see below).</p>
+<p class="why">The list view is the system DataGrid (the same grid the landing's list view uses): sortable headers, columns resizable and reorderable, remembered per user / per contact. Done is the leftmost column. On a phone the grid scrolls sideways inside its own container, as every DataGrid does; the day groups are section rows so the date-first order survives.</p>
 <div class="row">
 <div class="phone"><div class="screen"><div class="pwrap">
   <div class="welcome"><b>Welcome, Sean Tan</b><span class="btn sm">Log out</span></div>
@@ -274,24 +265,28 @@ kbd{font:inherit}
     <div class="left"><span class="btn">&#9776; Filter</span><span class="btn">&#8645; Created</span></div>
     <span class="toggle"><span class="on">&#8801;</span><span>&#9638;</span></span>
   </div>
-  <p class="counts">Open <b>5</b> &middot; Needs attention <b class="red">2</b> &middot; Done today <b>1</b></p>
-  <div class="rowlist">
-    <div class="gh red">Needs attention</div>
-    <div class="dh">Sat 27 Sep</div>
-    <div class="r"><div class="m"><div class="b"><b>Hock Lee Trading</b> &middot; SRT5674 x 50</div><div class="a">Yes, we have stock, please refer to your salesman &middot; 11:00 am &middot; <span class="age">2 days ago</span></div></div><span class="btn sm primary">Done</span></div>
-    <div class="dh">Yesterday</div>
-    <div class="r"><div class="m"><div class="b"><b>Kim Hong Hardware</b> &middot; BLT2210 x 20</div><div class="a">No stock and no incoming, please refer to your salesman &middot; 3:00 pm &middot; <span class="age">Yesterday</span></div></div><span class="btn sm primary">Done</span></div>
-    <div class="gh">Today</div>
-    <div class="r"><div class="m"><div class="b"><b>Ah Huat Trading</b> &middot; PLT1042 x 10</div><div class="a">Yes, we have stock, please refer to your salesman &middot; 10:40 am</div></div><span class="btn sm primary">Done</span></div>
-    <div class="r"><div class="m"><div class="b"><b>Hock Lee Trading</b> &middot; CWCX604 x 300</div><div class="a">More than I can confirm here, please refer to your salesman &middot; 10:25 am</div></div><span class="btn sm primary">Done</span></div>
-    <div class="r"><div class="m"><div class="b"><b>Seri Indah Renovation</b> &middot; SRTW2000 x 150</div><div class="a">No stock at the moment, ETA 19/10/2026 &middot; 9:12 am</div></div><span class="btn sm primary">Done</span></div>
-    <div class="gh">Done today</div>
-    <div class="r dim"><div class="m"><div class="b"><b>Tan Hardware Sdn Bhd</b> &middot; GLV0310 x 200</div><div class="a">Done by Sean Tan, 8:05 am</div></div><span class="btn sm">Reopen</span></div>
+  <div class="gridwrap">
+    <table class="table" style="min-width:760px">
+      <thead><tr><th></th><th>Asked at &#8595;</th><th>Customer</th><th>Contact</th><th>Asked</th><th>Answered</th></tr></thead>
+      <tbody>
+        <tr class="sec red"><td colspan="6">Needs attention &middot; Sat 27 Sep</td></tr>
+        <tr><td><span class="btn sm primary">Done</span></td><td class="num">27/09/2026, 11:00 am</td><td>Hock Lee Trading</td><td>Ah Seng</td><td class="num">SRT5674 x 50</td><td class="ell">Yes, we have stock, please refer to your salesman to proceed.</td></tr>
+        <tr class="sec red"><td colspan="6">Needs attention &middot; Yesterday</td></tr>
+        <tr><td><span class="btn sm primary">Done</span></td><td class="num">28/09/2026, 3:00 pm</td><td>Kim Hong Hardware</td><td>Mei Ling</td><td class="num">BLT2210 x 20</td><td class="ell">No stock and no incoming at the moment, please refer to your salesman.</td></tr>
+        <tr class="sec"><td colspan="6">Today</td></tr>
+        <tr><td><span class="btn sm primary">Done</span></td><td class="num">29/09/2026, 10:40 am</td><td>Ah Huat Trading</td><td>Huat</td><td class="num">PLT1042 x 10</td><td class="ell">Yes, we have stock, please refer to your salesman to proceed.</td></tr>
+        <tr><td><span class="btn sm primary">Done</span></td><td class="num">29/09/2026, 10:25 am</td><td>Hock Lee Trading</td><td>Ah Seng</td><td class="num">CWCX604 x 300</td><td class="ell">The quantity is more than what I can confirm here, please refer to your salesman.</td></tr>
+        <tr><td><span class="btn sm primary">Done</span></td><td class="num">29/09/2026, 9:12 am</td><td>Seri Indah Renovation</td><td>Mei Ling</td><td class="num">SRTW2000 x 150</td><td class="ell">No stock at the moment, ETA 19/10/2026.</td></tr>
+        <tr class="sec"><td colspan="6">Done today</td></tr>
+        <tr class="dim"><td><span class="btn sm">Reopen</span></td><td class="num">28/09/2026, 9:00 pm</td><td>Tan Hardware Sdn Bhd</td><td>Mr Tan</td><td class="num">GLV0310 x 200</td><td class="ell">Yes, we have stock, please refer to your salesman to proceed.</td></tr>
+      </tbody>
+    </table>
   </div>
+  <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted-fg);padding:8px 2px"><span>Rows per page 20</span><span>1 - 6 of 6</span></div>
   <div style="text-align:center;margin:8px 0 16px"><span class="btn ghost sm">Show done</span></div>
-</div></div><div class="cap">Portal, 375 x 812, list. Tapping the row text opens the card.</div></div>
+</div></div><div class="cap">Portal, 375 x 812, list view: the DataGrid, Done leftmost, scrolls sideways inside its container. Clicking a row opens the conversation panel.</div></div>
 <div style="max-width:420px">
-  <p class="note"><span class="num">5</span>List view on a phone: one row per ask, same facts, same groups. The Sort button applies inside each day; the day order itself never changes (oldest day first under Needs attention).</p>
+  <p class="note"><span class="nb">5</span>List view is the system DataGrid on both mounts: Done is the leftmost column, then Asked at, Customer, Contact, Asked, Answered (and Done by, Agent in the CRM). Sort and column order are remembered per user (CRM) / per contact (portal), the DataGrid's own preference.</p>
 </div>
 </div>
 </section>
@@ -299,13 +294,13 @@ kbd{font:inherit}
 <!-- ============================================================ PORTAL OPENED CARD -->
 <section id="p-open">
 <h2>Portal, phone 375, opened card with the conversation</h2>
-<p class="why">Tapping a card slides up a sheet: the ask and the answer on top, then the WhatsApp conversation around that ask (the dealer's messages on the left, the assistant's on the right, the answering turn marked), then the note with its own Save button, and the one CTA at the foot. The conversation is the chat history panel the SLA ticket uses, without its technical parts (no turn ids, no parser output, no event log).</p>
+<p class="why">Tapping anywhere on a card slides up a sheet: the ask and the answer on top, then the WhatsApp conversation around that ask (the dealer's messages on the left, the assistant's on the right, the answering turn marked), then the note with its own Save button, and the one CTA at the foot. The conversation is the chat history panel the SLA ticket uses, without its technical parts (no turn ids, no parser output, no event log).</p>
 <div class="row">
 <div class="phone"><div class="screen">
   <div class="scrim"></div>
   <div class="sheet">
     <div class="grab"></div>
-    <div class="hd"><div><b>Hock Lee Trading</b> <span class="meta">Ah Seng &middot; +60 12-000 0002</span><div class="meta">Asked 27/09/2026, 11:00 am &middot; <span class="age">2 days ago</span></div></div><span class="x">&times;</span></div>
+    <div class="hd"><div><b>Hock Lee Trading</b> <span class="meta">Ah Seng &middot; +60 12-000 0002</span><div class="meta">Asked 27/09/2026, 11:00 am</div></div><span class="x">&times;</span></div>
     <div class="askbox">
       <div class="lbl">Asked</div><p><b>SRT5674 x 50</b> <span style="color:var(--muted-fg)">(SRT5674 Wiper Blade 24in)</span></p>
       <div class="lbl" style="margin-top:8px">Answered</div><p>Yes, we have stock, please refer to your salesman to proceed.</p>
@@ -330,9 +325,9 @@ kbd{font:inherit}
   </div>
 </div><div class="cap">Portal, 375 x 812, the opened card (bottom sheet).</div></div>
 <div style="max-width:420px">
-  <p class="note"><span class="num">6</span>Note saving is explicit: a Save note button and a "Saved &lt;time&gt;" line. The note also lives on the card list as a one-line preview once it has text (not shown to keep the card light; say if you want it on the card).</p>
-  <p class="note"><span class="num">7</span>The conversation shows the messages around the ask only, the answering turn marked "This ask"; the dealer's own words are left, the assistant right. No Sent / template / turn details.</p>
-  <p class="note"><span class="num">8</span>One CTA in the sheet: Done. The sheet closes and the card leaves its group.</p>
+  <p class="note"><span class="nb">6</span>Note saving is explicit: a Save note button and a "Saved &lt;time&gt;" line. The note also lives on the card list as a one-line preview once it has text (not shown to keep the card light; say if you want it on the card).</p>
+  <p class="note"><span class="nb">7</span>The conversation shows the messages around the ask only, the answering turn marked "This ask"; the dealer's own words are left, the assistant right. No Sent / template / turn details.</p>
+  <p class="note"><span class="nb">8</span>One CTA in the sheet: Done. The sheet closes and the card leaves its group.</p>
 </div>
 </div>
 </section>
@@ -358,10 +353,9 @@ kbd{font:inherit}
     <div style="display:flex;justify-content:flex-end"><span class="btn sm">Clear filters</span></div>
   </div>
   <div style="height:280px"></div>
-  <p class="counts">Open <b>2</b> &middot; Needs attention <b class="red">1</b> &middot; Done today <b>0</b></p>
   <div class="gh red">Needs attention</div>
   <div class="dh">Sat 27 Sep</div>
-  <div class="card"><div class="who">Hock Lee Trading <span>Ah Seng</span></div><div class="ask"><span class="lbl">Asked: </span>SRT5674 x 50</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">27/09/2026, 11:00 am <span class="age">2 days ago</span></div><div class="top"><span class="btn sm primary">Done</span></div></div>
+  <div class="card"><div class="who">Hock Lee Trading <span>Ah Seng</span></div><div class="ask"><span class="lbl">Asked: </span>SRT5674 x 50</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">27/09/2026, 11:00 am</div><div class="top"><span class="btn sm primary">Done</span></div></div>
 </div></div><div class="cap">Filter popover: Customer, Answer, Asked (day), State.</div></div>
 
 <div class="phone"><div class="screen"><div class="pwrap" style="position:relative">
@@ -380,14 +374,13 @@ kbd{font:inherit}
     <div class="hint">Remembered for you on this account</div>
   </div>
   <div style="height:180px"></div>
-  <p class="counts">Open <b>5</b> &middot; Needs attention <b class="red">2</b> &middot; Done today <b>1</b></p>
   <div class="gh red">Needs attention</div>
   <div class="dh">Sat 27 Sep</div>
-  <div class="card"><div class="who">Hock Lee Trading <span>Ah Seng</span></div><div class="ask"><span class="lbl">Asked: </span>SRT5674 x 50</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">27/09/2026, 11:00 am <span class="age">2 days ago</span></div><div class="top"><span class="btn sm primary">Done</span></div></div>
+  <div class="card"><div class="who">Hock Lee Trading <span>Ah Seng</span></div><div class="ask"><span class="lbl">Asked: </span>SRT5674 x 50</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">27/09/2026, 11:00 am</div><div class="top"><span class="btn sm primary">Done</span></div></div>
 </div></div><div class="cap">Sort menu: Created (default, oldest first), Customer, Product, Answer. Tap the same entry again to flip direction.</div></div>
 <div style="max-width:420px">
-  <p class="note"><span class="num">9</span>Filter fields for this kind: Customer, Answer (in stock / too big / no stock / incoming), Asked (today / yesterday / older), State (open / done). Filtering to Done is the other way to reach the history.</p>
-  <p class="note"><span class="num">10</span>Sort is the toolbar's own Sort button; Created is the default (oldest first, so the longest-waiting is on top). Stored on the same listing preference row the CRM DataGrids use (`sorting`), per user in the CRM; per contact on the portal.</p>
+  <p class="note"><span class="nb">9</span>Filter fields for this kind: Customer, Answer (in stock / too big / no stock / incoming), Asked (today / yesterday / older), State (open / done). Filtering to Done is the other way to reach the history.</p>
+  <p class="note"><span class="nb">10</span>Sort is the toolbar's own Sort button; Created is the default (oldest first, so the longest-waiting is on top). Stored on the same listing preference row the CRM DataGrids use (`sorting`), per user in the CRM; per contact on the portal.</p>
 </div>
 </div>
 </section>
@@ -402,24 +395,22 @@ kbd{font:inherit}
   <div class="search">&#128269; Search submissions</div>
   <div class="kind"><span class="l">Customer asks <span class="pill">4</span></span><span class="star">&#9733;</span></div>
   <div class="toolbar"><div class="left"><span class="btn">&#9776; Filter</span><span class="btn">&#8645; Created</span></div><span class="toggle"><span>&#8801;</span><span class="on">&#9638;</span></span></div>
-  <p class="counts">Open <b>4</b> &middot; Needs attention <b class="red">1</b> &middot; Done today <b>2</b></p>
   <div class="gh red">Needs attention</div>
   <div class="dh">Yesterday</div>
-  <div class="card"><div class="who">Kim Hong Hardware <span>Mei Ling</span></div><div class="ask"><span class="lbl">Asked: </span>BLT2210 x 20</div><div class="ans"><span class="lbl">Answered: </span>No stock and no incoming at the moment, please refer to your salesman.</div><div class="when">28/09/2026, 3:00 pm <span class="age">Yesterday</span></div><div class="top"><span class="btn sm primary">Done</span></div><div class="open">Open &rsaquo;</div></div>
+  <div class="card"><div class="who">Kim Hong Hardware <span>Mei Ling</span></div><div class="ask"><span class="lbl">Asked: </span>BLT2210 x 20</div><div class="ans"><span class="lbl">Answered: </span>No stock and no incoming at the moment, please refer to your salesman.</div><div class="when">28/09/2026, 3:00 pm</div><div class="top"><span class="btn sm primary">Done</span></div></div>
   <div class="gh">Today</div>
-  <div class="card"><div class="who">Ah Huat Trading <span>Huat</span></div><div class="ask"><span class="lbl">Asked: </span>PLT1042 x 10</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">29/09/2026, 10:40 am</div><div class="top"><span class="btn sm primary">Done</span></div><div class="open">Open &rsaquo;</div></div>
-  <div class="card"><div class="who">Hock Lee Trading <span>Ah Seng</span></div><div class="ask"><span class="lbl">Asked: </span>CWCX604 x 300</div><div class="ans"><span class="lbl">Answered: </span>The quantity is more than what I can confirm here, please refer to your salesman.</div><div class="when">29/09/2026, 10:25 am</div><div class="top"><span class="btn sm primary">Done</span></div><div class="open">Open &rsaquo;</div></div>
+  <div class="card"><div class="who">Ah Huat Trading <span>Huat</span></div><div class="ask"><span class="lbl">Asked: </span>PLT1042 x 10</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">29/09/2026, 10:40 am</div><div class="top"><span class="btn sm primary">Done</span></div></div>
+  <div class="card"><div class="who">Hock Lee Trading <span>Ah Seng</span></div><div class="ask"><span class="lbl">Asked: </span>CWCX604 x 300</div><div class="ans"><span class="lbl">Answered: </span>The quantity is more than what I can confirm here, please refer to your salesman.</div><div class="when">29/09/2026, 10:25 am</div><div class="top"><span class="btn sm primary">Done</span></div></div>
   <div class="gh">Done today</div>
   <div class="card done"><div class="who">Hock Lee Trading <span>Ah Seng</span></div><div class="ask"><span class="lbl">Asked: </span>SRT5674 x 50</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">27/09/2026, 11:00 am</div><div class="doneby">Done by Sean Tan, 29/09/2026, 4:05 pm</div><div class="top"><span class="btn sm">Reopen</span></div></div>
   <div class="card done"><div class="who">Tan Hardware Sdn Bhd <span>Mr Tan</span></div><div class="ask"><span class="lbl">Asked: </span>GLV0310 x 200</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">28/09/2026, 9:00 pm</div><div class="doneby">Done by Sean Tan, 29/09/2026, 8:05 am</div><div class="top"><span class="btn sm">Reopen</span></div></div>
-</div></div><div class="cap">After Done: the card fades out of its day and lands under Done today, counts move, kind badge drops to 4.</div></div>
+</div></div><div class="cap">After Done: the card fades out of its day and lands under Done today; the kind badge drops to 4.</div></div>
 
 <div class="phone"><div class="screen"><div class="pwrap">
   <div class="welcome"><b>Welcome, Sean Tan</b><span class="btn sm">Log out</span></div>
   <div class="search">&#128269; Search submissions</div>
   <div class="kind"><span class="l">Customer asks <span class="pill">0</span></span><span class="star">&#9733;</span></div>
   <div class="toolbar"><div class="left"><span class="btn">&#9776; Filter</span><span class="btn">&#8645; Created</span></div><span class="toggle"><span>&#8801;</span><span class="on">&#9638;</span></span></div>
-  <p class="counts">Open <b>0</b> &middot; Needs attention <b>0</b> &middot; Done today <b>3</b></p>
   <div class="empty"><div style="font-size:26px;color:var(--muted-fg)">&#128172;</div><div class="h">Nothing waiting</div><div class="p">Asks your customers make on WhatsApp land here.</div></div>
   <div class="gh">Done today</div>
   <div class="card done"><div class="who">Kim Hong Hardware <span>Mei Ling</span></div><div class="ask"><span class="lbl">Asked: </span>BLT2210 x 20</div><div class="ans"><span class="lbl">Answered: </span>No stock and no incoming at the moment, please refer to your salesman.</div><div class="when">28/09/2026, 3:00 pm</div><div class="doneby">Done by Sean Tan, 29/09/2026, 4:31 pm</div><div class="top"><span class="btn sm">Reopen</span></div></div>
@@ -452,21 +443,20 @@ kbd{font:inherit}
       <div class="left"><span class="btn">&#9776; Filter</span><span class="btn">&#8645; Created</span></div>
       <span class="toggle"><span>&#8801;</span><span class="on">&#9638;</span></span>
     </div>
-    <p class="counts">Open <b>5</b> &middot; Needs attention <b class="red">2</b> &middot; Done today <b>1</b></p>
     <div class="gh red" style="margin-top:4px">Needs attention</div>
     <div class="dh">Sat 27 Sep</div>
     <div class="grid2">
-      <div class="card" style="outline:2px solid var(--primary);outline-offset:1px"><div class="who">Hock Lee Trading <span>Ah Seng</span></div><div class="ask"><span class="lbl">Asked: </span>SRT5674 x 50</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">27/09/2026, 11:00 am <span class="age">2 days ago</span></div><div class="top"><span class="btn sm primary">Done</span></div><div class="open">Open &rsaquo;</div></div>
+      <div class="card" style="outline:2px solid var(--primary);outline-offset:1px"><div class="who">Hock Lee Trading <span>Ah Seng</span></div><div class="ask"><span class="lbl">Asked: </span>SRT5674 x 50</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">27/09/2026, 11:00 am</div><div class="top"><span class="btn sm primary">Done</span></div></div>
     </div>
     <div class="dh">Yesterday</div>
     <div class="grid2">
-      <div class="card"><div class="who">Kim Hong Hardware <span>Mei Ling</span></div><div class="ask"><span class="lbl">Asked: </span>BLT2210 x 20</div><div class="ans"><span class="lbl">Answered: </span>No stock and no incoming at the moment, please refer to your salesman.</div><div class="when">28/09/2026, 3:00 pm <span class="age">Yesterday</span></div><div class="top"><span class="btn sm primary">Done</span></div><div class="open">Open &rsaquo;</div></div>
+      <div class="card"><div class="who">Kim Hong Hardware <span>Mei Ling</span></div><div class="ask"><span class="lbl">Asked: </span>BLT2210 x 20</div><div class="ans"><span class="lbl">Answered: </span>No stock and no incoming at the moment, please refer to your salesman.</div><div class="when">28/09/2026, 3:00 pm</div><div class="top"><span class="btn sm primary">Done</span></div></div>
     </div>
     <div class="gh">Today</div>
     <div class="grid2">
-      <div class="card"><div class="who">Ah Huat Trading <span>Huat</span></div><div class="ask"><span class="lbl">Asked: </span>PLT1042 x 10</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">29/09/2026, 10:40 am</div><div class="top"><span class="btn sm primary">Done</span></div><div class="open">Open &rsaquo;</div></div>
-      <div class="card"><div class="who">Hock Lee Trading <span>Ah Seng</span></div><div class="ask"><span class="lbl">Asked: </span>CWCX604 x 300</div><div class="ans"><span class="lbl">Answered: </span>The quantity is more than what I can confirm here, please refer to your salesman.</div><div class="when">29/09/2026, 10:25 am</div><div class="top"><span class="btn sm primary">Done</span></div><div class="open">Open &rsaquo;</div></div>
-      <div class="card"><div class="who">Seri Indah Renovation <span>Mei Ling</span></div><div class="ask"><span class="lbl">Asked: </span>SRTW2000 x 150</div><div class="ans"><span class="lbl">Answered: </span>No stock at the moment, ETA 19/10/2026.</div><div class="when">29/09/2026, 9:12 am</div><div class="top"><span class="btn sm primary">Done</span></div><div class="open">Open &rsaquo;</div></div>
+      <div class="card"><div class="who">Ah Huat Trading <span>Huat</span></div><div class="ask"><span class="lbl">Asked: </span>PLT1042 x 10</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">29/09/2026, 10:40 am</div><div class="top"><span class="btn sm primary">Done</span></div></div>
+      <div class="card"><div class="who">Hock Lee Trading <span>Ah Seng</span></div><div class="ask"><span class="lbl">Asked: </span>CWCX604 x 300</div><div class="ans"><span class="lbl">Answered: </span>The quantity is more than what I can confirm here, please refer to your salesman.</div><div class="when">29/09/2026, 10:25 am</div><div class="top"><span class="btn sm primary">Done</span></div></div>
+      <div class="card"><div class="who">Seri Indah Renovation <span>Mei Ling</span></div><div class="ask"><span class="lbl">Asked: </span>SRTW2000 x 150</div><div class="ans"><span class="lbl">Answered: </span>No stock at the moment, ETA 19/10/2026.</div><div class="when">29/09/2026, 9:12 am</div><div class="top"><span class="btn sm primary">Done</span></div></div>
     </div>
     <div class="gh">Done today</div>
     <div class="grid2">
@@ -474,7 +464,7 @@ kbd{font:inherit}
     </div>
 
     <div class="rsheet">
-      <div class="hd" style="display:flex;justify-content:space-between;align-items:flex-start"><div><b style="font-size:16px">Hock Lee Trading</b> <span class="meta">Ah Seng &middot; +60 12-000 0002</span><div class="meta">Asked 27/09/2026, 11:00 am &middot; <span class="age">2 days ago</span> &middot; Agent SEAN I</div></div><span style="color:var(--muted-fg);font-size:18px">&times;</span></div>
+      <div class="hd" style="display:flex;justify-content:space-between;align-items:flex-start"><div><b style="font-size:16px">Hock Lee Trading</b> <span class="meta">Ah Seng &middot; +60 12-000 0002</span><div class="meta">Asked 27/09/2026, 11:00 am &middot; Agent SEAN I</div></div><span style="color:var(--muted-fg);font-size:18px">&times;</span></div>
       <div class="askbox"><div class="lbl">Asked</div><p><b>SRT5674 x 50</b> <span style="color:var(--muted-fg)">(SRT5674 Wiper Blade 24in)</span></p><div class="lbl" style="margin-top:8px">Answered</div><p>Yes, we have stock, please refer to your salesman to proceed.</p></div>
       <div class="sect">Conversation</div>
       <div class="chat">
@@ -493,14 +483,14 @@ kbd{font:inherit}
   </div>
 </div><div class="cap">CRM, 1280 x 800, cards view; the first card opened in a right sheet.</div></div>
 </div>
-<p class="note"><span class="num">11</span>The CRM opened card adds "Open in Conversations" (the full chat history page for staff) under the same short conversation; the portal has no such link.</p>
-<p class="note"><span class="num">12</span>Agent select: view_all sees every agent; a team leader sees their current team; a salesperson sees no select. All agents shows the agent code on each card.</p>
+<p class="note"><span class="nb">11</span>The CRM opened card adds "Open in Conversations" (the full chat history page for staff) under the same short conversation; the portal has no such link.</p>
+<p class="note"><span class="nb">12</span>Agent select: view_all sees every agent; a team leader sees their current team; a salesperson sees no select. All agents shows the agent code on each card.</p>
 </section>
 
 <!-- ============================================================ CRM LIST -->
 <section id="c-list">
 <h2>CRM, desktop 1280, list view</h2>
-<p class="why">The list view is the repo DataGrid (sortable headers, resizable and reorderable columns, remembered per user like every other listing). The day groups become section rows so the date-first order survives; a header click sorts inside the day.</p>
+<p class="why">The list view is the system DataGrid (sortable headers, resizable and reorderable columns, remembered per user like every other listing). Done is the leftmost column; the day groups are section rows so the date-first order survives; a header click sorts inside the day; clicking a row opens the same right-sheet conversation panel.</p>
 <div class="row">
 <div class="desk"><div class="screen">
   <div class="sidebar">
@@ -520,29 +510,28 @@ kbd{font:inherit}
       <div class="left"><span class="btn">&#9776; Filter</span><span class="btn">&#8645; Created</span></div>
       <span class="toggle"><span class="on">&#8801;</span><span>&#9638;</span></span>
     </div>
-    <p class="counts">Open <b>7</b> &middot; Needs attention <b class="red">3</b> &middot; Done today <b>1</b></p>
     <table class="table">
-      <thead><tr><th>Asked at &#8595;</th><th>Agent</th><th>Customer</th><th>Contact</th><th>Asked</th><th>Answered</th><th>Done by</th><th></th></tr></thead>
+      <thead><tr><th></th><th>Asked at &#8595;</th><th>Agent</th><th>Customer</th><th>Contact</th><th>Asked</th><th>Answered</th><th>Done by</th></tr></thead>
       <tbody>
         <tr class="sec red"><td colspan="8">Needs attention &middot; Sat 27 Sep</td></tr>
-        <tr><td class="num">27/09/2026, 11:00 am <span class="age">2 days ago</span></td><td>SEAN I</td><td>Hock Lee Trading</td><td>Ah Seng</td><td class="num">SRT5674 x 50</td><td class="ell" title="Yes, we have stock, please refer to your salesman to proceed.">Yes, we have stock, please refer to your salesman to proceed.</td><td>-</td><td><span class="btn sm primary">Done</span></td></tr>
+        <tr><td><span class="btn sm primary">Done</span></td><td class="num">27/09/2026, 11:00 am</td><td>SEAN I</td><td>Hock Lee Trading</td><td>Ah Seng</td><td class="num">SRT5674 x 50</td><td class="ell" title="Yes, we have stock, please refer to your salesman to proceed.">Yes, we have stock, please refer to your salesman to proceed.</td><td>-</td></tr>
         <tr class="sec red"><td colspan="8">Needs attention &middot; Yesterday</td></tr>
-        <tr><td class="num">28/09/2026, 3:00 pm <span class="age">Yesterday</span></td><td>SEAN I</td><td>Kim Hong Hardware</td><td>Mei Ling</td><td class="num">BLT2210 x 20</td><td class="ell">No stock and no incoming at the moment, please refer to your salesman.</td><td>-</td><td><span class="btn sm primary">Done</span></td></tr>
-        <tr><td class="num">28/09/2026, 5:20 pm <span class="age">Yesterday</span></td><td>LCL</td><td>Lim Chong Hardware</td><td>Mei Ling</td><td class="num">SRT5674 x 8</td><td class="ell">Yes, we have stock, please refer to your salesman to proceed.</td><td>-</td><td><span class="btn sm primary">Done</span></td></tr>
+        <tr><td><span class="btn sm primary">Done</span></td><td class="num">28/09/2026, 3:00 pm</td><td>SEAN I</td><td>Kim Hong Hardware</td><td>Mei Ling</td><td class="num">BLT2210 x 20</td><td class="ell">No stock and no incoming at the moment, please refer to your salesman.</td><td>-</td></tr>
+        <tr><td><span class="btn sm primary">Done</span></td><td class="num">28/09/2026, 5:20 pm</td><td>LCL</td><td>Lim Chong Hardware</td><td>Mei Ling</td><td class="num">SRT5674 x 8</td><td class="ell">Yes, we have stock, please refer to your salesman to proceed.</td><td>-</td></tr>
         <tr class="sec"><td colspan="8">Today</td></tr>
-        <tr><td class="num">29/09/2026, 10:40 am</td><td>SEAN I</td><td>Ah Huat Trading</td><td>Huat</td><td class="num">PLT1042 x 10</td><td class="ell">Yes, we have stock, please refer to your salesman to proceed.</td><td>-</td><td><span class="btn sm primary">Done</span></td></tr>
-        <tr><td class="num">29/09/2026, 10:25 am</td><td>SEAN I</td><td>Hock Lee Trading</td><td>Ah Seng</td><td class="num">CWCX604 x 300</td><td class="ell">The quantity is more than what I can confirm here, please refer to your salesman.</td><td>-</td><td><span class="btn sm primary">Done</span></td></tr>
-        <tr><td class="num">29/09/2026, 9:12 am</td><td>SEAN I</td><td>Seri Indah Renovation</td><td>Mei Ling</td><td class="num">SRTW2000 x 150</td><td class="ell">No stock at the moment, ETA 19/10/2026.</td><td>-</td><td><span class="btn sm primary">Done</span></td></tr>
-        <tr><td class="num">29/09/2026, 8:50 am</td><td>LCL</td><td>Lim Chong Hardware</td><td>Mei Ling</td><td class="num">ELP3756 x 5</td><td class="ell">Yes, we have stock, please refer to your salesman to proceed.</td><td>-</td><td><span class="btn sm primary">Done</span></td></tr>
+        <tr><td><span class="btn sm primary">Done</span></td><td class="num">29/09/2026, 10:40 am</td><td>SEAN I</td><td>Ah Huat Trading</td><td>Huat</td><td class="num">PLT1042 x 10</td><td class="ell">Yes, we have stock, please refer to your salesman to proceed.</td><td>-</td></tr>
+        <tr><td><span class="btn sm primary">Done</span></td><td class="num">29/09/2026, 10:25 am</td><td>SEAN I</td><td>Hock Lee Trading</td><td>Ah Seng</td><td class="num">CWCX604 x 300</td><td class="ell">The quantity is more than what I can confirm here, please refer to your salesman.</td><td>-</td></tr>
+        <tr><td><span class="btn sm primary">Done</span></td><td class="num">29/09/2026, 9:12 am</td><td>SEAN I</td><td>Seri Indah Renovation</td><td>Mei Ling</td><td class="num">SRTW2000 x 150</td><td class="ell">No stock at the moment, ETA 19/10/2026.</td><td>-</td></tr>
+        <tr><td><span class="btn sm primary">Done</span></td><td class="num">29/09/2026, 8:50 am</td><td>LCL</td><td>Lim Chong Hardware</td><td>Mei Ling</td><td class="num">ELP3756 x 5</td><td class="ell">Yes, we have stock, please refer to your salesman to proceed.</td><td>-</td></tr>
         <tr class="sec"><td colspan="8">Done today</td></tr>
-        <tr class="dim"><td class="num">28/09/2026, 9:00 pm</td><td>SEAN I</td><td>Tan Hardware Sdn Bhd</td><td>Mr Tan</td><td class="num">GLV0310 x 200</td><td class="ell">Yes, we have stock, please refer to your salesman to proceed.</td><td>Sean Tan, 8:05 am</td><td><span class="btn sm">Reopen</span></td></tr>
+        <tr class="dim"><td><span class="btn sm">Reopen</span></td><td class="num">28/09/2026, 9:00 pm</td><td>SEAN I</td><td>Tan Hardware Sdn Bhd</td><td>Mr Tan</td><td class="num">GLV0310 x 200</td><td class="ell">Yes, we have stock, please refer to your salesman to proceed.</td><td>Sean Tan, 8:05 am</td></tr>
       </tbody>
     </table>
     <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted-fg);padding:10px 4px"><span>Rows per page 20</span><span>1 - 8 of 8</span></div>
   </div>
 </div><div class="cap">CRM, 1280 x 800, list view as All agents (view_all).</div></div>
 </div>
-<p class="note"><span class="num">13</span>Columns: Asked at, Agent (only when more than one agent is shown), Customer, Contact, Asked, Answered, Done by, the Done action. Clicking a row opens the same right sheet as the cards view.</p>
+<p class="note"><span class="nb">13</span>Columns: Done (leftmost), Asked at, Agent (only when more than one agent is shown), Customer, Contact, Asked, Answered, Done by. Clicking a row opens the same right sheet as the cards view.</p>
 </section>
 
 <!-- ============================================================ DECISIONS -->
@@ -550,11 +539,11 @@ kbd{font:inherit}
 <h2>Decisions to annotate</h2>
 <p class="why">Numbered like the notes above. Each is a yes / no / change for Lavish.</p>
 <ol style="font-size:13.5px;line-height:1.6;max-width:820px;padding-left:22px">
-  <li>Card content: customer + contact, Asked, Answered, datetime. Nothing else on the card.</li>
-  <li>Done is the one CTA and sits in the card's top-right badge slot; Reopen replaces it on a done card.</li>
+  <li>Card content: customer + contact, Asked, Answered, datetime. Nothing else on the card: no counts line, no age label, no Open link.</li>
+  <li>Done is the one CTA and sits in the card's top-right badge slot; Reopen replaces it on a done card. The rest of the card is the click target for the conversation panel.</li>
   <li>Groups: Needs attention (pinned, by day, oldest first), Today, Done today (greyed), Show done for history.</li>
   <li>Toolbar reused from the landing: Filter, Sort (Created default), list / cards. No New button.</li>
-  <li>List view on the phone: one line per ask; on the desktop: the DataGrid with section rows.</li>
+  <li>List view is the system DataGrid on both mounts, Done as the leftmost column, day groups as section rows, sort and columns remembered.</li>
   <li>Note: explicit Save note button and a Saved time; the note lives in the opened card, not on the list card.</li>
   <li>Opened card shows the WhatsApp conversation around the ask, the answering turn marked; dealer left, assistant right; "Show the whole day" for more.</li>
   <li>Done at the foot of the opened card closes it and clears the row.</li>
