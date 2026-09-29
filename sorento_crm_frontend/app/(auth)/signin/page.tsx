@@ -20,7 +20,11 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { LoaderCircleIcon } from 'lucide-react';
 import { getSigninSchema, SigninSchemaType } from '../forms/signin-schema';
 import { toAbsoluteUrl } from '@/lib/helpers';
@@ -42,7 +46,9 @@ export function isSafeCallbackUrl(cb: string | null | undefined): cb is string {
   if (!cb || typeof cb !== 'string') return false;
   if (!cb.startsWith('/') || cb.includes('\\')) return false;
   try {
-    return new URL(cb, window.location.origin).origin === window.location.origin;
+    return (
+      new URL(cb, window.location.origin).origin === window.location.origin
+    );
   } catch {
     return false;
   }
@@ -75,6 +81,7 @@ export default function Page() {
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [phoneBusy, setPhoneBusy] = useState(false);
 
   const form = useForm<SigninSchemaType>({
     resolver: zodResolver(getSigninSchema()),
@@ -92,10 +99,17 @@ export default function Page() {
   };
 
   async function goToLandingUrl() {
-    const target = await resolveLandingUrl(searchParams?.get('callbackUrl') ?? null);
+    const target = await resolveLandingUrl(
+      searchParams?.get('callbackUrl') ?? null,
+    );
     router.push(target);
   }
 
+  // Same rule as the phone step (fix round 4, #1307): a successful sign-in
+  // keeps "Signing you in" up through the session read and the route change,
+  // because `router.push` returns before the destination paints and the old
+  // `finally` reset left an idle Continue on screen for that whole span. The
+  // page unmounts when the destination renders; only a failure unlocks it.
   async function onSubmit(values: SigninSchemaType) {
     setIsProcessing(true);
     setError(null);
@@ -116,6 +130,7 @@ export default function Page() {
           // If error is not JSON, use it directly (might be a Prisma error or other non-JSON error)
           setError(response.error || 'An error occurred during sign in.');
         }
+        setIsProcessing(false);
       } else {
         await goToLandingUrl();
       }
@@ -125,7 +140,6 @@ export default function Page() {
           ? err.message
           : 'An unexpected error occurred. Please try again.',
       );
-    } finally {
       setIsProcessing(false);
     }
   }
@@ -166,105 +180,120 @@ export default function Page() {
 
       {mode === 'email' ? (
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
-            <FormField
-              control={form.control}
-              name="email"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Email</FormLabel>
-                  <FormControl>
-                    <Input placeholder="Your email" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="password"
-              render={({ field }) => (
-                <FormItem>
-                  <div className="flex justify-between items-center gap-2.5">
-                    <FormLabel>Password</FormLabel>
-                    <Link
-                      href="/reset-password"
-                      className="text-sm font-semibold text-foreground hover:text-primary"
-                    >
-                      Forgot Password?
-                    </Link>
-                  </div>
-                  <div className="relative">
-                    <Input
-                      placeholder="Your password"
-                      type={passwordVisible ? 'text' : 'password'} // Toggle input type
-                      {...field}
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      mode="icon"
-                      size="sm"
-                      onClick={() => setPasswordVisible(!passwordVisible)} // Toggle visibility
-                      className="absolute end-0 top-1/2 -translate-y-1/2 h-7 w-7 me-1.5 bg-transparent!"
-                      aria-label={
-                        passwordVisible ? 'Hide password' : 'Show password'
-                      }
-                    >
-                      {passwordVisible ? (
-                        <EyeOff className="text-muted-foreground" />
-                      ) : (
-                        <Eye className="text-muted-foreground" />
-                      )}
-                    </Button>
-                  </div>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <div className="flex items-center space-x-2">
+          <form onSubmit={form.handleSubmit(onSubmit)}>
+            <fieldset disabled={isProcessing} className="space-y-5 min-w-0">
               <FormField
                 control={form.control}
-                name="rememberMe"
+                name="email"
                 render={({ field }) => (
-                  <>
-                    <Checkbox
-                      id="remember-me"
-                      checked={field.value}
-                      onCheckedChange={(checked) => field.onChange(!!checked)}
-                    />
-                    <label
-                      htmlFor="remember-me"
-                      className="text-sm leading-none text-muted-foreground"
-                    >
-                      Remember me
-                    </label>
-                  </>
+                  <FormItem>
+                    <FormLabel>Email</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Your email" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
                 )}
               />
-            </div>
 
-            <div className="flex flex-col gap-2.5">
-              <Button type="submit" disabled={isProcessing}>
-                {isProcessing ? (
-                  <LoaderCircleIcon className="size-4 animate-spin" />
-                ) : null}
-                Continue
-              </Button>
-            </div>
+              <FormField
+                control={form.control}
+                name="password"
+                render={({ field }) => (
+                  <FormItem>
+                    <div className="flex justify-between items-center gap-2.5">
+                      <FormLabel>Password</FormLabel>
+                      <Link
+                        href="/reset-password"
+                        className="text-sm font-semibold text-foreground hover:text-primary"
+                      >
+                        Forgot Password?
+                      </Link>
+                    </div>
+                    <div className="relative">
+                      <Input
+                        placeholder="Your password"
+                        type={passwordVisible ? 'text' : 'password'} // Toggle input type
+                        {...field}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        mode="icon"
+                        size="sm"
+                        onClick={() => setPasswordVisible(!passwordVisible)} // Toggle visibility
+                        className="absolute end-0 top-1/2 -translate-y-1/2 h-7 w-7 me-1.5 bg-transparent!"
+                        aria-label={
+                          passwordVisible ? 'Hide password' : 'Show password'
+                        }
+                      >
+                        {passwordVisible ? (
+                          <EyeOff className="text-muted-foreground" />
+                        ) : (
+                          <Eye className="text-muted-foreground" />
+                        )}
+                      </Button>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <div className="flex items-center space-x-2">
+                <FormField
+                  control={form.control}
+                  name="rememberMe"
+                  render={({ field }) => (
+                    <>
+                      <Checkbox
+                        id="remember-me"
+                        checked={field.value}
+                        onCheckedChange={(checked) => field.onChange(!!checked)}
+                      />
+                      <label
+                        htmlFor="remember-me"
+                        className="text-sm leading-none text-muted-foreground"
+                      >
+                        Remember me
+                      </label>
+                    </>
+                  )}
+                />
+              </div>
+
+              <div className="flex flex-col gap-2.5">
+                <Button
+                  type="submit"
+                  disabled={isProcessing}
+                  aria-busy={isProcessing}
+                >
+                  {isProcessing ? (
+                    <LoaderCircleIcon
+                      aria-hidden="true"
+                      className="size-4 animate-spin motion-reduce:animate-none"
+                    />
+                  ) : null}
+                  {isProcessing ? 'Signing you in' : 'Continue'}
+                </Button>
+              </div>
+            </fieldset>
           </form>
         </Form>
       ) : (
-        <PhoneSignIn onError={setError} onSignedIn={() => void goToLandingUrl()} />
+        <PhoneSignIn
+          onError={setError}
+          onSignedIn={goToLandingUrl}
+          onBusyChange={setPhoneBusy}
+        />
       )}
 
       {mode === 'email' ? (
         <>
           <div className="flex items-center gap-3">
             <Separator className="flex-1" />
-            <span className="text-xs text-muted-foreground">or Log in with</span>
+            <span className="text-xs text-muted-foreground">
+              or Log in with
+            </span>
             <Separator className="flex-1" />
           </div>
           <div className="flex justify-center">
@@ -278,6 +307,7 @@ export default function Page() {
                   size="lg"
                   aria-label="Phone number"
                   onClick={() => handleModeChange('phone')}
+                  disabled={isProcessing}
                 >
                   <Smartphone />
                 </Button>
@@ -293,6 +323,7 @@ export default function Page() {
             variant="ghost"
             size="sm"
             onClick={() => handleModeChange('email')}
+            disabled={phoneBusy}
             className="text-muted-foreground"
           >
             <ArrowLeft />

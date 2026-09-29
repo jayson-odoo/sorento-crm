@@ -16,8 +16,9 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
+const mockPush = vi.fn();
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push: mockPush, replace: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
 }));
 
@@ -328,6 +329,101 @@ describe('error words', () => {
     await waitFor(() =>
       expect(screen.getByText('Too many tries. Try again in 12 minutes.')).toBeInTheDocument(),
     );
+  });
+});
+
+describe('fix round 4: feedback from the sixth digit to the destination (#1307)', () => {
+  function codeInput() {
+    return within(screen.getByTestId('otp-code-field')).getByPlaceholderText(
+      '6-digit code',
+    ) as HTMLInputElement;
+  }
+
+  it('the sixth digit locks the field and shows "Signing you in" with the number, at once', async () => {
+    await toPhoneCodeStep();
+    // A verify that has not answered yet: the state must be up before it does.
+    mockSignIn.mockReturnValue(new Promise(() => {}));
+
+    fireEvent.change(codeInput(), { target: { value: '123456' } });
+
+    const status = await screen.findByTestId('phone-signin-verifying');
+    expect(status).toHaveAttribute('role', 'status');
+    expect(status).toHaveTextContent('Signing you in as +60•••6789');
+    expect(codeInput()).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Change number' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Back to email' })).toBeDisabled();
+    // The resend button's place is taken, not stacked under the status.
+    expect(screen.queryByRole('button', { name: /resend/i })).toBeNull();
+  });
+
+  it('a successful verify keeps the state up through the navigation instead of re-enabling the field', async () => {
+    await toPhoneCodeStep();
+    mockSignIn.mockResolvedValue({ error: null, ok: true } as Awaited<ReturnType<typeof signIn>>);
+
+    fireEvent.change(codeInput(), { target: { value: '123456' } });
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/'));
+    // router.push has returned, the destination has not painted: still locked.
+    expect(screen.getByTestId('phone-signin-verifying')).toBeInTheDocument();
+    expect(codeInput()).toBeDisabled();
+  });
+
+  it('a wrong code clears the field, re-enables and refocuses it, and drops the status', async () => {
+    await toPhoneCodeStep();
+    mockSignIn.mockResolvedValue({
+      error: JSON.stringify({ code: 401, message: 'That code is not right. 4 tries left.' }),
+    } as Awaited<ReturnType<typeof signIn>>);
+
+    fireEvent.change(codeInput(), { target: { value: '000000' } });
+
+    await waitFor(() =>
+      expect(screen.getByText('That code is not right. 4 tries left.')).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId('phone-signin-verifying')).toBeNull();
+    expect(codeInput()).not.toBeDisabled();
+    expect(codeInput().value).toBe('');
+    expect(document.activeElement).toBe(codeInput());
+    expect(screen.getByRole('button', { name: /resend/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Back to email' })).not.toBeDisabled();
+  });
+
+  it('email Continue reads "Signing you in" and stays locked through the navigation', async () => {
+    mockSignIn.mockResolvedValue({ error: null, ok: true } as Awaited<ReturnType<typeof signIn>>);
+    renderSignin();
+    fireEvent.change(screen.getByPlaceholderText('Your email'), {
+      target: { value: 'a@b.co' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('Your password'), {
+      target: { value: 'secret123' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/'));
+    const button = screen.getByRole('button', { name: 'Signing you in' });
+    expect(button).toBeDisabled();
+    expect(screen.getByPlaceholderText('Your email')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Phone number' })).toBeDisabled();
+  });
+
+  it('a refused email sign-in unlocks the form and shows Continue again', async () => {
+    mockSignIn.mockResolvedValue({
+      error: JSON.stringify({ message: 'Invalid email or password.' }),
+    } as Awaited<ReturnType<typeof signIn>>);
+    renderSignin();
+    fireEvent.change(screen.getByPlaceholderText('Your email'), {
+      target: { value: 'a@b.co' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('Your password'), {
+      target: { value: 'wrong-one' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() =>
+      expect(screen.getByText('Invalid email or password.')).toBeInTheDocument(),
+    );
+    expect(screen.getByRole('button', { name: 'Continue' })).not.toBeDisabled();
+    expect(screen.getByPlaceholderText('Your email')).not.toBeDisabled();
+    expect(mockPush).not.toHaveBeenCalled();
   });
 });
 

@@ -14,7 +14,7 @@
  * portal card's original auto-verify behaviour exactly.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -33,6 +33,13 @@ export interface OtpCodeFieldProps {
   onResend: () => void;
   id?: string;
   autoFocus?: boolean;
+  /**
+   * Shown in the resend button's place, at the same height, while set - the
+   * caller's "working on it" line (`/signin` uses it for "Signing you in").
+   * Leaving it unset keeps the resend button, which is what every other
+   * caller wants.
+   */
+  status?: ReactNode;
 }
 
 export function OtpCodeField({
@@ -46,8 +53,19 @@ export function OtpCodeField({
   onResend,
   id = 'code',
   autoFocus,
+  status,
 }: OtpCodeFieldProps) {
   const lastAutoVerifiedRef = useRef<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const wasDisabledRef = useRef(Boolean(disabled));
+
+  // A disabled input drops focus, so when the caller unlocks the field again
+  // (a wrong code) the cursor goes straight back into it: retyping needs no
+  // extra tap.
+  useEffect(() => {
+    if (wasDisabledRef.current && !disabled) inputRef.current?.focus();
+    wasDisabledRef.current = Boolean(disabled);
+  }, [disabled]);
 
   useEffect(() => {
     const trimmed = value.trim();
@@ -69,6 +87,7 @@ export function OtpCodeField({
         <Label htmlFor={id}>Verification code</Label>
         <Input
           variant="lg"
+          ref={inputRef}
           id={id}
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -82,15 +101,21 @@ export function OtpCodeField({
         />
       </div>
 
-      <Button
-        type="button"
-        variant="outline"
-        onClick={onResend}
-        disabled={pending || disabled || cooldown > 0}
-        className="h-11 w-full"
-      >
-        {cooldown > 0 ? `Resend in ${cooldown}s` : sent ? 'Resend code' : 'Send code'}
-      </Button>
+      {status ?? (
+        <Button
+          type="button"
+          variant="outline"
+          onClick={onResend}
+          disabled={pending || disabled || cooldown > 0}
+          className="h-11 w-full"
+        >
+          {cooldown > 0
+            ? `Resend in ${cooldown}s`
+            : sent
+              ? 'Resend code'
+              : 'Send code'}
+        </Button>
+      )}
     </div>
   );
 }

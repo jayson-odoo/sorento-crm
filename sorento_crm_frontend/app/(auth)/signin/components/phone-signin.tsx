@@ -15,26 +15,41 @@
  * The number is entered through the shared `PhoneInput` (owner ruling, 29 Sep
  * 2026): Malaysia by default, sent as E.164, and an incomplete number stops at
  * the field's own error state instead of reaching request-code.
+ *
+ * From the sixth digit to the destination's first paint the card never looks
+ * idle (fix round 4, #1307): the field locks and "Signing you in" takes the
+ * resend button's place, and a successful sign-in leaves it that way through
+ * the session read and the route change - this component unmounts when the
+ * destination renders, so there is nothing to reset. Only a failure unlocks
+ * the field, cleared and focused for the retry.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { LoaderCircleIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { PhoneInput } from '@/components/common/PhoneInput';
 import { Label } from '@/components/ui/label';
-import { OtpCodeField, useResendCooldown } from '@/components/auth/OtpCodeField';
+import {
+  OtpCodeField,
+  useResendCooldown,
+} from '@/components/auth/OtpCodeField';
 import { useRequestSigninCode } from '../hooks/usePhoneSignin';
 
 type PhoneStep = 'phone' | 'code';
 
 interface Props {
   onError: (message: string | null) => void;
-  /** Called once a phone sign-in succeeds - the page runs the same landing logic as Email. */
-  onSignedIn: () => void;
+  /**
+   * Called once a phone sign-in succeeds - the page runs the same landing
+   * logic as Email. Awaited, so a failure there still unlocks the field.
+   */
+  onSignedIn: () => Promise<void> | void;
+  /** Mirrors the verifying state so the page can lock "Back to email" too. */
+  onBusyChange?: (busy: boolean) => void;
 }
 
-export function PhoneSignIn({ onError, onSignedIn }: Props) {
+export function PhoneSignIn({ onError, onSignedIn, onBusyChange }: Props) {
   const [step, setStep] = useState<PhoneStep>('phone');
   const [phone, setPhone] = useState('');
   const [phoneValid, setPhoneValid] = useState(false);
@@ -45,6 +60,10 @@ export function PhoneSignIn({ onError, onSignedIn }: Props) {
   const [cooldown, setCooldown] = useResendCooldown();
 
   const requestCode = useRequestSigninCode();
+
+  useEffect(() => {
+    onBusyChange?.(verifying);
+  }, [verifying, onBusyChange]);
 
   const sendCode = () => {
     onError(null);
@@ -90,17 +109,20 @@ export function PhoneSignIn({ onError, onSignedIn }: Props) {
         }
         onError(message);
         setCode('');
+        setVerifying(false);
         return;
       }
 
-      onSignedIn();
+      // Still verifying on purpose: the state holds until the destination
+      // replaces this page.
+      await onSignedIn();
     } catch (err) {
       onError(
         err instanceof Error
           ? err.message
           : 'An unexpected error occurred. Please try again.',
       );
-    } finally {
+      setCode('');
       setVerifying(false);
     }
   };
@@ -114,7 +136,8 @@ export function PhoneSignIn({ onError, onSignedIn }: Props) {
           <button
             type="button"
             onClick={handleChangeNumber}
-            className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            disabled={verifying}
+            className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
           >
             Change number
           </button>
@@ -128,8 +151,36 @@ export function PhoneSignIn({ onError, onSignedIn }: Props) {
           cooldown={cooldown}
           sent={Boolean(sentTo)}
           pending={verifying || requestCode.isPending}
+          disabled={verifying}
           onResend={sendCode}
           autoFocus
+          status={
+            verifying ? (
+              <div
+                role="status"
+                aria-live="polite"
+                data-testid="phone-signin-verifying"
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-md bg-muted text-sm animate-in fade-in-0 duration-(--duration-fast) ease-(--ease-standard) motion-reduce:animate-none"
+              >
+                <LoaderCircleIcon
+                  aria-hidden="true"
+                  className="size-4 animate-spin text-muted-foreground motion-reduce:animate-none"
+                />
+                <span>
+                  Signing you in
+                  {sentTo ? (
+                    <>
+                      {' '}
+                      as{' '}
+                      <span className="font-medium whitespace-nowrap">
+                        {sentTo}
+                      </span>
+                    </>
+                  ) : null}
+                </span>
+              </div>
+            ) : undefined
+          }
         />
       </div>
     );

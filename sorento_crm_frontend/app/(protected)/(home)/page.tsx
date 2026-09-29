@@ -5,7 +5,7 @@ import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 
 const MyPendingSLAWidget = dynamic(
-  () => import('./sla-management/conversation-sla-tracking/components/MyPendingSLAWidget'),
+  () => import('../sla-management/conversation-sla-tracking/components/MyPendingSLAWidget'),
   { ssr: false }
 );
 
@@ -14,7 +14,7 @@ const MyPendingSLAWidget = dynamic(
 // was removed per product direction.
 const SLAKpiDashboardContent = dynamic(
   () =>
-    import('./sla-management/kpi-dashboard/SLAKpiDashboardContent').then(
+    import('../sla-management/kpi-dashboard/SLAKpiDashboardContent').then(
       (m) => m.SLAKpiDashboardContent,
     ),
   { ssr: false }
