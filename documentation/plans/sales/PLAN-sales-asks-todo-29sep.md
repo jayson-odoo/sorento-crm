@@ -1,6 +1,6 @@
 # PLAN: sales asks as a salesperson's to-do list, date-first (lane SALES-ASKS-TODO)
 
-Status: PAUSED for Lavish review 29 Sep 2026 (owner: reuse the Price Tag Request list shell, a lighter card, explicit note save, open a card to see the conversation): static mockup at `documentation/mockups/sales-asks-todo/index.html`; the code built so far (Phase 2 green, Phase 3 reviewed and fixed, section 7c) stays on the branch and is reshaped to the annotated mockup. Track: full. The plan was first written
+Status: mockup APPROVED by the owner in Lavish 29 Sep 2026 (round 3, 168e1e2e, `documentation/mockups/sales-asks-todo/index.html`, verbatim "ok"); reshape round in progress, tester-first (section 0c + 3.6; the code built before the pause, section 7c, is reshaped, not rewritten). Track: full. The plan was first written
 under the recommendations and each pending question is marked `[Q<n> pending]` where its answer
 changes the design. Track: full (one migration, two new routes under RBAC, one portal route).
 Plan created: 2026-09-29T08:20:00Z
@@ -47,6 +47,20 @@ to scan on a phone and on a desktop.
   (`sales.teams.leader_sales_agent_id`). Design in 3.4.
 - **Q8 (a)**: no digest.
 - Order: update the mock, re-file the hand test when the mock reflects these, then build.
+
+## 0c. Lavish rulings on the mockup (29 Sep 2026, binding; the approved mock is the contract)
+
+Round 1 (owner, verbatim points): (1) "it is not reusing the component from other forms like
+price tag request": reuse the Price Tag Request portal list: Filter button, Sort button
+(Created), list / card view toggle, same card shell; sorting remembered per user like the
+remembered DataGrid listing. (2) "this card too many info already, only need to know the
+customer, what he asked and what the system answered, and the datetime, don't need the Sent or
+what". (3) "the note can be saved?": explicit, obvious note saving. (4) "can open the card to view
+the chat history": opening a card shows the conversation, the chat history panel in a less
+technical way. Round 2: no counts line; no relative age label; no Open link, the whole card opens
+the chat panel; the list view is the system DataGrid. Round 3: Done is the RIGHTMOST column; ONE
+Needs attention section (not one per day); the opened card's Asked / Answered block jumps to the
+exact chat bubble of that ask. Approved as round 3.
 
 ## 1. Journey
 
@@ -287,6 +301,72 @@ list when an agent other than mine, or all, is chosen.
 `GET /api/v1/public/portal/customer-asks/todo` in `portal_customer_asks.py`, same `_agent_id`
 gate, `todo_for_agent`. PATCH stays the #1333 one (`update_for_agent`), now stamping `done_by`
 with the contact's label (`_contact_label`). Nothing else on the portal changes.
+
+### 3.6 The reshape to the approved mock (replaces 3.3's list; 3.2's payload and 3.4's scope stay)
+
+**What stays from the build before the pause:** the payload (3.2; `today_start`, `open`,
+`done_today`, `truncated`, `agent`), the routes and scopes (3.4, 3.5, plus AC-ST105b from
+section 4), the done stamps (3.1), the Done by column on the office Asks tab and the portal
+history, the sort persistence (3.2: CRM `useListingViewPreferences` under
+`sales.customer_asks.view::todo`, portal `localStorage` per contact), the Agent select.
+
+**What changes on screen (both mounts, one shared component set):**
+
+- **Toolbar** = the portal landing's own `LandingToolbar` (`app/(auth)/portal/components/
+  LandingToolbar.tsx`: Filter popover with an active count, Sort dropdown, `ListBoardViewToggle`),
+  fed by the landing's field contract (`landing-fields.ts`). Asks are adapted to the
+  `PortalSubmissionSummary` shape the toolbar's helpers take (`askToSummary`, pure: `title` =
+  `CODE x Q`, `customer_name`, `created_at`, `status` = `open | done`, plus `contact_name`,
+  `answer` and `branch` as extra keys the asks fields read). Fields for this kind: Customer
+  (text), Answer (text over the branch label), Asked (date), State (status). Sort options: Created
+  (default, oldest first), Customer, Product, Answer; the choice is the remembered sort. The CRM
+  page imports the same toolbar. No New button.
+- **Groups** (Q3 as re-ruled): one `Needs attention` section (open, asked before `today_start`,
+  oldest first), then `Today`, then `Done today` (greyed, Reopen). No counts line, no day
+  sub-headings, no age label, no branch / notified / console badge. `bucketTodo` keeps its
+  section shape with one day per section.
+- **Card** = the landing card shell extracted from `PortalLanding.tsx`'s `SubmissionCard`
+  (tint, the top-right slot, the press wiring: tap or Enter opens, long-press is unused here)
+  into a shared shell both use, so the two cards stay one component. Content: line 1 customer
+  (bold) + contact name; `Asked: CODE x Q`; `Answered: <the answer sentence>` (`askAnswerText`:
+  `answer_summary` with its `CODE x Q:` prefix removed and the first letter upper-cased); the
+  datetime (`formatDateTimeInMalaysia`). The slot holds `Done` (or `Reopen` on a done card); a
+  click on the button never opens the card. Whole card opens the conversation panel.
+- **List view** = the system `DataGrid` on both mounts (fixed layout, resizable, `listingKey`
+  `sales.customer_asks.view::todo` on the CRM, `null` on the portal, which has no user row):
+  columns Asked at, Customer, Contact, Asked, Answered, then on the CRM Agent (only when more
+  than one agent is shown) and Done by, and Done / Reopen as the RIGHTMOST column. The three
+  groups are section rows (a full-width row per group) so the date-first order survives; a
+  header sort orders inside a group. Row click opens the conversation panel.
+- **Opened card** = portal: the `Drawer` (vaul, bottom sheet); CRM: the `Sheet` (right side).
+  Content in order: header (customer, contact and phone, asked at; CRM adds the agent code);
+  the Asked / Answered block, a button labelled "Jump to message" that scrolls the conversation to
+  that ask's bubble and flashes it; `Conversation`: the messages around the ask (see the
+  endpoint), inbound left on `muted`, outbound right on `primary` soft, the ask's answer bubble
+  tagged "This ask", a day separator; `Show the whole day`; CRM only: `Open in Conversations`
+  (the existing chat history page for that contact); `Note`: textarea + `Save note` button +
+  "Saved <time>" line (explicit save, never on blur); foot: `Done` (or `Reopen`). No turn ids, no
+  parser output, no delivery status.
+- **Portal `Show done`** stays at the foot (the history grid with its Done by column); the State
+  filter set to Done shows the same history in place. The CRM has no history (deviation stands).
+
+**The one new endpoint, the conversation around an ask** (core, `stock_ask_service`):
+`GET /api/v1/public/portal/customer-asks/{ask_id}/conversation` and
+`GET /api/v1/sales/customer-asks/{ask_id}/conversation`, both `?whole_day=false`, under the same
+scope as the PATCH (404 outside it) -> `{ "messages": [{ "id", "direction": "in" | "out",
+"text", "at" }], "ask_message_id": <id | null> }`. Source: `chat_histories`
+(`app/models/chat_history.py:21`: `contact_id`, `type` = `incoming | outgoing`, `message`,
+`sent_at`), for the ask's contact, resolved the way `chat_history_query.get_thread`
+(`app/services/chat_history_query.py:437`) resolves a contact. Window: `sent_at` within 30
+minutes either side of the ask's `created_at`, oldest first, at most 60 rows; `whole_day=true`
+widens to the ask's Malaysia calendar day (at most 200 rows). `ask_message_id` = the outgoing
+row nearest after `created_at` whose `message` contains the ask's `answer_summary` line, else
+the nearest outgoing row after `created_at`, else null. Nothing else of the row is on the wire
+(no Respond ids, no result set, no latency). An ask with no contact answers an empty list.
+
+**Deleted by the reshape:** the counts line, the age label, the in-line Sort select, the day
+sub-headings, the Notified / Console / branch badges on the to-do, the inline note cell on the
+to-do rows (the note lives in the opened card; `AskEditCells` stays for the office tab).
 
 ## 4. Coordination with CONTACT-CUSTOMERS
 

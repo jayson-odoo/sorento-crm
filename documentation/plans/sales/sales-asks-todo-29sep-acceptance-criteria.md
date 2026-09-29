@@ -1,7 +1,8 @@
 # UAC: sales asks as a salesperson's to-do list, date-first (lane SALES-ASKS-TODO)
 
-Status: owner rulings Q1 to Q8 applied 29 Sep 2026 (plan section 0b); the `[Q<n>]` marks now name
-the ruling each AC implements. Plan: `PLAN-sales-asks-todo-29sep.md`.
+Status: owner rulings Q1 to Q8 applied 29 Sep 2026 (plan section 0b) and the Lavish-approved mockup
+(plan 0c, round 3) applied as S3 below; where an S1/S2 AC and an S3 AC disagree on what is on
+screen, S3 wins (AC-ST114 to 117, 120, 121, 209, 210 are superseded as noted). Plan: `PLAN-sales-asks-todo-29sep.md`.
 Numbering: AC-ST<slice><nn>. Tags: [BE] pytest (Postgres), [FE] vitest, [E2E] recorded
 agent-browser evidence, [T] a test that pins a rule, [UX] a measurable design AC. The `tester`
 writes every [BE]/[FE] test red before the `coder` starts the slice.
@@ -172,3 +173,67 @@ to A, customer Z assigned to B, asks with `created_at` set explicitly around a f
 - **AC-ST217 [FE]** `Done` and `Reopen` are disabled for the ask whose PATCH is in flight
   (`pendingAskId`); the CRM unlinked state is a heading "Not linked to a sales agent" plus one
   hint line, no button (reviewer nits, 29 Sep).
+
+## S3: the reshape to the approved mockup (plan 0c, 3.6)
+
+Supersedes on screen: AC-ST114 (counts line, age label, Sort select in the counts line), AC-ST115
+(inline note on the row), AC-ST116 (truncated notice stays), AC-ST117 (portal body), AC-ST120 /
+121 (the sort is now the toolbar's Sort, persistence unchanged), AC-ST209 / 210 (CRM page shape,
+Agent select unchanged), AC-ST217 (pending state stays on the card's button and the sheet foot).
+
+- **AC-ST301 [FE][T]** `askToSummary(ask)` maps an ask to the landing summary shape: `title` =
+  `SRT5674 x 50`, `customer_name`, `contact_name`, `created_at`, `status` = the ask's state,
+  `answer` = `askAnswerText(ask)`, `branch`; `askAnswerText` strips the `CODE x Q:` prefix from
+  `answer_summary` and upper-cases the first letter ("SRT5674 x 50: yes, we have stock, ..." ->
+  "Yes, we have stock, ..."); an `answer_summary` without the prefix is returned as is.
+- **AC-ST302 [FE][T]** `ASK_LANDING_FIELDS` = Customer (text), Answer (text), Asked (date), State
+  (status); `applyLandingFilters` over adapted asks with `{customer_name: 'Hock Lee Trading'}`
+  keeps only that customer's rows; `sortLandingItems` with `{key: 'created_at', dir: 'asc'}` puts
+  the oldest first, `{key: 'customer_name', dir: 'asc'}` A to Z.
+- **AC-ST303 [FE][T]** `bucketTodo(payload, sort)`: sections `Needs attention` (open before
+  `today_start`, one day group, oldest first under the default sort) and `Today`; no per-day
+  sub-groups; `done` unchanged.
+- **AC-ST304 [FE]** Both mounts render `LandingToolbar` (Filter, Sort reading `Created` by
+  default, the list / cards toggle) and no New button; changing Sort re-orders inside each
+  section and is remembered (CRM: `useListingViewPreferences` `sorting[0]` under
+  `sales.customer_asks.view::todo`; portal: `localStorage sorento.portalAsksSort.<contact_id>`).
+- **AC-ST305 [FE]** Cards view: one `Needs attention` heading (red) then `Today` then
+  `Done today`; a card shows exactly customer + contact, `Asked: CODE x Q`, `Answered: <sentence>`,
+  the datetime, and `Done` in the top-right slot (`Reopen` on a done card); no counts line, no
+  age label, no badge, no Open link, no note input. Clicking the card body calls `onOpen(ask)`;
+  clicking `Done` calls `onDone(askId)` and does not call `onOpen`.
+- **AC-ST306 [FE]** List view: a `DataGrid` (`tableLayout` fixed, resizable, `listingKey`
+  `sales.customer_asks.view::todo` on the CRM and `null` on the portal) with columns Asked at,
+  Customer, Contact, Asked, Answered, (CRM: Agent when `showAgent`, Done by) and the action
+  column LAST holding `Done` / `Reopen`; the groups are section rows in order Needs attention,
+  Today, Done today; row click calls `onOpen`, the button does not.
+- **AC-ST307 [FE]** The opened card (portal `Drawer`, CRM `Sheet`) renders: customer, contact,
+  asked at (CRM: agent code); the Asked / Answered block with a `Jump to message` button; the
+  conversation from `getAskConversation` with inbound bubbles left and outbound right, the
+  `ask_message_id` bubble tagged `This ask`; `Show the whole day` refetches with `whole_day=true`;
+  CRM only `Open in Conversations` link; a Note textarea whose `Save note` button calls
+  `onNote(askId, text)` (blur does not) and then shows `Saved <time>`; foot `Done` calling
+  `onDone` (or `Reopen`). Clicking `Jump to message` scrolls the tagged bubble into view (the
+  bubble element receives the flash class).
+- **AC-ST308 [FE]** Empty payload: "Nothing waiting" heading + hint, no button; the toolbar still
+  renders. Loading: skeleton. Error: the error block.
+- **AC-ST309 [BE]** `GET /api/v1/public/portal/customer-asks/{id}/conversation` as CA for an ask
+  of X (contact CX): messages of `chat_histories` for CX with `sent_at` within 30 minutes of the
+  ask's `created_at`, oldest first, each `{id, direction in|out, text, at}` and nothing else (no
+  `message_id`, `result`, `respond_ts`, `delivery_status`); rows outside the window absent;
+  another contact's rows absent; at most 60 rows. `ask_message_id` is the id of the outgoing row
+  after `created_at` whose text contains the ask's `answer_summary`; with no such row, the nearest
+  outgoing row after `created_at`; with none, null. An ask of Z (another agent) is 404; a contact
+  with the switch off 403; an ask with no contact answers `messages: []`.
+- **AC-ST310 [BE]** `?whole_day=true` returns the rows of the ask's Malaysia calendar day (a row at
+  `today_start - 1s` of that day absent, a row 5 hours before the ask present), at most 200.
+- **AC-ST311 [BE]** `GET /api/v1/sales/customer-asks/{id}/conversation` under
+  `sales.customer_asks.view` follows the PATCH scope: mine 200, a team member's 200 for the
+  leader, Z's 404 without `view_all`, 200 with it; same payload rules as AC-ST309.
+- **AC-ST312 [E2E]** Portal as CA at 375: Customer asks tab shows the toolbar and the three
+  sections; tap a card: the sheet shows the conversation with the tagged bubble; `Jump to
+  message` scrolls to it; type a note, `Save note`, "Saved" appears; `Done` at the foot closes
+  the sheet and the card moves to Done today; switch to list view: the grid with Done rightmost,
+  scroll sideways reaches it. CRM at 1280: sidebar to Customer asks, pick SEAN I, same in cards
+  and list; the right sheet opens on row click; `Open in Conversations` leads to that contact's
+  chat history.
