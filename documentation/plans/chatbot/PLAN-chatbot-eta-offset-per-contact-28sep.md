@@ -1,6 +1,6 @@
 # PLAN: chatbot ETA +x days from one per-contact switch; container and quantity deniable; packing list gate on incoming
 
-Status: READY FOR CI - issue #1328, full track (migration), cloud lane, PR #1329, reviewer + security-reviewer addressed; fix round from the owner hand test (dealer ETA reply, stock vs incoming routing) built and tested, main 5b18b6d0 merged (28 Sep 2026)
+Status: READY FOR CI - issue #1328, full track (migration), cloud lane, PR #1329, reviewer + security-reviewer addressed; fix round from the owner hand test (dealer ETA reply) built and tested, main 5b18b6d0 merged (28 Sep 2026); strip round took the stock vs incoming routing patch out (owner ruling 28 Sep, #1352), re-chain round pending (29 Sep 2026)
 Domain: chatbot / incoming stock / contacts
 UAC: `chatbot-eta-offset-per-contact-28sep-acceptance-criteria.md`
 
@@ -75,14 +75,16 @@ touched no routing) nor by the availability policy. The product printed twice be
 still-incoming lines share one ETA and the container and quantities that told them apart
 are withheld from the contact.
 
-- **Routing** (`app/services/chatbot/domain_words.py`, called in `engine._run_stages`
-  after `order_list_verdict`, before `apply()`): a stock word (the inventory row's own
-  `switch_words`, plus a one-slip typo of "stock": an extra, missing or swapped letter,
-  never a changed one, so "stick" and "stack" stay words) and no incoming word turns an
-  incoming or domain-less reading into the stock domain; a quantity with no incoming word
-  does the same over a turn that would land on incoming; an incoming word and no stock
-  word turns a stock reading into incoming; both words keep the parser's reading; any
-  other domain is never touched. Recorded on the trace as `domain_words`.
+- **Routing: stripped (29 Sep 2026).** The fix round shipped a word rule
+  (`domain_words.py`, called in `engine._run_stages` before `apply()`) that re-read the
+  customer's stock or incoming word over the parser and the carried focus. The owner ruled
+  that patching approach wrong (28 Sep, "code first hotfix and patching approach is
+  wrong"), and the scout report on #1352 (section 6) dropped it with the decide.py rows
+  and the "decisive domain word is never an answer" prompt clause. The strip round
+  removed the module, its engine call and its tests; the decide rows and the prompt
+  clause never reached this branch. Stock vs incoming routing after an incoming turn is
+  fixed by the picker lane on #1352 (parser reports, engine judges), not here. The
+  `domain_in_message` implies `domain_hint` consistency rule stays with that lane too.
 - **Dealer reply** (`eta_policy.dealer_view`, applied last in `incoming_stock._for_contact`
   when `eta_policy.is_dealer`, the availability-policy test the chatbot profile uses): one
   row per product, `{product_code, etas}`, the ETAs distinct and sorted, padded by the

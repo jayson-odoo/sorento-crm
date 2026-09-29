@@ -25,13 +25,13 @@ Plan: `PLAN-chatbot-eta-offset-per-contact-28sep.md` (issue #1328)
 
 Fix round, owner hand test 28 Sep 2026:
 
-- AC-EO13: a stock ask ("stock X", "check stock X", "stoick X", "X x 150") runs the stock
-  tool first for every contact, whatever the parser read or the conversation carried; a
-  dealer (availability-only policy) gets the availability answer ("How many units of X?",
-  then one sentence per product) and never the incoming reply.
-- AC-EO14: an incoming ask ("incoming X", "ETA X", "when arriving X") runs the incoming
-  tool, even when the parser read it as a stock ask; a message with both words keeps the
-  parser's reading.
+- AC-EO13: a dealer (availability-only policy) whose stock ask the parser reads as stock
+  gets the availability answer ("How many units of X?", then one sentence per product) and
+  never the incoming reply. The routing half (a stock or incoming word winning over the
+  parser's reading or the carried focus, "stoick X", "X x 150") was stripped on 29 Sep
+  2026 by owner ruling and moves to the picker lane on #1352.
+- AC-EO14: WITHDRAWN 29 Sep 2026 (routing patch stripped, owner ruling on #1352); the
+  incoming-word routing belongs to the picker lane.
 - AC-EO15: a dealer's incoming reply is one message: per product, the code once and its
   distinct ETAs sorted (padded by the contact's offset rule), then "Please refer to your
   salesperson, <name>." (or without the name when the contact has no salesperson); no

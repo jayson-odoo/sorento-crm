@@ -1,17 +1,16 @@
-"""Owner hand test, 28 Sep 2026 (PR #1329): a stock ask answers stock, an incoming ask
-answers incoming, and a dealer's incoming reply is the deduped ETA list plus the
-salesperson line. UAC AC-EO13 to AC-EO16
+"""Owner hand test, 28 Sep 2026 (PR #1329): a dealer's stock ask gets the availability
+answer, and a dealer's incoming reply is the deduped ETA list plus the salesperson line.
+UAC AC-EO13 (dealer half), AC-EO15, AC-EO16
 (`documentation/plans/chatbot/chatbot-eta-offset-per-contact-28sep-acceptance-criteria.md`).
 
 Owner, verbatim: "stock is stock, incoming is incoming, no such thing as incoming stock"
 and "it should just list deduped ETAs, and say please refer to sales person".
 
-Measured cause (the console harness below, this branch and main alike): after an
-"incoming X" turn, "stoick X" (the parser reads no domain off the typo) carried the focus
-domain `incoming`, and nothing in the engine read the customer's own stock word, so the
-stock ask ran `crm_incoming_stock_list`. The product printed twice because two
-still-incoming lines share one ETA and the container and quantities that told them apart
-were withheld from the contact.
+The product printed twice because two still-incoming lines share one ETA and the
+container and quantities that told them apart were withheld from the contact. The stock
+vs incoming routing half of the hand test ("stoick X", "check stock X" after an incoming
+turn) is NOT pinned here: the owner ruled the routing patch out (28 Sep, #1352) and the
+strip round removed it; the fix comes from the picker design.
 
 Harness: the REAL engine, the REAL stock and incoming routes (through TestClient, the
 MCP tool call being the one seam doubled), the REAL MCP presenter. Only the parser
@@ -281,66 +280,19 @@ def _dealer_reply(etas: list[str], salesperson: str | None = SALESPERSON) -> str
     return f"{CODE}\nETA: {', '.join(etas)}\n\n{refer}"
 
 
-# ------------------------------------------------------------------ routing (item 1)
-
-
-def _answered_as_stock(c: Console, reply: str, *, dealer: bool) -> None:
-    """The stock tool is the turn's own tool. A dealer never reaches the incoming tool at
-    all; staff may, but only as the zero-stock ladder's rung under the stock answer
-    ("No stock for X. But there is INCOMING stock (ETA) ..."), the prod-parity ruling of
-    21 Sep 2026, never as the answer to the ask."""
-    assert c.tools[:1] == [STOCK_TOOL], c.tools
-    assert not reply.startswith("Here is the incoming stock I found"), reply
-    if dealer:
-        assert INCOMING_TOOL not in c.tools, c.tools
-    else:
-        assert f"No stock for {CODE}" in reply, reply
-
-
-@pytest.mark.parametrize("dealer", [True, False], ids=["dealer", "staff"])
-def test_typo_stock_ask_after_an_incoming_turn_reaches_the_stock_tool(console, dealer):
-    """The owner's first message: "stoick X" over a carried incoming focus."""
-    c = console(dealer=dealer, salesperson=True)
-    c.say(f"incoming {CODE}", INCOMING)
-    reply = c.say(f"stoick {CODE}", _v(None))
-    _answered_as_stock(c, reply, dealer=dealer)
-
-
-@pytest.mark.parametrize("dealer", [True, False], ids=["dealer", "staff"])
-def test_check_stock_read_as_incoming_still_reaches_the_stock_tool(console, dealer):
-    """The owner's second message, when the parser reads it against the carried
-    incoming focus: the customer's own stock word decides."""
-    c = console(dealer=dealer, salesperson=True)
-    c.say(f"incoming {CODE}", INCOMING)
-    reply = c.say(f"check stock {CODE}", _v("incoming", "check_incoming"))
-    _answered_as_stock(c, reply, dealer=dealer)
+# --------------------------------------------------------- the dealer stock ask
 
 
 def test_a_dealer_stock_ask_gets_the_availability_answer_not_figures(console):
-    """What the availability-only policy allows on a stock ask: the quantity question,
-    then one sentence per product. No quantity of ours, no location."""
+    """What the availability-only policy allows on a stock ask the parser read as stock:
+    the quantity question, then one sentence per product. No quantity of ours, no
+    location, never the incoming reply. Routing a stock word the parser did NOT read as
+    stock is left to the picker design on #1352 (the strip round took the word rule out)."""
     c = console(dealer=True, salesperson=True)
     c.say(f"incoming {CODE}", INCOMING)
-    reply = c.say(f"check stock {CODE}", _v("incoming", "check_incoming"))
+    reply = c.say(f"check stock {CODE}", _v("inventory", "check_stock"))
+    assert c.tools == [STOCK_TOOL], c.tools
     assert reply == f"How many units of {CODE}?"
-
-
-def test_a_quantity_ask_after_an_incoming_turn_is_a_stock_ask(console):
-    """ "X x 150": no domain word at all, a quantity, and a carried incoming focus."""
-    c = console(dealer=True, salesperson=True)
-    c.say(f"incoming {CODE}", INCOMING)
-    reply = c.say(f"{CODE} x 150", _v(None, quantity=150, demand_qty=150))
-    assert c.tools[:1] == [STOCK_TOOL], c.tools
-    assert INCOMING_TOOL not in c.tools
-    assert "incoming stock I found" not in reply
-
-
-def test_an_eta_ask_read_as_stock_answers_incoming(console):
-    """The mirror rule: the customer's own incoming word decides too."""
-    c = console(dealer=False, salesperson=False)
-    reply = c.say(f"ETA {CODE}", _v("inventory", "check_stock"))
-    assert c.tools == [INCOMING_TOOL]
-    assert reply.startswith("Here is the incoming stock I found.")
 
 
 # ------------------------------------------------------ the dealer reply (items 2 and 3)

@@ -2657,23 +2657,6 @@ def _run_stages(  # noqa: PLR0915
         if order_list_rule:
             turn_trace.add("order_list", {"verdict_rule": order_list_rule})
 
-        # PR #1329 hand test (owner, 28 Sep 2026): stock is stock, incoming is incoming.
-        # The customer's own stock or incoming word settles which of the two this turn
-        # asks, over a parser reading or a carried focus that says the other one.
-        from app.services.chatbot import domain_words
-
-        verdict, domain_word_rule = domain_words.stock_or_incoming(
-            verdict,
-            jsc.js_string(jsc.get(_inner_message(envelope), "text") or ""),
-            carried=list(state_in.focus.domains or []),
-            policy=policy,
-        )
-        if domain_word_rule:
-            turn_trace.add(
-                "domain_words",
-                {"rule": domain_word_rule, "domain_hint": verdict.get("domain_hint")},
-            )
-
         # C APPLY, first pass: state and plan from the verdict alone.
         state_out, plan = turn_apply(state_in, verdict, policy)
 
