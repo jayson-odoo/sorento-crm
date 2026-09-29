@@ -407,8 +407,11 @@ asks (two before today, four today across all four branches incl. one `console`,
   oldest row: "Done by Sean Tan 29/09/2026, 4:20 pm" (`done_by_contact_id` resolved to the
   contact label), counts move. No page errors. 1280x800: two-column rows.
 - Suites: lane + #1333 files 93 passed; neighbours (`tests/chatbot/test_stock_ask_record.py`,
-  `test_stock_ask_notify.py`, `test_rbac.py`) 68 passed; vitest whole suite: see the commit
-  that records it.
+  `test_stock_ask_notify.py`, `test_rbac.py`) 68 passed; vitest by area after the Phase 3 fix
+  round (29 Sep 2026, 245cfa15): `app/(auth)/portal` 61 files / 447 tests, `app/(protected)/sales`
+  20 / 194, `app/(protected)/order-management` 14 / 59, `components/stock-asks` 1 / 19,
+  `lib/stock-asks-todo` + `lib/list-query` 3 / 56, `services` 86 / 614, `config` 9 / 50, all
+  green (the whole suite in one run exceeds the sandbox's 25-minute window, so it ran by area).
 
 ## 8. Risks
 
