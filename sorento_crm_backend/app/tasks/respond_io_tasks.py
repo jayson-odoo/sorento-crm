@@ -39,6 +39,10 @@ def _send_and_log(
     portal OTP code, which has no business-entity row to derive). Set
     ``emit_outbound_webhook=False`` for system messages (OTP) that should be
     logged in the Respond outbox but NOT mirrored into the CRM chat thread.
+
+    OTP sends (sign-in and portal) keep the real code in the outbox row:
+    owner ruling 29 Sep 2026 overruled security round B1 (#1280), because
+    the operator reads the code from the outbox on a test copy.
     """
     from app.database import SessionLocal
     from app.schemas.integration import IntegrationLogCreate
@@ -190,7 +194,8 @@ def send_portal_otp_respond_message(
     ``portal_otp_codes``) like every other send - including a ``status='failed'``
     row when the send can't go out (e.g. local dev with no Respond.io
     connectivity), whose ``request_payload`` carries the code so it can be read
-    back for testing. Not mirrored into the CRM chat thread (system message).
+    back for testing (owner ruling 29 Sep 2026, overruling security round B1,
+    #1280). Not mirrored into the CRM chat thread (system message).
     """
     return _send_and_log(
         use_case="portal_otp",
@@ -205,6 +210,83 @@ def send_portal_otp_respond_message(
         extra_context_vars={"otp_code": otp_code},
         emit_outbound_webhook=False,
     )
+
+
+def send_login_otp_respond_message(
+    otp_id: str,
+    identifier: str,
+    message_text: str,
+    otp_code: str,
+    space_id: Optional[str],
+) -> dict:
+    """Worker-side: window-aware Respond.io send for a phone sign-in OTP (identity S1, #1280).
+
+    Sends under the approved ``portal_otp`` template (owner ruling, 27 Sep
+    2026: CRM sign-in reuses it, no new template goes to Meta). Only when
+    ``settings.phone_signin_otp_use_case`` is set AND has a mapped default
+    does the send use that override instead. Logged in the Respond outbox
+    exactly like the portal's own OTP send (``business_table=
+    'portal_otp_codes'``), and likewise not mirrored into the CRM chat thread.
+    The row carries the real code (owner ruling 29 Sep 2026, overruling
+    security round B1, #1280): the operator reads it from the outbox on a
+    test copy.
+    """
+    from app.config import settings
+    from app.database import SessionLocal
+    from app.services.respond_template_service import get_default_row
+
+    use_case = "portal_otp"
+    override = settings.phone_signin_otp_use_case
+    if override:
+        db = SessionLocal()
+        try:
+            if get_default_row(db, override) is not None:
+                use_case = override
+        finally:
+            db.close()
+
+    return _send_and_log(
+        use_case=use_case,
+        business_table="portal_otp_codes",
+        business_id=otp_id,
+        identifier=identifier,
+        message_text=message_text,
+        respond_user_id="",
+        crm_sender_user_id=None,
+        space_id=space_id,
+        sla_entity_type="",
+        extra_context_vars={"otp_code": otp_code},
+        emit_outbound_webhook=False,
+    )
+
+
+def dispatch_phone_signin_code(num: str) -> None:
+    """Worker-side: decide eligibility and send, for EVERY request-code call
+    (security round S1, #1280).
+
+    `POST /auth/phone/request-code` enqueues this for every normalised
+    number, known or not, with no eligibility check of its own - so the
+    route's timing carries no tell. This job is what used to run inline in
+    that route: resolve the number, and only when it belongs to exactly one
+    eligible user, create the code and send it - INLINE (`dispatch_inline=
+    True`), since this job already IS the `respond_io` queue's own worker, so
+    a second `enqueue_job` would just add a hop. Every failure (ineligible
+    number, a contact-level cooldown/cap hit, a send failure) is logged and
+    swallowed - nothing here is visible to the HTTP caller, which already
+    answered 200.
+    """
+    from app.database import SessionLocal
+    from app.services import phone_signin_service as svc
+
+    db = SessionLocal()
+    try:
+        eligible = svc.find_eligible(db, num)
+        if eligible is None:
+            return
+        _user, contact = eligible
+        svc.send_signin_code(db, contact, dispatch_inline=True)
+    finally:
+        db.close()
 
 
 def send_complaint_respond_message(

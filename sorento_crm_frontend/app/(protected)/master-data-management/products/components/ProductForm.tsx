@@ -76,6 +76,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
   const updateMutation = useUpdateProduct();
   const canViewChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.view');
   const canEditChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.edit');
+  const canViewSuppliers = useHasPermission('procurement.product_suppliers.view');
 
   const navigationBasePath = '/master-data-management/products';
 
@@ -303,10 +304,12 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
               <ListChecks />
               <span>Specifications</span>
             </TabsTrigger>
-            <TabsTrigger value="suppliers">
-              <Factory />
-              <span>Suppliers</span>
-            </TabsTrigger>
+            {canViewSuppliers ? (
+              <TabsTrigger value="suppliers">
+                <Factory />
+                <span>Suppliers</span>
+              </TabsTrigger>
+            ) : null}
             <TabsTrigger value="attachments">
               <Paperclip />
               <span>Attachments</span>
@@ -964,12 +967,14 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
           </TabsContent>
 
           {/* Tab 4: Suppliers */}
-          <TabsContent value="suppliers">
-            <ProductSuppliersSection
-              productId={productId}
-              isEditMode={isEditMode}
-            />
-          </TabsContent>
+          {canViewSuppliers ? (
+            <TabsContent value="suppliers">
+              <ProductSuppliersSection
+                productId={productId}
+                isEditMode={isEditMode}
+              />
+            </TabsContent>
+          ) : null}
 
           {/* Tab 5: Attachments */}
           <TabsContent value="attachments">

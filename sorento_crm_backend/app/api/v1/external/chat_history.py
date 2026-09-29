@@ -29,6 +29,7 @@ from app.schemas.ticket_comment import (
 from app.models.access import RespondContact
 from app.services import conversation_event_bus
 from app.services.chat_message_resolver import respond_ts_from_message_id
+from app.services.otp_redaction import mask_otp_text
 from app.services.integration_service import (
     IntegrationLogService,
     sanitize_request_headers,
@@ -129,7 +130,8 @@ def ingest_chat_message(
                 "channel": payload.channel,
                 "contact_id": payload.contact_id,
                 "phone_number": payload.phone_number,
-                "message": payload.message,
+                # Reviewer B2 (#1280): the mirror never stores an OTP code.
+                "message": mask_otp_text(payload.message),
                 "sent_at": sent_at,
                 "first_name": payload.first_name,
                 "last_name": payload.last_name,
@@ -137,7 +139,7 @@ def ingest_chat_message(
                 "message_id": payload.message_id,
                 "result": json.dumps(payload.result) if payload.result is not None else None,
                 "reply_to_message_id": payload.reply_to_message_id,
-                "reply_to_message": payload.reply_to_message,
+                "reply_to_message": mask_otp_text(payload.reply_to_message),
                 "turn_id": payload.turn_id,
                 # Our clock at ingest. Never the SLA clock - its only job is to make
                 # webhook lag (ingest_at - respond_ts) separable from agent time.

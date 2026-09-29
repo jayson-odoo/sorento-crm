@@ -28,7 +28,7 @@ option (`engine._with_the_picked_axis`), so the v48 body published on the hand-t
 database from this PR's round 1 still exercises the fix.
 
 Revision ID: chatbot_picker_domain_1352
-Revises: merge_29sep_batch5
+Revises: cpc4_cost_packaging_method
 """
 import logging
 
@@ -39,7 +39,7 @@ from app.models.ai_prompt import AIPromptVersion
 from app.services.ai_prompt_registry import PROMPT_KEYS
 
 revision = "chatbot_picker_domain_1352"
-down_revision = "merge_29sep_batch5"
+down_revision = "cpc4_cost_packaging_method"
 branch_labels = None
 depends_on = None
 
