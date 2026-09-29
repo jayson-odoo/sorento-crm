@@ -86,7 +86,14 @@ def test_head_chain():  # AC-EM097
     parent = mods["eml_0001_layout_columns"].down_revision
     assert isinstance(parent, str) and not parent.startswith("eml_")
     assert sd.get_revision(parent) is not None
-    assert sd.get_heads() == ["eml_0002_seed_layouts"]
+    # One head, and the layout chain sits under it. Not `== ["eml_0002_seed_layouts"]`:
+    # the moment a join lands on main above this chain (merge_29sep_batch7 did, the
+    # day after #1350 merged) that exact pin goes red on every PR, which is the very
+    # thing the comment above rules out for the parent.
+    heads = sd.get_heads()
+    assert len(heads) == 1
+    ancestors = {r.revision for r in sd.iterate_revisions(heads[0], "base")}
+    assert "eml_0002_seed_layouts" in ancestors
     for rev in ("eml_0001_layout_columns", "eml_0002_seed_layouts"):
         assert len(rev) <= 32
 
