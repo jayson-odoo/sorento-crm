@@ -1,15 +1,16 @@
 'use client';
 
 /**
- * `/signin`'s Phone tab (PLAN-unified-identity-26sep.md S1, AC-20 to AC-25,
+ * `/signin`'s phone flow (PLAN-unified-identity-26sep.md S1, AC-20 to AC-25,
  * AC-29). Step 1 asks for the number and requests a code; step 2 reuses the
  * portal's shared `OtpCodeField` and signs in on the sixth digit through
- * NextAuth's `phone-otp` Credentials provider - the same shape the Email tab
+ * NextAuth's `phone-otp` Credentials provider - the same shape the email form
  * gets from `signIn('credentials', ...)`.
  *
- * The page owns the one destructive `Alert` under the toggle (AC-20/AC-29):
- * this component reports errors up via `onError` rather than rendering its
- * own, so switching tabs clears the same slot the Email form uses.
+ * The page opens it from the round phone button under "or Log in with" and
+ * owns the one destructive `Alert` above it (AC-20/AC-29): this component
+ * reports errors up via `onError` rather than rendering its own, so "Back to
+ * email" clears the same slot the email form uses.
  */
 
 import { useState } from 'react';

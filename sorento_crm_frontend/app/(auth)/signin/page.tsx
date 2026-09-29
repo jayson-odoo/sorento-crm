@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Eye, EyeOff, Smartphone } from 'lucide-react';
 import { getSession, signIn } from 'next-auth/react';
 import { useForm } from 'react-hook-form';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
@@ -19,7 +19,8 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Separator } from '@/components/ui/separator';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { LoaderCircleIcon } from 'lucide-react';
 import { getSigninSchema, SigninSchemaType } from '../forms/signin-schema';
 import { toAbsoluteUrl } from '@/lib/helpers';
@@ -85,8 +86,8 @@ export default function Page() {
     },
   });
 
-  const handleModeChange = (next: string) => {
-    setMode(next as SigninMode);
+  const handleModeChange = (next: SigninMode) => {
+    setMode(next);
     setError(null);
   };
 
@@ -153,17 +154,6 @@ export default function Page() {
           Sign in to Sorento
         </h1>
       </div>
-
-      <Tabs value={mode} onValueChange={handleModeChange} className="w-full">
-        <TabsList variant="default" className="w-full">
-          <TabsTrigger value="email" className="flex-1">
-            Email
-          </TabsTrigger>
-          <TabsTrigger value="phone" className="flex-1">
-            Phone
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
 
       {error && (
         <Alert variant="destructive">
@@ -268,6 +258,47 @@ export default function Page() {
         </Form>
       ) : (
         <PhoneSignIn onError={setError} onSignedIn={() => void goToLandingUrl()} />
+      )}
+
+      {mode === 'email' ? (
+        <>
+          <div className="flex items-center gap-3">
+            <Separator className="flex-1" />
+            <span className="text-xs text-muted-foreground">or Log in with</span>
+            <Separator className="flex-1" />
+          </div>
+          <div className="flex justify-center">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  mode="icon"
+                  shape="circle"
+                  size="lg"
+                  aria-label="Phone number"
+                  onClick={() => handleModeChange('phone')}
+                >
+                  <Smartphone />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Phone number</TooltipContent>
+            </Tooltip>
+          </div>
+        </>
+      ) : (
+        <div className="flex justify-center">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => handleModeChange('email')}
+            className="text-muted-foreground"
+          >
+            <ArrowLeft />
+            Back to email
+          </Button>
+        </div>
       )}
     </div>
   );

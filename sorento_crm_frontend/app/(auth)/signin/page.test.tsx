@@ -1,6 +1,7 @@
 /**
- * `/signin` Email/Phone toggle (PLAN-unified-identity-26sep.md S1, AC-20,
- * AC-25, AC-29). The Phase 1 frontend already ships this against the mocked
+ * `/signin` phone entry (PLAN-unified-identity-26sep.md S1, AC-20, AC-25,
+ * AC-29; fix round 1, 29 Sep 2026: the Email | Phone toggle became an
+ * "or Log in with" divider plus one round phone icon button). The Phase 1 frontend already ships this against the mocked
  * `phoneSigninService` and NextAuth's `phone-otp` provider; these tests pin
  * the contract's exact words and DOM shape so a later change cannot drift
  * from it silently.
@@ -13,6 +14,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { TooltipProvider } from '@/components/ui/tooltip';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -52,7 +54,17 @@ const mockFetchSlugInfo = vi.mocked(fetchSlugInfo);
 const mockRequestOtp = vi.mocked(requestOtp);
 
 function wrapper({ children }: { children: React.ReactNode }) {
-  return <QueryClientProvider client={new QueryClient()}>{children}</QueryClientProvider>;
+  // The app mounts its one TooltipProvider in ClientProviders.tsx; the test
+  // stands in for it so the phone button's tooltip has a provider.
+  return (
+    <QueryClientProvider client={new QueryClient()}>
+      <TooltipProvider>{children}</TooltipProvider>
+    </QueryClientProvider>
+  );
+}
+
+function openPhone() {
+  fireEvent.click(screen.getByRole('button', { name: 'Phone number' }));
 }
 
 function renderSignin() {
@@ -64,7 +76,7 @@ const CODE_RESULT = { sent_to: '+60•••6789', expires_in_seconds: 600, rese
 async function toPhoneCodeStep(typedPhone = '012-345 6789') {
   mockRequestSigninCode.mockResolvedValue(CODE_RESULT);
   renderSignin();
-  fireEvent.mouseDown(screen.getByRole('tab', { name: 'Phone' }));
+  openPhone();
   fireEvent.change(screen.getByLabelText('Phone number'), { target: { value: typedPhone } });
   fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
   await waitFor(() => expect(screen.getByTestId('otp-code-field')).toBeInTheDocument());
@@ -80,17 +92,57 @@ afterEach(() => {
   if (vi.isFakeTimers()) vi.useRealTimers();
 });
 
-describe('AC-20: /signin toggle structure', () => {
-  it('renders the heading and an Email/Phone tablist with Email selected by default', () => {
+describe('AC-20: /signin phone entry', () => {
+  it('renders the heading, no Email/Phone tablist, and an "or Log in with" divider with one phone icon button under Continue', () => {
     renderSignin();
 
     expect(screen.getByRole('heading', { name: 'Sign in to Sorento' })).toBeInTheDocument();
+    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(screen.queryByRole('tab')).toBeNull();
 
-    const tablist = screen.getByRole('tablist');
-    const tabs = within(tablist).getAllByRole('tab');
-    expect(tabs.map((t) => t.textContent)).toEqual(['Email', 'Phone']);
-    expect(screen.getByRole('tab', { name: 'Email' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Phone' })).toHaveAttribute('aria-selected', 'false');
+    const continueButton = screen.getByRole('button', { name: 'Continue' });
+    const divider = screen.getByText('or Log in with');
+    const phoneButton = screen.getByRole('button', { name: 'Phone number' });
+    const FOLLOWING = Node.DOCUMENT_POSITION_FOLLOWING;
+    expect(continueButton.compareDocumentPosition(divider) & FOLLOWING).toBeTruthy();
+    expect(divider.compareDocumentPosition(phoneButton) & FOLLOWING).toBeTruthy();
+    expect(phoneButton.className).toContain('rounded-full');
+    // No Facebook, Google or Sign Up entry.
+    expect(screen.queryByText(/facebook|google|sign up/i)).toBeNull();
+  });
+
+  it('the phone icon button swaps the card body to the phone flow, and Back to email returns to the email form', () => {
+    renderSignin();
+    openPhone();
+
+    expect(screen.getByLabelText('Phone number')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Your email')).toBeNull();
+    expect(screen.queryByText('or Log in with')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Phone number' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to email' }));
+
+    expect(screen.getByPlaceholderText('Your email')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Phone number' })).toBeNull();
+    expect(screen.getByText('or Log in with')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Back to email' })).toBeNull();
+  });
+
+  it('Back to email from the code step clears the error slot', async () => {
+    await toPhoneCodeStep();
+    mockSignIn.mockResolvedValue({
+      error: JSON.stringify({ code: 401, message: 'That code is not right. 4 tries left.' }),
+    } as Awaited<ReturnType<typeof signIn>>);
+    const input = within(screen.getByTestId('otp-code-field')).getByPlaceholderText('6-digit code');
+    fireEvent.change(input, { target: { value: '000000' } });
+    await waitFor(() =>
+      expect(screen.getByText('That code is not right. 4 tries left.')).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to email' }));
+
+    expect(screen.queryByText('That code is not right. 4 tries left.')).toBeNull();
+    expect(screen.getByPlaceholderText('Your email')).toBeInTheDocument();
   });
 
   it('Email mode shows Email, Password, Forgot Password, Remember me and Continue in that DOM order', () => {
@@ -112,7 +164,7 @@ describe('AC-20: /signin toggle structure', () => {
 
   it('Phone mode shows Phone number and Continue, and no Remember me', () => {
     renderSignin();
-    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Phone' }));
+    openPhone();
 
     expect(screen.getByLabelText('Phone number')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument();
@@ -191,7 +243,7 @@ describe('AC-25: /signin and PortalVerifyCard share the one OtpCodeField', () =>
     vi.useFakeTimers();
     mockRequestSigninCode.mockResolvedValue(CODE_RESULT);
     renderSignin();
-    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Phone' }));
+    openPhone();
     fireEvent.change(screen.getByLabelText('Phone number'), { target: { value: '0123456789' } });
 
     await act(async () => {
@@ -236,7 +288,7 @@ describe('error words', () => {
   it('a refused request-code shows the rate-limit message verbatim', async () => {
     mockRequestSigninCode.mockRejectedValue(new Error('Too many tries. Try again in 12 minutes.'));
     renderSignin();
-    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Phone' }));
+    openPhone();
     fireEvent.change(screen.getByLabelText('Phone number'), { target: { value: '0123456789' } });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
@@ -246,7 +298,7 @@ describe('error words', () => {
   });
 });
 
-describe('AC-29: Email mode carries no change beyond the toggle row', () => {
+describe('AC-29: the Email form carries no change beyond the phone entry below it', () => {
   it('the Email form contains exactly its existing controls and no explanatory paragraph', () => {
     const { container } = renderSignin();
     const form = container.querySelector('form');

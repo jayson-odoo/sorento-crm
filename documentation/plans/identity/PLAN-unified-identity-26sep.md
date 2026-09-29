@@ -467,17 +467,21 @@ of the current sign in page". So: no new page and no one-field guesser (the roun
 withdrawn); the existing page gains a two-way toggle, and every other element is the one it
 already has (section 3.2).
 
-- **Layout, top to bottom, in the same narrow card:** the wordmark; "Sign in to Sorento"; a
-  two-option toggle **Email | Phone** (the existing `Tabs` primitive, full width of the card,
-  Email selected by default); the error `Alert` slot; then the fields of the chosen mode. No
-  extra heading, no explanatory copy.
+- **Layout, top to bottom, in the same narrow card** (fix round 1, owner hand test 29 Sep 2026:
+  "the UI of togggling between email and phone not so nice, do something like this, 'or Log in
+  with' then the phone number icon", replacing the round 4 `Tabs` toggle): the wordmark; "Sign in
+  to Sorento"; the error `Alert` slot; the email form; then a divider (`Separator` either side of
+  "or Log in with") and one round outline icon `Button` with the `Smartphone` icon (tooltip and
+  accessible name "Phone number"). Pressing it swaps the card body to the phone flow, which
+  carries a small "Back to email" link under it. No Email | Phone toggle, no Facebook or Google
+  button, no Sign Up line. No extra heading, no explanatory copy.
 - **Email mode** is today's page exactly: Email, Password with "Forgot Password?", the eye
-  toggle, Remember me, Continue. Nothing moves.
+  toggle, Remember me, Continue. Nothing moves; the divider and phone button sit below it.
 - **Phone mode, step 1:** "Phone number" `Input` (`inputMode="tel"`, `autoComplete="tel"`,
   placeholder "e.g. 012-345 6789"), then the full-width "Continue" button. No Remember me: a phone
   sign-in is always the 30-day rolling session (Q15). The FE sends the number as typed; the
   backend normalises it with `normalize_msisdn`.
-- **Phone mode, step 2 (same card, the toggle stays):** the line "We'll send a code to your
+- **Phone mode, step 2 (same card, "Back to email" stays):** the line "We'll send a code to your
   WhatsApp <masked number>" with "Change number" beside it, one "Verification code" `Input`
   styled exactly as the portal's (`variant="lg"`, numeric, `one-time-code`, placeholder "6-digit
   code", centred, letter-spaced), and the outline "Resend in 60s" / "Resend code" button under it.
