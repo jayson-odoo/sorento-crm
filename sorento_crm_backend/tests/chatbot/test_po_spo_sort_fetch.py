@@ -1,0 +1,122 @@
+"""RED tests - the fetch transformer maps sort per tool and defaults the SPO list.
+
+`documentation/plans/chatbot/PLAN-po-spo-warehouse-29sep.md` sections S6, S7 (sort table);
+`documentation/plans/chatbot/po-spo-warehouse-29sep-acceptance-criteria.md` AC-9, AC-10.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from app.services.chatbot.lanes.business import fetch
+
+PO_TOOL = "crm_procurement_po_placed_list"
+SPO_TOOL = "crm_procurement_spo_allocations_last_receipt_list"
+PRODUCT_UUID = "11111111-1111-1111-1111-111111111111"
+WAREHOUSE_UUID = "22222222-2222-2222-2222-222222222222"
+
+
+def _args(tool: str, *, entities: list[dict] | None = None, **semantic: Any) -> dict[str, Any]:
+    return fetch.entity_ids_transformer(
+        {
+            "entities": entities or [],
+            "tool": tool,
+            "semantic_input": {"contact_id": "1", "space_id": "s", **semantic},
+        }
+    )
+
+
+def _product() -> dict[str, str]:
+    return {"uuid": PRODUCT_UUID, "entity_type": "product", "code": "SRT79-SS"}
+
+
+def _warehouse() -> dict[str, str]:
+    return {"uuid": WAREHOUSE_UUID, "entity_type": "warehouse", "code": "BRW"}
+
+
+class TestSortMapsPerTool:
+    @pytest.mark.parametrize(
+        ("sort_by", "sort", "dir_"),
+        [
+            ("date", "po_date", "desc"),
+            ("expected_date", "expected_date", "asc"),
+            ("quantity", "ordered_qty", "desc"),
+            ("outstanding", "outstanding_qty", "desc"),
+            ("product", "product", "asc"),
+            ("supplier", "supplier", "asc"),
+        ],
+    )
+    def test_po_tool_key_and_default_direction(self, sort_by: str, sort: str, dir_: str) -> None:
+        out = _args(PO_TOOL, sort_by=sort_by)
+        assert out.get("sort") == sort, out
+        assert out.get("dir") == dir_, out
+
+    @pytest.mark.parametrize(
+        ("sort_by", "sort", "dir_"),
+        [
+            ("date", "spo_date", "desc"),
+            ("expected_date", "spo_date", "asc"),
+            ("quantity", "spo_quantity", "desc"),
+            ("received_date", "gr_date", "desc"),
+            ("received_quantity", "gr_quantity", "desc"),
+        ],
+    )
+    def test_spo_tool_key_and_default_direction(self, sort_by: str, sort: str, dir_: str) -> None:
+        out = _args(SPO_TOOL, sort_by=sort_by)
+        assert out.get("sort") == sort, out
+        assert out.get("dir") == dir_, out
+
+    def test_a_parser_direction_wins_over_the_default(self) -> None:
+        po = _args(PO_TOOL, sort_by="quantity", sort_dir="asc")
+        assert po.get("sort") == "ordered_qty" and po.get("dir") == "asc", po
+        spo = _args(SPO_TOOL, sort_by="date", sort_dir="asc")
+        assert spo.get("sort") == "spo_date" and spo.get("dir") == "asc", spo
+
+    def test_supplier_is_unmapped_on_the_spo_tool(self) -> None:
+        out = _args(SPO_TOOL, sort_by="supplier")
+        assert "sort" not in out and "dir" not in out, out
+
+    def test_received_date_is_unmapped_on_the_po_tool(self) -> None:
+        out = _args(PO_TOOL, sort_by="received_date")
+        assert "sort" not in out and "dir" not in out, out
+
+    def test_no_sort_asked_sends_neither(self) -> None:
+        for tool in (PO_TOOL, SPO_TOOL):
+            out = _args(tool)
+            assert "sort" not in out and "dir" not in out, (tool, out)
+
+    def test_another_tool_never_gets_sort_or_dir(self) -> None:
+        out = _args("crm_inventory_stock_balance_list", sort_by="quantity", sort_dir="desc")
+        assert "sort" not in out and "dir" not in out, out
+
+    def test_the_maps_are_named_module_constants(self) -> None:
+        assert hasattr(fetch, "SORT_KEY_BY_TOOL")
+        assert hasattr(fetch, "SORT_DEFAULT_DIR")
+
+
+class TestWarehouseAndListDefault:
+    def test_a_warehouse_entity_becomes_warehouse_ids_on_the_po_tool(self) -> None:
+        out = _args(PO_TOOL, entities=[_warehouse()])
+        assert out.get("warehouse_ids") == [WAREHOUSE_UUID], out
+
+    def test_the_spo_list_default_is_ten_rows(self) -> None:
+        assert getattr(fetch, "SPO_LIST_ROWS", None) == 10
+
+    def test_a_warehouse_only_spo_ask_lists_ten_rows(self) -> None:
+        out = _args(SPO_TOOL, entities=[_warehouse()])
+        assert out.get("warehouse_ids") == [WAREHOUSE_UUID], out
+        assert out.get("top_n") == 10, out
+
+    def test_a_named_top_n_wins(self) -> None:
+        out = _args(SPO_TOOL, entities=[_warehouse()], top_n=3)
+        assert out.get("top_n") == 3, out
+
+    def test_a_product_scoped_spo_ask_keeps_the_tool_default(self) -> None:
+        out = _args(SPO_TOOL, entities=[_product()])
+        assert out.get("product_ids") == [PRODUCT_UUID], out
+        assert "top_n" not in out, out
+
+    def test_a_product_and_warehouse_ask_adds_no_default_either(self) -> None:
+        out = _args(SPO_TOOL, entities=[_product(), _warehouse()])
+        assert "top_n" not in out, out

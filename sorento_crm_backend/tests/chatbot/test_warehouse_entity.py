@@ -385,3 +385,48 @@ class TestProductAndWarehouseResolveTogether:
 # reproduce the drop either. The live-incident fix this class proved appears to have
 # no equivalent anywhere in the new architecture; not the tester's fix to make.
 # --------------------------------------------------------------------------- #
+
+
+# --------------------------------------------------------------------------- #
+# AC-11 (PLAN-po-spo-warehouse-29sep.md W1): the gate keeps a warehouse on a PO ask.
+# --------------------------------------------------------------------------- #
+
+
+class TestGateKeepsWarehouseOnPurchaseOrder:
+    """Supersedes the "`purchase_order` stays as is" line of the earlier plan: a PO ask
+    used to pass every entity through unscoped (no `ALLOWED` row for the domain)."""
+
+    def _gate(self, *matches: dict[str, Any]) -> dict[str, Any]:
+        resolver = _resolver(*matches)
+        return run_gate(
+            dict(resolver),
+            parser={"domain_hint": "purchase_order", "entities": []},
+            resolver=resolver,
+        )
+
+    def test_keeps_product_and_warehouse_and_drops_a_customer(self) -> None:
+        out = self._gate(
+            _match(PRODUCT_UUID, "product", "SRT79-SS"),
+            _match(WAREHOUSE_UUID, "warehouse", "BRW"),
+            _match(CUSTOMER_UUID, "customer", "ABC SDN BHD"),
+        )
+        types = {e["entity_type"] for e in out["compatible_entities"]}
+        assert types == {"product", "warehouse"}, out.get("gate_reason")
+
+    def test_a_zero_entity_ask_passes_as_a_broad_query(self) -> None:
+        out = self._gate()
+        assert out["gate_passed"] is True, out.get("gate_reason")
+        assert "permits broad query" in out["gate_reason"], out["gate_reason"]
+
+    def test_the_matrix_rows_exist(self) -> None:
+        from app.services.chatbot.lanes.business.gate import ALLOWED, ALLOWS_EMPTY
+
+        assert set(ALLOWED.get("purchase_order") or []) == {
+            "product", "warehouse", "category", "brand",
+        }
+        assert ALLOWS_EMPTY.get("purchase_order") is True
+
+    def test_the_miss_line_has_a_scope_word(self) -> None:
+        from app.services.chatbot.lanes.business.answer import _SCOPE_WORD
+
+        assert _SCOPE_WORD.get("purchase_order") == "purchase order"
