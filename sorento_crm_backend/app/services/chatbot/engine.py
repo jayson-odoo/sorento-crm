@@ -193,9 +193,14 @@ def _without_carried_domain_on_a_roster_pick(
         for e in (parse_output.get("entities") or [])
     ):
         return parse_output
-    if not parse_output.get("domain_hint"):
+    if not parse_output.get("domain_hint") and not parse_output.get("intent_hint"):
         return parse_output
-    return {**parse_output, "domain_hint": None}
+    # PR #1353 fix round 2 (merge of main's #833): the carried `intent_hint` is the same
+    # echo. `lanes/business/predicate.derive_require` reads `check_promotion` as the bare
+    # "has a promotion" leg, so a pick over an already-settled product (no token for the
+    # resolver) built a described set over nothing, and `run_fetch` answered "the
+    # described set qualifies nothing" instead of the promotion fetch the pick planned.
+    return {**parse_output, "domain_hint": None, "intent_hint": None}
 
 
 def _picks_in_the_roster_domain(pending: Any, verdict: dict[str, Any]) -> list[int]:
