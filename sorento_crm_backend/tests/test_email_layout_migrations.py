@@ -86,7 +86,11 @@ def test_head_chain():  # AC-EM097
     parent = mods["eml_0001_layout_columns"].down_revision
     assert isinstance(parent, str) and not parent.startswith("eml_")
     assert sd.get_revision(parent) is not None
-    assert sd.get_heads() == ["eml_0002_seed_layouts"]
+    # Same rule for the head: a later migration chained on top of eml_0002 must not turn
+    # this red, so check eml_0002 is on the single head's ancestry, not that it IS the head.
+    heads = list(sd.get_heads())
+    assert len(heads) == 1
+    assert "eml_0002_seed_layouts" in {r.revision for r in sd.walk_revisions(base="base", head=heads[0])}
     for rev in ("eml_0001_layout_columns", "eml_0002_seed_layouts"):
         assert len(rev) <= 32
 

@@ -63,6 +63,7 @@ from app.models.projects import (
 from app.models.entity_conversation import EntityConversationMessage
 from app.models.integration import Integration, IntegrationApiKey, IntegrationLog
 from app.models.integration_reference import IntegrationReference
+from app.models.ideation_status_event import IdeationStatusEventCursor
 from app.models.import_log import ImportLog
 from app.models.import_alias import ImportFieldAlias
 from app.models.translation_memory import TranslationMemory
@@ -180,6 +181,7 @@ from app.models.stock_transfer import StockTransfer  # noqa: F401
 from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow  # noqa: F401
 
 __all__ = [
+    "IdeationStatusEventCursor",
     "ImportFieldAlias",
     "PriorityPolicy",
     "Company",
