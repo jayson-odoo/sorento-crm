@@ -280,6 +280,27 @@ def test_a_leader_of_an_inactive_team_is_nobodys_leader(w):
     assert denied.json().get("code") == "NOT_YOUR_AGENT"
 
 
+def test_a_leader_row_in_another_company_grants_nothing(w):
+    """A team of ANOTHER company led by agent A with member B never makes A their leader here."""
+    from app.models.sales import SalesTeam, SalesTeamMember
+
+    db = w["db"]
+    mocha = seed_mocha(db)
+    team = SalesTeam(id=seed.uid(), company_id=mocha.id, name=f"ZZT Foreign {seed.uid()[:6]}", is_active=True)
+    db.add(team)
+    db.flush()
+    for agent in (w["a"], w["b"]):
+        db.add(SalesTeamMember(id=seed.uid(), company_id=mocha.id, sales_team_id=team.id, sales_agent_id=agent.id))
+    db.flush()
+    team.leader_sales_agent_id = w["a"].id
+    db.commit()
+
+    assert _call(w, [VIEW], "me", "get", "/agents").json() == []
+    denied = _call(w, [VIEW], "me", "get", f"/todo?agent_id={w['b'].id}")
+    assert denied.status_code == 403, denied.text
+    assert denied.json().get("code") == "NOT_YOUR_AGENT"
+
+
 # ---- AC-ST216 ---------------------------------------------------------------------------
 
 

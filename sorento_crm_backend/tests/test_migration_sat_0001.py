@@ -186,6 +186,7 @@ def test_permissions_seeded_and_swept():
         try:
             conn.execute(sa.text("DELETE FROM user_permissions WHERE slug LIKE 'sales.customer_asks.%'"))
             admin = _role(conn, "admin")
+            superadmin = _role(conn, "superadmin")
             sales_role = _role(conn, f"zzt_sales_{uuid.uuid4().hex[:6]}")
             integration = _role(conn, f"integration_zzt_{uuid.uuid4().hex[:6]}")
             plain = _role(conn, f"zzt_plain_{uuid.uuid4().hex[:6]}")
@@ -200,9 +201,12 @@ def test_permissions_seeded_and_swept():
                 r[0] for r in conn.execute(sa.text("SELECT slug FROM user_permissions WHERE slug LIKE 'sales.customer_asks.%'"))
             }
             assert set(SLUGS) <= existing
-            wanted = {"sales.customer_asks.view", "sales.customer_asks.edit", "sales.customer_asks.view_all"}
-            assert wanted <= _held(conn, admin)
-            assert wanted <= _held(conn, sales_role)
+            # AC-ST201 (security review B1): a salesperson sees their own list and a leader their
+            # team, so the opportunities sweep grants view and edit, never view_all.
+            assert _held(conn, admin) == set(SLUGS)
+            assert _held(conn, superadmin) == set(SLUGS)
+            assert _held(conn, sales_role) == {"sales.customer_asks.view", "sales.customer_asks.edit"}
+            assert "sales.customer_asks.view_all" not in _held(conn, sales_role)
             assert _held(conn, integration) == set()
             assert _held(conn, plain) == set()
         finally:
