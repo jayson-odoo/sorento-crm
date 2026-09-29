@@ -6,7 +6,8 @@
  *
  * A country flag + dial code picker on the left (the standard
  * `SearchableSelect`, like every select in the system), the number on the
- * right in the chosen country's national format as it is typed. The value in
+ * right as the national significant number (no trunk "0", since the dial code
+ * is shown beside it), formatted for the chosen country as it is typed. The value in
  * and out is E.164 (`+60166753328`); `normalisePhone` is what turns "0166753328",
  * "60166753328" or "+60 16-675 3328" into that same value. The backend still
  * normalises what it receives - this is the first line, not the only one.
@@ -20,6 +21,7 @@ import {
   AsYouType,
   getCountries,
   getCountryCallingCode,
+  Metadata,
   parsePhoneNumberFromString,
   type CountryCode,
 } from 'libphonenumber-js';
@@ -71,15 +73,48 @@ export function normalisePhone(raw: string, country: CountryCode): NormalisedPho
   const number = typer.getNumber();
   const resolved = (number?.country ?? typer.getCountry() ?? country) as CountryCode;
   const valid = Boolean(number?.isValid());
+  const shownCountry = valid ? resolved : country;
+  const shownCode = getCountryCallingCode(shownCountry);
+  const callingCode = number?.countryCallingCode ?? typer.getCallingCode() ?? (international ? undefined : shownCode);
+
+  // The dial code sits beside the field, so the field shows the national
+  // significant number without the trunk "0" (owner ruling, 29 Sep 2026:
+  // "16-675 3328", not "016-675 3328"). A half-typed "+65 9" in a Malaysia
+  // field keeps its "+" until it resolves, or the "+60" beside it would lie.
+  let display = typed;
+  if (callingCode === shownCode) {
+    const nsn = valid && number ? number.nationalNumber : (typer.getNationalNumber() ?? '');
+    // The national format is the per-country one ("016-675 3328"); it only
+    // formats right with the trunk prefix present, so format first, then drop it.
+    const formatted =
+      valid && number
+        ? number.formatNational()
+        : new AsYouType(shownCountry).input(`${nationalPrefix(shownCountry)}${nsn}`);
+    display = withoutTrunkPrefix(formatted, nsn);
+  }
 
   return {
     e164: number?.number ?? (international ? `+${digits}` : ''),
-    // A complete number always settles in national format; a half-typed one
-    // keeps the as-you-type rendering so the caret does not jump around.
-    display: valid && number ? number.formatNational() : typed,
-    country: valid ? resolved : country,
+    display,
+    country: shownCountry,
     valid,
   };
+}
+
+function nationalPrefix(country: CountryCode): string {
+  const metadata = new Metadata();
+  metadata.selectNumberingPlan(country);
+  // Present at runtime ("0" for MY, "8" for RU), missing from the published typings.
+  const plan = metadata.numberingPlan as unknown as { nationalPrefix?: () => string | undefined } | undefined;
+  return plan?.nationalPrefix?.() ?? '';
+}
+
+/** "016-675 3328" to "16-675 3328": drop the digits in front of the national significant number. */
+function withoutTrunkPrefix(formatted: string, nsn: string): string {
+  const extra = formatted.replace(/\D/g, '').length - nsn.length;
+  if (!nsn) return '';
+  if (extra <= 0) return formatted;
+  return formatted.replace(new RegExp(`^\\D*(?:\\d\\D*?){${extra}}[\\s-]*`), '');
 }
 
 /** Regional-indicator flag emoji for an ISO 3166 alpha-2 code. */
@@ -245,7 +280,7 @@ export function PhoneInput({
           aria-invalid={invalid || undefined}
           aria-describedby={invalid ? errorId : undefined}
           value={display}
-          placeholder={country === 'MY' ? '012-345 6789' : undefined}
+          placeholder={country === 'MY' ? '12-345 6789' : undefined}
           onChange={(e) => apply(e.target.value, country)}
           onBlur={() => {
             setTouched(true);
