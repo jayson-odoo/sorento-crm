@@ -356,8 +356,10 @@ history, the sort persistence (3.2: CRM `useListingViewPreferences` under
 scope as the PATCH (404 outside it) -> `{ "messages": [{ "id", "direction": "in" | "out",
 "text", "at" }], "ask_message_id": <id | null> }`. Source: `chat_histories`
 (`app/models/chat_history.py:21`: `contact_id`, `type` = `incoming | outgoing`, `message`,
-`sent_at`), for the ask's contact, resolved the way `chat_history_query.get_thread`
-(`app/services/chat_history_query.py:437`) resolves a contact. Window: `sent_at` within 30
+`sent_at`), for the ask's contact: `chat_histories.contact_id` holds the Respond.io contact id, so the ask's
+`contact_id` (a `respond_contacts.id`) is resolved to that row's `respond_io_id` first, exactly as
+`conversation_thread_service.py:309` filters (`ChatHistory.contact_id == contact.respond_io_id`);
+a contact with no `respond_io_id` answers an empty list. Window: `sent_at` within 30
 minutes either side of the ask's `created_at`, oldest first, at most 60 rows; `whole_day=true`
 widens to the ask's Malaysia calendar day (at most 200 rows). `ask_message_id` = the outgoing
 row nearest after `created_at` whose `message` contains the ask's `answer_summary` line, else
