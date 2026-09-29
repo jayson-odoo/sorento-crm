@@ -1,0 +1,440 @@
+# PLAN: one append-only audit backbone for every function (issue #1281)
+
+Status: S0 built, PR #1299, fix lane round 3 done on the reviewer pass at cba2b754 (Track: full,
+a migration and an auth-surface change). #1298 (S-1) and #1303 (identity S0) are merged into the
+lane; merge order is #1298, then #1303, then #1299. The actor on every audit row is #1303's
+(identity plan section 8); S0 adds no actor column. Measurement gate: run on the 25 Sep
+production copy (27 Sep 06:42 MYT), failed as built; round 3 implements the B3 exclusion ruling
+(assumed, owner to confirm): projected 3,136 rows a day at most, 2,015 expected, against 480
+today (section "Measurement"). Owner confirmed the B3 exclusion list as built (27 Sep 15:31 MYT).
+Merge round: origin/main 721ca398 merged, aud_0001 chains on identity_0001_s0_model, single head
+aud_0001_audit_standard_s0, up-down-up clean. Round 3 runs: the touched and audit, identity, queue, worker,
+scheduler, ingest and import suites (178 files) 2981 passed, 73 skipped, 0 failed; kill tests
+K1 to K15 all red. Hardening round (owner ruling 28 Sep 19:1x MYT) built on PR #1299: capture
+best-effort and loud (savepoint, integration_log channel `audit`, `audit_trail_gaps` via
+`aud_0002_audit_trail_gaps`, health page count), migration lock timeout, off switch
+`AUDIT_CAPTURE_ENABLED`; single head aud_0002, up-down-up clean; backend suite green apart from
+failures that are environmental or red on the base too (PR comment). S1, S2, S3 not started.
+Plan created: 2026-09-26 (from the investigation report on #1281, comment 5846914028, sections 7
+to 10, investigated at `51d30ccc5`).
+Domain: audit (CORE, not a module: every install needs a trail; the `audit` App Store key keeps
+gating only the read screens).
+UAC: `audit-standard-26sep-acceptance-criteria.md` alongside.
+
+## Owner rulings
+
+- **26 Sep 2026 23:45 MYT, decision 1 (security fixes first):** "yeah". The three section-6
+  findings ship now as their own lane (S-1), ahead of S0.
+- **26 Sep 2026 23:45 MYT, decision 2 (evolve `audit_logs` or build `audit_events`):** "the
+  recommended standard should be applied now, we must do the right thing now". Evolve
+  `audit_logs` in place; no second table. The orchestrator reads this ruling as authorising the
+  whole recommended standard (section 7 below) as a sliced build, S0 first.
+
+- **27 Sep 2026 06:42 MYT, B3 volume gate (ASSUMED by the orchestrator, owner to confirm):**
+  rows written by the integration sync and import paths (AutoCount sync, supplier syncs,
+  product and master ingest, scheduled feed jobs) and pure line and link child tables are
+  EXCLUDED from default-on; staff-driven business writes stay on. Built in fix round 3 as the
+  sync writer context (7.2 item 1) plus the model opt-out list in "Measurement".
+
+- **28 Sep 2026 19:1x MYT, audit capture is best-effort (supersedes "a failed capture fails
+  the write"):** owner's words, verbatim: "hmm if writing to audit fails, the save shouldn't
+  fail, right? for business flow shouldn't fail if the audit writing fail?" and, on the
+  hardening round, "go". Until this ruling the hooks wrote their rows in the business write's
+  own transaction, so a failed capture failed the write ("a failed capture fails the write
+  rather than leaving a change with no trail", `_session_do_orm_execute`). That contract is
+  superseded. Built in fix lane round 3 (section "Best-effort capture" below): the automatic
+  hooks never raise into the business transaction; a failure is never silent (one
+  `integration_log` row, channel `audit`; one `audit_trail_gaps` row per record left without
+  its trail; a count on the system health page). The same round adds a lock timeout to the
+  migration and an emergency off switch (`AUDIT_CAPTURE_ENABLED`, default on).
+
+Every other decision in the report is still open and is listed as a grill question at the end.
+Where S0 has to pick a side to be buildable at all (decisions 3 and 11), it builds the report's
+recommendation under ruling 2 and says so; the grill question asks the owner to confirm.
+
+## Measured facts (origin/main `dc10a1afb`, 26 Sep 2026)
+
+- `audit_logs` (`app/models/audit.py`) is written by a global `before_flush` listener
+  (`app/services/audit_service.py`), registered in the API only (`app/main.py`). 42 of 331 mapped
+  classes set `__audit_track__ = True`.
+- The actor lives in three separate contextvars (`app/audit_context.py`): a `(user, ip,
+  effective)` tuple, `trace_id`, `actor_contact_id`. Every auth dependency calls `.set()`.
+  `get_current_user_or_api_key` is a sync `def` (`app/dependencies.py`), so FastAPI runs it on a
+  copied context in a threadpool and its `.set()` is lost to the endpoint.
+- UPDATE rows snapshot every column (`_old_new_from_dirty`), changed or not. `User` carries no
+  `__audit_columns__`, so `password` is copied on every user update (S-1 finding 6.1).
+- The action vocabulary is enforced by a CHECK constraint that exists only in migrations
+  (`271_audit_action_allow_import`): `CREATE, READ, UPDATE, DELETE, IMPORT`. `create_all` (CI,
+  `scripts/bootstrap_env.py`, the blank test schema) does not build it.
+- Bulk ORM DML (`query().update()/delete()`, ORM `update()/delete()`) never reaches
+  `before_flush`. 124 + 13 sites.
+- `worker.py` registers the company-scope and spec listeners but never
+  `register_audit_listeners`. Jobs are enqueued through `app.services.queue_service.enqueue_job`
+  (all but 5 direct `.enqueue` sites) and run in `ForkSafeWorker.perform_job` or, for the
+  in-process drain, `run_sync_rq_jobs`.
+- Scheduler ticks all open their session through `app.scheduler.task_scheduler.scheduler_session`.
+- Integration keys resolve to a seeded service user per integration (`integration_seed.py`:
+  `n8n` type `automation`, `sorento-mcp` type `mcp`, `foundryx-esb` type `autocount_esb`). The
+  in-app assistant reaches the backend through the MCP server, so its writes arrive as the MCP
+  integration; nothing carries the end user yet.
+- `module_purge_service.purge_audit` deletes every audit row when the `audit` module is
+  uninstalled with purge.
+- Row volume per day on the production copy: 480 (30-day average, 25 Sep copy, measured by the
+  orchestrator on 27 Sep). Default-on as first built projected 87,788 to 675,992; see
+  "Measurement" for the exclusion that brings it to 2,015 to 3,136.
+
+## The standard (report section 7)
+
+### 7.1 One append-only event model: `audit_logs`, evolved
+
+New columns (S0), all nullable so every existing row and reader keeps working:
+
+| Column | Meaning |
+|---|---|
+| `root_entity_type`, `root_entity_id` | The record an operator opens to see this change. A child model declares `__audit_parent__ = "<fk column>"`; the parent's audit entity type is read from the FK target. A model with no parent rolls up to itself, so "history of record X" is one predicate on the root pair. |
+| `event` | Business verb, dotted (`scm.po.confirm`, `settings.general.update`, `auth.login_failed`). NULL = plain CRUD. |
+| (actor) | WHO acted is not S0's: it is identity S0's actor contract (#1303, `PLAN-unified-identity-26sep.md` section 8): `actor_type`, `user_id` (the EFFECTIVE actor, the impersonation target), `real_user_id` (at the keyboard), `auth_method`, `session_id`, `integration_id`, `job_id`, `user_agent`. S0's own `principal_type`, `principal_id` and `on_behalf_of_user_id` were dropped in fix round 2 (review B2): `principal_type` maps to `actor_type` (`api_key` is `integration`), `principal_id` to `integration_id` / `job_id` / `contact_id`, and `on_behalf_of_user_id` to `real_user_id` with `user_id` read the other way round. |
+| `source` | `ui`, `portal`, `chatbot`, `mcp`, `n8n`, `external_api`, `import`, `worker`, `scheduler` (and `assistant` once G7 lands). Derived server side, never from `X-Source`. |
+| `reason` | Free text or a reason code. |
+| `correlation_id` | One per business action across processes; a job inherits its request's. Taken from an inbound `X-Correlation-Id` (the header `api_call_log` already reads) or defaults to the request id. |
+
+Unchanged: `trace_id` IS the request id (one per HTTP request or job run), now length-clamped to
+64 on ingest and returned by the API as `request_id`. `action` keeps the CRUD vocabulary plus
+one new value, `EVENT`, for a side effect that changed no row (a download, a send, a login).
+
+**Append-only is enforced by Postgres.** A `BEFORE UPDATE OR DELETE` row trigger and a
+`BEFORE TRUNCATE` statement trigger raise, with one way through: the transaction has run
+`SET LOCAL sorento.audit_maintenance = 'on'` AND the current role is a member of the NOLOGIN role
+`sorento_audit_maintainer` (with no such role, only a superuser) AND neither the current nor the
+session role holds CREATEROLE without being a superuser (review S1-r2: such a login can make
+itself a member). Any login can SET a custom
+setting, so at 7a56073f the app role could set the flag itself and rewrite history (review S1,
+probed as a NOSUPERUSER owner); the role check is what the app login does not have. The migration
+creates the role only when it runs as a superuser (else it notes that only a superuser can
+maintain the table: a CREATEROLE login that created the role would be a member of it through
+PG16's implicit grant, probe P1 at cba2b754)
+and the trigger for existing databases; an `after_create` DDL hook on the model creates both
+wherever `create_all` builds the table (CI bootstrap, the blank test schema), so the two cannot
+drift (lesson 90). The retention job (S3) and any scrub migration run as a maintainer with the
+flag set. Module purge stops deleting audit rows.
+
+What the trigger is: a guard against application code, and the application login, editing
+history. What it is not: tamper-proof against the table's owner or a DBA. The bypasses that
+remain, named so nobody reads the trigger as more than it is:
+
+1. The table's OWNER can `ALTER TABLE audit_logs DISABLE TRIGGER ...` or drop the trigger. In a
+   single-role deployment the app login is the owner.
+2. A superuser can `SET session_replication_role = replica`, which skips triggers.
+3. A superuser is a member of every role, so it passes the maintainer check.
+4. An app login with CREATEROLE (review S1-r2). The trigger refuses it and it cannot create the
+   role, but on PG15 (the shipped compose image) a CREATEROLE login may grant any non-superuser
+   role, so it can create a second login without CREATEROLE and grant that the role. PG16 closes
+   this (granting needs ADMIN on the role, which a superuser-created role gives nobody). Run the
+   app login without CREATEROLE.
+
+Closing 1 needs the table owned by a migration role and `REVOKE UPDATE, DELETE, TRUNCATE ON
+audit_logs` from the app login: a second role, which this deployment does not run today. Trigger to
+revisit: a second writer role appears, or the owner rules the trail must hold against its own
+login (grill question 14).
+
+### 7.2 Emission: one hook, one decorator, no per-endpoint code
+
+1. **Default-on, for staff-driven writes.** The `before_flush` listener audits every mapped class
+   unless it declares `__audit_skip__ = "<reason>"`. `__audit_columns__` still narrows a table.
+   Inside a **sync writer context** (review B3; `AuditContext.sync_writer`, read by
+   `sync_writer_for`) the flush, after-flush and bulk hooks audit only the 42 classes opted in
+   before default-on (`__audit_track__`), so `__audit_track__` is no longer a no-op marker. The
+   context is set centrally: `job_actor_scope` for every `imports`-queue job,
+   `mark_integration_request` for the `autocount_esb` key and for `/api/v1/external/ingest/*`,
+   every `scheduler` actor (ticks, heartbeat handlers, Run now), and `sync_writer_scope(name)`
+   for a sync path anywhere else. Explicit `log_audit` / `record()` / `@audit_event` rows are
+   written either way.
+2. **Changed keys only on UPDATE.** CREATE and DELETE stay full snapshots. An UPDATE whose only
+   changed keys are touch columns (`updated_at`, `last_used_at`, `last_sign_in_at`,
+   `last_seen_at`, `last_activity_at`, `last_synced_at`, `synced_at`, `last_run_at`,
+   `storage_checked_at`) writes nothing. Measured writers: `integrations.last_used_at` (every
+   API-key call), `users.last_sign_in_at` (every login), `integration_references.last_synced_at`
+   (every sync, even of an unchanged record; found by the suite), `scheduled_tasks.last_run_at`
+   (every heartbeat), catalogue syncs, the storage audit job.
+3. **Bulk ORM DML via `do_orm_execute`.** For an audited table, an ORM or Core `update()` /
+   `delete()` issued through `Session.execute` pre-selects the matching primary keys (and the old
+   values of the SET columns, or the whole row for a delete), capped at 500 rows per statement,
+   and writes one audit row each (plus one `description="... N more rows"` summary row beyond the
+   cap). SET values that are SQL expressions read `"[expression]"`. Raw `text()` DML,
+   `bulk_*_mappings` and an executemany ORM bulk UPDATE by primary key
+   (`session.execute(update(Model), [{...}, ...])`, no app call site today, review N2) are not
+   seen; S3 allowlists the sites by name.
+4. **The actor is #1303's; S0 adds the business action.** `AuditActor` (identity S0) is stamped
+   on the contextvar, `db.info` and `request.state`, which is #1303's fix for the API-key
+   attribution loss (report section 1, inferred). S0 adds one mutable `AuditContext` for the
+   business action only (`event`, `reason`, `source`, `correlation_id`): `LoggingMiddleware` puts
+   a fresh one in its contextvar per request and code MUTATES it, so a sync dependency on a
+   copied context still reaches the endpoint. One helper stamps every write path (`log_audit`,
+   the after-flush CREATE insert, the bulk DML rows), so no row misses an actor column.
+5. **Worker inherits context.** `worker.py` registers the audit listeners. `enqueue_job` stamps
+   `job.meta["actor"]` (#1303: user, real user, trace id) and `job.meta["audit_context"]`
+   (S0: correlation id); `job_actor_scope`, shared by `ForkSafeWorker.perform_job` and
+   `run_sync_rq_jobs`, runs the job as `actor_type = worker` with `job_id` = the RQ job id,
+   `source = import` on the `imports` queue (else `worker`), and the request's correlation id.
+   The deliberate `skip_audit_for` / `skip_audit_entity_types` plus one coarse IMPORT row stays
+   for imports. Scheduler ticks run as `actor_type = scheduler`, `job_id` = the tick name,
+   `source = scheduler` and a fresh correlation id in `scheduler_session`.
+6. **Redaction in the listener.** Keys named `password`, `token`, `key_hash`, `code_hash`,
+   `credentials_json`, or ending `_password`, `_secret`, `_token`, `_ciphertext`, or starting
+   `api_key`, never reach `old_values` / `new_values`: the key is dropped at every depth (S-1's
+   semantics, which its scrub migration and tests assume). Applied inside `log_audit` and the bulk path, so explicit callers are
+   covered too. Overlap with S-1: S-1(a) redacts `password` and scrubs existing rows. S0 needs
+   the wider denylist regardless, because default-on starts auditing `system_settings`,
+   `integration_api_keys`, `respond_workspaces`, `ai_assistant_configs`, `view_tokens` and more.
+   When S-1 lands, the two denylists merge into this one function; the scrub migration stays
+   S-1's.
+7. **Business verbs: `@audit_event` and `audit.record()`.**
+   `@audit_event("scm.po.confirm", entity="purchase_orders", ids="ids", reason="reason")` sets
+   `event` (and `reason` from the named argument) on the context for the duration of the call, so
+   every row the hook writes inside it carries the verb; for an id in `ids` that got no row, it
+   writes one `EVENT` row itself. `record(db, event=..., entity_type=..., entity_id=...)` is the
+   one explicit call for a non-service caller. The 38 `log_audit` call sites move over in S1.
+8. **Reason is a body field**, passed by the service to the decorator; S0 ships the plumbing,
+   S1 adds the fields on the decision-6 routes.
+
+The bespoke domain logs stay product data and are linked by `correlation_id` (decision 8 is open;
+nothing in S0 depends on it).
+
+### 7.3 Retention (S3)
+
+24 months hot in Postgres, monthly gzip JSONL export to R2 with a manifest row, then delete under
+the maintenance flag. Business events deleted from the archive after 7 years, security and access
+events after 2. S0 deletes nothing. Partition trigger: more than about 10M rows, or the per-record
+history query over 1s at p95.
+
+### 7.4 Screens (S2)
+
+Per-record History drawer in every detail page's `PageHeader` (entity or root entity = this
+record), per-user Activity tab replacing `user-management/logs`, global search with server-served
+entity types and event / source / principal / request / correlation / reason filters, audited
+export. `audit.logs.view` enforced on the backend, IP addresses only to its holders. No UUIDs.
+
+### 7.5 Interlock with #1280
+
+`user_id` is the human. Once #1280 provisions a user for a contact, portal writes stamp both
+`user_id` and `contact_id` for one release; history is never rewritten and resolves contact to
+user at read time. #1280's auth paths emit `auth.*` events through `record()` from their first
+commit, which makes S0 a prerequisite of #1280's first auth slice (grill G9).
+
+## PR-CHECKLIST addition (report section 8, lands in S3)
+
+```markdown
+## Audit trail (every state-changing endpoint)
+- [ ] Every new or changed POST / PUT / PATCH / DELETE route leaves an audit event: its
+      tables are audited (default-on; any `__audit_skip__` names its reason), or the service
+      method carries `@audit_event("<domain>.<entity>.<verb>")` for a side effect that
+      flushes nothing (send, download, export, login)
+- [ ] Approve, confirm, reject, cancel, void, publish and send carry a business `event`
+      name, not only a CRUD row, so they are searchable by verb
+- [ ] Actions on the "reason required" list (owner decision 6) take `reason` in the body and
+      the test asserts it lands on the audit row
+- [ ] No new `query().update()` / `.delete()` / `text()` DML / `bulk_*_mappings` on an
+      audited table outside the reviewed allowlist (`tests/test_audit_coverage.py`)
+- [ ] Work moved into an RQ job is enqueued through the context-carrying helper, so the
+      job's rows name the requesting user and share the request's correlation id
+- [ ] No secret column (password, token, key, hash) reaches `old_values` / `new_values`
+- [ ] A test asserts the event: actor, `source`, `event`, and the changed field in the diff,
+      for the happy path of each new state-changing route
+- [ ] A new detail page shows the History drawer in its `PageHeader`
+```
+
+Backed by `tests/test_audit_coverage.py` (S3): fails when a mapped table is neither audited nor
+`__audit_skip__` with a reason, or a bulk / raw DML site on an audited table is off the allowlist.
+
+## Sliced rollout (report section 9)
+
+| Slice | Contents | Track, size |
+|---|---|---|
+| S-1 security hotfix | Redact `password` + scrub existing JSON; gate `/audit/logs/` and `/audit/activity` on a backend permission and company-scope `/activity`; remove or lock down `POST /user-management/system-logs/`. | Full (migration + auth), S. Own lane. |
+| **S0 event model and emitter (this PR)** | Columns + migration + `EVENT` action; mutable `AuditContext`; default-on with `__audit_skip__`; changed-keys UPDATE; `do_orm_execute` bulk capture; worker listener + `job.meta` carry; scheduler context; `@audit_event` + `record()`; reason plumbing; source derivation for JWT, API key, portal, impersonation (the actor is #1303's); append-only trigger; module purge keeps audit rows; API returns `request_id`, `correlation_id`, `source`, `event`, `reason`, root entity. | Full, L. |
+| S1 backfill the gaps | Roles / permissions / company grants (`set_user_roles` as a diff); system settings; SCM PO confirm, GR, bulk delete; GRN; core `sales_orders` ingest with a stored verdict; auth events; downloads and exports; sends to customers; project PO / schedule / SO / order inquiry verbs. | Full, L (may split S1a / S1b). |
+| S2 screens | History drawer, per-user Activity, global search upgrades, `audit.logs.view` + grant sweep. | Full, M. |
+| S3 the gate | PR-CHECKLIST section, `tests/test_audit_coverage.py`, retire `system_logs` and `import_logs`, retention + R2 archive job. | Small fix apart from any archive migration, S to M. |
+
+Dependencies: S-1 first; S0 blocks S1, S2 and #1280's auth slice; S1 and S2 in parallel; S3 last.
+
+## S0 design details
+
+- Migration `aud_0001_audit_standard_s0` (id under 32 chars): nine columns, three indexes
+  (`event`, `correlation_id`, `(root_entity_type, root_entity_id)`), CHECK widened with `EVENT`,
+  trigger function `audit_logs_append_only()` plus the two triggers. Downgrade drops all of it.
+- Skip-list (`__audit_skip__`), by reason class: the trails themselves (`audit_logs`,
+  `activity_events`, `module_install_events`, `import_logs`, `integration_log`,
+  `scheduled_task_runs`, `system_logs`, `conversation_sla_event_log`,
+  `workflow_submission_transition_logs` is NOT skipped because the report wants its history kept
+  when a submission is deleted); derived or recomputed data (embeddings, SCM analytics and reorder
+  runs, findability runs, translation memory, AI assistant traces / spans / usage / messages);
+  queues and job progress (`import_jobs`, `import_job_rows`, `email_outbox`,
+  `notification_deliveries`, `notifications`, `media_extraction_job`, `embedding_queue`,
+  `sla_form_actions`, dealer-kit export requests and flyer readings, `user_downloads`); timers
+  and cursors (`conversation_sla_tracking`, `agent_team_round_robin_cursors`,
+  `health_alert_state`, `contact_media_usage`, `conversation_frames`); sessions and one-time
+  secrets (`user_sessions`, `portal_otp_codes`, `verification_tokens`); per-user UI preferences
+  (`user_list_column_configs`, `saved_views`, `user_quick_access`, `report_views`); message logs
+  (`chat_histories`, `chatbot.turns`, `entity_conversation_messages`). The exact list with each
+  reason is in the models; S3's coverage test is what keeps it honest.
+- Actor and source: the actor columns follow identity plan 8.1 exactly (JWT = `user`;
+  impersonation = `user` with `user_id` = target and `real_user_id` = admin; API key =
+  `integration` + `integration_id`, `user_id` = the act-as user; portal token of a contact with
+  no user = `contact`; worker, scheduler as above; nothing set = `system`). `source` is the
+  channel: `ui` for a user, `portal` for any portal route, by integration type for a key
+  (`automation` -> `n8n`, `mcp` -> `mcp`, anything else -> `external_api`) except
+  `/api/v1/external/chat/*` -> `chatbot`.
+
+## Best-effort capture (owner ruling 28 Sep 2026 19:1x MYT)
+
+- **Where the rows go.** `before_flush` no longer adds `AuditLog` objects to the business flush:
+  it builds the rows (the same columns `log_audit` fills) and hands them to `after_flush`, which
+  inserts them, plus the CREATE rows whose key was unknown before the INSERT, inside a
+  **SAVEPOINT** on the flush's own connection (`Connection.begin_nested()`), released before
+  the flush returns. The collection itself (the parent-company lookups, the old-value reads)
+  runs in its own savepoint too, because a failed SELECT aborts a Postgres transaction just as
+  a failed INSERT does. The bulk hook (`do_orm_execute`) runs its pre-select and INSERT in one
+  savepoint before the statement executes.
+- **Why a savepoint, not an after-commit write.** The trail row still commits atomically with
+  the business row and disappears with it when the business write rolls back for its own
+  reason, so there is never a trail for a change that did not happen and never a lost row when
+  the process dies between the two commits. `Session.begin_nested()` is not usable here (it
+  flushes, and these hooks run inside a flush); the Connection-level savepoint is. Cost: one
+  SAVEPOINT / RELEASE pair per audited flush, skipped on a flush with nothing audited.
+- **Loud failure.** On any exception the savepoint is rolled back and, in a second savepoint:
+  one `integration_log` row (`integration_channel = 'audit'`, `status = 'failed'`,
+  `business_table` = entity type, `external_reference` = entity id, `error_code` / `error_message`
+  = the exception, `request_payload` = actor, source, trace id and every affected entity), and
+  one `audit_trail_gaps` row per affected record (a side table, not a column on every audited
+  table: `entity_type`, `entity_id`, `action`, `company_id`, `integration_log_id`, `error`,
+  `occurred_at`, `backfilled_at`; migration `aud_0002_audit_trail_gaps` over `aud_0001`). A later
+  slice backfills from it and stamps `backfilled_at`. The system health page's Audit Activity
+  card shows the open-gap count, and the `audit` channel appears in its Integrations table with
+  its failed count. If recording the failure fails too, it is logged at ERROR and the business
+  write still proceeds.
+- **Scope.** The three automatic hooks. An explicit `log_audit` / `record()` row stays in the
+  caller's flush (the caller wrote it on purpose; the 38 call sites move onto the hook in S1,
+  7.2 item 7); `log_import_audit` callers already wrap it best-effort by contract.
+- **Off switch.** `AUDIT_CAPTURE_ENABLED` (`settings.audit_capture_enabled`, default true), read
+  on every write, not at startup: false skips the three hooks and makes `log_audit` / `record()`
+  write nothing. For an incident only; every write while it is off has no trail and no gap row.
+- **Migration lock timeout.** `aud_0001` sets `lock_timeout = 5s` and `statement_timeout = 60s`
+  (transaction-local, restored at the end) for its transactional DDL on `audit_logs`, takes the
+  table lock first with `LOCK TABLE` in a savepoint, and retries up to 5 times with a backoff;
+  the fifth miss raises a RuntimeError naming the fix. No timeout is set inside the autocommit
+  block, where the CONCURRENTLY builds and the VALIDATE scan run.
+
+## Measurement (before the default-on flip merges)
+
+**Result (fix round 3, B3).** Excluded from default-on, by model (`__audit_skip__` names the
+measured rows a day; lower bound from `created_at` / `updated_at` over 30 days, upper bound
+from `pg_stat_user_tables`):
+
+| Table | Rows a day, lower | Upper | Why |
+|---|---|---|---|
+| `sales_order_lines` | 47,507 | 286,917 | AutoCount sync line table |
+| `integration_references` | 13,315 | 79,431 | sync bookkeeping (external id map) |
+| `sales_orders` | 10,829 | 68,710 | AutoCount SO mirror; S1 records the ingest verdict as an event |
+| `purchase_order_lines` | 5,224 | 51,107 | sync line table |
+| `spo_allocations` | 2,602 | 29,343 | shipping order allocation lines from the sync |
+| `scm.order_link_claim` | 907 | 21,551 | sync link table |
+| `order_lines` | 699 | 32,458 | line table |
+| `projects.sales_order_lines` | 679 | 7,502 | ingested line table |
+| `stock` | 526 | 6,879 | balance mirror; movements are `stock_ledger` |
+| `product_specifications` | 513 | 5,220 | derived from products |
+| `projects.order_inquiry_rows` | 451 | 4,601 | line table (services log explicitly) |
+| `picking_lines` | 268 | 4,047 | line table |
+| `product_suppliers` | 264 | 4,865 | link from the master sync |
+| `product_attachments` | 259 | 4,399 | link table |
+| `certificate_products` | 256 | 3,420 | link table |
+| `projects.order_inquiry_links` | 230 | 2,351 | link table |
+| `projects.planning_change_rows` | 67 | not in the top 25 | line table |
+| `attachment_field_links` | 55 | 5,278 | link table |
+| `promotion_products` | not in the top 25 | 4,705 | link table |
+
+Excluded by writer, whatever the table: the sync writer context (7.2 item 1), where only the 42
+`__audit_track__` classes are recorded.
+
+**Projected: 3,136 audit rows a day at most (6.5x today's 480), 2,015 expected (4.2x).** The
+ceiling is the lower-bound estimator's 87,788 minus the excluded tables, with every remaining
+default-on table counted in full whoever wrote it (the measurement cannot split a table by
+writer, so the sync writer context gets no credit). Expected replaces the 42 tracked classes'
+raw write volume (1,602) with today's actual audit volume (480), since they were audited
+before S0 and still are. Both are computed by `projected_rows_per_day()` in
+`tests/test_audit_standard_s0_round3.py`, which pins them and fails if a table is put back.
+The upper-bound estimator is not used for the gate: its counters show inserts only (0 updates
+and 0 deletes on every table, and `sales_order_lines`' 843,494 is its whole row count), which
+reads as the dump restore 2.94 days before the run, so it measures table size, not a daily rate.
+After deploy, the 10x rule below still applies to the real count.
+
+The full gate is `documentation/plans/audit/measure-s0.sql` (review B3 at 7a56073f): today's
+volume, then the projected volume under default-on from two estimators (write counters since the
+stats reset, an upper bound; `created_at` / `updated_at` over 30 days, a lower bound), and a
+verdict against the 10x rule. Read-only, temp tables only. Run it on the production copy with
+`psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f documentation/plans/audit/measure-s0.sql` and paste
+the result here. On CI's database (seed rows only) it runs clean and says nothing about volume.
+The three baseline queries, for reference:
+
+```sql
+SELECT date_trunc('day', changed_at) AS day, count(*)
+FROM audit_logs WHERE changed_at > now() - interval '30 days'
+GROUP BY 1 ORDER BY 1;
+SELECT count(*) FROM audit_logs;
+SELECT pg_size_pretty(pg_total_relation_size('audit_logs'));
+```
+
+The flip multiplies writers from 42 classes to about 280; the skip-list takes the known
+high-churn tables. If the post-merge daily count exceeds 10x the pre-merge figure, the next step is
+narrowing the loudest table with `__audit_columns__` or `__audit_skip__`, not reverting the
+default.
+
+## Tests (red first, then green)
+
+See the UAC for the per-AC list. Files: `tests/test_audit_standard_s0.py` (listener, context,
+bulk, decorator, redaction, trigger, worker carry), `tests/test_audit_api_key_attribution.py`
+(the sync-dependency attribution red test), `tests/test_migration_aud_0001_audit_standard.py`,
+and one file per review round (`tests/test_audit_standard_s0_round2.py`, `_round3.py`).
+
+## Out of scope for S0
+
+S-1's work (scrub migration, read-route permission gate, `system_logs` POST), any screen, any
+reason field on a route, the retention job, the trusted on-behalf-of header, backfilling any
+history (decision 10).
+
+## Grill questions for the owner
+
+1. **Default-on auditing (decision 3).** S0 flips to default-on for staff-driven writes with the
+   reasoned skip-list above (built under ruling 2), and off for the sync writer context. Confirm,
+   or keep opt-in? Recommendation: default-on.
+2. **Measurement gate.** Measured on 27 Sep; the B3 exclusion (ruling assumed, "Owner rulings")
+   brings the projection to 2,015 to 3,136 rows a day. Confirm the ruling and the exclusion
+   list in "Measurement", in particular `sales_orders` and `stock` (not line tables, but sync
+   mirrors) and `product_specifications` (staff spec edits are no longer rows of their own).
+3. **Retention (decision 4).** 24 months hot then R2; delete business events after 7 years and
+   security / access events after 2; `chatbot.turns` envelopes after 12 months. Confirm 7 years
+   with the accountant (Companies Act 2016).
+4. **Record reads (decision 5).** Record downloads, exports and customer-data sends; do not
+   record page views or plain GETs. Confirm.
+5. **Reason required (decision 6).** Mandatory on reject, cancel, void, unacknowledge, a
+   confirmed-document delete (PO, SO, GRN), a permission or role change, a price-floor override;
+   optional elsewhere, typed inline next to the D7 countdown. Confirm the list.
+6. **Who sees the trail (decision 7).** Global search and per-user Activity: superadmin, admin
+   and `audit.logs.view`; per-record History: anyone who can view the record; IP addresses:
+   `audit.logs.view` only. Confirm.
+7. **Trusted on-behalf-of header (report 7.5 item 4).** Let the chatbot and MCP keys, flagged per
+   integration, pass the end user's id so the row reads "MCP key on behalf of Jane"? This is a new
+   auth surface and needs a security review. Recommendation: yes, in S1 behind a per-integration
+   flag.
+8. **Fold bespoke logs into `audit_logs` (decision 8).** Recommendation: no; link by
+   `correlation_id`, retire only `system_logs` and `import_logs`, audit the SLA event log's manual
+   POST / DELETE.
+9. **Sequencing against #1280 (decision 9).** S-1 and S0 land before #1280's first auth slice.
+   Confirm.
+10. **Reconstruct history (decision 10).** Recommendation: no; the trail starts at S0 and the S1
+    PR records the date each gap closed.
+11. **API-key attribution bug (decision 11).** Built in S0 with a red test first (the mutable
+    context is S0's foundation). Confirm it stays in S0.
+12. **API-key `user_id`.** An integration's act-as user is a seeded service user, not a person,
+    so `user_id` keeps it (identity plan 8.1: `user_id` = act-as user, `integration_id` = the key's
+    integration) until question 7 lands. Confirm, or show the integration name instead of the service user?

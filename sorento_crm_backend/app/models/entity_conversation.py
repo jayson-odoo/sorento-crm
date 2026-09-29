@@ -20,6 +20,7 @@ def _uuid_str() -> str:
 
 class EntityConversationMessage(Base):
     __tablename__ = "entity_conversation_messages"
+    __audit_skip__ = "message log, itself a trail"
 
     id = Column(String(36), primary_key=True, default=_uuid_str)
     entity_type = Column(String(64), nullable=False)

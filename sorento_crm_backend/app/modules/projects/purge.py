@@ -61,6 +61,7 @@ from app.models.project_so import (
     OrderInquiryReserveRequest,
     OrderInquiryReserveRequestRow,
     OrderInquiryRow,
+    OrderInquirySuggestedLink,
     ProjectDeliveryPhase,
     ProjectPOAnnotation,
     ProjectPOLine,
@@ -124,6 +125,13 @@ PURGE_ORDER: List[Type] = [
     # reserve table below it, not just before the row - its own statement so the
     # operator sees the placements counted.
     OrderInquiryLink,
+    # order_inquiry_suggested_links.row_id CASCADEs off the row (its other two targets,
+    # po_line_id and spo_allocation_id, CASCADE onto CORE purchase_order_lines and
+    # spo_allocations, outside the module and irrelevant to this order). A guess, not a
+    # placement (PLAN-oi-links-autocount-truth-24sep.md, issue #1215) - purges beside its
+    # sibling OrderInquiryLink and before the row it hangs off, its own statement so the
+    # operator sees the suggestions counted.
+    OrderInquirySuggestedLink,
     # order_inquiry_reserve_events.reserve_request_row_id CASCADEs off the request row
     # (section 6c, `PLAN-oi-request-cs-reserve.md`), so it purges first, its own
     # statement so the operator sees the history counted.

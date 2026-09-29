@@ -1,7 +1,7 @@
 /**
  * Lane C, PLAN-order-sheet-oi-reports-22sep.md (AC-C1/AC-C2): `exportOiWorksheet` - the
  * "OI worksheet Excel" export - through the SAME `/order-summary/export` pipeline
- * `exportOrderSheet`/`exportLowStockReport` already use, with a third `format` value
+ * `exportOrderSheet` already uses (and the low stock report once did), with a third `format` value
  * (`'oi_worksheet'`). Modelled directly on `summaryOrderService.test.ts`'s own
  * `exportLowStockReport` block.
  *

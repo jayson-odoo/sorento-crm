@@ -16,8 +16,19 @@ from app.services.storage_router import default_provider, get_backend
 
 logger = logging.getLogger(__name__)
 
+#: R8 (security S3, review round 1): the fixed sentence a caller passes to `_record_
+#: failure` via `message=` when the underlying exception's OWN text is not safe to show
+#: the requesting user verbatim (a SQL fragment, a column name, a file path). Public -
+#: the enqueuing ENDPOINT (`enqueue_packing_list_export`) stores the same sentence for
+#: its own queue-time failure, so the drawer never shows two different wordings for
+#: "this export did not work".
+EXPORT_FAILURE_MESSAGE = "Export failed. Please try again."
 
-def _record_failure(db, svc: DownloadService, download_id: str, error: Exception, label: str) -> None:
+
+def _record_failure(
+    db, svc: DownloadService, download_id: str, error: Exception, label: str,
+    *, message: Optional[str] = None,
+) -> None:
     """Write the failure onto the download row, whatever it was that failed.
 
     The rollback is the point. When the thing that failed was the DATABASE - a query against a
@@ -27,6 +38,10 @@ def _record_failure(db, svc: DownloadService, download_id: str, error: Exception
     rollback first it raises too, and the row is left sitting in 'processing' for good: the
     drawer polls it forever, and its sweeper only reaps rows in 'sent'. The user is told nothing.
 
+    `message`, when given, OVERRIDES what gets STORED on the row (R8) - the caller's own
+    `logger.exception` right before this call is where the real exception detail goes;
+    every other caller keeps storing `str(error)` unchanged, so this is opt-in per task.
+
     Marking the failure is itself best-effort - if even this cannot be written, log it and let
     the task return normally rather than poisoning RQ's failed registry.
     """
@@ -35,7 +50,7 @@ def _record_failure(db, svc: DownloadService, download_id: str, error: Exception
     except Exception:  # noqa: BLE001 - a session too broken to roll back is still worth trying
         logger.exception("%s: rollback before marking download %s failed", label, download_id)
     try:
-        svc.mark_failed(download_id, str(error))
+        svc.mark_failed(download_id, message if message is not None else str(error))
     except Exception:  # noqa: BLE001
         logger.exception("%s: could not mark download %s failed", label, download_id)
 
@@ -81,6 +96,121 @@ def generate_complaint_pdf(download_id: str, complaint_id: str, user_id: str) ->
         _record_failure(db, svc, download_id, e, "generate_complaint_pdf")
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
+        db.close()
+
+
+def generate_packing_list_xlsx(download_id: str, shipment_id: str) -> dict:
+    """Render the consolidated packing list workbook, store it, and update the download
+    row (E1/E2, PLAN-pi-header-fields-convert-fixes-24sep.md) - the SAME bytes the
+    synchronous GET export has always produced (`consolidated_packing_list.build` +
+    `to_xlsx`), just rendered on the worker instead of the request path.
+
+    Best-effort and self-contained: any failure marks the download 'failed' with a
+    fixed, safe message rather than raising into RQ's failed registry - same pattern
+    `generate_complaint_pdf` follows.
+
+    R7 (security review round 1): `shipment_id` is an RQ job ARGUMENT - trusted input,
+    replayable and, on a compromised worker queue, spoofable - never cross-checked
+    against anything before this fix. Two checks, mirroring the fix already shipped for
+    `generate_order_inquiry_xlsx` (security review fix round 2, item 2, sha 002fd3d2e on
+    `fix/order-sheet-cells`):
+
+    (a) the download row is the ONLY thing that says which shipment this render is FOR -
+    it must name `source_entity_type="inbound_shipment"` and `source_entity_id ==
+    shipment_id`, or the render never starts (a mismatched pair would otherwise store
+    one shipment's data under a download that names a different one).
+
+    (b) an `InboundShipment` is company-scoped data (`CompanyScopedMixin`), not a shared
+    entity like a complaint - the OLD comment here claiming otherwise was simply wrong.
+    The shipment is resolved under `None` (every company, the same shape `generate_
+    order_inquiry_xlsx` uses to find a row before it knows the row's own company), then
+    the session is RE-SCOPED to that shipment's own company before anything else touches
+    it, and the render refuses outright unless the download's OWNING user
+    (`user_downloads.user_id`) is a member of that company - closing the gap `None`
+    would otherwise leave open for the rest of the render.
+    """
+    db = SessionLocal()
+    from app.models.base import UNSET, get_company_scope
+    from app.models.procurement import InboundShipment
+    from app.services.company_scope_resolver import resolve_user_grant_ids
+
+    caller_scope = get_company_scope(db)
+    svc = DownloadService(db)
+    try:
+        row = svc.get(download_id)
+        if (
+            row is None
+            or row.source_entity_type != "inbound_shipment"
+            or str(row.source_entity_id) != str(shipment_id)
+        ):
+            raise ValueError(
+                f"Download {download_id} does not name shipment {shipment_id}; "
+                "refusing to export."
+            )
+
+        set_company_scope(db, None)
+        shipment = db.get(InboundShipment, shipment_id)
+        company_id = getattr(shipment, "company_id", None) if shipment is not None else None
+        if company_id:
+            set_company_scope(db, frozenset({str(company_id)}))
+        else:
+            set_company_scope(db, UNSET)
+            raise ValueError(
+                f"Shipment {shipment_id} could not be found or carries no company; "
+                "refusing to export."
+            )
+
+        # S1 (review round 2, blocker): the PLATFORM'S OWN scope resolver, not a raw
+        # `UserCompany` lookup - `resolve_user_grant_ids` treats a superadmin/admin as a
+        # member of EVERY company (the same rule the active-company switcher and every
+        # other screen already honour), so an admin's export of a shipment they hold no
+        # explicit membership row for still renders, exactly as it would through the
+        # normal request path.
+        if str(company_id) not in resolve_user_grant_ids(db, str(row.user_id)):
+            raise ValueError(
+                f"User {row.user_id} is not a member of shipment {shipment_id}'s "
+                "company; refusing to export."
+            )
+
+        svc.mark_processing(download_id)
+
+        from app.services.scm import consolidated_packing_list
+
+        payload = consolidated_packing_list.build(db, shipment_id)
+        xlsx_bytes = consolidated_packing_list.to_xlsx(payload)
+        filename = consolidated_packing_list.export_filename(payload)
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/packing-list-xlsx/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=xlsx_bytes,
+            file_path=key,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        logger.info(
+            "generate_packing_list_xlsx: download %s ready (%d bytes)",
+            download_id, len(xlsx_bytes),
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(xlsx_bytes)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_packing_list_xlsx failed for download %s", download_id)
+        # R8: a fixed sentence stored on the row - never `str(e)`, which could carry a
+        # SQL fragment, a column name, or a file path this drawer shows the user.
+        _record_failure(
+            db, svc, download_id, e, "generate_packing_list_xlsx",
+            message=EXPORT_FAILURE_MESSAGE,
+        )
+        return {"download_id": download_id, "status": "failed", "error": EXPORT_FAILURE_MESSAGE}
+    finally:
+        set_company_scope(db, caller_scope)
         db.close()
 
 
@@ -812,6 +942,11 @@ def _respond_io_id_for(db, contact_id: str, download_id: str) -> Optional[str]:
 
 
 def _tell_chat_the_report_failed(db, download_id: str) -> None:
+    """The low stock report's own wording, kept as its caller always had it."""
+    _tell_chat_the_download_failed(db, download_id, text=LOW_STOCK_BUILD_FAILED_TEXT)
+
+
+def _tell_chat_the_download_failed(db, download_id: str, *, text: str) -> None:
     """Reviewer item 1: the contact was told "it will be sent here when ready" - tell them
     when it never will be.
 
@@ -835,13 +970,13 @@ def _tell_chat_the_report_failed(db, download_id: str) -> None:
     if not respond_io_id:
         return
 
-    payload = {"message": {"type": "text", "text": LOW_STOCK_BUILD_FAILED_TEXT}}
+    payload = {"message": {"type": "text", "text": text}}
     try:
         respond_chat_template_service.send_chat_message_for(
             db,
             identifier=str(respond_io_id),
             respond_contact_id=str(claimed),
-            text=LOW_STOCK_BUILD_FAILED_TEXT,
+            text=text,
             chat_use_case="conversation_chat",
             business_table="user_downloads",
             business_id=str(download_id),
@@ -871,6 +1006,11 @@ def _tell_chat_the_report_failed(db, download_id: str) -> None:
 
 
 def _push_low_stock_to_chat(db, download_id: str, *, provider: str, key: str) -> None:
+    """The low stock report's name for the one push every chat-delivered download uses."""
+    _push_download_to_chat(db, download_id, provider=provider, key=key)
+
+
+def _push_download_to_chat(db, download_id: str, *, provider: str, key: str) -> None:
     """Push the finished workbook to the contact the chat turn handed it over to (AC-45).
 
     The turn CLAIMS delivery for the worker by writing `deliver_to_contact_id` when its own
@@ -960,17 +1100,20 @@ def _push_low_stock_to_chat(db, download_id: str, *, provider: str, key: str) ->
 
 
 def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
-                              include_supplier: bool = True) -> dict:
+                              include_supplier: bool = True, split: str = "none",
+                              suppliers: Optional[list] = None,
+                              categories: Optional[list] = None) -> dict:
     """Render the run's low stock workbook, store it, and update the download row.
 
-    PLAN-low-stock-report S3 (AC-36). `generate_order_sheet`'s twin, down to the company
-    dance: the worker has NO request-scoped company, so the run row is read under NO scope
-    (that row is the one thing that states which company the export belongs to), its own
-    company is adopted before anything company-scoped is touched, and the caller's scope is
-    restored in `finally` - a synchronous caller whose session this reuses did not ask to
-    have its scope changed underneath it.
+    PLAN-low-stock-report S3 (AC-36; `split` added PLAN-low-stock-export-split-25sep,
+    AC-14). `generate_order_sheet`'s twin, down to the company dance: the worker has NO
+    request-scoped company, so the run row is read under NO scope (that row is the one
+    thing that states which company the export belongs to), its own company is adopted
+    before anything company-scoped is touched, and the caller's scope is restored in
+    `finally` - a synchronous caller whose session this reuses did not ask to have its
+    scope changed underneath it.
 
-    Two things it does that the order sheet does not:
+    Three things it does that the order sheet does not:
 
     * `row_count_low` / `row_count_all` are stamped onto the download row at `mark_ready`,
       so S5's chat turn can answer "Low: 12 of 340 planned products" without opening the
@@ -978,6 +1121,14 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
       the sheets are built from, so the figures are the workbook's own.
     * `include_supplier=False` (S5, for a contact without the `purchase_orders.supplier`
       reveal key) drops the Supplier column from both sheets.
+    * `split` (default `"none"`, the chat route never sends one) is forwarded to
+      `export_low_stock` unchanged. The route's own schema already refused an unknown
+      value before this job was enqueued; a supplier split without the Supplier column is
+      a combination the route can never produce (it never sends `include_supplier=False`,
+      only the chat route does, and that route never sends a split), so the check for it
+      lives inside `export_low_stock` itself (R5) rather than here.
+    * `suppliers` / `categories` (PLAN-excel-preview-26sep AC-6) are the page's filters,
+      forwarded only when set, so the chat route's call shape is unchanged.
 
     `_record_failure` on any exception, never raising into RQ: a poisoned job retries for
     ever and the buyer's row sits `processing` until it goes stale.
@@ -1014,10 +1165,17 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
 
         # The counts come back WITH the bytes (reviewer item 4) - the builder already has
         # both row sets, and a second `row_counts()` call re-serialised the whole frozen
-        # run on the worker.
+        # run on the worker. `split` is always forwarded, `"none"` included (AC-14) - the
+        # task states its own contract plainly rather than varying its call shape by value.
+        filters = {}
+        if suppliers:
+            filters["suppliers"] = list(suppliers)
+        if categories:
+            filters["categories"] = list(categories)
         file_bytes, content_type, fallback_filename, counts = (
             low_stock_report_service.export_low_stock(
-                db, run_id=run_id, include_supplier=include_supplier,
+                db, run_id=run_id, include_supplier=include_supplier, split=split,
+                **filters,
             )
         )
         filename = filename or fallback_filename
@@ -1042,8 +1200,10 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
             row_count_all=counts["all"],
         )
         logger.info(
-            "generate_low_stock_report: download %s ready (%d bytes, %d low of %d)",
-            download_id, len(file_bytes), counts["low"], counts["all"],
+            "generate_low_stock_report: download %s ready (%d bytes, %d low of %d, "
+            "split=%s, %s sheets)",
+            download_id, len(file_bytes), counts["low"], counts["all"], split,
+            counts.get("sheets", 2),
         )
         ready = {"download_id": download_id, "status": "ready", "bytes": len(file_bytes),
                   "row_count_low": counts["low"], "row_count_all": counts["all"]}
@@ -1225,6 +1385,85 @@ def generate_order_inquiry_worklist_xlsx(
             "generate_order_inquiry_worklist_xlsx failed for download %s", download_id
         )
         _record_failure(db, svc, download_id, e, "generate_order_inquiry_worklist_xlsx")
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        set_company_scope(db, caller_scope)
+        db.close()
+
+
+def generate_stock_debt_xlsx(
+    download_id: str, user_id: str, params: dict, *, company_id: Optional[str] = None,
+) -> dict:
+    """Render the Stock Debt workbook for the board's own filters, store it, update the
+    download row (PLAN-stock-debt-filters-totals-export-24sep.md, AC-12b).
+
+    Same shape as `generate_order_inquiry_worklist_xlsx` above - a filtered export with no
+    run or header of its own to adopt a company from, so the enqueuing request's own
+    single-company scope travels as `company_id`, snapshotted at enqueue time
+    (`export_stock_debt`'s own `acting_company_id(db)` call).
+
+    A DIRECT call with no `company_id` (this module's own tests, which reuse the seeding
+    session's already-resolved scope) leaves the session's scope exactly as it found it,
+    rather than forcing `UNSET` the way the OI worklist twin does: a brand-new worker
+    session already defaults to fail-closed on its own (`get_company_scope`'s own "absent
+    key => UNSET"), so there is nothing this branch needs to enforce that resetting an
+    ALREADY-resolved scope would not simply break.
+
+    `row_count` / `sheet_count` (the export's own `counts` tuple) are stamped at
+    `mark_ready` in the SAME transaction as the status - the generic pair
+    (`516_low_stock_report`'s `row_count_low`/`row_count_all` twin), because this export's
+    sheet count varies with its own `split` rather than being a fixed two.
+
+    `_record_failure` on any exception, never raising into RQ: a poisoned job retries for
+    ever and the buyer's row sits `processing` until it goes stale.
+    """
+    db = SessionLocal()
+    from app.models.base import get_company_scope
+
+    caller_scope = get_company_scope(db)
+    if company_id:
+        set_company_scope(db, frozenset({str(company_id)}))
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+        row = svc.get(download_id)
+        filename = row.filename if row else None
+
+        from app.services.scm.stock_debt_service import StockDebtService
+
+        file_bytes, content_type, fallback_filename, counts = StockDebtService(db).export(
+            **(params or {}),
+        )
+        filename = filename or fallback_filename
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        key = f"exports/stock-debt-xlsx/{download_id}/{filename}"
+        stored_key, _signed = backend.upload_file(
+            file_content=file_bytes,
+            file_path=key,
+            content_type=content_type,
+        )
+
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+            row_count=counts["rows"],
+            sheet_count=counts["sheets"],
+        )
+        logger.info(
+            "generate_stock_debt_xlsx: download %s ready (%d bytes, %d rows, %d sheets)",
+            download_id, len(file_bytes), counts["rows"], counts["sheets"],
+        )
+        return {
+            "download_id": download_id, "status": "ready", "bytes": len(file_bytes),
+            "row_count": counts["rows"], "sheet_count": counts["sheets"],
+        }
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_stock_debt_xlsx failed for download %s", download_id)
+        _record_failure(db, svc, download_id, e, "generate_stock_debt_xlsx")
         return {"download_id": download_id, "status": "failed", "error": str(e)}
     finally:
         set_company_scope(db, caller_scope)

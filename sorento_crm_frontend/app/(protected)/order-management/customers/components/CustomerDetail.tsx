@@ -11,6 +11,7 @@ import { useCustomer, customersPagerQuery } from '../hooks/useCustomers';
 import { formatDate } from '@/lib/helpers';
 import DetailActions from '@/components/common/DetailActions';
 import { useCustomerActions } from '../actions';
+import CustomerOpportunitiesSection from './CustomerOpportunitiesSection';
 
 interface CustomerDetailProps {
   customerId: string;
@@ -101,6 +102,16 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
               <p className="text-sm text-muted-foreground">Phone</p>
               <p className="font-medium">{customer.phone_number || '-'}</p>
             </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Sales Agent</p>
+              <p className="font-medium">
+                {customer.sales_agent_code
+                  ? customer.sales_agent_name
+                    ? `${customer.sales_agent_code} - ${customer.sales_agent_name}`
+                    : customer.sales_agent_code
+                  : 'No sales agent assigned'}
+              </p>
+            </div>
           </CardContent>
         </Card>
 
@@ -139,6 +150,8 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
           </CardContent>
         </Card>
       </div>
+
+      <CustomerOpportunitiesSection customerId={customerId} customerName={customer.customer_name} />
     </div>
   );
 }

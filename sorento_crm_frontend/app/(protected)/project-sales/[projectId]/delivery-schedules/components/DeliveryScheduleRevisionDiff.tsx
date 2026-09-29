@@ -49,10 +49,10 @@ export function DeliveryScheduleRevisionDiff({
   const summary = priorLoading
     ? 'Comparing quantities with the previous version…'
     : qty
-      ? `${dateMoves.length} phase${dateMoves.length === 1 ? '' : 's'} moved · ` +
+      ? `${dateMoves.length} area${dateMoves.length === 1 ? '' : 's'} moved · ` +
         `${qty.changes.length} quantit${qty.changes.length === 1 ? 'y' : 'ies'} changed · ` +
         `${qty.unchangedCount} unchanged`
-      : `${dateMoves.length} phase${dateMoves.length === 1 ? '' : 's'} moved. Quantities could ` +
+      : `${dateMoves.length} area${dateMoves.length === 1 ? '' : 's'} moved. Quantities could ` +
         'not be compared with the previous version.';
 
   return (
@@ -162,7 +162,7 @@ function buildDiffRows(
       if (!dateMove && changes.length === 0) continue;
       rows.push({
         phaseId: phase.id,
-        label: phase.label?.trim() || `Phase ${phase.sequence}`,
+        label: phase.label?.trim() || `Area ${phase.sequence}`,
         area: group.area,
         dateMove,
         qtyChanges: changes,

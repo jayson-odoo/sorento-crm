@@ -3,10 +3,8 @@
 import { useMemo, useRef } from 'react';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import Link from 'next/link';
-import { Boxes } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { formatStatusLabel } from '@/lib/status-badge';
-import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardHeading, CardTable, CardTitle } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -32,16 +30,15 @@ const NO_ROWS: PackingListPlacement[] = [];
  * how much of this invoice it carries and when it was drafted. Nothing about what is still
  * to place - that question is the convert dialog's own table, and a line that cannot go at
  * all says so in the Lines tab's Matched column, where the fix for it also lives.
+ *
+ * No Convert button of its own (C5, PLAN-pi-header-fields-convert-fixes-24sep.md) - the
+ * header carries the only one (AC-C4), so a PI never offers two ways to start the same
+ * write. The empty state keeps its sentence with nothing to press underneath it.
  */
 export function ProformaInvoicePackingListsTab({
   invoice,
-  onConvert,
-  convertLabel,
 }: {
   invoice: ProformaInvoiceDetail;
-  /** Omitted when this invoice cannot be converted (no permission, nothing left). */
-  onConvert?: () => void;
-  convertLabel: string;
 }) {
   const rows = invoice.packing_lists.length ? invoice.packing_lists : NO_ROWS;
   const totalQtyRef = useRef(invoice.total_qty);
@@ -131,14 +128,6 @@ export function ProformaInvoicePackingListsTab({
       isLoading={false}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
       emptyMessage="Nothing from this invoice is in a packing list yet."
-      emptyAction={
-        onConvert ? (
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={onConvert}>
-            <Boxes className="size-4" />
-            {convertLabel}
-          </Button>
-        ) : undefined
-      }
       listingKey={LISTING_KEY}
     >
       <Card>

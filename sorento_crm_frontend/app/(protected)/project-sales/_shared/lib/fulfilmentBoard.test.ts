@@ -2174,10 +2174,10 @@ describe('confirmLinesFor and a line with no mirror', () => {
 });
 
 /**
- * A Buy on a DISCONTINUED product needs a reason (AC-B11), and the server refuses the whole
- * order's confirmation without one. The board states the flag on every line it judged, so a
- * line that would be refused is never posted from here: it is left out and NAMED, and the
- * planner gives the reason in the editor.
+ * D2 (AC-19, AC-20): a Buy on a DISCONTINUED product no longer needs a reason to post. The
+ * board still carries the discontinued flag (for the warning chip/badge elsewhere), but
+ * `lineFor` treats a discontinued Buy the same as any other line now - it posts with or
+ * without a `buy_reason`, and `unpostableDecidedFor` never names it for that cause.
  */
 describe('confirmLinesFor and a discontinued product', () => {
   const board = buildBoard(
@@ -2205,14 +2205,16 @@ describe('confirmLinesFor and a discontinued product', () => {
     contributions.map((entry) => [entry.key, { verdict: 'approved' as const }]),
   );
 
-  it('leaves an approved Buy of a discontinued product out of the body, and names why', () => {
+  it('AC-19/AC-20: posts an approved Buy of a discontinued product with no reason, same as any other line', () => {
     const lines = confirmLinesFor(contributions, 'so-a', approved);
-    expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-1']);
+    expect(lines.map((entry) => entry.project_line_id).sort()).toEqual([
+      'pl-so-a-1',
+      'pl-so-a-2',
+    ]);
     expect(
-      unpostableDecidedFor(contributions, 'so-a', approved).map(
-        (entry) => `${entry.contribution.item_code}: ${entry.reason}`,
-      ),
-    ).toEqual(['OLD-1: buy_reason_missing']);
+      lines.find((entry) => entry.project_line_id === 'pl-so-a-2')!.buy_reason,
+    ).toBeUndefined();
+    expect(unpostableDecidedFor(contributions, 'so-a', approved)).toEqual([]);
   });
 
   it('posts it once the amendment carries the reason', () => {
@@ -2254,7 +2256,7 @@ describe('confirmLinesFor and a discontinued product', () => {
     expect(unpostableDecidedFor(contributions, 'so-a', draft)).toEqual([]);
   });
 
-  it('still names it on an amendment that buys it without a reason (the other, SAVED line still posts)', () => {
+  it('AC-19: posts an amended Buy of a discontinued product with no reason (the other, SAVED line also posts)', () => {
     const draft = {
       [contributions.find((entry) => entry.line_no === 1)!.key]: { verdict: 'approved' as const },
       [old.key]: {
@@ -2266,10 +2268,11 @@ describe('confirmLinesFor and a discontinued product', () => {
       },
     };
     const lines = confirmLinesFor(contributions, 'so-a', draft);
-    expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-1']);
-    expect(unpostableDecidedFor(contributions, 'so-a', draft).map((entry) => entry.reason)).toEqual([
-      'buy_reason_missing',
+    expect(lines.map((entry) => entry.project_line_id).sort()).toEqual([
+      'pl-so-a-1',
+      'pl-so-a-2',
     ]);
+    expect(unpostableDecidedFor(contributions, 'so-a', draft)).toEqual([]);
   });
 
   it('does not ask for a reason when the discontinued line buys nothing', () => {
@@ -2289,12 +2292,12 @@ describe('confirmLinesFor and a discontinued product', () => {
     expect(unpostableDecidedFor(covered, 'so-a', approved)).toEqual([]);
   });
 
-  it('names it on an order nobody has adopted yet, and does not count it as planned', () => {
+  it('AC-19: an order nobody has adopted yet is unaffected by the discontinued cause - both lines read no_mirror and both count as planned', () => {
     const unadopted = contributions.map((entry) => ({ ...entry, project_line_id: null }));
     expect(
       unpostableDecidedFor(unadopted, 'so-a', approved, false).map((entry) => entry.reason),
-    ).toEqual(['buy_reason_missing']);
-    expect(plannedLineCount(unadopted, 'so-a', approved)).toBe(1);
+    ).toEqual([]);
+    expect(plannedLineCount(unadopted, 'so-a', approved)).toBe(2);
   });
 });
 
@@ -2356,11 +2359,12 @@ describe('confirmLinesFor and an approved COVERED line: the buy reason travels w
     expect(lines[0].buy_reason).toBe(REASON);
   });
 
-  it('still refuses it without one, the same as before', () => {
+  it('AC-19/AC-20: no longer refuses it without one - the reason is optional now', () => {
     const draft = { [key]: { verdict: 'approved' as const } };
-    expect(
-      unpostableDecidedFor(contributions, 'so-a', draft).map((entry) => entry.reason),
-    ).toEqual(['buy_reason_missing']);
+    expect(unpostableDecidedFor(contributions, 'so-a', draft)).toEqual([]);
+    const lines = confirmLinesFor(contributions, 'so-a', draft);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].buy_reason).toBeUndefined();
   });
 });
 

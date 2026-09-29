@@ -143,8 +143,8 @@ export function TaskFormDialog({
                   clearable
                   options={(users.data ?? []).map((user) => ({
                     value: user.id,
-                    label: user.name || user.email,
-                    description: user.name ? user.email : undefined,
+                    label: user.name || user.email || 'Unnamed user',
+                    description: user.name ? (user.email ?? undefined) : undefined,
                   }))}
                   placeholder="Unassigned"
                   emptyMessage="No active users found"

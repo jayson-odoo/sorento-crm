@@ -61,13 +61,12 @@ function project(overrides: Partial<Project> = {}): Project {
 }
 
 describe('PipelineBoard', () => {
-  it('points at the status admin when no stages are configured', () => {
+  it('names the status admin in the hint when no stages are configured, with no CTA (PR #1336)', () => {
     render(<PipelineBoard statuses={[]} projects={[]} onMove={vi.fn()} />);
     expect(screen.getByText(/No pipeline stages configured/i)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Configure stages/i })).toHaveAttribute(
-      'href',
-      '/system-management/status-graphs',
-    );
+    expect(screen.getByText(/System Management → Status Graphs/)).toBeInTheDocument();
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
   });
 
   it('distinguishes an empty live column from an empty terminal one', () => {

@@ -76,6 +76,18 @@ vi.mock('../../shared/hooks/use-uom-select-query', () => ({
   useUOMSelectQuery: () => ({ data: [{ id: UOM_ID, uom_code: 'PCS' }] }),
 }));
 
+// The chatbot stock-limits fields (PLAN-chatbot-stock-ask-v2-24sep.md S1) need
+// `useHasPermission`, which needs a NextAuth `<SessionProvider>` this file does not
+// set up, and `useCategory`, a real react-query hook with no `QueryClientProvider`
+// here either - stub both at their own module, same idiom as
+// `ProductsList.discontinued.test.tsx`.
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => false,
+}));
+vi.mock('../../product-categories/hooks/useProductCategories', () => ({
+  useCategory: () => ({ data: undefined }),
+}));
+
 vi.mock('@/app/(protected)/project-sales/_shared/components/PriceFloorPanel', () => ({
   PriceFloorPanel: () => <div data-testid="price-floor-stub" />,
 }));

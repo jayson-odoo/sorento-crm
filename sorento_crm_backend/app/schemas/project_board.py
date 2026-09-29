@@ -230,7 +230,7 @@ class BoardItemFlags(BaseModel):
     #: is hot too - the hot flag above already covers it.
     dealer_classified: bool = False
     project_classified: bool = False
-    #: `products.is_discontinued`: a Buy for it needs a reason at confirm, nothing more.
+    #: `products.is_discontinued`.
     discontinued: bool = False
     #: Somebody has classified this item - a NON-NULL letter on EITHER demand class - at all.
     #: False is the PLAN's "no classification" state (no delivered demand of either class in
@@ -708,6 +708,13 @@ class BoardContribution(BaseModel):
     #: What was frozen, when the line is covered. Null otherwise, and never an empty object:
     #: "nobody decided this" and "decided, to nothing" are different answers.
     decision: Optional[BoardLineDecision] = None
+    #: AC-DT-2 (`PLAN-oi-decision-trail-ui.md`): who confirmed the ACTIVE decision that
+    #: covers this line, and when, flattened onto the line for the Confirmed chip's own
+    #: tooltip - `decision` above carries no confirmer, since it is shaped for
+    #: re-posting an amendment rather than for display. `None` on an uncovered line.
+    decided_by_name: Optional[str] = None
+    decided_at: Optional[datetime] = None
+    decision_revision: Optional[int] = None
     #: What purchasing was already TOLD about this line, reached through the planning
     #: record's mirror (`projects.sales_order_lines.core_sales_order_line_id`), and how far
     #: they got with it.
@@ -729,6 +736,11 @@ class BoardContribution(BaseModel):
     #: carry a draft with no decision (saved, not confirmed), a decision with no draft
     #: (confirmed - Confirm deletes the draft it promotes), or neither.
     draft: Optional[BoardLineDraft] = None
+    #: AC-DT-2: the same saver facts as `draft.saved_by` / `draft.saved_at`, flattened
+    #: onto the line under the trail's own names for the tooltip. `None` when nobody
+    #: has saved one, same as `draft` itself.
+    draft_saved_by_name: Optional[str] = None
+    draft_saved_at: Optional[datetime] = None
     #: S3 (`PLAN-local-supplier-oi-routing.md`): whether the product's supplier sits in
     #: the home country, computed once per product for the whole board. A `local` Buy
     #: raises no Order Inquiry row on confirm; the client marks it with a `Local` pill.
@@ -1175,6 +1187,19 @@ class BoardUndo(BaseModel):
     mode: Literal["journal", "reconstructed"]
 
 
+class BoardOrderDecisionHeader(BaseModel):
+    """AC-DT-1 (`PLAN-oi-decision-trail-ui.md`): the ACTIVE decision's own header facts
+    for one order - what the board panel's "Revision N, confirmed by <name>, N lines"
+    line reads. Distinct from `BoardUndo`, which is gated to a journalled (or, admin-
+    only, reconstructable) revision for the undo gear; this is a plain read of the
+    decision itself and is present whenever the order has an active one."""
+
+    revision_no: int
+    confirmed_by_name: Optional[str] = None
+    confirmed_at: Optional[datetime] = None
+    line_count: int
+
+
 class BoardOrderStanding(BaseModel):
     sales_order_id: str
     #: The planning record this order's confirmation posts to
@@ -1197,6 +1222,10 @@ class BoardOrderStanding(BaseModel):
     #: journal (a pre-lane revision, or one minted by `uncover_lines` rather than the
     #: board's own confirm routes) - there is nothing this lane can replay.
     undo: Optional[BoardUndo] = None
+    #: AC-DT-1: the board panel's own "Revision N, confirmed by <name>, N lines" line.
+    #: Null when the order has no active decision at all - unlike `undo` above, this is
+    #: never withheld for a journal-less or unconfirmable revision.
+    decision: Optional[BoardOrderDecisionHeader] = None
 
 
 class BoardPolicy(BaseModel):

@@ -305,7 +305,6 @@ export function LoadingPlansGrid() {
         rowPending={rowPending}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         listingKey="scm.dashboard.view::loading-plans"
-        emptyAction={listPrimaryAction}
       >
         <Card>
           <CardHeader className="block">

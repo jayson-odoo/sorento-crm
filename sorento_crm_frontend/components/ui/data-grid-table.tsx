@@ -1083,7 +1083,6 @@ function DataGridTableEmpty() {
           className="sticky start-0 flex w-fit flex-col items-start gap-3 px-4 py-6 text-start"
         >
           <span>{props.emptyMessage || 'No data available'}</span>
-          {props.emptyAction}
         </div>
       </td>
     </tr>

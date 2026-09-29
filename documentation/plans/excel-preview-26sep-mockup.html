@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Excel preview mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Mockup for PLAN-excel-preview-26sep.md. Static sample data; not the shipped UI.
+   Tokens mirror css/config.reui.css names so the build can map them one to one. */
+:root {
+  --background: #ffffff; --foreground: #0a0a0a; --muted: #f4f4f5; --muted-foreground: #71717a;
+  --border: #e4e4e7; --primary: #1b84ff; --primary-foreground: #ffffff; --accent: #f4f4f5;
+  --low-bg: #fff4e5; --low-fg: #b54708; --radius: 0.5rem;
+  --text-2sm: 0.8125rem; --text-xs: 0.75rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --background: #0b0b0d; --foreground: #f4f4f5; --muted: #18181b; --muted-foreground: #a1a1aa;
+    --border: #27272a; --accent: #1f1f23; --low-bg: #3a2410; --low-fg: #fdb022;
+  }
+}
+:root[data-theme="dark"] {
+  --background: #0b0b0d; --foreground: #f4f4f5; --muted: #18181b; --muted-foreground: #a1a1aa;
+  --border: #27272a; --accent: #1f1f23; --low-bg: #3a2410; --low-fg: #fdb022;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--background); color: var(--foreground);
+  font: 400 14px/1.45 Inter, ui-sans-serif, system-ui, sans-serif; }
+.wrap { max-width: 1280px; margin: 0 auto; padding: 16px; }
+.note { font-size: var(--text-xs); color: var(--muted-foreground); margin: 0 0 8px; }
+h2.section { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground);
+  margin: 32px 0 8px; font-weight: 600; }
+.frame { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.crumbs { font-size: var(--text-xs); color: var(--muted-foreground); }
+.header { display: flex; flex-direction: column; gap: 4px; padding: 16px; border-bottom: 1px solid var(--border); }
+.header h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -.01em; }
+.sub { color: var(--muted-foreground); font-size: var(--text-2sm); }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 16px;
+  border-bottom: 1px solid var(--border); }
+.group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pills { display: inline-flex; background: var(--muted); border-radius: var(--radius); padding: 3px; gap: 2px; }
+.pills button { border: 0; background: transparent; color: var(--muted-foreground); font: inherit;
+  font-size: var(--text-2sm); padding: 4px 10px; border-radius: calc(var(--radius) - 2px); cursor: pointer; }
+.pills button[aria-pressed="true"] { background: var(--background); color: var(--foreground);
+  box-shadow: 0 1px 2px rgba(0,0,0,.08); font-weight: 500; }
+.ms { position: relative; }
+.ms > button { display: inline-flex; align-items: center; gap: 6px; min-width: 170px; justify-content: space-between;
+  border: 1px solid var(--border); background: var(--background); color: var(--foreground); font: inherit;
+  font-size: var(--text-2sm); padding: 6px 10px; border-radius: var(--radius); cursor: pointer; }
+.ms .pop { display: none; position: absolute; top: calc(100% + 4px); left: 0; z-index: 50; width: 260px;
+  background: var(--background); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 6px; }
+.ms.open .pop { display: block; }
+.pop input[type=search] { width: 100%; border: 1px solid var(--border); border-radius: calc(var(--radius) - 2px);
+  padding: 6px 8px; font: inherit; font-size: var(--text-2sm); background: var(--background); color: var(--foreground); }
+.pop ul { list-style: none; margin: 6px 0 0; padding: 0; max-height: 220px; overflow: auto; }
+.pop li label { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 4px;
+  font-size: var(--text-2sm); cursor: pointer; }
+.pop li label:hover { background: var(--accent); }
+.pop li .n { margin-left: auto; color: var(--muted-foreground); font-variant-numeric: tabular-nums; font-size: var(--text-xs); }
+.pop .clear { border: 0; background: none; color: var(--primary); font: inherit; font-size: var(--text-xs);
+  cursor: pointer; padding: 6px; }
+.count { font-size: var(--text-xs); color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.spacer { flex: 1; }
+.btn { border: 1px solid transparent; background: var(--primary); color: var(--primary-foreground); font: inherit;
+  font-size: var(--text-2sm); font-weight: 500; padding: 6px 14px; border-radius: var(--radius); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px; }
+.btn.ghost { background: transparent; color: var(--foreground); border-color: transparent; padding: 6px; }
+.btn.outline { background: var(--background); color: var(--foreground); border-color: var(--border); }
+.btn:disabled { opacity: .6; cursor: default; }
+svg.i { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+/* SpreadsheetViewer */
+.viewer { display: flex; flex-direction: column; min-width: 0; }
+.vbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.vbar .lbl { font-size: var(--text-xs); color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: thin; border-bottom: 1px solid var(--border); padding: 0 8px; }
+.tabs button { flex: none; border: 0; background: none; color: var(--muted-foreground); font: inherit; font-size: var(--text-2sm);
+  padding: 8px 10px; border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap; }
+.tabs button[aria-selected="true"] { color: var(--foreground); border-bottom-color: var(--primary); font-weight: 500; }
+.tabs button .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--low-fg); margin-right: 6px; vertical-align: 1px; }
+.goto { display: flex; align-items: center; gap: 6px; }
+.goto select { font: inherit; font-size: var(--text-2sm); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 4px 8px; background: var(--background); color: var(--foreground); max-width: 220px; }
+.scroller { overflow: auto; max-height: 420px; min-width: 0; }
+table { border-collapse: separate; border-spacing: 0; font-size: var(--text-2sm); width: max-content; min-width: 100%; }
+th, td { border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); padding: 6px 10px; white-space: nowrap;
+  max-width: 260px; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+thead th { position: sticky; top: 0; z-index: 2; background: color-mix(in oklab, var(--background) 90%, transparent);
+  backdrop-filter: blur(4px); font-weight: 500; color: var(--muted-foreground); font-size: var(--text-xs); }
+th:first-child, td:first-child { position: sticky; left: 0; background: var(--background); z-index: 1; }
+thead th:first-child { z-index: 3; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.low td.onhand { color: var(--low-fg); background: var(--low-bg); font-weight: 500; }
+.empty { padding: 48px 16px; text-align: center; color: var(--muted-foreground); }
+.foot { padding: 6px 10px; font-size: var(--text-xs); color: var(--muted-foreground); border-top: 1px solid var(--border); }
+/* modal */
+.stage { position: relative; background: color-mix(in oklab, black 50%, transparent); border-radius: var(--radius);
+  padding: 24px 16px; }
+.dialog { background: var(--background); border-radius: calc(var(--radius) + 4px); max-width: 1100px; margin: 0 auto;
+  border: 1px solid var(--border); overflow: hidden; display: flex; flex-direction: column; max-height: 640px; }
+.dhead { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.dhead .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.search { border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 8px; font: inherit; font-size: var(--text-2sm);
+  background: var(--background); color: var(--foreground); width: 160px; }
+mark { background: #fde68a; color: inherit; border-radius: 2px; }
+/* My Downloads drawer strip */
+.drawer { border: 1px solid var(--border); border-radius: var(--radius); max-width: 420px; }
+.drow { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.drow:last-child { border-bottom: 0; }
+.drow .body { flex: 1; min-width: 0; cursor: pointer; border-radius: 6px; padding: 2px 4px; }
+.drow .body:hover { background: var(--accent); }
+.drow .t { font-weight: 500; font-size: var(--text-2sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drow .m { font-size: var(--text-xs); color: var(--muted-foreground); }
+.email { max-width: 560px; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; font-size: var(--text-2sm); }
+.email .subj { font-weight: 600; margin-bottom: 8px; }
+.email a { color: var(--primary); }
+@media (max-width: 640px) {
+  .ms > button { min-width: 0; }
+  .toolbar .spacer { display: none; }
+  .search { width: 110px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="note">Mockup for <code>PLAN-excel-preview-26sep.md</code>, updated with the owner rulings of 26 Sep. Sample data, static. Resize to 375px to see the wrap. In the build the rows are virtualised; the header row and first column stay put while scrolling. <button class="btn outline" id="theme" type="button">Toggle theme</button></p>
+
+  <h2 class="section">1. The daily email: the automation's own template, fired by "Low stock report ready" (S1; owner ruling 26 Sep, Q1 and Q5)</h2>
+  <p class="note">The template and recipients are the admin's, set on the automation in System &gt; Automations. The subject and link use the trigger's context: <code>{{ report.date_label }}</code>, <code>{{ report.low }}</code>, <code>{{ report.link }}</code>.</p>
+  <div class="email">
+    <div class="subj">Low stock report 26 Sep 2026: 42 low</div>
+    <div>Today's reorder plan is ready.</div>
+    <p><a href="#page">Open the low stock report</a></p>
+  </div>
+
+  <h2 class="section" id="page">2. Low stock report page, where the link lands (S1)</h2>
+  <div class="frame">
+    <div class="header">
+      <div class="crumbs">Procurement / Supply Chain / Low stock report</div>
+      <h1>Low stock report</h1>
+      <div class="sub">Daily plan, 26 Sep 2026 07:40</div>
+    </div>
+    <div class="toolbar">
+      <div class="group">
+        <div class="pills" role="group" aria-label="Split" id="split">
+          <button type="button" data-v="supplier_category" aria-pressed="true">Supplier and category</button>
+          <button type="button" data-v="supplier" aria-pressed="false">Supplier</button>
+          <button type="button" data-v="category" aria-pressed="false">Category</button>
+          <button type="button" data-v="none" aria-pressed="false">None</button>
+        </div>
+      </div>
+      <div class="group">
+        <div class="ms" id="ms-sup"><button type="button"><span class="v">All suppliers</span><svg class="i" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
+          <div class="pop"><input type="search" placeholder="Search suppliers"><ul></ul><button class="clear" type="button">Clear</button></div></div>
+        <div class="ms" id="ms-cat"><button type="button"><span class="v">All categories</span><svg class="i" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
+          <div class="pop"><input type="search" placeholder="Search categories"><ul></ul><button class="clear" type="button">Clear</button></div></div>
+      </div>
+      <span class="count" id="count"></span>
+      <span class="spacer"></span>
+      <button class="btn" type="button" id="dl"><svg class="i" viewBox="0 0 24 24"><path d="M12 3v12m0 0-4-4m4 4 4-4M5 21h14"/></svg><span>Download</span></button>
+    </div>
+    <div class="viewer" id="v1"></div>
+  </div>
+
+  <h2 class="section">3. My Downloads: the row opens the preview, the icon downloads (S2)</h2>
+  <div class="drawer">
+    <div class="drow">
+      <div class="body" id="openPreview" role="button" tabindex="0" title="Preview">
+        <div class="t">low-stock-26092026.xlsx</div>
+        <div class="m">Low stock report, ready 26 Sep 2026 07:41</div>
+      </div>
+      <button class="btn ghost" type="button" aria-label="Download"><svg class="i" viewBox="0 0 24 24"><path d="M12 3v12m0 0-4-4m4 4 4-4M5 21h14"/></svg></button>
+    </div>
+    <div class="drow">
+      <div class="body" role="button" tabindex="0" title="Preview">
+        <div class="t">stock-debt-25092026.xlsx</div>
+        <div class="m">Stock debt, ready 25 Sep 2026 16:02</div>
+      </div>
+      <button class="btn ghost" type="button" aria-label="Download"><svg class="i" viewBox="0 0 24 24"><path d="M12 3v12m0 0-4-4m4 4 4-4M5 21h14"/></svg></button>
+    </div>
+  </div>
+
+  <h2 class="section">4. The preview modal (AttachmentPreviewModal + SpreadsheetViewer, S2)</h2>
+  <div class="stage">
+    <div class="dialog" role="dialog" aria-label="low-stock-26092026.xlsx">
+      <div class="dhead">
+        <svg class="i" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>
+        <span class="name">low-stock-26092026.xlsx</span>
+        <input class="search" type="search" placeholder="Search" id="q2" aria-label="Search this sheet">
+        <button class="btn outline" type="button"><svg class="i" viewBox="0 0 24 24"><path d="M12 3v12m0 0-4-4m4 4 4-4M5 21h14"/></svg>Download</button>
+        <button class="btn ghost" type="button" aria-label="Open in new tab"><svg class="i" viewBox="0 0 24 24"><path d="M14 3h7v7M10 14 21 3M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg></button>
+        <button class="btn ghost" type="button" aria-label="Close"><svg class="i" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+      </div>
+      <div class="viewer" id="v2"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var COLS = ['Item code','Description','Category','BRW on hand','Reorder level','Reorder qty','Suggested qty','Suggestion','Order qty','Dealer o/s','Supplier','BRW PO qty','BRW incoming qty','Last in qty','Last in date','Remarks'];
+  var NUM = {3:1,4:1,5:1,6:1,8:1,9:1,11:1,12:1,13:1};
+  var SUP = ['Guangdong Ceramics','Foshan Tiles Co','Hansgrohe MY','Kohler Asia','Rigel Sanitary','Teka Kitchens','Blum Hardware','Grohe SEA','No supplier'];
+  var CAT = ['BASIN','BATH','CERAMIC','FAUCET','HOOD','HINGE','SHOWER','WC'];
+  var rows = [];
+  var seed = 7; function rnd(n) { seed = (seed * 9301 + 49297) % 233280; return Math.floor(seed / 233280 * n); }
+  for (var i = 0; i < 180; i++) {
+    var s = SUP[rnd(SUP.length)], c = CAT[rnd(CAT.length)];
+    var rl = 10 + rnd(40), oh = rnd(70);
+    rows.push([c.slice(0,2) + '-' + (1000 + i), c.charAt(0) + c.slice(1).toLowerCase() + ' model ' + (i + 1), c, oh, rl, 20 + rnd(30),
+      oh < rl ? rl - oh + 10 : 0, oh < rl ? 'Order' : '', oh < rl ? rl - oh + 10 : 0, rnd(12), s, rnd(30), rnd(20), 10 + rnd(40),
+      (1 + rnd(28)) + ' Aug 2026', '']);
+  }
+  function isLow(r) { return r[3] < r[4]; }
+  function supOf(r) { return r[10]; }
+  var state = { split: 'supplier_category', sup: [], cat: [], sheet: null, q: '' };
+
+  function facet(fn) { var m = {}; rows.forEach(function (r) { var k = fn(r); m[k] = m[k] || { rows: 0, low: 0 }; m[k].rows++; if (isLow(r)) m[k].low++; });
+    return Object.keys(m).sort(function (a, b) { return a.toLowerCase() < b.toLowerCase() ? -1 : 1; }).map(function (k) { return { key: k, rows: m[k].rows, low: m[k].low }; }); }
+  var FS = facet(supOf), FC = facet(function (r) { return r[2]; });
+
+  function model() {
+    var kept = rows.filter(function (r) { return (!state.sup.length || state.sup.indexOf(r[10]) >= 0) && (!state.cat.length || state.cat.indexOf(r[2]) >= 0); });
+    kept.sort(function (a, b) { return (a[2] + a[0]) < (b[2] + b[0]) ? -1 : 1; });
+    if (state.split === 'none') return { rows: kept, sheets: [{ title: 'Low stock', rows: kept.filter(isLow), low: true }, { title: 'All', rows: kept }] };
+    var key = state.split === 'supplier' ? supOf : state.split === 'category' ? function (r) { return r[2]; } : function (r) { return r[10] + ' - ' + r[2]; };
+    var g = {}; kept.forEach(function (r) { var k = key(r); (g[k] = g[k] || []).push(r); });
+    var sheets = [];
+    Object.keys(g).sort(function (a, b) { return a.toLowerCase() < b.toLowerCase() ? -1 : 1; }).forEach(function (k) {
+      var base = k.length > 25 ? k.slice(0, 25) : k;
+      sheets.push({ title: base + ' - Low', rows: g[k].filter(isLow), low: true });
+      sheets.push({ title: base, rows: g[k] });
+    });
+    return { rows: kept, sheets: sheets };
+  }
+
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function hl(s, q) { s = esc(s); if (!q) return s; var i = s.toLowerCase().indexOf(q.toLowerCase()); return i < 0 ? s : s.slice(0, i) + '<mark>' + s.slice(i, i + q.length) + '</mark>' + s.slice(i + q.length); }
+
+  function renderViewer(el, m, opts) {
+    opts = opts || {};
+    var sheet = m.sheets.filter(function (s) { return s.title === opts.sheet; })[0] || m.sheets[0];
+    var many = m.sheets.length > 12;
+    var h = '<div class="vbar"><span class="lbl">' + m.sheets.length + ' sheets</span>';
+    if (many) {
+      h += '<span class="goto"><span class="lbl">Go to sheet</span><select aria-label="Go to sheet">' +
+        m.sheets.map(function (s) { return '<option' + (s === sheet ? ' selected' : '') + '>' + esc(s.title) + '</option>'; }).join('') + '</select></span>';
+    }
+    h += '<span class="spacer" style="flex:1"></span><span class="lbl">' + (sheet ? sheet.rows.length + ' rows' : '') + '</span></div>';
+    h += '<div class="tabs" role="tablist">' + m.sheets.map(function (s) {
+      return '<button role="tab" type="button" aria-selected="' + (s === sheet) + '">' + (s.low ? '<span class="dot"></span>' : '') + esc(s.title) + '</button>';
+    }).join('') + '</div>';
+    if (!sheet || !sheet.rows.length) {
+      h += '<div class="empty">' + (sheet && sheet.low ? 'Nothing low here' : 'No rows') + '</div>';
+    } else {
+      var q = opts.q || '';
+      var shown = sheet.rows.filter(function (r) { return !q || r.join(' ').toLowerCase().indexOf(q.toLowerCase()) >= 0; });
+      h += '<div class="scroller"><table><thead><tr>' + COLS.map(function (c, i) { return '<th' + (NUM[i] ? ' class="num"' : '') + '>' + c + '</th>'; }).join('') + '</tr></thead><tbody>' +
+        shown.map(function (r) { return '<tr' + (isLow(r) ? ' class="low"' : '') + '>' + r.map(function (v, i) {
+          return '<td class="' + (NUM[i] ? 'num' : '') + (i === 3 ? ' onhand' : '') + '" title="' + esc(v) + '">' + hl(v, q) + '</td>'; }).join('') + '</tr>'; }).join('') +
+        '</tbody></table></div>';
+    }
+    el.innerHTML = h;
+    el.querySelectorAll('.tabs button').forEach(function (b, i) { b.onclick = function () { opts.onSheet(m.sheets[i].title); }; });
+    var sel = el.querySelector('select'); if (sel) sel.onchange = function () { opts.onSheet(sel.value); };
+  }
+
+  function draw1() {
+    var m = model();
+    document.getElementById('count').textContent = m.rows.length + ' rows, ' + m.sheets.length + ' sheets';
+    renderViewer(document.getElementById('v1'), m, { sheet: state.sheet, onSheet: function (t) { state.sheet = t; draw1(); } });
+  }
+
+  document.querySelectorAll('#split button').forEach(function (b) {
+    b.onclick = function () { state.split = b.dataset.v; document.querySelectorAll('#split button').forEach(function (x) { x.setAttribute('aria-pressed', x === b); }); draw1(); };
+  });
+
+  function multi(id, items, key, allLabel) {
+    var root = document.getElementById(id), ul = root.querySelector('ul'), inp = root.querySelector('input'), lbl = root.querySelector('.v');
+    function list() {
+      var q = inp.value.toLowerCase();
+      ul.innerHTML = items.filter(function (f) { return f.key.toLowerCase().indexOf(q) >= 0; }).map(function (f) {
+        return '<li><label><input type="checkbox" value="' + esc(f.key) + '"' + (state[key].indexOf(f.key) >= 0 ? ' checked' : '') + '>' + esc(f.key) + '<span class="n">' + f.low + ' low / ' + f.rows + '</span></label></li>'; }).join('');
+      ul.querySelectorAll('input').forEach(function (c) { c.onchange = function () {
+        var a = state[key]; if (c.checked) a.push(c.value); else a.splice(a.indexOf(c.value), 1);
+        lbl.textContent = a.length ? (a.length === 1 ? a[0] : a.length + ' selected') : allLabel; draw1(); }; });
+    }
+    root.querySelector('button').onclick = function (e) { e.stopPropagation(); document.querySelectorAll('.ms').forEach(function (x) { if (x !== root) x.classList.remove('open'); }); root.classList.toggle('open'); list(); inp.focus(); };
+    root.querySelector('.pop').onclick = function (e) { e.stopPropagation(); };
+    inp.oninput = list;
+    root.querySelector('.clear').onclick = function () { state[key] = []; lbl.textContent = allLabel; list(); draw1(); };
+  }
+  multi('ms-sup', FS, 'sup', 'All suppliers');
+  multi('ms-cat', FC, 'cat', 'All categories');
+  document.addEventListener('click', function () { document.querySelectorAll('.ms').forEach(function (x) { x.classList.remove('open'); }); });
+
+  var dl = document.getElementById('dl');
+  dl.onclick = function () { dl.disabled = true; dl.querySelector('span').textContent = 'Preparing...';
+    setTimeout(function () { dl.disabled = false; dl.querySelector('span').textContent = 'Download'; }, 1800); };
+
+  var s2 = { sheet: null, q: '' };
+  function draw2() {
+    var saved = { split: state.split, sup: state.sup, cat: state.cat };
+    state.split = 'none'; state.sup = []; state.cat = [];
+    var m = model(); state.split = saved.split; state.sup = saved.sup; state.cat = saved.cat;
+    renderViewer(document.getElementById('v2'), m, { sheet: s2.sheet, q: s2.q, onSheet: function (t) { s2.sheet = t; draw2(); } });
+  }
+  document.getElementById('q2').oninput = function (e) { s2.q = e.target.value; draw2(); };
+  document.getElementById('openPreview').onclick = function () { document.querySelector('.stage').scrollIntoView({ block: 'start' }); };
+
+  document.getElementById('theme').onclick = function () {
+    var r = document.documentElement, dark = r.dataset.theme === 'dark' || (!r.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches);
+    r.dataset.theme = dark ? 'light' : 'dark';
+  };
+  draw1(); draw2();
+})();
+</script>
+</body>
+</html>

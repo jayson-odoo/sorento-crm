@@ -140,9 +140,87 @@ def _delete_user(db: Session, payload: dict):
     return UserService(db).delete_user(_entity_id(payload))
 
 
+def _unlink_user_contact(db: Session, payload: dict):
+    from app.audit_context import AuditActor, actor_scope
+    from app.services.user_service import UserService
+
+    # The exact unlink branch of `PUT /users/{id}` (S3 1.3/1.4) - one
+    # implementation, called from both places.
+    #
+    # This executor runs from whichever request or background sweep happens to
+    # commit the deferred window, not from the click that started it - without
+    # this, the audit row would name that sweep's actor (or nobody) instead of
+    # the owner who actually asked for the unlink. `requested_by_id` is stamped
+    # onto the payload at park time (`app/api/v1/system/pending_actions.py`).
+    requested_by_id = payload.get("requested_by_id")
+    if requested_by_id:
+        with actor_scope(
+            AuditActor(
+                actor_type="user",
+                user_id=str(requested_by_id),
+                real_user_id=str(requested_by_id),
+            ),
+            db=db,
+        ):
+            return UserService(db).unlink_contact(_entity_id(payload))
+    return UserService(db).unlink_contact(_entity_id(payload))
+
+
 # --------------------------------------------------------------------------------------
 # Registrations. `<entity>.<verb>`, the same keys the frontend's action sets name.
 # --------------------------------------------------------------------------------------
+
+def _delete_sales_team(db: Session, payload: dict):
+    from app.services.sales import team_service
+
+    return team_service.delete_team_by_id(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="sales_team.delete",
+        entity_types=("sales_team",),
+        execute=_delete_sales_team,
+        window=WINDOW_DESTRUCTIVE,
+        permission="sales.teams.delete",
+        label="Delete sales team",
+    )
+)
+
+
+def _delete_sales_opportunity(db: Session, payload: dict):
+    from app.services.sales import opportunity_service
+
+    return opportunity_service.delete_opportunity_by_id(db, _entity_id(payload))
+
+
+def _delete_sales_target(db: Session, payload: dict):
+    from app.services.sales import target_service
+
+    return target_service.delete_target_by_id(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="sales_opportunity.delete",
+        entity_types=("sales_opportunity",),
+        execute=_delete_sales_opportunity,
+        window=WINDOW_DESTRUCTIVE,
+        permission="sales.opportunities.delete",
+        label="Delete sales opportunity",
+    )
+)
+
+register(
+    FormAction(
+        key="sales_target.delete",
+        entity_types=("sales_target",),
+        execute=_delete_sales_target,
+        window=WINDOW_DESTRUCTIVE,
+        permission="sales.targets.delete",
+        label="Delete target",
+    )
+)
 
 register(
     FormAction(
@@ -247,6 +325,17 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="user_management.users.delete",
         label="Trash user",
+    )
+)
+
+register(
+    FormAction(
+        key="user.unlink_contact",
+        entity_types=("user",),
+        execute=_unlink_user_contact,
+        window=WINDOW_REVERSIBLE,
+        permission="user_management.users.edit",
+        label="Unlink WhatsApp contact",
     )
 )
 
@@ -1088,6 +1177,63 @@ register(
     )
 )
 
+def _remove_spec_rule(db: Session, payload: dict):
+    from app.services.product_spec_registry import remove_rule
+
+    # Keyed by the spec key: the rule has no id of its own, so the payload carries the
+    # builder it is (#1286, D8: removing a rule is the way back from a mistake).
+    return remove_rule(db, _entity_id(payload), payload.get("builder") or {})
+
+
+def _remove_spec_value(db: Session, payload: dict):
+    from app.services.product_spec_registry import remove_value
+
+    return remove_value(db, _entity_id(payload), payload.get("value"))
+
+
+def _remove_spec_word(db: Session, payload: dict):
+    from app.services.product_spec_registry import remove_word
+
+    return remove_word(db, _entity_id(payload), payload.get("value"), payload.get("word"))
+
+
+# Reversible, all three: a rule, a choice or a word can be added back on the same
+# screen, and a shipped choice or word is only suppressed (D13). Parked against the
+# spec key; the entity type names the thing being removed as well, so a key's prefix is
+# one of its entity types like every other record action.
+register(
+    FormAction(
+        key="spec_rule.remove",
+        entity_types=("spec_key", "spec_rule"),
+        execute=_remove_spec_rule,
+        window=WINDOW_REVERSIBLE,
+        permission="master_data.spec_registry.edit",
+        label="Remove rule",
+    )
+)
+
+register(
+    FormAction(
+        key="spec_value.remove",
+        entity_types=("spec_key", "spec_value"),
+        execute=_remove_spec_value,
+        window=WINDOW_REVERSIBLE,
+        permission="master_data.spec_registry.edit",
+        label="Remove choice",
+    )
+)
+
+register(
+    FormAction(
+        key="spec_word.remove",
+        entity_types=("spec_key", "spec_word"),
+        execute=_remove_spec_word,
+        window=WINDOW_REVERSIBLE,
+        permission="master_data.spec_registry.edit",
+        label="Remove word",
+    )
+)
+
 register(
     FormAction(
         key="stock_visibility_policy.remove",
@@ -1695,6 +1841,33 @@ register(
 )
 
 
+def _delete_sales_order_line_attachment(db: Session, payload: dict):
+    from app.services import so_line_attachments
+
+    # `line_id` scopes the delete (mirrors `shipment_line_photo.delete`'s own rule) -
+    # without it a link id under another line would be reachable off a guess.
+    return so_line_attachments.delete(
+        db,
+        str(payload.get("line_id") or ""),
+        _entity_id(payload),
+        payload.get("requested_by_id"),
+    )
+
+
+register(
+    FormAction(
+        key="sales_order_line_attachment.delete",
+        entity_types=("sales_order_line_attachment",),
+        execute=_delete_sales_order_line_attachment,
+        # Destructive: the file itself is removed (link, attachment row and object) -
+        # re-adding it means uploading it again, not undoing a link (Q8).
+        window=WINDOW_DESTRUCTIVE,
+        permission="projects.projects.edit",
+        label="Delete attachment",
+    )
+)
+
+
 def _delete_notification(db: Session, payload: dict):
     from app.services.error_handler import handle_not_found
     from app.services.notification_service import NotificationService
@@ -1864,6 +2037,55 @@ def _undo_confirm(db: Session, payload: dict):
         actor_user_id=payload.get("requested_by_id"),
         expected_decision_id=payload.get("decision_id"),
     )
+
+
+def _discard_cost_price_change_set(db: Session, payload: dict):
+    from app.services.procurement.cost_price_change_service import discard
+
+    return discard(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="cost_price_change_set.discard",
+        entity_types=("cost_price_change_set",),
+        execute=_discard_cost_price_change_set,
+        # A Draft set has nothing live changed yet - there is no way back once the
+        # window lapses, same as any other hard delete (#1288, AC-S1-23).
+        window=WINDOW_DESTRUCTIVE,
+        permission="procurement.cost_price_changes.upload",
+        label="Discard price change",
+    )
+)
+
+
+def _delete_product_supplier_cost(db: Session, payload: dict):
+    from app.models.cost_price import ProductSupplierCost
+    from app.services.error_handler import handle_not_found
+    from app.services.procurement.supplier_cost_service import delete_cost
+
+    cost_id = _entity_id(payload)
+    row = db.query(ProductSupplierCost).filter(ProductSupplierCost.id == cost_id).first()
+    if row is None:
+        raise handle_not_found("Cost row", cost_id)
+    return delete_cost(
+        db, str(row.product_supplier_id), cost_id,
+        {"id": payload.get("requested_by_id")},
+    )
+
+
+register(
+    FormAction(
+        key="product_supplier_cost.delete",
+        entity_types=("product_supplier_cost",),
+        execute=_delete_product_supplier_cost,
+        window=WINDOW_DESTRUCTIVE,
+        # The section lives on the supplier's Prices tab / product's Suppliers tab,
+        # both gated by the product-suppliers edit slug (#1288, contract 2.3).
+        permission="procurement.product_suppliers.edit",
+        label="Delete cost row",
+    )
+)
 
 
 register(

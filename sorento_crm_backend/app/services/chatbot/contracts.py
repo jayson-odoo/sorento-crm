@@ -105,6 +105,17 @@ DOMAIN_HINTS: tuple[str, ...] = tuple(row["name"] for row in policy_rows.DEFAULT
 DomainHint = Literal[DOMAIN_HINTS]  # type: ignore[valid-type]
 
 
+def named_count(top_n: Any) -> int | None:
+    """The count a message named (the parser's `top_n`), or None: a bool, a non-int or a
+    value <= 0 names none. THE one reading, shared by the engine (arming the counted-set
+    carry), `turn/apply.py` (reading the answer to "how many should I show?") and the
+    fetch (slicing the set), so the three cannot disagree about one turn (reviewer N2 on
+    PR #833: `True` or `0` once withheld the rows while arming no carry)."""
+    if isinstance(top_n, bool) or not isinstance(top_n, int) or top_n <= 0:
+        return None
+    return top_n
+
+
 def coerce_domain_hint(value: Any) -> Any:
     """A `domain_hint` outside the enum above, coerced to null. THE one guard.
 
@@ -189,6 +200,9 @@ ENTITY_HINTS = (
     "category",
     "brand",
     "attachment_type",
+    # Fix round 8 on PR #833: a product property from the specification registry
+    # (`head/grounding.py`), never a document type.
+    "specification",
 )
 EntityHint = Literal[ENTITY_HINTS]  # type: ignore[valid-type]
 
@@ -366,6 +380,13 @@ PendingKind = Literal[PENDING_KINDS]  # type: ignore[valid-type]
 # caller inspecting the stored session state, not for this re-run decision.
 DETAIL_OFFER_KINDS: tuple[str, ...] = ("outstanding_detail", "sales_report_detail")
 
+# PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 5: the `order_status`
+# values that read sales figures under the `sales_orders.sales_report` reveal key (the
+# owner's access ruling, 26 Sep 2026: no new key). The engine's grant-before-roster
+# check reads this one tuple, so the asks cannot be gated differently. `sales_analysis`
+# (PLAN-retail-sales-reports-26sep S1, #1269) is gated by the same key.
+SALES_FIGURE_STATUSES: tuple[str, ...] = ("sales_report", "top_selling", "sales_analysis")
+
 # --------------------------------------------------------------------------- #
 # Session state (R2: every key compile-current-state writes, nothing dropped)
 # --------------------------------------------------------------------------- #
@@ -538,6 +559,10 @@ class Focus(BaseModel):
     customers: list[dict[str, Any]] = Field(default_factory=list)
     warehouse: list[dict[str, Any]] = Field(default_factory=list)
     brands: list[str] = Field(default_factory=list)
+    # #1262 slice 9 (F1a) follow-up: the outstanding report's own brand carry - see
+    # `turn/state.py::Focus.outstanding_brand_ids`'s own docstring for why this is a
+    # dedicated field, never `brands` above.
+    outstanding_brand_ids: list[str] = Field(default_factory=list)
     tier: list[str] = Field(default_factory=list)
     domains: list[str] = Field(default_factory=list)
     document: list[str] = Field(default_factory=list)
@@ -549,6 +574,18 @@ class Focus(BaseModel):
     date_window: dict[str, Any] | None = None
     # AC-1317: where a counted-set answer got to, `{set_key, offset}`.
     set_page: dict[str, Any] | None = None
+    # Round 4 R5: the ask an open clarify question was about, `{term, options, ask}`.
+    set_clarify: dict[str, Any] | None = None
+    # PLAN-chatbot-top-x-hot-selling-24sep.md "Lane wiring (S4)" point 8: the top selling
+    # ask's own axes while `status == "top_selling"` (`turn/state.py::Focus.top_selling`).
+    top_selling: dict[str, Any] | None = None
+    # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner ruling
+    # 24 Sep 2026) for chatbot-stock-ask-v2 S3: the open tasks, carried INSIDE the
+    # focus rather than on a session key of their own. Declared here because this
+    # model is `extra="forbid"` and `turn/state.py::focus_to_wire` writes the key on
+    # every turn - a shape the session validator did not know would fail the write
+    # itself.
+    tasks: list[dict[str, Any]] = Field(default_factory=list)
     # Any entity kind without a named axis above, keyed by kind. A kind this turn's
     # policy narrows on but the Focus never declared still has somewhere safe to sit
     # rather than being dropped on the way to the session.
@@ -815,18 +852,14 @@ SELF_CLOSING_BRANCH_KINDS: frozenset[str] = (
 
 # What a dry run prints where a SEAM would have supplied a value (D14, AC-507). One
 # token, so a reader of a preview action can tell at a glance that nothing behind it
-# happened. Declared here rather than in a lane because two lanes now stand values in -
-# `out_of_scope` for the assignee and the SLA timestamps, `ideate` for the whole reply
-# the write tool would have composed - and an executor that had to match two spellings of
-# "nothing happened" would be matching a typo the day a third lane arrived.
+# happened. Declared here rather than in the lane that uses it (`out_of_scope`, for the
+# assignee and the SLA timestamps) so a second lane that stands a value in reuses the one
+# spelling of "nothing happened" rather than a near-miss of it. It is an operator token:
+# it belongs on `status` and the trace facts and must never reach a `send_message`,
+# because the executor executes actions and nothing else. (`ideate` used to stand its
+# whole reply in; since #1179 a dry-run ideate turn calls the tool as a test turn and
+# sends the tool's real words.)
 PREVIEW = "<preview>"
-
-# The same fact said in the CUSTOMER's words. `PREVIEW` is an operator token and belongs on
-# `status` and the trace facts; it must never reach a `send_message`, because the executor
-# executes actions and nothing else, so a dry-run ideate turn sent the literal string
-# "<preview>" to whoever typed the idea. One sentence, in the vocabulary of the person who
-# would read it, and it still says plainly that nothing was generated.
-PREVIEW_IDEATE_REPLY = "[dry-run: ideation reply not generated]"
 
 
 # `DELEGATED_BRANCH_KINDS` used to be the complement of the set above and is GONE: with

@@ -22,11 +22,13 @@ import {
   isDueAfterHorizon,
   isHorizonDate,
   linkHorizonRequest,
+  linkOutcomeText,
   readStoredLinkHorizon,
   readUrlLinkHorizon,
   startsCleared,
   storeLinkHorizon,
 } from './linkHorizon';
+import type { AutoPlaceResult } from '../types/orderInquiry.types';
 
 const HORIZON = '2026-12-31';
 
@@ -223,6 +225,53 @@ describe('acknowledgeOutcomeText', () => {
         skipped: 1,
       }),
     ).toBe('Confirmed 2 rows, 1 linked across 1 document line, 1 skipped');
+  });
+});
+
+/**
+ * Review round 2 Should fix 9: `linkOutcomeText` (Auto link all AND Link selected,
+ * R18 - the SAME call, so the SAME text) had no test of its own at all. The three
+ * counts (`book_linked_rows`, `suggested_rows`, `changed_rows`) are each independently
+ * absent-or-present on the wire (S2/S3/R18 landed in that order), so every combination
+ * is pinned here rather than assumed from the pre-S3 fallback shape below it.
+ */
+describe('linkOutcomeText', () => {
+  const base: AutoPlaceResult = {
+    placed_rows: 0,
+    allocations: 0,
+    products_touched: 0,
+    after_horizon: 0,
+  };
+
+  it('G4/R18: book-linked, suggested and changed together, the full sentence', () => {
+    expect(
+      linkOutcomeText({ ...base, book_linked_rows: 3, suggested_rows: 5, changed_rows: 2 }),
+    ).toBe('3 linked from AutoCount, 5 suggested, 2 changed');
+  });
+
+  it('R18: Link selected on ticked rows that changed nothing reads 0 changed, not absent', () => {
+    expect(
+      linkOutcomeText({ ...base, book_linked_rows: 0, suggested_rows: 4, changed_rows: 0 }),
+    ).toBe('0 linked from AutoCount, 4 suggested, 0 changed');
+  });
+
+  it('appends the after-horizon phrase when some rows are held back', () => {
+    expect(
+      linkOutcomeText({
+        ...base, book_linked_rows: 1, suggested_rows: 1, changed_rows: 1,
+        after_horizon: 2, link_up_to: HORIZON,
+      }),
+    ).toBe(`1 linked from AutoCount, 1 suggested, 1 changed, 2 after ${formatHorizon(HORIZON)}`);
+  });
+
+  it('falls back to the pre-S3 shape when the backend sends neither book_linked_rows nor suggested_rows', () => {
+    expect(linkOutcomeText({ ...base, placed_rows: 4, allocations: 6 })).toBe(
+      '4 rows linked across 6 document lines',
+    );
+  });
+
+  it('the pre-S3 fallback says "Nothing new to link yet" at zero', () => {
+    expect(linkOutcomeText({ ...base, placed_rows: 0 })).toBe('Nothing new to link yet');
   });
 });
 

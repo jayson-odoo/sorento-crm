@@ -767,7 +767,10 @@ describe('ProformaInvoiceDetail - the tabs', () => {
     ).toBeInTheDocument();
   });
 
-  it('renders the Packing lists tab with an empty state and the Convert CTA', () => {
+  it('renders the Packing lists tab with an empty state and ONE Convert button (header only)', () => {
+    // C4/C5 (PLAN-pi-header-fields-convert-fixes-24sep.md): the empty-state's own Convert
+    // CTA is removed - only the header's Convert to packing list button exists now. RED
+    // until the coder drops `ProformaInvoicePackingListsTab`'s `emptyAction` wiring.
     state.data = detail();
     renderDetail();
     openTab('Packing lists');
@@ -775,8 +778,7 @@ describe('ProformaInvoiceDetail - the tabs', () => {
     expect(
       screen.getByText('Nothing from this invoice is in a packing list yet.'),
     ).toBeInTheDocument();
-    // The next step from the empty state is the SAME action as the header's primary.
-    expect(screen.getAllByRole('button', { name: /convert to packing list/i }).length).toBe(2);
+    expect(screen.getAllByRole('button', { name: /convert to packing list/i }).length).toBe(1);
   });
 
   it('names the packing list, and what is left when it is split (Q9)', () => {

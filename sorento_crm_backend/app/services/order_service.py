@@ -7,24 +7,28 @@ from io import BytesIO
 from datetime import datetime
 
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_, and_, func, exists, false
+from sqlalchemy import or_, and_, func, exists, false, select
+from sqlalchemy.sql import Select
 from decimal import Decimal
 from app.utils.chunking import chunked
 from app.models.order import Order, OrderStatus, Customer, OrderLine, Transporter
 from app.models.product import Product
 from app.models.inventory import Warehouse
+from app.models.sales_agent import SalesAgent
 from app.schemas.order import (
     OrderCreate, OrderUpdate, CustomerCreate, CustomerUpdate,
     OrderStatusCreate, OrderStatusUpdate,
     OrderLineCreate, OrderLineUpdate,
 )
-from app.services.error_handler import handle_not_found, handle_conflict
+from app.services.error_handler import handle_not_found, handle_conflict, handle_unprocessable
 from app.services.import_log_service import ImportLogService
 from app.services.calendar_service import CalendarService
 from app.services.identifier_resolver import resolve_identifier
 from app.services.company_scope import (
+    DEFAULT_COMPANY_ID,
     build_company_predicate,
     get_company_scope,
+    pending_company_id,
     stamp_lookup_companies,
 )
 from app.services.embedding_change_listener import (
@@ -131,6 +135,125 @@ def resolve_warehouse_ids(db, warehouse_codes: Optional[list]) -> Optional[list]
     return [r[0] for r in rows]
 
 
+def brand_product_condition(db: Session, brand_ids: list):
+    """#1262 fix lane round 7, R2: which products a brand covers, as a condition on
+    `Product` - the owner's rule from PR #1300 round 4.
+
+    A product carries the brand when its brand row is that brand, OR when it belongs
+    to a company that stands for the brand: a company other than the incumbent whose
+    name, first name word or code is the brand's name or code. The Mocha company sells
+    only Mocha and its products carry no brand row, so every Mocha company item is
+    Mocha brand. The incumbent (Sorento) carries several brands, so its products count
+    only by their brand row. Company scope is untouched: callers AND this with the
+    scope predicate as before, so a company outside the caller's scope never appears.
+    """
+    from app.models.company import Company
+    from app.models.product import Brand
+
+    ids = [str(b) for b in brand_ids]
+
+    def fold(value) -> str:
+        return " ".join(str(value or "").casefold().split())
+
+    brand_keys: set[str] = set()
+    for name, code in db.query(Brand.brand_name, Brand.brand_code).filter(Brand.id.in_(ids)).all():
+        brand_keys |= {fold(name), fold(code)}
+    brand_keys.discard("")
+    company_ids: list[str] = []
+    if brand_keys:
+        rows = db.query(Company.id, Company.name, Company.code).filter(Company.id != DEFAULT_COMPANY_ID).all()
+        for company_id, name, code in rows:
+            words = fold(name).split()
+            keys = {fold(name), fold(code), words[0] if words else ""}
+            if keys & brand_keys:
+                company_ids.append(str(company_id))
+    condition = Product.brand_id.in_(ids)
+    if company_ids:
+        condition = or_(condition, Product.company_id.in_(company_ids))
+    return condition
+
+
+def narrow_product_ids_by_brand(
+    db: Session,
+    resolved_product_ids: Optional[list],
+    resolved_brand_ids: Optional[list],
+):
+    """#1262 slice 9 (F1a): a `brand_ids` filter narrows `product_ids` to that brand's
+    own products (`Product.brand_id`).
+
+    Fix lane round 2, N3: returned as a `Product.brand_id` SUBQUERY, never read into
+    Python - a brand-only call used to materialise the brand's whole product id list
+    and bind it back as `IN (...)`. Every consumer below accepts either shape through
+    `has_product_filter` / `product_filter` / `merge_product_filters`, and a brand
+    that matches no products simply filters to nothing (no sentinel id needed).
+
+    `None` (no brand filter) returns `resolved_product_ids` untouched. A given
+    `resolved_product_ids` AND a brand both narrowing is the INTERSECTION. The company
+    predicate is ANDed in by hand, the same way `stamp_order_summary` does for its own
+    column queries: a subquery must not depend on the ORM listener reaching it.
+    """
+    if not resolved_brand_ids:
+        return resolved_product_ids
+    stmt = select(Product.id).where(brand_product_condition(db, resolved_brand_ids))
+    predicate = build_company_predicate(Product, get_company_scope(db))
+    if predicate is not None:
+        stmt = stmt.where(predicate)
+    if resolved_product_ids is not None:
+        stmt = stmt.where(Product.id.in_(resolved_product_ids))
+    return stmt
+
+
+def keep_brand_lines(db: Session, orders: list, brand_product_filter) -> list:
+    """#1262 fix lane round 6: a `brand_ids` ask lists only that brand's lines. The
+    order filter keeps a document with ANY line of the brand; inside it, the lines of
+    another brand are left out (a Sorento ask never prints a Mocha line).
+
+    `brand_product_filter` is `narrow_product_ids_by_brand`'s subquery. Returns
+    `OrderResponse` rows, never a mutated ORM collection (dropping a line off
+    `Order.lines` would be a pending delete). The kept lines are read through the
+    subquery by the page's order ids, so the brand's product ids are never bound (N3)."""
+    from app.schemas.order import OrderResponse
+
+    order_ids = [str(o.id) for o in orders]
+    kept: set[str] = set()
+    if order_ids:
+        stmt = select(OrderLine.id).where(
+            OrderLine.order_id.in_(order_ids),
+            OrderLine.product_id.in_(brand_product_filter),
+        )
+        kept = {str(row[0]) for row in db.execute(stmt)}
+    out = []
+    for o in orders:
+        row = OrderResponse.model_validate(o)
+        row.lines = [line for line in (row.lines or []) if str(line.id) in kept]
+        out.append(row)
+    return out
+
+
+def has_product_filter(value) -> bool:
+    """A product filter is present: a brand subquery always is, a list when non-empty."""
+    return isinstance(value, Select) or bool(value)
+
+
+def product_filter(value):
+    """A typed product filter as the services keep it: the brand subquery as is, a
+    list copied as strings, nothing as None."""
+    if isinstance(value, Select):
+        return value
+    kept = [str(p) for p in (value or []) if p]
+    return kept or None
+
+
+def merge_product_filters(*values):
+    """The union of several product filters. Plain lists concatenate exactly as the
+    `[*a, *b]` they replace; once a brand subquery is among them, the union is one
+    `Product.id` subquery instead."""
+    kept = [v for v in values if has_product_filter(v)]
+    if not any(isinstance(v, Select) for v in kept):
+        return [p for v in kept for p in v]
+    return select(Product.id).where(or_(*(Product.id.in_(v) for v in kept)))
+
+
 def _plain_number(v):
     """Decimal/float -> int when integral, else float. None stays None."""
     if v is None:
@@ -182,7 +305,7 @@ def so_outstanding_rows(
     )
     if customer_ids:
         q = q.filter(SalesOrder.customer_id.in_(customer_ids))
-    if product_ids:
+    if has_product_filter(product_ids):
         q = q.filter(SalesOrderLine.product_id.in_(product_ids))
     rows = (
         q.order_by(SalesOrder.order_date.asc().nulls_last(), SalesOrder.so_number.asc())
@@ -227,7 +350,7 @@ def so_outstanding_summary(
     )
     if customer_ids:
         q = q.filter(SalesOrder.customer_id.in_(customer_ids))
-    if product_ids:
+    if has_product_filter(product_ids):
         q = q.filter(SalesOrderLine.product_id.in_(product_ids))
     qty, count = q.one()
     return {
@@ -271,7 +394,7 @@ def stamp_so_outstanding_rows(
     groups = summary.get("groups") if isinstance(summary.get("groups"), list) else []
     if not products and not groups:
         return
-    pids = [str(p) for p in (product_ids or []) if p]
+    pids = product_filter(product_ids)
     try:
         _scope = get_company_scope(db)
         _p_so = build_company_predicate(SalesOrder, _scope)
@@ -309,7 +432,7 @@ def stamp_so_outstanding_rows(
         )
         if customer_ids:
             q = q.filter(SalesOrder.customer_id.in_([str(c) for c in customer_ids]))
-        if pids:
+        if has_product_filter(pids):
             q = q.filter(SalesOrderLine.product_id.in_(pids))
         q = _scoped(_scoped(q, _p_so), _p_line)
         per_group: dict[tuple, dict[str, Any]] = {}
@@ -461,7 +584,7 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
     answer never dies because its headline could not be computed. An empty
     result gets no summary at all.
     """
-    pids = [str(p) for p in (product_ids or []) if p]
+    pids = product_filter(product_ids)
     try:
         # COMPANY SCOPE, EXPLICITLY. The session's do_orm_execute listener scopes ORM
         # ENTITIES via with_loader_criteria; every query below is column-only
@@ -544,7 +667,7 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
         # groups are ALWAYS emitted with an asked summary - a breakdown by product is
         # meaningful under any filter (it was the cross-product grand total that was
         # not). When the caller narrowed by product, the lines are restricted to it.
-        _line_scope = OrderLine.product_id.in_(pids) if pids else None
+        _line_scope = OrderLine.product_id.in_(pids) if has_product_filter(pids) else None
         prod_q = (
             db.query(
                 Product.product_code,
@@ -706,7 +829,7 @@ class OrderService:
         # cannot shadow them.
         _order_uuid_filter = list(order_ids) if order_ids else None
         _customer_uuid_filter = list(customer_ids) if customer_ids else None
-        _product_uuid_filter = list(product_ids) if product_ids else None
+        _product_uuid_filter = product_filter(product_ids)
         _transporter_uuid_filter = list(transporter_ids) if transporter_ids else None
 
         # Date-axis relaxation (§3.4) bookkeeping. `_customer_scoped` gates the
@@ -772,7 +895,7 @@ class OrderService:
                 )
             )
 
-        if _product_uuid_filter:
+        if has_product_filter(_product_uuid_filter):
             filters.append(
                 Order.lines.any(OrderLine.product_id.in_(_product_uuid_filter))
             )
@@ -1643,7 +1766,7 @@ class OrderService:
         applied as additional AND filters.
         """
         # Capture typed UUID kwargs before any local variable shadows them.
-        _product_uuid_filter = list(product_ids) if product_ids else None
+        _product_uuid_filter = product_filter(product_ids)
         _customer_uuid_filter = list(customer_ids) if customer_ids else None
         _transporter_uuid_filter = list(transporter_ids) if transporter_ids else None
 
@@ -1655,7 +1778,7 @@ class OrderService:
             .distinct()
         )
 
-        if _product_uuid_filter:
+        if has_product_filter(_product_uuid_filter):
             q = q.filter(OrderLine.product_id.in_(_product_uuid_filter))
 
         if _customer_uuid_filter:
@@ -1732,7 +1855,7 @@ class OrderService:
         # narrows by `product_ids` (the MCP/typed path) instead of the legacy
         # `product_id` token resolver below. The order-level filter is applied
         # separately above via _product_uuid_filter on `q`.
-        if _product_uuid_filter:
+        if has_product_filter(_product_uuid_filter):
             product_match_filters.append(
                 OrderLine.product_id.in_(_product_uuid_filter)
             )
@@ -1934,7 +2057,7 @@ class OrderService:
                 self.db,
                 payload,
                 [],
-                product_ids=[*(_product_uuid_filter or []), *(product_ids or [])],
+                product_ids=merge_product_filters(_product_uuid_filter, product_ids),
             )
             return payload
 
@@ -2018,14 +2141,14 @@ class OrderService:
                 self.db,
                 payload,
                 summary_q,
-                product_ids=[*(_product_uuid_filter or []), *(product_ids or [])],
+                product_ids=merge_product_filters(_product_uuid_filter, product_ids),
             )
             if include_pipeline and isinstance(payload.get("summary"), dict):
                 stamp_so_outstanding_rows(
                     self.db,
                     payload["summary"],
                     customer_ids=_customer_uuid_filter,
-                    product_ids=[*(_product_uuid_filter or []), *(product_ids or [])],
+                    product_ids=merge_product_filters(_product_uuid_filter, product_ids),
                 )
         # Per-company labelling when the lookup spans more than one company - on the
         # empty path too, so an empty answer can name the companies searched. Both
@@ -2035,7 +2158,7 @@ class OrderService:
             self.db,
             payload,
             orders,
-            product_ids=[*(_product_uuid_filter or []), *(product_ids or [])],
+            product_ids=merge_product_filters(_product_uuid_filter, product_ids),
         )
         if entity_buckets is not None:
             payload["resolved_entities"] = entity_buckets.as_echo()
@@ -3441,6 +3564,45 @@ class CustomerService:
             raise handle_not_found("Customer", customer_id)
         return customer
     
+    def _resolve_sales_agent(
+        self,
+        agent_id: str,
+        *,
+        customer_company_id: Optional[str],
+        require_active: bool = True,
+    ) -> SalesAgent:
+        """The sales agent a create/update assigns.
+
+        Checked against the CUSTOMER's own `company_id` (shared agents, `company_id IS
+        NULL`, always allowed) - NOT the caller's scope. PR #1177 review, security item 3:
+        a user whose scope spans {A, B} must not be able to put a company-B-owned agent
+        onto a company-A customer just because both companies are in their own scope; the
+        question is whether the agent belongs to THIS record, not to the caller.
+
+        `require_active=False` lets an unrelated field edit on a customer already carrying
+        a since-deactivated agent go through without re-picking one (`update_customer`
+        passes this only when `agent_id` is unchanged from what the customer already has) -
+        a fresh assignment (create, or a genuine change on update) always requires active.
+
+        Raised as 422 (not 404): the request itself is well-formed, it is naming an agent
+        this customer may not use (`handle_unprocessable`, same status AC-2 asks for on an
+        unknown id, a malformed id, an inactive one, and one from another company alike -
+        the id space is shared, so none of these need to read differently to whoever picked
+        it in the select).
+        """
+        try:
+            uuid.UUID(str(agent_id))
+        except (ValueError, AttributeError, TypeError):
+            raise handle_unprocessable("Sales agent not found")
+        agent = self.db.get(SalesAgent, agent_id)
+        if not agent:
+            raise handle_unprocessable("Sales agent not found")
+        if agent.company_id is not None and str(agent.company_id) != str(customer_company_id or ""):
+            raise handle_unprocessable("Sales agent not found")
+        if require_active and not agent.is_active:
+            raise handle_unprocessable("Sales agent is inactive")
+        return agent
+
     def create_customer(self, customer_data: CustomerCreate):
         """Create a new customer.
 
@@ -3458,20 +3620,49 @@ class CustomerService:
         if existing:
             raise handle_conflict("Customer with this code + name already exists.")
 
-        customer = Customer(**customer_data.model_dump())
+        # `sales_agent_id` is held out of the constructor and set only AFTER it validates:
+        # `_resolve_sales_agent`'s `db.get(SalesAgent, ...)` autoflushes this row the moment
+        # it is added, and an unknown/inactive/cross-company id sitting on it already would
+        # autoflush an INSERT that violates the FK (or the company check) before the 422 is
+        # even raised - a 500 instead of the 422 AC-2 promises.
+        data = customer_data.model_dump()
+        agent_id = data.pop("sales_agent_id", None)
+        customer = Customer(**data)
         self.db.add(customer)
+        if agent_id is not None:
+            # `pending_company_id` resolves what `before_insert` is about to stamp on
+            # THIS row, from the very same single-company scope, so the agent is checked
+            # against the company the customer is actually about to join - not yet
+            # `customer.company_id` itself, which is still None before flush.
+            self._resolve_sales_agent(
+                agent_id,
+                customer_company_id=pending_company_id(customer),
+                require_active=True,
+            )
+            customer.sales_agent_id = agent_id
         self.db.commit()
         self.db.refresh(customer)
         return customer
-    
+
     def update_customer(self, customer_id: str, customer_data: CustomerUpdate):
         """Update a customer."""
         customer = self.get_customer(customer_id)
-        
+
         update_data = customer_data.model_dump(exclude_unset=True)
+        new_agent_id = update_data.get("sales_agent_id")
+        if new_agent_id is not None:
+            # Re-saving the SAME agent the customer already carries (any other field
+            # edit resubmits the whole form) must not require it to still be active -
+            # only an actual change of agent does.
+            changing = str(new_agent_id) != str(customer.sales_agent_id or "")
+            self._resolve_sales_agent(
+                new_agent_id,
+                customer_company_id=customer.company_id,
+                require_active=changing,
+            )
         for key, value in update_data.items():
             setattr(customer, key, value)
-        
+
         self.db.commit()
         self.db.refresh(customer)
         return customer

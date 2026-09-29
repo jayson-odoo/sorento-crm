@@ -23,6 +23,7 @@ import {
 } from '../delivery-schedules/_demo/scheduleDemo';
 import { DeliveryScheduleUploadDialog } from './DeliveryScheduleUploadDialog';
 import { DeliveryScheduleVersionsGrid } from './DeliveryScheduleVersionsGrid';
+import { projectTabOriginHref, withReviewOrigin } from '../../_shared/lib/reviewOrigin';
 
 /**
  * Delivery schedules (P6, contract section 4).
@@ -174,7 +175,10 @@ export function DeliverySchedulesPanel({ project }: { project: Project }) {
             {row.original.latest_version_id && (
               <Button asChild size="sm" variant="outline">
                 <Link
-                  href={`/project-sales/${project.id}/delivery-schedules/${row.original.latest_version_id}`}
+                  href={withReviewOrigin(
+                    `/project-sales/${project.id}/delivery-schedules/${row.original.latest_version_id}`,
+                    projectTabOriginHref(project.id, 'schedules'),
+                  )}
                 >
                   {row.original.confirmed_at ? 'Open' : 'Review'}
                 </Link>
@@ -278,6 +282,7 @@ export function DeliverySchedulesPanel({ project }: { project: Project }) {
           project={project}
           schedules={rows}
           onDone={() => setUploading(false)}
+          originHref={projectTabOriginHref(project.id, 'schedules')}
         />
       )}
 

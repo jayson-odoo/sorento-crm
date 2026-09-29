@@ -101,12 +101,23 @@ R3's other terms -- one severity set, one verb, duplicates collapsed, the gate u
 - **S3-2 [FE] (J4)** The only dismiss verb is "Dismiss with a reason". A text check asserts
   "Override with a reason", "Clear with a reason" and "Dismiss as false signal" appear nowhere
   in project-sales.
+  Reviewer note, 25 Sep 2026: this round added the project-sales-wide text check for
+  "Override with a reason" and "Clear with a reason" (`dismissVerb.guard.test.ts`). The third
+  string, "Dismiss as false signal", is still live on purpose in
+  `DeliveryScheduleReconciliationList.tsx` - it is S5's to rename.
+  26 Sep 2026 (S5): renamed with the list's removal; `dismissVerb.guard.test.ts` now bans all
+  three strings.
 - **S3-3 [FE] (J4)** Findings with the same `code` about the same subject render as one row with
   a count. Subject key, first present wins: `line_id`, then `detail_json.customer_code_raw` (a
   schedule column; the unmapped-column finding carries one row per area), then
   `detail_json.product_code`, then `detail_json.line_no`. Dismissing the row calls the existing
   acknowledge endpoint once per underlying finding with the same reason. A finding with none of
   these keys never collapses.
+  25 Sep 2026: `collapseFindings()` shipped with no caller yet, and R23's cross-code collapse is
+  not implemented in it; both carried to S5 (schedule matrix) and S7 (SO lines list).
+  26 Sep 2026 (S5): the schedule matrix has nothing to collapse. Its flags are the per-column
+  verdicts (one entry per column already, addressed by `product_index`), not `SODraftFinding`
+  rows, so `collapseFindings()` has no caller there either; both it and R23 stay with S7.
 - **S3-4 [FE] (J4)** The dismiss dialog requires a reason of at least 3 characters (the service's
   existing rule) and names the count ("Dismiss 7").
 - **S3-5 [FE][BE] (J4)** The publish gate is unchanged: a pytest pins that warn findings leave an
@@ -167,6 +178,29 @@ Re-dating and Notes move into a secondary History panel rather than tabs of thei
 - **S5-6 [FE] (J3)** Every section renders when empty, with `-` per ADR 1e.
 - **S5-7 [E2E] (J3)** HQ/26/01/121 v2 at 1280 and 375 matches the approved mockup's callouts.
 
+Implementation notes, 26 Sep 2026 (S5, binding owner lessons from the S6 hand tests on PR #1237):
+
+- S5-3: the Flag cell is one pill plus a count, row height unchanged; the sentences, the product
+  picker, "Fix the quantities" and "Dismiss with a reason" sit in its popover (lesson (b)), not
+  in an Action column. Product and Flag are pinned; the matrix scrolls in its own container
+  (lesson (a)). The totals close each row as Schedule and PO, per the mockup; the printed TOTAL
+  QTY is named in the popover when it disagrees.
+- S5-4: "Only rows with a flag" reads "Need attention (N)" / "All rows (N)" (lesson (c)). Need
+  attention is exactly the columns `blocksConfirm()` returns, the same test the server's
+  `confirm` makes (not reconciled, a dismissal counting as reconciled), so the screen and the
+  server cannot disagree (lesson (e)). A shortfall warning ("Needs acknowledgement") does not
+  block on either side and is shown under All rows. On a partial read the confirm dialog now
+  asks for the acknowledgement the server already required.
+- S5-5: Documents holds the file only, nothing under it (lesson (d)).
+- Removed as more than the mockup (R22): the gear menu (the PO link moved to the meta line, the
+  document to its tab), the confirmed banner and its "Back to the project" button, the reading
+  time, the revision label and issuer in the meta line, the "N cells re-dated" chip, the
+  "Remembered code" pill and the inline "will resolve" note (now a toast). A confirmed version
+  that owes an amendment makes "Review the amendment" the one primary button.
+- S5-7: evidence in this lane is component-level (the real client rendered off its `?demo=`
+  fixture in Chromium; no live stack or login in the cloud lane). The pass on HQ/26/01/121 v2
+  stays owed on a local stack.
+
 ## S6. PO review screen (per approved `mockups/po-review.html`; page renamed from "PO confirm")
 
 Rewritten after the lavish review: two tabs only, no left/right split pane (R14(b)); the PDF and
@@ -176,14 +210,59 @@ the rejected-note reasons move together into Documents, always present (R18).
   with who and when; document total vs our sum on one line; "Back to the project" removed.
 - **S6-2 [FE] (J3)** Two tabs, Lines (default) and Documents; the PDF viewer is never shown beside
   the lines table, at 1280 or at 375 -- Lines takes the full page width in both.
+
+  Owner hand test 25 Sep: the Lines grid was cut off at the right edge at 1280 with no way to
+  reach the Amount column. It now scrolls horizontally inside its own container (the grid's
+  shared `DataGridTable` scroller, not a one-off wrapper) at both 1280 and 375; the two-tabs,
+  full-page-width contract itself is unchanged.
 - **S6-3 [FE] (J3)** Lines opens on "Lines identified" (today's "Show only these" filter, on by
   default while unconfirmed); "Show all lines (N)" is one click away.
-- **S6-4 [FE] (J3)** A line with an open finding carries a Flag cell and one "Dismiss with a
-  reason" action on its own row; there is no separate Findings tab or card.
+
+  Owner hand test 25 Sep: renamed to "Need attention (N)" / "All lines (N)" -- "this should be
+  Need attention and All lines, simple as that." Default-on-while-unconfirmed behaviour
+  unchanged.
+- **S6-4 [FE] (J3)** A line with an open finding carries a Flag cell and the row's own corrective
+  action (edit the line, cancel it, or accept/reject the handwritten note); there is no separate
+  Findings tab or card, and no Dismiss action on a PO line.
+
+  Amended by reviewer judgment (a), 25 Sep 2026: at PO review time a line's mismatch is not a
+  persisted `SODraftFinding` row - those are written only at SO draft time as HARD findings whose
+  text says correct the line on the PO version. Correcting the line is the designed resolution and
+  the grid already offers it. A Dismiss would need a new persisted field on `projects.po_lines`
+  (migration + PATCH), contradicting "Backend seam: none", and the later hard finding would still
+  stand unless the draft service learned to skip it (OOS-3). No seam is the smallest correct
+  answer.
+
+  Owner hand test 25 Sep: the handwritten-note cards that used to stay expanded under a flagged
+  line ("Amend code / Page 1", "Amend description / Page 2", "Cancel line", plus "Skip to the
+  next unreviewed line") read as "messy and bulky, like so many expanded sections." A line's
+  notes are now one compact indicator in the Flag cell -- a note icon with the count, amber
+  while unreviewed -- that opens a popover on click with the same accept/edit/reject actions in
+  one line each, page included. Row height stays one line. The header's "Review them" link opens
+  the first unreviewed line's popover directly rather than merely scrolling to it. The
+  "Skip to the next unreviewed line" link inside the old card is gone; accepting or rejecting a
+  note still auto-advances the reader to the next unreviewed line.
 - **S6-5 [FE] (J3)** The Documents tab renders the PDF viewer, or, when it cannot be found, the
   S5-5 empty state (R13), with the rejected-note reasons (R7, `POIntakeAnnotationsGrid`) directly
   below it, both in the one tab, always present.
+
+  Owner hand test 25 Sep: "why does this exist? just show me the entire document." The
+  annotations grid (#, State, Reading, Note, Handwriting) is removed; the Documents tab shows
+  only the PDF viewer, which now takes the tab's full height (was a short fixed-height strip) so
+  every page is reachable by scrolling the viewer itself. The R13 empty state is unchanged.
+  `POIntakeAnnotationsGrid` itself is trimmed to the `describeAnnotationEffect` helper the S6-4
+  popover still uses; the grid component and its own test file are deleted as dead code.
+
+  Assumption flagged for the owner to overrule: a note naming no line (a signature, "Continue To
+  Next Page", delivery instructions) had its only surface in the grid just removed. With nowhere
+  left to review it, it no longer blocks Confirm and is not counted in the header's unreviewed
+  tally. A note naming a line still blocks Confirm exactly as before, through that line's S6-4
+  indicator.
 - **S6-6 [E2E] (J3)** HQ/26/01/121 v1 at 1280 and 375 matches the approved mockup.
+
+  Owner hand test 25 Sep 2026 stands in place of this AC for this fix round: the owner's own
+  screenshots on HQ/26/01/121 v2 named the four defects S6-2 through S6-5 amend above. A fresh
+  E2E capture against the mockup is still owed once this round lands.
 
 ## S7. Sales order review screen (per approved `mockups/sales-order-review.html`; page renamed
 from "SO findings")
@@ -200,6 +279,47 @@ Rewritten after the lavish review: one lines list, not a Lines tab plus a Findin
   findings card.
 - **S7-4 [FE] (J4)** Summary card renders `-` for unknown values (ADR 1e).
 - **S7-5 [E2E] (J4)** PSO-000003 at 1280 and 375 matches the approved mockup.
+
+  Implementation notes, 26 Sep 2026 (S7 lane), applying the S6 owner lessons: a row's Flag is
+  one compact pill (most severe open item, plus a count when there are several) that opens a
+  popover with one entry per item, its source and its "Dismiss with a reason"; row height stays
+  one line. Lines opens on "Need attention (N)" beside "All lines (N)"; every row holding a
+  publish blocker is in Need attention. The count under Publish and the server's refusal share
+  one rule, `publishBlockers` in `_shared/lib/findings.ts` (this order's hard findings with no
+  `acknowledged_at`, the filter `blocking_findings` applies); a schedule-level finding is shown
+  but never counted, because the server never lets it block. R23's pairing (an unmapped schedule
+  column folded into the `schedule_short` finding for the product it names) is in
+  `buildFlagItems`. Assumption flagged for the owner: the per-order allocation grid now shows only
+  on a published order, so a draft's Lines tab is one table (R16).
+
+  Open for the owner, R22 (PR #1264 review SF3): the mockup's lines table has 6 columns (#,
+  Product, Qty, Value, Flag, Action); the shipped grid has 12 (#, Product, Flag, Description,
+  Qty, UOM, Unit price, Amount, Delivery, Area, Source line, Stock location), and the Lines tab
+  keeps the stock-location bulk-apply control. All of these predate S7 (they come from main),
+  and the edit view mirrors the same 12 headers by rule, so the S7 lane kept them rather than
+  cut working fields under R22 on its own call. Until the owner rules, R22 reads as unmet on
+  these extras; a trim is its own slice (read and edit columns together).
+
+  Review fixes, 26 Sep 2026 (PR #1264): a Flag pill, read and edit, leads with the most severe
+  open item (`leadFlagItem`), never the first raised; "All lines (N)" counts finding-only rows
+  too, so it equals the rows the view shows (lesson (c)); R23 pairs a product code with a
+  schedule column only where the code starts one of the column's segments and is at least 3
+  characters, the same floor the server's `_code_candidates` uses.
+
+  Owner hand test, 26 Sep 2026 ~07:15Z on :3081 (PR #1264, five binding notes), applied:
+  (1) the Lines table is one plain row per line in line order: no set heading row, no collapse,
+  no indented companion; a zero-priced set part reads "Part of #N" in its price cell (the
+  server's `parent_line_id`). Area, From PO line and Stock location leave BOTH the read and the
+  edit view, which closes the SF3 question above for those three; the nine left are the
+  editable fields plus #, Flag and Amount. (2) No Reorder lines toggle: every row carries its
+  handle while the order may be reordered, and a drop saves at once. (3) No "Stock location for
+  all lines" bar: the server derives the order's location from its customer's sales agent's
+  location group (`BRW-<group>`, master site from `project_allocation_brw_warehouse_code`) and
+  the header states it; a missing link is a "No stock location" flag naming it. (4) The project's
+  Sales orders list keeps every row one line; To review is one pill in the Flag pill's words.
+  (5) The three chips are gone; a footer row sums Value (labelled Page total past one page).
+  Evidence: `evidence/pr1264-owner-notes/` (1280 and 375, cloud-lane stack seeded from the test
+  builders, sidebar navigation, a real drag that saved).
 
 ## Out of scope (rulings)
 

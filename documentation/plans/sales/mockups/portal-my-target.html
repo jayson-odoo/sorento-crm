@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>My target (portal mockup)</title>
+<style>
+:root{--bg:#f7f7f8;--card:#fff;--fg:#18181b;--muted:#71717a;--border:#e4e4e7;--primary:#2563eb;--primary-soft:#dbeafe;--success:#16a34a;--success-soft:#dcfce7;--warn:#d97706;--warn-soft:#fef3c7}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);font:14px/1.45 Inter,system-ui,sans-serif;color:var(--fg)}
+.wrap{max-width:768px;margin:0 auto;padding:12px}
+.h1{font-size:18px;font-weight:600;text-align:center;margin:8px 0 12px}
+.search{height:48px;border:1px solid var(--border);border-radius:8px;background:#fff;padding:0 12px;display:flex;align-items:center;color:var(--muted);margin-bottom:12px}
+.kind{height:48px;border:1px solid var(--border);border-radius:8px;background:#fff;padding:0 12px;display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.badge{background:#f4f4f5;border-radius:6px;padding:0 6px;font-size:12px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
+.title{display:flex;justify-content:space-between;gap:8px;align-items:baseline;flex-wrap:wrap}
+.title b{font-size:15px}.muted{color:var(--muted);font-size:12px}
+.sentence{margin:8px 0 12px;font-size:14px}
+.sentence strong{font-weight:600}
+.lbl{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:10px 0 4px}
+.track{position:relative;height:36px;border-radius:8px;background:#f4f4f5;border:1px solid var(--border)}
+.elapsed{position:absolute;left:0;top:0;bottom:0;background:var(--primary-soft);border-radius:8px 0 0 8px}
+.today{position:absolute;top:-6px;bottom:-6px;width:2px;background:var(--primary)}
+.today span{position:absolute;bottom:-20px;left:50%;transform:translateX(-50%);font-size:11px;color:var(--primary);white-space:nowrap}
+.pin{position:absolute;top:50%;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;background:var(--warn);border:2px solid #fff;box-shadow:0 0 0 1px var(--warn)}
+.ends{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:22px}
+.meter{display:flex;height:14px;border-radius:7px;overflow:hidden;background:#f4f4f5;border:1px solid var(--border)}
+.meter .a{background:var(--success)}.meter .p{background:repeating-linear-gradient(45deg,var(--warn),var(--warn) 4px,var(--warn-soft) 4px,var(--warn-soft) 8px)}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;margin-top:6px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:-1px}
+ul{list-style:none;padding:0;margin:6px 0 0}li{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--border);font-size:13px}
+li span:last-child{white-space:nowrap}li .n{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.options{max-width:768px;margin:0 auto;padding:12px}
+.options h2{font-size:15px;margin:16px 0 6px}
+@media(min-width:900px){.wrap{max-width:900px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}}
+</style></head><body>
+<div class="wrap">
+  <div class="h1">Welcome, Jayson</div>
+  <div class="search">Search...</div>
+  <div class="kind">Sales Opportunity <span class="badge">4</span></div>
+  <div class="grid">
+  <div class="card">
+    <div class="title"><b>Q4 sales</b><span class="muted">Amount, ordered, all products</span></div>
+    <p class="sentence"><strong>RM 40,000</strong> achieved of <strong>RM 100,000</strong> by 31 Oct. <strong>3 open opportunities</strong> worth <strong>RM 45,000</strong> close before then. Still <strong>RM 15,000 short</strong> if all are won.</p>
+    <div class="lbl">1 Sep to 31 Oct</div>
+    <div class="track">
+      <div class="elapsed" style="width:44%"></div>
+      <div class="today" style="left:44%"><span>Today 27 Sep</span></div>
+      <div class="pin" style="left:66%" title="OPP-000003 RM 20,000, 10 Oct"></div>
+      <div class="pin" style="left:79%" title="OPP-000001 RM 15,000, 18 Oct"></div>
+      <div class="pin" style="left:95%" title="OPP-000004 RM 10,000, 28 Oct"></div>
+    </div>
+    <div class="ends"><span>1 Sep</span><span>31 Oct</span></div>
+    <div class="lbl">Towards RM 100,000</div>
+    <div class="meter"><div class="a" style="width:40%"></div><div class="p" style="width:45%"></div></div>
+    <div class="legend"><span><i class="dot" style="background:var(--success)"></i>Achieved RM 40,000</span><span><i class="dot" style="background:var(--warn)"></i>Open RM 45,000</span><span><i class="dot" style="background:#e4e4e7"></i>Short RM 15,000</span></div>
+    <ul>
+      <li><span class="n">OPP-000003 Kitchen fit-out, Chin Chun</span><span>RM 20,000 &middot; 10 Oct</span></li>
+      <li><span class="n">OPP-000001 Showroom, Lim Tiles</span><span>RM 15,000 &middot; 18 Oct</span></li>
+      <li><span class="n">OPP-000004 Bath refresh, Tan Home</span><span>RM 10,000 &middot; 28 Oct</span></li>
+    </ul>
+  </div>
+  <div class="card">
+    <div class="title"><b>Basins Q4</b><span class="muted">Quantity, delivered, 1 category</span></div>
+    <p class="sentence"><strong>120</strong> achieved of <strong>150</strong> by 31 Dec. <strong>1 open opportunity</strong> worth <strong>40</strong> closes before then. <strong>Target reached</strong> if it is won.</p>
+    <div class="lbl">1 Sep to 31 Dec</div>
+    <div class="track"><div class="elapsed" style="width:22%"></div><div class="today" style="left:22%"><span>Today 27 Sep</span></div><div class="pin" style="left:60%"></div></div>
+    <div class="ends"><span>1 Sep</span><span>31 Dec</span></div>
+    <div class="lbl">Towards 150</div>
+    <div class="meter"><div class="a" style="width:80%"></div><div class="p" style="width:20%"></div></div>
+    <div class="legend"><span><i class="dot" style="background:var(--success)"></i>Achieved 120</span><span><i class="dot" style="background:var(--warn)"></i>Open 40</span></div>
+  </div>
+  </div>
+</div>
+</body></html>

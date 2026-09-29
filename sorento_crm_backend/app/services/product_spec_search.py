@@ -25,9 +25,9 @@ import json
 import re
 from decimal import Decimal
 
-from sqlalchemy import and_, cast, func, literal, or_
+from sqlalchemy import Float, and_, cast, func, literal, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.product import Brand, Product, ProductCategory, chat_searchable_products
 from app.models.product_spec import ProductSpecifications
@@ -64,6 +64,13 @@ MAX_CANDIDATES = 5
 # Below that a result is one weak trigram hit, which is how "flux capacitor" would
 # otherwise return a kitchen sink.
 RELEVANCE_FLOOR = 1.5
+
+
+# What a brand the customer named is worth. It was the removed Brand specification's
+# `rank_weight` (1.5): the brand is the product's own field now (#1286, D2), so the
+# weight lives here, beside the other defaults, rather than on a registry row.
+BRAND_RANK_WEIGHT = 1.5
+BRAND_KEY = "brand"
 
 
 # Inside the tolerance band, how much of the score closeness is allowed to decide.
@@ -331,41 +338,50 @@ def brand_names(db: Session) -> list[str]:
     ]
 
 
-# A placeholder brand word too generic to ever be an ask. "OTHERS" is how the
-# catalog records the ABSENCE of a brand on 1,956 products, and a customer writing
-# "others" means the English word, never that bucket - so it stays unbindable even
-# though the full name matches. "NO LOGO" is the opposite case: nobody says those
-# two words in that order by accident, so the full phrase IS an ask (F8).
-_UNBINDABLE_BRAND_NAMES: frozenset[str] = frozenset({"others"})
+# A floor under `brands.is_searchable` (review S-2): a customer writing "others" means
+# the English word, never that catch-all bucket, whatever the flag on a brand row says.
+# A new company's OTHERS arrives from ingest searchable by default.
+UNBINDABLE_BRAND_NAMES: frozenset[str] = frozenset({"others"})
+
+
+def unsearchable_brand_names(db: Session) -> set[str]:
+    """Brand names customers never ask for (`brands.is_searchable` false), lower case.
+
+    OTHERS and NO LOGO are how the catalogue records the ABSENCE of a brand. They used
+    to be the Brand specification's `excluded_values`; that specification is gone
+    (#1286, D3) and the flag lives on the brand itself.
+    """
+    held_back: set[str] = set()
+    offered: set[str] = set()
+    for name, is_searchable in db.query(Brand.brand_name, Brand.is_searchable).all():
+        lowered = str(name or "").strip().lower()
+        if lowered:
+            (offered if is_searchable else held_back).add(lowered)
+    # A name some company in scope offers as a real brand is not held back: the same
+    # answer the understanding vocabulary gives (security review N1). The floor holds
+    # whatever any row says.
+    return (held_back - offered) | UNBINDABLE_BRAND_NAMES
 
 
 def _brand_match_in_haystack(
-    haystack: str, registry_rows, names: list[str]
+    haystack: str, names: list[str], unsearchable: set[str]
 ) -> tuple[str | None, tuple[int, int] | None]:
     """The brand named in the customer's words, with the span that named it.
 
-    `excluded_values` on the registry row is how the catalog records the ABSENCE
-    of a brand (OTHERS, NO LOGO). Those values are never OFFERED to the
-    understanding model, but a customer who names one IN FULL is asking a real
-    question - "no logo kitchen sink" is a request for the unbranded range, and
-    answering it with silence was the gap. So an excluded value binds only on a
-    full-phrase, word-boundary match of a MULTI-WORD name; a single generic word
-    (OTHERS) never binds at all.
+    A brand customers never ask for (`is_searchable` false: OTHERS, NO LOGO) is never
+    OFFERED to the understanding model, but a customer who names one IN FULL is asking
+    a real question - "no logo kitchen sink" is a request for the unbranded range, and
+    answering it with silence was the gap. So such a brand binds only on a full-phrase,
+    word-boundary match of a MULTI-WORD name; a single generic word (OTHERS) never binds
+    at all, because a customer writing "others" means the English word.
 
     Longest name wins, for the same reason the synonym loop above prefers the
     longest phrase: a specific reading beats a generic one that is a substring of
     the same words.
     """
-    brand_row = next((row for row in registry_rows if row.spec_key == "brand"), None)
-    excluded = {
-        str(value).strip().lower()
-        for value in (getattr(brand_row, "excluded_values", None) or [])
-    }
     for name in sorted(names, key=len, reverse=True):
         lowered = name.lower()
-        if lowered in _UNBINDABLE_BRAND_NAMES:
-            continue
-        if lowered in excluded and " " not in lowered:
+        if lowered in unsearchable and " " not in lowered:
             continue
         match = re.search(rf"(?<!\w){re.escape(lowered)}(?!\w)", haystack)
         if match:
@@ -455,12 +471,12 @@ def resolve_terms_to_specs_with_spans(
             best[key] = (length, value)
 
     types = {row.spec_key: row.data_type for row in rows}
-    brand_binding: str | None = None
-    brand_span: tuple[int, int] | None = None
-    if "brand" not in best:
-        brand_binding, brand_span = _brand_match_in_haystack(
-            haystack, rows, brand_names(db) if brands is None else brands
-        )
+    # The product's own brand field, read from the Brands master (#1286, D2).
+    brand_binding, brand_span = _brand_match_in_haystack(
+        haystack,
+        brand_names(db) if brands is None else brands,
+        unsearchable_brand_names(db),
+    )
     spans: dict[str, list[tuple[int, int]]] = {}
     resolved: list[dict] = []
     for key, (_, value) in best.items():
@@ -478,15 +494,14 @@ def resolve_terms_to_specs_with_spans(
         # The winning value's own spans: where the customer SAID this.
         spans[key] = list(spoken_spans.get((key, best[key][1]), []))
 
-    # A brand is a brand. The registry's `brand` row ships with an empty synonym map,
-    # so "sorento" bound to nothing and the word was left to the code probes, which
-    # prefix-matched it into SORENTOBAG and SORENTO188 (live turn 12303509). The names
-    # are read from the `brands` table rather than hand-seeded into the registry, so a
-    # brand added tomorrow is understood the same day, spelled exactly as the catalog
-    # spells it - which is the spelling the derived `brand` values carry.
+    # A brand is a brand. Without this, "sorento" bound to nothing and the word was left
+    # to the code probes, which prefix-matched it into SORENTOBAG and SORENTO188 (live
+    # turn 12303509). The names are read from the `brands` table, so a brand added
+    # tomorrow is understood the same day, spelled exactly as the catalog spells it -
+    # which is the spelling the ranker compares against the product's own brand field.
     if brand_binding is not None:
-        resolved.append({"key": "brand", "value": brand_binding})
-        spans["brand"] = [brand_span] if brand_span else []
+        resolved.append({"key": BRAND_KEY, "value": brand_binding})
+        spans[BRAND_KEY] = [brand_span] if brand_span else []
 
     # Numbers the customer typed: "trap 200mm", "thickness 1.2mm", 'S trap 8"'.
     # A value stated in WORDS wins over one bound by proximity - "double bowl" is a
@@ -592,6 +607,9 @@ def _search_vocabulary(
 
     for name in (brand_names(db) if brands is None else brands):
         absorb(name)
+    # "sorento brand kitchen sink": the word itself was known only through the Brand
+    # specification's row, which is gone (#1286; review S-4).
+    absorb("brand brands")
 
     return frozenset(words)
 
@@ -725,6 +743,199 @@ def is_generic_free_term(term: str) -> bool:
 # silently undercount ("250mm" excluding every close-but-not-exact match).
 
 
+#: Keys whose value names WHAT a product is; an unknown word there is the product-type
+#: clarify's (AC-1320), not an unknown value.
+_UNKNOWN_VALUE_SKIP_KEYS = frozenset({"class", "product_type", "brand"})
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def _words_of(text: Any) -> list[str]:
+    return _WORD_RE.findall(str(text or "").lower())
+
+
+def _one_edit(a: str, b: str) -> bool:
+    """True when `a` and `b` differ by exactly one insert, delete or substitution."""
+    if a == b or abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        return sum(x != y for x, y in zip(a, b)) == 1
+    short, long_ = (a, b) if len(a) < len(b) else (b, a)
+    return any(long_[:i] + long_[i + 1 :] == short for i in range(len(long_)))
+
+
+def _in_value_position(modifier: str, known: set[str]) -> bool:
+    """Round 5 B1 (reviewer pass at d6fa2b31 on PR #833): is `modifier` shaped like one
+    of the words the registry puts in front of this head word? A single letter where the
+    known ones are single letters ("t" beside "p" and "s" before "trap"), or a one-edit
+    neighbour of a known word of three letters or more (a misspelt value). A plain word
+    ("deck" before "mounted", "long" before "spout", "grease" before "trap") is not: it
+    is an ordinary product word and is searched."""
+    if len(modifier) == 1:
+        return any(len(m) == 1 for m in known)
+    return len(modifier) >= 3 and any(len(m) >= 3 and _one_edit(modifier, m) for m in known)
+
+
+def _names_a_product(db: Session, phrase: str) -> bool:
+    """Round 5 B1: a phrase some active product carries in its name or description is a
+    product name, never an unknown value; the search runs for it.
+
+    Round 6 B1-r5 (reviewer pass at 34cb4697): whole words only (`\\m` / `\\M`). A bare
+    substring let "Basket Trap" name "t trap" and undo the owner's exchange 8."""
+    pattern = rf"\m{re.escape(phrase)}\M"
+    hit = (
+        db.query(Product.id)
+        .filter(
+            Product.is_active.is_(True),
+            or_(Product.product_name.op("~*")(pattern), Product.description.op("~*")(pattern)),
+        )
+        .first()
+    )
+    return hit is not None
+
+
+def unknown_spec_values(db: Session, text: str, *, registry_rows=None) -> list[dict]:
+    """The attribute values a message names that the registry does not know, each with
+    the values it does: `[{"key", "label", "said", "known"}]`, `[]` when there are none.
+
+    Round 4 R6 (owner console test on PR #833: "the water closet t trap ask, why it match
+    s trap?"): "t trap" was answered with S trap water closets. A value is recognised as
+    a value OF a key by its key's own shape, read off the registry: a word that ends the
+    synonyms of two or more of the key's values ("trap" ends "s trap" and "p trap") is
+    that key's head word. "<word> trap" that is no synonym is an unknown trap value, said
+    back as "I don't know 't trap' as a trap. I know P trap and S trap.", never matched to
+    the nearest one. Not an unknown value: a phrase that is a synonym; a modifier that is
+    a known word elsewhere ("closet trap", "chrome trap"), a number ("250mm trap") or a
+    stopword ("the trap"); a head word that is itself a class word ("tap"). No word list
+    in code: the registry's synonyms and the class vocabulary decide.
+
+    Round 5 B1 (reviewer pass at d6fa2b31): the modifier must also sit in a VALUE
+    position (`_in_value_position`: shaped like the key's own modifiers), and the phrase
+    must be no product's name or description (`_names_a_product`). Without that, every
+    unknown word before a head word ("deck mounted", "long spout", "grease trap", "click
+    clack waste") was said back and nothing was searched."""
+    from app.services.product_class_signal import CLASS_SYNONYMS
+    from app.services.product_spec_registry import display_spec_value
+
+    tokens = _words_of(text)
+    if len(tokens) < 2:
+        return []
+    rows = active_registry(db) if registry_rows is None else registry_rows
+    class_words = {w for label, syns in CLASS_SYNONYMS.items() for phrase in [label, *syns] for w in _words_of(phrase)}
+    known_words = set(class_words) | set(_PHRASE_STOPWORDS)
+    shapes: list[tuple[Any, dict[str, list[str]]]] = []
+    for row in rows:
+        synonyms = {v: list(p) for v, p in merged_synonyms(row).items() if v != SELF_SYNONYM_KEY}
+        for value, phrases in synonyms.items():
+            for phrase in [str(value).replace("_", " "), *phrases]:
+                known_words.update(_words_of(phrase))
+        if row.data_type == "enum" and row.spec_key not in _UNKNOWN_VALUE_SKIP_KEYS:
+            shapes.append((row, synonyms))
+    out: list[dict] = []
+    for row, synonyms in shapes:
+        phrases = {
+            " ".join(_words_of(p))
+            for value, ps in synonyms.items()
+            for p in [str(value).replace("_", " "), *ps]
+            if _words_of(p)
+        }
+        enders: dict[str, set[str]] = {}
+        for value, ps in synonyms.items():
+            for p in [str(value).replace("_", " "), *ps]:
+                words = _words_of(p)
+                if len(words) >= 2:
+                    enders.setdefault(words[-1], set()).add(value)
+        heads = {w for w, values in enders.items() if len(values) >= 2 and w not in class_words}
+        # Round 5 B1: the words that sit in front of each head word in a known phrase
+        # ("p" and "s" before "trap", "wall" and "counter" before "mounted").
+        modifiers: dict[str, set[str]] = {}
+        for value, ps in synonyms.items():
+            for p in [str(value).replace("_", " "), *ps]:
+                words = _words_of(p)
+                if len(words) >= 2 and words[-1] in heads:
+                    modifiers.setdefault(words[-1], set()).add(words[-2])
+        # Every token a known phrase of this key already covers ("wall" in "wall hung",
+        # "trap" in "s trap"): a head word inside a phrase the registry knows is no
+        # unknown value.
+        covered: set[int] = set()
+        for phrase in phrases:
+            words = phrase.split()
+            for start in range(len(tokens) - len(words) + 1):
+                if tokens[start : start + len(words)] == words:
+                    covered.update(range(start, start + len(words)))
+        for j in range(1, len(tokens)):
+            if tokens[j] not in heads or j in covered:
+                continue
+            modifier = tokens[j - 1]
+            if modifier in known_words or any(ch.isdigit() for ch in modifier):
+                continue
+            if not _in_value_position(modifier, modifiers.get(tokens[j], set())):
+                continue
+            said = f"{modifier} {tokens[j]}"
+            if any(u["key"] == row.spec_key for u in out) or _names_a_product(db, said):
+                continue
+            labels = dict(getattr(row, "value_labels", None) or {})
+            known = sorted({display_spec_value(v, labels) for v in merged_allowed_values(row)})
+            out.append({"key": row.spec_key, "label": row.label, "said": said, "known": known})
+    return out
+
+
+def membership_clause(membership: dict[str, Any]):
+    """The described set's predicate over `ProductSpecifications.values`: one clause per
+    key, ANDed; the values of one key ORed. None when nothing named a member.
+
+    Split out of `filter_specs` (round 4 R4 on PR #833) so a zero set can be recounted
+    without one of its keys ("no gunmetal wash basins with incoming ... N in another
+    finish") through the very same clause."""
+    key_clauses = []
+    for key, values in membership.items():
+        if not values:
+            continue
+        if key == BRAND_KEY:
+            # The product's own brand field, never a stored value (#1286, D2 / R3).
+            lowered = [value.lower() for value in values]
+            key_clauses.append(
+                ProductSpecifications.product_id.in_(
+                    select(Product.id)
+                    .join(Brand, Brand.id == Product.brand_id)
+                    .where(func.lower(Brand.brand_name).in_(lowered))
+                )
+            )
+            continue
+        # Scalar branch is case-insensitive, matching the ranker's `_states`. The
+        # containment branch (case-sensitive, against the stored spelling the
+        # resolvers returned) exists because a value may be a LIST - two finishes
+        # on one product - and `#>>` renders a list as its JSON text.
+        stored = ProductSpecifications.values[key]["value"]
+        # Fix round 8 on PR #833: a grounded number matches the stored number exactly
+        # (a JSON number, never a string that happens to read like one).
+        numbers = sorted(v for v in values if isinstance(v, (int, float)) and not isinstance(v, bool))
+        if numbers:
+            key_clauses.append(
+                and_(
+                    func.jsonb_typeof(stored) == "number",
+                    or_(*[cast(stored.astext, Float).between(n - 1e-6, n + 1e-6) for n in numbers]),
+                )
+            )
+            continue
+        lowered = [value.lower() for value in values]
+        scalar = func.lower(stored.astext).in_(lowered)
+        contained = [
+            stored.op("@>")(cast(literal(json.dumps(value)), JSONB))
+            for value in sorted(values)
+        ]
+        # R15/AC-1339 (third console pass): a category-sourced class row IS real
+        # membership - a product filed under Bathroom Accessory by its own category is
+        # a member of the described set for "bathroom accessory". Measured on the prod
+        # copy: two class labels exist ONLY through category filing (Bathroom Accessory
+        # 2,040, Bathtub and Jacuzzi 93).
+        key_clauses.append(or_(scalar, *contained))
+    if not key_clauses:
+        return None
+    # R27/AC-1352: DIFFERENT keys AND together (a water closet AND an s_trap is narrower
+    # than either alone); repeated values WITHIN one key stay unioned.
+    return key_clauses[0] if len(key_clauses) == 1 else and_(*key_clauses)
+
+
 def filter_specs(
     db: Session,
     *,
@@ -791,7 +1002,15 @@ def filter_specs(
             membership.setdefault(str(key), set()).add(value)
 
     for entry in specs or []:
-        _join(entry.get("key"), entry.get("value"))
+        value = entry.get("value")
+        # Fix round 8 on PR #833: a number the customer SAID as a property ("thickness 1.2
+        # mm") is grounded against the registry (`chatbot/head/grounding.py`) and defines
+        # membership like a named choice does. A number the reader only bound by
+        # proximity stays a ranking boost (R27/AC-1352).
+        if entry.get("grounded") and isinstance(value, (int, float)) and not isinstance(value, bool) and entry.get("key"):
+            membership.setdefault(str(entry["key"]), set()).add(value)
+            continue
+        _join(entry.get("key"), value)
 
     vocabulary = _search_vocabulary(db) if terms else frozenset()
     unrecognized: list[str] = []
@@ -823,43 +1042,15 @@ def filter_specs(
             if word not in unrecognized:
                 unrecognized.append(word)
 
-    clause = None
-    key_clauses = []
-    for key, values in membership.items():
-        if not values:
-            continue
-        # Scalar branch is case-insensitive, matching the ranker's `_states`. The
-        # containment branch (case-sensitive, against the stored spelling the
-        # resolvers returned) exists because a value may be a LIST - two finishes
-        # on one product - and `#>>` renders a list as its JSON text.
-        lowered = [value.lower() for value in values]
-        scalar = func.lower(ProductSpecifications.values[key]["value"].astext).in_(lowered)
-        contained = [
-            ProductSpecifications.values[key]["value"].op("@>")(cast(literal(json.dumps(value)), JSONB))
-            for value in sorted(values)
-        ]
-        key_clause = or_(scalar, *contained)
-        # R15/AC-1339 (third console pass): a category-sourced class row IS
-        # real membership, not excluded from it - a product filed under
-        # Bathroom Accessory by its own category is a member of the described
-        # set for "bathroom accessory" exactly as one whose description named
-        # it. Measured on the prod copy: two class labels exist ONLY through
-        # category filing (Bathroom Accessory 2,040 products, Bathtub and
-        # Jacuzzi 93) - excluding provenance.class.source == "category"
-        # reported "which bathroom accessory has stock" as zero qualifying
-        # against a real 999. The company's own filing is the strongest
-        # statement of what the product is.
-        key_clauses.append(key_clause)
-    if key_clauses:
-        # R27/AC-1352: DIFFERENT keys AND together (a water closet AND an
-        # s_trap is narrower than either alone) - repeated values WITHIN one
-        # key stayed unioned above, unchanged.
-        clause = key_clauses[0] if len(key_clauses) == 1 else and_(*key_clauses)
+    clause = membership_clause(membership)
 
     return {
         "clause": clause,
         "class_labels": sorted(membership.get("class", set())),
         "unrecognized_terms": unrecognized,
+        # What defined the set, key by key, so a caller can say it back in plain words
+        # (owner brief W2 on PR #833). Additive; the clause above is the truth.
+        "membership": {key: sorted(values) for key, values in membership.items() if values},
     }
 
 
@@ -901,6 +1092,43 @@ def _fails_threshold(values: dict, specs: list[dict]) -> bool:
     return False
 
 
+#: A product type no product holds: what two product types named in one phrase narrow to.
+_NO_CLASS = "\x00no class"
+
+
+def _exact_classes(db: Session, term: str) -> list[str] | None:
+    """The product type(s) a phrase names word for word, for `search_specs(exact=True)`.
+
+    The whole phrase first (`resolve_classes_for_term`, an exact label or synonym), then
+    the longest class phrase inside it, word for word ("gunmetal basin" -> Wash Basin); a
+    word in the plural is read in the singular ("basins"). `[]` when the phrase names no
+    product type. None when it names two different ones ("water tap basin": "water tap"
+    is a tap and "basin" a wash basin), which is no one product type at all. No near
+    spelling: a word the class vocabulary does not hold names nothing."""
+    whole = resolve_classes_for_term(db, term)
+    if whole:
+        return whole
+    words = [w for w in re.split(r"[^a-z0-9]+", str(term or "").lower()) if w]
+    used: set[int] = set()
+    found: list[frozenset[str]] = []
+    for size in range(len(words), 0, -1):
+        for start in range(len(words) - size + 1):
+            span = set(range(start, start + size))
+            if span & used:
+                continue
+            phrase = words[start : start + size]
+            classes = resolve_classes_for_term(db, " ".join(phrase))
+            if not classes and phrase[-1].endswith("s") and len(phrase[-1]) > 3:
+                classes = resolve_classes_for_term(db, " ".join([*phrase[:-1], phrase[-1][:-1]]))
+            if classes:
+                used |= span
+                found.append(frozenset(classes))
+    distinct = set(found)
+    if len(distinct) > 1:
+        return None
+    return sorted(next(iter(distinct))) if distinct else []
+
+
 def search_specs(
     db: Session,
     *,
@@ -910,6 +1138,7 @@ def search_specs(
     limit: int | None = None,
     floor: float | None = None,
     product_ids: list[str] | None = None,
+    exact: bool = False,
 ) -> dict:
     """Rank the catalog against extracted specs. Returns candidates and a floor verdict.
 
@@ -919,6 +1148,14 @@ def search_specs(
     `product_ids` restricts ranking to a caller-supplied whitelist (shape B's
     stage 2: membership was decided in SQL, the ranker only ORDERS what already
     qualifies). None means the whole catalog; an empty list ranks nothing.
+
+    `exact` (fix round 10 on PR #833, owner 28 Sep 2026: "i tried to search like gunmetal
+    basin, there is no such thing and it gives me flexible trap", "for #833 yeah exact
+    only"): a candidate must HOLD every value that was asked for, the product type
+    included (`_exact_classes`), a number equal to the one stored (a threshold keeps its
+    own meaning), and a free word that merely appears in its sentence is no evidence at
+    all. A product with no exact signal is never a result. Off for every caller but the
+    chatbot's spec fallback.
     """
     specs = specs or []
     exclusions = exclusions or []
@@ -958,6 +1195,7 @@ def search_specs(
         if row.value_weights
     }
     weights = {row.spec_key: float(row.rank_weight or 1.0) for row in registry_rows}
+    weights[BRAND_KEY] = BRAND_RANK_WEIGHT
     # (tolerance, decay) per key, so a count is compared as a count and a millimetre as
     # a millimetre.
     match_windows = {
@@ -986,14 +1224,21 @@ def search_specs(
     implied_classes = {
         label.lower()
         for term in free_terms
-        for label in resolve_classes_for_term(db, term)
+        for label in ((_exact_classes(db, term) or []) if exact else resolve_classes_for_term(db, term))
     }
+    if exact and any(_exact_classes(db, term) is None for term in free_terms):
+        # The words name two different product types ("water tap basin"): no one product
+        # is both, so none qualifies.
+        implied_classes = {_NO_CLASS}
 
     candidate_query = (
         db.query(ProductSpecifications, Product, ProductCategory)
         .join(Product, Product.id == ProductSpecifications.product_id)
         .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
         .filter(Product.is_active.is_(True), chat_searchable_products())
+        # The brand is scored off the product's own field (#1286, D2); loaded with the
+        # row so it is not one query per candidate.
+        .options(joinedload(Product.brand))
     )
     if product_ids is not None:
         candidate_query = candidate_query.filter(
@@ -1008,7 +1253,15 @@ def search_specs(
 
     scored: list[dict] = []
     for spec_row, product, category in rows:
-        values = spec_row.values or {}
+        values = dict(spec_row.values or {})
+        # The brand is not a specification (#1286, D1): it is the product's own field,
+        # laid in beside the values so it is scored, preferred and returned exactly as
+        # the stored `brand` value used to be.
+        brand_name = (getattr(product.brand, "brand_name", None) or "").strip()
+        if brand_name:
+            values[BRAND_KEY] = {"value": brand_name}
+        else:
+            values.pop(BRAND_KEY, None)
         # Where each value was read from, so the flyer can outweigh the description.
         provenance = spec_row.provenance or {}
 
@@ -1085,7 +1338,9 @@ def search_specs(
                 and isinstance(target, (int, float, Decimal))
                 and not isinstance(actual, bool)
             ):
-                tolerance, decay = match_windows.get(key, (0.0, 0.0))
+                # Exact mode: a number is the number stored (the described set's own
+                # equality, `membership_clause`), never the registry's tolerance band.
+                tolerance, decay = (1e-6, 0.0) if exact else match_windows.get(key, (0.0, 0.0))
                 # "above 900mm" is a THRESHOLD, not an approximate equality. Scored as
                 # equality, a 960mm basin sat 60mm from the target and a 850mm one sat
                 # 50mm from it, so the basin that actually cleared 900 ranked BELOW the
@@ -1139,7 +1394,10 @@ def search_specs(
             hits = wanted_terms & haystack
             if hits:
                 score += free_term_boost * len(hits)
-                evidence += free_term_boost * len(hits)
+                # Exact mode: a word appearing in the sentence orders the answers, it
+                # never makes one ("basin" in "flexible trap for wash basin").
+                if not exact:
+                    evidence += free_term_boost * len(hits)
                 matched.append("free_terms")
 
 
@@ -1166,6 +1424,17 @@ def search_specs(
             penalty += discontinued_penalty
 
         score -= penalty
+
+        if exact:
+            # Every value asked for, held exactly: the product type (when one was named)
+            # and every stated specification. Anything less is not a result.
+            if implied_classes and "class" not in matched:
+                continue
+            if any(
+                entry.get("key") and entry.get("value") is not None and entry.get("key") not in matched
+                for entry in specs
+            ):
+                continue
 
         # Dropped for having NO positive evidence, never for scoring badly. A penalty
         # that can delete a row is a filter wearing a boost's clothes, and this file's

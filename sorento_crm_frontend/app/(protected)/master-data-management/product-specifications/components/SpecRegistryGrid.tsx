@@ -2,7 +2,8 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { MessageSquareText, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { MessageSquareText, Plus, Trash2, X } from 'lucide-react';
 import {
   getCoreRowModel,
   useReactTable,
@@ -30,7 +31,7 @@ import { AddSpecificationDialog } from './AddSpecificationDialog';
 import { TryPhraseDialog } from './TryPhraseDialog';
 import { useKeysForProductQuery } from '../hooks/useKeysForProductQuery';
 import { SPEC_REGISTRY_QUERY_KEY, useSpecRegistryQuery } from '../hooks/useSpecRegistryQuery';
-import { useSpecRegistryMutations } from '../hooks/useSpecRegistryMutations';
+import { getProductClassLabels } from '../../product-categories/services/categoryService';
 import { filterSpecKeys } from '../lib/specRegistryFilter';
 import { specTypeLabel } from '../lib/specTypeLabel';
 import type { SpecRegistryKey } from '../types/productSpec.types';
@@ -47,9 +48,7 @@ import type { SpecRegistryKey } from '../types/productSpec.types';
 export function SpecRegistryGrid() {
   const router = useRouter();
   const canAdd = useHasPermission('master_data.spec_registry.add');
-  const canEdit = useHasPermission('master_data.spec_registry.edit');
   const canDelete = useHasPermission('master_data.spec_registry.delete');
-  const { reread } = useSpecRegistryMutations();
   const [adding, setAdding] = useState(false);
   const [trying, setTrying] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
@@ -62,6 +61,18 @@ export function SpecRegistryGrid() {
   } = useDebouncedSearch();
   const { matchedCode, keys: productKeys, loading: probeLoading } =
     useKeysForProductQuery(debouncedFilter);
+
+  // AC-S3.3, fix round 3 D5: "Product class" is the one OPEN-vocabulary specification -
+  // the seed comment on it is explicit ("sourced from product_categories.class_label,
+  // which grows"), so its own `allowed_values` stays empty and the Choices column has
+  // nothing to count there. Read the count from the category master directly, the SAME
+  // existing endpoint System Settings' guarded-classes picker already reads
+  // (`getProductClassLabels`) - not a new one.
+  const { data: classLabels } = useQuery({
+    queryKey: ['product-class-labels'],
+    queryFn: () => getProductClassLabels(),
+    staleTime: 5 * 60 * 1000,
+  });
 
   // A matched product wins over word matching: the reader asked about a code, so
   // the answer is that code's specifications, not every key whose wording happens
@@ -95,16 +106,68 @@ export function SpecRegistryGrid() {
       {
         id: 'label',
         accessorFn: (row) => row.label,
-        header: ({ column }) => <DataGridColumnHeader title="Label" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Specification" column={column} />,
         size: 220,
         enableSorting: false,
-        meta: { headerTitle: 'Label', skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Specification', skeleton: <Skeleton className="h-4 w-32" /> },
         cell: ({ row }) => (
           <span className="truncate font-medium" title={row.original.label}>
             {row.original.label}
           </span>
         ),
       },
+      {
+        id: 'type',
+        accessorFn: (row) => row.data_type,
+        header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
+        size: 130,
+        enableSorting: false,
+        meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-5 w-16" /> },
+        cell: ({ row }) => (
+          <Badge variant="secondary" size="sm" appearance="light" shape="circle">
+            {specTypeLabel(row.original.data_type, row.original.unit)}
+          </Badge>
+        ),
+      },
+      {
+        id: 'values',
+        accessorFn: (row) =>
+          row.spec_key === 'class' ? classLabels?.length ?? 0 : row.allowed_values.length,
+        header: ({ column }) => <DataGridColumnHeader title="Choices" column={column} />,
+        size: 90,
+        enableSorting: false,
+        meta: { headerTitle: 'Choices', skeleton: <Skeleton className="h-4 w-8" /> },
+        cell: ({ row }) => {
+          // AC-S3.3: a number or a yes/no key has no choices to count.
+          if (row.original.data_type === 'numeric' || row.original.data_type === 'boolean') {
+            return <span className="text-muted-foreground">-</span>;
+          }
+          // Product class is the one open-vocabulary list (AC-S3.3, D5): its count is
+          // the category master's own distinct class label count, read above, never
+          // `allowed_values.length` - the registry seeds it empty on purpose.
+          if (row.original.spec_key === 'class') {
+            return <span className="tabular-nums">{classLabels?.length ?? 0}</span>;
+          }
+          return <span className="tabular-nums">{row.original.allowed_values.length}</span>;
+        },
+      },
+      {
+        id: 'seen_in',
+        accessorFn: (row) => row.measured_coverage ?? 0,
+        header: ({ column }) => <DataGridColumnHeader title="Products" column={column} />,
+        size: 100,
+        enableSorting: false,
+        meta: { headerTitle: 'Products', skeleton: <Skeleton className="h-4 w-12" /> },
+        cell: ({ row }) => (
+          <span className="tabular-nums">
+            {row.original.measured_coverage != null
+              ? row.original.measured_coverage.toLocaleString()
+              : '-'}
+          </span>
+        ),
+      },
+      // Code, Rules and Built in: available in the column chooser, hidden by
+      // default (AC-S3.1). Not deleted - a maintainer can still switch them on.
       {
         id: 'code',
         accessorFn: (row) => row.spec_key,
@@ -122,41 +185,6 @@ export function SpecRegistryGrid() {
         ),
       },
       {
-        id: 'type',
-        accessorFn: (row) => row.data_type,
-        header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
-        size: 110,
-        enableSorting: false,
-        meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-5 w-16" /> },
-        cell: ({ row }) => (
-          <Badge variant="secondary" size="sm" appearance="light" shape="circle">
-            {specTypeLabel(row.original.data_type)}
-          </Badge>
-        ),
-      },
-      {
-        id: 'unit',
-        accessorFn: (row) => row.unit ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Unit" column={column} />,
-        size: 80,
-        enableSorting: false,
-        meta: { headerTitle: 'Unit', skeleton: <Skeleton className="h-4 w-10" /> },
-        cell: ({ row }) => (
-          <span className="text-muted-foreground">{row.original.unit ?? '-'}</span>
-        ),
-      },
-      {
-        id: 'values',
-        accessorFn: (row) => row.allowed_values.length,
-        header: ({ column }) => <DataGridColumnHeader title="Values" column={column} />,
-        size: 90,
-        enableSorting: false,
-        meta: { headerTitle: 'Values', skeleton: <Skeleton className="h-4 w-8" /> },
-        cell: ({ row }) => (
-          <span className="tabular-nums">{row.original.allowed_values.length}</span>
-        ),
-      },
-      {
         id: 'rules',
         accessorFn: (row) => row.effective_rules.length,
         header: ({ column }) => <DataGridColumnHeader title="Rules" column={column} />,
@@ -168,36 +196,16 @@ export function SpecRegistryGrid() {
         ),
       },
       {
-        id: 'seen_in',
-        accessorFn: (row) => row.measured_coverage ?? 0,
-        header: ({ column }) => <DataGridColumnHeader title="Seen in" column={column} />,
-        size: 100,
-        enableSorting: false,
-        meta: { headerTitle: 'Seen in', skeleton: <Skeleton className="h-4 w-12" /> },
-        cell: ({ row }) => (
-          <span className="tabular-nums">
-            {row.original.measured_coverage != null
-              ? row.original.measured_coverage.toLocaleString()
-              : '-'}
-          </span>
-        ),
-      },
-      {
         id: 'source',
         accessorFn: (row) => row.source,
-        header: ({ column }) => <DataGridColumnHeader title="Source" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Built in" column={column} />,
         size: 90,
         enableSorting: false,
-        meta: { headerTitle: 'Source', skeleton: <Skeleton className="h-5 w-14" /> },
+        meta: { headerTitle: 'Built in', skeleton: <Skeleton className="h-5 w-14" /> },
         cell: ({ row }) => (
-          <Badge
-            variant={row.original.source === 'user' ? 'primary' : 'secondary'}
-            size="sm"
-            appearance="light"
-            shape="circle"
-          >
-            {row.original.source === 'user' ? 'User' : 'Seed'}
-          </Badge>
+          <span className="text-muted-foreground">
+            {row.original.source === 'user' ? 'No' : 'Yes'}
+          </span>
         ),
       },
       {
@@ -210,8 +218,17 @@ export function SpecRegistryGrid() {
         enableResizing: false,
       },
     ],
-    [],
+    [classLabels],
   );
+
+  // Code, Rules and Built in start hidden (AC-S3.1) - the column chooser (already
+  // on this DataGrid) is where a maintainer switches one back on; the choice is
+  // then persisted per viewer through the grid's own column preferences.
+  const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>({
+    code: false,
+    rules: false,
+    source: false,
+  });
 
   const table = useReactTable({
     columns,
@@ -222,11 +239,13 @@ export function SpecRegistryGrid() {
       // feed paged through.
       pagination: { pageIndex: 0, pageSize: Math.max(visible.length, 1) },
       rowSelection,
+      columnVisibility,
     },
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
     enableRowSelection: true,
     onRowSelectionChange: setRowSelection,
+    onColumnVisibilityChange: setColumnVisibility,
     getCoreRowModel: getCoreRowModel(),
   });
 
@@ -285,10 +304,12 @@ export function SpecRegistryGrid() {
       isLoading={isLoading}
       rowHref={rowHref}
       rowPending={rowPending}
-      listingKey="master_data.spec_registry.view"
+      // `::v2` (S-6, review round 2): preferences saved under the old key predate
+      // Code, Rules and Built in starting hidden (AC-S3.1) and would keep showing
+      // them; a new key starts every viewer on the new defaults.
+      listingKey="master_data.spec_registry.view::v2"
       tableLayout={{ width: 'fixed', columnsResizable: true }}
       emptyMessage="No specifications match that search."
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">
@@ -330,17 +351,6 @@ export function SpecRegistryGrid() {
                 icon: MessageSquareText,
                 onClick: () => setTrying(true),
               },
-              ...(canEdit
-                ? [
-                    {
-                      key: 'reread',
-                      label: 'Reread catalogue',
-                      icon: RefreshCw,
-                      disabled: reread.isPending,
-                      onClick: () => reread.mutate(),
-                    },
-                  ]
-                : []),
             ]}
             bulkActions={
               canDelete

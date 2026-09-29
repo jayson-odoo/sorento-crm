@@ -37,10 +37,18 @@ vi.mock('@/lib/toast', () => ({
 
 const exportOrderSheet = vi.fn();
 const getOrderSummaryDemand = vi.fn();
-vi.mock('../services/summaryOrderService', () => ({
-  exportOrderSheet: (...args: unknown[]) => exportOrderSheet(...args),
-  getOrderSummaryDemand: (...args: unknown[]) => getOrderSummaryDemand(...args),
-}));
+// `importActual` keeps the module's other exports (`exportOiWorksheet`, unused here) real
+// rather than undefined, while `exportOrderSheet`/`getOrderSummaryDemand` stay stubbed.
+vi.mock('../services/summaryOrderService', async () => {
+  const actual = await vi.importActual<typeof import('../services/summaryOrderService')>(
+    '../services/summaryOrderService',
+  );
+  return {
+    ...actual,
+    exportOrderSheet: (...args: unknown[]) => exportOrderSheet(...args),
+    getOrderSummaryDemand: (...args: unknown[]) => getOrderSummaryDemand(...args),
+  };
+});
 
 vi.mock('../services/reorderRunService', () => ({
   resetRunDecisions: vi.fn(),

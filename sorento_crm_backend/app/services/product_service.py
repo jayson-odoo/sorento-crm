@@ -1,5 +1,5 @@
 """Product service for business logic."""
-from datetime import datetime
+from datetime import date, datetime, time, timedelta, timezone
 import logging
 import re
 import uuid
@@ -9,6 +9,7 @@ from typing import Any, Optional, List, Callable, Tuple, Iterable
 from decimal import Decimal
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure, ProductAttachment
 from app.models.product_set import ProductSet, ProductSetMember
+from app.services.sla_service import MALAYSIA_TZ
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +219,14 @@ def is_active_from_manual_value(raw_active) -> bool:
     return True
 
 
+def malaysia_day_start_utc(day: date) -> datetime:
+    """Midnight of `day` in Malaysia time (UTC+8), converted to naive UTC - the
+    same representation `discontinued_notified_at` (and other naive-UTC columns)
+    are stored in. Used to turn a `discontinued_from`/`discontinued_to` calendar
+    day into a bound comparable against that column."""
+    return datetime.combine(day, time.min, tzinfo=MALAYSIA_TZ).astimezone(timezone.utc).replace(tzinfo=None)
+
+
 class ProductService:
     """Service for product operations."""
     
@@ -314,6 +323,8 @@ class ProductService:
         product_ids: Optional[list[str]] = None,
         discontinued_batch_id: Optional[str] = None,
         variant_filter: Optional[str] = None,
+        discontinued_from: Optional[date] = None,
+        discontinued_to: Optional[date] = None,
     ):
         """Build the filtered + sorted products query shared by ``list_products``
         and ``neighbours`` so the two can never drift.
@@ -371,6 +382,18 @@ class ProductService:
         # products reported in that batch (see product_discontinued_notify_service).
         if discontinued_batch_id:
             filters.append(Product.discontinued_notify_batch_id == discontinued_batch_id)
+
+        # "Discontinued at" date-range filter (issue #1287): inclusive by Malaysia
+        # calendar day, either bound set also excludes null (never-discontinued) rows.
+        if discontinued_from is not None:
+            filters.append(
+                Product.discontinued_notified_at >= malaysia_day_start_utc(discontinued_from)
+            )
+        if discontinued_to is not None:
+            filters.append(
+                Product.discontinued_notified_at
+                < malaysia_day_start_utc(discontinued_to + timedelta(days=1))
+            )
 
         if price_min or price_max:
             price_filters = []
@@ -463,6 +486,7 @@ class ProductService:
             "height": Product.dimensions_height,
             "largest_dimension": largest_dim,
             "smallest_dimension": smallest_dim,
+            "discontinued_at": Product.discontinued_notified_at,
         }
         sort_column = sort_map.get(sort_field, Product.created_at)
         if sort_dir == "desc":
@@ -497,6 +521,8 @@ class ProductService:
         product_ids: Optional[list[str]] = None,
         discontinued_batch_id: Optional[str] = None,
         variant_filter: Optional[str] = None,
+        discontinued_from: Optional[date] = None,
+        discontinued_to: Optional[date] = None,
     ):
         """List products with filtering and pagination.
 
@@ -553,6 +579,8 @@ class ProductService:
             product_ids=product_ids,
             discontinued_batch_id=discontinued_batch_id,
             variant_filter=variant_filter,
+            discontinued_from=discontinued_from,
+            discontinued_to=discontinued_to,
         )
         if q is self._EMPTY_RESULT:
             payload = {
@@ -657,6 +685,7 @@ class ProductService:
         `specifications_for_products`.
         """
         from app.models.product_spec import ProductSpecifications, ProductSpecRegistry
+        from app.services.product_spec_registry import display_spec_value
 
         ids = [str(pid) for pid in product_ids if pid]
         if not ids:
@@ -686,6 +715,15 @@ class ProductService:
                         "key": key,
                         "label": reg.label,
                         "value": entry["value"],
+                        # R7 (round 4 on PR #833): the value in plain words, off the
+                        # registry's own `value_labels`, for every reader that shows it.
+                        # A LIST value (two finishes on one product) reads as its values
+                        # joined (PR #833 round 5 N1).
+                        "display_value": (
+                            " / ".join(display_spec_value(v, reg.value_labels) for v in entry["value"])
+                            if isinstance(entry["value"], list)
+                            else display_spec_value(entry["value"], reg.value_labels)
+                        ),
                         "unit": entry.get("unit") or reg.unit,
                         "rank_weight": float(reg.rank_weight) if reg.rank_weight is not None else 1.0,
                     }
@@ -1450,7 +1488,7 @@ class ProductService:
         if not touched:
             return
         from app.models.embeddings import EmbeddingQueue
-        from app.services.queue_service import get_queue
+        from app.services.queue_service import enqueue_job
         from app.services.embedding_service import _get_embedding_worker
         from app.config import settings as _settings
 
@@ -1497,10 +1535,11 @@ class ProductService:
             raise
 
         try:
-            queue = get_queue(_settings.embedding_queue_name)
             worker = _get_embedding_worker()
             for q_id in enqueue_payload:
-                queue.enqueue(worker, q_id, job_timeout=900)
+                # enqueue_job, not queue.enqueue: the job carries its audit actor and
+                # correlation id like every other job (review N5).
+                enqueue_job(worker, q_id, queue_name=_settings.embedding_queue_name, job_timeout=900)
         except Exception:
             # Embedding side effects must never block the import; rows are persisted
             # and can be picked up by a sweeper. Log and move on.
@@ -2427,6 +2466,8 @@ class BrandService:
                 # Manual dict builder: a column not listed here never reaches the FE
                 # however faithfully the response schema inherits it.
                 "flows_to_purchasing": b.flows_to_purchasing,
+                "chatbot_weight": float(b.chatbot_weight or 0),
+                "is_searchable": b.is_searchable,
                 "created_at": b.created_at,
                 "updated_at": b.updated_at,
                 "created_by": str(b.created_by) if b.created_by else None,
@@ -2465,7 +2506,7 @@ class BrandService:
         self.db.commit()
         self.db.refresh(brand)
         return brand
-    
+
     def update_brand(self, brand_id: str, brand_data: BrandUpdate):
         """Update a brand."""
         brand = self.get_brand(brand_id)

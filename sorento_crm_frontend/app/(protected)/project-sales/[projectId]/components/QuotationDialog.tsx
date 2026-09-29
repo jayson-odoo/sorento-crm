@@ -32,10 +32,16 @@ export function QuotationDialog({
   project,
   quotation,
   onDone,
+  onSubmit,
 }: {
   project: Project;
   quotation: ProjectQuotation | null;
   onDone: () => void;
+  /**
+   * The quotation form page (#1341): the scope's name, series and notes are staged and saved
+   * with the form, so the dialog hands them over instead of writing.
+   */
+  onSubmit?: (body: { scope_label: string; series_id: string | null; notes: string | null }) => void;
 }) {
   const { create, update } = useQuotationMutations(project.id);
   const series = useProjectSeries();
@@ -52,7 +58,11 @@ export function QuotationDialog({
       <DialogContent className="max-h-[92vh] w-full max-w-lg overflow-hidden">
         <DialogHeader>
           <DialogTitle>
-            {isEdit ? `Edit "${quotation?.scope_label}"` : 'Add a scope'}
+            {isEdit
+              ? quotation?.scope_label
+                ? `Edit "${quotation.scope_label}"`
+                : 'Edit scope'
+              : 'Add a scope'}
           </DialogTitle>
           <DialogDescription>
             One quotation per scope, because each one is won or lost on its own.
@@ -67,7 +77,9 @@ export function QuotationDialog({
               series_id: seriesId || null,
               notes: notes.trim() || null,
             };
-            if (quotation) {
+            if (onSubmit) {
+              onSubmit(body);
+            } else if (quotation) {
               await update.mutateAsync({ id: quotation.id, body });
             } else {
               await create.mutateAsync(body);

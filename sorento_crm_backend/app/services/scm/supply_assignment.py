@@ -131,6 +131,12 @@ DEFAULT_OVERDUE_DEAD_DAYS = 0
 POOL_GROUP = "__pool__"
 
 
+def ownership_group(warehouse: Optional[str], is_pool: bool = False) -> str:
+    """Public name for `_group_of`, for a caller outside this module that must agree with
+    the walk about which pile a location is (R42's S/O pin stays inside its own group)."""
+    return _group_of(warehouse, is_pool)
+
+
 def _group_of(warehouse: Optional[str], is_pool: bool) -> str:
     """The ownership group a location belongs to, in ONE spelling.
 
@@ -176,6 +182,27 @@ class SupplyEvent:
     #: by 17 Sep 2026"). Carried rather than derived from `at - stated_at`, which would be
     #: the lateness PLUS the grace and so a different number from the one a person counts.
     days_late: int = 0
+    #: R26 (Stock Debt only): an SPO's own RAW ordered/received quantities, beside `qty`
+    #: above which stays the NETTED outstanding balance the WALK itself assigns against -
+    #: changing what `qty` means here would change what every line's `free_qty`/
+    #: `assigned_qty` comes out to, which is not this ruling's business. `None` for every
+    #: kind but SPO, on hand included - the drill prints an on-hand row's Received/
+    #: Outstanding columns blank, never a fabricated 0.
+    ordered_qty: Optional[float] = None
+    received_qty: Optional[float] = None
+    #: R29 (Stock Debt only): the SPO's own `spo_number`/`spo_line_number` off
+    #: `spo_allocations`, beside `ref` (the human label `_spo_ref` already builds) - the
+    #: FE's own link target for the Document cell and for a demand line's `assigned_from`
+    #: entry. `None` for on hand, which is a bin rather than a document.
+    spo_number: Optional[str] = None
+    spo_line_number: Optional[int] = None
+    #: R42 (Stock Debt only, 28 Sep 2026): a PO line's own document number, its position in
+    #: the document and the document's id - the FE opens the PO on that line from Covered
+    #: by and from the Supply tab. `None` for every other kind. The PO LINE's id is the
+    #: event key itself (`po:<id>`, `parse_supply_key`).
+    po_number: Optional[str] = None
+    po_line_number: Optional[int] = None
+    purchase_order_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -190,6 +217,28 @@ class DemandLine:
     required_date: Optional[date]
     open_qty: float
     is_pool: bool = False
+    #: The drill's own Ordered/Delivered columns (R22, Stock Debt only - `open_qty` above
+    #: is what the WALK uses and stays as it is). `qty_ordered` is `plan_qty()`
+    #: (`coalesce(qty_required, qty_ordered)`), `qty_delivered` the sales-order book's own
+    #: column - both default 0.0 so every other `DemandLine(...)` call site in this module
+    #: and its tests, none of which states either, keeps compiling unchanged.
+    qty_ordered: float = 0.0
+    qty_delivered: float = 0.0
+    #: R29 (Stock Debt only): the sales order this line belongs to - the FE's own link
+    #: target for the Sales order cell (`/scm/sales-orders/<id>`). Defaulted so every
+    #: other `DemandLine(...)` call site, none of which states it, keeps compiling
+    #: unchanged.
+    sales_order_id: Optional[str] = None
+    #: R29 (Stock Debt only): the CORE `sales_order_lines.line_no` (AutoCount's own `Seq`)
+    #: - Supply's own "Assigned to" entries name THIS, never `line_no` above (the PROJECT
+    #: mirror's own numbering, read by the ladder's borrow-donor naming and nothing here).
+    #: `None` for a line AutoCount has never numbered.
+    core_line_no: Optional[int] = None
+    #: R43 (Stock Debt only, 28 Sep 2026): the line's own `sales_order_lines.source_ref`
+    #: (`"{database}:{DocKey}:{DtlKey}"`), the value a PO line's S/O
+    #: (`from_so_line_ref`) quotes, so a book pin lands on the LINE it names. `None` for a
+    #: line the book never keyed.
+    source_ref: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -209,6 +258,26 @@ class Hold:
     kind: str = KIND_ON_HAND
     warehouse: Optional[str] = None
     ref: Optional[str] = None
+    #: R29: carried beside `ref` for the same reason `SupplyEvent` carries them - the
+    #: "stood up" synthetic event branch below (AC-S2-1b) needs them on the HOLD, because
+    #: the real document is outside this call's span.
+    spo_number: Optional[str] = None
+    spo_line_number: Optional[int] = None
+    #: R29 addendum: the order inquiry this PLACEMENT came through (`order_inquiry_links`
+    #: names one OI row, which points at the SO line) - `None` for an on-hand hold, which
+    #: is a decision (`so_line_allocations`), never a placement.
+    oi_number: Optional[str] = None
+    oi_id: Optional[str] = None
+    #: R42: a PO placement's own document, for the stood-up branch (AC-S2-1b) - the same
+    #: reason `spo_number` rides here.
+    po_number: Optional[str] = None
+    purchase_order_id: Optional[str] = None
+    #: R43 (owner, 28 Sep 2026, #1346): "when it is assigned, then it will fulfil the
+    #: demand ady". The Stock Debt view sets it on every hold naming a PO line (the book's
+    #: S/O and a placement alike): the quantity is fulfilled whatever the document's date,
+    #: so a dead or undated PO books no shortfall for it (unlike AC-S2-7's precedent) and a
+    #: PO landing after the line's date does not either. The board never sets it.
+    fulfils: bool = False
 
 
 @dataclass(frozen=True)
@@ -222,6 +291,13 @@ class Assigned:
     #: spent before the walk started and is free at no date at all. Read by `free_piles_at`,
     #: which is the only way to state a pile as it stood on a date somebody is asking about.
     at: Optional[date] = None
+    #: R29 addendum: the order inquiry a PINNED placement came through - `Hold.oi_number`/
+    #: `oi_id`, carried onto the take itself because the SHARED `event` object (drawn by
+    #: many lines) cannot say which line's own placement this quantity answers for.
+    #: `None` on anything that is not a pinned placement (a plain walk draw, or an on-hand
+    #: pin, which is a decision rather than a placement).
+    oi_number: Optional[str] = None
+    oi_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -488,6 +564,7 @@ def assign(
     left = {event.key: float(event.qty) for event in counted}
     events = {event.key: event for event in counted}
     uncounted_by_key = {event.key: event for event in uncounted}
+    uncounted_left = {event.key: float(event.qty) for event in uncounted}
     states = {
         line.key: _Open(line=line, remaining=float(line.open_qty)) for line in dated
     }
@@ -515,11 +592,22 @@ def assign(
             # (the line reads `pinned`) and the drill names the order the document is
             # placed against - but the document is still not supply, so it adds nothing to
             # the month. Chasing it is the action the red cell is asking for.
+            #
+            # R43: unless the hold `fulfils` (the view's PO pins): assigned means fulfilled,
+            # so the line is owed nothing for it, and the document still adds nothing free.
+            # A fulfilling hold is capped by what the document still has outstanding, the
+            # way a counted one is capped by `left`: two placements, or a placement larger
+            # than what is left after a receipt, cannot fulfil more than the PO will bring.
             take = min(float(hold.qty), state.remaining)
+            if hold.fulfils:
+                take = min(take, uncounted_left[hold.supply_key])
             if take <= EPSILON:
                 continue
             event = uncounted_by_key[hold.supply_key]
-            state.uncounted_pinned += take
+            if hold.fulfils:
+                uncounted_left[hold.supply_key] -= take
+            else:
+                state.uncounted_pinned += take
         else:
             take = min(float(hold.qty), state.remaining)
             if take <= EPSILON:
@@ -533,11 +621,26 @@ def assign(
                 at=as_of,
                 qty=_round(take),
                 ref=hold.ref,
+                spo_number=hold.spo_number,
+                spo_line_number=hold.spo_line_number,
+                po_number=hold.po_number,
+                purchase_order_id=hold.purchase_order_id,
             )
             counted.append(event)
         state.remaining -= take
         state.pinned = True
-        state.taken.append(Assigned(event=event, qty=_round(take), pinned=True))
+        state.taken.append(
+            Assigned(
+                event=event,
+                qty=_round(take),
+                pinned=True,
+                # R29 addendum: the placement's own order inquiry, carried on the TAKE
+                # rather than the (possibly shared) event - `None` for an on-hand hold,
+                # which is a decision, not a placement.
+                oi_number=hold.oi_number,
+                oi_id=hold.oi_id,
+            )
+        )
 
     # 2. ONE chronological walk, with a pile per ownership group ---------------------------
     _walk(
@@ -887,6 +990,7 @@ __all__ = [
     "group_book_positions",
     "month_axis",
     "month_key",
+    "ownership_group",
     "parse_supply_key",
     "tone_for",
 ]

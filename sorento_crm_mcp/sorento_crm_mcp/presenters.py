@@ -57,6 +57,8 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_outstanding_report",
         "crm_low_stock_report",
         "crm_sales_report",
+        "crm_top_selling_report",
+        "crm_sales_analysis",
     }
 )
 
@@ -115,9 +117,6 @@ _STOCK_COMPACT_INTRO = "Stock summary for the requested products."
 # The dealer answer, verbatim. This IS the outbound WhatsApp text (n8n prints the
 # intro and nothing else for this mode), so the wording is the contract.
 _AVAILABILITY_ASK = "How many units do you need?"
-_AVAILABILITY_YES = "Yes, we have stock."
-_AVAILABILITY_NO = "Sorry, we do not have enough stock for that quantity."
-_AVAILABILITY_MIXED = "Here is the stock availability for the requested products."
 
 # Passthrough keys preserved from the raw response into the envelope (e.g. the
 # escalation hint attached after sanitize). Kept so render mode loses nothing.
@@ -128,6 +127,13 @@ _PASSTHROUGH_KEYS = (
     "fallback_used",
     "alternatives",
     "relaxed_axis",
+    # Chatbot stock ask v2 S3 (AC-SA314): the per-product `needs_quantity` / `branch`
+    # block. The PRESENTER reads it to build the dealer's per-product sentence, and
+    # the ENGINE reads it AGAIN, off this same envelope - to open/update/close the
+    # stock task (`turn/task.py::tasks_after_reply`) and to decide whether to attach
+    # an `incoming` entry's packing list. Dropping it here means the raw fetch never
+    # reaches either reader, even though the rendered TEXT still looks right.
+    "stock_availability",
     # Every company the backend actually searched, present only when the lookup
     # spanned more than one (see `stamp_lookup_companies` backend-side). A
     # single-company reply never carries it, so it stays byte-identical.
@@ -978,6 +984,10 @@ def _spec_field_value(spec: dict) -> Any:
     registry label) - `_qty` compacts a numeric value the same way every other
     quantity field does ("1.2000" -> "1.2")."""
     value = spec.get("value")
+    # R7 (PR #833 round 4): an enum value in the CRM's own plain words ("cold_only" ->
+    # "Cold only"), off the registry's `value_labels`, when the CRM sent them.
+    if isinstance(value, str) and _filled(spec.get("display_value")):
+        value = spec["display_value"]
     val_text = _qty(value) if isinstance(value, (int, float)) else value
     unit = spec.get("unit")
     return f"{val_text} {unit}".strip() if _filled(unit) else val_text
@@ -1384,44 +1394,100 @@ def _stock_compact(payload: dict, b: _Builder) -> None:
                 fields.append({"label": str(code), "value": qty})
         b.raw_item(entry.get("product_code"), fields, dict(entry.get("flags") or {}))
 
-def _stock_availability(payload: dict, b: _Builder) -> None:
-    """`availability`: yes / no / ask, and nothing else.
+def _availability_entries(payload: dict) -> list[dict]:
+    return [e for e in (payload.get("stock_availability") or []) if isinstance(e, dict)]
 
-    `fields` stays empty on purpose. This mode exists so a dealer is never told a
-    quantity, and an empty field list is the only shape that cannot carry one.
+
+def _availability_label(entry: dict) -> Optional[str]:
+    """A row with no `product_code` (matched only by name) falls back to
+    `product_name`; a row with neither cannot be named to a person at all and is
+    skipped by every caller rather than rendered as `None` (no UUIDs in the UI,
+    plan point 7: "<P> is product_code, fallback product_name, never the id")."""
+    return entry.get("product_code") or entry.get("product_name")
+
+
+#: R6/R14 (lavish review), AC-SA313: the three branches whose wording never varies.
+#: `incoming` is handled separately in `_availability_line` - it is the only branch
+#: whose sentence carries a date.
+_AVAILABILITY_TAILS = {
+    "too_big": (
+        "the quantity is more than what I can confirm here, please refer to your "
+        "salesman."
+    ),
+    "in_stock": "yes, we have stock, please refer to your salesman to proceed.",
+    "no_incoming": (
+        "no stock and no incoming at the moment, please refer to your salesman."
+    ),
+}
+
+
+def _availability_line(entry: dict) -> str:
+    """Chatbot stock ask v2 S3, R14/AC-SA313: one line per entry, every line
+    starting "<code> x <Q>:" so a multi-product reply reads line by line. The four
+    fixed sentences (R6) are the ONLY wording; AC-SA312: no digit of ours besides
+    the dealer's own asked quantity and the ETA date (already dd/mm/yyyy on the
+    entry, `StockService._apply_stock_visibility`) ever appears."""
+    code = _availability_label(entry)
+    qty = entry.get("requested_qty")
+    branch = entry.get("branch")
+    if branch == "incoming":
+        tail = f"no stock at the moment, ETA {entry.get('eta')}."
+    else:
+        # Nit, review round 1: an unknown or missing branch is unreachable today
+        # (`products.category_id` is NOT NULL, so `inventory_service.py` never
+        # leaves `branch` unset) - but if a fallback is kept, `too_big` is the one
+        # of the four sentences that claims nothing about our stock either way.
+        tail = _AVAILABILITY_TAILS.get(branch, _AVAILABILITY_TAILS["too_big"])
+    return f"{code} x {qty}: {tail}"
+
+
+def _stock_availability(payload: dict, b: _Builder) -> None:
+    """`availability`: one R6 sentence per product, and nothing else.
+
+    `fields` stays empty on purpose - this mode exists so a dealer is never told a
+    quantity or a location of ours, and an empty field list is the only shape that
+    cannot carry one. The item TITLE carries the whole answer (`_availability_line`)
+    once every entry has a branch; while any entry is still missing its quantity, the
+    title stays the bare product code and `_availability_intro` asks instead
+    (unchanged from before S3 - the "how many units" question is #1118's
+    `turn/task.py::StockQtyTask.question()` territory once a task is open, not this
+    slice's scope, R1/AC-SA310).
     """
-    for entry in payload.get("stock_availability") or []:
-        if not isinstance(entry, dict):
+    entries = _availability_entries(payload)
+    show_answer = bool(entries) and not any(e.get("needs_quantity") for e in entries)
+    for entry in entries:
+        label = _availability_label(entry)
+        if not label:
             continue
+        title = _availability_line(entry) if show_answer else label
         b.raw_item(
-            entry.get("product_code"),
+            title,
             [],
             {
                 "needs_quantity": bool(entry.get("needs_quantity")),
-                "available": entry.get("available"),
+                "branch": entry.get("branch"),
             },
         )
 
 
 def _availability_intro(payload: dict) -> str:
-    """The whole reply, in one line.
+    """The whole reply, in one line - or none.
 
-    Several products can disagree. Any product still missing its quantity makes
-    the turn a question, not an answer - so ask, and say nothing about the rest.
-    Otherwise a shared yes or no speaks for all of them; a split verdict cannot,
-    so the intro steps back and the per-item flags carry it.
+    Any product still missing its quantity makes the turn a question, not an
+    answer - so ask, and say nothing about the rest. Once every entry has a
+    branch (chatbot stock ask v2 S3 fix round 1, Blocking 1), the per-item
+    titles (`_availability_line`) already carry the whole R14 sentence, product
+    and quantity included - a shared intro on top of them cannot be true for
+    every entry at once: a too_big/no_incoming pairing spoke of "not enough
+    stock" even when one of the two entries had plenty, which is false and,
+    for `too_big`, a statement about our stock that R6 B1 forbids. So an
+    answered reply gets no intro at all; the plan's sample (g) shows the same
+    shape, one line per product and nothing before them.
     """
-    entries = [
-        e for e in (payload.get("stock_availability") or []) if isinstance(e, dict)
-    ]
+    entries = _availability_entries(payload)
     if any(e.get("needs_quantity") for e in entries):
         return _AVAILABILITY_ASK
-    verdicts = {e.get("available") for e in entries}
-    if verdicts == {True}:
-        return _AVAILABILITY_YES
-    if verdicts == {False}:
-        return _AVAILABILITY_NO
-    return _AVAILABILITY_MIXED
+    return ""
 
 
 def _forms(rows: list[dict], b: _Builder) -> None:
@@ -1578,6 +1644,12 @@ def present_response(tool_name: str, raw: str) -> str:
     if tool_name == "crm_sales_report":
         return json.dumps(_sales_report_envelope(data))
 
+    # PLAN-chatbot-top-x-hot-selling-24sep.md S4: the SAME bypass, for the same
+    # reason - a ranking plus a header, a count-only how-many question, or one
+    # code's detail, none of which the generic item/field envelope could build.
+    if tool_name == "crm_top_selling_report":
+        return json.dumps(_top_selling_envelope(data))
+
     # The same bypass, for the same reason: the low stock report's payload is a STATUS
     # (ready / pending / busy) plus an attachment list, not a row collection the generic
     # item/field envelope could build items from. `attachments` rides through untouched -
@@ -1585,6 +1657,11 @@ def present_response(tool_name: str, raw: str) -> str:
     # here would be a second copy of that contract.
     if tool_name == "crm_low_stock_report":
         return json.dumps(_low_stock_envelope(data))
+
+    # The same bypass again: the sales analysis answers a table AND a file (or a question,
+    # or a refusal), never a row collection (PLAN-retail-sales-reports-26sep R4.2).
+    if tool_name == "crm_sales_analysis":
+        return json.dumps(_sales_analysis_envelope(data))
 
     rows = data.get("data")
     if not isinstance(rows, list):
@@ -1911,8 +1988,13 @@ def _outstanding_header_lines(report: dict) -> list[str]:
     date header", so the reader of a list could not tell what it was a list OF), and the
     chatbot lane's own copy of the rule for the scope question it asks before either
     exists.
+
+    #1262 slice 9 (F1a): a FIFTH line, `Brand:`, ADDITIVE only - printed when
+    `brand_name` is filled, absent otherwise (unlike the four above, it never falls
+    back to "all": a report with no brand filter simply never named one, the same
+    reason `location_token`/`so_refused` are tacked-on-only elsewhere on this body).
     """
-    return [
+    lines = [
         # R13: `all` when no product was named, the same word the other header lines use
         # for "every one of them" - a customer-subject report is about all their products.
         f"Product: {report.get('product_code') if _filled(report.get('product_code')) else 'all'}",
@@ -1920,6 +2002,9 @@ def _outstanding_header_lines(report: dict) -> list[str]:
         f"Location: {_outstanding_location_header(report.get('location_token'), report.get('warehouse_codes'))}",
         f"Order date: {_outstanding_date_range(report.get('order_date_from'), report.get('order_date_to'))}",
     ]
+    if _filled(report.get("brand_name")):
+        lines.append(f"Brand: {report['brand_name']}")
+    return lines
 
 
 def _outstanding_report(report: dict) -> str:
@@ -2426,4 +2511,364 @@ def _sales_report_envelope(report: dict) -> dict:
         "result_type": "sales_report",
         "response": _sales_report(report),
         "has_result": isinstance(months, list) and len(months) > 0,
+    }
+
+
+# --------------------------------------------------------------------------
+# top X hot selling (PLAN-chatbot-top-x-hot-selling-24sep.md; S1 presenter, S4
+# wired to the route's own body as built on PR #1263). The same minimal envelope
+# as the sales report for the same reason: the header renders on a miss too, so
+# only `has_result` can tell the lane a miss (escalate) from a hit. Reuses the
+# sales report's and the outstanding report's formatters directly (money,
+# quantity, dates, channel, months) so the three replies cannot drift apart.
+#
+# Body (`TopSellingResponse`): `rank_by` quantity|amount, `basis`, `group`, `n`,
+# `date_from`/`date_to` (the resolved window), `filters {customer_name,
+# category_name, sales_agent, channel, dealer_scoped}`, `total_count`, `rows
+# [{rank, code, name, quantity, amount}]`, `totals`, `sales_agent_fill_rate`
+# (0 to 1, only under an agent filter) and `detail` (the detail offer's answer).
+# --------------------------------------------------------------------------
+
+# Fixed lines the lane sends BEFORE any fetch (owner: no default metric, clarify
+# when unsure whether a category is a filter or the ranking grain, or which basis
+# an ambiguous word means). Declared here so the goldens and the lane read one
+# literal each.
+TOP_SELLING_ASK_METRIC = "By quantity or by amount?"
+TOP_SELLING_ASK_GROUP = (
+    "Do you want the top items inside one category, or the categories ranked against each other?"
+)
+TOP_SELLING_ASK_BASIS = "Delivered (transferred to DO) or ordered?"
+TOP_SELLING_REFUSED_OTHER_CUSTOMER = "Sorry, I can only share sales figures for your own account."
+
+# The owner's "top 100": the route caps a named N here, the presenter never prints past it.
+_TOP_SELLING_MAX_ROWS = 100
+# The agent fill-rate note prints below this share (plan "The reply": the route
+# sends the rate whenever an agent filter is used, the presenter decides).
+_TOP_SELLING_AGENT_NOTE_BELOW = 0.95
+
+
+def _top_selling_is_category(report: dict) -> bool:
+    return report.get("group") == "category"
+
+
+def _top_selling_filters(report: dict) -> dict:
+    filters = report.get("filters")
+    return filters if isinstance(filters, dict) else {}
+
+
+def _top_selling_count(report: dict) -> int:
+    try:
+        return int(report.get("total_count") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _top_selling_agent_note(report: dict) -> str | None:
+    rate = report.get("sales_agent_fill_rate")
+    try:
+        rate = float(rate)
+    except (TypeError, ValueError):
+        return None
+    if rate >= _TOP_SELLING_AGENT_NOTE_BELOW:
+        return None
+    return f"Note: only {int(round(rate * 100))}% of sales orders in this period carry a sales agent."
+
+
+def _top_selling_axes(report: dict) -> list[str]:
+    """Every filter axis, ``all`` where none was named, the agent note under its
+    line, then the window. Shared by the ranking and the detail reply."""
+    filters = _top_selling_filters(report)
+
+    def _or_all(key: str) -> str:
+        value = filters.get(key)
+        return str(value) if _filled(value) else "all"
+
+    lines = [
+        f"Customer: {_or_all('customer_name')}",
+        f"Category: {_or_all('category_name')}",
+        # Fix lane round 4 (owner retest, 27 Sep 2026): the brand filter.
+        f"Brand: {_or_all('brand_name')}",
+        f"Sales agent: {_or_all('sales_agent')}",
+    ]
+    note = _top_selling_agent_note(report)
+    if note:
+        lines.append(note)
+    lines.append(f"Channel: {_sales_channel_header(filters.get('channel'))}")
+    lines.append(f"Delivery date: {_outstanding_date_range(report.get('date_from'), report.get('date_to'))}")
+    return lines
+
+
+def _top_selling_metric_lines(report: dict) -> list[str]:
+    return [
+        f"Ranked by: {'Amount' if report.get('rank_by') == 'amount' else 'Quantity'}",
+        f"Basis: {'Ordered' if report.get('basis') == 'ordered' else 'Delivered (transferred to DO)'}",
+    ]
+
+
+def _top_selling_is_bottom(report: dict) -> bool:
+    return report.get("direction") == "bottom"
+
+
+#: Fix lane round 4 (owner retest, 27 Sep 2026): how a least sold ranking treats an
+#: item that sold nothing. The plan never ranks one (the route ranks sales), so the
+#: reply says so instead of letting "least sold" read as "sold least of everything".
+TOP_SELLING_NO_SALE_LINE = "Items with no sale in this period are not ranked."
+
+
+def _top_selling_title(report: dict) -> str:
+    """``*Top N selling items*`` / ``*Top selling items*``; a bottom ranking reads
+    ``*Bottom N selling items*`` / ``*Least sold items*`` (owner retest, 27 Sep 2026:
+    "cold selling" and "least sold" rank ascending)."""
+    noun = "categories" if _top_selling_is_category(report) else "items"
+    n = report.get("n")
+    if _filled(n):
+        one = str(n) == "1"
+        word = ("category" if noun == "categories" else "item") if one else noun
+        return f"*{'Bottom' if _top_selling_is_bottom(report) else 'Top'} {n} selling {word}*"
+    return f"*Least sold {noun}*" if _top_selling_is_bottom(report) else f"*Top selling {noun}*"
+
+
+def _top_selling_header(report: dict) -> str:
+    """Title, metric, basis, the FULL count (owner: the header states it), then
+    every filter axis."""
+    noun = "categories" if _top_selling_is_category(report) else "items"
+    lines = [
+        _top_selling_title(report),
+        *_top_selling_metric_lines(report),
+        f"{noun.capitalize()} with sales: {_outstanding_fmt_int(_top_selling_count(report))}",
+    ]
+    if _top_selling_is_bottom(report):
+        lines.append(TOP_SELLING_NO_SALE_LINE.replace("Items", noun.capitalize()))
+    return "\n".join([*lines, *_top_selling_axes(report)])
+
+
+def _top_selling_code(row: dict) -> str:
+    """The row's CODE only, never its name (owner, 26 Sep 2026: "don't need to show
+    name, just show code will do"). A product with no category ranks under a null
+    code and prints ``Unassigned``."""
+    code = row.get("code")
+    return str(code) if _filled(code) else "Unassigned"
+
+
+def _top_selling_row(row: dict) -> str:
+    """``n. CODE: Qty q, RM v``; ``n`` is the body's own rank: the route sorts,
+    never this."""
+    return (
+        f"{row.get('rank')}. {_top_selling_code(row)}: Qty {_outstanding_fmt_int(row.get('quantity'))}, "
+        f"{_rm_money(row.get('amount') or 0)}"
+    )
+
+
+def _top_selling_rows(report: dict) -> list[dict]:
+    rows = report.get("rows") if isinstance(report.get("rows"), list) else []
+    return [r for r in rows if isinstance(r, dict)][:_TOP_SELLING_MAX_ROWS]
+
+
+def _top_selling_detail(report: dict) -> str:
+    """The detail offer's answer: one code's customers and months under the SAME
+    filters and basis the ranking ran with, each list in the route's own order
+    (the ranking metric desc). A code with no sales has no `detail` and takes the
+    miss line instead (`_top_selling`)."""
+    detail = report.get("detail") if isinstance(report.get("detail"), dict) else {}
+    code = detail.get("code") if _filled(detail.get("code")) else "Unassigned"
+    lines = [f"*{code}: customers and months*", *_top_selling_metric_lines(report), *_top_selling_axes(report)]
+    totals = report.get("totals") if isinstance(report.get("totals"), dict) else {}
+    lines.append(
+        f"Total: Qty {_outstanding_fmt_int(totals.get('quantity'))}, {_rm_money(totals.get('amount') or 0)}"
+    )
+    customers = [r for r in (detail.get("by_customer") or []) if isinstance(r, dict)]
+    months = [r for r in (detail.get("by_month") or []) if isinstance(r, dict)]
+    blocks = ["\n".join(lines)]
+    if customers:
+        blocks.append(
+            "*_By customer_*\n"
+            + "\n".join(
+                f"{i}. {_outstanding_label(r.get('customer_name'))}: Qty "
+                f"{_outstanding_fmt_int(r.get('quantity'))}, {_rm_money(r.get('amount') or 0)}"
+                for i, r in enumerate(customers, start=1)
+            )
+        )
+    if months:
+        blocks.append(
+            "*_By month_*\n"
+            + "\n".join(
+                f"{_sales_month_label(r.get('month'))}: Qty "
+                f"{_outstanding_fmt_int(r.get('quantity'))}, {_rm_money(r.get('amount') or 0)}"
+                for r in months
+            )
+        )
+    return "\n\n".join(blocks)
+
+
+def _top_selling(report: dict) -> str:
+    """The whole WhatsApp reply for one route body. Four shapes:
+
+    * `detail` present: the detail offer's answer (customers and months);
+    * rows present: the ranking plus the detail offer (owner: required);
+    * no rows but a count: the message named no N (the lane asked the route for the
+      count only), so state the count (the header) and ask how many (owner rulings
+      26 Sep: no default N, no partial list, no "more");
+    * no rows and no count: the miss line.
+
+    Length is never a reason here: n8n already chunks a long WhatsApp message
+    (owner, PR #1258 05:32Z), so a named N up to 100 goes out whole."""
+    if isinstance(report.get("detail"), dict):
+        return _top_selling_detail(report)
+    header = _top_selling_header(report)
+    category = _top_selling_is_category(report)
+    rows = _top_selling_rows(report)
+    if not rows:
+        total = _top_selling_count(report)
+        if total > 0:
+            noun = "categories" if category else "items"
+            return (
+                header + f"\n\nHow many {noun} do you want to see? "
+                f"Reply with a number from 1 to {min(total, _TOP_SELLING_MAX_ROWS)}."
+            )
+        return header + "\n\n" + SALES_REPORT_MISS_MESSAGE
+    offer = (
+        "Reply with a rank number to see that category's top items."
+        if category
+        else "Reply with a rank number to see that item's customers and months."
+    )
+    body = "\n".join(_top_selling_row(r) for r in rows)
+    return header + "\n\n" + body + "\n\n" + offer
+
+
+def _top_selling_pick_row(row: dict, *, category: bool) -> dict:
+    """One printed line as a pick row (owner, PR #1258 05:32Z: the list behaves like
+    the customer and product pickers). The `{idx, label, code, entity_type}` roster
+    shape with no `name` (owner ruling 26 Sep ~07:40Z: code only, and the route sends
+    none); `idx` is the printed rank so a later "2" means line 2, and the label is the
+    code the line printed, which is what a typed answer matches exactly
+    (`turn/decide._positions_by_label`)."""
+    return {
+        "idx": row.get("rank"),
+        "label": _top_selling_code(row),
+        "code": row.get("code"),
+        "entity_type": "category" if category else "product",
+    }
+
+
+def _top_selling_envelope(report: dict) -> dict:
+    """What `present_response` returns for `crm_top_selling_report`. The how-many
+    reply is not a miss (nothing to escalate), so it carries `has_result: true`
+    under its own `result_type`, which the lane reads to arm nothing. `result_set`
+    is the pick list the lane arms as a sticky `top_selling_pick` roster (backend
+    `turn/pending.top_selling_pick`); empty whenever no ranked list was printed,
+    the detail reply included (the list it answers stays open on its own).
+
+    A route refusal arrives here as the AppException body (`{message, detail,
+    code}`, no `rank_by`): the two the customer is meant to read become their fixed
+    lines, and anything else is an `error` envelope the lane treats as a failure."""
+    if "rank_by" not in report and _filled(report.get("code")):
+        code = str(report.get("code"))
+        refusal = {
+            "customer_not_permitted": TOP_SELLING_REFUSED_OTHER_CUSTOMER,
+            "sales_report_not_enabled": "Sales report is not enabled for your account.",
+        }.get(code)
+        if refusal is None:
+            return {"error": f"{code}: {report.get('message') or ''}".strip()}
+        return {
+            "result_type": "top_selling_refused",
+            "response": refusal,
+            "has_result": True,
+            "result_set": [],
+        }
+    if isinstance(report.get("detail"), dict):
+        return {
+            "result_type": "top_selling_detail",
+            "response": _top_selling(report),
+            "has_result": True,
+            "result_set": [],
+        }
+    rows = _top_selling_rows(report)
+    how_many = not rows and _top_selling_count(report) > 0
+    category = _top_selling_is_category(report)
+    return {
+        "result_type": "top_selling_how_many" if how_many else "top_selling",
+        "response": _top_selling(report),
+        "has_result": bool(rows) or how_many,
+        "result_set": [_top_selling_pick_row(r, category=category) for r in rows],
+    }
+
+
+# --------------------------------------------------------------------------------------
+# crm_sales_analysis (PLAN-retail-sales-reports-26sep S1; Owner ruling 26 Sep 07:16 Q2,
+# "always text + file, no cutoff").
+#
+# The text IS the answer: a header (report and company, channel, basis, period, the row
+# count), one line per row, then the totals line - every row, whatever the count (n8n
+# chunks a long message). One value column reads `label: RM a`; two or more read
+# `label: a | b | c` under a line naming the columns (Q9 (a): every column on every line).
+# A negative prints in brackets, an empty cell "-". The Excel of the same query rides in
+# `attachments`; when it is still being built the text ends "The Excel follows here." and
+# the worker pushes it. A question or a refusal is one line and no file (AC-R4-3).
+# --------------------------------------------------------------------------------------
+
+_SALES_ANALYSIS_PENDING = "The Excel follows here."
+_SALES_ANALYSIS_FILE_FAILED = "Could not build the sales report Excel right now."
+_SALES_ANALYSIS_ERROR = "Could not run the sales report right now."
+
+
+def _sales_figure(value: Any) -> str:
+    if value is None or value == "":
+        return "-"
+    try:
+        amount = Decimal(str(value))
+    except Exception:  # noqa: BLE001 - a value the route never sends; print it as is
+        return str(value)
+    text = f"{abs(amount):,.2f}"
+    return f"({text})" if amount < 0 else text
+
+
+def _sales_analysis_text(payload: dict) -> str:
+    lines = [
+        f"*{payload.get('report') or 'Sales'}, {payload.get('company') or ''}*".replace(", *", "*"),
+        f"Channel: {payload.get('channel') or 'All channels'}",
+        f"Basis: {payload.get('basis') or ''}",
+        f"Period: {payload.get('period') or ''}",
+        f"{payload.get('count_label') or 'Rows'}: {payload.get('total_count', 0)}",
+        "",
+    ]
+    columns = payload.get("columns") or []
+    rows = payload.get("rows") or []
+    totals = (payload.get("totals") or {}).get("values") or []
+    if len(columns) == 1:
+        def _rm(value: Any) -> str:
+            # A month with no sales is "-", never "RM -".
+            text = _sales_figure(value)
+            return text if text == "-" else f"RM {text}"
+
+        for row in rows:
+            values = row.get("values") or [None]
+            lines.append(f"{row.get('label')}: {_rm(values[0])}")
+        lines.append(f"Total: {_rm(totals[0] if totals else None)}")
+    else:
+        lines.append(f"{payload.get('rows_label') or 'Row'}: " + " | ".join(str(c) for c in columns))
+        for row in rows:
+            lines.append(
+                f"{row.get('label')}: " + " | ".join(_sales_figure(v) for v in row.get("values") or [])
+            )
+        lines.append("Total: " + " | ".join(_sales_figure(v) for v in totals))
+    return "\n".join(lines)
+
+
+def _sales_analysis_envelope(payload: dict) -> dict:
+    status = payload.get("status")
+    envelope = {"result_type": "sales_analysis", "attachments": [], "has_result": True}
+    if status in ("clarify", "refused", "busy"):
+        return {**envelope, "response": str(payload.get("message") or _SALES_ANALYSIS_ERROR)}
+    if status not in ("ready", "pending", "error") or not isinstance(payload.get("rows"), list):
+        return {**envelope, "response": _SALES_ANALYSIS_ERROR}
+    text = _sales_analysis_text(payload)
+    if status == "pending":
+        return {**envelope, "response": f"{text}\n\n{_SALES_ANALYSIS_PENDING}"}
+    if status == "error":
+        return {**envelope, "response": f"{text}\n\n{_SALES_ANALYSIS_FILE_FAILED}"}
+    attachments = payload.get("attachments")
+    return {
+        **envelope,
+        "response": text,
+        "attachments": attachments if isinstance(attachments, list) else [],
     }

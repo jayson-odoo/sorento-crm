@@ -1,11 +1,12 @@
 """User management models."""
 import enum
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Numeric, Text, Index, Integer, UniqueConstraint, text
+from sqlalchemy import CheckConstraint, Column, String, Boolean, DateTime, ForeignKey, Numeric, Text, Index, Integer, UniqueConstraint, text
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, ARRAY, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
+from app.models.audit import audit_columns_excluding_secrets
 import uuid
 
 
@@ -18,9 +19,17 @@ class UserStatus(str, enum.Enum):
 class User(Base):
     __tablename__ = "users"
     __audit_track__ = True  # who changed what (Sub-plan D Tier-2)
+    # `__audit_columns__` is set right after the class body: every column minus
+    # AUDIT_SECRET_KEYS, derived so a new column is audited without being listed.
+    # The bcrypt `password` hash was written into audit_logs on every user write,
+    # logins included (#1281).
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    email = Column(String, unique=True, nullable=False, index=True)
+    # Nullable since identity S0 (#1280): a phone-only user has no email, and no
+    # placeholder is ever written. `ck_users_email_or_phone` keeps at least one of
+    # the two. Every write stores `email.strip().lower()`; `uq_users_email_lower`
+    # is the case-insensitive backstop beside the original unique index.
+    email = Column(String, unique=True, nullable=True, index=True)
     password = Column(String, nullable=True)
     country = Column(String, nullable=True)
     timezone = Column(String, nullable=True)
@@ -59,8 +68,10 @@ class User(Base):
     tier = Column(Integer, nullable=True)  # Conversation SLA policy tier (1, 2, ...)
     daily_sla_summary_subscribed = Column(Boolean, default=True, nullable=False)  # email summary opt-in
     # Link to the WhatsApp contact this user is reachable on (resolves respond_io_id).
-    # Set explicitly by an admin, or auto-cached by a unique phone match (see respond_link_service).
+    # Set by the owner (or once by the identity S0 migration); nothing links it at runtime (see respond_link_service).
     respond_contact_id = Column(String, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True)
+    # When the user last proved they hold `contact_number` (phone sign-in code). Naive UTC.
+    phone_verified_at = Column(DateTime(timezone=False), nullable=True)
     # Per-channel notification toggles (default off until a contact is linked).
     notify_whatsapp = Column(Boolean, default=False, nullable=False, server_default="false")  # legacy; superseded by the per-event toggles below
     notify_whatsapp_summary = Column(Boolean, default=False, nullable=False, server_default="false")  # daily summary template
@@ -120,7 +131,23 @@ class User(Base):
         Index("ix_users_respond_contact_id", "respond_contact_id"),
         # One phone == one user. Postgres allows multiple NULLs, so unlinked users are fine.
         UniqueConstraint("contact_number", name="uq_users_contact_number"),
+        # Identity S0 (#1280), mirrored by migration identity_0001_s0_model.
+        CheckConstraint(
+            "email IS NOT NULL OR contact_number IS NOT NULL",
+            name="ck_users_email_or_phone",
+        ),
+        Index("uq_users_email_lower", func.lower(email), unique=True),
+        # One WhatsApp contact == one user (AC-01).
+        Index(
+            "uq_users_respond_contact_id",
+            "respond_contact_id",
+            unique=True,
+            postgresql_where=text("respond_contact_id IS NOT NULL"),
+        ),
     )
+
+
+User.__audit_columns__ = audit_columns_excluding_secrets(User.__table__)
 
 
 class UserProductDiscontinuedScope(Base):
@@ -240,6 +267,7 @@ class UserRolePermission(Base):
 
 class SystemLog(Base):
     __tablename__ = "system_logs"
+    __audit_skip__ = "request log, retired in S3"
     
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
@@ -391,6 +419,12 @@ class SystemSetting(Base):
     # status change and anything else that can simply be set back.
     deferred_delete_seconds = Column(Integer, nullable=False, server_default="10", default=10)
     deferred_action_seconds = Column(Integer, nullable=False, server_default="5", default=5)
+    # Cost price from the supplier (#1288, AC-S2-20): off for the first rollout (owner ruling
+    # 27 Sep 00:45). On, a staff upload goes through Submit/Decide/Return before Apply; off, the
+    # uploader applies directly. A supplier-channel set (Lane B) is Pending regardless.
+    cost_price_verification_enabled = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
     # How many days an untouched price tag collection waits before the sweep
     # closes it (r9 D10). 0 turns the sweep off; 7 is the shipped default.
     price_tag_auto_collect_days = Column(
@@ -692,6 +726,7 @@ class SystemSetting(Base):
 class UserQuickAccess(Base):
     """Per-user quick access (pinned menu items and attachment folders) for sidebar."""
     __tablename__ = "user_quick_access"
+    __audit_skip__ = "per-user UI preference"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
@@ -711,6 +746,7 @@ class UserListColumnConfig(Base):
     """Per-user per-listing column preferences (visibility + ordering)."""
 
     __tablename__ = "user_list_column_configs"
+    __audit_skip__ = "per-user UI preference"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)

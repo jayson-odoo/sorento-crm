@@ -11,8 +11,13 @@ import type { ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
+import { fakePdfJs } from '@/test-utils/fakePdfJs';
 import { AttachmentDropzone } from './AttachmentDropzone';
 import { writePortalToken, clearPortalToken, type PortalAttachment } from '../lib/portal-client';
+
+vi.mock('@/components/common/pdf-viewer/pdfjs', async () =>
+  (await import('@/test-utils/fakePdfJs')).fakePdfJsModule,
+);
 
 const apiFetchMock = vi.fn();
 vi.mock('@/lib/api', () => ({
@@ -49,6 +54,7 @@ function attachment(over: Partial<PortalAttachment> = {}): PortalAttachment {
 }
 
 beforeEach(() => {
+  fakePdfJs.reset();
   apiFetchMock.mockReset();
   clearPortalToken();
   writePortalToken('tok-123');
@@ -74,7 +80,13 @@ beforeEach(() => {
 });
 
 describe('portal attachment preview', () => {
-  it('previews a PDF in place - no new tab, no anchor to a protected route', () => {
+  it('previews a PDF in place - no new tab, no anchor to a protected route', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => new ArrayBuffer(4),
+    });
+    vi.stubGlobal('fetch', fetchMock);
     render(
       <AttachmentDropzone
         kind="stock_inquiry"
@@ -87,8 +99,13 @@ describe('portal attachment preview', () => {
     expect(document.body.querySelector('a[target="_blank"]')).toBeNull();
     fireEvent.click(screen.getByLabelText('Preview quote.pdf'));
 
-    const frame = document.body.querySelector('iframe');
-    expect(frame?.getAttribute('src')).toBe('https://cdn.example.com/quote.pdf');
+    // Drawn in the themed viewer, its bytes read through the portal token route.
+    expect(await screen.findByRole('group', { name: 'quote.pdf page 1' })).toBeInTheDocument();
+    expect(document.body.querySelector('iframe')).toBeNull();
+    expect(fetchMock.mock.calls[0][0]).toMatch(
+      /\/api\/v1\/public\/portal\/attachments\/att-1\/download$/,
+    );
+    expect(apiFetchMock).not.toHaveBeenCalled();
   });
 
   it('renders the shared fallback card for an unpreviewable type', () => {

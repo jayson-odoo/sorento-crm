@@ -141,11 +141,12 @@ def _domain_row(
     narrowing: dict[str, str],
     tools: tuple[str, ...] = (),
     reveal_key: str | None = None,
+    intents: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     return {
         "name": name,
         "label": name,
-        "intents": [],
+        "intents": list(intents),
         "tools": list(tools),
         "primary_tool": tools[0] if tools else None,
         "escalation_team_code": None,
@@ -169,6 +170,11 @@ POLICY_DOMAIN_ROWS: list[dict[str, Any]] = [
     # AC-1861 (PLAN-chatbot-roster-label-vs-ask-24sep.md): the real `master_products`
     # domain row (`turn/policy_rows.py`) narrows on nothing at all.
     _domain_row("master_products", narrowing={}),
+    # S2 (reviewer pass 1 on PR #1185): the real `ideate` row (`policy_rows.py:273`)
+    # carries `intents=["submit_idea"]`. Without it here, `policy.domain("ideate")` was
+    # `None` in every pure test, so `_continues_open_draft`'s "ideate's own intents
+    # pass" branch (`turn/apply.py`) never ran against a real intents set.
+    _domain_row("ideate", narrowing={}, intents=("submit_idea",)),
 ]
 
 

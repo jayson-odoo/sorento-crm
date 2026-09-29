@@ -89,9 +89,9 @@
  * E. SEND (ticket-stamped) - UAC AC-D1/D2/D3, AC-E1
  *    POST /{tracking_id}/ticket/send
  *      JSON body when there are no files:
- *        { text: string }
+ *        { text: string, reply_to_message_id?: string, reply_to_excerpt?: string }
  *      multipart/form-data when files are attached:
- *        text, files[] (repeated)
+ *        text, reply_to_message_id?, reply_to_excerpt?, files[] (repeated)
  *    Response 200: SendTicketMessageResult
  *    Semantics the backend owns:
  *    - in-window  -> raw text; out-of-window -> the existing `*_chat` template
@@ -112,12 +112,14 @@
  *    (image, video, audio, file) / quick_reply / whatsapp_template. There is NO
  *    sticker type and NO reply-to/context parameter, so:
  *    - the composer has no sticker affordance at all
- *    - there is no outbound "reply to" at all. The ">"-prefix emulation was
- *        removed on 2026-08-16: it read like a real quote and was not one.
- *        The route still ACCEPTS optional `reply_to_message_id` /
- *        `reply_to_excerpt` (audit-only), and the FE no longer sends them.
- *        Inbound quoted context (the contact quoting us) is unaffected - it is
- *        real, comes from Respond's structured `replyTo`, and still renders.
+ *    - "reply to" is emulated (#1317, restoring what shipped 12 Aug and was
+ *        dropped 16 Aug): the quoted excerpt is sent as a ">"-prefixed line
+ *        above the body (`buildQuotedReplyText` in lib/respondIoChatRender),
+ *        which WhatsApp renders as quoted text and our chat list re-parses via
+ *        `splitMessageQuote`. `reply_to_message_id` / `reply_to_excerpt` go to
+ *        the event log / audit trail only, never to Respond.
+ *        Inbound quoted context (the contact quoting us) is separate - it
+ *        comes from Respond's structured `replyTo`.
  *
  * E2. MANUAL TEMPLATE SEND (the composer's "Send template" dialog) - AC-E1
  *    POST /{tracking_id}/conversation/template-message
@@ -226,6 +228,9 @@ export interface InterventionTicketDetail {
 export interface SendTicketMessageInput {
   text: string;
   attachments?: File[];
+  /** #1317, audit only: Respond has no reply-to; the quote is in `text`. */
+  reply_to_message_id?: string | null;
+  reply_to_excerpt?: string | null;
 }
 
 /**
@@ -274,7 +279,11 @@ export async function sendInterventionTicketMessage(
     : apiFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: input.text }),
+        body: JSON.stringify({
+          text: input.text,
+          ...(input.reply_to_message_id ? { reply_to_message_id: input.reply_to_message_id } : {}),
+          ...(input.reply_to_excerpt ? { reply_to_excerpt: input.reply_to_excerpt } : {}),
+        }),
       }));
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to send message'));
@@ -285,6 +294,8 @@ export async function sendInterventionTicketMessage(
 function buildSendFormData(input: SendTicketMessageInput, files: File[]): FormData {
   const formData = new FormData();
   formData.append('text', input.text);
+  if (input.reply_to_message_id) formData.append('reply_to_message_id', input.reply_to_message_id);
+  if (input.reply_to_excerpt) formData.append('reply_to_excerpt', input.reply_to_excerpt);
   for (const file of files) formData.append('files', file);
   return formData;
 }

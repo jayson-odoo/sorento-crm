@@ -38,7 +38,8 @@ n8n does **not** need to write `session_vars` for this feature - the `/turn` end
   "message_text":  "<this turn's text>",      // required - for VOICE, the Whisper transcript
   "submitter_name": "<Respond profile name>", // optional (WS-A fallback)
   "media_selection": "1,3",                    // optional - see §3 (only when answering a media menu)
-  "is_new_idea": true                          // optional - see §4 (semantic restart)
+  "is_new_idea": true,                         // optional - see §4 (semantic restart)
+  "is_test": false                             // optional, default false - a test turn (#1179): create_idea gets is_test:true, no session_vars persisted
 }
 ```
 The retired `audio_attachment_ref` is **gone** - do not send it. The audio *file* is captured by

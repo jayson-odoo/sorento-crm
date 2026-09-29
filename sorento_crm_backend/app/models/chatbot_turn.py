@@ -43,6 +43,7 @@ class ChatbotTurn(Base):
     """One inbound message's journey through the engine."""
 
     __tablename__ = "turns"
+    __audit_skip__ = "chatbot turn log, itself a trail"
     __table_args__ = (
         # The list the trace screen pages (S2b): one contact, filtered by status, newest
         # first.

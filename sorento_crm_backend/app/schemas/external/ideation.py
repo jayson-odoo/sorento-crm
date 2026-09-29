@@ -42,13 +42,40 @@ class IdeationTurnRequest(BaseModel):
             "copy - this is what makes the draft accumulate across turns."
         ),
     )
+    is_test: bool = Field(
+        False,
+        description=(
+            "A test turn (#1179): the chatbot's dry run sets this. The idea is still "
+            "created in the shared service, flagged is_test so the board hides it by "
+            "default, and the endpoint does NOT persist session_vars for the contact - "
+            "the caller carries the returned pointer instead."
+        ),
+    )
+
+
+class IdeationOfferedMedia(BaseModel):
+    """One entry of the media menu this turn offered (#1277), numbered as the menu
+    numbers it."""
+
+    position: int
+    kind: str
+    url: str
+    filename: str | None = None
 
 
 class IdeationTurnResponse(BaseModel):
-    """What n8n relays: the tool's reply, an optional deep link, and the full
-    updated session_vars blob."""
+    """What n8n relays: the tool's reply, an optional deep link, the full
+    updated session_vars blob, and the media the reply's menu offered."""
 
     status: str
     reply_text: str
     link: str | None = None
     session_vars: dict[str, Any] = Field(default_factory=dict)
+    offered_media: list[IdeationOfferedMedia] = Field(
+        default_factory=list,
+        description=(
+            "The recent files the reply's media menu lists, in menu order (#1277). "
+            "The chatbot's ideate lane sends the images among them, captioned with "
+            "their number. Empty on any turn that offers no menu."
+        ),
+    )

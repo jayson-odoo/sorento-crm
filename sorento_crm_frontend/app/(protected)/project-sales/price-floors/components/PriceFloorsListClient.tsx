@@ -139,8 +139,8 @@ export function PriceFloorsListClient() {
     defaultColumn: { minSize: 60, maxSize: 800, size: 150 },
   });
 
-  // The one offer this listing makes, in both places it belongs: the
-  // toolbar, and the empty state's next step (S5-06).
+  // The one offer this listing makes, in the toolbar only: the empty state
+  // does not repeat it (#1335).
   const listPrimaryAction = (
     <Button onClick={() => router.push('/project-sales/price-floors/new')}>
       <Plus />
@@ -158,7 +158,6 @@ export function PriceFloorsListClient() {
       }
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       tableClassNames={{ edgeCell: 'px-5' }}
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

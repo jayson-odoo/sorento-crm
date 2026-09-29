@@ -274,7 +274,24 @@ describe('SalesOrderLinesEditor, editing', () => {
       <SalesOrderLinesEditor lines={LINES} findings={[HARD]} editing={editing()} />,
     );
 
-    expect(screen.getByText('Blocking')).toBeInTheDocument();
+    expect(screen.getByText('Blocks publish')).toBeInTheDocument();
+  });
+
+  it('marks the line with its most severe finding, not its first (review B1)', () => {
+    const warnFirst: ProjectSalesOrderFinding = {
+      id: 'f0',
+      severity: 'warn',
+      code: 'price_vs_quotation',
+      detail: 'Line 1 is priced below the quotation.',
+      line_id: 'l1',
+      line_no: 1,
+    };
+    render(
+      <SalesOrderLinesEditor lines={LINES} findings={[warnFirst, HARD]} editing={editing()} />,
+    );
+
+    expect(screen.getByText('Blocks publish')).toBeInTheDocument();
+    expect(screen.queryByText('Needs acknowledgement')).not.toBeInTheDocument();
   });
 
   it('marks a line that has no product and no description', () => {
@@ -325,7 +342,6 @@ describe('the lines section keeps its chrome in both views', () => {
     read.unmount();
 
     const write = render(<SalesOrderLinesTable lines={LINES} editing={editing()} />);
-    expect(within(write.container).getByText('Lines')).toBeInTheDocument();
     expect(within(write.container).getByText('2 lines')).toBeInTheDocument();
   });
 });

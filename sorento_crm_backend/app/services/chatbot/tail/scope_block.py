@@ -168,6 +168,49 @@ def _axis_words(
     return ", ".join(words) if words else None
 
 
+def with_brand_names(
+    gate_json: Mapping[str, Any] | None, envelope: Mapping[str, Any] | None
+) -> Mapping[str, Any] | None:
+    """#1262 fix lane round 3, B1-r2: `gate_json` with the fetch envelope's own
+    `brand_names` (the live brands the order fetch was actually filtered by,
+    `turn_runtime.order_brand_filter`) as `live_brands`. A copy; unchanged when the
+    fetch sent no brand. A follow-up turn that typed nothing has no resolver gate at
+    all, so the brand has to come off the fetch, never off the resolver."""
+    names = envelope.get("brand_names") if isinstance(envelope, Mapping) else None
+    if not names:
+        return gate_json
+    return {**(gate_json if isinstance(gate_json, Mapping) else {}), "live_brands": list(names)}
+
+
+def live_brand_words(gate_json: Mapping[str, Any] | None) -> str | None:
+    """#1262 fix lane round 2, B1: the live brands an order turn is filtered by
+    (`with_brand_names` stamps `live_brands` on the gate), for the "Brand:" line both
+    order headers print - this one and the miss composer's in
+    `lanes/business/answer.py`."""
+    raw = gate_json.get("live_brands") if isinstance(gate_json, Mapping) else None
+    words: list[str] = []
+    for value in raw if isinstance(raw, list) else []:
+        printable = _printable(value)
+        if printable and printable not in words:
+            words.append(printable)
+    return ", ".join(words) if words else None
+
+
+def _one_typed_word(rows: Any) -> str | None:
+    """#1262 fix lane round 7, R5: several carried rows that one typed word resolved to
+    ("cheng huat sentul", seven ledgers) are that word, as the turn that typed it
+    printed it - never the list of every ledger. Such rows each carry their own
+    resolved `name`; a picked ledger family (Group F) carries none and still names
+    each ledger."""
+    kept = [row for row in rows or [] if isinstance(row, Mapping)]
+    if len(kept) < 2 or not all(row.get("name") for row in kept):
+        return None
+    raws = {_printable(row.get("raw")) for row in kept}
+    if len(raws) != 1:
+        return None
+    return raws.pop() or None
+
+
 def _focus_words(rows: Any) -> str | None:
     """The SAME axis, off the FOCUS carry - AC-1695's own case, which main has no
     equivalent for because main's header runs in the tail, where the session's
@@ -179,6 +222,9 @@ def _focus_words(rows: Any) -> str | None:
     after a pick to name it. Customer and Product only: those are the two axes a
     `Focus` carries."""
     words: list[str] = []
+    typed = _one_typed_word(rows)
+    if typed:
+        return typed
     for row in rows or []:
         if not isinstance(row, Mapping):
             continue
@@ -233,5 +279,8 @@ def search_scope_header(
             lines.append(f"{axis['label']}: {words or axis['all_text']}")
         elif words:
             lines.append(f"{axis['label']}: {words}")
+    brand_words = live_brand_words(gate_json)
+    if brand_words:
+        lines.append(f"Brand: {brand_words}")
     lines.append(f"Dates: {dates}")
     return "\n".join(lines)

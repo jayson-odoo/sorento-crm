@@ -272,6 +272,14 @@ describe('AC-B3: two orders, two batches', () => {
     expect(getPlanningChangeBatch).toHaveBeenCalledWith(BATCH_A.id);
     expect(getPlanningChangeBatch).toHaveBeenCalledWith(BATCH_B.id);
 
+    // S5 (owner ruling 25 Sep 2026, issue #1245): a bare pre-mark no longer rides along on
+    // its own - both lines are only "Change proposed" until this saves them, so Confirm has
+    // something of each order's own to post.
+    fireEvent.click(await screen.findByRole('button', { name: /^Save all suggested/ }));
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (2)'),
+    );
+
     fireEvent.click(await screen.findByTestId('board-confirm'));
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
 
@@ -329,6 +337,16 @@ describe('AC-B6: an applied batch skips only its own order', () => {
     renderPanel(null, ['SO381895', 'SO381896']);
     await screen.findByTestId('fulfilment-board-matrix');
     await screen.findByTestId('board-change-icon-pcr-381896-1');
+
+    // S5: B's pre-marked line has to be SAVED to post at all now, so "Save all suggested"
+    // saves BOTH lines on screen (the header count does not know about the per-order
+    // `appliedSoNumbers` skip below - that is a POSTING-time exclusion, reported afterward -
+    // so it reads 2 here). A is still left out of the body by that separate mechanism, which
+    // is the whole point of this test: saving it changes nothing about that.
+    fireEvent.click(await screen.findByRole('button', { name: /^Save all suggested/ }));
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (2)'),
+    );
 
     fireEvent.click(await screen.findByTestId('board-confirm'));
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
@@ -404,6 +422,14 @@ describe('B1: the confirm-all body never lets a body-level batch_id contradict a
     await screen.findByTestId('fulfilment-board-matrix');
     await screen.findByTestId('board-change-icon-pcr-381895-1');
 
+    // S5: A is pre-marked by BATCH_A and needs saving to post at all now - B already carries
+    // a SERVER-PERSISTED draft (`withSavedContribution`), which the panel's own seeding
+    // effect reads straight into `draft` with no `preMarked` flag, so B needs no click here.
+    fireEvent.click(await screen.findByRole('button', { name: /^Save all suggested/ }));
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (2)'),
+    );
+
     fireEvent.click(await screen.findByTestId('board-confirm'));
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
 
@@ -466,6 +492,13 @@ describe('S1: a URL-applied batch and a board-pending batch on the same order', 
     await screen.findAllByTestId('board-change-icon-pcr-381895-1');
 
     expect(screen.getAllByTestId('board-change-icon-pcr-381895-1')).toHaveLength(1);
+
+    // S5: nothing has been saved yet - the board's own PENDING batch merely pre-marked the
+    // line, so it needs saving before Confirm has anything of A's to post.
+    fireEvent.click(await screen.findByRole('button', { name: /^Save all suggested/ }));
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
+    );
 
     fireEvent.click(await screen.findByTestId('board-confirm'));
     fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
@@ -537,11 +570,50 @@ describe('S1: a URL-applied batch and a board-pending batch on the same order', 
     await screen.findByTestId('fulfilment-board-matrix');
     await screen.findByTestId('board-change-icon-pcr-381895-1');
 
-    // Only the surviving pending batch's one line is pre-marked - the applied batch's
-    // extra, deduped-away line must not add a second approved draft to Confirm's count.
+    // S5 (owner ruling 25 Sep 2026, issue #1245): nothing has been saved, so Confirm itself
+    // reads 0 regardless of dedup - a bare pre-mark no longer counts on its own.
     await waitFor(() =>
-      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (0)'),
     );
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /SRTWCX7405-RL-S-PJ, .* across 1 sales order/,
+      }),
+    );
+    const linesTab = await screen.findByRole('tab', {
+      name: /^Contributing lines/,
+    });
+    fireEvent.mouseDown(linesTab);
+    fireEvent.click(linesTab);
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('decision-pill-so-381895|1|SRTWCX7405-RL-S-PJ|2026-08-17'),
+      ).toHaveTextContent('Change proposed');
+    });
+
+    // Close the first cell's dialog before opening the second - Radix hides the rest of the
+    // page from the accessibility tree while it is open.
+    fireEvent.click(screen.getAllByRole('button', { name: 'Close' }).at(-1)!);
+
+    // The dedup itself, still checked directly: line 2 exists on the board (demandA2) but is
+    // named ONLY by the stale, deduped-away applied row - it must read as plain undecided
+    // demand, never pre-marked.
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /SRTWCX-OTHER-ITEM, .* across 1 sales order/,
+      }),
+    );
+    const otherLinesTab = await screen.findByRole('tab', {
+      name: /^Contributing lines/,
+    });
+    fireEvent.mouseDown(otherLinesTab);
+    fireEvent.click(otherLinesTab);
+    await waitFor(() => {
+      expect(
+        screen.getByTestId(/^decision-pill-so-381895\|2\|SRTWCX-OTHER-ITEM/),
+      ).toHaveTextContent('Suggested');
+    });
   });
 });
 

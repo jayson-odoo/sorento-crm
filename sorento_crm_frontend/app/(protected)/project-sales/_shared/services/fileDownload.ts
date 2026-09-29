@@ -16,16 +16,6 @@ export function filenameFromContentDisposition(header: string | null): string | 
   return bare?.[1] ? decodeURIComponent(bare[1].trim()) : null;
 }
 
-export function saveBlobAs(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  // Revoked a tick later, not on this one: the click starts the save asynchronously, and
-  // some browsers have not read the object url by the time the synchronous line after the
-  // click runs - the download then fails with nothing on the console to say why.
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-}
+// Lifted to `lib/save-blob.ts` (PLAN-excel-preview-26sep S1, the second domain to need it);
+// re-exported here so this module's callers are unchanged.
+export { saveBlobAs } from '@/lib/save-blob';

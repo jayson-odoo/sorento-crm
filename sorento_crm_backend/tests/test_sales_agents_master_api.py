@@ -53,6 +53,7 @@ RESPONSE_KEYS = {
     "internal_note",
     "follow_up",
     "person_label",
+    "aliases",
     "demand_class",
     "location_group",
     "contact_id",

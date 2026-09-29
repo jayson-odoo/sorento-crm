@@ -212,9 +212,9 @@ describe('CertificatesList - states', () => {
     });
     renderList();
     expect(screen.getByText(/No data available/i)).toBeInTheDocument();
-    // Toolbar is still usable so the user can retry / widen the filter, and the
-    // empty state repeats the offer as its next step (S5-06), so there are two.
-    expect(screen.getAllByRole('button', { name: /Add Certificate/i })).toHaveLength(2);
+    // Toolbar is still usable so the user can retry / widen the filter. The empty
+    // state no longer repeats the offer: one CTA per page (PR #1336), so exactly one.
+    expect(screen.getAllByRole('button', { name: /Add Certificate/i })).toHaveLength(1);
   });
 
   it('renders the data state: the toolbar reports the record count', () => {

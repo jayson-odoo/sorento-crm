@@ -22,7 +22,7 @@ Two independently measured mechanisms combine to break this turn today:
    (`resolve_gate.py::resolve_entity_body`, `lanes/business/resolve_gate.py:733-776`)
    sends BOTH `spec_fallback: true` and `require={"stock": true}` + `scope_terms`
    derived from the two `category`-hinted entities ("close couple wc", "p trap"). The
-   `require` branch wins (`payload.require and not _has_exact_product_match(...)`,
+   `require` branch wins (`payload.require and not _code_matched(...)`,
    references.py:2639). Inside it, `derive_search_inputs(..., allow_model=False)`
    (`product_spec_understanding.py`, references.py:2687) is the DETERMINISTIC reader
    that decides `specs` - measured HERE (this session's own instrumented replay,

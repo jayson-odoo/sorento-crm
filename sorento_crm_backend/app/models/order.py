@@ -151,6 +151,33 @@ class Customer(Base, CompanyScopedMixin):
         back_populates="customer",
         cascade="all, delete-orphan",
     )
+    # The salesperson master row `sales_agent_id` points at. Eager (the customers list
+    # draws every row, and a per-row lazy load would be one query per customer for a
+    # single code + name), but `selectin` rather than `joined`: `joined` chains through
+    # `SalesAgent.contact` (also `lazy="joined"`, `app/models/sales_agent.py`), so it added
+    # TWO LEFT OUTER JOINs to every `Customer` load, including ones that never read an
+    # agent field at all - `/customers/select` (~6,397 rows, unpaged by default) and the
+    # importer's bulk `query(Customer)` (PR #1177 review, nit 5). `selectin` is still one
+    # extra query for the whole result set (never per-row), just not joined onto rows that
+    # do not ask for it.
+    sales_agent = relationship("SalesAgent", lazy="selectin")
+
+    @property
+    def sales_agent_code(self):
+        """The agent code (`sales_agents.sales_agent`), for `CustomerResponse`.
+
+        A UUID is never shown in the UI (Cursor rule), so the response carries this
+        alongside the id.
+        """
+        agent = self.sales_agent
+        return agent.sales_agent if agent else None
+
+    @property
+    def sales_agent_name(self):
+        """The person behind the code (`sales_agents.person_label`), same reason as
+        `sales_agent_code` - null until the captain annotates the agent."""
+        agent = self.sales_agent
+        return agent.person_label if agent else None
 
     __table_args__ = (
         Index("ix_customers_is_active", "is_active"),
@@ -194,6 +221,7 @@ class CustomerContact(Base, CompanyScopedMixin):
     """Main or stakeholder person linked to a business customer profile."""
 
     __tablename__ = "customer_contacts"
+    __audit_parent__ = "customer_id"  # history rolls up to the header
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     customer_id = Column(UUID(as_uuid=False), ForeignKey("customers.id", ondelete="CASCADE"), nullable=False)
@@ -333,6 +361,8 @@ class Order(Base, CompanyScopedMixin):
 class OrderLine(Base, CompanyScopedMixin):
     """Delivery order detail line: product + warehouse + qty + pricing."""
     __tablename__ = "order_lines"
+    __audit_skip__ = "line table, 699 to 32,458 rows a day (measured 27 Sep 2026, review B3)"
+    __audit_parent__ = "order_id"  # history rolls up to the header
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     line_sequence = Column(Integer, nullable=False, default=1)
@@ -358,6 +388,19 @@ class OrderLine(Base, CompanyScopedMixin):
     tax = Column(Numeric(15, 4), nullable=True)
     total_excluding_tax = Column(Numeric(15, 4), nullable=True)
     total_including_tax = Column(Numeric(15, 4), nullable=True)
+    # The sales order line this DO line delivers (AutoCount's "transferred from"), the seam
+    # sales targets count delivered quantities by DO date through (sales plan 3.2, 16.1).
+    # Filled by the DO integration; NULL on every line uploaded before it. SET NULL, so
+    # deleting a sales order line never deletes a delivery.
+    sales_order_line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(
+            "sales_order_lines.id",
+            ondelete="SET NULL",
+            name="fk_order_lines_sales_order_line_id",
+        ),
+        nullable=True,
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -377,6 +420,7 @@ class OrderLine(Base, CompanyScopedMixin):
             unique=False,
         ),
         UniqueConstraint("order_id", "line_sequence", name="uq_order_lines_order_id_line_sequence"),
+        Index("ix_order_lines_sales_order_line_id", "sales_order_line_id"),
     )
 
 
@@ -384,6 +428,7 @@ class SalesOrder(Base, CompanyScopedMixin):
     """SCM sales order (demand / committed source). Public core record - survives
     module uninstall. Sits with Order/DO in the order domain."""
     __tablename__ = "sales_orders"
+    __audit_skip__ = "AutoCount sales order mirror written by the ESB sync, 10,829 to 68,710 rows a day (measured 27 Sep 2026, review B3); S1 records the ingest verdict as an event"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     # Unique per COMPANY, not globally: migration 305 dropped
@@ -461,6 +506,8 @@ class SalesOrder(Base, CompanyScopedMixin):
         Index("ix_sales_orders_so_number", "so_number"),
         Index("ix_sales_orders_status", "status"),
         Index("ix_sales_orders_sales_agent_id", "sales_agent_id"),
+        # Sales targets bucket achievement by order date (sales plan 3.1, 16.1).
+        Index("ix_sales_orders_order_date", "order_date"),
         # `order_link_service.book_so_numbers_by_ref` filters `source_ref IN (...)` to
         # resolve the book's own SO linkage on a purchase-order line (review of PR #764,
         # F3) - unindexed, this was a sequential scan over the whole table on every PO
@@ -476,6 +523,8 @@ class SalesOrder(Base, CompanyScopedMixin):
 class SalesOrderLine(Base, CompanyScopedMixin):
     """Open SO line - feeds committed / net-position views by product×warehouse."""
     __tablename__ = "sales_order_lines"
+    __audit_skip__ = "AutoCount sync line table, 47,507 to 286,917 rows a day (measured 27 Sep 2026, review B3)"
+    __audit_parent__ = "sales_order_id"  # history rolls up to the header
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     sales_order_id = Column(UUID(as_uuid=False), ForeignKey("sales_orders.id", ondelete="CASCADE"), nullable=False)

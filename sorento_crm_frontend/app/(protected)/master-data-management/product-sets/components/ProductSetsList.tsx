@@ -285,7 +285,6 @@ export default function ProductSetsList() {
           listingKey="master_data.product_sets.view"
           tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
           emptyMessage="No product sets match that search."
-          emptyAction={listPrimaryAction}
         >
           <Card>
             <CardHeader className="block">

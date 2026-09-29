@@ -45,9 +45,9 @@ export default function TicketWatchersSection({ ticket, onChange }: Props) {
         .filter((u) => !watcherIds.has(u.id))
         .map((u) => ({
           value: u.id,
-          label: u.name || u.email,
-          searchText: `${u.name ?? ''} ${u.email}`,
-          description: u.email,
+          label: u.name || u.email || 'Unnamed user',
+          searchText: `${u.name ?? ''} ${u.email ?? ''}`,
+          description: u.email ?? undefined,
         })),
     [users, watcherIds],
   );

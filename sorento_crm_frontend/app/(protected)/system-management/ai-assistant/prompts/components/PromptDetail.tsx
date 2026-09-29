@@ -238,9 +238,8 @@ export function PromptDetail({ name }: { name: string }) {
             </Link>
           </Button>
         }
-      >
-        <p className="text-sm text-muted-foreground break-words">{meta.role}</p>
-      </PageHeader>
+      />
+      <p className="text-sm text-muted-foreground break-words">{meta.role}</p>
 
       {!meta.active ? (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800">

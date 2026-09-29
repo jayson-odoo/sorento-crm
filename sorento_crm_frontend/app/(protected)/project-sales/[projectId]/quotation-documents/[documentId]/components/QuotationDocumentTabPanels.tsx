@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { QuotationCoverLetterPanel, QuotationTermsPanel } from './QuotationLetterPanels';
+import { QuotationDocumentHeader, useQuotationHeaderDetails } from './QuotationDocumentHeader';
 import { QuotationSignatureBlock } from './QuotationSignatureBlock';
 import { useQuotationDocumentScreen } from './QuotationDocumentContext';
 
@@ -12,32 +13,26 @@ import { useQuotationDocumentScreen } from './QuotationDocumentContext';
  * The panels themselves are untouched on purpose. What the client asked for was to stop scrolling
  * past fifty priced lines to reach the terms, not for the terms to read differently.
  */
+/**
+ * The Header tab, first of the five (#1341): the letterhead card the customer reads (To, Attn,
+ * Our Ref, Your Ref, Date, Total) and who issued and opened each scope's current version. The
+ * owner on that strip: "this one should be in header details".
+ */
+export function QuotationHeaderTab() {
+  const { projectId, document } = useQuotationDocumentScreen();
+  const details = useQuotationHeaderDetails(projectId, document.scopes ?? []);
+  return <QuotationDocumentHeader document={document} details={details} />;
+}
+
 export function QuotationCoverLetterTab() {
-  const { document, canEdit, edit } = useQuotationDocumentScreen();
-  const staged = edit.documentDraft.cover_letter_html;
-  const editing = canEdit && edit.isEditing;
-  return (
-    <QuotationCoverLetterPanel
-      // The staged copy while one exists, so leaving for the scopes tab and coming back shows
-      // what was typed rather than what the server still holds.
-      html={staged !== undefined ? staged : document.cover_letter_html}
-      onChange={
-        editing ? (html) => edit.stageDocument({ cover_letter_html: html }) : undefined
-      }
-    />
-  );
+  const { document } = useQuotationDocumentScreen();
+  // A read: the letter is edited with the rest of the quotation in the form page (#1341).
+  return <QuotationCoverLetterPanel html={document.cover_letter_html} />;
 }
 
 export function QuotationTermsTab() {
-  const { document, canEdit, edit } = useQuotationDocumentScreen();
-  const staged = edit.documentDraft.terms_html;
-  const editing = canEdit && edit.isEditing;
-  return (
-    <QuotationTermsPanel
-      html={staged !== undefined ? staged : document.terms_html}
-      onChange={editing ? (html) => edit.stageDocument({ terms_html: html }) : undefined}
-    />
-  );
+  const { document } = useQuotationDocumentScreen();
+  return <QuotationTermsPanel html={document.terms_html} />;
 }
 
 export function QuotationSignaturesTab() {

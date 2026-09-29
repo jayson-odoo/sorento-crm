@@ -30,6 +30,11 @@ class Company(Base):
     # answer carries no Outstanding (PLAN company-so-feed-flag).
     so_feed_live = Column(Boolean, nullable=False, default=True, server_default="true")
     autocount_ref = Column(String(255), nullable=True)  # AutoCount company reference
+    # When an accepted AutoCount `stock_balances` push batch last confirmed this
+    # company's stock (UTC, naive), unchanged rows included. The push writes no
+    # ledger row, so without this the stock "Data last updated" footer only ever
+    # saw the last BULK_IMPORT. NULL = never pushed.
+    stock_push_confirmed_at = Column(DateTime(timezone=False), nullable=True)
     logo_url = Column(String(500), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 

@@ -253,7 +253,8 @@ but now cannot reads as data loss.
 - Each section with optional data MUST have an explicit empty state.
 - Empty state should:
  - Explain why it's empty (e.g. "No team assignments yet")
- - Provide a clear next step (e.g. "Edit agent to add assignments" or "Add assignment" button)
+ - Name the next step in the hint text (e.g. "Edit agent to add assignments"), never as a
+   button or link: the page's one primary CTA lives in its header (owner ruling, PR #1336).
 - Use consistent copy and styling across modules.
 
 ---

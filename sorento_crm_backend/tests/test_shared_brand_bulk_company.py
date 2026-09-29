@@ -790,8 +790,11 @@ def test_ac_b13_five_hundred_files_share_in_one_insert_and_one_delete(db):
     # everything else `apply()` does (the folder/file collection queries, the
     # certificate-follow lookup above, the twin INSERT/DELETE themselves, the
     # outer commit).
+    # Plus, since the audit standard (#1281 S0) made `attachment_field_links` audited, that
+    # row's audit INSERT and the lookup of its parent attachment's company (so the audit row is
+    # scoped, not visible to every company): two more per field-keyed row, still none per file.
     BASE_STATEMENTS = 15
-    PER_FIELD_KEYED_ROW = 5
+    PER_FIELD_KEYED_ROW = 7
     bound = BASE_STATEMENTS + FIELD_KEYED * PER_FIELD_KEYED_ROW
     assert len(all_statements) <= bound, (
         f"{len(all_statements)} statements for 500 files ({FIELD_KEYED} field-keyed) - "
