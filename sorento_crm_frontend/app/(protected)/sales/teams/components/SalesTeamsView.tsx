@@ -88,8 +88,7 @@ export default function SalesTeamsView() {
             <PillOverflow
               ariaLabel={`Agents in ${row.original.name}`}
               items={agentPills(row.original)}
-              // The shared one-label-per-line body every label-only cell uses (#1377
-              // follow-up), instead of this list's own copy of the same markup.
+              // The shared one-label-per-line body every label-only cell uses.
               renderPopover={(items) => <PillOverflowList items={items} />}
               testId={`sales-team-agents-${row.original.id}`}
             />
