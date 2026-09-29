@@ -232,6 +232,20 @@ branches daily and before the backfill; the deletion sweep over a trailing DocDa
 (45 days, scout Q9); push each record verbatim with the envelope above; the per-entity pull /
 push switch (ruling Q5).
 
+### 1.13 Customer Branches screen (owner, 29 Sep: "i need the branch UI in #1356")
+
+Read only: the `branchbypage` push is the only writer (1.11, ruling Q2), so no Add, Edit, Delete
+or Import. `GET /api/v1/order-management/branches` (`order_management.branches.view`): page,
+limit, sort, dir, query (AccNo, branch code, branch name), `book`, `in_crm`, `customer_id`;
+`GET .../branches/books` for the Book filter. The customer is matched by AccNo = customer code,
+trimmed and case-insensitive, in the branch's company (the DO ingest's `DebtorCode` rule).
+Screens: "Customer Branches" under Delivery Orders after Customers (columns Customer Code,
+Customer Name, Branch Code, Branch Name, Book, Last Synced; listing key
+`order_management.branches.view`), and a Branches tab on the Customer detail and edit pages
+between Details and Asks (hidden without the view slug). The table has no address, contact or
+phone columns (2.1) and the `branchbypage` field list is still uninspected (6, item 1); trigger
+for typed address / contact columns: one captured real branch row.
+
 ## 2. Data model (migration `ac_grn_do_0001_ingest`, one head)
 
 Chained on `merge_29sep_batch4`: main carried two heads (`sales_agent_aliases_r7` and
