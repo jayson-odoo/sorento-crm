@@ -2143,7 +2143,7 @@ class ProjectOrderInquiryService:
             and self._own_arrival_credit_for_row(row, need=linked_qty) >= linked_qty
         ):
             return None
-        # The still-open links used to be released here (AC-RL-11) so the raise-time
+        # The still-open links used to be released here (AC-RL-12) so the raise-time
         # cascade could draft them onto the fresh row. Owner ruling 29 Sep 2026
         # (`PLAN-oi-links-intent-only.md`): they stay exactly as AutoCount has them; the
         # cascade only suggests, and purchasing moves the link in AutoCount.

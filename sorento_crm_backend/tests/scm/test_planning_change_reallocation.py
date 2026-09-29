@@ -357,11 +357,11 @@ def test_freed_po_qty_goes_to_the_dealer_pool_when_hot_selling(api):
     assert result["failed_orders"] == [], result["failed_orders"]
 
     db.expire_all()
-    # The line's own row: settled at 100, its PO link reduced to 100 (the existing
-    # confirm-time link-reduction mechanism, NOT Slice D - measured to already work).
+    # The line's own row: settled at 100, its PO link left at 134 (owner ruling 29 Sep
+    # 2026, PR #1371, AC-IO-1: the settle no longer trims a PO link on a quantity drop).
     own_row = db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == line.id).one()
     own_links = _links_of(db, own_row.id)
-    assert sum(Decimal(str(l.qty)) for l in own_links) == Decimal("100"), own_links
+    assert sum(Decimal(str(l.qty)) for l in own_links) == Decimal("134"), own_links
 
     # Option (c): no pool row for the freed 34. The batch records the intent for purchasing
     # to carry out in AutoCount, quoting the label the user confirmed (composed before the
@@ -498,10 +498,10 @@ def test_freed_po_qty_nobody_needs_stays_unclaimed_for_purchasing_never_a_pool_r
     db.expire_all()
     _assert_no_pool_row(db, world)
 
-    # The line's own row is settled at 100 by the confirm's own settle (AC-P3-8, not this
-    # path), so the PO line reads 34 unclaimed: that is what purchasing re-deals in
-    # AutoCount. Summed directly off `OrderInquiryLink`, which is what such a reader
-    # would compute.
+    # The line's own row is settled at 100 and keeps its 134 link (owner ruling 29 Sep
+    # 2026, PR #1371, AC-IO-1: no trim). The PO line reads fully claimed by that row; the
+    # 34 it is over-linked by is what purchasing re-deals in AutoCount. Summed directly
+    # off `OrderInquiryLink`, which is what such a reader would compute.
     own_row = db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == line.id).one()
     from app.models.procurement import PurchaseOrderLine
 
@@ -513,8 +513,9 @@ def test_freed_po_qty_nobody_needs_stays_unclaimed_for_purchasing_never_a_pool_r
     po_links = db.query(OrderInquiryLink).filter(OrderInquiryLink.po_line_id == po_line.id).all()
     assert {str(l.row_id) for l in po_links} == {str(own_row.id)}, po_links
     total_linked = sum(Decimal(str(l.qty)) for l in po_links)
-    assert total_linked == Decimal("100"), total_linked
-    assert po_line.qty_ordered - total_linked == Decimal("34")
+    assert total_linked == Decimal("134"), total_linked
+    assert po_line.qty_ordered - total_linked == Decimal("0")
+    assert "over-linked" in (own_row.note or ""), own_row.note
     notices = _assert_intent_recorded(db, row, po.po_number, "34", so_number=core_so.so_number)
     assert any("pool" in text for text in notices), notices
 
@@ -1100,20 +1101,22 @@ def test_a_freed_spo_share_is_unlinked_and_named_unallocated(api):
     db.expire_all()
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
+    # Owner ruling 29 Sep 2026 (PR #1371, AC-IO-6, supersedes D7's unlink): the SPO link
+    # STAYS as AutoCount has it; the apply records the release for purchasing to carry
+    # out in AutoCount, and the next sync brings it back.
     remaining_links = ProjectOrderInquiryService(db)._links_of(order_back_row.id)
-    assert remaining_links == [], (
-        "the SPO link must be removed - never record an instruction (Reallocate) that "
-        "is not carried out"
-    )
+    assert sum(Decimal(str(l.qty)) for l in remaining_links) == Decimal("100"), remaining_links
     spo_links = db.query(OrderInquiryLink).filter(OrderInquiryLink.spo_allocation_id == spo.id).all()
     linked_total = sum(Decimal(str(l.qty)) for l in spo_links)
-    assert spo.allocated_quantity - linked_total == Decimal("100"), (
-        "the incoming list's unallocated quantity for this SPO line must read 100 again"
+    assert spo.allocated_quantity - linked_total == Decimal("0"), (
+        "the allocation still reads claimed until purchasing releases it in AutoCount"
     )
 
     fresh = db.get(PlanningChangeRow, row.id)
     released = (fresh.result_json or {}).get("released_documents") or []
-    assert spo.spo_number in released, fresh.result_json
+    assert any(
+        spo.spo_number in text and "100" in text and "AutoCount" in text for text in released
+    ), fresh.result_json
 
 
 # --------------------------------------------------------------------------- #
@@ -1283,24 +1286,24 @@ def test_every_link_of_a_cancelled_row_finds_a_taker_survivor_and_cross_order(ap
     # link has no taker on this order; under option (c) it STAYS on the cancelled row
     # (never re-dealt cross-order by the planning side) and the batch records the intent
     # for purchasing to carry out in AutoCount.
+    # Owner ruling 29 Sep 2026 (PR #1371, AC-IO-3): the same-order survivor shift is gone
+    # too. The cancelled row keeps BOTH links, the survivor gains none, nothing is
+    # executed, and the one notice covers the whole 34.
     cancelled_row = db.get(OrderInquiryRow, row_1.id)
     remaining_links = _links_of(db, cancelled_row.id)
-    assert len(remaining_links) == 1, remaining_links
-    assert sum(Decimal(str(l.qty)) for l in remaining_links) == Decimal("17"), remaining_links
+    assert len(remaining_links) == 2, remaining_links
+    assert sum(Decimal(str(l.qty)) for l in remaining_links) == Decimal("34"), remaining_links
 
     survivor_row = db.get(OrderInquiryRow, row_2.id)
-    survivor_links = _links_of(db, survivor_row.id)
-    assert len(survivor_links) == 1, survivor_links
-    assert sum(Decimal(str(l.qty)) for l in survivor_links) == Decimal("17"), survivor_links
+    assert _links_of(db, survivor_row.id) == [], _links_of(db, survivor_row.id)
+    assert "Took" not in (survivor_row.note or ""), survivor_row.note
 
     other_row = db.get(OrderInquiryRow, other_row.id)
     assert _links_of(db, other_row.id) == [], _links_of(db, other_row.id)
     assert other_row.state == INQUIRY_RAISED, other_row.state
     assert "Found:" not in (other_row.note or ""), other_row.note
 
-    notices = _assert_intent_recorded(
-        db, row, po.po_number, "17", so_number=core_so.so_number, executed=1,
-    )
+    notices = _assert_intent_recorded(db, row, po.po_number, "34", so_number=core_so.so_number)
     assert len(notices) == 1, notices
 
 
@@ -1327,18 +1330,18 @@ def test_every_link_of_a_cancelled_row_finds_a_taker_survivor_then_release_when_
     assert result["failed_orders"] == [], result["failed_orders"]
 
     db.expire_all()
+    # Owner ruling 29 Sep 2026 (PR #1371, AC-IO-3): no survivor shift either. Both links
+    # stay on the cancelled row, the survivor gains none, one notice for the whole 34.
     cancelled_row = db.get(OrderInquiryRow, row_1.id)
     remaining_links = _links_of(db, cancelled_row.id)
-    assert len(remaining_links) == 1, remaining_links
-    assert sum(Decimal(str(l.qty)) for l in remaining_links) == Decimal("17"), remaining_links
+    assert len(remaining_links) == 2, remaining_links
+    assert sum(Decimal(str(l.qty)) for l in remaining_links) == Decimal("34"), remaining_links
 
     survivor_row = db.get(OrderInquiryRow, row_2.id)
-    survivor_links = _links_of(db, survivor_row.id)
-    assert len(survivor_links) == 1, survivor_links
-    assert sum(Decimal(str(l.qty)) for l in survivor_links) == Decimal("17"), survivor_links
+    assert _links_of(db, survivor_row.id) == [], _links_of(db, survivor_row.id)
 
     notices = _assert_intent_recorded(
-        db, row, fixture["po"].po_number, "17", so_number=core_so.so_number, executed=1,
+        db, row, fixture["po"].po_number, "34", so_number=core_so.so_number,
     )
     assert len(notices) == 1, notices
     assert not any("unallocated for purchasing" in text for text in notices), notices
@@ -1591,24 +1594,24 @@ def test_a_freed_document_lands_on_survivor_waiting_row_and_pool_three_way(api):
     # The survivor shift takes its one leg (the order's own placement, AC-P3-6); the two
     # remaining legs stay on the cancelled row under option (c), order B's row is not
     # linked, no pool row is written, and the intent for the remaining 34 is recorded once.
+    # Owner ruling 29 Sep 2026 (PR #1371, AC-IO-3): no leg moves at all. The cancelled
+    # row keeps all three links, the survivor and order B gain none, no pool row, and
+    # one notice records the whole 51 for purchasing.
     cancelled_row = db.get(OrderInquiryRow, row_1.id)
     kept = _links_of(db, cancelled_row.id)
-    assert len(kept) == 2, kept
-    assert sum(Decimal(str(l.qty)) for l in kept) == Decimal("34"), kept
+    assert len(kept) == 3, kept
+    assert sum(Decimal(str(l.qty)) for l in kept) == Decimal("51"), kept
 
-    survivor_links = _links_of(db, row_2.id)
-    assert len(survivor_links) == 1, survivor_links
-    assert sum(Decimal(str(l.qty)) for l in survivor_links) == Decimal("17"), survivor_links
+    assert _links_of(db, row_2.id) == [], _links_of(db, row_2.id)
 
     other_row = db.get(OrderInquiryRow, other_row.id)
     assert _links_of(db, other_row.id) == [], _links_of(db, other_row.id)
 
     _assert_no_pool_row(db, world)
-    claimed_po_line_ids = {l.po_line_id for l in survivor_links} | {l.po_line_id for l in kept}
-    assert claimed_po_line_ids == {pl.id for pl in po_lines}, (survivor_links, kept)
+    assert {l.po_line_id for l in kept} == {pl.id for pl in po_lines}, kept
 
     notices = _assert_intent_recorded(
-        db, change_row, po.po_number, "34", so_number=core_so.so_number, executed=1,
+        db, change_row, po.po_number, "51", so_number=core_so.so_number,
     )
     assert len(notices) == 1, notices
 

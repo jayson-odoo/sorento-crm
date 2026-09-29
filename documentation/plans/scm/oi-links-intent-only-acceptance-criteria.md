@@ -25,7 +25,7 @@ open-link release (`oi-replan-received-links-acceptance-criteria.md`) and D7's S
   and a same-order survivor with headroom for one of them, when the batch is applied, then
   the survivor gains no link and no "Took" note, the cancelled row keeps both links, and the
   batch row records the intent naming the survivor for purchasing.
-- AC-IO-4 [BE][T] (was AC-RL-11) Given a row linked to a received PO line and an open PO
+- AC-IO-4 [BE][T] (was AC-RL-12) Given a row linked to a received PO line and an open PO
   line, when the settle redirects it, then the open link stays on the row, the received
   link stays as history, and no link is written onto either line.
 - AC-IO-5 [BE][T] (G2) Given a planning-change apply that raises or settles a Buy row with

@@ -387,7 +387,12 @@ def test_apply_updates_the_surviving_lines_inquiry_row_in_place(api):
 # ---------------------------------------------------------------------------
 
 
-def test_a_closed_lines_rows_are_cancelled_and_their_links_move_to_the_survivor(api):
+def test_a_closed_lines_rows_are_cancelled_and_their_links_stay_for_purchasing(api):
+    """Was `..._and_their_links_move_to_the_survivor` (AC-P3-6). Owner ruling 29 Sep 2026
+    (PR #1371, `PLAN-oi-links-intent-only.md` AC-IO-3): "a cancelled line shouldn't
+    directly hand its PO link to its sibling". The closed lines' rows are cancelled and
+    KEEP their links exactly as AutoCount has them; the survivor holds only its own
+    document and reads partly linked until purchasing moves the links in AutoCount."""
     fixture = _form_three(api)
     world = fixture["world"]
     line_1, line_2, line_3 = fixture["lines"]
@@ -400,8 +405,8 @@ def test_a_closed_lines_rows_are_cancelled_and_their_links_move_to_the_survivor(
         rows = _rows_of(world, closed)
         assert rows, "a cancelled row is kept, never deleted"
         assert all(r.state == INQUIRY_CANCELLED for r in rows)
-        assert not ProjectOrderInquiryService(world.db)._links_of(rows[0].id), (
-            "its links moved rather than being dropped"
+        assert ProjectOrderInquiryService(world.db)._links_of(rows[0].id), (
+            "its links stay on the cancelled row for purchasing to move in AutoCount"
         )
 
     survivor = _order_row(world, line_1)
@@ -409,8 +414,8 @@ def test_a_closed_lines_rows_are_cancelled_and_their_links_move_to_the_survivor(
         link.document
         for link in ProjectOrderInquiryService(world.db)._links_of(survivor.id)
     )
-    assert documents == ["202604-S0083", "202606-S0082", "202607-S0031"]
-    assert survivor.state == INQUIRY_PLACED, "10 + 10 + 5 covers the whole 25"
+    assert documents == ["202604-S0083"], documents
+    assert survivor.state == INQUIRY_PARTLY_LINKED, "10 of 25 on a document, 15 still to buy"
 
 
 # ---------------------------------------------------------------------------
@@ -501,16 +506,22 @@ def test_qty_down_unlinks_the_latest_dated_link_first_and_writes_no_cancel_balan
 
     survivor = _order_row(world, line)
     assert Decimal(str(survivor.qty)) == Decimal("12")
+    # Owner ruling 29 Sep 2026 (PR #1371, AC-IO-1, supersedes AC-P3-8): "shrinking a line
+    # shouldn't trim its own PO link". Every link stays; the row reads over-linked and
+    # its note says so for purchasing to adjust in AutoCount.
     remaining = sorted(
         link.document
         for link in ProjectOrderInquiryService(db)._links_of(survivor.id)
     )
-    assert remaining == ["EARLY", "MIDDLE"], "the latest-dated link is given back first"
+    assert remaining == ["EARLY", "LATEST", "MIDDLE"], "no link is given back"
     kept = sum(
         Decimal(str(link.qty))
         for link in ProjectOrderInquiryService(db)._links_of(survivor.id)
     )
-    assert kept == Decimal("12"), "linked never exceeds the new quantity"
+    assert kept == Decimal("25"), "the links stand as AutoCount has them"
+    assert "over-linked" in (survivor.note or "") and "AutoCount" in (survivor.note or ""), (
+        survivor.note
+    )
     assert not (
         db.query(OrderInquiryRow)
         .filter(OrderInquiryRow.so_line_id == line.id,
@@ -869,8 +880,12 @@ def test_committed_v_counts_twenty_five_for_the_product_and_nothing_else(api):
         ),
         {"pid": world.product.id},
     ).scalar()
-    assert Decimal(str(committed)) == Decimal("0"), (
-        "every one of the 25 sits on a document, so nothing is left to buy"
+    # Owner ruling 29 Sep 2026 (PR #1371, AC-IO-3): the closed lines' 10 + 5 stay linked
+    # on their cancelled rows rather than moving to the survivor, so the survivor's own
+    # 10 is all it holds and 15 of the 25 counts as demand until purchasing re-links in
+    # AutoCount.
+    assert Decimal(str(committed)) == Decimal("15"), (
+        "the survivor holds its own 10; the other 15 is demand until AutoCount says otherwise"
     )
 
 
@@ -1227,14 +1242,12 @@ def test_a_survivor_with_partial_headroom_splits_the_retired_links_qty_across_su
     assert retiring_rows, "the closed line's row is cancelled, never deleted"
     retiring_links = service._links_of(retiring_rows[-1].id)
 
-    took = survivor_docs.get("RETIRING")
-    assert took is not None, "the survivor takes what it can hold, never nothing at all"
-    assert took == Decimal("6"), "the survivor takes exactly its own headroom, 6 of the 10"
-    assert not retiring_links, "the retired row keeps no link of its own"
-    # The other 4 goes back through the cascade (unlinked, free for the next row) rather
-    # than vanishing - the total the link ever carried is preserved across the split.
-    freed = Decimal("10") - took
-    assert freed == Decimal("4")
+    # Owner ruling 29 Sep 2026 (PR #1371, AC-IO-3, supersedes AC-P3-6's split): the
+    # survivor takes NOTHING from the planning side; the retiring row keeps its whole 10
+    # on RETIRING, and purchasing moves it in AutoCount.
+    assert survivor_docs.get("RETIRING") is None, survivor_docs
+    assert sum(Decimal(str(l.qty)) for l in retiring_links) == Decimal("10"), retiring_links
+    assert {l.document for l in retiring_links} == {"RETIRING"}, retiring_links
 
 
 # ---------------------------------------------------------------------------
@@ -1481,9 +1494,11 @@ def test_the_survivor_takes_the_closed_lines_documents_not_a_strangers(api):
         link.document
         for link in ProjectOrderInquiryService(world.db)._links_of(survivor.id)
     )
-    assert documents == ["202604-S0083", "202606-S0082", "202607-S0031"], (
-        "the closed lines' own placements follow the line that still needs them"
-    )
+    # Owner ruling 29 Sep 2026 (PR #1371, AC-IO-3): the closed lines' placements stay on
+    # their cancelled rows; the survivor keeps only its own document. The order-of-
+    # operations point this test pins still holds: no stranger's purchase order is dealt
+    # onto the survivor by the apply either.
+    assert documents == ["202604-S0083"], documents
     assert "ZZT-PO-FREE" not in documents, (
         "a free purchase order is not dealt in ahead of the order's own supply"
     )

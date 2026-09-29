@@ -108,6 +108,9 @@ Settle seam (`ProjectOrderInquiryService.refresh_for_decision` and `_settle_row_
   confirmation settles the line, Then the received link stays on the redirected row, the
   open link is removed from it through `_remove_links` (its capacity returns to the target),
   and the raise-time cascade may draft that open document onto the new row.
+  SUPERSEDED 29 Sep 2026 (owner ruling, PR #1371, `PLAN-oi-links-intent-only.md`
+  AC-IO-4): the open link stays on the redirected row exactly as AutoCount has it; the
+  cascade only suggests, and purchasing moves the link in AutoCount.
 - **AC-RL-13 [BE]** Given a row whose every link is still open (not received), When the
   confirmation settles the line, Then behaviour is unchanged from today: settle-in-place,
   links kept, `previous_qty` / `previous_delivery_date` carried.

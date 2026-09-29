@@ -1922,20 +1922,25 @@ def test_settle_raises_fresh_order_row_for_full_need(api):
     assert new_row.previous_delivery_date == WAS
 
 
-def test_settle_mixed_links_frees_open_link(api):
-    """AC-RL-12: the received link stays on the redirected row; the still-open one is
-    removed through `_remove_links`, so its capacity returns to the target."""
+def test_settle_mixed_links_keeps_the_open_link(api):
+    """AC-RL-12 said the still-open link is removed through `_remove_links` so its
+    capacity returns to the target. Owner ruling 29 Sep 2026 (PR #1371, AC-IO-4): the
+    open link stays on the redirected row exactly as AutoCount has it, beside the received
+    one, and the PO line still reads claimed by it. Was `..._frees_open_link`."""
     _client, world = api
     fixture = _redirected_fixture(api, open_qty="20")
     row = fixture["redirected_row"]
     open_line = fixture["open_po_line"]
 
     links = _links_of(world, row)
-    assert len(links) == 1
-    assert links[0].spo_allocation_id == fixture["received_allocation"].id
+    assert len(links) == 2, links
+    assert {l.spo_allocation_id for l in links if l.spo_allocation_id} == {
+        fixture["received_allocation"].id
+    }
+    assert {l.po_line_id for l in links if l.po_line_id} == {open_line.id}
 
     by_po, _by_spo = ProjectOrderInquiryService(world.db)._linked_by_target()
-    assert str(open_line.id) not in by_po, "the freed PO line must show no claimed quantity"
+    assert Decimal(str(by_po.get(str(open_line.id)) or 0)) == Decimal("20"), by_po
 
 
 def test_settle_keeps_row_with_only_open_links_in_place(api):
