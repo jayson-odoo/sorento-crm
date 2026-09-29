@@ -25,6 +25,12 @@ FROM spo_allocations;
 
 Not a gate on the build: both filters match by `warehouse_id` OR `location_code` (W3/W4).
 
+Answered (orchestrator, read-only on `sorento_cagent_stack`, data as of 2026-09-18):
+Q1 `po_lines = 3919`, `po_lines_with_warehouse = 2975` (~76%). Q2 `spo_lines = 77666`,
+`spo_with_warehouse_id = 76985`, `spo_code_only = 681`, `spo_no_location = 0`. Coverage is
+enough: both halves are built. Option (a) of the SPO list-default ask (top_n 10 for a
+no-product SPO ask) proceeds.
+
 ## Routing (S1..S4)
 
 - AC-1 `DOMAIN_BY_DOCUMENT["SPO"] == "spo_allocation"`; `PO`, `SO`, `DO`, `GRN` unchanged;

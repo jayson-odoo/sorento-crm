@@ -91,11 +91,20 @@ Sort (top selling precedent):
 - A message that names no entity, no domain and is `business_query` is planned over the
   carried focus (`apply.py:3255-3260`, `_is_idle_chat :1816` only fires for casual types).
 
-Warehouse coverage on the dev DB: NOT measurable from this sandbox (no shared DB access,
-by the crew contract). The SQL to run read-only is in the UAC (AC-0) and was handed to the
-orchestrator as a `crew-ask`. The build does not depend on the answer: both PO arms and the
-SPO tool filter by `warehouse_id` OR by the book's `location_code` (see W3), so a line
-whose location is not a warehouse row still matches its code.
+Warehouse coverage, measured read-only by the orchestrator on the shared dev DB
+`sorento_cagent_stack` (data as of 2026-09-18, UAC AC-0):
+
+| Table                                          | rows   | with `warehouse_id` | `location_code` only | no location |
+| ---------------------------------------------- | ------ | ------------------- | -------------------- | ----------- |
+| `purchase_order_lines` open, outstanding > 0   | 3,919  | 2,975 (~76%)        | n/a                  | 944         |
+| `spo_allocations`                              | 77,666 | 76,985              | 681                  | 0           |
+
+Coverage is enough to build both halves (orchestrator ruling, 29 Sep 2026). The 681 SPO
+lines with a code and no warehouse row are why both PO arms and the SPO tool filter by
+`warehouse_id` OR the book's `location_code` (see W3/W4). The ~24% of open PO lines with no
+warehouse cannot match any warehouse filter and are correctly absent from a "PO to BRW"
+answer. `PLAN-scm-reorder-revamp.md:31`'s "12,928 of 12,940 imported PO lines had no
+warehouse" describes an older import, not today's open book.
 
 Alembic on origin/main de8020fb has TWO heads: `eml_0002_seed_layouts` (#1350) and
 `mem_0003_parser_history` (#1304). `alembic heads` prints both; `scripts.bootstrap_env`
