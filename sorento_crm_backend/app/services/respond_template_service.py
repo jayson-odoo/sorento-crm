@@ -89,6 +89,13 @@ PARAM_VARIABLES = (
     # user's ``users.name`` (falls back to "Customer Service" for API-key/system
     # principals). Used by the chat reply templates so the contact knows who replied.
     "sender_name",
+    # Chatbot stock ask v2 S4 (``stock_ask_salesman``): the ask facts the salesman
+    # message carries. ``contact_name`` is the dealer contact who asked.
+    "outcome",
+    "customer_name",
+    "product",
+    "quantity",
+    "asked_at",
 )
 
 # Use cases whose template MUST map a slot to a specific variable, or the message
@@ -97,6 +104,7 @@ PARAM_VARIABLES = (
 # "every slot mapped to *something*" check. Enforced in set_default.
 REQUIRED_PARAM_VARIABLE: Dict[str, str] = {
     "portal_otp": "otp_code",
+    "login_otp": "otp_code",
 }
 
 _PARAM_RE = re.compile(r"\{\{(\d+)\}\}")

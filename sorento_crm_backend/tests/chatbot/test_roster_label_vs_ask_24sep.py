@@ -137,7 +137,10 @@ class TestAC1862TheBareCodeIsStillAPickByLabel:
 
         assert plan.trace.decision == {"kind": ANSWER, "why": "label_match"}, plan.trace.decision
         assert plan.domains == ["purchase_cost"], plan.domains
-        assert "domain_locked_by_pick" in plan.trace.rules_fired, plan.trace.rules_fired
+        # Issue #1352: the lock that ignored domain_hint under ANY pick is retired; a
+        # bare pick (no domain word of its own) answers in the roster's domain.
+        assert "pick_in_roster_domain" in plan.trace.rules_fired, plan.trace.rules_fired
+        assert "domain_locked_by_pick" not in plan.trace.rules_fired, plan.trace.rules_fired
         assert state2.pending is not None
         assert 1 in state2.pending.answered_positions, state2.pending.answered_positions
 
@@ -155,7 +158,10 @@ class TestAC1863ABarePositionIsStillAPick:
 
         assert plan.trace.decision == {"kind": ANSWER, "why": "positions"}, plan.trace.decision
         assert plan.domains == ["purchase_cost"], plan.domains
-        assert "domain_locked_by_pick" in plan.trace.rules_fired, plan.trace.rules_fired
+        # Issue #1352: the lock that ignored domain_hint under ANY pick is retired; a
+        # bare pick (no domain word of its own) answers in the roster's domain.
+        assert "pick_in_roster_domain" in plan.trace.rules_fired, plan.trace.rules_fired
+        assert "domain_locked_by_pick" not in plan.trace.rules_fired, plan.trace.rules_fired
         assert any(
             (p.get("canonical_code") or p.get("raw")) == "SRTWT5866-RG"
             for p in state2.focus.products
@@ -207,14 +213,13 @@ class TestAC1865TheRuleIsKindAgnosticOverATierPickToo:
         assert plan.domains == ["promotion"], plan.domains
         assert "domain_locked_by_pick" not in plan.trace.rules_fired, plan.trace.rules_fired
         # The tier landed on the focus as THIS message's own entity, never as a pick of
-        # the roster. The roster itself closes here (`new_ask_closes_stale_roster`),
-        # because `_roster_is_about` only matches a roster option against a dict-shaped
-        # focus row and a tier lands on `focus.tier` as a plain string - a separate,
-        # unmeasured seam, out of scope here, so this pins what actually happens rather
-        # than a survival the plan does not name for this kind.
+        # the roster. PR #1353 fix round 1 closed the seam this pin used to record:
+        # `_roster_is_about` now reads the code-only tier axis, so the roster is still
+        # about the subject ("Dealer" is one of its options) and stays stored underneath,
+        # as a product roster does when a new ask names one of its options (AC-PK015).
         assert "Dealer" in state2.focus.tier, state2.focus.tier
-        assert state2.pending is None
-        assert "new_ask_closes_stale_roster" in plan.trace.rules_fired, plan.trace.rules_fired
+        assert state2.pending is not None and state2.pending.kind == "tier_pick"
+        assert "new_ask_closes_stale_roster" not in plan.trace.rules_fired, plan.trace.rules_fired
 
     def test_bare_dealer_still_picks_position_2(self) -> None:
         pending = self._tier_pick_roster()
@@ -228,6 +233,9 @@ class TestAC1865TheRuleIsKindAgnosticOverATierPickToo:
 
         assert plan.trace.decision == {"kind": ANSWER, "why": "label_match"}, plan.trace.decision
         assert plan.domains == ["promotion"], plan.domains
-        assert "domain_locked_by_pick" in plan.trace.rules_fired, plan.trace.rules_fired
+        # Issue #1352: the lock that ignored domain_hint under ANY pick is retired; a
+        # bare pick (no domain word of its own) answers in the roster's domain.
+        assert "pick_in_roster_domain" in plan.trace.rules_fired, plan.trace.rules_fired
+        assert "domain_locked_by_pick" not in plan.trace.rules_fired, plan.trace.rules_fired
         assert state2.pending is not None
         assert 2 in state2.pending.answered_positions, state2.pending.answered_positions

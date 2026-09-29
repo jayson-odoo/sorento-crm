@@ -618,7 +618,13 @@ def _tier_options(rows: list[dict[str, Any]], *, asked_at_turn: int | None) -> p
     ]
     if len(options) < _MIN_ROSTER_OPTIONS:
         return None
-    return pending.ask("tier_pick", options, asked_at_turn=asked_at_turn)
+    # PR #1353 fix round 1: the domain this roster was asked FOR, as every other roster
+    # records it (contract 121, `_offer_answer` below). With no `domain` the pick
+    # judgement (`apply._answer_pending`) had no roster domain to compare the message's
+    # own "promotion" against, so a pick whose verdict kept `domain_hint: promotion`
+    # read as a pick in ANOTHER domain. The tier ask is the promotion lane's alone
+    # (`tier_gate.needs_tier_ask`).
+    return pending.ask("tier_pick", options, asked_at_turn=asked_at_turn, payload={"domain": "promotion"})
 
 
 def _access_ask_answer(
