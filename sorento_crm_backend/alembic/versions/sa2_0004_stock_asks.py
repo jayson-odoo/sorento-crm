@@ -8,14 +8,14 @@ resolvable customer still gets a row). Deleting a customer removes its asks (AC-
 schema `Base.metadata.create_all` already built (`scripts.bootstrap_env`).
 
 Revision ID: sa2_0004_stock_asks
-Revises: cpc4_cost_packaging_method
+Revises: chatbot_picker_domain_1352
 Create Date: 2026-09-28
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "sa2_0004_stock_asks"
-down_revision = "cpc4_cost_packaging_method"
+down_revision = "chatbot_picker_domain_1352"
 branch_labels = None
 depends_on = None
 
