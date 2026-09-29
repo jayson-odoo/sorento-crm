@@ -48,6 +48,10 @@ to A, customer Z assigned to B, asks with `created_at` set explicitly around a f
   and the to-do payload.
 - **AC-ST105 [BE]** `todo_for_agent(A, now)`: `open` holds only asks of X and Y with `state =
   open`; Z's asks and customer-less asks are absent.
+- **AC-ST105b [BE]** (#1366) An ask with `customer_id` NULL whose contact is linked (through
+  `respond_contact_customers`) to two customers, one handled by A and one by B, appears in BOTH
+  A's and B's `open` with `customer_name` null; an ask with no customer and an unlinked contact
+  appears in nobody's; the portal and CRM PATCH scopes follow the same rule.
 - **AC-ST106 [BE]** `open` holds every branch: an open `incoming` ask and a `console` ask are in
   `open` and count (Q5 (a)). [Q5]
 - **AC-ST107 [BE]** `open` is ordered by `created_at` ascending, id as tie-break; `done_today` by

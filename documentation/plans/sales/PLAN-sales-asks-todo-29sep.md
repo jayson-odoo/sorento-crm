@@ -301,6 +301,20 @@ outside this lane.) Nothing here
 adds a second copy of "whose customers", and no schema for the relation is added here.
 Ruled (crew, 29 Sep 2026): (a), build on `customers.sales_agent_id` now; swap when PR #1366 lands.
 
+**#1366 read (29 Sep 2026, crew: build against it; its branch is merged into this one):** #1366
+keeps `customers.sales_agent_id` as "handled by" and exposes contact -> customers through
+`respond_contact_customers` (multi-select, no primary in that lane). So "my customers" needs no
+swap: `_owning_agent_column()` already IS #1366's relation. What does change is the ask with NO
+customer: `resolve_customer` returns None for a contact linked to several customers with no
+primary (`contact_customer_service.py:48-63`), and multi-select linking makes that common, so
+such an ask would sit on nobody's list. The swap this lane makes in `_agent_scope` (the one
+function): an ask belongs to an agent when its customer is handled by the agent, OR when it has
+no customer and its contact is linked to a customer the agent handles (#1366's seam
+`contact_customer_service.agents_for_contact(db, contact_id)`, the same join). The row then
+shows the contact's name with no customer name. Nothing is written on the ask; the relation is
+read every time, so a later link or move is reflected at once. Built in the reshape round with
+its own tests (AC-ST105b).
+
 ## 5. Simplest thing, not built (and the trigger that would build it)
 
 - No digest or reminder (Q8 (a)): S4's per-ask WhatsApp stays the nudge.
