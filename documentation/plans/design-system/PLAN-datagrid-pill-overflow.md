@@ -1,6 +1,6 @@
 # PLAN: DataGrid pill cells fold to one line with a "+N" popover
 
-Status: PR #1377 merged (29 Sep 2026); follow-up lane PILL-OVERFLOW-2 in review (small fix track:
+Status: PR #1377 merged (29 Sep 2026); follow-up lane PILL-OVERFLOW-2 in review on PR #1378 (small fix track:
 no migration, no auth change, reuse-only frontend diff). Archive on merge of the follow-up PR.
 Lane: PILL-OVERFLOW (crew), branch `claude/datagrid-pill-overflow-31ss4p`, PR #1377
 Follow-up lane: PILL-OVERFLOW-2 (crew), branch `crew/pill-overflow-2`
@@ -89,4 +89,5 @@ or to clip "+N" (hides the count). Neither is layout-only, so it stays as docume
 
 ## Hand test
 
-`laneboard/scripts/<PR>.md`, covering both People pages and the OI Lines SPO column.
+`laneboard/scripts/1377.md`, covering both People pages and the OI Lines SPO column.
+PILL-OVERFLOW-2: `laneboard/scripts/1378.md`, Sales > Sales Teams Agents column.
