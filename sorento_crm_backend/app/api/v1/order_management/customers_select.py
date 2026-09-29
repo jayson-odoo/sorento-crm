@@ -69,6 +69,11 @@ async def get_customers_select(
                     "customer_code": c.customer_code,
                     "customer_name": c.customer_name,
                     "market_segment_code": c.market_segment_code,
+                    # The agent handling this customer, so a picker can say who a pick
+                    # would move it away from. The relationship is `selectin`: no per-row query.
+                    "sales_agent_id": c.sales_agent_id,
+                    "sales_agent_code": c.sales_agent_code,
+                    "sales_agent_name": c.sales_agent_name,
                 }
                 for c in customers
             ],

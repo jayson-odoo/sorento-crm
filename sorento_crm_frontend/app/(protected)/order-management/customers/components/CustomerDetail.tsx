@@ -16,6 +16,7 @@ import { useCustomerActions } from '../actions';
 import { CustomerAsksTab } from './CustomerAsksTab';
 import { CustomerBranchesTab } from './CustomerBranchesTab';
 import { useHasPermission } from '@/hooks/usePermissions';
+import CustomerLinkedContactsSection from './CustomerLinkedContactsSection';
 import CustomerOpportunitiesSection from './CustomerOpportunitiesSection';
 
 export type CustomerTab = 'details' | 'branches' | 'asks';
@@ -185,6 +186,10 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
                 )}
               </CardContent>
             </Card>
+          </div>
+
+          <div className="mt-6">
+            <CustomerLinkedContactsSection customerId={customerId} />
           </div>
 
           <CustomerOpportunitiesSection

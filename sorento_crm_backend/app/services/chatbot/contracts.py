@@ -572,6 +572,8 @@ class Focus(BaseModel):
     # `focus_to_wire` writes it, one shape, not two.
     sales_channel: str | None = None
     date_window: dict[str, Any] | None = None
+    # The PO/SPO sort axis {"by", "dir"} (PLAN-po-spo-warehouse-29sep S5); `Focus.sort`.
+    sort: dict[str, Any] | None = None
     # AC-1317: where a counted-set answer got to, `{set_key, offset}`.
     set_page: dict[str, Any] | None = None
     # Round 4 R5: the ask an open clarify question was about, `{term, options, ask}`.

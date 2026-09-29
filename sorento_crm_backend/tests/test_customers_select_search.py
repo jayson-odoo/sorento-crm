@@ -38,8 +38,17 @@ SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
 
 #: What a customer dropdown actually shows. Listed explicitly rather than dumped off the ORM
 #: row - the raw row carries credit limits and terms, and a dropdown is not the place to
-#: decide who may see a customer's credit.
-SELECT_KEYS = {"id", "customer_code", "customer_name", "market_segment_code"}
+#: decide who may see a customer's credit. The agent fields are there for the contact and
+#: agent customer pickers (PLAN-contact-customers-29sep D2).
+SELECT_KEYS = {
+    "id",
+    "customer_code",
+    "customer_name",
+    "market_segment_code",
+    "sales_agent_id",
+    "sales_agent_code",
+    "sales_agent_name",
+}
 
 
 @pytest.fixture

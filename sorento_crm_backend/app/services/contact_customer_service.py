@@ -16,12 +16,16 @@ and nobody would find out until the invoice.
 """
 from __future__ import annotations
 
+import uuid
 from typing import Sequence
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.access import RespondContact, RespondContactCustomer
 from app.models.order import Customer
+from app.models.sales_agent import SalesAgent
+from app.services.error_handler import handle_not_found
 from app.utils.phone_normalize import normalize_phone
 
 # Malaysian mobile numbers are written with and without the 60 country code and
@@ -66,23 +70,31 @@ def link_customer(
     is_primary: bool = False,
     source: str = "manual",
     linked_by: str | None = None,
+    customer: Customer | None = None,
 ) -> RespondContactCustomer:
     """Create (or update) the link. Re-linking the same pair is not an error.
 
     Idempotent because the callers are a human clicking twice and a backfill
-    re-running, and both deserve the same answer.
+    re-running, and both deserve the same answer. Two concurrent inserts of the same pair
+    are the same case: the loser hits the unique constraint and answers the winner's row.
+
+    `customer` is the row a route has already read under the caller's scope; passing it
+    saves the second lookup.
     """
-    existing = (
-        db.query(RespondContactCustomer)
-        .filter(
-            RespondContactCustomer.contact_id == contact_id,
-            RespondContactCustomer.customer_id == customer_id,
-        )
-        .first()
-    )
+    existing = get_link(db, contact_id, customer_id)
+
+    # The link belongs to the CUSTOMER's company. `before_insert` would otherwise stamp it
+    # from the caller's scope and raises when that scope spans two companies, so a staff
+    # user scoped to both could not link at all. Read under the caller's scope: a customer
+    # they cannot see leaves this None and the insert falls back to the old behaviour.
+    if customer is None:
+        customer = get_customer_in_scope(db, customer_id)
+    company_id = customer.company_id if customer is not None else None
 
     if is_primary:
-        _demote_other_primaries(db, contact_id, keep_customer_id=customer_id)
+        _demote_other_primaries(
+            db, contact_id, keep_customer_id=customer_id, company_id=company_id
+        )
 
     if existing:
         if is_primary:
@@ -92,12 +104,24 @@ def link_customer(
     link = RespondContactCustomer(
         contact_id=contact_id,
         customer_id=customer_id,
+        company_id=company_id,
         is_primary=is_primary,
         source=source,
         linked_by=linked_by,
     )
-    db.add(link)
-    db.flush()
+    try:
+        # A savepoint, so losing the race rolls back this insert only and not the caller's
+        # open transaction.
+        with db.begin_nested():
+            db.add(link)
+            db.flush()
+    except IntegrityError:
+        winner = get_link(db, contact_id, customer_id)
+        if winner is None:
+            raise
+        if is_primary:
+            winner.is_primary = True
+        return winner
     return link
 
 
@@ -117,22 +141,28 @@ def unlink_customer(db: Session, contact_id: str, customer_id: str) -> bool:
     return True
 
 
-def _demote_other_primaries(db: Session, contact_id: str, keep_customer_id: str) -> None:
+def _demote_other_primaries(
+    db: Session,
+    contact_id: str,
+    keep_customer_id: str,
+    company_id: str | None = None,
+) -> None:
     """Only one primary per contact per company - the index enforces it too.
 
     Demoting here rather than letting the insert fail means "make this the
     primary" behaves like the sentence it is, instead of asking the caller to
     clear the old one first.
     """
-    others = (
-        db.query(RespondContactCustomer)
-        .filter(
-            RespondContactCustomer.contact_id == contact_id,
-            RespondContactCustomer.customer_id != keep_customer_id,
-            RespondContactCustomer.is_primary.is_(True),
-        )
-        .all()
+    query = db.query(RespondContactCustomer).filter(
+        RespondContactCustomer.contact_id == contact_id,
+        RespondContactCustomer.customer_id != keep_customer_id,
+        RespondContactCustomer.is_primary.is_(True),
     )
+    if company_id is not None:
+        # The index is per (contact, company): a Mocha primary does not compete with a
+        # Sorento one, so demoting it would silently undo somebody else's choice.
+        query = query.filter(RespondContactCustomer.company_id == company_id)
+    others = query.all()
     for link in others:
         link.is_primary = False
     if others:
@@ -174,4 +204,130 @@ def propose_customers(db: Session, contact_id: str) -> Sequence[Customer]:
         for customer in candidates
         if customer.id not in already_linked
         and normalize_phone(customer.phone_number).endswith(suffix)
+    ]
+
+
+def get_customer_in_scope(db: Session, customer_id: str) -> Customer | None:
+    """The customer, or None when it does not exist OR the caller's scope hides it.
+
+    Deliberately one answer for both: a route built on this cannot tell a caller which of
+    the two it was. A malformed id is None too, so it never reaches Postgres as a cast.
+    """
+    try:
+        uuid.UUID(str(customer_id))
+    except (ValueError, AttributeError, TypeError):
+        return None
+    return db.query(Customer).filter(Customer.id == customer_id).first()
+
+
+def get_contact(db: Session, contact_id: str) -> RespondContact | None:
+    return db.query(RespondContact).filter(RespondContact.id == contact_id).first()
+
+
+def links_with_customers(
+    db: Session, contact_id: str
+) -> list[tuple[RespondContactCustomer, Customer]]:
+    """Each link with its customer (and, through the customer, its agent), oldest first."""
+    return (
+        db.query(RespondContactCustomer, Customer)
+        .join(Customer, Customer.id == RespondContactCustomer.customer_id)
+        .filter(RespondContactCustomer.contact_id == contact_id)
+        .order_by(RespondContactCustomer.created_at, RespondContactCustomer.id)
+        .all()
+    )
+
+
+def get_link(db: Session, contact_id: str, customer_id: str) -> RespondContactCustomer | None:
+    return (
+        db.query(RespondContactCustomer)
+        .filter(
+            RespondContactCustomer.contact_id == contact_id,
+            RespondContactCustomer.customer_id == customer_id,
+        )
+        .first()
+    )
+
+
+def get_link_by_id(db: Session, link_id: str) -> RespondContactCustomer | None:
+    """One link by its own id, under the caller's scope. A malformed id is None."""
+    try:
+        uuid.UUID(str(link_id))
+    except (ValueError, AttributeError, TypeError):
+        return None
+    return db.query(RespondContactCustomer).filter(RespondContactCustomer.id == link_id).first()
+
+
+def unlink_by_link_id(db: Session, link_id: str) -> bool:
+    """Drop one link row by its own id. The pending action's entry point.
+
+    A link that is gone (or that the action's scope cannot see) raises not-found, so the
+    parked action ends `failed` instead of reporting a commit that changed nothing."""
+    link = get_link_by_id(db, link_id)
+    if link is None:
+        raise handle_not_found("Customer link", link_id)
+    db.delete(link)
+    db.commit()
+    return True
+
+
+def agents_for_contact(db: Session, contact_id: str) -> list[SalesAgent]:
+    """The distinct sales agents handling this contact's customers, by agent code.
+
+    Derived off the links every time, never stored: the agent is a property of the
+    customer, and a copy on the contact would drift the first time a customer moved.
+    """
+    return (
+        db.query(SalesAgent)
+        .join(Customer, Customer.sales_agent_id == SalesAgent.id)
+        .join(RespondContactCustomer, RespondContactCustomer.customer_id == Customer.id)
+        .filter(RespondContactCustomer.contact_id == contact_id)
+        .distinct()
+        .order_by(SalesAgent.sales_agent)
+        .all()
+    )
+
+
+def link_row(link: RespondContactCustomer, customer: Customer) -> dict:
+    """One link as the routes answer it: the link plus its customer and that customer's agent."""
+    return {
+        "id": link.id,
+        "customer_id": customer.id,
+        "customer_code": customer.customer_code,
+        "customer_name": customer.customer_name,
+        "is_active": bool(customer.is_active),
+        "source": link.source,
+        "sales_agent_id": customer.sales_agent_id,
+        "sales_agent_code": customer.sales_agent_code,
+        "sales_agent_name": customer.sales_agent_name,
+        "created_at": link.created_at,
+    }
+
+
+def contact_customers_payload(db: Session, contact_id: str) -> dict:
+    """The contact card's read: the links, oldest first."""
+    return {
+        "data": [link_row(link, customer) for link, customer in links_with_customers(db, contact_id)],
+    }
+
+
+def links_for_customer(db: Session, customer_id: str) -> list[dict]:
+    """The WhatsApp contacts linked to one customer, oldest link first.
+
+    Read-only: the customer detail page lists them; linking happens from the contact."""
+    rows = (
+        db.query(RespondContactCustomer, RespondContact)
+        .join(RespondContact, RespondContact.id == RespondContactCustomer.contact_id)
+        .filter(RespondContactCustomer.customer_id == customer_id)
+        .order_by(RespondContactCustomer.created_at, RespondContactCustomer.id)
+        .all()
+    )
+    return [
+        {
+            "id": link.id,
+            "contact_id": contact.id,
+            "name": contact.name,
+            "phone_number": contact.phone_number,
+            "created_at": link.created_at,
+        }
+        for link, contact in rows
     ]

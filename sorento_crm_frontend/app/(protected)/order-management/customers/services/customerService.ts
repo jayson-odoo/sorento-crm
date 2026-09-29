@@ -2,6 +2,7 @@ import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type { Customer, CustomerFormData, CustomerDetail } from '../types/customer.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
+import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 
 
 export async function getCustomers(params: DataGridApiFetchParams & { status?: string }): Promise<DataGridApiResponse<Customer>> {
@@ -77,5 +78,81 @@ export async function getCustomerSalesAgentsSelect(): Promise<CustomerSalesAgent
     throw new Error(await extractApiError(response, 'Failed to load sales agents'));
   }
   const body: { data?: CustomerSalesAgentOption[] } = await response.json();
+  return body.data ?? [];
+}
+
+/** Page size of the customers select. */
+export const CUSTOMER_SELECT_PAGE_SIZE = 50;
+
+/** A customers-select option; `salesAgentId` lets a caller disable "already on this agent". */
+export type CustomerSelectOption = SearchableSelectOption & { salesAgentId?: string | null };
+
+/**
+ * One page of customers for the contact card's "Add customers" and the sales agent tab's
+ * "Assign customers". Server-searched, keyed by customer ID (a code is not unique).
+ *
+ *   GET /api/v1/order-management/customers/select?limit=50&offset&query
+ *     -> { data: { id, customer_code, customer_name, sales_agent_id, sales_agent_code,
+ *          sales_agent_name }[] }
+ *   The three sales_agent_* fields are additive (UAC AC-31), null when unassigned.
+ *
+ * value = customer id, label = `code - name`, description = the customer's current agent as
+ * `code - name`, or "No sales agent".
+ */
+export async function searchCustomersSelect(
+  query: string,
+  pageIndex = 0,
+): Promise<CustomerSelectOption[]> {
+  type Row = {
+    id: string;
+    customer_code: string;
+    customer_name: string;
+    sales_agent_id?: string | null;
+    sales_agent_code?: string | null;
+    sales_agent_name?: string | null;
+  };
+  const search = new URLSearchParams({
+    limit: String(CUSTOMER_SELECT_PAGE_SIZE),
+    offset: String(pageIndex * CUSTOMER_SELECT_PAGE_SIZE),
+  });
+  if (query.trim()) search.set('query', query.trim());
+  const response = await apiFetch(`/api/v1/order-management/customers/select?${search.toString()}`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load customers'));
+  }
+  const rows = ((await response.json()) as { data?: Row[] }).data ?? [];
+  return rows.map((c) => ({
+    value: c.id,
+    label: `${c.customer_code} - ${c.customer_name}`,
+    description: c.sales_agent_code
+      ? `${c.sales_agent_code} - ${c.sales_agent_name ?? ''}`.replace(/ - $/, '')
+      : 'No sales agent',
+    salesAgentId: c.sales_agent_id ?? null,
+  }));
+}
+
+export interface CustomerLinkedContact {
+  /** The link row id. Never rendered. */
+  id: string;
+  contact_id: string;
+  name: string | null;
+  phone_number: string | null;
+  created_at: string;
+}
+
+/**
+ * The WhatsApp contacts linked to a customer, for the customer detail page. Read-only.
+ *
+ *   GET /api/v1/order-management/customers/{customer_id}/linked-contacts
+ *     -> { data: { id, contact_id, name, phone_number, created_at }[] }
+ *   Gated `order_management.customers.view`; ordered by created_at; a customer hidden by
+ *   the caller's company scope, or unknown, is a 404.
+ */
+export async function getCustomerLinkedContacts(customerId: string): Promise<CustomerLinkedContact[]> {
+  const response = await apiFetch(`/api/v1/order-management/customers/${customerId}/linked-contacts`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load linked contacts'));
+  }
+  const body: { data?: CustomerLinkedContact[] } = await response.json();
   return body.data ?? [];
 }

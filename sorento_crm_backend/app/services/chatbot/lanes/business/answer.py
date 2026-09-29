@@ -492,6 +492,18 @@ def crossdomain_zeroset(
     availability = jsc.get(env_probe, "stock_availability")
     if isinstance(availability, list) and availability:
         return off("stock_availability")
+    # PR #1329 fix round: the same for a dealer's incoming reply - the product code and
+    # its ETAs are the whole answer, and a dealer is referred to their salesperson. Its
+    # lines carry the code in the title, never a field, so the probe below would read
+    # every code as missing; the presenter flags each line instead.
+    # An EMPTY dealer reply has no line to carry the flag, so the envelope's own
+    # `result_type` says it (fix round 2: "No incoming, no stock and nothing on order"
+    # and a purchasing offer reached a dealer's miss).
+    if jsc.get(env_probe, "result_type") == "incoming_dealer" or any(
+        jsc.get(jsc.get(it, "flags"), "dealer_view") is True
+        for it in _envelope_items(env_probe)
+    ):
+        return off("dealer_view")
 
     qf = parser if isinstance(parser, dict) else {}
     dh = qf.get("domain_hint")
@@ -2268,6 +2280,8 @@ NO_TOOL_ID = _NO_TOOL_ID
 _SCOPE_WORD = {
     "order": "delivery order",
     "incoming": "incoming shipment",
+    # PLAN-po-spo-warehouse-29sep W1: `purchase_order` now has a gate row, so it can miss.
+    "purchase_order": "purchase order",
     "inventory": "stock",
     "promotion": "promotion",
     "goods_receive": "goods receipt",

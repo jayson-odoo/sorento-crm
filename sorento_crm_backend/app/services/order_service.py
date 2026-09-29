@@ -3508,6 +3508,8 @@ class CustomerService:
         "email": Customer.email,
         "phone_number": Customer.phone_number,
         "is_active": Customer.is_active,
+        "region": Customer.region,
+        "market_segment_code": Customer.market_segment_code,
         "created_at": Customer.created_at,
         "updated_at": Customer.updated_at,
     }
@@ -3517,6 +3519,7 @@ class CustomerService:
         query: Optional[str] = None,
         sort_field: str = "created_at",
         sort_dir: str = "desc",
+        sales_agent_id: Optional[str] = None,
     ):
         """Build the filtered + sorted customers query shared by ``list_customers``
         and ``neighbours`` so the two can never drift.
@@ -3526,6 +3529,9 @@ class CustomerService:
         primary sort column has equal values.
         """
         q = self.db.query(Customer)
+
+        if sales_agent_id is not None:
+            q = q.filter(Customer.sales_agent_id == sales_agent_id)
 
         if query:
             q = q.filter(
@@ -3549,12 +3555,17 @@ class CustomerService:
         query: Optional[str] = None,
         sort_field: str = "created_at",
         sort_dir: str = "desc",
+        sales_agent_id: Optional[str] = None,
     ):
-        """List customers with pagination, search, and sorting."""
+        """List customers with pagination, search, and sorting.
+
+        `sales_agent_id` narrows to the customers one agent handles (the agent's
+        Customers tab)."""
         q = self._build_customer_list_query(
             query=query,
             sort_field=sort_field,
             sort_dir=sort_dir,
+            sales_agent_id=sales_agent_id,
         )
 
         total = q.count()
@@ -3676,6 +3687,40 @@ class CustomerService:
         self.db.commit()
         self.db.refresh(customer)
         return customer
+
+    def assign_sales_agent_many(self, customers: list, agent_id: str) -> list:
+        """Put several customers under `agent_id` in ONE transaction, from any agent.
+
+        Each pair is checked the way `update_customer` checks it (`_resolve_sales_agent`:
+        inactive agent or cross-company pair is a 422), and nothing is committed until every
+        one has passed, so a refusal leaves the whole selection as it was. A customer already
+        on this agent is skipped: re-saving the same agent is not a change. The customer
+        audit rows are written by the listener on flush, the same as for the form."""
+        for customer in customers:
+            if str(customer.sales_agent_id or "") == str(agent_id):
+                continue
+            self._resolve_sales_agent(
+                agent_id, customer_company_id=customer.company_id, require_active=True
+            )
+            customer.sales_agent_id = agent_id
+        self.db.commit()
+        for customer in customers:
+            self.db.refresh(customer)
+        return customers
+
+    def unassign_sales_agent(self, customer_id: str, agent_id: Optional[str]) -> bool:
+        """Clear the agent, but only while the customer is still under `agent_id`.
+
+        The unassign is parked for a few seconds; a customer moved to another agent in that
+        window is somebody else's now and is left alone. It is refused, not skipped, so the
+        parked action ends `failed` with this sentence instead of reporting a commit that
+        changed nothing (the same rule as unlinking a link that has vanished)."""
+        customer = self.get_customer(customer_id)
+        if str(customer.sales_agent_id or "") != str(agent_id or ""):
+            raise handle_conflict("This customer is no longer assigned to that sales agent.")
+        customer.sales_agent_id = None
+        self.db.commit()
+        return True
 
 
 class OrderStatusService:

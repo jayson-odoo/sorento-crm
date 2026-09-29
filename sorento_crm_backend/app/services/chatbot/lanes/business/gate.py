@@ -117,6 +117,11 @@ ALLOWED: dict[str, list[str]] = {
     # measured on replay case `console/case-024`, whose live call carried
     # `attachment_ids` with two real uuids.
     "resource_attachment": ["attachment_type", "attachment"],
+    # PLAN-po-spo-warehouse-29sep W1 (29 Sep 2026): replaces the no-row pass-through now that
+    # the PO tool takes `warehouse_ids`; a customer or transporter token no longer rides into
+    # it. Supersedes PLAN-chatbot-warehouse-entity-and-last-in line 47 ("purchase_order
+    # stays as is"). `ALLOWS_EMPTY` below keeps a bare "PO" listing the open book.
+    "purchase_order": ["product", "warehouse", "category", "brand"],
 }
 
 #: PLAN-low-stock-report S6 (owner ruling, console round 2, 14 Sep 2026): INTENTS that
@@ -139,6 +144,8 @@ ALLOWS_EMPTY: dict[str, bool] = {
     "product_attachment": False,
     "inventory": False,
     "order": False,
+    # PLAN-po-spo-warehouse-29sep W1: a bare "PO" lists the open book, as the old pass-through did.
+    "purchase_order": True,
 }
 
 # Domains that need a SPECIFIC type present to be scopable (beyond compatibility).

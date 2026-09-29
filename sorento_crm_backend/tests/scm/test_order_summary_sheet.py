@@ -686,7 +686,7 @@ def test_a3_a_superseded_decision_now_contributes_to_the_sheet(db, chain):
 
 def _scope_row(db, *, product, qty, delivery=None, verb=None, state=None, ack_state=None,
                so_number=None, customer_name="Scope customer", project_label=None,
-               project_title=None, redirected=False, delivered=0, line_qty=None):
+               project_title=None, redirected=False, delivered=0):
     """The A3/A5 "engine scope" shape (ruling 23 Sep): a project SO line reconciled to a
     REAL core `sales_order_lines` row - `run_scope_oi_rows` now reads product and the
     owed figure off that core line, `sol`, the same reconciled line the engine's own
@@ -696,12 +696,7 @@ def _scope_row(db, *, product, qty, delivery=None, verb=None, state=None, ack_st
     confirmed yet, which the OLD `so_supply_decisions` INNER JOIN dropped). Deliberately
     skips `register_project`/`SOSupplyDecision` entirely - the new contract reads
     neither - so this stays a smaller chain than `test_channel_read_model._confirmed_leg`,
-    not a copy of it; only the reconciled core line is shared machinery now.
-
-    ``line_qty`` (default: `qty`) is the CORE line's own `qty_ordered` - the ceiling
-    `_OWED_SQL`'s `LEAST(oir.qty, outstanding)` caps against; left at `qty` by default so
-    a plain call's owed figure equals `qty` exactly, unless a test is deliberately proving
-    the cap."""
+    not a copy of it; only the reconciled core line is shared machinery now."""
     from app.models.project_so import (  # noqa: PLC0415
         ACK_ACKNOWLEDGED,
         INQUIRY_RAISED,
@@ -726,7 +721,7 @@ def _scope_row(db, *, product, qty, delivery=None, verb=None, state=None, ack_st
     # line the engine's confirmed leg requires.
     core_line = SalesOrderLine(
         id=_u(), sales_order_id=so.id, product_id=product.id, warehouse_id=None,
-        qty_ordered=(line_qty if line_qty is not None else qty), qty_delivered=delivered,
+        qty_ordered=qty, qty_delivered=delivered,
         line_status="open",
     )
     db.add(core_line)

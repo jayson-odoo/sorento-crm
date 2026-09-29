@@ -90,6 +90,9 @@ class Customer(Base, CompanyScopedMixin):
         "last_name",
         "market_segment_code",
         "region",
+        # Who handles the customer: assigned from the customer form, the contact card's
+        # agent column and the sales agent's Customers tab, so a move has to be traceable.
+        "sales_agent_id",
     ]
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))

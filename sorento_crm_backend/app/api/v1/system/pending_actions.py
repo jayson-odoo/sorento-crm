@@ -48,6 +48,7 @@ from app.models.sla import (
 from app.services.error_handler import (
     AppException,
     handle_internal_error,
+    handle_not_found,
     handle_validation_error,
 )
 from app.services.form_action_grace import record_action_window_seconds
@@ -127,6 +128,25 @@ def _assert_required_payload(action_key: str, payload: dict) -> None:
     for key in _REQUIRED_PAYLOAD_KEYS.get(action_key, ()):
         if not (payload or {}).get(key):
             raise handle_validation_error(f"{key!r} is required for {action_key!r}.")
+
+
+def _assert_entity_visible(db: Session, action_key: str, entity_id: str) -> None:
+    """Park-time existence check for the two contact-customers actions.
+
+    The record is read under the requester's company scope, so a link or customer in
+    another company (or one that does not exist) refuses 404 before anything is parked -
+    the same answer either way, and no countdown for a record the caller cannot see.
+    Deliberately just these two keys: no other action asked for it."""
+    if action_key == "contact_customer_link.unlink":
+        from app.services.contact_customer_service import get_link_by_id
+
+        if get_link_by_id(db, entity_id) is None:
+            raise handle_not_found("Customer link", entity_id)
+    elif action_key == "customer.unassign_sales_agent":
+        from app.services.contact_customer_service import get_customer_in_scope
+
+        if get_customer_in_scope(db, entity_id) is None:
+            raise handle_not_found("Customer", entity_id)
 
 
 def _assert_undo_not_refused(
@@ -395,6 +415,7 @@ def create_pending_action(
     actor_id = (current_user or {}).get("id")
     _assert_permission(db, actor_id, action.key, action.permission)
     _assert_required_payload(body.action_key, body.payload)
+    _assert_entity_visible(db, body.action_key, body.entity_id)
     _assert_undo_not_refused(db, body.action_key, body.entity_id, body.payload, actor_id)
 
     try:

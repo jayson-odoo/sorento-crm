@@ -29,7 +29,12 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Popover,
+  PopoverContent,
+  PopoverPortal,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -161,19 +166,24 @@ function DeliveryDatesCell({ dates }: { dates: string[] }) {
             <ChevronDown className="size-3" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent
-          align="start"
-          className="w-44 p-2"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex flex-col gap-1">
-            {dates.map((d) => (
-              <span key={d} className="text-sm tabular-nums">
-                {fmtDate(d)}
-              </span>
-            ))}
-          </div>
-        </PopoverContent>
+        {/* Portalled (owner, 29 Sep 2026): at the document root the popover sits above
+            the rows beneath it instead of painting inside the table. */}
+        <PopoverPortal>
+          <PopoverContent
+            align="start"
+            collisionPadding={8}
+            className="w-44 p-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-col gap-1">
+              {dates.map((d) => (
+                <span key={d} className="text-sm tabular-nums">
+                  {fmtDate(d)}
+                </span>
+              ))}
+            </div>
+          </PopoverContent>
+        </PopoverPortal>
       </Popover>
     </div>
   );

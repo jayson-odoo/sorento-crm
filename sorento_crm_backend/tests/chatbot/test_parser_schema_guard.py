@@ -123,6 +123,10 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     # Round 3 (AC-MEM033/069, merged 5b110df8) RENAMES it `profile_statements` (a LIST,
     # up to 3) - same reader, same count.
     "profile_statements": "app/services/chatbot/engine.py",
+    # 29 Sep 2026 (PLAN-po-spo-warehouse-29sep S4/S5): the PO/SPO sort axis, read by
+    # `turn/apply.py::_focus_rules` onto `Focus.sort`. 45 declared keys -> 47.
+    "sort_by": "app/services/chatbot/turn/apply.py",
+    "sort_dir": "app/services/chatbot/turn/apply.py",
 }
 
 

@@ -228,11 +228,20 @@ class InboundShipment(Base, CompanyScopedMixin):
     supplier = relationship("Supplier", back_populates="inbound_shipments")
     attachment = relationship("Attachment")
     container_size = relationship("ContainerSize")
-    # Order matters: delete allocations before lines (allocations can reference lines)
+    # No delete cascade, on purpose (SPO-CASCADE, owner ruling 28 Sep 2026: "we shouldn't
+    # delete on cascade"). A shipping order is a document in its own right (see
+    # `SPOAllocation`); this shipment is only the container it was booked on. Deleting the
+    # shipment UNLINKS its lines (`InboundShipmentService._unlink_allocations` nulls
+    # `inbound_shipment_id` on each one as an audited update; `passive_deletes` leaves any
+    # straggler to the FK's own SET NULL), and a later shipment naming the same container
+    # picks them up again (`InboundShipmentService._relink_allocations_for_shipment`).
+    # `cascade="all, delete-orphan"` here is what hard-deleted the 18 AutoCount-synced lines
+    # of SPO-2026/09-0104 when a user deleted PL-2609-059, and the sync never re-pushes.
     spo_allocations = relationship(
         "SPOAllocation",
         back_populates="inbound_shipment",
-        cascade="all, delete-orphan",
+        cascade="save-update, merge",
+        passive_deletes=True,
     )
     shipment_lines = relationship(
         "InboundShipmentLine",
@@ -460,12 +469,23 @@ class SPOAllocation(Base, CompanyScopedMixin):
         a warehouse); a location we cannot place cannot cover a line standing at one.
     """
     __tablename__ = "spo_allocations"
+    # Stays opted out of the default-on hooks: the audit standard's measured 10x ceiling
+    # (`tests/test_audit_standard_s0_round3.py::projected_rows_per_day`) cannot credit the
+    # sync-writer exclusion, and this table's volume alone breaches it on paper. What the
+    # SPO-CASCADE incident needed (18 synced lines gone with no row saying who or when) is
+    # written explicitly instead: `procurement_service._audit_spo_line` records every
+    # staff-driven delete of a line (single, bulk, whole document) and the unlink when a
+    # packing list is deleted, attributed to the stamped actor.
     __audit_skip__ = "shipping order allocation lines from the sync, 2,602 to 29,343 rows a day (measured 27 Sep 2026, review B3)"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     spo_number = Column(String(50), nullable=True)
     spo_line_number = Column(Integer, nullable=True)
-    inbound_shipment_id = Column(UUID(as_uuid=False), ForeignKey("inbound_shipments.id", ondelete="CASCADE"), nullable=True)
+    #: SET NULL, never CASCADE (SPO-CASCADE, migration `spo_cascade_0001_set_null`): the
+    #: shipment is where the document was booked, not what owns it. Its deletion returns
+    #: the line to "promised, not yet on a named shipment"; `container_number` below is
+    #: what a later shipment relinks on.
+    inbound_shipment_id = Column(UUID(as_uuid=False), ForeignKey("inbound_shipments.id", ondelete="SET NULL"), nullable=True)
     warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=True)
     #: The stock location exactly as the book spelled it, whether or not we hold it. The
     #: only record of where an unheld-location line was meant to go.

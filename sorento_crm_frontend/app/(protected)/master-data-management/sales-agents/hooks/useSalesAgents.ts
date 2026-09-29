@@ -5,7 +5,9 @@ import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import {
   annotateSalesAgent,
   bulkAnnotateSalesAgents,
+  assignSalesAgentCustomers,
   getSalesAgent,
+  getSalesAgentCustomers,
   getSalesAgents,
 } from '../services/salesAgentService';
 import type {
@@ -97,5 +99,44 @@ export function useAnnotateSalesAgent() {
       toast.success('Sales agent updated');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to save sales agent'),
+  });
+}
+
+/** The agent's customers key. The unassign countdown invalidates it after the server commits. */
+export const SALES_AGENT_CUSTOMERS_PREFIX = ['sales-agent-customers'] as const;
+export const salesAgentCustomersKey = (agentId: string) => [...SALES_AGENT_CUSTOMERS_PREFIX, agentId];
+
+export function useSalesAgentCustomers(agentId: string, params: DataGridApiFetchParams) {
+  return useQuery({
+    ...LIST_QUERY_OPTIONS,
+    queryKey: [
+      ...salesAgentCustomersKey(agentId),
+      params.pageIndex,
+      params.pageSize,
+      params.sorting,
+      params.searchQuery,
+    ],
+    queryFn: () => getSalesAgentCustomers(agentId, params),
+    enabled: !!agentId,
+    retry: 1,
+  });
+}
+
+export function useAssignSalesAgentCustomers(agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (customerIds: string[]) => assignSalesAgentCustomers(agentId, customerIds),
+    onSuccess: (customers) => {
+      // The whole prefix: the customer left another agent's tab too, and that tab may be cached.
+      queryClient.invalidateQueries({ queryKey: SALES_AGENT_CUSTOMERS_PREFIX });
+      // The customer's own detail shows its agent.
+      queryClient.invalidateQueries({ queryKey: ['customer'] });
+      // The contact card shows the agent per linked customer, so it must refetch too.
+      queryClient.invalidateQueries({ queryKey: ['contact-customers'] });
+      toast.success(
+        customers.length === 1 ? 'Customer assigned' : `${customers.length} customers assigned`,
+      );
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to assign customers'),
   });
 }
