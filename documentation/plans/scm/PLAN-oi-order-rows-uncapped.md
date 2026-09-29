@@ -1,7 +1,7 @@
 # PLAN: An ORDER inquiry row is owed until it is linked, whatever AutoCount says about the line (23 Sep 2026)
 
 Status: BUILT 23 Sep 2026, review round 2; fix round 29 Sep 2026 (R3 = A recorded, reopen
-script removed, main merged, migration 527 re-parented onto `cpc4_cost_packaging_method`,
+script removed, main merged, migration 527 re-parented onto `chatbot_picker_domain_1352`,
 browser AC-OU-12 run). Feature track (one demand fragment across the view, the plan SELECT
 and the worklist ORM twin, a view migration).
 UAC: `oi-order-rows-uncapped-acceptance-criteria.md`.
