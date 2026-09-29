@@ -16,6 +16,9 @@ Resolution logic (PLAN-portal-forms-market-segment D3, r2 lavish ruling):
    ``is_enabled=True`` adds a type; ``is_enabled=False`` removes it - this is
    the only way to hide a base kind, or to grant an opt-in kind without a
    segment.
+4. `customer_asks` also needs the contact to be linked to a sales agent (fix round 5): the
+   list is that agent's customers' asks, so a switch left on for anyone else offers an
+   entry that could only ever answer 403.
 """
 import logging
 
@@ -25,7 +28,7 @@ from sqlalchemy.orm import Session
 from app.models.access import MarketSegment, respond_contact_market_segments
 from app.models.price_tag import ContactPortalFormOverride
 from app.services.error_handler import AppException
-from app.services.portal_service import SUPPORTED_TYPES
+from app.services.portal_service import CUSTOMER_ASKS_FORM_TYPE, SUPPORTED_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,7 @@ _KIND_LABELS: dict[str, str] = {
     "sponsorship_form": "Sponsorship Form",
     "price_tag_request": "Price Tag Request",
     "sales_opportunity": "Sales Opportunities",
+    "customer_asks": "Customer asks",
 }
 
 
@@ -69,8 +73,9 @@ def inherited_form_types(db: Session, contact_id: str) -> set[str]:
     return inherited
 
 
-def resolve_visible_form_types(db: Session, contact_id: str) -> set[str]:
-    """Return the set of portal form type strings visible to ``contact_id``."""
+def switched_form_types(db: Session, contact_id: str) -> set[str]:
+    """Steps 1 to 3: base kinds, segment grants, per-contact overrides. The Customer asks
+    route reads this after its own agent check, so the agent is resolved once per request."""
 
     # Steps 1+2: base four, plus the union of portal_form_types across the
     # contact's assigned market segments.
@@ -88,6 +93,18 @@ def resolve_visible_form_types(db: Session, contact_id: str) -> set[str]:
         else:
             visible.discard(override.form_type)
 
+    return visible
+
+
+def resolve_visible_form_types(db: Session, contact_id: str) -> set[str]:
+    """Return the set of portal form type strings visible to ``contact_id``."""
+    visible = switched_form_types(db, contact_id)
+    # Step 4. Imported here: price_tag_request_service imports half the portal.
+    if CUSTOMER_ASKS_FORM_TYPE in visible:
+        from app.services import price_tag_request_service
+
+        if price_tag_request_service.sales_agent_for_contact(db, contact_id) is None:
+            visible.discard(CUSTOMER_ASKS_FORM_TYPE)
     return visible
 
 

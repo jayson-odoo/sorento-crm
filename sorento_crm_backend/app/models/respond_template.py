@@ -138,6 +138,13 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # here: {{3}}" maps to ``idea_number`` / ``status_label`` / ``track_url``
     # (``message`` carries the whole sentence). Unmapped -> skipped and logged.
     "ideation_status_update",
+    # Chatbot stock ask v2 S4 (PLAN-chatbot-stock-ask-v2-24sep.md, R8). Sent to the
+    # customer's SALES AGENT when a dealer's stock ask is answered too big / in stock /
+    # no stock no incoming and the dealer contact's "Notify salesman" is on. Map params to
+    # ``customer_name`` / ``contact_name`` (the dealer who asked) / ``product`` /
+    # ``quantity`` / ``outcome`` / ``asked_at``. Unmapped out-of-window -> the send is
+    # skipped and logged failed; in-window it sends the default one-line wording.
+    "stock_ask_salesman",
 )
 
 # Chat reply use cases - a *_chat / conversation_chat default MUST map a slot to the

@@ -84,7 +84,8 @@ export type UseCase =
   | 'price_tag_update'
   | 'ideation_draft_reminder'
   | 'ideation_status_update'
-  | 'supplier_request_chat';
+  | 'supplier_request_chat'
+  | 'stock_ask_salesman';
 
 export type ParamVariable =
   | 'contact_name'
@@ -115,7 +116,12 @@ export type ParamVariable =
   | 'handler_name'
   | 'idea_number'
   | 'status_label'
-  | 'track_url';
+  | 'track_url'
+  | 'outcome'
+  | 'customer_name'
+  | 'product'
+  | 'quantity'
+  | 'asked_at';
 
 export interface WhatsAppTemplate {
   id: string;
@@ -360,6 +366,12 @@ export const USE_CASES: {
     description:
       'Sent to the requester each time their idea moves on the ideas board (new stage, merged into another idea, or separated again). Always sent as this template. Use a Utility template; map params to "Idea number", "New status label" and "Track link", or one param to "Full update message".',
   },
+  {
+    key: 'stock_ask_salesman',
+    label: 'Stock Ask - Salesman Notification',
+    description:
+      'Sent to the customer\'s sales agent when the chatbot answers a dealer\'s stock ask (too big, in stock, or no stock and no incoming) and the dealer contact has "Notify salesman" on. Map params to "Customer", "Contact name" (the dealer who asked), "Product", "Quantity", "Outcome" and "Asked at".',
+  },
 ];
 
 export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: string }[] = [
@@ -392,6 +404,11 @@ export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: 
   { key: 'status_label', label: 'New status label', description: 'Ideation: the new stage, or "combined with IDEA-0012" / "handled separately again from IDEA-0012, now <stage>"' },
   { key: 'track_url', label: 'Track link', description: 'Ideation: public link to follow the idea, no login needed' },
   { key: 'update', label: 'Update', description: 'Lean action core - technical reply / "Approved" / "Rejected, reason: X" / "Processed by CS" / "Root cause is X" / "Resolution is X". No preamble or link.' },
+  { key: 'outcome', label: 'Outcome', description: 'Stock ask: in stock / too big / no stock no incoming / no cap set for <category>' },
+  { key: 'customer_name', label: 'Customer', description: 'Stock ask: the customer the dealer contact buys for' },
+  { key: 'product', label: 'Product', description: 'Stock ask: product code - name' },
+  { key: 'quantity', label: 'Quantity', description: 'Stock ask: the quantity the dealer asked for' },
+  { key: 'asked_at', label: 'Asked at', description: 'Stock ask: when the dealer asked (DD/MM/YYYY HH:MM, Malaysia time)' },
 ];
 
 
