@@ -14,6 +14,8 @@ from app.services.error_handler import AppException, handle_internal_error
 from app.services.po_last_cost_service import last_cost_rows
 from app.services.purchase_order_service import (
     PO_GROUP_BY_AXES,
+    PO_SORT_DIRS,
+    PO_SORT_KEYS,
     group_rows,
     purchase_orders_placed_rows,
     purchase_orders_placed_summary,
@@ -88,6 +90,13 @@ def get_purchase_orders_placed(
         None,
         description="Filter by canonical product UUIDs (csv / JSON / repeated).",
     ),
+    warehouse_ids: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Filter by warehouse UUIDs (csv / JSON / repeated): the PO line's warehouse; an SPO "
+            "allocation also matches by its book location code."
+        ),
+    ),
     expected_date_from: Optional[str] = Query(
         None, description="Filter by expected date from (inclusive). Line expected_date, else header's."
     ),
@@ -111,6 +120,11 @@ def get_purchase_orders_placed(
     Never nets against incoming SPO receipts (`spo_allocations.po_line_id` is
     NULL on every row) - "PO placed, not yet shipped" is the whole answer this
     route gives; A6 answers "last in" separately.
+
+    `warehouse_ids` narrows PO lines by their warehouse and SPO allocations by warehouse or
+    location code. `sort` is one of expected_date | product | supplier | outstanding_qty |
+    po_date | ordered_qty and `dir` asc | desc; anything else is a 422
+    (PLAN-po-spo-warehouse-29sep O1).
     """
     if group_by is not None and group_by not in PO_GROUP_BY_AXES:
         raise AppException(
@@ -119,13 +133,29 @@ def get_purchase_orders_placed(
             detail=f"allowed: {', '.join(sorted(PO_GROUP_BY_AXES))}",
             code="invalid_group_by",
         )
+    if sort is not None and sort not in PO_SORT_KEYS:
+        raise AppException(
+            422,
+            f"Unknown sort value '{sort}'",
+            detail=f"allowed: {', '.join(sorted(PO_SORT_KEYS))}",
+            code="invalid_sort",
+        )
+    if dir is not None and dir not in PO_SORT_DIRS:
+        raise AppException(
+            422,
+            f"Unknown dir value '{dir}'",
+            detail=f"allowed: {', '.join(sorted(PO_SORT_DIRS))}",
+            code="invalid_dir",
+        )
     try:
         resolved_product_ids = parse_uuid_list(product_ids, param_name="product_ids")
+        resolved_warehouse_ids = parse_uuid_list(warehouse_ids, param_name="warehouse_ids")
         _from = _parse_flex_date(expected_date_from)
         _to = _parse_flex_date(expected_date_to, end_of_day=True)
         rows = purchase_orders_placed_rows(
             db,
             product_ids=resolved_product_ids,
+            warehouse_ids=resolved_warehouse_ids,
             expected_date_from=_from.date() if _from else None,
             expected_date_to=_to.date() if _to else None,
             sort=sort or "expected_date",
@@ -149,6 +179,7 @@ def get_purchase_orders_placed(
                 **purchase_orders_placed_summary(
                     db,
                     product_ids=resolved_product_ids,
+                    warehouse_ids=resolved_warehouse_ids,
                     expected_date_from=expected_date_from,
                     expected_date_to=expected_date_to,
                 ),

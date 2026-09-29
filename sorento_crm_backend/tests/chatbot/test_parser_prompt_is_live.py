@@ -32,6 +32,7 @@ from app.services.chatbot_parser_prompt import (
     LIVE_SYSTEM_MESSAGE_SHA256,
     LOW_STOCK_ADDENDUM,
     MEMORY_ADDENDUM,
+    PO_SPO_WAREHOUSE_ADDENDUM,
     QUANTITY_ADDENDUM,
     SALES_ANALYSIS_ADDENDUM,
     SALES_REPORT_ADDENDUM,
@@ -198,7 +199,9 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # Merge of main bc75eb96 (#1353) into chatbot memory lane A (fix round 7, 29 Sep 2026):
 # main's +249 and this lane's -387 touch different spans and both stand:
 # 62722 + 249 = 62971.
-CONSTANT_CHARS = 62971
+# 62971 -> 62977 (29 Sep 2026, PLAN-po-spo-warehouse-29sep S2): the OUTSTANDING block's
+# "SPO" -> incoming becomes "SPO" -> spo_allocation, an in-body edit (+6).
+CONSTANT_CHARS = 62977
 
 #: The line the round 8 cut rewrote, as the live file carries it and as the constant does.
 COMPANIES_OFFERED_LIVE = (
@@ -239,6 +242,8 @@ def _without_growth_r1_addendum(text: str) -> str:
     # chatbot-stock-ask-v2 S3).
     if text.endswith(MEMORY_ADDENDUM):
         text = text[: -len(MEMORY_ADDENDUM)]
+    if text.endswith(PO_SPO_WAREHOUSE_ADDENDUM):
+        text = text[: -len(PO_SPO_WAREHOUSE_ADDENDUM)]
     if text.endswith(ESCALATION_CONFIRMATION_ADDENDUM):
         text = text[: -len(ESCALATION_CONFIRMATION_ADDENDUM)]
     if text.endswith(TOP_SELLING_ADDENDUM):

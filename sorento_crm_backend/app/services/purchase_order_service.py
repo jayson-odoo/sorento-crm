@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
@@ -43,6 +43,32 @@ from app.models.product import Product
 from app.services.company_scope import build_company_predicate, get_company_scope
 
 PO_GROUP_BY_AXES: frozenset[str] = frozenset({"product", "supplier", "date"})
+
+#: PLAN-po-spo-warehouse-29sep O1: the sort keys and directions `/placed` accepts. The ROUTE
+#: validates against these (a 422), so the `.get(sort, ...)` fallbacks below never fire.
+PO_SORT_KEYS: frozenset[str] = frozenset(
+    {"expected_date", "product", "supplier", "outstanding_qty", "po_date", "ordered_qty"}
+)
+PO_SORT_DIRS: frozenset[str] = frozenset({"asc", "desc"})
+
+
+def warehouse_codes_for(db: Session, warehouse_ids: Optional[list[str]]) -> list[str]:
+    """The `warehouse_code`s of these warehouse ids (PLAN-po-spo-warehouse-29sep W3).
+    One read; the session's company scope applies to it."""
+    if not warehouse_ids:
+        return []
+    rows = db.query(Warehouse.warehouse_code).filter(Warehouse.id.in_(warehouse_ids)).all()
+    return [code for (code,) in rows if code]
+
+
+def spo_warehouse_predicate(warehouse_ids: list[str], codes: list[str]):
+    """An SPO line is at a warehouse by its `warehouse_id` OR by the book's raw
+    `location_code` (`warehouse_id` is absent on lines whose location we hold no row
+    for; PLAN-po-spo-warehouse-29sep W3/W4)."""
+    by_id = SPOAllocation.warehouse_id.in_(warehouse_ids)
+    if not codes:
+        return by_id
+    return or_(by_id, SPOAllocation.location_code.in_(codes))
 
 
 def _plain_number(v: Any) -> Any:
@@ -61,6 +87,7 @@ def purchase_orders_placed_rows(
     db: Session,
     *,
     product_ids: Optional[list[str]] = None,
+    warehouse_ids: Optional[list[str]] = None,
     expected_date_from=None,
     expected_date_to=None,
     sort: str = "expected_date",
@@ -86,6 +113,8 @@ def purchase_orders_placed_rows(
     )
     if product_ids:
         q = q.filter(PurchaseOrderLine.product_id.in_(product_ids))
+    if warehouse_ids:
+        q = q.filter(PurchaseOrderLine.warehouse_id.in_(warehouse_ids))
     # Line `expected_date` else header's - COALESCE, not a Python fallback, so
     # the date filter, the sort and the SUMMARY all see the same effective value.
     effective_date = _effective_expected_date()
@@ -96,6 +125,8 @@ def purchase_orders_placed_rows(
         "product": Product.product_code,
         "supplier": Supplier.supplier_name,
         "outstanding_qty": delta,
+        "po_date": PurchaseOrder.issue_date,
+        "ordered_qty": PurchaseOrderLine.qty_ordered,
     }.get(sort, effective_date)
     order = sort_col.desc() if dir == "desc" else sort_col.asc()
     rows = (
@@ -133,7 +164,7 @@ def purchase_orders_placed_rows(
         )
 
     # Item 5: the unshipped SPO allocations, same scope and window, same shape.
-    spo_q = _unshipped_spo_query(db, product_ids=product_ids)
+    spo_q = _unshipped_spo_query(db, product_ids=product_ids, warehouse_ids=warehouse_ids)
     spo_q = _apply_spo_expected_date_window(spo_q, expected_date_from, expected_date_to)
     spo_delta = _spo_delta()
     spo_sort_col = {
@@ -141,6 +172,8 @@ def purchase_orders_placed_rows(
         "product": Product.product_code,
         "supplier": Supplier.supplier_name,
         "outstanding_qty": spo_delta,
+        "po_date": SPOAllocation.issue_date,
+        "ordered_qty": SPOAllocation.allocated_quantity,
     }.get(sort, SPOAllocation.expected_date)
     spo_order = spo_sort_col.desc() if dir == "desc" else spo_sort_col.asc()
     spo_rows = (
@@ -179,6 +212,8 @@ _SORT_KEY_FIELD = {
     "product": "product_code",
     "supplier": "supplier",
     "outstanding_qty": "outstanding_qty",
+    "po_date": "po_date",
+    "ordered_qty": "ordered_qty",
 }
 
 
@@ -210,7 +245,12 @@ def _spo_delta():
     return SPOAllocation.allocated_quantity - SPOAllocation.quantity_received
 
 
-def _unshipped_spo_query(db: Session, *, product_ids: Optional[list[str]]):
+def _unshipped_spo_query(
+    db: Session,
+    *,
+    product_ids: Optional[list[str]],
+    warehouse_ids: Optional[list[str]] = None,
+):
     """`(SPOAllocation, Product, Supplier)` for every allocation still on order from the
     supplier: pending, not yet on a shipment, quantity unreceived (see the module
     docstring for the `po_line_id` dedupe that is deliberately NOT here).
@@ -236,6 +276,8 @@ def _unshipped_spo_query(db: Session, *, product_ids: Optional[list[str]]):
     )
     if product_ids:
         q = q.filter(SPOAllocation.product_id.in_(product_ids))
+    if warehouse_ids:
+        q = q.filter(spo_warehouse_predicate(warehouse_ids, warehouse_codes_for(db, warehouse_ids)))
     return q
 
 
@@ -274,6 +316,7 @@ def purchase_orders_placed_summary(
     db,
     *,
     product_ids: Optional[list[str]] = None,
+    warehouse_ids: Optional[list[str]] = None,
     expected_date_from: Optional[str] = None,
     expected_date_to: Optional[str] = None,
 ) -> dict:
@@ -309,12 +352,16 @@ def purchase_orders_placed_summary(
     q = _scoped(_scoped(q, _p_line), _p_po)
     if product_ids:
         q = q.filter(PurchaseOrderLine.product_id.in_(product_ids))
+    if warehouse_ids:
+        q = q.filter(PurchaseOrderLine.warehouse_id.in_(warehouse_ids))
     q = _apply_expected_date_window(q, expected_date_from, expected_date_to)
     qty, count = q.one()
     # Item 5: the unshipped SPO allocations count too, under the same scope and window the
     # rows take - a summary that counts fewer rows than the list under it is the one
     # failure mode a summary has.
-    spo_q = _unshipped_spo_query(db, product_ids=product_ids).with_entities(
+    spo_q = _unshipped_spo_query(
+        db, product_ids=product_ids, warehouse_ids=warehouse_ids
+    ).with_entities(
         func.sum(_spo_delta()), func.count(SPOAllocation.id)
     )
     spo_q = _scoped(spo_q, _p_spo)

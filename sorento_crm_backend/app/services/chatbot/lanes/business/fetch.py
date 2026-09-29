@@ -502,6 +502,37 @@ GROUP_BY_TOOLS: frozenset[str] = frozenset(
 # A6: the one tool with its OWN `top_n` param (default 1, "last 3 in"); every
 # other GROUP_BY_TOOLS/ORDER_TOOLS member aliases `top_n` to `limit` instead
 # (above), since it has no `top_n` param of its own.
+# PLAN-po-spo-warehouse-29sep S6: the parser's `sort_by` mapped to each PO/SPO tool's own
+# `sort` key. A key a tool has no column for is absent, so it sends nothing and the tool's
+# own default order answers. `SORT_DEFAULT_DIR` is the direction when the parser named none.
+SORT_KEY_BY_TOOL: dict[str, dict[str, str]] = {
+    "crm_procurement_po_placed_list": {
+        "date": "po_date",
+        "expected_date": "expected_date",
+        "quantity": "ordered_qty",
+        "outstanding": "outstanding_qty",
+        "product": "product",
+        "supplier": "supplier",
+    },
+    "crm_procurement_spo_allocations_last_receipt_list": {
+        "date": "spo_date",
+        "expected_date": "spo_date",
+        "quantity": "spo_quantity",
+        "received_date": "gr_date",
+        "received_quantity": "gr_quantity",
+    },
+}
+SORT_DEFAULT_DIR: dict[str, str] = {
+    "date": "desc",
+    "expected_date": "asc",
+    "quantity": "desc",
+    "outstanding": "desc",
+    "received_date": "desc",
+    "received_quantity": "desc",
+    "product": "asc",
+    "supplier": "asc",
+}
+
 TOP_N_DIRECT_TOOLS: frozenset[str] = frozenset(
     {
         "crm_procurement_spo_allocations_last_receipt_list",
@@ -1074,6 +1105,13 @@ def entity_ids_transformer(
             out["top_n"] = top_n
         elif tool_name in ORDER_TOOLS or tool_name in GROUP_BY_TOOLS:
             out["limit"] = top_n
+    # PLAN-po-spo-warehouse-29sep S6: the sort axis, for the two PO/SPO tools only.
+    sort_by = jsc.get(semantic_input, "sort_by")
+    mapped = SORT_KEY_BY_TOOL.get(tool_name, {}).get(sort_by) if isinstance(sort_by, str) else None
+    if mapped:
+        out["sort"] = mapped
+        sort_dir = jsc.get(semantic_input, "sort_dir")
+        out["dir"] = sort_dir if sort_dir in ("asc", "desc") else SORT_DEFAULT_DIR[sort_by]
 
     # A counted set (the resolver's `predicate` rode through the gate) lists PRODUCTS,
     # never a ROW count: `limit` is the tool's own row cap (a stock answer carries a row

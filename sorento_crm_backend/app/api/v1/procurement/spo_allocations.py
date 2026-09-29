@@ -21,8 +21,8 @@ from app.schemas.procurement import (
     SPODocumentRow,
 )
 from app.schemas.common import ListResponse
-from app.services.error_handler import handle_internal_error
-from app.services.spo_last_receipt_service import last_receipt_rows
+from app.services.error_handler import AppException, handle_internal_error
+from app.services.spo_last_receipt_service import SPO_SORT_DIRS, SPO_SORT_KEYS, last_receipt_rows
 from app.services.uuid_list_param import parse_uuid_list
 
 router = APIRouter()
@@ -43,6 +43,10 @@ async def get_spo_last_receipt(
         1, ge=1, le=50,
         description="Lines per product when product_ids is given, else lines overall.",
     ),
+    sort: str = Query(
+        "spo_date", description="spo_date | spo_quantity | gr_date | gr_quantity (nulls last)."
+    ),
+    dir: str = Query("desc", description="asc | desc."),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -65,14 +69,34 @@ async def get_spo_last_receipt(
     answered ("expected" / "issued" / "recorded"), so the presenter never labels a
     bookkeeping timestamp as a promised delivery. `gr_date` is
     `picking_headers.picking_date` reached through `picking_lines.spo_allocation_id`, for
-    `picking_status = 'approved'` only. `warehouse_ids` narrows before the pick.
+    `picking_status = 'approved'` only. `warehouse_ids` narrows before the pick (a line matches
+    by its warehouse or its book location code).
+
+    `sort` / `dir` choose the order (default spo_date desc, nulls last); an unknown value is a
+    422 (PLAN-po-spo-warehouse-29sep O2).
     """
+    if sort not in SPO_SORT_KEYS:
+        raise AppException(
+            422,
+            f"Unknown sort value '{sort}'",
+            detail=f"allowed: {', '.join(sorted(SPO_SORT_KEYS))}",
+            code="invalid_sort",
+        )
+    if dir not in SPO_SORT_DIRS:
+        raise AppException(
+            422,
+            f"Unknown dir value '{dir}'",
+            detail=f"allowed: {', '.join(sorted(SPO_SORT_DIRS))}",
+            code="invalid_dir",
+        )
     try:
         rows = last_receipt_rows(
             db,
             product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
             warehouse_ids=parse_uuid_list(warehouse_ids, param_name="warehouse_ids"),
             top_n=top_n,
+            sort=sort,
+            dir=dir,
         )
         from fastapi.encoders import jsonable_encoder
         from fastapi.responses import JSONResponse
@@ -86,6 +110,8 @@ async def get_spo_last_receipt(
                 }
             )
         )
+    except AppException:
+        raise
     except Exception as e:  # noqa: BLE001
         raise handle_internal_error(str(e))
 

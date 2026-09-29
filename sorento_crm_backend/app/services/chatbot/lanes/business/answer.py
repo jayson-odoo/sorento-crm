@@ -2268,6 +2268,8 @@ NO_TOOL_ID = _NO_TOOL_ID
 _SCOPE_WORD = {
     "order": "delivery order",
     "incoming": "incoming shipment",
+    # PLAN-po-spo-warehouse-29sep W1: `purchase_order` now has a gate row, so it can miss.
+    "purchase_order": "purchase order",
     "inventory": "stock",
     "promotion": "promotion",
     "goods_receive": "goods receipt",

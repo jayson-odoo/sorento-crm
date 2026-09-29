@@ -66,7 +66,12 @@ POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
 # message's own domain": one DOMAIN IN MESSAGE rule plus the open numbered question and
 # stock task edits) measures 41,163 (+564); this lane merged over it without the addendum
 # measures 40,984 (still 179 under main).
-CEILING = 41_163
+# Re-pinned 29 Sep 2026 (PLAN-po-spo-warehouse-29sep M3): PO_SPO_WAREHOUSE_ADDENDUM (the SPO
+# routing rule, the warehouse cue under PO/SPO, the sort_by/sort_dir vocabulary) and the
+# "SPO" -> spo_allocation in-body edit take the prompt without MEMORY_ADDENDUM to 42,356 est.
+# tokens and the whole prompt to the 42,872 this test prints; CEILING is 42,872 - 512 = 42,360
+# so both assertions hold (+1,197 over 41,163).
+CEILING = 42_360
 # The memory addendum on its own, bounded separately so this PR's growth stays bounded.
 # 26 Sep baseline (lane d89110c0): 339 est. tokens. Round 4 (baf4c813, 28 Sep: the history
 # question in any wording, the number re-run, commercial_request) took it to 512, which is

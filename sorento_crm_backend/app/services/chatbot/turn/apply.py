@@ -58,7 +58,8 @@ from app.services.chatbot.turn.state import EXTRA_KIND_ALIASES, KIND_FIELD_MAP, 
 
 RESET_KEEPS = {"tier", "brands"}
 
-# D6, "domain follows the document": a turn that names a document kind and no domain is
+# D6, "domain follows the document" (SPO belongs to spo_allocation, not incoming, per the
+# 29 Sep 2026 owner ruling, PLAN-po-spo-warehouse-29sep S1): a turn that names a document kind and no domain is
 # about the domain that OWNS that document. A dict rather than a policy column because it
 # is five literals that follow from what the document IS - a migration for this would be a
 # table with one true row shape and no second reader.
@@ -66,7 +67,7 @@ DOMAIN_BY_DOCUMENT: dict[str, str] = {
     "SO": "order",
     "DO": "order",
     "PO": "purchase_order",
-    "SPO": "incoming",
+    "SPO": "spo_allocation",
     "GRN": "goods_receive",
 }
 
@@ -1045,6 +1046,10 @@ def _focus_rules(
                 # rule, unchanged).
                 focus.date_window = None
                 trace.rules_fired.append("new_ask_drops_date_window")
+            if focus.sort and not verdict.get("sort_by"):
+                # PLAN-po-spo-warehouse-29sep S5: the sort axis follows the window's rule.
+                focus.sort = None
+                trace.rules_fired.append("new_ask_drops_sort")
             # Hand pass 10 (owner ruling): the SAME rule, extended to the two axes
             # that hold no subject of their own - `tier` and `extra` are never a
             # SUBJECT (contract 121's `domain_in_message` table is unchanged: it
@@ -1120,6 +1125,10 @@ def _focus_rules(
             "end": verdict.get("date_filter_end"),
         }
         trace.rules_fired.append("date_restated_only")
+    if verdict.get("sort_by"):
+        # PLAN-po-spo-warehouse-29sep S5: the PO/SPO sort axis, written from the parser's field.
+        focus.sort = {"by": verdict["sort_by"], "dir": verdict.get("sort_dir")}
+        trace.rules_fired.append("sort_restated")
 
     _top_selling_rules(focus, verdict, decision, trace, was_ranking=was_ranking)
     return focus
@@ -1794,6 +1803,7 @@ _IDLE_CHAT_DISQUALIFIERS = (
     "document",
     "status",
     "sales_channel",
+    "sort_by",
     # PLAN-chatbot-top-x-hot-selling-24sep.md S4: "amount", "ordered" and "the
     # categories" answer the bot's own top selling question and name nothing else.
     "rank_by",
