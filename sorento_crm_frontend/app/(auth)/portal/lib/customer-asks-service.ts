@@ -9,7 +9,7 @@
  *          incoming, oldest first, cap 500), done_today: StockAsk[] (done_at >= today_start,
  *          newest first), truncated: boolean }
  *   PATCH /api/v1/public/portal/customer-asks/{id}  { state?, note? }  -> StockAsk
- *          (unchanged route; a transition to done now stamps `done_at` + `done_by` = the
+ *          (unchanged route; a transition to done now stamps `done_at` and the actor ids; `done_by` on the wire is the
  *          contact's label, a transition to open clears both, a note-only PATCH touches neither)
  *   GET   /api/v1/public/portal/customer-asks?state=done&page=&limit=  (unchanged, "Show done")
  * `StockAsk` gains `done_at` and `done_by`.
@@ -18,11 +18,6 @@ import { buildDataGridParams } from '@/lib/api-client';
 import { portalFetch, unwrap } from './portal-client';
 import type { StockAsk, StockAskPage, StockAskPatch, StockAskState } from '@/lib/stock-asks';
 import type { AskTodoPayload } from '@/lib/stock-asks-todo';
-import { getMockAskStore } from '@/lib/stock-asks-todo-mock';
-
-/** PHASE 1 MOCK: true serves the in-memory store; Phase 2 flips it and deletes the mock file. */
-const PHASE1_MOCK = true; // PHASE 1 MOCK
-const MOCK_ACTOR = 'Sean Ibrahim'; // PHASE 1 MOCK: the contact label the server will stamp
 
 const BASE = '/api/v1/public/portal/customer-asks';
 
@@ -40,7 +35,6 @@ export async function listCustomerAsks(params: {
   q?: string;
   state?: StockAskState;
 }): Promise<StockAskPage> {
-  if (PHASE1_MOCK) return getMockAskStore().list(params); // PHASE 1 MOCK
   const usp = buildDataGridParams(
     { pageIndex: params.page - 1, pageSize: params.limit },
     { q: params.q?.trim(), state: params.state },
@@ -52,14 +46,12 @@ export async function listCustomerAsks(params: {
 
 /** The to-do read: one payload, grouped on the client by `bucketTodo`. */
 export async function getCustomerAsksTodo(): Promise<AskTodoPayload> {
-  if (PHASE1_MOCK) return getMockAskStore().todo(); // PHASE 1 MOCK
   const res = await portalFetch(`${BASE}/todo`);
   if (res.status === 403) throw new NotASalesAgentError();
   return unwrap<AskTodoPayload>(res, 'Failed to load customer asks');
 }
 
 export async function updateCustomerAsk(askId: string, patch: StockAskPatch): Promise<StockAsk> {
-  if (PHASE1_MOCK) return getMockAskStore().patch(askId, patch, MOCK_ACTOR); // PHASE 1 MOCK
   const res = await portalFetch(`${BASE}/${encodeURIComponent(askId)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

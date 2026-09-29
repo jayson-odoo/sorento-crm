@@ -112,5 +112,5 @@ def customer_asks_update(
         ask_id,
         body.model_dump(exclude_unset=True),
         agent_id=agent_id,
-        actor=str(current_user.get("name") or current_user.get("email") or "-"),
+        actor_user_id=current_user["id"],
     )

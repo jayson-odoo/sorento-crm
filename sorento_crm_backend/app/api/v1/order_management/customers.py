@@ -171,7 +171,7 @@ def update_customer_ask(
         customer_id,
         ask_id,
         body.model_dump(exclude_unset=True),
-        actor=str(current_user.get("name") or current_user.get("email") or "-"),
+        actor_user_id=current_user["id"],
     )
 
 

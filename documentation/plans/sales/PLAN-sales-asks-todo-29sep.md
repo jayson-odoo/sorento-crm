@@ -1,6 +1,6 @@
 # PLAN: sales asks as a salesperson's to-do list, date-first (lane SALES-ASKS-TODO)
 
-Status: Phase 1 FE mock built and browser-verified 29 Sep 2026 (section 7b); grill posted on PR #1364 (crew-ask, 8 questions), Q6 ruled; the plan is written
+Status: owner rulings Q1 to Q8 received 29 Sep 2026 (section 0b, binding); Phase 1 mock (section 7b) being updated to them before the hand test is re-filed; Phase 2 red tests committed (5109da98). The plan was first written
 under the recommendations and each pending question is marked `[Q<n> pending]` where its answer
 changes the design. Track: full (one migration, two new routes under RBAC, one portal route).
 Plan created: 2026-09-29T08:20:00Z
@@ -31,6 +31,22 @@ Read as five requirements: (R1) the salesperson's own list, of their customers' 
 date-first: what came in today, and what has been waiting; (R3) clear off one by one: one action
 per row, the row leaves the list; (R4) counts of what is open and what needs attention; (R5) quick
 to scan on a phone and on a desktop.
+
+## 0b. Owner rulings (29 Sep 2026, relayed by crew; binding, they override the recommendations)
+
+- **Q1 (c)**: one shared component on both the portal `Customer asks` kind and a CRM page.
+- **Q2 (a)**: one CTA `Done` per row, `Reopen` to undo, note optional.
+- **Q3 (a)**: date-first groups: `Needs attention` pinned, `Today`, `Yesterday`, earlier days; done
+  behind `Show done`; counts header. AND the sorting must be customizable and remembered per
+  contact / user, exactly like the existing remembered DataGrid listing feature (sorting + column
+  reordering persisted); reuse that mechanism. Design in 3.2 and 3.3.
+- **Q4 (a)**: overdue = still open from before today (Malaysia time).
+- **Q5 (a)**: ALL four branches, `incoming` and `console` rows included.
+- **Q6 (a)** (crew): `customers.sales_agent_id` behind `_agent_scope`; swap to CONTACT-CUSTOMERS (#1366) later.
+- **Q7 (c)**: the manager CRM page with the Agent filter AND team leaders see only their team
+  (`sales.teams.leader_sales_agent_id`). Design in 3.4.
+- **Q8 (a)**: no digest.
+- Order: update the mock, re-file the hand test when the mock reflects these, then build.
 
 ## 1. Journey
 
@@ -141,26 +157,46 @@ wire (no UUIDs in the UI). Asserted in a test: `response_model` drops undeclared
 ```
 {
   "today_start": "2026-09-28T16:00:00Z",   Malaysia midnight of today, as UTC
-  "open":       [StockAskResponse, ...],   state open, branch in (too_big, in_stock, no_incoming),
-                                           oldest first, cap 500, `truncated: bool`
+  "open":       [StockAskResponse, ...],   state open, EVERY branch (Q5 (a)), oldest first,
+                                           cap 500, `truncated: bool`
   "done_today": [StockAskResponse, ...],   state done, done_at >= today_start, newest first
   "truncated":  false
 }
 ```
 
-`service.todo_for_agent(db, agent_id, now)`: the same `_agent_scope` as #1333, the branch
-filter (`[Q5 pending: (a) drops the branch filter; (c) writes incoming rows done at creation]`),
+`service.todo_for_agent(db, agent_id, now)`: the same `_agent_scope` as #1333, every branch
+(Q5 (a): no branch filter; an `incoming` row is a to-do like the others and keeps its badge),
 `today_start` computed once from `_MALAYSIA` (the server owns the day boundary; the FE never
 guesses a timezone). No paging: a salesperson's open asks are tens, and a to-do list with a
 "next page" is not a to-do list; the cap and `truncated` flag are the guard, shown as "Showing
 the oldest 500 open asks".
 
-FE `lib/stock-asks-todo.ts`: `bucketTodo(payload)` (pure, unit-tested) -> `{ counts: { open,
-needs_attention, done_today }, groups: [{ key, label, asks }] }` where `needs_attention` = open
-and `created_at < today_start` (`[Q4 pending: (b) uses today_start minus one day; (c) reads a
-settings value]`), `today` = open and `>= today_start`, older groups keyed by the Malaysia date
-(`formatDateInMalaysia`) and labelled `Yesterday` or `Mon 22 Sep`. Rows inside `Needs attention`
-oldest first, inside every other group newest first. One rule, one function, both mounts.
+FE `lib/stock-asks-todo.ts`: `bucketTodo(payload, sort)` (pure, unit-tested) -> `{ counts: { open,
+needs_attention, done_today }, sections: [{ key: 'needs_attention' | 'today', label, days: [{ key:
+'<yyyy-mm-dd Malaysia>', label: 'Yesterday' | 'Sat 27 Sep', asks }] }] }`. Q3 (a) + Q4 (a): the
+`Needs attention` section is pinned first and holds every open ask asked before `today_start`,
+split into one day group per Malaysia date, oldest day first; the `Today` section holds the rest
+under one day group. A day group with no open row is not rendered. `sort` is `{ id: 'asked_at'
+| 'customer' | 'product' | 'branch', desc: boolean }` and orders the rows INSIDE every day group
+(default `asked_at` ascending, so the oldest waits at the top). One rule, one function, both
+mounts.
+
+**Remembered sort (Q3 (a), "exactly like the remembered DataGrid listing feature").** The
+mechanism reused is the per-user per-listing view preference row `user_list_column_configs`
+(`app/models/user.py:745`), whose payload already carries `sorting: [{id, desc}]`
+(`UserListColumnConfigPayload.sorting`, `app/schemas/list_query.py:181`, validated as
+`ListSortEntry`) behind `GET|PUT /api/v1/list-query/column-config/{listing_key}`
+(`documentation/reference/LISTING-COLUMN-PREFERENCES.md`), and the FE hook that reads and
+debounce-writes it, `lib/listing-column-preferences/useListingViewPreferences.ts` (the hook the
+DataGrid listings use for their remembered sort and filter). The CRM mount calls that hook with
+listing key `sales.customer_asks.view::todo` and maps its `sorting[0]` to the Sort select; no new
+table, no new endpoint. The portal has no user row to key that table on (the #1333 grid already
+passes `listingKey={null}` for that reason), so the portal mount remembers the same `{id, desc}`
+under the portal's own per-contact remembered-preference pattern, `localStorage` keyed by the
+contact id exactly as the landing's default tab is (`PortalLanding.tsx:312-333`,
+`sorento.portalDefaultTab.<contact_id>`; here `sorento.portalAsksSort.<contact_id>`). A
+server-side per-contact preference is not built: the trigger is a salesperson using two devices
+who asks for it. Column reordering does not apply to the to-do (its rows are not columns).
 
 ### 3.3 The to-do surface: one component, two mounts
 
@@ -168,9 +204,12 @@ oldest first, inside every other group newest first. One rule, one function, bot
 loading, error, onDone(askId), onReopen(askId), onNote(askId, note), showAgent?: boolean }`.
 
 - Counts line at the top: `Open N · Needs attention M · Done today K` (plain text with the
-  numbers in `tabular-nums`; the M turns `text-destructive` when > 0).
-- Groups as headed sections (`Needs attention`, `Today`, `Yesterday`, dates), each a `<ul>` of
-  rows. A row: line 1 customer name (bold) and the contact name; line 2 `SRT5674 x 50` and the
+  numbers in `tabular-nums`; the M turns `text-destructive` when > 0), with the Sort
+  `SearchableSelect` (not clearable, one required value) on its right: `Oldest first`, `Newest
+  first`, `Customer A to Z`, `Product A to Z`, `Branch`; the mount owns persistence (3.2).
+- Sections as headed blocks: `Needs attention` (red) with its day sub-headings (`Yesterday`,
+  `Sat 27 Sep`, ...), then `Today`; each day a `<ul>` of rows.
+- A row: line 1 customer name (bold) and the contact name; line 2 `SRT5674 x 50` and the
   branch `Badge`; line 3 the answer summary (truncate + title); line 4 the time asked
   (`formatDateTimeInMalaysia`) with the age ("2 days ago") on `Needs attention` rows, the
   `Console` badge on console rows, and the `Notified` badge; right column (or below at 375px):
@@ -192,8 +231,7 @@ loading, error, onDone(askId), onReopen(askId), onNote(askId, note), showAgent?:
 Portal mount: `CustomerAsksList` becomes the to-do (`AskTodoList` fed by
 `customer-asks-service.ts` -> `/customer-asks/todo`), the State filter and cards/list toggle go
 (the to-do has its own sections; `Show done` replaces the filter). The landing badge keeps
-reading the open count. `[Q1 pending: (a) is this mount alone; (b) is the CRM mount alone with
-the portal untouched]`
+reading the open count. Ruled Q1 (c): both mounts.
 
 CRM mount: `app/(protected)/sales/customer-asks/page.tsx` -> `MyCustomerAsksClient` with
 `PageHeader` title "Customer asks", the same `AskTodoList`. Menu entry Sales > Customer asks
@@ -213,19 +251,26 @@ CRM mount: `app/(protected)/sales/customer-asks/page.tsx` -> `MyCustomerAsksClie
   the list is mine; a user linked to no agent gets `{open: [], done_today: [], ...,
   agent: null}` and the page shows "You are not linked to a sales agent" (no 403: the page is
   still theirs to open).
-- `agent_id` given (the manager filter): allowed with `sales.customer_asks.view_all`
-  (one extra slug, registered beside the `_crud` four, granted with them); without it 403.
-  `[Q7 pending: (a) drops `agent_id`, `view_all` and the manager page; (c) adds a team-leader
-  branch: `agent_id` must be a current member of a team the caller's agent leads]`
+- Who else the caller may look at (Q7 (c)), computed once per request as the caller's
+  **pickable agents**: with `sales.customer_asks.view_all` (one extra slug, registered beside the
+  `_crud` four, granted with them) every agent; else, when the caller's own agent is
+  `leader_sales_agent_id` of one or more active `sales.teams` rows, the CURRENT members of those
+  teams (`sales.team_members.valid_to IS NULL`, the same predicate `team_service.list_teams`
+  uses at `app/services/sales/team_service.py:348`) plus the leader themself; else nobody but
+  themself. `agent_id` given: must be pickable, else 403 (`NOT_YOUR_AGENT`); an id that is no
+  agent at all is 404. `agent_id=all` = every pickable agent's rows, each carrying `agent_code`.
+  A leader is never granted a slug for this: leading a team IS the grant.
 - PATCH scope: the ask's customer's agent is mine, or I hold `view_all` (the office marking on
   an agent's behalf); otherwise 404, never 403 (no id probing). Actor label for `done_by`: the
   user's full name.
 
-Manager page: the same `page.tsx` with an `Agent` `SearchableSelect` (clearable, options from
-`services/salesAgentService` with open counts fetched from
-`GET /api/v1/sales/customer-asks/agents` -> `[{agent_id, code, name, open, needs_attention}]`)
-shown only with `view_all`; `showAgent` on the list when an agent other than mine, or all, is
-chosen. `[Q7 pending]`
+Manager and leader page: the same `page.tsx` with an `Agent` `SearchableSelect` (clearable,
+`All agents` as its first option) fed by `GET /api/v1/sales/customer-asks/agents` ->
+`[{agent_id, code, name, open, needs_attention}]`, which lists the caller's pickable agents
+(view_all: every agent with at least one open ask; a leader: every current member of their
+teams, counts included even when 0; neither: `[]`). The select renders only when that list is
+non-empty, so one rule (the pickable set) drives both the API and the screen. `showAgent` on the
+list when an agent other than mine, or all, is chosen.
 
 ### 3.5 Portal route
 
@@ -243,12 +288,13 @@ Ruled (crew, 29 Sep 2026): (a), build on `customers.sales_agent_id` now; swap wh
 
 ## 5. Simplest thing, not built (and the trigger that would build it)
 
-- No digest or reminder: S4's per-ask WhatsApp stays the nudge. Trigger: the owner asks for a
-  morning "you have N open" after using the list. `[Q8]`
-- No middle state, no assignment, no due date, no snooze. Trigger: a salesperson asks to park an
-  ask. `[Q2]`
-- No settings row for the overdue rule. Trigger: a second threshold is asked for. `[Q4]`
-- No team-leader scoping. Trigger: a leader asks to see only their team. `[Q7]`
+- No digest or reminder (Q8 (a)): S4's per-ask WhatsApp stays the nudge.
+- No middle state, no assignment, no due date, no snooze (Q2 (a)). Trigger: a salesperson asks
+  to park an ask.
+- No settings row for the overdue rule (Q4 (a)). Trigger: a second threshold is asked for.
+- No new preference table for the sort (Q3): the existing view-preference row for the CRM, the
+  portal's per-contact local storage for the portal. Trigger: a two-device salesperson.
+- No team hierarchy beyond one level: a leader sees current members, not members' teams (Q7 (c)).
 - No paging on the to-do (cap 500 + flag). Trigger: an agent whose open asks exceed the cap.
 - No new table: two columns on the row that exists. No registry for the day buckets: one pure
   function.

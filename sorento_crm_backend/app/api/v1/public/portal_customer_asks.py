@@ -21,8 +21,8 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.public.portal import get_portal_token
 from app.database import get_db
-from app.models.access import RespondContact
 from app.models.portal import PortalToken
+from app.models.user import User
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.stock_ask import StockAskResponse, StockAskTodoResponse, StockAskUpdate
 from app.services import price_tag_request_service, stock_ask_service
@@ -83,11 +83,13 @@ def portal_update_customer_ask(
 ):
     agent_id = _agent_id(db, token)
     validate_uuid_path(ask_id, resource="Stock ask")
-    contact = db.query(RespondContact).filter(RespondContact.id == token.contact_id).first()
+    # Who cleared it: the portal contact, and the CRM user that contact is (if any).
+    user_id = db.query(User.id).filter(User.respond_contact_id == token.contact_id).scalar()
     return stock_ask_service.update_for_agent(
         db,
         agent_id,
         ask_id,
         body.model_dump(exclude_unset=True),
-        actor=stock_ask_service.contact_label(contact) if contact else "-",
+        actor_contact_id=token.contact_id,
+        actor_user_id=user_id,
     )

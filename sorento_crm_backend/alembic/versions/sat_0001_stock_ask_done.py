@@ -2,11 +2,12 @@
 
 Plan: documentation/plans/sales/PLAN-sales-asks-todo-29sep.md, 3.1 and 3.4 (one migration for the lane).
 
-1. `done_at TIMESTAMP NULL` (naive UTC, like `created_at`) and `done_by VARCHAR(150) NULL` (a name
-   snapshot: the portal contact's label or the CRM user's name), added with `IF NOT EXISTS` so the
-   revision is re-runnable.
+1. `done_at TIMESTAMP NULL` (naive UTC, like `created_at`), `done_by_user_id VARCHAR NULL` (FK
+   `users.id`) and `done_by_contact_id TEXT NULL` (FK `respond_contacts.id`), both ON DELETE SET
+   NULL: who did it is an id, never a name (identity plan 8.3). Added with `IF NOT EXISTS` and a
+   guarded ADD CONSTRAINT so the revision is re-runnable.
 2. Backfill: a row already `done` reads `done_at = updated_at` (the best answer the table holds),
-   `done_by` NULL (shown as "Done", no name). Only rows with no `done_at` yet are touched.
+   both actor ids NULL (shown as "Done", no name). Only rows with no `done_at` yet are touched.
 3. `sales.customer_asks.{view,add,edit,delete,view_all}` created when absent, then swept: `view`,
    `edit` and `view_all` go to every role that holds `sales.opportunities.view` (the salesperson's
    roles) and to `admin` and `superadmin`. Integration roles are excluded (an integration
@@ -38,6 +39,10 @@ _PERMS = (
         "Permission to view and clear every sales agent's customer asks, not only your own.",
     ),
 )
+_FKS = (
+    ("fk_stock_asks_done_by_user", "done_by_user_id", "users(id)"),
+    ("fk_stock_asks_done_by_contact", "done_by_contact_id", "respond_contacts(id)"),
+)
 _GRANTED = ("sales.customer_asks.view", "sales.customer_asks.edit", "sales.customer_asks.view_all")
 _SWEEP_SOURCE = "sales.opportunities.view"
 _GRANT_ROLE_SLUGS = ("admin", "superadmin")
@@ -47,7 +52,26 @@ _EXCLUDED_ROLE_PREFIX = "integration\\_%"
 def upgrade() -> None:
     bind = op.get_bind()
     bind.execute(sa.text("ALTER TABLE stock_asks ADD COLUMN IF NOT EXISTS done_at TIMESTAMP NULL"))
-    bind.execute(sa.text("ALTER TABLE stock_asks ADD COLUMN IF NOT EXISTS done_by VARCHAR(150) NULL"))
+    bind.execute(sa.text("ALTER TABLE stock_asks ADD COLUMN IF NOT EXISTS done_by_user_id VARCHAR NULL"))
+    bind.execute(sa.text("ALTER TABLE stock_asks ADD COLUMN IF NOT EXISTS done_by_contact_id TEXT NULL"))
+    for name, column, target in _FKS:
+        bind.execute(
+            sa.text(
+                f"""
+                DO $$
+                BEGIN
+                    -- Scoped to THIS stock_asks: a constraint name is only unique per table.
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint
+                        WHERE conname = '{name}' AND conrelid = 'stock_asks'::regclass
+                    ) THEN
+                        ALTER TABLE stock_asks ADD CONSTRAINT {name}
+                            FOREIGN KEY ({column}) REFERENCES {target} ON DELETE SET NULL;
+                    END IF;
+                END $$;
+                """
+            )
+        )
     bind.execute(
         sa.text("UPDATE stock_asks SET done_at = updated_at WHERE state = 'done' AND done_at IS NULL")
     )
@@ -96,5 +120,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     bind = op.get_bind()
-    bind.execute(sa.text("ALTER TABLE stock_asks DROP COLUMN IF EXISTS done_by"))
+    bind.execute(sa.text("ALTER TABLE stock_asks DROP COLUMN IF EXISTS done_by_contact_id"))
+    bind.execute(sa.text("ALTER TABLE stock_asks DROP COLUMN IF EXISTS done_by_user_id"))
     bind.execute(sa.text("ALTER TABLE stock_asks DROP COLUMN IF EXISTS done_at"))

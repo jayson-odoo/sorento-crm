@@ -292,10 +292,6 @@ def _contact_label(contact: Any) -> str:
     return _CONTROL_CHARS.sub(" ", str(raw)).strip()[:100] or "-"
 
 
-#: Public name for the routers that stamp `done_by` with a portal contact's label.
-contact_label = _contact_label
-
-
 def _recipient(
     db: Session, contact_id: Optional[str], customer_id: Optional[str] = None
 ) -> tuple[Any, Any, Any, Optional[str]]:
@@ -510,6 +506,29 @@ def serialize(db: Session, rows: list[Any], *, with_agent: bool = False) -> list
         if product_ids
         else {}
     )
+    done_user_ids = {r.done_by_user_id for r in rows if r.done_by_user_id}
+    done_contact_ids = {r.done_by_contact_id for r in rows if r.done_by_contact_id} - set(contacts)
+    from app.models.user import User
+
+    user_names = (
+        {u.id: u.name for u in db.query(User.id, User.name).filter(User.id.in_(done_user_ids))}
+        if done_user_ids
+        else {}
+    )
+    done_contacts = dict(contacts)
+    if done_contact_ids:
+        done_contacts.update(
+            {c.id: _contact_label(c) for c in db.query(RespondContact).filter(RespondContact.id.in_(done_contact_ids))}
+        )
+
+    def _done_by(r: Any) -> Optional[str]:
+        # "Who did it" is stored as ids; the reader gets a label (a user's name, else the contact's).
+        if r.done_by_user_id and user_names.get(r.done_by_user_id):
+            return user_names[r.done_by_user_id]
+        if r.done_by_contact_id:
+            return done_contacts.get(r.done_by_contact_id)
+        return None
+
     agent_codes: dict[Any, str] = {}
     if with_agent and customer_ids:
         from app.models.order import Customer as _Customer
@@ -539,7 +558,7 @@ def serialize(db: Session, rows: list[Any], *, with_agent: bool = False) -> list
             created_at=r.created_at,
             updated_at=r.updated_at,
             done_at=r.done_at,
-            done_by=r.done_by,
+            done_by=_done_by(r),
             agent_code=agent_codes.get(r.customer_id),
         )
         for r in rows
@@ -560,20 +579,27 @@ def _page(query: Any, page: int, limit: int) -> tuple[list[Any], int]:
 
 
 def _apply_update(
-    db: Session, ask: Any, data: dict[str, Any], *, actor: str, now: Optional[datetime] = None
+    db: Session,
+    ask: Any,
+    data: dict[str, Any],
+    *,
+    actor_user_id: Optional[str] = None,
+    actor_contact_id: Optional[str] = None,
+    now: Optional[datetime] = None,
 ) -> Any:
-    """The ONE place `done_at` and `done_by` are written (plan 3.1): a transition to done stamps
-    both, a transition to open clears both, a repeat of the same state or a note-only change
-    touches neither. `actor` is a name snapshot (the portal contact's label or the CRM user's
-    name)."""
+    """The ONE place `done_at` and the two actor ids are written (plan 3.1): a transition to
+    done stamps all three, a transition to open clears all three, a repeat of the same state or
+    a note-only change touches none. Ids, never a name: `serialize` resolves the label."""
     new_state = data.get("state")
     if new_state is not None and new_state != ask.state:
         if new_state == "done":
             ask.done_at = now or datetime.utcnow()
-            ask.done_by = (actor or "").strip()[:150] or None
+            ask.done_by_user_id = actor_user_id
+            ask.done_by_contact_id = actor_contact_id
         else:
             ask.done_at = None
-            ask.done_by = None
+            ask.done_by_user_id = None
+            ask.done_by_contact_id = None
         ask.state = new_state
     if "note" in data:
         note = (data["note"] or "").strip()
@@ -608,7 +634,7 @@ def list_for_customer(db: Session, customer_id: str, *, page: int, limit: int) -
 
 
 def update_for_customer(
-    db: Session, customer_id: str, ask_id: str, data: dict[str, Any], *, actor: str
+    db: Session, customer_id: str, ask_id: str, data: dict[str, Any], *, actor_user_id: str
 ) -> Any:
     from app.models.stock_ask import StockAsk
     from app.services.error_handler import handle_not_found
@@ -621,7 +647,7 @@ def update_for_customer(
     )
     if ask is None:
         raise handle_not_found("Stock ask", ask_id)
-    return serialize(db, [_apply_update(db, ask, data, actor=actor)])[0]
+    return serialize(db, [_apply_update(db, ask, data, actor_user_id=actor_user_id)])[0]
 
 
 def _agent_scope(db: Session, agent_id: Optional[str]) -> Any:
@@ -676,18 +702,29 @@ def list_for_agent(
     }
 
 
-def update_for_agent(db: Session, agent_id: str, ask_id: str, data: dict[str, Any], *, actor: str) -> Any:
+def update_for_agent(
+    db: Session,
+    agent_id: str,
+    ask_id: str,
+    data: dict[str, Any],
+    *,
+    actor_contact_id: str,
+    actor_user_id: Optional[str] = None,
+) -> Any:
     from app.models.stock_ask import StockAsk
     from app.services.error_handler import handle_not_found
 
     ask = _agent_scope(db, agent_id).filter(StockAsk.id == ask_id).first()
     if ask is None:
         raise handle_not_found("Stock ask", ask_id)
-    return serialize(db, [_apply_update(db, ask, data, actor=actor)])[0]
+    return serialize(
+        db,
+        [_apply_update(db, ask, data, actor_contact_id=actor_contact_id, actor_user_id=actor_user_id)],
+    )[0]
 
 
 def update_for_sales(
-    db: Session, ask_id: str, data: dict[str, Any], *, agent_id: Optional[str], actor: str
+    db: Session, ask_id: str, data: dict[str, Any], *, agent_id: Optional[str], actor_user_id: str
 ) -> Any:
     """The CRM to-do's PATCH: `agent_id` is my agent (my customers' asks only), or None for a
     caller with view_all (any ask that belongs to some agent's customer). Out of scope is a 404."""
@@ -697,7 +734,7 @@ def update_for_sales(
     ask = _agent_scope(db, agent_id).filter(StockAsk.id == ask_id).first()
     if ask is None:
         raise handle_not_found("Stock ask", ask_id)
-    return serialize(db, [_apply_update(db, ask, data, actor=actor)], with_agent=agent_id is None)[0]
+    return serialize(db, [_apply_update(db, ask, data, actor_user_id=actor_user_id)], with_agent=agent_id is None)[0]
 
 
 def today_start_utc(now: datetime) -> datetime:
