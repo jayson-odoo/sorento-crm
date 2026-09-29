@@ -19,6 +19,7 @@ import {
   rerunReconciliation,
 } from '../services/fulfilmentPlanningService';
 import { listPlans } from '../services/plansService';
+import { failingLineText } from '../lib/fulfilmentBoard';
 import type {
   AdoptSalesOrderResult,
   BoardCell,
@@ -237,6 +238,11 @@ export function useReconciliationMutations() {
               rows === 1 ? '' : 's'
             } handed over.${fulfilledText}`,
       );
+      // #1362 (owner, 29 Sep 2026): a Buy kept over goods that landed for its line is
+      // confirmed as decided; say it, the way purchasing reads it on the Buy's row.
+      for (const notice of result.landed_buy_notices ?? []) {
+        toast.warning(failingLineText(notice));
+      }
       // Only when something went wrong. The successful count is on the Transfers page and
       // does not need saying twice; an unwritten movement has no other way to be noticed.
       const failed = result.transfers_failed ?? 0;

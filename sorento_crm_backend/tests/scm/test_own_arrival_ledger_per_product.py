@@ -225,17 +225,23 @@ def _confirm_world(db, *, need: str, on_hand: int):
     return actor, product, own, core_so, core_line, order, line
 
 
-def _refusal(db, order, line, actor, buy: str) -> str:
-    with pytest.raises(AppException) as refused:
-        ProjectSupplyService(db).confirm(
-            order,
-            ConfirmSupplyBody(lines=[ConfirmLine(project_line_id=str(line.id), buy_qty=buy)]),
-            actor_user_id=actor,
-        )
-    assert refused.value.detail.get("code") == "planning_change_buy_over_own_arrival", (
-        refused.value.detail
+def _landed_notice(db, order, line, actor, buy: str) -> dict:
+    """#1362 (owner, 29 Sep 2026): a Buy over goods that landed for the line is confirmed as
+    decided, with a notice naming what landed (it used to be refused, AC-S3-15)."""
+    result = ProjectSupplyService(db).confirm(
+        order,
+        ConfirmSupplyBody(lines=[ConfirmLine(project_line_id=str(line.id), buy_qty=buy)]),
+        actor_user_id=actor,
     )
-    return refused.value.detail.get("message") or ""
+    assert result["revision_no"] is not None, result
+    notices = result.get("landed_buy_notices") or []
+    assert len(notices) == 1, result
+    return notices[0]
+
+
+def _refusal(db, order, line, actor, buy: str) -> str:
+    """What landed, as the confirm now says it (the notice's `landed` phrase)."""
+    return _landed_notice(db, order, line, actor, buy)["landed"]
 
 
 def test_1362_item2_a_po_line_landed_on_two_shipments_names_both_with_their_quantities():
@@ -257,8 +263,7 @@ def test_1362_item2_a_po_line_landed_on_two_shipments_names_both_with_their_quan
 
         message = _refusal(db, order, line, actor, buy="100")
         assert message == (
-            "100 landed for this line: 60 on SPO-2026/06-0092, 40 on SPO-2026/07-0019; "
-            "nothing to buy for it"
+            "100 landed for this line: 60 on SPO-2026/06-0092, 40 on SPO-2026/07-0019"
         ), message
 
 
@@ -302,8 +307,7 @@ def test_1362_item2_the_order_inquiry_placement_names_its_own_shipments():
 
         message = _refusal(db, order, line, actor, buy="100")
         assert message == (
-            "100 landed for this line: 60 on SPO-2026/06-0092, 40 on SPO-2026/07-0019; "
-            "nothing to buy for it"
+            "100 landed for this line: 60 on SPO-2026/06-0092, 40 on SPO-2026/07-0019"
         ), message
 
 
@@ -507,7 +511,7 @@ def test_1362_item4_the_confirm_refusal_on_a_spare_names_the_line_it_was_bought_
         message = _refusal(db, order, line, actor, buy="100")
         assert message == (
             "100 spare from line 1648's purchase (200 bought for 100) landed on "
-            "SPO-2026/09-0036; nothing to buy for it"
+            "SPO-2026/09-0036"
         ), message
 
 
@@ -534,8 +538,9 @@ def test_1362_item5_the_board_carries_the_autocount_line_number_beside_its_addre
 
 
 def test_1362_item5_a_confirm_refusal_names_the_autocount_line_number():
-    """The refusal's failing line carries AutoCount's No. (2912), not the project line's
-    positional number (1), so the sheet can say "Line 2912, ...". """
+    """The confirm's per-line notice carries AutoCount's No. (2912), not the project line's
+    positional number (1), so the board can say "Line 2912, ...". (It was a refusal until
+    the owner's 29 Sep ruling made a Buy over landed goods a notice.)"""
     with blank_session() as db:
         actor, product, own, _so, core_line, order, line = _confirm_world(
             db, need="100", on_hand=100
@@ -548,17 +553,9 @@ def test_1362_item5_a_confirm_refusal_names_the_autocount_line_number():
         )
         db.commit()
 
-        with pytest.raises(AppException) as refused:
-            ProjectSupplyService(db).confirm(
-                order,
-                ConfirmSupplyBody(
-                    lines=[ConfirmLine(project_line_id=str(line.id), buy_qty="100")]
-                ),
-                actor_user_id=actor,
-            )
-        failing = refused.value.detail.get("failing_lines") or []
-        assert failing and failing[0]["so_line_no"] == 2912, refused.value.detail
-        assert failing[0]["line_no"] == 1, failing
+        notice = _landed_notice(db, order, line, actor, buy="100")
+        assert notice["so_line_no"] == 2912, notice
+        assert notice["line_no"] == 1, notice
 
 
 # ---------------------------------------------------------------------------- item 6
@@ -774,3 +771,100 @@ def test_1362_round5_the_order_inquiry_credits_the_landed_line_in_full():
             row, need=Decimal("100")
         )
         assert credit == Decimal("100"), credit
+
+
+# ============================================================================
+# #1362 hand test (owner, 29 Sep 2026): "Confirmed 0 orders; 1 refused" because ONE line
+# carried a saved Buy over goods that landed for it. Owner: "i think we are too
+# restrictive already". One line's stale or conflicting decision must not refuse the
+# whole order: confirm-all holds the refused line back and confirms the rest.
+# ============================================================================
+
+from app.schemas.project_supply import ConfirmManyOrderBody  # noqa: E402
+
+
+def test_1362_confirm_all_holds_back_a_refused_line_and_confirms_the_rest():
+    with blank_session() as db:
+        actor, _c, _p, product, own, order, early, later = _ruling_confirm_world(db)
+        later_core = db.get(type(later), later.id).core_sales_order_line_id
+
+        results = ProjectSupplyService(db).confirm_many(
+            [
+                ConfirmManyOrderBody(
+                    pso_id=str(order.id),
+                    lines=[
+                        # A saved decision that no longer adds up to the line (50 of 100).
+                        ConfirmLine(project_line_id=str(later.id), buy_qty="50"),
+                        ConfirmLine(project_line_id=str(early.id), buy_qty="250"),
+                    ],
+                )
+            ],
+            actor_user_id=actor,
+            assert_can_act=lambda _session, _order: None,
+        )
+
+        (result,) = results
+        assert result["ok"] is True, result
+        assert result["decision_revision"] is not None, result
+        held = result["lines_held_back"]
+        assert held and len(held) == 1, result
+        assert held[0]["line_no"] == 2, held
+        assert "add up to 50" in held[0]["reason"], held
+        assert "project_line_id" not in held[0], held
+        assert later_core
+
+
+def test_1362_confirm_all_still_refuses_when_every_named_line_is_refused():
+    with blank_session() as db:
+        actor, _c, _p, _product, _own, order, _early, later = _ruling_confirm_world(db)
+
+        (result,) = ProjectSupplyService(db).confirm_many(
+            [
+                ConfirmManyOrderBody(
+                    pso_id=str(order.id),
+                    lines=[ConfirmLine(project_line_id=str(later.id), buy_qty="50")],
+                )
+            ],
+            actor_user_id=actor,
+            assert_can_act=lambda _session, _order: None,
+        )
+        assert result["ok"] is False, result
+        assert result["failing_lines"], result
+
+
+def test_1362_a_buy_over_landed_goods_is_confirmed_and_purchasing_is_told_on_the_row():
+    """Owner (29 Sep 2026): "this good is on hand, and is covering the line, but, from
+    fulfilment planning, is kind of requesting it to be delayed while the link is intact,
+    then only purchasing will do the adjustment in the linkage". The hand test's row 29: a
+    saved Buy 100 over 100 landed for the line. Confirm succeeds with the Buy as decided,
+    the PO link is untouched, and the Buy's own order inquiry row (born awaiting, so a
+    buyer must acknowledge it) carries the landed fact for purchasing."""
+    with blank_session() as db:
+        actor, product, own, _so, core_line, order, line = _confirm_world(
+            db, need="100", on_hand=100
+        )
+        po = supplier_and_po(db, po_number=f"ZZT-PO-1362-HT-{_uid()[:6]}")
+        po_line, _spo = po_line_bought_for(
+            db, po, product, own, from_so_line_ref=core_line.source_ref,
+            qty_received=100, qty_ordered=100, spo_number="SPO-2026/06-0131",
+        )
+        db.commit()
+
+        notice = _landed_notice(db, order, line, actor, buy="100")
+        assert notice["reason"] == (
+            "Buy 100 confirmed as decided; 100 landed for this line on SPO-2026/06-0131 "
+            "stay linked to it, for purchasing to adjust"
+        ), notice
+        db.expire_all()
+        assert db.get(type(po_line), po_line.id).from_so_line_ref == core_line.source_ref
+        rows = (
+            db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.state != "cancelled")
+            .all()
+        )
+        notes = [row.note or "" for row in rows]
+        assert any(
+            "Planning keeps this Buy: 100 landed for this line on SPO-2026/06-0131 stay "
+            "linked to this line; adjust the linkage if the Buy replaces them" in note
+            for note in notes
+        ), notes

@@ -104,7 +104,6 @@ from app.services.scm.front_planning_engine import (
     BUY,
     RESERVE,
     TIMELY_SPO,
-    landed_on,
     qty_text,
 )
 from app.services.scm.outstanding_diff import (
@@ -2835,68 +2834,6 @@ def _validate_composition_shape(
     }
 
 
-def _refuse_buy_over_own_arrival(row: PlanningChangeRow, composition: dict) -> None:
-    """R7: an amend may not turn own-arrival credit into a Buy.
-
-    `row.proposal_json["sources"]` names every own-arrival Reserve the row's own live
-    proposal carries - goods that already landed for this line, `source: "own_arrival"`,
-    each naming the document it landed on (the SPO, since R7's follow-up
-    `PLAN-r7-landed-reads-spo-received.md`, R3 - never a PO). The amend still stands for
-    whatever reserve at that SAME warehouse it keeps; only the part that would drop BELOW
-    what is credited is refused, so amending the remainder (an ordinary reserve or Buy
-    beside the credit) is untouched.
-
-    A credit source carrying NO `warehouse_id` names no pile the composition can be judged
-    against, so it is logged and treated as NOT credited (security review, nit 5). It used
-    to compare against zero and therefore refuse EVERY amend of such a row - one malformed
-    proposal would have locked a planner out of amending that line at all, with a message
-    naming a document they could do nothing about.
-    """
-    if _row_open_qty(row) <= _ZERO:
-        # #1362 item 3: a line with nothing open has no Buy to refuse - its credit and
-        # any saved composition answer a quantity the line no longer has.
-        return
-    credit_sources = [
-        s for s in (row.proposal_json or {}).get("sources") or []
-        if s.get("source") == "own_arrival"
-    ]
-    if not credit_sources:
-        return
-    reserved_by_wh: Dict[str, Decimal] = {}
-    for r in composition.get("reserve") or []:
-        wh = r.get("warehouse_id")
-        if wh:
-            reserved_by_wh[wh] = reserved_by_wh.get(wh, _ZERO) + _dec(r.get("qty"))
-    for source in credit_sources:
-        credited = _dec(source.get("qty"))
-        if credited <= _ZERO:
-            continue
-        wh = source.get("warehouse_id")
-        if not wh:
-            logger.warning(
-                "own_arrival credit source on planning row %s names no warehouse_id; "
-                "not treated as credited (qty=%s document=%s)",
-                row.id, source.get("qty"), source.get("supply_document"),
-            )
-            continue
-        still_reserved = reserved_by_wh.get(wh, _ZERO)
-        if still_reserved < credited:
-            # R7 follow-up (`PLAN-r7-landed-reads-spo-received.md`, R3): `supply_document`
-            # is the document goods actually LANDED on - an SPO number, never a PO
-            # number - so the sentence names it bare, with no "PO" noun in front of it.
-            doc = source.get("supply_document")
-            # #1362 item 4: a sibling's spare says whose purchase it was.
-            landed = source.get("landed_text") or (
-                f"{qty_text(credited)} landed for this line{landed_on(doc)}"
-            )
-            message = f"{landed}; nothing to buy for it"
-            raise AppException(
-                status_code=409,
-                message=message,
-                code="planning_change_buy_over_own_arrival",
-            )
-
-
 def set_row_decision(
     db: Session,
     batch_id: str,
@@ -2973,7 +2910,9 @@ def set_row_decision(
                     message="An amendment needs a composition.",
                     code="planning_change_composition_required",
                 )
-            _refuse_buy_over_own_arrival(row, composition)
+            # #1362 (owner, 29 Sep 2026): an amend that Buys over goods that landed for the
+            # line is the planner's recorded intent, never refused here; the confirm that
+            # applies it says so and leaves the linkage to purchasing.
             composed = composition
         row.composition_json = _validate_composition_shape(db, composed, row, open_qty)
     else:

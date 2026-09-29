@@ -725,6 +725,12 @@ def test_ac_s3_15_board_confirm_refuses_a_buy_over_own_arrival():
     1`, and `pytest.raises(AppException)` below fails with "DID NOT RAISE" - there is
     no refusal to catch, because the seam that would raise one does not exist at
     confirm time, only at `set_row_decision`'s amend time.
+
+    #1362 (owner ruling, 29 Sep 2026): no longer refused. "this good is on hand, and is
+    covering the line, but, from fulfilment planning, is kind of requesting it to be
+    delayed while the link is intact, then only purchasing will do the adjustment in the
+    linkage" - the Buy is confirmed as decided and the confirm returns a notice naming
+    what landed, which is what this test now pins.
     """
     within_window = date.today() + timedelta(days=10)
     with blank_session() as db:
@@ -748,22 +754,19 @@ def test_ac_s3_15_board_confirm_refuses_a_buy_over_own_arrival():
         line = _project_line(db, order, line_no=1, product=product, core_line=core_line)
         db.commit()
 
-        with pytest.raises(AppException) as refused:
-            ProjectSupplyService(db).confirm(
-                order,
-                ConfirmSupplyBody(
-                    lines=[
-                        ConfirmLine(project_line_id=str(line.id), buy_qty="20"),
-                    ]
-                ),
-                actor_user_id=actor,
-            )
-        assert refused.value.status_code == 409, refused.value.detail
-        assert refused.value.detail.get("code") == "planning_change_buy_over_own_arrival", (
-            refused.value.detail
+        spo_number = spo.spo_number
+        result = ProjectSupplyService(db).confirm(
+            order,
+            ConfirmSupplyBody(
+                lines=[
+                    ConfirmLine(project_line_id=str(line.id), buy_qty="20"),
+                ]
+            ),
+            actor_user_id=actor,
         )
-        message = refused.value.detail.get("message") or ""
-        assert "20" in message and spo.spo_number in message, message
+        assert result["revision_no"] is not None, result
+        (notice,) = result["landed_buy_notices"]
+        assert notice["landed"] == f"20 landed for this line on {spo_number}", notice
 
 
 def test_ac_s3_15_control_buy_beside_a_fully_reserved_credit_is_accepted():
@@ -845,6 +848,12 @@ def test_ac_s3_15_refusal_names_the_credited_quantity_not_the_uncovered_part():
     message reads "12 landed for this line on ..." - the part the posted Reserve left
     short, not what actually landed. Document name updated by the R7 follow-up
     (`PLAN-r7-landed-reads-spo-received.md`): the message names the SPO, never the PO.
+
+    #1362 (owner ruling, 29 Sep 2026): no longer refused. "this good is on hand, and is
+    covering the line, but, from fulfilment planning, is kind of requesting it to be
+    delayed while the link is intact, then only purchasing will do the adjustment in the
+    linkage" - the Buy is confirmed as decided and the confirm returns a notice naming
+    what landed, which is what this test now pins.
     """
     within_window = date.today() + timedelta(days=10)
     with blank_session() as db:
@@ -868,30 +877,27 @@ def test_ac_s3_15_refusal_names_the_credited_quantity_not_the_uncovered_part():
         line = _project_line(db, order, line_no=1, product=product, core_line=core_line)
         db.commit()
 
-        with pytest.raises(AppException) as refused:
-            ProjectSupplyService(db).confirm(
-                order,
-                ConfirmSupplyBody(
-                    lines=[
-                        ConfirmLine(
-                            project_line_id=str(line.id),
-                            reserve=[{"warehouse_id": str(own.id), "qty": "8"}],
-                            buy_qty="12",
-                            amend_reason=(
-                                "ZZT AC-S3-15 - partial reserve at the credited bin, "
-                                "remainder bought"
-                            ),
+        spo_number = spo.spo_number
+        result = ProjectSupplyService(db).confirm(
+            order,
+            ConfirmSupplyBody(
+                lines=[
+                    ConfirmLine(
+                        project_line_id=str(line.id),
+                        reserve=[{"warehouse_id": str(own.id), "qty": "8"}],
+                        buy_qty="12",
+                        amend_reason=(
+                            "ZZT AC-S3-15 - partial reserve at the credited bin, "
+                            "remainder bought"
                         ),
-                    ]
-                ),
-                actor_user_id=actor,
-            )
-        assert refused.value.status_code == 409, refused.value.detail
-        assert refused.value.detail.get("code") == "planning_change_buy_over_own_arrival", (
-            refused.value.detail
+                    ),
+                ]
+            ),
+            actor_user_id=actor,
         )
-        message = refused.value.detail.get("message") or ""
-        assert "20 landed for this line on" in message and spo.spo_number in message, (
+        (notice,) = result["landed_buy_notices"]
+        message = notice["reason"]
+        assert "20 landed for this line on" in message and spo_number in message, (
             f"the message must name the credited quantity (20), not the uncovered part "
             f"(12) the posted Reserve happened to leave: message={message!r}"
         )

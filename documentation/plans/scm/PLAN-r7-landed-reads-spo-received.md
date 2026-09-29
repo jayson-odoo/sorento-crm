@@ -172,6 +172,20 @@ line's own bin floor, before the walk. Only a floor already in the read is pinne
 of the same planning unit. AC-S3-11 is amended accordingly (see the UAC). The Stock Debt view
 reads the same assignment, so a line whose goods landed reads `pinned` there too.
 
+## Follow-up: #1362 hand test, a Buy over landed goods is recorded, not refused (owner 29 Sep 2026)
+
+Hand test: SO382618 confirm-all refused the whole order on one line (planning row 29, a saved
+Buy over 100 that landed for it on SPO-2026/06-0131). Owner: "i think we are too restrictive
+already", then "this good is on hand, and is covering the line, but, from fulfilment planning,
+is kind of requesting it to be delayed while the link is intact, then only purchasing will do
+the adjustment in the linkage". Built: the confirm recheck no longer refuses a Buy over landed
+goods (it records a notice, returned as `landed_buy_notices` and written on the Buy's own order
+inquiry row `note`, which a buyer must acknowledge anyway); the amend guard
+`_refuse_buy_over_own_arrival` is removed; the board's Decide Buy no longer skips such a row
+(AC-51). Any other per-line refusal at confirm-all holds that line back (`lines_held_back`,
+decision kept) and confirms the rest; a planning-change batch is still applied whole. AC-S3-6,
+AC-S3-15 and AC-51 are marked superseded in their UACs.
+
 ## Out of scope
 
 - The board proposing Buy for a late own-SPO (R2 keeps it).

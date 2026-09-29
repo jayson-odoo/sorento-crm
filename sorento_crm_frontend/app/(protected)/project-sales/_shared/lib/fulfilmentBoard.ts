@@ -1251,3 +1251,30 @@ export function failingLineText(line: {
   if (!line.line_no && line.so_line_no == null) return line.reason;
   return `${soLineLabel(line)}${line.item_code ? `, ${line.item_code}` : ''}: ${line.reason}`;
 }
+
+/**
+ * #1362 (owner, 29 Sep 2026: "i think we are too restrictive already"): what a CONFIRMED
+ * order's result still has to tell the planner, one line each. A line held back by the
+ * recheck ("row 29, B2154-NL held back, decision kept: <reason>") and a Buy kept over goods
+ * that landed for its line (the notice purchasing also reads on the Buy's inquiry row).
+ */
+export function confirmNoticeLines(result: {
+  lines_held_back?: Array<{
+    so_line_no?: number | null;
+    line_no?: number | null;
+    item_code?: string | null;
+    reason: string;
+  }> | null;
+  landed_buy_notices?: Array<{
+    so_line_no?: number | null;
+    line_no?: number | null;
+    item_code?: string | null;
+    reason: string;
+  }> | null;
+}): string[] {
+  const held = (result.lines_held_back ?? []).map((line) =>
+    failingLineText({ ...line, reason: `held back, decision kept: ${line.reason}` }),
+  );
+  const landed = (result.landed_buy_notices ?? []).map((line) => failingLineText(line));
+  return [...held, ...landed];
+}

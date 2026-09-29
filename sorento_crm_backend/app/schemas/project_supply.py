@@ -494,6 +494,9 @@ class ConfirmResult(BaseModel):
     #: decision cleared (#1362 item 3). The toast says "1 line already fulfilled,
     #: decision cleared".
     lines_fulfilled_skipped: int = 0
+    #: #1362 (owner, 29 Sep 2026): Buys confirmed as decided over goods that landed for
+    #: their line. The link stays; purchasing adjusts it off the Buy's inquiry row.
+    landed_buy_notices: Optional[List[SupplyFailingLine]] = None
 
 
 # ------------------------------------------------------------------- the Plans page (D1)
@@ -588,6 +591,11 @@ class ConfirmManyOrderResult(BaseModel):
     rejected_count: Optional[int] = None
     #: The per-order twin of `ConfirmResult.lines_fulfilled_skipped` (#1362 item 3).
     lines_fulfilled_skipped: Optional[int] = None
+    #: #1362 hold-back: lines the recheck refused, left out so the rest of the order
+    #: confirmed. Each keeps its saved decision; named the way a refusal names a line.
+    lines_held_back: Optional[List[SupplyFailingLine]] = None
+    #: The per-order twin of `ConfirmResult.landed_buy_notices` (#1362).
+    landed_buy_notices: Optional[List[SupplyFailingLine]] = None
     error: Optional[str] = None
     #: The lines the server refused, named the way `SupplyFailingLine` always is (AC-C02),
     #: when the refusal named any.

@@ -678,6 +678,8 @@ export interface ConfirmResult {
   rejected_count?: number | null;
   /** Named lines skipped because nothing was open on them, their saved decision cleared (#1362). */
   lines_fulfilled_skipped?: number | null;
+  /** Buys confirmed as decided over goods that landed for their line (#1362). */
+  landed_buy_notices?: SupplyFailingLine[] | null;
 }
 
 export interface FulfilmentPlanningListEnvelope {
@@ -2544,6 +2546,16 @@ export interface ConfirmManyOrderResult {
   rejected_count?: number | null;
   /** The per-order twin of `ConfirmResult.lines_fulfilled_skipped` (#1362). */
   lines_fulfilled_skipped?: number | null;
+  /**
+   * #1362 (owner, 29 Sep 2026): lines the server's recheck refused, left out so the rest of
+   * the order confirmed. Each keeps its saved decision.
+   */
+  lines_held_back?: SupplyFailingLine[] | null;
+  /**
+   * #1362: Buys confirmed as decided over goods that landed for their line. The link stays;
+   * purchasing adjusts it off the Buy's order inquiry row.
+   */
+  landed_buy_notices?: SupplyFailingLine[] | null;
   error?: string | null;
   failing_lines?: SupplyFailingLine[] | null;
 }

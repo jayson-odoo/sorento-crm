@@ -5098,6 +5098,11 @@ class ProjectSupplyService:
         invalid: List[Dict[str, Any]] = []
         seen: set = set()
         checked: List[Tuple[ProjectSalesOrderLine, Any, _LineFacts]] = []
+        # #1362 (owner, 29 Sep 2026): a Buy over goods that landed for the line is the
+        # planner's recorded intent, confirmed with a notice - `_check_line` fills this,
+        # `_write_decision` puts the landed fact on the Buy's order inquiry row for
+        # purchasing, and the result returns it. Project line id -> notice line.
+        self._landed_buy_notices: Dict[str, Dict[str, Any]] = {}
         # What is still available as the payload is walked, so two lines of the SAME
         # confirmation cannot each be sold the whole pile. The per-line facts say what was
         # free when the sheet was read; these say what is left after the lines before it
@@ -5266,6 +5271,7 @@ class ProjectSupplyService:
             as_of=getattr(payload, "as_of", None),
         )
         body["lines_fulfilled_skipped"] = len(fulfilled)
+        body["landed_buy_notices"] = list(self._landed_buy_notices.values()) or None
         return body
 
     def _carried_lines(
@@ -5464,6 +5470,9 @@ class ProjectSupplyService:
             "line_no": line.line_no,
             "so_line_no": fact.core.line_no if fact.core is not None else None,
             "item_code": fact.item_code,
+            # #1362 hold-back: addressing only, so confirm-all can hold THIS line back and
+            # confirm the rest of the order (`confirm_many`). Never rendered.
+            "project_line_id": str(line.id),
         }
 
         def refuse(bucket: List[Dict[str, Any]], reason: str) -> None:
@@ -5871,23 +5880,29 @@ class ProjectSupplyService:
             )
             uncovered = credit_qty - reserved_at_credit_bin
             if uncovered > _ZERO:
-                # S-1 (round-5): names the CREDITED quantity, the same figure
-                # `_refuse_buy_over_own_arrival` states for its own seam - not
-                # whatever a partial Reserve happened to leave uncovered of it.
-                # R7 follow-up (R3): `credit_po` is now the document goods actually
-                # LANDED on - an SPO number, never a PO number - so the sentence names
-                # it bare, with no "PO" noun in front of it.
+                # #1362 (owner, 29 Sep 2026): "this good is on hand, and is covering the
+                # line, but, from fulfilment planning, is kind of requesting it to be
+                # delayed while the link is intact, then only purchasing will do the
+                # adjustment in the linkage". Planning RECORDS the intent: the Buy is
+                # confirmed as decided, never refused and never swapped for the landed
+                # goods, and the PO/SPO link stays as it is. What landed is said on the
+                # Buy's own order inquiry row (`_write_decision`), which purchasing must
+                # acknowledge anyway, and in the confirm result. It used to refuse the
+                # whole order ("... nothing to buy for it", AC-S3-15).
                 # #1362 item 4: a sibling's spare says whose purchase it was.
                 landed = credit_said or (
                     f"{qty_text(credit_qty)} landed for this line{landed_on(credit_po)}"
                 )
-                message = f"{landed}; nothing to buy for it"
-                raise SupplyLinesRefused(
-                    status_code=409,
-                    message=message,
-                    failing_lines=[{**subject, "reason": message}],
-                    code="planning_change_buy_over_own_arrival",
-                )
+                notices = getattr(self, "_landed_buy_notices", None)
+                if notices is not None:
+                    notices[str(line.id)] = {
+                        **{k: v for k, v in subject.items() if k != "project_line_id"},
+                        "landed": landed,
+                        "reason": (
+                            f"Buy {qty_text(buy)} confirmed as decided; {landed} "
+                            "stay linked to it, for purchasing to adjust"
+                        ),
+                    }
 
         for item in entry.borrow or []:
             self._check_borrow(item, fact, borrow_left, refuse, stale, invalid, carried_holds)
@@ -6066,8 +6081,12 @@ class ProjectSupplyService:
                         failing_lines=[
                             {
                                 "line_no": line.line_no,
+                                "so_line_no": (
+                                    fact.core.line_no if fact.core is not None else None
+                                ),
                                 "item_code": fact.item_code,
                                 "reason": message,
+                                "project_line_id": str(line.id),
                             }
                         ],
                         conflict={
@@ -6834,6 +6853,11 @@ class ProjectSupplyService:
                         (getattr(entry, "cited_document", None) or "").strip() or None
                     ),
                     "origin": origin_by_product.get(str(fact.product_id), "overseas"),
+                    # #1362: a Buy over goods that landed for the line, kept as decided.
+                    # Purchasing reads this on the Buy's own row and adjusts the linkage.
+                    "landed_note": (
+                        getattr(self, "_landed_buy_notices", None) or {}
+                    ).get(str(line.id), {}).get("landed"),
                 }
             )
         for entry in carried:
@@ -10640,6 +10664,51 @@ class ProjectSupplyService:
 
     # --------------------------------------------------- confirm all approved (D3)
 
+    def _write_holding_back(
+        self,
+        order: ProjectSalesOrder,
+        entry: Any,
+        write: Callable[[ProjectSalesOrder, Any], Dict[str, Any]],
+        hold_back: bool,
+    ) -> Tuple[Dict[str, Any], Any, List[Dict[str, Any]]]:
+        """#1362 (owner, 29 Sep 2026: "i think we are too restrictive already"): one line's
+        stale or conflicting decision must not refuse the whole order.
+
+        When the recheck refuses named lines (`SupplyLinesRefused`, every failing line
+        addressed by `project_line_id`), those lines are held back - rolled back, left out
+        of the body, their saved decisions untouched - and the rest of the order is
+        confirmed without them. A line the payload does not name is undecided, which is a
+        normal outcome (13.4), so nothing here invents a state. Repeated while it still
+        makes progress, because holding one member back can make a unit sibling fail its
+        own check next. Refused as before when nothing would be left to confirm, or when a
+        refusal names no line (it is about the order, not a line).
+
+        Not for a planning-change apply (`hold_back=False`): a batch names its lines on
+        purpose, and applying part of it would leave the batch half applied.
+        """
+        held: List[Dict[str, Any]] = []
+        while True:
+            try:
+                return write(order, entry), entry, held
+            except SupplyLinesRefused as refused:
+                failing = refused.failing_lines
+                ids = {str(f.get("project_line_id") or "") for f in failing}
+                lines = list(getattr(entry, "lines", None) or [])
+                keep = [line for line in lines if str(line.project_line_id) not in ids]
+                if (
+                    not hold_back
+                    or not failing
+                    or "" in ids
+                    or not keep
+                    or len(keep) == len(lines)
+                ):
+                    raise
+                self.db.rollback()
+                held.extend(
+                    {k: v for k, v in f.items() if k != "project_line_id"} for f in failing
+                )
+                entry = entry.model_copy(update={"lines": keep})
+
     def confirm_many(
         self,
         entries: Sequence[Any],
@@ -10647,6 +10716,7 @@ class ProjectSupplyService:
         actor_user_id: str,
         assert_can_act: Callable[[Session, ProjectSalesOrder], None],
         write: Optional[Callable[[ProjectSalesOrder, Any], Dict[str, Any]]] = None,
+        can_hold_back: Optional[Callable[[Any], bool]] = None,
     ) -> List[Dict[str, Any]]:
         """"Confirm all approved" (D3): every order's Confirm, each in its OWN transaction.
 
@@ -10671,6 +10741,7 @@ class ProjectSupplyService:
         write = write or (
             lambda order, entry: self.confirm(order, entry, actor_user_id=actor_user_id)
         )
+        can_hold_back = can_hold_back or (lambda _entry: True)
         results: List[Dict[str, Any]] = []
         for entry in entries:
             pso_id = str(entry.pso_id)
@@ -10691,10 +10762,13 @@ class ProjectSupplyService:
                     }
                 )
                 continue
+            held_back: List[Dict[str, Any]] = []
             try:
                 order = self.get_order(pso_id)
                 assert_can_act(self.db, order)
-                body = write(order, entry)
+                body, entry, held_back = self._write_holding_back(
+                    order, entry, write, can_hold_back(entry)
+                )
                 self.db.commit()
                 results.append(
                     {
@@ -10720,6 +10794,11 @@ class ProjectSupplyService:
                         "rejected_count": body.get("rejected_count"),
                         # #1362 item 3: named lines skipped because nothing was open.
                         "lines_fulfilled_skipped": body.get("lines_fulfilled_skipped"),
+                        # #1362 hold-back: lines the recheck refused, left out so the rest
+                        # of the order confirmed; each keeps its saved decision.
+                        "lines_held_back": held_back or None,
+                        # #1362: Buys confirmed over goods that landed for their line.
+                        "landed_buy_notices": body.get("landed_buy_notices"),
                     }
                 )
             except Exception as exc:  # noqa: BLE001 - every order must get an answer
