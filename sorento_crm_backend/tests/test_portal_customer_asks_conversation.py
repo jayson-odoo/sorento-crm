@@ -78,7 +78,7 @@ def test_window_rows_shape_and_isolation(w):
     resp = _get(w, w["ask"].id)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert set(body) == {"messages", "ask_message_id", "contact_id"}
+    assert set(body) == {"messages", "ask_message_id"}
     ids = [m["id"] for m in body["messages"]]
     assert ids == [w["q_in"].id, w["out_other"].id, w["out_answer"].id, w["out_late"].id]  # oldest first
     for m in body["messages"]:
