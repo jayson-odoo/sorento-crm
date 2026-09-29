@@ -21,14 +21,14 @@ Order matters only for readability: the recount never reads the column. Idempote
 recount lands on the same numbers every time and the drop is guarded.
 
 Revision ID: lsa_0001_show_all_counts
-Revises: sat_0001_stock_ask_done
+Revises: ac_grn_do_0001_ingest
 Create Date: 2026-09-30
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "lsa_0001_show_all_counts"
-down_revision = "sat_0001_stock_ask_done"
+down_revision = "ac_grn_do_0001_ingest"
 branch_labels = None
 depends_on = None
 
