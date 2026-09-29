@@ -73,7 +73,7 @@ that takes `customer_ids` and returns per-customer data (census in the plan, sec
 ### Self-reference (Q5a, Q6a)
 
 - **AC-CS-20** `[BE]` The parser's strict schema has a boolean key `self_reference`, listed
-  in `contracts.TOLERATED_ABSENT` (an older prompt version omits it), and the prompt teaches
+  in `head/parser.TOLERATED_ABSENT` (an older prompt version omits it), and the prompt teaches
   it: "my", "mine", "me", "our", "us" (as the asker's own account, not the company),
   "saya punya", "kami punya", "我的", "我们的" -> `self_reference: true`; a message naming
   another party or none -> false. "where is my shipment" (ETA) stays the ETA rule AND

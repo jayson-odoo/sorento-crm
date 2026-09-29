@@ -65,7 +65,7 @@ All paths under `sorento_crm_backend/app/` unless given in full. Read on main `b
   emits no customer entity; under `order` the gate then fails on `ALLOWS_EMPTY["order"] =
   False` (`lanes/business/gate.py:133-142`) and asks for scope, or a carried customer is
   reused.
-- Adding a key: `head/parser.py:422-467` (schema), `contracts.TOLERATED_ABSENT:501`, and a
+- Adding a key: `head/parser.py:422-467` (schema), `head/parser.py::TOLERATED_ABSENT:501`, and a
   prompt-version migration that publishes a new version with the label unmoved (pattern:
   `alembic/versions/chatbot_top_selling_vocab.py`).
 
@@ -209,7 +209,7 @@ reads it too (returns `scope.linked` or None).
 ### D2. Parser: `self_reference`
 
 - `head/parser.py` schema: `"self_reference": {"type": "boolean"}` beside `correction`;
-  `contracts.TOLERATED_ABSENT` gains it; `contracts.DECLARED_KEYS` follows the schema.
+  `head/parser.TOLERATED_ABSENT` gains it; `DECLARED_KEYS` follows the schema.
 - Prompt: a new trailing addendum `SELF_REFERENCE_ADDENDUM` in `chatbot_parser_prompt.py`,
   appended to `SEMANTIC_PARSER_PROMPT` the way `TOP_SELLING_ADDENDUM` is, teaching the key
   (AC-CS-20 wording), with the "we / us = the company" rule narrowed: "we" as the asker's
