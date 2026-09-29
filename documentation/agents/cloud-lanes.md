@@ -64,5 +64,12 @@ The `[skip ci]` convention for intermediate commits (a commit message containing
 a run for that push) stays in place as belt and braces - it costs nothing now that pushes to a PR
 do not trigger runs on their own, and it still matters for pushes to `main`.
 
+A docs-only change (every path under `documentation/**`, `.claude/**`, `.cursor/**`, a root-level
+`*.md` or the PR template) runs only the `Changed areas` and `Single alembic head` jobs, on a PR,
+a merge-queue entry and a push to main alike: no image build, no test suite, no deploy, no deploy
+email (owner ruling 29 Sep 2026; `documentation/plans/ci/PLAN-ci-docs-skip-29sep.md`). One
+non-docs path anywhere in the change, a markdown file inside a service tree included, keeps the
+full pipeline.
+
 A PR with no `ci` label shows no checks and therefore cannot merge under branch protection - that
 is intended, not a bug: it is what keeps a not-yet-ready PR from being mergeable by accident.
