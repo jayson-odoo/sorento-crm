@@ -47,6 +47,16 @@ FK seeded, never a borrowed row.
 - AC-S3-6 `set_row_decision` / amend that turns an own-arrival Reserve into a Buy is refused with
   `planning_change_buy_over_own_arrival` and a message naming N and the PO; amending the remainder
   (the 10 of AC-S3-2 when no spare exists) to Buy is allowed.
+  SUPERSEDED by the owner ruling of 29 Sep 2026 (#1362, PR #1363): "this good is on hand, and
+  is covering the line, but, from fulfilment planning, is kind of requesting it to be delayed
+  while the link is intact, then only purchasing will do the adjustment in the linkage".
+  Fulfilment planning records the intent and never refuses a Buy over goods that landed for the
+  line, at amend or at Confirm, and never swaps it for the landed goods. Confirm keeps the Buy as
+  decided and returns a notice ("Buy 20 confirmed as decided; 20 landed for this line on SPO-...
+  stay linked to it, for purchasing to adjust"); the PO/SPO link is untouched; the Buy's own
+  order inquiry row (born awaiting acknowledgement) carries "Planning keeps this Buy: ... stay
+  linked to this line; adjust the linkage if the Buy replaces them" for purchasing. Any other
+  per-line refusal at confirm-all holds that line back (decision kept) and confirms the rest.
 - AC-S3-7 Path B: a replanned row linked 40 to a received SPO allocation, own landed 40 on hand:
   the row is settled in place, link kept, note gains "Was {qty} on {date}", `redirected_to_pool`
   stays false, no fresh row is raised.
@@ -65,6 +75,18 @@ FK seeded, never a borrowed row.
   ladder (compose) and the confirm-time recheck. (measured: the line served first by the
   ordinary rung takes the bin; the credit finds nothing left)
   (seams guarded: single-line floor, confirm ledger)
+  AMENDED by the owner ruling of 29 Sep 2026 (#1362, "we cannot snatch, what's ordered
+  against the SO should stay belonged to it"): goods that landed on a PO bought for an SO line
+  belong to THAT line. They are pinned to it in the shared assignment before anybody queues
+  (`StockDebtService._landed_holds`), so an ordinary draw by any other line, an earlier-due
+  line of the same product at the same bin included, reaches only the truly free stock: on
+  hand less what landed for other lines and is still owed to them. The ordinary-draw charge
+  above still spends the physical ledger, but it can no longer spend another line's landed
+  goods, so the credited line keeps them. Example (SRT357 shape): on hand 261, 100 landed for
+  the later line, an earlier line asking 250: the earlier line may draw 161 (it buys, since
+  161 cannot meet 250 whole), the later line is credited all 100. Board walk, confirm recheck
+  and order inquiry read the same rule. A sibling's tier-2 SPARE is not pinned: it is not owed
+  to the line it was bought for.
 - AC-S3-12 (second review round, 21 Sep) Owner ruling R2: a mixed row (a received link and a
   still-open purchase-order link) that settles in place because its own-arrival credit covers the
   row's whole linked total keeps BOTH links - the received link as history, and the still-open PO
@@ -96,6 +118,16 @@ FK seeded, never a borrowed row.
   states for its own seam - not whatever a partial Reserve happened to leave uncovered of it:
   credit 20, Reserve 8 posted at the credited bin plus Buy 12, the refusal reads "20 landed for
   this line on PO ...", never "12 landed".
+  SUPERSEDED by the owner ruling of 29 Sep 2026 (#1362, PR #1363): "this good is on hand, and
+  is covering the line, but, from fulfilment planning, is kind of requesting it to be delayed
+  while the link is intact, then only purchasing will do the adjustment in the linkage".
+  Fulfilment planning records the intent and never refuses a Buy over goods that landed for the
+  line, at amend or at Confirm, and never swaps it for the landed goods. Confirm keeps the Buy as
+  decided and returns a notice ("Buy 20 confirmed as decided; 20 landed for this line on SPO-...
+  stay linked to it, for purchasing to adjust"); the PO/SPO link is untouched; the Buy's own
+  order inquiry row (born awaiting acknowledgement) carries "Planning keeps this Buy: ... stay
+  linked to this line; adjust the linkage if the Buy replaces them" for purchasing. Any other
+  per-line refusal at confirm-all holds that line back (decision kept) and confirms the rest.
 - AC-S3-16 (round-5, B-2, merge-blocking, browser-pass finding, 22 Sep) The confirm-time refusal
   follows the SAME reserve-window verdict the composer already reads (`outside_reserve_window`) -
   a line due beyond the reserve window is never credited at all, composed or confirmed, so its Buy

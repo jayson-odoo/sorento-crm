@@ -1,6 +1,6 @@
 # PLAN: R7 own-arrival credit reads what LANDED on the SPO, not what the PO transferred
 
-Status: in review, PR open (24 Sep 2026); coder green (38 pass across the five s3 files), reviewer round 1 folded (B1 kill tests, S1 planning-engine sentence, S2 company equality on the batched join, N2 docstrings). Open ruling S3 below. Merge needs owner go. Track: small fix track, stretched - one seam, no migration, no auth change, but the R7 test fixture seeds the wrong document so four existing test files move with it. One coder writes tests + fix, one reviewer, no browser pass (no UI code changes; the refusal message is asserted in pytest). Lane `fix/r7-landed-reads-spo-received`, worktree `sorento_crm-r7-spo`. Follow-up to `PLAN-board-received-stock-own-arrival.md` (R7, PR #1092, merged as 2280975f9).
+Status: in review, PR open (24 Sep 2026); #1362 rounds 4 and 5 on PR #1363 (29 Sep 2026); coder green (38 pass across the five s3 files), reviewer round 1 folded (B1 kill tests, S1 planning-engine sentence, S2 company equality on the batched join, N2 docstrings). Open ruling S3 below. Merge needs owner go. Track: small fix track, stretched - one seam, no migration, no auth change, but the R7 test fixture seeds the wrong document so four existing test files move with it. One coder writes tests + fix, one reviewer, no browser pass (no UI code changes; the refusal message is asserted in pytest). Lane `fix/r7-landed-reads-spo-received`, worktree `sorento_crm-r7-spo`. Follow-up to `PLAN-board-received-stock-own-arrival.md` (R7, PR #1092, merged as 2280975f9).
 
 ## The problem, measured (SO399639 line 58 / core line 2120, C-FHSS18, prod 24 Sep 2026)
 
@@ -102,6 +102,89 @@ keep their `quantity_received` and are counted by both R7 joins, the same way
 `from_po_line_ref` values carry both a retired and a live row with receipts, so those could
 double-count. Built as A (count them, consistent with the board); owner may rule B (exclude
 `retired_at IS NOT NULL` from R7 only).
+
+## Follow-up: #1362, landed and free said apart (owner ruling 29 Sep 2026)
+
+Owner, 29 Sep 2026, on SO382618 line SRT357 (100 landed on SPO-2026/06-0152 at BRW-BB, on
+hand 261, trail read "40 landed for this line"): "i check 100 is for this line, why it says
+40 ah?" then "please fix this". Ruling: the sentence states two facts apart. The first is what
+landed for the line (tier 1 plus tier-2 spare, capped by the line's need). The second is how
+much of it is still free at the bin and taken first. Example: "100 landed for this line on
+SPO-2026/06-0152; 40 free at BRW-BB, taken first". When less is taken than is free (a pool
+share covered part of the line first), the taken figure is said as a third number.
+`front_planning_engine.own_arrival_reason` builds it for both the component reason and the
+board trail (`_group_take_why`).
+
+Measured cause of the 40 (reproduction, 29 Sep): the credit ledger is already per (product,
+bin) (`compose_lines`, `_check_line`, the order-inquiry picker), so no other product is
+involved. An EARLIER-due line of the SAME product at the same bin, with no PO of its own,
+drew 221 of the 261 through the ordinary group take, and AC-S3-11 charges that draw to the
+same ledger. Ruled 29 Sep 2026, built in round 5 below.
+
+## Follow-up: #1362 items 2 and 3 (owner, 29 Sep 2026)
+
+Item 2, shipment naming. `_po_received_by_so_line_ref` summed every SPO row landing the PO
+line but named the first one found, so SO382618 line 400 read "on SPO-2026/06-0044" while its
+order-inquiry rows link SPO-2026/06-0092 and SPO-2026/07-0019. Now (`_landed_for_refs`):
+where the line's order-inquiry row links a specific SPO row, that link names the shipment and
+its landed figure is tier 1, `min(link qty, allocation quantity_received)` per link, even when
+the PO line's own receipts add to a different number. Otherwise the PO line's receipts stand
+and every contributing shipment is named with its quantity: "100 landed for this line: 60 on
+SPO-2026/06-0092, 40 on SPO-2026/07-0019". One helper, `front_planning_engine.landed_on`,
+words the board sentence and both amend refusals.
+
+Item 3, a stale decision on a fulfilled line. A named line whose plan quantity is 0 is skipped
+by `confirm` (not checked, not guarded), counted as `lines_fulfilled_skipped`, and its saved
+draft is deleted (cleared, not marked superseded: a draft has no history of its own, and on a
+line with nothing open there is nothing left for it to decide). `_refuse_buy_over_own_arrival`
+returns early for such a row. The cell drawer states "Fulfilled, N delivered, due <date>" in
+place of the suggestion. The stock drawer lists the drawer's own fulfilled line at zero, so
+"My line" finds it. There is no delivered-date column on `sales_order_lines`, so the date said
+is the line's due date.
+
+## Follow-up: #1362 round 4 (owner evidence, 29 Sep 2026)
+
+Item 4, a tier-2 spare says whose purchase it was. SO382618's PO 202607-S0077 bought 200
+B2154-NL for line 1648 (100 pieces) and landed all 200 on SPO-2026/09-0036. Line 1648 reads
+"100 landed for this line on SPO-2026/09-0036"; line 2912 reads "100 spare from line 1648's
+purchase (200 bought for 100) landed on SPO-2026/09-0036", never "landed for this line"
+(`ProjectSupplyService.own_arrival_landed_text`). The board trail, the component reason, the
+amend refusal and the confirm refusal all use it.
+
+Item 5, AutoCount line numbers. Board contributions and confirm failing lines carry
+`so_line_no` (`sales_order_lines.line_no`). The Line column, the drawer's line labels and the
+confirm messages print it; "row N" only where AutoCount gave the line no number. `line_no`
+stays the planning address (the draft key).
+
+Item 6, a same-date unit member read the unit's first core line for tier 1, so a line with no
+purchase of its own was credited its sibling's receipt (100 landed, 160 credited). Each member
+now reads its own core line.
+
+## Follow-up: #1362 round 5, landed goods stay with their line (owner ruling 29 Sep 2026)
+
+Owner: "we cannot snatch, what's ordered against the SO should stay belonged to it, we cannot
+simply say it belongs to another order, this is not the right process". Built in the ONE
+assignment every reader shares (R21): `StockDebtService._landed_holds` pins what landed for a
+line (tier 1, `min(landed, open)`, less the line's own decision and placement holds) to the
+line's own bin floor, before the walk. Only a floor already in the read is pinned, and
+`assign()` caps a pin at what the floor holds, so no stock is invented. The pin is marked
+`landed`, and `_drawn_at_own_date` offers it to its own line only, never to another member
+of the same planning unit. AC-S3-11 is amended accordingly (see the UAC). The Stock Debt view
+reads the same assignment, so a line whose goods landed reads `pinned` there too.
+
+## Follow-up: #1362 hand test, a Buy over landed goods is recorded, not refused (owner 29 Sep 2026)
+
+Hand test: SO382618 confirm-all refused the whole order on one line (planning row 29, a saved
+Buy over 100 that landed for it on SPO-2026/06-0131). Owner: "i think we are too restrictive
+already", then "this good is on hand, and is covering the line, but, from fulfilment planning,
+is kind of requesting it to be delayed while the link is intact, then only purchasing will do
+the adjustment in the linkage". Built: the confirm recheck no longer refuses a Buy over landed
+goods (it records a notice, returned as `landed_buy_notices` and written on the Buy's own order
+inquiry row `note`, which a buyer must acknowledge anyway); the amend guard
+`_refuse_buy_over_own_arrival` is removed; the board's Decide Buy no longer skips such a row
+(AC-51). Any other per-line refusal at confirm-all holds that line back (`lines_held_back`,
+decision kept) and confirms the rest; a planning-change batch is still applied whole. AC-S3-6,
+AC-S3-15 and AC-51 are marked superseded in their UACs.
 
 ## Out of scope
 

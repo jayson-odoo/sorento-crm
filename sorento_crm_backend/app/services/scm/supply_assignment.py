@@ -278,6 +278,11 @@ class Hold:
     #: so a dead or undated PO books no shortfall for it (unlike AC-S2-7's precedent) and a
     #: PO landing after the line's date does not either. The board never sets it.
     fulfils: bool = False
+    #: #1362 round 5 (owner ruling, 29 Sep 2026): goods that LANDED for this line on its
+    #: own purchase (`StockDebtService._landed_holds`). They belong to this line alone, so
+    #: the board offers them to no other line - not even another member of its own
+    #: planning unit.
+    landed: bool = False
 
 
 @dataclass(frozen=True)
@@ -298,6 +303,8 @@ class Assigned:
     #: pin, which is a decision rather than a placement).
     oi_number: Optional[str] = None
     oi_id: Optional[str] = None
+    #: #1362 round 5: this take is a `Hold.landed` pin - goods that landed for THIS line.
+    landed: bool = False
 
 
 @dataclass(frozen=True)
@@ -639,6 +646,7 @@ def assign(
                 # which is a decision, not a placement.
                 oi_number=hold.oi_number,
                 oi_id=hold.oi_id,
+                landed=hold.landed,
             )
         )
 

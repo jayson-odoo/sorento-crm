@@ -7,11 +7,13 @@ import {
   getEmailTemplates,
   getTemplateVariableCatalog,
   previewEmailTemplate,
+  previewEmailTemplateDraft,
   updateEmailTemplate,
 } from '../services/emailTemplateService';
 import type {
   EmailTemplateCreateBody,
   EmailTemplateUpdateBody,
+  PreviewDraftBody,
 } from '../types/emailTemplate.types';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
@@ -32,10 +34,10 @@ export function useEmailTemplate(id: string | null) {
   });
 }
 
-export function useTemplateVariableCatalog() {
+export function useTemplateVariableCatalog(code?: string | null) {
   return useQuery({
-    queryKey: ['email-template-variable-catalog'],
-    queryFn: getTemplateVariableCatalog,
+    queryKey: ['email-template-variable-catalog', code ?? null],
+    queryFn: () => getTemplateVariableCatalog(code),
     staleTime: 1000 * 60 * 30,
   });
 }
@@ -62,5 +64,11 @@ export function useUpdateEmailTemplate(id: string) {
 export function usePreviewEmailTemplate(id: string | null) {
   return useMutation({
     mutationFn: (context?: Record<string, unknown>) => previewEmailTemplate(id!, context),
+  });
+}
+
+export function usePreviewEmailTemplateDraft() {
+  return useMutation({
+    mutationFn: (body: PreviewDraftBody) => previewEmailTemplateDraft(body),
   });
 }

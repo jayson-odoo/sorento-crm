@@ -33,7 +33,7 @@ import { BoardChangeTable } from './BoardChangeTable';
 import { changedFieldsOf, lineKeyOf } from '../../_shared/lib/boardChangeAnnotations';
 import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotations';
 import { canDecide } from '../../_shared/lib/boardAmend';
-import { contributionMatchesSearch } from '../../_shared/lib/fulfilmentBoard';
+import { contributionMatchesSearch, soLineLabel, soLineNoText } from '../../_shared/lib/fulfilmentBoard';
 import { BoardDecideControl } from './BoardDecideControl';
 import {
   boardOrderInquiryWord,
@@ -372,7 +372,8 @@ export function FulfilmentBoardListView({
             : row.original.cancelled
               ? 'This line was removed from the sales order.'
               : undefined,
-        rowLabel: (row) => `Select ${row.original.so_number} line ${row.original.line_no}`,
+        rowLabel: (row) =>
+          `Select ${row.original.so_number} ${soLineLabel(row.original).toLowerCase()}`,
       }),
       // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-13): the leftmost column, split out
       // of the "Sales order" cell's own `(Line N)` suffix below - AutoCount's own line
@@ -381,10 +382,12 @@ export function FulfilmentBoardListView({
       // here - the caller's own order IS the default (`PanelDataGrid`'s own contract).
       {
         id: 'line',
-        accessorFn: (row) => row.line_no,
+        // #1362 item 5: AutoCount's own line number, never the planning row index;
+        // "row N" only where AutoCount gave the line none.
+        accessorFn: (row) => row.so_line_no ?? row.line_no,
         header: ({ column }) => <DataGridColumnHeader title="Line" column={column} />,
         cell: ({ row }) => (
-          <span className="block tabular-nums">{row.original.line_no}</span>
+          <span className="block tabular-nums">{soLineNoText(row.original)}</span>
         ),
         size: 70,
         minSize: 60,
@@ -829,7 +832,7 @@ export function FulfilmentBoardListView({
               {contribution.line_id ? (
                 <SoLineAttachmentsButton
                   lineId={contribution.line_id}
-                  label={`${contribution.so_number} L${contribution.line_no} ${contribution.item_code}`}
+                  label={`${contribution.so_number} ${soLineLabel(contribution)} ${contribution.item_code}`}
                   attachments={attachmentsByLine[contribution.line_id] ?? []}
                   canEdit={canEditAttachments}
                 />

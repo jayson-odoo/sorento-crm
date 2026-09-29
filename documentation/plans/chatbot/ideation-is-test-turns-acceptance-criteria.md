@@ -42,5 +42,6 @@ live run.
 
 ## Docs
 
-- **AC-10 [T]** `PLAN-ideation-capture-n8n.md` section 1 request body and
-  `PLAN-ideation-ideate-intent.md` section 4 (the section 5.1 snapshot) each name `is_test`.
+- **AC-10 [T]** `documentation/plans/_archive/ideation/PLAN-ideation-capture-n8n.md` section 1 request
+  body and `documentation/plans/_archive/ideation/PLAN-ideation-ideate-intent.md` section 4 (the
+  section 5.1 snapshot) each name `is_test`.
