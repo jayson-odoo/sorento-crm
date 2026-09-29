@@ -19,6 +19,22 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/portal/c/ah-lim/customer_asks',
   useSearchParams: () => new URLSearchParams(),
 }));
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: (props: {
+    id?: string;
+    value: string;
+    onChange: (v: string) => void;
+    options?: { value: string; label: string }[];
+  }) => (
+    <select id={props.id} value={props.value} onChange={(e) => props.onChange(e.target.value)}>
+      {(props.options ?? []).map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
@@ -79,6 +95,7 @@ function payload(over: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.localStorage.clear();
   getCustomerAsksTodo.mockResolvedValue(payload());
   listCustomerAsks.mockResolvedValue({ data: [DONE_ROW], pagination: { total: 1, page: 1, limit: 20 } });
   updateCustomerAsk.mockResolvedValue({ ...ROW, state: 'done' });
@@ -92,7 +109,12 @@ describe('CustomerAsksList (portal to-do body)', () => {
     expect(screen.getByTestId('ask-todo-counts').textContent?.replace(/\s+/g, ' ')).toContain(
       'Open 2 · Needs attention 1 · Done today 0',
     );
-    expect(screen.getAllByRole('heading').map((h) => h.textContent)).toEqual(['Needs attention', 'Today']);
+    expect(screen.getAllByRole('heading').map((h) => h.textContent)).toEqual([
+      'Needs attention',
+      'Sun 27 Sep',
+      'Today',
+      'Today',
+    ]);
     expect(screen.getByText('SRT5674 x 150')).toBeInTheDocument();
     expect(screen.queryByLabelText('Filter by state')).toBeNull();
     expect(screen.queryByText('Asked at')).toBeNull(); // no grid header
@@ -164,5 +186,46 @@ describe('CustomerAsksList (portal to-do body)', () => {
     getCustomerAsksTodo.mockRejectedValue(new NotASalesAgentError());
     render(<CustomerAsksList search="" />);
     expect(await screen.findByText('Customer asks are for sales agents only.')).toBeInTheDocument();
+  });
+
+  // AC-ST121: the sort is remembered per contact in localStorage.
+  describe('remembered sort', () => {
+    const TWO = () =>
+      payload({
+        open: [
+          { ...TODAY_ROW, id: 'z', customer_name: 'Zed Trading', product_code: 'SRT-Z' },
+          { ...TODAY_ROW, id: 'a', customer_name: 'Abe Trading', product_code: 'SRT-A' },
+        ],
+      });
+    const order = () => screen.getAllByText(/Trading$/).map((n) => n.textContent);
+
+    it('applies a value stored for this contact on open', async () => {
+      window.localStorage.setItem('sorento.portalAsksSort.contact-1', JSON.stringify({ id: 'customer', desc: false }));
+      getCustomerAsksTodo.mockResolvedValue(TWO());
+      render(<CustomerAsksList search="" contactId="contact-1" />);
+      await screen.findByText('Zed Trading');
+      expect(order()).toEqual(['Abe Trading', 'Zed Trading']);
+      expect((screen.getByLabelText('Sort') as HTMLSelectElement).value).toBe('customer:asc');
+    });
+
+    it('ignores a value stored for another contact', async () => {
+      window.localStorage.setItem('sorento.portalAsksSort.contact-2', JSON.stringify({ id: 'customer', desc: false }));
+      getCustomerAsksTodo.mockResolvedValue(TWO());
+      render(<CustomerAsksList search="" contactId="contact-1" />);
+      await screen.findByText('Zed Trading');
+      expect((screen.getByLabelText('Sort') as HTMLSelectElement).value).toBe('asked_at:asc');
+    });
+
+    it('writes the choice under the contact key when the select changes', async () => {
+      getCustomerAsksTodo.mockResolvedValue(TWO());
+      render(<CustomerAsksList search="" contactId="contact-1" />);
+      await screen.findByText('Zed Trading');
+      fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'product:asc' } });
+      await waitFor(() => {
+        const raw = window.localStorage.getItem('sorento.portalAsksSort.contact-1');
+        expect(raw && JSON.parse(raw)).toEqual({ id: 'product', desc: false });
+      });
+      expect(window.localStorage.getItem('sorento.portalAsksSort.contact-2')).toBeNull();
+    });
   });
 });

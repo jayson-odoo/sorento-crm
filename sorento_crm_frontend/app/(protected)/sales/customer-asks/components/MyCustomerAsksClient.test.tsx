@@ -20,9 +20,14 @@ vi.mock('next/navigation', () => ({
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() }));
 vi.mock('@/lib/toast', () => ({ toast }));
 
-let permissions = new Set<string>(['sales.customer_asks.view']);
-vi.mock('@/hooks/usePermissions', () => ({
-  useHasPermission: (slug: string) => permissions.has(slug),
+const setSorting = vi.fn();
+let storedSorting: { id: string; desc: boolean }[] = [{ id: 'asked_at', desc: false }];
+const prefsCalls: { listingKey?: string | null }[] = [];
+vi.mock('@/lib/listing-column-preferences/useListingViewPreferences', () => ({
+  useListingViewPreferences: (args: { listingKey?: string | null }) => {
+    prefsCalls.push(args);
+    return { sorting: storedSorting, setSorting, filters: null, setFilters: vi.fn(), isLoading: false };
+  },
 }));
 
 vi.mock('@/components/common/SearchableSelect', () => ({
@@ -100,7 +105,8 @@ const AGENTS = [
 
 beforeEach(() => {
   vi.clearAllMocks();
-  permissions = new Set(['sales.customer_asks.view']);
+  storedSorting = [{ id: 'asked_at', desc: false }];
+  prefsCalls.length = 0;
   getCustomerAsksTodo.mockResolvedValue(payload());
   listAskAgents.mockResolvedValue(AGENTS);
   updateSalesAsk.mockResolvedValue(ask('mine', { state: 'done' }));
@@ -155,24 +161,25 @@ describe('MyCustomerAsksClient (AC-ST209)', () => {
 });
 
 describe('MyCustomerAsksClient Agent select (AC-ST210)', () => {
-  it('renders no Agent select, and never asks for the agents, without view_all', async () => {
+  it('renders no Agent select when the agents list is empty', async () => {
+    listAskAgents.mockResolvedValue([]);
     render(<MyCustomerAsksClient />);
     await screen.findByText('Customer mine');
+    await waitFor(() => expect(listAskAgents).toHaveBeenCalled());
     expect(screen.queryByLabelText('Agent')).toBeNull();
-    expect(listAskAgents).not.toHaveBeenCalled();
   });
 
-  it('renders a clearable Agent select with the open counts under view_all', async () => {
-    permissions = new Set(['sales.customer_asks.view', 'sales.customer_asks.view_all']);
+  it('renders a clearable Agent select with All agents first and the counts, when the list is non-empty', async () => {
     render(<MyCustomerAsksClient />);
     const select = await screen.findByLabelText('Agent');
     expect(select).toHaveAttribute('data-clearable', 'true');
-    expect(await screen.findByRole('option', { name: 'SEAN I · 4 open · 2 need attention' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'All agents' })).toBeInTheDocument();
+    await screen.findByRole('option', { name: 'SEAN I · 4 open · 2 need attention' });
+    const labels = within(select).getAllByRole('option').map((o) => o.textContent);
+    expect(labels[0]).toBe('-'); // the mock's clear option
+    expect(labels[1]).toBe('All agents');
   });
 
   it('picking an agent refetches with agent_id and clearing returns to mine', async () => {
-    permissions = new Set(['sales.customer_asks.view', 'sales.customer_asks.view_all']);
     render(<MyCustomerAsksClient />);
     const select = await screen.findByLabelText('Agent');
     await screen.findByRole('option', { name: /WT I/ });
@@ -183,7 +190,6 @@ describe('MyCustomerAsksClient Agent select (AC-ST210)', () => {
   });
 
   it('All agents fetches agent_id=all and names the agent on each row', async () => {
-    permissions = new Set(['sales.customer_asks.view', 'sales.customer_asks.view_all']);
     getCustomerAsksTodo.mockImplementation((agentId?: string) =>
       Promise.resolve(
         agentId === 'all'
@@ -198,5 +204,36 @@ describe('MyCustomerAsksClient Agent select (AC-ST210)', () => {
     await waitFor(() => expect(getCustomerAsksTodo).toHaveBeenLastCalledWith('all'));
     expect(await screen.findByText('WT I')).toBeInTheDocument();
     expect(screen.queryByText('You are not linked to a sales agent')).toBeNull();
+  });
+});
+
+describe('MyCustomerAsksClient remembered sort (AC-ST120)', () => {
+  it('reads the sort from the listing view preference under sales.customer_asks.view::todo', async () => {
+    render(<MyCustomerAsksClient />);
+    await screen.findByText('Customer mine');
+    expect(prefsCalls.length).toBeGreaterThan(0);
+    expect(prefsCalls.every((c) => c.listingKey === 'sales.customer_asks.view::todo')).toBe(true);
+  });
+
+  it('applies a stored customer sort on open: rows inside a day are A to Z', async () => {
+    storedSorting = [{ id: 'customer', desc: false }];
+    getCustomerAsksTodo.mockResolvedValue(
+      payload({ open: [ask('zed', { customer_name: 'Zed Trading' }), ask('abe', { customer_name: 'Abe Trading' })] }),
+    );
+    render(<MyCustomerAsksClient />);
+    await screen.findByText('Zed Trading');
+    const names = screen.getAllByText(/Trading$/).map((n) => n.textContent);
+    expect(names).toEqual(['Abe Trading', 'Zed Trading']);
+    expect((screen.getByLabelText('Sort') as HTMLSelectElement).value).toBe('customer:asc');
+  });
+
+  it('changing the Sort select writes the new entry through the hook setter', async () => {
+    render(<MyCustomerAsksClient />);
+    await screen.findByText('Customer mine');
+    fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'product:asc' } });
+    expect(setSorting).toHaveBeenCalled();
+    const arg = setSorting.mock.calls.at(-1)![0];
+    const value = typeof arg === 'function' ? arg([]) : arg;
+    expect(value).toEqual([{ id: 'product', desc: false }]);
   });
 });

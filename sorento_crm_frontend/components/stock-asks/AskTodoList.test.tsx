@@ -6,6 +6,23 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { AskTodoList } from './AskTodoList';
+
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: (props: {
+    id?: string;
+    value: string;
+    onChange: (v: string) => void;
+    options?: { value: string; label: string }[];
+  }) => (
+    <select id={props.id} value={props.value} onChange={(e) => props.onChange(e.target.value)}>
+      {(props.options ?? []).map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
 import type { StockAsk } from '@/lib/stock-asks';
 import type { AskTodoPayload } from '@/lib/stock-asks-todo';
 
@@ -71,10 +88,49 @@ describe('AskTodoList counts and groups (AC-ST114)', () => {
     expect(screen.getByTestId('ask-todo-counts').querySelector('.text-destructive')).toBeNull();
   });
 
-  it('renders the group headings in order: Needs attention, Today, Done today', () => {
-    setup(payload());
-    const headings = screen.getAllByRole('heading').map((h) => h.textContent);
-    expect(headings).toEqual(['Needs attention', 'Today', 'Done today']);
+  it('renders the sections in order with their day sub-headings, oldest day first', () => {
+    const older = ask({ id: 'older', customer_name: 'Older Customer', created_at: '2026-09-22T05:00:00Z' });
+    const yday = ask({ id: 'yday', customer_name: 'Yday Customer', created_at: '2026-09-28T02:00:00Z' });
+    setup(payload({ open: [yday, older, NEW] }));
+    const headings = screen.getAllByRole('heading').map((h) => `${h.tagName}:${h.textContent}`);
+    expect(headings).toEqual([
+      'H2:Needs attention',
+      'H3:Tue 22 Sep',
+      'H3:Yesterday',
+      'H2:Today',
+      'H3:Today',
+      'H2:Done today',
+    ]);
+  });
+
+  it('renders a Sort select on the counts line and reports a change', () => {
+    const onSortChange = vi.fn();
+    setup(payload(), { onSortChange });
+    const sort = screen.getByLabelText('Sort');
+    expect(sort).toBeInTheDocument();
+    expect(within(sort).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Oldest first',
+      'Newest first',
+      'Customer A to Z',
+      'Product A to Z',
+      'Branch',
+    ]);
+    fireEvent.change(sort, { target: { value: 'customer:asc' } });
+    expect(onSortChange).toHaveBeenCalledWith({ id: 'customer', desc: false });
+  });
+
+  it('applies the sort it is given inside a day', () => {
+    const a = ask({ id: 'a1', customer_name: 'Zed', created_at: '2026-09-29T01:00:00Z' });
+    const b = ask({ id: 'b1', customer_name: 'Abe', created_at: '2026-09-29T02:00:00Z' });
+    setup(payload({ open: [a, b], done_today: [] }), { sort: { id: 'customer', desc: false } });
+    const names = screen.getAllByText(/^(Zed|Abe)$/).map((n) => n.textContent);
+    expect(names).toEqual(['Abe', 'Zed']);
+  });
+
+  it('shows the Incoming badge on an incoming row', () => {
+    setup(payload({ open: [ask({ id: 'inc', customer_name: 'Inc Customer', branch: 'incoming' })], done_today: [] }));
+    const row = screen.getByText('Inc Customer').closest('li') as HTMLElement;
+    expect(within(row).getByText('Incoming')).toBeInTheDocument();
   });
 
   it('renders a row with customer, contact, CODE x Q, branch badge, answer, time and a Done button', () => {
