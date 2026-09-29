@@ -459,7 +459,7 @@ def test_e_the_migration_chains_on_the_single_head_with_a_short_id():
     module = _migration()
     assert module.revision == "chatbot_picker_domain_1352"
     assert len(module.revision) <= 32
-    assert module.down_revision == "merge_29sep_batch5"
+    assert module.down_revision == "cpc4_cost_packaging_method"
 
 
 def test_e_publish_adds_the_text_once_and_leaves_the_label(session_factory):
