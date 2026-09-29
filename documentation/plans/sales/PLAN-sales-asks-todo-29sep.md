@@ -245,7 +245,10 @@ CRM mount: `app/(protected)/sales/customer-asks/page.tsx` -> `MyCustomerAsksClie
   /api/v1/sales/customer-asks/{ask_id}` `{state, note}`, both under `sales.customer_asks.view`
   (`_crud("sales", "customer_asks", "Customer Asks")`, `.edit` gates the PATCH), migration
   grants `.view` + `.edit` to every role holding `sales.opportunities.view` and to `admin`
-  (the `sales_0003_opportunities` sweep shape), integration roles excluded.
+  (the `sales_0003_opportunities` sweep shape), integration roles excluded. `view_all` goes to
+  `admin` and `superadmin` ONLY (security review B1, 29 Sep 2026: sweeping it onto the
+  salesperson roles would have made every salesperson a manager and voided Q7 (c)); a named
+  office or manager role gets it by hand in Roles.
 - "Me": `agent_for_user(db, user)` (new, `app/services/sales/portal_agent.py`, beside
   `agent_for_contact`): `users.respond_contact_id` -> `agent_for_contact`. Without `agent_id`
   the list is mine; a user linked to no agent gets `{open: [], done_today: [], ...,
@@ -259,7 +262,11 @@ CRM mount: `app/(protected)/sales/customer-asks/page.tsx` -> `MyCustomerAsksClie
   uses at `app/services/sales/team_service.py:348`) plus the leader themself; else nobody but
   themself. `agent_id` given: must be pickable, else 403 (`NOT_YOUR_AGENT`); an id that is no
   agent at all is 404. `agent_id=all` = every pickable agent's rows, each carrying `agent_code`.
-  A leader is never granted a slug for this: leading a team IS the grant.
+  A leader is never granted a slug for this: leading a team IS the grant. Security review nits
+  recorded as triggers, not built: a `view_all` caller may name another tenant's agent id and
+  get its code back (every `sales_agents` row is shared today; filter by `company_id` when
+  tenant-owned agents arrive); a future-dated team move counts from the day it is written, the
+  same as `team_service.list_teams` (a `valid_from <= today` predicate when a leader complains).
 - PATCH scope = the view scope (Q7 (c), ruled 29 Sep after the coder flagged that a leader
   could see a member's row but not clear it): the ask's customer's agent is one of my pickable
   agents, which is mine, or a current member of a team I lead, or anyone with `view_all` (the
