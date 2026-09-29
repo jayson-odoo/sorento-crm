@@ -12,6 +12,15 @@ suggestion is asserted first (usually already correct, sometimes not - AC-D4 nee
 re-run to recognise a nearer unlinked rival, which it does not do today either), then the
 apply-time redeal is asserted and is the actual red.
 
+OWNER RULING 29 SEP 2026 (PR #1369, lane REDEAL-CLOSED-PO, option (c)) supersedes the
+PO-sourced re-deal legs above: "confirm only records the intent, and purchasing makes every
+link change in AutoCount, then synced back to order inquiries". The apply no longer writes a
+pool row, links a waiting row or unclaims the giving line's share for a `reallocate` of
+document quantity; it records a notice naming the AutoCount line, the document, the quantity
+and the composed target on `result_json["released_documents"]`. The reserve move (AC-D4, a
+stock hold, not a document link) and the SPO give-back (D7) are unchanged. The tests that
+used to assert a pool row or a fresh link now assert the intact link and the notice.
+
 Fixtures, imported rather than copied:
 - `tests.scm.test_planning_change_recompute_and_diff` (`_qty_down_with_po_world`,
   `_only_row`) - S2's own shape: 234 wholly Buy, 134 placed on a real PO, 100 raised
@@ -114,6 +123,50 @@ def _drop_line_to_100(api):
 
 def _links_of(db, row_id) -> list:
     return db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_id).all()
+
+
+# Owner ruling 29 Sep 2026 (PR #1369, lane REDEAL-CLOSED-PO, option (c)): "confirm only
+# records the intent, and purchasing makes every link change in AutoCount, then synced back
+# to order inquiries". The planning side never re-links a purchase-order place any more: no
+# pool row, no waiting-row link, no unclaim. What Apply writes for a `reallocate` of
+# document quantity is a NOTICE on `result_json["released_documents"]` naming the AutoCount
+# line (sales order + line number), the document, the quantity and the composed target, for
+# purchasing to carry out in AutoCount. AC-D1 to AC-D3's re-deal legs are superseded; the
+# helpers below say so once, for every test that used to assert a pool row or a link.
+
+
+def _assert_no_pool_row(db, world) -> None:
+    pool_rows = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER,
+                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code)
+        .all()
+    )
+    assert pool_rows == [], ("the planning side never writes a pool row (option (c))", pool_rows)
+
+
+def _result_of(db, row_id) -> dict:
+    from app.models.planning_change import PlanningChangeRow
+
+    fresh = db.get(PlanningChangeRow, row_id)
+    return fresh.result_json or {}
+
+
+def _assert_intent_recorded(db, row, po_number: str, qty: str, *, so_number: str,
+                            executed: int = 0) -> list:
+    """The row's result carries the intent for purchasing: one sentence naming the AutoCount
+    line, the document and the quantity, and saying AutoCount is where the link moves.
+    `executed` is how many `executed_reallocations` sentences are still legitimate (a
+    same-order survivor shift, which repoints a link the order already owns)."""
+    said = _result_of(db, row.id)
+    notices = said.get("released_documents") or []
+    assert any(
+        po_number in text and qty in text and "AutoCount" in text
+        and f"{so_number} line {row.line_no}" in text
+        for text in notices
+    ), said
+    assert len(said.get("executed_reallocations") or []) == executed, said
+    return notices
 
 
 def _wholly_placed_buy_world(api, *, qty="34", warehouse=None):
@@ -310,21 +363,14 @@ def test_freed_po_qty_goes_to_the_dealer_pool_when_hot_selling(api):
     own_links = _links_of(db, own_row.id)
     assert sum(Decimal(str(l.qty)) for l in own_links) == Decimal("100"), own_links
 
-    # The freed 34 lands on a POOL-LOCATION row (contract point 1a): a new
-    # OrderInquiryRow, so_line_id NULL, verb ORDER, stock_location the pool code, qty 34,
-    # linked to the SAME PO line for 34.
-    pool_rows = (
-        db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER,
-                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code)
-        .all()
-    )
-    assert len(pool_rows) == 1, pool_rows
-    assert pool_rows[0].qty == Decimal("34"), pool_rows[0].qty
-    pool_links = _links_of(db, pool_rows[0].id)
-    assert sum(Decimal(str(l.qty)) for l in pool_links) == Decimal("34"), pool_links
+    # Option (c): no pool row for the freed 34. The batch records the intent for purchasing
+    # to carry out in AutoCount, quoting the label the user confirmed (composed before the
+    # classification above was written, so it reads "to pool": the intent is what was
+    # confirmed, never a verdict re-read at apply time).
+    _assert_no_pool_row(db, world)
+    _assert_intent_recorded(db, row, po.po_number, "34", so_number=core_so.so_number)
 
-    # The other order's row is UNTOUCHED - the pool won because the product is hot-selling.
+    # The other order's row is UNTOUCHED - nothing is re-dealt from the planning side.
     db.refresh(other_row)
     assert other_row.state != INQUIRY_CANCELLED
     assert _links_of(db, other_row.id) == []
@@ -373,11 +419,14 @@ def test_freed_po_qty_links_to_the_first_raised_order_row_when_not_hot_selling(a
     assert result["failed_orders"] == [], result["failed_orders"]
 
     db.expire_all()
+    # Option (c): the waiting row is NOT linked from the planning side. It stays raised and
+    # unlinked, its note untouched; purchasing links it in AutoCount and the next sync
+    # brings the link to Order Inquiries.
     other_row = db.get(OrderInquiryRow, other_row.id)
-    links = _links_of(db, other_row.id)
-    assert sum(Decimal(str(l.qty)) for l in links) == Decimal("34"), links
-    assert other_row.state == "partly_linked", other_row.state
-    assert other_row.note and f"Found: {po.po_number} 34" in other_row.note, other_row.note
+    assert _links_of(db, other_row.id) == [], _links_of(db, other_row.id)
+    assert other_row.state == INQUIRY_RAISED, other_row.state
+    assert "Found:" not in (other_row.note or ""), other_row.note
+    _assert_intent_recorded(db, row, po.po_number, "34", so_number=core_so.so_number)
 
     # No new revision was written for the receiving order (contract point 1b).
     other_decision_id_after = (
@@ -388,23 +437,17 @@ def test_freed_po_qty_links_to_the_first_raised_order_row_when_not_hot_selling(a
         .id
     )
     assert other_decision_id_after == other_decision_id_before
-
-    pool_rows = (
-        db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER)
-        .all()
-    )
-    assert pool_rows == [], pool_rows
+    _assert_no_pool_row(db, world)
 
 
 # --------------------------------------------------------------------------- #
-# AC-D2b: freed qty follows the linking engine's own priority
+# AC-D2b: the composed target still names the engine's own priority, nothing is linked
 # --------------------------------------------------------------------------- #
 
 def test_freed_qty_follows_the_linking_engines_priority(api):
-    """Two other raised, unlinked rows for the same product - the earlier-due one wins
-    (`_rank_raised_rows`'s own tie-break, delivery_date then created_at, with no active
-    priority policy weighting anything)."""
+    """Two other raised, unlinked rows for the same product. Compose still names the
+    earlier-due one (`_rank_raised_rows`'s own tie-break) as the target, and under option
+    (c) that is what the recorded intent says - but NEITHER row is linked by the apply."""
     world, core_so, core_line, order, line, po, batch = _drop_line_to_100(api)
     db = world.db
     client = api[0]
@@ -436,15 +479,16 @@ def test_freed_qty_follows_the_linking_engines_priority(api):
     db.expire_all()
     earlier_row = db.get(OrderInquiryRow, earlier_row.id)
     later_row = db.get(OrderInquiryRow, later_row.id)
-    assert _links_of(db, earlier_row.id), "the earlier-due row should have been linked first"
-    assert _links_of(db, later_row.id) == [], "the later-due row should get nothing"
+    assert _links_of(db, earlier_row.id) == [], "nothing is linked from the planning side"
+    assert _links_of(db, later_row.id) == [], "nothing is linked from the planning side"
+    _assert_intent_recorded(db, row, po.po_number, "34", so_number=core_so.so_number)
 
 
 # --------------------------------------------------------------------------- #
-# AC-D3: freed PO qty nobody needs lands on a pool row and counts as cover
+# AC-D3 (superseded): freed PO qty nobody needs stays unclaimed for purchasing
 # --------------------------------------------------------------------------- #
 
-def test_freed_po_qty_nobody_needs_lands_on_a_pool_row_and_counts_as_cover(api):
+def test_freed_po_qty_nobody_needs_stays_unclaimed_for_purchasing_never_a_pool_row(api):
     world, core_so, core_line, order, line, po, batch = _drop_line_to_100(api)
     db = world.db
 
@@ -452,30 +496,13 @@ def test_freed_po_qty_nobody_needs_lands_on_a_pool_row_and_counts_as_cover(api):
     assert result["failed_orders"] == [], result["failed_orders"]
 
     db.expire_all()
-    pool_rows = (
-        db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER,
-                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code)
-        .all()
-    )
-    assert len(pool_rows) == 1, pool_rows
-    assert pool_rows[0].qty == Decimal("34")
-    pool_links = _links_of(db, pool_rows[0].id)
-    assert sum(Decimal(str(l.qty)) for l in pool_links) == Decimal("34"), pool_links
+    _assert_no_pool_row(db, world)
 
-    # The PO line's linked total now reads 134 (100 kept + 34 reallocated to the pool) -
-    # its own gap is 0. No dedicated `unallocated_quantity` reader exists for a
-    # PO-line-to-order-inquiry-row link today (only `_unallocated_quantity` in
-    # `incoming_stock_service.py`, which is the DIFFERENT shipment/SPO-to-warehouse
-    # allocation gap) - summed directly off `OrderInquiryLink` instead, which is what
-    # such a reader would compute.
+    # The line's own row is settled at 100 by the confirm's own settle (AC-P3-8, not this
+    # path), so the PO line reads 34 unclaimed: that is what purchasing re-deals in
+    # AutoCount. Summed directly off `OrderInquiryLink`, which is what such a reader
+    # would compute.
     own_row = db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == line.id).one()
-    total_linked = sum(
-        Decimal(str(l.qty))
-        for r_id in (own_row.id, pool_rows[0].id)
-        for l in _links_of(db, r_id)
-    )
-    assert total_linked == Decimal("134"), total_linked
     from app.models.procurement import PurchaseOrderLine
 
     po_line = (
@@ -483,47 +510,43 @@ def test_freed_po_qty_nobody_needs_lands_on_a_pool_row_and_counts_as_cover(api):
         .filter(PurchaseOrderLine.purchase_order_id == po.id)
         .one()
     )
-    assert po_line.qty_ordered - total_linked == Decimal("0")
+    po_links = db.query(OrderInquiryLink).filter(OrderInquiryLink.po_line_id == po_line.id).all()
+    assert {str(l.row_id) for l in po_links} == {str(own_row.id)}, po_links
+    total_linked = sum(Decimal(str(l.qty)) for l in po_links)
+    assert total_linked == Decimal("100"), total_linked
+    assert po_line.qty_ordered - total_linked == Decimal("34")
+    notices = _assert_intent_recorded(db, row, po.po_number, "34", so_number=core_so.so_number)
+    assert any("pool" in text for text in notices), notices
 
 
-def test_a_reallocation_failure_is_loud_and_leaves_no_orphan_pool_row(api, monkeypatch):
-    """D1 (review round, blocker): a reallocation failure must be loud, never a silent
-    wrong row. `_execute_reallocations` catches every exception per component and only
-    logs it, so a refusal from `place_on_po_allocations` (AppException 409 - a race on
-    the PO line, say) is swallowed today: `_pool_row_for` has already flushed the pool
-    row before the refusing call, the order's savepoint still commits, and apply reports
-    success while that pool row sits in the database claiming nothing - exactly the
-    orphan AC-D1 exists to forbid."""
+def test_the_planning_side_never_calls_place_on_po_allocations_at_apply(api, monkeypatch):
+    """Option (c), measured at the one seam that used to re-link: `place_on_po_allocations`
+    is never reached by a planning-change apply. A refusal planted there (the SO396347
+    shape, `order_inquiry_po_line_closed`) can no longer fail the order, because the call
+    is never made. Was `test_a_reallocation_failure_is_loud_and_leaves_no_orphan_pool_row`
+    (D1 review blocker), whose loud failure is now a call that does not exist."""
     world, core_so, core_line, order, line, po, batch = _drop_line_to_100(api)
     db = world.db
 
     from app.services.error_handler import AppException
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
-    def _refuse(self, row_id, allocations, *, actor_user_id=None, auto_trigger=None):
-        raise AppException(409, "ZZT another process already claimed this PO line")
+    def _refuse(self, row_id, allocations, *, actor_user_id=None, auto_trigger=None,
+                full_set=False, offered_line_ids=None):
+        raise AppException(
+            409, "That purchase order line is no longer open.",
+            code="order_inquiry_po_line_closed",
+        )
 
     monkeypatch.setattr(ProjectOrderInquiryService, "place_on_po_allocations", _refuse)
 
-    row = _only_row(db, batch)
-    planning_change_service.set_row_decision(db, str(batch.id), str(row.id), "confirm")
-    result = planning_change_service.apply(db, str(batch.id), world.actor)
-    db.commit()
-
-    assert result["failed_orders"], (
-        "the refusal must surface as a failed order, not a silent success: "
-        f"{result}"
-    )
-    assert core_so.so_number not in (result["applied_orders"] or [])
+    row, result = _confirm_row_and_apply(db, batch, world.actor)
+    assert result["failed_orders"] == [], result
+    assert result["applied_orders"] == [core_so.so_number], result
 
     db.expire_all()
-    orphans = (
-        db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER,
-                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code)
-        .all()
-    )
-    assert orphans == [], orphans
+    _assert_no_pool_row(db, world)
+    _assert_intent_recorded(db, row, po.po_number, "34", so_number=core_so.so_number)
 
 
 # --------------------------------------------------------------------------- #
@@ -851,30 +874,26 @@ def test_a_line_the_same_batch_re_decides_never_receives_a_reallocation(api):
     row2_links = ProjectOrderInquiryService(db)._links_of(raised_row2.id)
     assert not any(str(l.po_line_id) == str(po_line.id) for l in row2_links), row2_links
 
-    # The executed target equals the composed one: the freed 34 lands on a pool row.
-    pool_rows = (
-        db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER,
-                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code)
-        .all()
+    # The recorded intent names the composed target (pool); no pool row is written.
+    _assert_no_pool_row(db, world)
+    row1 = next(r for r in rows_out if r["line_no"] == 1)
+    from app.models.planning_change import PlanningChangeRow
+
+    notices = _assert_intent_recorded(
+        db, db.get(PlanningChangeRow, row1["id"]), po.po_number, "34",
+        so_number=core_so.so_number,
     )
-    assert len(pool_rows) == 1, pool_rows
-    assert pool_rows[0].qty == Decimal("34")
-    pool_links = ProjectOrderInquiryService(db)._links_of(pool_rows[0].id)
-    assert {str(l.po_line_id) for l in pool_links} == {str(po_line.id)}
+    assert any("pool" in text for text in notices), notices
 
 
-def test_the_batch_records_where_the_quantity_went(api):
-    """D5 (review round): `PlanningChangeRow.result_json` is documented on the model
-    itself as "what Apply wrote for this row alone ... read back beside `applied_reason`
-    on the batch page after Apply" - the field the coder's own comment names for exactly
-    this. Measured directly: today it is only `{"board_link": ..., "confirmed": True}` -
-    it names nothing about where a reallocated quantity actually went, so the batch page
-    cannot say what happened to it. This asserts `result_json` gets an
-    `executed_reallocations` list of plain-English strings, one per `reallocate`
-    component, equal to the SAME text the composed suggestion used (`component["label"]`)
-    when nothing in the world changed between compose and apply - "the executed target
-    equals the label's target"."""
+def test_the_batch_records_the_intent_in_the_composed_labels_own_words(api):
+    """D5 (review round), re-read under option (c): `PlanningChangeRow.result_json` is
+    "what Apply wrote for this row alone ... read back beside `applied_reason` on the
+    batch page after Apply". Nothing is executed for a `reallocate` of document quantity
+    any more, so `executed_reallocations` is empty; the intent lands on
+    `released_documents`, and it quotes the SAME text the composed suggestion used
+    (`component["label"]`) so the board and the batch page say the same thing purchasing
+    is asked to do in AutoCount."""
     from app.models.planning_change import PlanningChangeRow
 
     world, core_so, core_line, order, line, po, batch = _drop_line_to_100(api)
@@ -890,8 +909,12 @@ def test_the_batch_records_where_the_quantity_went(api):
 
     db.expire_all()
     fresh = db.get(PlanningChangeRow, row.id)
-    executed = (fresh.result_json or {}).get("executed_reallocations") or []
-    assert composed_label in executed, (composed_label, fresh.result_json)
+    said = fresh.result_json or {}
+    assert not (said.get("executed_reallocations") or []), said
+    notices = said.get("released_documents") or []
+    assert any(composed_label in text and "AutoCount" in text for text in notices), (
+        composed_label, said,
+    )
 
 
 def test_a_receiving_row_covered_exactly_reads_placed_not_partly_linked():
@@ -1145,11 +1168,18 @@ def test_a_cancelled_lines_placed_quantity_with_no_same_order_taker_follows_rule
     assert result["failed_orders"] == [], result["failed_orders"]
 
     db.expire_all()
+    # Option (c): order B's row is NOT linked by the apply; the cancelled row keeps its
+    # placement exactly as it stands ("the link stays intact") until purchasing moves it
+    # in AutoCount and the sync brings the new link to Order Inquiries.
     other_row = db.get(OrderInquiryRow, other_row.id)
-    links = _links_of(db, other_row.id)
-    assert sum(Decimal(str(l.qty)) for l in links) == Decimal("34"), links
-    assert other_row.state in (INQUIRY_PLACED, INQUIRY_PARTLY_LINKED), other_row.state
-    assert other_row.note and f"Found: {po.po_number} 34" in other_row.note, other_row.note
+    assert _links_of(db, other_row.id) == [], _links_of(db, other_row.id)
+    assert other_row.state == INQUIRY_RAISED, other_row.state
+    assert "Found:" not in (other_row.note or ""), other_row.note
+
+    cancelled_row = db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == line.id).one()
+    assert cancelled_row.state == INQUIRY_CANCELLED, cancelled_row.state
+    kept = _links_of(db, cancelled_row.id)
+    assert sum(Decimal(str(l.qty)) for l in kept) == Decimal("34"), kept
 
     from app.models.procurement import PurchaseOrderLine as _POLine
 
@@ -1157,30 +1187,17 @@ def test_a_cancelled_lines_placed_quantity_with_no_same_order_taker_follows_rule
     po_links = (
         db.query(OrderInquiryLink).filter(OrderInquiryLink.po_line_id == fresh_po_line.id).all()
     )
-    po_linked_total = sum(Decimal(str(l.qty)) for l in po_links)
-    assert po_linked_total == fresh_po_line.qty_ordered, (
-        "the PO line must read fully claimed", po_linked_total, fresh_po_line.qty_ordered
-    )
+    assert {str(l.row_id) for l in po_links} == {str(cancelled_row.id)}, po_links
 
-    from app.models.planning_change import PlanningChangeRow
-
-    fresh = db.get(PlanningChangeRow, row.id)
-    executed = (fresh.result_json or {}).get("executed_reallocations") or []
-    released = (fresh.result_json or {}).get("released_documents") or []
-    assert any(
-        po.po_number in item and "34" in item and f"{other_so.so_number} ORDER" in item
-        for item in executed
-    ), fresh.result_json
-    assert not any(po.po_number in item for item in released), fresh.result_json
+    notices = _assert_intent_recorded(db, row, po.po_number, "34", so_number=core_so.so_number)
+    assert any(f"{other_so.so_number} ORDER" in text for text in notices), notices
 
 
-def test_a_cancelled_lines_placed_quantity_lands_on_a_pool_row_when_nobody_needs_it(api):
-    """Same shape, no order B: nobody waiting for the product anywhere, so the whole
-    placement has to land on a pool-location row instead (the "last resort" leg of rule 6,
-    the same shape a confirmed row's freed PO quantity gets via `_pool_row_for`), rather
-    than the released-document/qty-0 outcome `_shift_links_off_retired_lines` gives it
-    today when it finds no same-order survivor.
-    """
+def test_a_cancelled_lines_placed_quantity_nobody_needs_is_recorded_never_a_pool_row(api):
+    """Same shape, no order B: nobody waiting for the product anywhere. Under option (c)
+    the "last resort" pool row is never written either: the cancelled row keeps its
+    placement and the batch records the intent (the composed "to pool" target) for
+    purchasing to carry out in AutoCount."""
     world, core_so, core_line, order, line, po, po_line = _wholly_placed_buy_world(api)
     db = world.db
 
@@ -1190,16 +1207,11 @@ def test_a_cancelled_lines_placed_quantity_lands_on_a_pool_row_when_nobody_needs
     assert result["failed_orders"] == [], result["failed_orders"]
 
     db.expire_all()
-    pool_rows = (
-        db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER,
-                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code)
-        .all()
-    )
-    assert len(pool_rows) == 1, pool_rows
-    assert pool_rows[0].qty == Decimal("34"), pool_rows[0].qty
-    pool_links = _links_of(db, pool_rows[0].id)
-    assert sum(Decimal(str(l.qty)) for l in pool_links) == Decimal("34"), pool_links
+    _assert_no_pool_row(db, world)
+
+    cancelled_row = db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == line.id).one()
+    kept = _links_of(db, cancelled_row.id)
+    assert sum(Decimal(str(l.qty)) for l in kept) == Decimal("34"), kept
 
     from app.models.procurement import PurchaseOrderLine as _POLine
 
@@ -1207,20 +1219,10 @@ def test_a_cancelled_lines_placed_quantity_lands_on_a_pool_row_when_nobody_needs
     po_links = (
         db.query(OrderInquiryLink).filter(OrderInquiryLink.po_line_id == fresh_po_line.id).all()
     )
-    po_linked_total = sum(Decimal(str(l.qty)) for l in po_links)
-    assert po_linked_total == fresh_po_line.qty_ordered, (
-        "the PO line must read fully claimed against the pool row", po_linked_total,
-        fresh_po_line.qty_ordered,
-    )
+    assert {str(l.row_id) for l in po_links} == {str(cancelled_row.id)}, po_links
 
-    from app.models.planning_change import PlanningChangeRow
-
-    fresh = db.get(PlanningChangeRow, row.id)
-    executed = (fresh.result_json or {}).get("executed_reallocations") or []
-    released = (fresh.result_json or {}).get("released_documents") or []
-    assert any(po.po_number in item and "34" in item and "pool" in item.lower()
-               for item in executed), fresh.result_json
-    assert not any(po.po_number in item for item in released), fresh.result_json
+    notices = _assert_intent_recorded(db, row, po.po_number, "34", so_number=core_so.so_number)
+    assert any("pool" in text for text in notices), notices
 
 
 # --------------------------------------------------------------------------- #
@@ -1276,13 +1278,15 @@ def test_every_link_of_a_cancelled_row_finds_a_taker_survivor_and_cross_order(ap
     assert result["failed_orders"] == [], result["failed_orders"]
 
     db.expire_all()
+    # The same-order survivor shift (AC-P3-6) still repoints the one link line 2 can hold:
+    # that is the order's own placement finding the line that still needs it. The OTHER
+    # link has no taker on this order; under option (c) it STAYS on the cancelled row
+    # (never re-dealt cross-order by the planning side) and the batch records the intent
+    # for purchasing to carry out in AutoCount.
     cancelled_row = db.get(OrderInquiryRow, row_1.id)
     remaining_links = _links_of(db, cancelled_row.id)
-    assert remaining_links == [], (
-        "every link of a cancelled row must find a taker - none may stay on the row that "
-        "no longer owes anybody anything",
-        remaining_links,
-    )
+    assert len(remaining_links) == 1, remaining_links
+    assert sum(Decimal(str(l.qty)) for l in remaining_links) == Decimal("17"), remaining_links
 
     survivor_row = db.get(OrderInquiryRow, row_2.id)
     survivor_links = _links_of(db, survivor_row.id)
@@ -1290,28 +1294,23 @@ def test_every_link_of_a_cancelled_row_finds_a_taker_survivor_and_cross_order(ap
     assert sum(Decimal(str(l.qty)) for l in survivor_links) == Decimal("17"), survivor_links
 
     other_row = db.get(OrderInquiryRow, other_row.id)
-    other_links = _links_of(db, other_row.id)
-    assert sum(Decimal(str(l.qty)) for l in other_links) == Decimal("17"), other_links
-    assert other_row.state in (INQUIRY_PLACED, INQUIRY_PARTLY_LINKED), other_row.state
-    assert other_row.note and f"Found: {po.po_number} 17" in other_row.note, other_row.note
+    assert _links_of(db, other_row.id) == [], _links_of(db, other_row.id)
+    assert other_row.state == INQUIRY_RAISED, other_row.state
+    assert "Found:" not in (other_row.note or ""), other_row.note
 
-    from app.models.planning_change import PlanningChangeRow
-
-    fresh = db.get(PlanningChangeRow, row.id)
-    executed = (fresh.result_json or {}).get("executed_reallocations") or []
-    released = (fresh.result_json or {}).get("released_documents") or []
-    assert len(executed) == 2, (
-        "both the survivor shift AND the cross-order deal must be reported", fresh.result_json
+    notices = _assert_intent_recorded(
+        db, row, po.po_number, "17", so_number=core_so.so_number, executed=1,
     )
-    assert released == [], fresh.result_json
+    assert len(notices) == 1, notices
 
 
 def test_every_link_of_a_cancelled_row_finds_a_taker_survivor_then_release_when_nobody_needs_it(
     api,
 ):
-    """Same shape, no order B, no pool warehouse configured for this line's location: the
-    link line 2 cannot take must be RELEASED (unlinked, named in `released_documents`) -
-    never left stranded on the cancelled row either.
+    """Same shape, no order B, no pool warehouse configured for this line's location. Under
+    option (c) the link line 2 cannot take is neither released nor re-dealt: it stays on
+    the cancelled row and the batch records the intent for purchasing (AutoCount), the
+    same as when a pool IS configured - the planning side no longer picks a destination.
     """
     no_pool_wh = _warehouse(api[1].db, f"ZZT-NOPOOL-{_uid()[:4]}", segment="project")
     fixture = _two_lines_split_po_world(api, warehouse=no_pool_wh)
@@ -1330,40 +1329,27 @@ def test_every_link_of_a_cancelled_row_finds_a_taker_survivor_then_release_when_
     db.expire_all()
     cancelled_row = db.get(OrderInquiryRow, row_1.id)
     remaining_links = _links_of(db, cancelled_row.id)
-    assert remaining_links == [], (
-        "every link of a cancelled row must find a taker or be released - none may stay "
-        "on the row that no longer owes anybody anything",
-        remaining_links,
-    )
+    assert len(remaining_links) == 1, remaining_links
+    assert sum(Decimal(str(l.qty)) for l in remaining_links) == Decimal("17"), remaining_links
 
     survivor_row = db.get(OrderInquiryRow, row_2.id)
     survivor_links = _links_of(db, survivor_row.id)
     assert len(survivor_links) == 1, survivor_links
     assert sum(Decimal(str(l.qty)) for l in survivor_links) == Decimal("17"), survivor_links
 
-    from app.models.planning_change import PlanningChangeRow
-
-    fresh = db.get(PlanningChangeRow, row.id)
-    executed = (fresh.result_json or {}).get("executed_reallocations") or []
-    released = (fresh.result_json or {}).get("released_documents") or []
-    assert len(executed) == 1, (
-        "only the survivor shift is an executed reallocation", fresh.result_json
+    notices = _assert_intent_recorded(
+        db, row, fixture["po"].po_number, "17", so_number=core_so.so_number, executed=1,
     )
-    assert len(released) == 1, (
-        "the link nobody could take must be released and named", fresh.result_json
-    )
+    assert len(notices) == 1, notices
+    assert not any("unallocated for purchasing" in text for text in notices), notices
 
 
-def test_a_cancelled_lines_placed_buy_with_no_pool_configured_is_released_not_executed(api):
-    """R3: a cancelled line's placed Buy, no same-order survivor, no waiting row anywhere,
-    and NO pool warehouse configured for its location - the link is removed (not stranded),
-    and the sentence names it in `released_documents`, never `executed_reallocations`.
-
-    Today `_redeal_document`'s no-pool branch (~3274) appends the "Release ... unallocated
-    for purchasing" sentence, but its caller (`_execute_reallocations`, ~3623) always
-    extends `done[row_id]["executed_reallocations"]` with whatever `_redeal_document`
-    returns - so a release sentence lands in the wrong list.
-    """
+def test_a_cancelled_lines_placed_buy_with_no_pool_configured_keeps_its_link_and_records_intent(api):
+    """R3, re-read under option (c): a cancelled line's placed Buy, no same-order survivor,
+    no waiting row anywhere, NO pool warehouse configured for its location. The link is
+    neither removed nor re-dealt: it stays on the cancelled row, and the batch records the
+    intent for purchasing in `released_documents` (never `executed_reallocations`, nothing
+    was executed) without the retired "unallocated for purchasing" give-back wording."""
     no_pool_wh = _warehouse(api[1].db, f"ZZT-NOPOOL2-{_uid()[:4]}", segment="project")
     world, core_so, core_line, order, line, po, po_line = _wholly_placed_buy_world(
         api, warehouse=no_pool_wh
@@ -1379,19 +1365,11 @@ def test_a_cancelled_lines_placed_buy_with_no_pool_configured_is_released_not_ex
     cancelled_row = db.query(OrderInquiryRow).filter(
         OrderInquiryRow.so_line_id == line.id
     ).one()
-    assert _links_of(db, cancelled_row.id) == [], _links_of(db, cancelled_row.id)
+    kept = _links_of(db, cancelled_row.id)
+    assert sum(Decimal(str(l.qty)) for l in kept) == Decimal("34"), kept
 
-    from app.models.planning_change import PlanningChangeRow
-
-    fresh = db.get(PlanningChangeRow, row.id)
-    executed = (fresh.result_json or {}).get("executed_reallocations") or []
-    released = (fresh.result_json or {}).get("released_documents") or []
-    assert not any("unallocated for purchasing" in item for item in executed), (
-        "a release sentence must never land in executed_reallocations", fresh.result_json
-    )
-    assert any(
-        po.po_number in item and "unallocated for purchasing" in item for item in released
-    ), fresh.result_json
+    notices = _assert_intent_recorded(db, row, po.po_number, "34", so_number=core_so.so_number)
+    assert not any("unallocated for purchasing" in text for text in notices), notices
 
 
 # --------------------------------------------------------------------------- #
@@ -1506,41 +1484,23 @@ def test_a_freed_document_split_across_a_waiting_row_and_the_pool_lands_both_leg
     assert result["failed_orders"] == [], result["failed_orders"]
 
     db.expire_all()
+    # Option (c): both legs stay exactly where they are. The cancelled row keeps both
+    # links, order B's row is not linked, no pool row is written; the intent for the whole
+    # 34 is recorded once for purchasing to carry out in AutoCount.
     cancelled_row = db.get(OrderInquiryRow, row.id)
-    assert _links_of(db, cancelled_row.id) == [], _links_of(db, cancelled_row.id)
+    kept = _links_of(db, cancelled_row.id)
+    assert {l.po_line_id for l in kept} == {fixture["po_line_a"].id, fixture["po_line_b"].id}, kept
+    assert sum(Decimal(str(l.qty)) for l in kept) == Decimal("34"), kept
 
     other_row = db.get(OrderInquiryRow, other_row.id)
-    other_links = _links_of(db, other_row.id)
-    assert len(other_links) == 1, other_links
-    assert sum(Decimal(str(l.qty)) for l in other_links) == Decimal("17"), other_links
-    assert other_row.state in (INQUIRY_PLACED, INQUIRY_PARTLY_LINKED), other_row.state
+    assert _links_of(db, other_row.id) == [], _links_of(db, other_row.id)
+    assert other_row.state == INQUIRY_RAISED, other_row.state
 
-    pool_rows = (
-        db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER,
-                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code)
-        .all()
+    _assert_no_pool_row(db, world)
+    notices = _assert_intent_recorded(
+        db, change_row, po.po_number, "34", so_number=core_so.so_number,
     )
-    assert len(pool_rows) == 1, pool_rows
-    pool_links = _links_of(db, pool_rows[0].id)
-    assert len(pool_links) == 1, pool_links
-    assert sum(Decimal(str(l.qty)) for l in pool_links) == Decimal("17"), pool_links
-
-    # Each PO line claimed exactly once - by the waiting row XOR the pool row, never both,
-    # never neither.
-    po_line_ids = {fixture["po_line_a"].id, fixture["po_line_b"].id}
-    claimed_po_line_ids = {l.po_line_id for l in other_links} | {l.po_line_id for l in pool_links}
-    assert claimed_po_line_ids == po_line_ids, (other_links, pool_links)
-    assert {l.po_line_id for l in other_links} != {l.po_line_id for l in pool_links}
-
-    from app.models.planning_change import PlanningChangeRow
-
-    fresh = db.get(PlanningChangeRow, change_row.id)
-    executed = (fresh.result_json or {}).get("executed_reallocations") or []
-    released = (fresh.result_json or {}).get("released_documents") or []
-    assert len(executed) == 2, fresh.result_json
-    assert any(po.po_number in item and "17" in item for item in executed), fresh.result_json
-    assert released == [], fresh.result_json
+    assert len(notices) == 1, notices
 
 
 def test_a_freed_document_lands_on_survivor_waiting_row_and_pool_three_way(api):
@@ -1628,45 +1588,29 @@ def test_a_freed_document_lands_on_survivor_waiting_row_and_pool_three_way(api):
     assert result["failed_orders"] == [], result["failed_orders"]
 
     db.expire_all()
+    # The survivor shift takes its one leg (the order's own placement, AC-P3-6); the two
+    # remaining legs stay on the cancelled row under option (c), order B's row is not
+    # linked, no pool row is written, and the intent for the remaining 34 is recorded once.
     cancelled_row = db.get(OrderInquiryRow, row_1.id)
-    assert _links_of(db, cancelled_row.id) == [], _links_of(db, cancelled_row.id)
+    kept = _links_of(db, cancelled_row.id)
+    assert len(kept) == 2, kept
+    assert sum(Decimal(str(l.qty)) for l in kept) == Decimal("34"), kept
 
     survivor_links = _links_of(db, row_2.id)
     assert len(survivor_links) == 1, survivor_links
     assert sum(Decimal(str(l.qty)) for l in survivor_links) == Decimal("17"), survivor_links
 
     other_row = db.get(OrderInquiryRow, other_row.id)
-    other_links = _links_of(db, other_row.id)
-    assert len(other_links) == 1, other_links
-    assert sum(Decimal(str(l.qty)) for l in other_links) == Decimal("17"), other_links
+    assert _links_of(db, other_row.id) == [], _links_of(db, other_row.id)
 
-    pool_rows = (
-        db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER,
-                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code)
-        .all()
+    _assert_no_pool_row(db, world)
+    claimed_po_line_ids = {l.po_line_id for l in survivor_links} | {l.po_line_id for l in kept}
+    assert claimed_po_line_ids == {pl.id for pl in po_lines}, (survivor_links, kept)
+
+    notices = _assert_intent_recorded(
+        db, change_row, po.po_number, "34", so_number=core_so.so_number, executed=1,
     )
-    assert len(pool_rows) == 1, pool_rows
-    pool_links = _links_of(db, pool_rows[0].id)
-    assert len(pool_links) == 1, pool_links
-    assert sum(Decimal(str(l.qty)) for l in pool_links) == Decimal("17"), pool_links
-
-    claimed_po_line_ids = (
-        {l.po_line_id for l in survivor_links}
-        | {l.po_line_id for l in other_links}
-        | {l.po_line_id for l in pool_links}
-    )
-    assert claimed_po_line_ids == {pl.id for pl in po_lines}, (
-        survivor_links, other_links, pool_links,
-    )
-
-    from app.models.planning_change import PlanningChangeRow
-
-    fresh = db.get(PlanningChangeRow, change_row.id)
-    executed = (fresh.result_json or {}).get("executed_reallocations") or []
-    released = (fresh.result_json or {}).get("released_documents") or []
-    assert len(executed) == 3, fresh.result_json
-    assert released == [], fresh.result_json
+    assert len(notices) == 1, notices
 
 
 def test_the_wire_carries_the_cancelled_rows_reallocation_result_and_null_for_pending(api):
@@ -1726,9 +1670,13 @@ def test_the_wire_carries_the_cancelled_rows_reallocation_result_and_null_for_pe
 
     result = applied_wire_row["result"]
     assert result is not None, applied_wire_row
-    executed = result.get("executed_reallocations") or []
+    # Option (c): nothing executed; the intent (naming order B's ORDER row as the composed
+    # target, and AutoCount as where the link moves) is on the wire under
+    # `released_documents`, which `whereItWentFrom` prints verbatim.
+    assert not (result.get("executed_reallocations") or []), result
+    notices = result.get("released_documents") or []
     assert any(
         po.po_number in item and "34" in item and f"{other_so.so_number} ORDER" in item
-        for item in executed
+        and "AutoCount" in item and f"{core_so.so_number} line {row.line_no}" in item
+        for item in notices
     ), result
-    assert result.get("released_documents") == [], result
