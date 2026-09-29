@@ -1,7 +1,7 @@
 /**
  * Customer detail -> "WhatsApp contacts" section (UAC AC-13, round 2 Q8 b; PLAN D5).
  * `getCustomerLinkedContacts` (services/customerService.ts) is mocked, never fetch; the real
- * `useCustomerLinkedContacts` hook runs. The mock answers the backend envelope `{ data: [...] }`.
+ * `useCustomerLinkedContacts` hook runs. The service unwraps the envelope, so the mock answers an array.
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -49,7 +49,7 @@ afterEach(() => cleanup());
 
 describe('CustomerLinkedContactsSection', () => {
   it('AC-13: one row per link, the name links to the contact record and the phone shows', async () => {
-    services.getCustomerLinkedContacts.mockResolvedValue({ data: [NAMED, UNNAMED] });
+    services.getCustomerLinkedContacts.mockResolvedValue([NAMED, UNNAMED]);
     renderSection();
 
     const link = await screen.findByRole('link', { name: 'Ah Beng' });
@@ -60,7 +60,7 @@ describe('CustomerLinkedContactsSection', () => {
   });
 
   it('AC-13: an unnamed contact shows its phone number as the link', async () => {
-    services.getCustomerLinkedContacts.mockResolvedValue({ data: [UNNAMED] });
+    services.getCustomerLinkedContacts.mockResolvedValue([UNNAMED]);
     renderSection();
 
     const link = await screen.findByRole('link', { name: '60198765432' });
@@ -68,7 +68,7 @@ describe('CustomerLinkedContactsSection', () => {
   });
 
   it('AC-13: no links shows the empty state and no button', async () => {
-    services.getCustomerLinkedContacts.mockResolvedValue({ data: [] });
+    services.getCustomerLinkedContacts.mockResolvedValue([]);
     renderSection();
 
     expect(await screen.findByText('No WhatsApp contacts linked')).toBeInTheDocument();

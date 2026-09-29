@@ -61,8 +61,9 @@ vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
+const nav = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: nav.push }),
   usePathname: () => '/master-data-management/sales-agents/agent-1',
   useSearchParams: () => new URLSearchParams(),
 }));
@@ -130,6 +131,7 @@ function renderTab() {
 beforeEach(() => {
   Object.values(services).forEach((fn) => fn.mockReset());
   permissionState.granted = new Set(['master_data.sales_agents.edit']);
+  nav.push.mockReset();
   services.assignSalesAgentCustomer.mockResolvedValue(ROWS[0]);
 });
 
@@ -156,9 +158,12 @@ describe('SalesAgentCustomersTab', () => {
     services.getSalesAgentCustomers.mockResolvedValue(page(ROWS));
     renderTab();
 
-    await screen.findByText('C-100');
-    const hrefs = Array.from(document.querySelectorAll('a')).map((a) => a.getAttribute('href'));
-    expect(hrefs).toContain(`/order-management/customers/${ROWS[0].id}`);
+    fireEvent.click(await screen.findByText('Hanlim Alpha'));
+
+    await waitFor(() => expect(nav.push).toHaveBeenCalled());
+    expect(String(nav.push.mock.calls[0][0])).toContain(
+      `/order-management/customers/${ROWS[0].id}`,
+    );
   });
 
   it('AC-8: an agent with no customers shows the empty state', async () => {
