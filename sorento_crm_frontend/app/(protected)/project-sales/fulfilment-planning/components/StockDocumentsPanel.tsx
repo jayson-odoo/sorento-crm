@@ -145,6 +145,7 @@ export function StockDocumentsPanel({
         balance: null,
         line_id: order.line_id ?? null,
         is_this_line: Boolean(order.is_this_line),
+        fulfilled_qty: order.fulfilled_qty ?? null,
         // AC-3.3/3.13: the donor the active suggestion named, by its own core line id where
         // the suggestion carried one - two lines of one donor SO would otherwise both light
         // up - falling back to the SO number for the shapes that only carry that. EVERY
@@ -466,6 +467,15 @@ export function StockDocumentsPanel({
                 className="shrink-0 rounded bg-primary/10 px-1 text-[10px] font-medium text-primary"
               >
                 This line
+              </span>
+            ) : null}
+            {/* #1362: the drawer's own line with nothing open any more. */}
+            {row.original.fulfilled_qty ? (
+              <span
+                data-testid="stock-document-fulfilled"
+                className="shrink-0 rounded bg-muted px-1 text-[10px] font-medium text-muted-foreground"
+              >
+                Fulfilled, {row.original.fulfilled_qty} delivered
               </span>
             ) : null}
             {/* AC-3.3/3.13: the order the suggestion is borrowing FROM. Coexists with "This
@@ -915,6 +925,8 @@ interface StockDetailRow {
   line_id: string | null;
   /** One of the lines this drawer is planning (R5). */
   is_this_line: boolean;
+  /** Delivered quantity on the drawer's own line when nothing is open on it (#1362). */
+  fulfilled_qty?: string | null;
   /** The order the active suggestion is borrowing from (AC-3.3/3.13). */
   is_donor: boolean;
   /** The SPO the active suggestion is borrowing/using (AC-3.4). */

@@ -105,6 +105,8 @@ contributing line".
 - **AC-51 [FE] (J2) (R10, Q16)** Given a ticked row whose suggestion carries a Reserve with
   `source: 'own_arrival'`, when Decide > Buy saves, then that row is skipped with why
   `stock already landed for it` and no PUT is sent for it.
+  SUPERSEDED (owner ruling 29 Sep 2026, #1362): Decide Buy no longer skips a row with landed
+  goods; Confirm keeps the Buy as decided with a notice and purchasing adjusts the linkage.
 - **AC-52 [FE] (J2) (R3)** Given a ticked Confirmed row whose frozen decision already reserves
   the whole line from its own location, when Decide > Use own location saves, then it is
   skipped as `already decided that way`.

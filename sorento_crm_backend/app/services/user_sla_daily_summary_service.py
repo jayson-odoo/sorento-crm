@@ -1,7 +1,6 @@
 """Daily SLA performance + outstanding conversations summary per user (scheduled task)."""
 from __future__ import annotations
 
-import html
 from datetime import datetime, timedelta
 from typing import Any
 from jose import jwt, JWTError
@@ -13,6 +12,7 @@ from app.config import settings
 from app.models.scheduled_task import ScheduledTask
 from app.models.sla import ConversationSLAEventLog, ConversationSLATracking
 from app.models.user import User, UserStatus
+from app.services.email_template_service import EmailTemplateService
 from app.services.notification_service import NotificationService
 from app.services.sla_scope import open_tracker_scope
 from app.services.sla_service import MALAYSIA_TZ
@@ -99,6 +99,7 @@ def _outstanding_trackings_for_user(db: Session, user_id: str) -> list[Conversat
 
 
 def _build_bodies(
+    db: Session,
     user: User,
     summary_date_label: str,
     responded_7: int,
@@ -140,50 +141,34 @@ def _build_bodies(
     lines.extend(["", f"Unsubscribe from this daily summary: {unsub_link}"])
     text_body = "\n".join(lines)
 
-    table_rows = ""
+    # #1349: the email HTML is rendered through the `sla_daily_summary` template - the
+    # producer passes CONTEXT, never HTML. `text_body` above is unchanged: it is also
+    # read by WhatsApp's fallback default text and by the in-app notification.
+    conversations = []
     for tr in rows:
         c = tr.contact
-        name = html.escape((c.name if c else None) or "-")
-        phone = html.escape((c.phone_number if c else None) or "-")
+        name = (c.name if c else None) or "-"
+        phone = (c.phone_number if c else None) or "-"
         rel = conversation_tracking_path(str(tr.id))
-        href = html.escape(f"{base}{rel}" if base else rel)
-        table_rows += (
-            f"<tr><td style='padding:8px;border:1px solid #e5e7eb'>{name}</td>"
-            f"<td style='padding:8px;border:1px solid #e5e7eb'>{phone}</td>"
-            f"<td style='padding:8px;border:1px solid #e5e7eb'>"
-            f"<a href=\"{href}\">Open conversation</a></td></tr>"
-        )
-    if not rows:
-        table_rows = (
-            "<tr><td colspan='3' style='padding:8px;border:1px solid #e5e7eb'>"
-            "No outstanding assigned conversations.</td></tr>"
-        )
+        link = f"{base}{rel}" if base else rel
+        conversations.append({"name": name, "phone": phone, "link": link})
 
-    html_body = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8" /></head><body style="font-family:system-ui,sans-serif;line-height:1.5;color:#111827">
-<p>Hi {html.escape(display_name)},</p>
-<p>Below is your daily summary.</p>
-<h2 style="font-size:16px;margin-top:20px">Performance</h2>
-<p>Over last 7 days: <strong>{responded_7}</strong> responded, <strong>{resolved_7}</strong> resolved.<br/>
-Over last 30 days: <strong>{responded_30}</strong> responded, <strong>{resolved_30}</strong> resolved.</p>
-<h2 style="font-size:16px;margin-top:20px">Outstanding conversations as of today ({html.escape(summary_date_label)})</h2>
-<p><strong>{len(rows)}</strong> conversation(s).</p>
-<table style="border-collapse:collapse;width:100%;max-width:640px;font-size:14px">
-<thead><tr>
-<th align="left" style="padding:8px;border:1px solid #e5e7eb;background:#f9fafb">Name</th>
-<th align="left" style="padding:8px;border:1px solid #e5e7eb;background:#f9fafb">Phone number</th>
-<th align="left" style="padding:8px;border:1px solid #e5e7eb;background:#f9fafb">Conversation SLA tracking
-</th></tr></thead>
-<tbody>{table_rows}</tbody>
-</table>
-<p style="margin-top:24px">Thanks for your help in making Sorento a better place to work.</p>
-<p style="margin-top:16px">
-  <a href="{html.escape(unsub_link)}"
-     style="display:inline-block;padding:10px 14px;border:1px solid #d1d5db;border-radius:8px;text-decoration:none;color:#111827">
-    Unsubscribe from this daily summary
-  </a>
-</p>
-</body></html>"""
+    rendered = EmailTemplateService(db).render_code(
+        "sla_daily_summary",
+        {
+            "recipient": {"name": display_name, "email": user.email},
+            "summary_date": summary_date_label,
+            "outstanding_count": len(rows),
+            "responded_7": responded_7,
+            "resolved_7": resolved_7,
+            "responded_30": responded_30,
+            "resolved_30": resolved_30,
+            "conversations": conversations,
+            "summary_link": f"{base}/sla-management/conversation-sla-tracking" if base else "/sla-management/conversation-sla-tracking",
+            "unsubscribe_link": unsub_link,
+        },
+    )
+    html_body = rendered["body_html"]
 
     return text_body, html_body
 
@@ -243,6 +228,7 @@ def run_user_sla_daily_summary(db: Session, task: ScheduledTask) -> dict[str, An
         outstanding = _outstanding_trackings_for_user(db, uid)
 
         text_body, html_body = _build_bodies(
+            db,
             user,
             summary_date_label,
             responded_7,

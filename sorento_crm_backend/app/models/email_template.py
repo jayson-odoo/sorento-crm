@@ -16,6 +16,12 @@ class EmailTemplate(Base):
     subject = Column(String(512), nullable=False)
     body_html = Column(Text, nullable=False)
     body_text = Column(Text, nullable=True)
+    # #1349: the hidden inbox preview line, and the ordered block document the shared
+    # layout renders (app/services/email_layout.py). NULL layout_json = the implicit
+    # document [brand header, body_html, footer], so a template nobody arranged still
+    # renders branded.
+    preheader = Column(String(255), nullable=True)
+    layout_json = Column(JSONB, nullable=True)
     variables_schema = Column(JSONB, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_by_user_id = Column(String, nullable=True)

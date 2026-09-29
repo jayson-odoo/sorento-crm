@@ -1,0 +1,1168 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Email Layout Alignment</title>
+<style>
+:root { --bg:#f6f7f9; --fg:#111827; --muted:#6b7280; --card:#fff; --line:#e5e7eb; --accent:#2563eb; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --fg:#e5e7eb; --muted:#9ca3af; --card:#171a21; --line:#2a2f3a; --accent:#60a5fa; } }
+:root[data-theme="dark"] { --bg:#0f1115; --fg:#e5e7eb; --muted:#9ca3af; --card:#171a21; --line:#2a2f3a; --accent:#60a5fa; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+main { max-width:1180px; margin:0 auto; padding:24px 16px 80px; }
+h1 { font-size:26px; margin:0 0 4px; } h2 { font-size:20px; margin:40px 0 12px; border-bottom:1px solid var(--line); padding-bottom:6px; }
+h3 { font-size:17px; margin:28px 0 4px; }
+.muted { color:var(--muted); }
+blockquote { margin:12px 0; padding:12px 16px; background:var(--card); border-left:4px solid var(--accent); border-radius:6px; }
+table.t { border-collapse:collapse; width:100%; background:var(--card); } table.t th, table.t td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
+.row { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; }
+figure { margin:8px 0; max-width:100%; overflow-x:auto; } figcaption { font-size:13px; color:var(--muted); margin-bottom:6px; }
+iframe { border:1px solid var(--line); border-radius:8px; background:#fff; max-width:100%; }
+pre { white-space:pre-wrap; background:var(--card); border:1px solid var(--line); padding:12px; border-radius:8px; font-size:12px; }
+.q { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin:10px 0; }
+.q b.rec { color:var(--accent); }
+.mock { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin:12px 0; }
+.mock-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+.crumb { font-weight:600; } button.primary { background:#2563eb; color:#fff; border:0; border-radius:6px; padding:6px 14px; font-weight:600; }
+button.ghost { background:transparent; border:1px dashed var(--line); color:var(--fg); border-radius:6px; padding:6px 12px; }
+.mock-grid { display:grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap:14px; }
+@media (max-width:760px) { .mock-grid { grid-template-columns: 1fr; } }
+.mock-form label { display:flex; gap:8px; align-items:center; font-size:13px; margin:6px 0; }
+.mock-form input, .mock-form select, .mock-form textarea { flex:1; min-width:0; padding:5px 8px; border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--fg); font:inherit; }
+.mock-form h4 { margin:14px 0 4px; font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+.sw { width:18px; height:18px; border-radius:4px; border:1px solid var(--line); display:inline-block; }
+.mock-prev { border:1px dashed var(--line); border-radius:8px; min-height:320px; display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--muted); gap:8px; }
+.seg { border:1px solid var(--line); border-radius:6px; padding:4px 10px; font-size:13px; }
+ol.blocks { list-style:none; padding:0; margin:0; } ol.blocks li { border:1px solid var(--line); border-radius:6px; padding:8px 10px; margin:6px 0; font-size:13px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+ol.blocks li .ctl { margin-left:auto; color:var(--muted); letter-spacing:4px; } .grip { color:var(--muted); }
+ol.blocks li .set { flex-basis:100%; color:var(--muted); background:var(--bg); padding:6px 8px; border-radius:4px; }
+</style></head>
+<body><main>
+<h1>Email layout and theme: alignment</h1>
+<p class="muted">Issue #1349. Plan: documentation/plans/email/PLAN-email-layout-28sep.md. UAC: email-layout-28sep-acceptance-criteria.md. Base origin/main 445cb1eb. The mail previews below are rendered by the lane's real layout code, not drawn by hand.</p>
+
+<h2>The ask, in the owner's words (28 Sep, 20:4x MYT)</h2>
+<blockquote>"I think it's time for us to beautify our email templates because now our email templates are kind of not very nice. It's not professional. It's not up to the SaaS standard. So I want you to look into the best practice in the email template from SaaS. For example, Respond IO, Figma, even Instagram or anything. And need to refer to their email template and superimpose the style to all our existing email template. For example, like for Respond IO email, there's always a very big button centered so that it attracts people to click on it to open it. So I think our email template need to be nicer. You can refer to the Dreams EMS repository that has a quite good email template style. Okay, and the style is configurable at their site. So the style also need to be configurable at our site also like we can arrange the element, theme, etc."</blockquote>
+
+<h2>Rulings (dated)</h2>
+<table class="t"><tr><th>Date</th><th>Ruling</th><th>Source</th></tr>
+<tr><td>28 Sep</td><td>Beautify every existing email to SaaS standard; one big centred button like respond.io</td><td>Owner voice note (above)</td></tr>
+<tr><td>28 Sep</td><td>Refer to dreamz-ems's email style; adopt its layering (brand values + base layout + block document) and look, not its multi-tenant model</td><td>Owner voice note + issue #1349</td></tr>
+<tr><td>28 Sep</td><td>Style configurable in our system: theme and element arrangement</td><td>Owner voice note</td></tr>
+<tr><td>28 Sep</td><td>One PR; supplier notice may stay text-only if the plan says why; no dark mode, no CID images, no multi-tenant</td><td>Issue #1349 scope</td></tr>
+</table>
+
+<h2>The mails, before and after</h2>
+<p class="muted">Every mail shares one layout: soft grey page, white 600px card with rounded corners, logo on the brand band, heading, short intro, facts in a quiet panel, one big centred button, the raw link for clients that hide buttons, and a quiet footer (company, address, help, why you got this). On a phone the card goes edge to edge and the button goes full width.</p>
+
+<section class="mail" id="password_reset">
+  <h3>Password reset</h3>
+  <p class="muted">Subject: <b>Reset your password</b>. Before: auth.py builds an f-string: raw URL as the only link, no brand, no button.</p>
+  <div class="row">
+    <figure><figcaption>Before (today)</figcaption><iframe title="mail preview" sandbox="" style="width:600px;height:520px" srcdoc="&lt;!DOCTYPE html&gt;&lt;html&gt;&lt;body style=&quot;margin:12px;font-family:Times New Roman,serif;background:#fff&quot;&gt;&lt;p&gt;Hello,&lt;/p&gt;
+&lt;p&gt;You have requested a password reset for your Sorento account. Use the link below to set a new password. This link is valid for 1 hour.&lt;/p&gt;
+&lt;p&gt;&lt;a href=&quot;https://crm.example.com/change-password?token=sample&quot;&gt;https://crm.example.com/change-password?token=sample&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;If you did not request this, you can safely ignore this email.&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;This is a system-generated email. Please do not reply.&lt;/em&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;"></iframe></figure>
+  </div>
+  <div class="row">
+    <figure><figcaption>After, desktop (600 card in a mail pane)</figcaption><iframe title="mail preview" sandbox="" style="width:680px;height:760px" srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot; xmlns=&quot;http://www.w3.org/1999/xhtml&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;x-apple-disable-message-reformatting&quot;&gt;
+&lt;meta name=&quot;format-detection&quot; content=&quot;telephone=no, date=no, address=no, email=no&quot;&gt;
+&lt;meta name=&quot;color-scheme&quot; content=&quot;light&quot;&gt;
+&lt;meta name=&quot;supported-color-schemes&quot; content=&quot;light&quot;&gt;
+&lt;title&gt;Reset your password&lt;/title&gt;
+&lt;style&gt;
+  /* Only what inline styles cannot say: the phone breakpoint. Every other rule is inline. */
+  @media only screen and (max-width: 620px) {
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+    .em-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .em-btn-table { width: 100% !important; }
+    .em-btn-link { display: block !important; }
+    .em-facts td { display: block !important; width: 100% !important; }
+    .em-facts td.em-fact-label { padding-bottom: 0 !important; }
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body data-sorento-layout=&quot;1&quot; style=&quot;margin:0;padding:0;width:100%;background-color:#F3F4F6;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;&quot;&gt;
+&lt;div style=&quot;display:none;max-height:0;max-width:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F3F4F6;opacity:0;&quot; aria-hidden=&quot;true&quot;&gt;Use this link within 1 hour to choose a new password.&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&lt;/div&gt;
+&lt;table role=&quot;presentation&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#F3F4F6;&quot;&gt;
+  &lt;tr&gt;
+    &lt;td class=&quot;em-outer&quot; align=&quot;center&quot; style=&quot;padding:32px 12px;&quot;&gt;
+      &lt;table role=&quot;presentation&quot; class=&quot;em-card&quot; width=&quot;600&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:600px;max-width:600px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;&quot;&gt;
+
+        &lt;tr&gt;
+          &lt;td align=&quot;center&quot; style=&quot;padding:24px 40px;background-color:#2563EB;&quot; class=&quot;em-pad&quot;&gt;
+            &lt;span style=&quot;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;&quot;&gt;Sorento&lt;/span&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:36px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;&quot;&gt;
+            &lt;h1 style=&quot;margin:0;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:24px;line-height:32px;font-weight:700;color:#111827;&quot;&gt;Reset your password&lt;/h1&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:16px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;Hi Aina,&lt;/p&gt;&lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;We received a request to reset the password for your Sorento account. The button below is valid for 1 hour.&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:32px 40px 8px 40px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-btn-table&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; &gt;
+              &lt;tr&gt;
+                &lt;td align=&quot;center&quot; bgcolor=&quot;#2563EB&quot; style=&quot;border-radius:8px;background-color:#2563EB;&quot;&gt;
+                  &lt;a class=&quot;em-btn-link&quot; href=&quot;https://crm.example.com/change-password?token=sample&quot; target=&quot;_blank&quot; style=&quot;display:inline-block;padding:16px 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;mso-padding-alt:0;&quot;&gt;Reset password&lt;/a&gt;
+                &lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:12px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;
+            Or paste this link into your browser:&lt;br&gt;
+            &lt;a href=&quot;https://crm.example.com/change-password?token=sample&quot; target=&quot;_blank&quot; style=&quot;color:#2563EB;text-decoration:underline;word-break:break-all;&quot;&gt;https://crm.example.com/change-password?token=sample&lt;/a&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 16px 0;&quot;&gt;If you did not ask for this, you can ignore this email. Your password stays the same.&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:36px 40px 0 40px;&quot;&gt;&lt;div style=&quot;height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:20px 40px 32px 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#9ca3af;&quot;&gt;&lt;div style=&quot;font-weight:600;color:#6b7280;&quot;&gt;Sorento&lt;/div&gt;&lt;div&gt;Lot 12, Jalan Perusahaan 3, 47500 Subang Jaya, Selangor&lt;/div&gt;
+            &lt;div style=&quot;padding-top:8px;&quot;&gt;Need help? &lt;a href=&quot;mailto:support@sorento.com.my&quot; style=&quot;color:#2563EB;text-decoration:underline;&quot;&gt;support@sorento.com.my&lt;/a&gt;
+            &lt;/div&gt;&lt;div style=&quot;padding-top:12px;&quot;&gt;This is a system-generated email. Please do not reply.&lt;/div&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+
+      &lt;/table&gt;
+    &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;"></iframe></figure>
+    <figure><figcaption>After, phone 375</figcaption><iframe title="mail preview" sandbox="" style="width:375px;height:940px" srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot; xmlns=&quot;http://www.w3.org/1999/xhtml&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;x-apple-disable-message-reformatting&quot;&gt;
+&lt;meta name=&quot;format-detection&quot; content=&quot;telephone=no, date=no, address=no, email=no&quot;&gt;
+&lt;meta name=&quot;color-scheme&quot; content=&quot;light&quot;&gt;
+&lt;meta name=&quot;supported-color-schemes&quot; content=&quot;light&quot;&gt;
+&lt;title&gt;Reset your password&lt;/title&gt;
+&lt;style&gt;
+  /* Only what inline styles cannot say: the phone breakpoint. Every other rule is inline. */
+  @media only screen and (max-width: 620px) {
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+    .em-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .em-btn-table { width: 100% !important; }
+    .em-btn-link { display: block !important; }
+    .em-facts td { display: block !important; width: 100% !important; }
+    .em-facts td.em-fact-label { padding-bottom: 0 !important; }
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body data-sorento-layout=&quot;1&quot; style=&quot;margin:0;padding:0;width:100%;background-color:#F3F4F6;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;&quot;&gt;
+&lt;div style=&quot;display:none;max-height:0;max-width:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F3F4F6;opacity:0;&quot; aria-hidden=&quot;true&quot;&gt;Use this link within 1 hour to choose a new password.&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&lt;/div&gt;
+&lt;table role=&quot;presentation&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#F3F4F6;&quot;&gt;
+  &lt;tr&gt;
+    &lt;td class=&quot;em-outer&quot; align=&quot;center&quot; style=&quot;padding:32px 12px;&quot;&gt;
+      &lt;table role=&quot;presentation&quot; class=&quot;em-card&quot; width=&quot;600&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:600px;max-width:600px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;&quot;&gt;
+
+        &lt;tr&gt;
+          &lt;td align=&quot;center&quot; style=&quot;padding:24px 40px;background-color:#2563EB;&quot; class=&quot;em-pad&quot;&gt;
+            &lt;span style=&quot;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;&quot;&gt;Sorento&lt;/span&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:36px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;&quot;&gt;
+            &lt;h1 style=&quot;margin:0;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:24px;line-height:32px;font-weight:700;color:#111827;&quot;&gt;Reset your password&lt;/h1&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:16px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;Hi Aina,&lt;/p&gt;&lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;We received a request to reset the password for your Sorento account. The button below is valid for 1 hour.&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:32px 40px 8px 40px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-btn-table&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; &gt;
+              &lt;tr&gt;
+                &lt;td align=&quot;center&quot; bgcolor=&quot;#2563EB&quot; style=&quot;border-radius:8px;background-color:#2563EB;&quot;&gt;
+                  &lt;a class=&quot;em-btn-link&quot; href=&quot;https://crm.example.com/change-password?token=sample&quot; target=&quot;_blank&quot; style=&quot;display:inline-block;padding:16px 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;mso-padding-alt:0;&quot;&gt;Reset password&lt;/a&gt;
+                &lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:12px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;
+            Or paste this link into your browser:&lt;br&gt;
+            &lt;a href=&quot;https://crm.example.com/change-password?token=sample&quot; target=&quot;_blank&quot; style=&quot;color:#2563EB;text-decoration:underline;word-break:break-all;&quot;&gt;https://crm.example.com/change-password?token=sample&lt;/a&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 16px 0;&quot;&gt;If you did not ask for this, you can ignore this email. Your password stays the same.&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:36px 40px 0 40px;&quot;&gt;&lt;div style=&quot;height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:20px 40px 32px 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#9ca3af;&quot;&gt;&lt;div style=&quot;font-weight:600;color:#6b7280;&quot;&gt;Sorento&lt;/div&gt;&lt;div&gt;Lot 12, Jalan Perusahaan 3, 47500 Subang Jaya, Selangor&lt;/div&gt;
+            &lt;div style=&quot;padding-top:8px;&quot;&gt;Need help? &lt;a href=&quot;mailto:support@sorento.com.my&quot; style=&quot;color:#2563EB;text-decoration:underline;&quot;&gt;support@sorento.com.my&lt;/a&gt;
+            &lt;/div&gt;&lt;div style=&quot;padding-top:12px;&quot;&gt;This is a system-generated email. Please do not reply.&lt;/div&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+
+      &lt;/table&gt;
+    &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;"></iframe></figure>
+  </div>
+  <details><summary>Plain-text part (sent alongside the HTML)</summary><pre>Reset your password
+
+Hi Aina,
+
+We received a request to reset the password for your Sorento account. The button below is valid for 1 hour.
+
+Reset password: https://crm.example.com/change-password?token=sample
+
+If you did not ask for this, you can ignore this email. Your password stays the same.
+
+-- 
+Sorento
+Lot 12, Jalan Perusahaan 3, 47500 Subang Jaya, Selangor
+Need help? support@sorento.com.my
+This is a system-generated email. Please do not reply.</pre></details>
+</section>
+<section class="mail" id="handover">
+  <h3>Order inquiry handover (automation)</h3>
+  <p class="muted">Subject: <b>OI: KL WAREHOUSE @ SO-26-0412</b>. Before: Seeded template: red headline, grey Arial tables, a plain underlined link at the bottom.</p>
+  <div class="row">
+    <figure><figcaption>Before (today)</figcaption><iframe title="mail preview" sandbox="" style="width:600px;height:520px" srcdoc="&lt;!DOCTYPE html&gt;&lt;html&gt;&lt;body style=&quot;margin:12px;font-family:Times New Roman,serif;background:#fff&quot;&gt;&lt;p style=&quot;color:#b91c1c;font-weight:bold;&quot;&gt;ORDER, AMEND&lt;/p&gt;
+&lt;table style=&quot;border-collapse:collapse;font-family:Arial, sans-serif;font-size:13px;&quot;&gt;
+  &lt;thead&gt;
+    &lt;tr&gt;&lt;th style=&quot;border:1px solid #d0d0d5;padding:4px 8px;background:#f2f2f5;text-align:left;&quot;&gt;S/O NO&lt;/th&gt;&lt;th style=&quot;border:1px solid #d0d0d5;padding:4px 8px;background:#f2f2f5;text-align:left;&quot;&gt;CUSTOMER&lt;/th&gt;&lt;th style=&quot;border:1px solid #d0d0d5;padding:4px 8px;background:#f2f2f5;text-align:left;&quot;&gt;PROJECT&lt;/th&gt;&lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+    
+    &lt;tr&gt;
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;SO-26-0412&lt;/td&gt;
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;Lim Hardware Sdn Bhd&lt;/td&gt;
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;Taman Melati Phase 2&lt;/td&gt;
+    &lt;/tr&gt;
+    
+  &lt;/tbody&gt;
+&lt;/table&gt;&lt;table style=&quot;border-collapse:collapse;font-family:Arial, sans-serif;font-size:13px;margin-top:12px;&quot;&gt;
+  &lt;thead&gt;
+    &lt;tr&gt;
+      &lt;th style=&quot;border:1px solid #d0d0d5;padding:4px 8px;background:#f2f2f5;text-align:left;&quot;&gt;SO DATE&lt;/th&gt;&lt;th style=&quot;border:1px solid #d0d0d5;padding:4px 8px;background:#f2f2f5;text-align:left;&quot;&gt;S/O NO&lt;/th&gt;&lt;th style=&quot;border:1px solid #d0d0d5;padding:4px 8px;background:#f2f2f5;text-align:left;&quot;&gt;LOCATION&lt;/th&gt;&lt;th style=&quot;border:1px solid #d0d0d5;padding:4px 8px;background:#f2f2f5;text-align:left;&quot;&gt;ITEM CODE&lt;/th&gt;
+      &lt;th style=&quot;border:1px solid #d0d0d5;padding:4px 8px;background:#f2f2f5;text-align:left;&quot;&gt;QTY&lt;/th&gt;&lt;th style=&quot;border:1px solid #d0d0d5;padding:4px 8px;background:#f2f2f5;text-align:left;&quot;&gt;QTY CHANGE TO&lt;/th&gt;
+      &lt;th style=&quot;border:1px solid #d0d0d5;padding:4px 8px;background:#f2f2f5;text-align:left;&quot;&gt;DELIVERY DATE&lt;/th&gt;
+      &lt;th style=&quot;border:1px solid #d0d0d5;padding:4px 8px;background:#f2f2f5;text-align:left;&quot;&gt;REMARK&lt;/th&gt;
+    &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+    
+    &lt;tr&gt;
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;24/09/2026&lt;/td&gt;
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;SO-26-0412&lt;/td&gt;
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;KL WAREHOUSE&lt;/td&gt;
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;SRT-6060-GL&lt;/td&gt;
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;100&lt;/td&gt;
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;120&lt;/td&gt;
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;05/10/2026&lt;/td&gt;
+      
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;Split delivery&lt;/td&gt;
+    &lt;/tr&gt;
+    
+    &lt;tr&gt;
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;24/09/2026&lt;/td&gt;
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;SO-26-0412&lt;/td&gt;
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;KL WAREHOUSE&lt;/td&gt;
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;SRT-3030-MT&lt;/td&gt;
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;80&lt;/td&gt;
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;&lt;/td&gt;
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;05/10/2026&lt;/td&gt;
+      
+      &lt;td style=&quot;border:1px solid #d0d0d5;padding:4px 8px;&quot;&gt;&lt;/td&gt;
+    &lt;/tr&gt;
+    
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p&gt;Raised by Aina Rahman (aina@sorento.com.my) on 28/09/2026.&lt;/p&gt;
+&lt;p&gt;&lt;a href=&quot;https://crm.example.com/scm/order-inquiries/412&quot;&gt;Open in Order Inquiries&lt;/a&gt;&lt;/p&gt;
+&lt;/body&gt;&lt;/html&gt;"></iframe></figure>
+  </div>
+  <div class="row">
+    <figure><figcaption>After, desktop (600 card in a mail pane)</figcaption><iframe title="mail preview" sandbox="" style="width:680px;height:900px" srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot; xmlns=&quot;http://www.w3.org/1999/xhtml&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;x-apple-disable-message-reformatting&quot;&gt;
+&lt;meta name=&quot;format-detection&quot; content=&quot;telephone=no, date=no, address=no, email=no&quot;&gt;
+&lt;meta name=&quot;color-scheme&quot; content=&quot;light&quot;&gt;
+&lt;meta name=&quot;supported-color-schemes&quot; content=&quot;light&quot;&gt;
+&lt;title&gt;OI: KL WAREHOUSE @ SO-26-0412&lt;/title&gt;
+&lt;style&gt;
+  /* Only what inline styles cannot say: the phone breakpoint. Every other rule is inline. */
+  @media only screen and (max-width: 620px) {
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+    .em-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .em-btn-table { width: 100% !important; }
+    .em-btn-link { display: block !important; }
+    .em-facts td { display: block !important; width: 100% !important; }
+    .em-facts td.em-fact-label { padding-bottom: 0 !important; }
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body data-sorento-layout=&quot;1&quot; style=&quot;margin:0;padding:0;width:100%;background-color:#F3F4F6;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;&quot;&gt;
+&lt;table role=&quot;presentation&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#F3F4F6;&quot;&gt;
+  &lt;tr&gt;
+    &lt;td class=&quot;em-outer&quot; align=&quot;center&quot; style=&quot;padding:32px 12px;&quot;&gt;
+      &lt;table role=&quot;presentation&quot; class=&quot;em-card&quot; width=&quot;600&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:600px;max-width:600px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;&quot;&gt;
+
+        &lt;tr&gt;
+          &lt;td align=&quot;center&quot; style=&quot;padding:24px 40px;background-color:#2563EB;&quot; class=&quot;em-pad&quot;&gt;
+            &lt;span style=&quot;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;&quot;&gt;Sorento&lt;/span&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:36px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;&quot;&gt;
+            &lt;h1 style=&quot;margin:0;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:24px;line-height:32px;font-weight:700;color:#111827;&quot;&gt;ORDER, AMEND&lt;/h1&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;table width=&quot;100%&quot; style=&quot;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;&quot;&gt;
+  &lt;thead&gt;
+    &lt;tr&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;S/O NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;CUSTOMER&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;PROJECT&lt;/th&gt;&lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+    
+    &lt;tr&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO-26-0412&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Lim Hardware Sdn Bhd&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Taman Melati Phase 2&lt;/td&gt;
+    &lt;/tr&gt;
+    
+  &lt;/tbody&gt;
+&lt;/table&gt;&lt;table width=&quot;100%&quot; style=&quot;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;&quot;&gt;
+  &lt;thead&gt;
+    &lt;tr&gt;
+      &lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;SO DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;S/O NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;LOCATION&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;ITEM CODE&lt;/th&gt;
+      &lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;QTY&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;QTY CHANGE TO&lt;/th&gt;
+      &lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;DELIVERY DATE&lt;/th&gt;
+      &lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;REMARK&lt;/th&gt;
+    &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+    
+    &lt;tr&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;24/09/2026&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO-26-0412&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;KL WAREHOUSE&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRT-6060-GL&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;100&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;120&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;05/10/2026&lt;/td&gt;
+      
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Split delivery&lt;/td&gt;
+    &lt;/tr&gt;
+    
+    &lt;tr&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;24/09/2026&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO-26-0412&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;KL WAREHOUSE&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRT-3030-MT&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;80&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;05/10/2026&lt;/td&gt;
+      
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;/td&gt;
+    &lt;/tr&gt;
+    
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p style=&quot;margin:0 0 16px 0;&quot;&gt;Raised by Aina Rahman (aina@sorento.com.my) on 28/09/2026.&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:32px 40px 8px 40px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-btn-table&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; &gt;
+              &lt;tr&gt;
+                &lt;td align=&quot;center&quot; bgcolor=&quot;#2563EB&quot; style=&quot;border-radius:8px;background-color:#2563EB;&quot;&gt;
+                  &lt;a class=&quot;em-btn-link&quot; href=&quot;https://crm.example.com/scm/order-inquiries/412&quot; target=&quot;_blank&quot; style=&quot;display:inline-block;padding:16px 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;mso-padding-alt:0;&quot;&gt;Open in Order Inquiries&lt;/a&gt;
+                &lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:36px 40px 0 40px;&quot;&gt;&lt;div style=&quot;height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:20px 40px 32px 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#9ca3af;&quot;&gt;&lt;div style=&quot;font-weight:600;color:#6b7280;&quot;&gt;Sorento&lt;/div&gt;&lt;div&gt;Lot 12, Jalan Perusahaan 3, 47500 Subang Jaya, Selangor&lt;/div&gt;
+            &lt;div style=&quot;padding-top:8px;&quot;&gt;Need help? &lt;a href=&quot;mailto:support@sorento.com.my&quot; style=&quot;color:#2563EB;text-decoration:underline;&quot;&gt;support@sorento.com.my&lt;/a&gt;
+            &lt;/div&gt;&lt;div style=&quot;padding-top:12px;&quot;&gt;You received this email because you have an account on Sorento. It is a service message about your work in the system.&lt;/div&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+
+      &lt;/table&gt;
+    &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;"></iframe></figure>
+    <figure><figcaption>After, phone 375</figcaption><iframe title="mail preview" sandbox="" style="width:375px;height:1080px" srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot; xmlns=&quot;http://www.w3.org/1999/xhtml&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;x-apple-disable-message-reformatting&quot;&gt;
+&lt;meta name=&quot;format-detection&quot; content=&quot;telephone=no, date=no, address=no, email=no&quot;&gt;
+&lt;meta name=&quot;color-scheme&quot; content=&quot;light&quot;&gt;
+&lt;meta name=&quot;supported-color-schemes&quot; content=&quot;light&quot;&gt;
+&lt;title&gt;OI: KL WAREHOUSE @ SO-26-0412&lt;/title&gt;
+&lt;style&gt;
+  /* Only what inline styles cannot say: the phone breakpoint. Every other rule is inline. */
+  @media only screen and (max-width: 620px) {
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+    .em-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .em-btn-table { width: 100% !important; }
+    .em-btn-link { display: block !important; }
+    .em-facts td { display: block !important; width: 100% !important; }
+    .em-facts td.em-fact-label { padding-bottom: 0 !important; }
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body data-sorento-layout=&quot;1&quot; style=&quot;margin:0;padding:0;width:100%;background-color:#F3F4F6;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;&quot;&gt;
+&lt;table role=&quot;presentation&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#F3F4F6;&quot;&gt;
+  &lt;tr&gt;
+    &lt;td class=&quot;em-outer&quot; align=&quot;center&quot; style=&quot;padding:32px 12px;&quot;&gt;
+      &lt;table role=&quot;presentation&quot; class=&quot;em-card&quot; width=&quot;600&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:600px;max-width:600px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;&quot;&gt;
+
+        &lt;tr&gt;
+          &lt;td align=&quot;center&quot; style=&quot;padding:24px 40px;background-color:#2563EB;&quot; class=&quot;em-pad&quot;&gt;
+            &lt;span style=&quot;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;&quot;&gt;Sorento&lt;/span&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:36px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;&quot;&gt;
+            &lt;h1 style=&quot;margin:0;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:24px;line-height:32px;font-weight:700;color:#111827;&quot;&gt;ORDER, AMEND&lt;/h1&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;table width=&quot;100%&quot; style=&quot;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;&quot;&gt;
+  &lt;thead&gt;
+    &lt;tr&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;S/O NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;CUSTOMER&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;PROJECT&lt;/th&gt;&lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+    
+    &lt;tr&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO-26-0412&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Lim Hardware Sdn Bhd&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Taman Melati Phase 2&lt;/td&gt;
+    &lt;/tr&gt;
+    
+  &lt;/tbody&gt;
+&lt;/table&gt;&lt;table width=&quot;100%&quot; style=&quot;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;&quot;&gt;
+  &lt;thead&gt;
+    &lt;tr&gt;
+      &lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;SO DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;S/O NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;LOCATION&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;ITEM CODE&lt;/th&gt;
+      &lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;QTY&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;QTY CHANGE TO&lt;/th&gt;
+      &lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;DELIVERY DATE&lt;/th&gt;
+      &lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;REMARK&lt;/th&gt;
+    &lt;/tr&gt;
+  &lt;/thead&gt;
+  &lt;tbody&gt;
+    
+    &lt;tr&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;24/09/2026&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO-26-0412&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;KL WAREHOUSE&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRT-6060-GL&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;100&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;120&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;05/10/2026&lt;/td&gt;
+      
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Split delivery&lt;/td&gt;
+    &lt;/tr&gt;
+    
+    &lt;tr&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;24/09/2026&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO-26-0412&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;KL WAREHOUSE&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRT-3030-MT&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;80&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;/td&gt;
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;05/10/2026&lt;/td&gt;
+      
+      &lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;/td&gt;
+    &lt;/tr&gt;
+    
+  &lt;/tbody&gt;
+&lt;/table&gt;
+&lt;p style=&quot;margin:0 0 16px 0;&quot;&gt;Raised by Aina Rahman (aina@sorento.com.my) on 28/09/2026.&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:32px 40px 8px 40px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-btn-table&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; &gt;
+              &lt;tr&gt;
+                &lt;td align=&quot;center&quot; bgcolor=&quot;#2563EB&quot; style=&quot;border-radius:8px;background-color:#2563EB;&quot;&gt;
+                  &lt;a class=&quot;em-btn-link&quot; href=&quot;https://crm.example.com/scm/order-inquiries/412&quot; target=&quot;_blank&quot; style=&quot;display:inline-block;padding:16px 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;mso-padding-alt:0;&quot;&gt;Open in Order Inquiries&lt;/a&gt;
+                &lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:36px 40px 0 40px;&quot;&gt;&lt;div style=&quot;height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:20px 40px 32px 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#9ca3af;&quot;&gt;&lt;div style=&quot;font-weight:600;color:#6b7280;&quot;&gt;Sorento&lt;/div&gt;&lt;div&gt;Lot 12, Jalan Perusahaan 3, 47500 Subang Jaya, Selangor&lt;/div&gt;
+            &lt;div style=&quot;padding-top:8px;&quot;&gt;Need help? &lt;a href=&quot;mailto:support@sorento.com.my&quot; style=&quot;color:#2563EB;text-decoration:underline;&quot;&gt;support@sorento.com.my&lt;/a&gt;
+            &lt;/div&gt;&lt;div style=&quot;padding-top:12px;&quot;&gt;You received this email because you have an account on Sorento. It is a service message about your work in the system.&lt;/div&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+
+      &lt;/table&gt;
+    &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;"></iframe></figure>
+  </div>
+  <details><summary>Plain-text part (sent alongside the HTML)</summary><pre>ORDER, AMEND
+
+SO-26-0412 - Lim Hardware Sdn Bhd - Taman Melati Phase 2
+
+SO DATE | S/O NO | LOCATION | ITEM CODE | QTY | QTY CHANGE TO | DELIVERY DATE | REMARK
+24/09/2026 | SO-26-0412 | KL WAREHOUSE | SRT-6060-GL | 100 | 120 | 05/10/2026 | Split delivery
+24/09/2026 | SO-26-0412 | KL WAREHOUSE | SRT-3030-MT | 80 |  | 05/10/2026 | 
+
+Raised by Aina Rahman on 28/09/2026.
+Open: https://crm.example.com/scm/order-inquiries/412</pre></details>
+</section>
+<section class="mail" id="pr_approved">
+  <h3>Purchase request approved (automation)</h3>
+  <p class="muted">Subject: <b>[Approved] Purchase Request PR26-0319</b>. Before: Seeded template: bullet list of facts, plain link.</p>
+  <div class="row">
+    <figure><figcaption>Before (today)</figcaption><iframe title="mail preview" sandbox="" style="width:600px;height:520px" srcdoc="&lt;!DOCTYPE html&gt;&lt;html&gt;&lt;body style=&quot;margin:12px;font-family:Times New Roman,serif;background:#fff&quot;&gt;&lt;p&gt;Hi Jason,&lt;/p&gt;
+&lt;p&gt;
+  &lt;strong&gt;Purchase Request PR26-0319&lt;/strong&gt;
+  has been &lt;strong&gt;approved&lt;/strong&gt;.
+&lt;/p&gt;
+&lt;ul&gt;
+  &lt;li&gt;&lt;strong&gt;Customer:&lt;/strong&gt; ACME Sdn Bhd&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;Project:&lt;/strong&gt; HQ Renovation&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;Purpose:&lt;/strong&gt; Office equipment refresh&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;Requested by:&lt;/strong&gt; Jane Doe&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;Approved by:&lt;/strong&gt; Director Lim&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;Approved at:&lt;/strong&gt; 28/09/2026 10:15&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;Expected delivery:&lt;/strong&gt; 15/10/2026&lt;/li&gt;
+  &lt;li&gt;&lt;strong&gt;Expected PO date:&lt;/strong&gt; 30/09/2026&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;&lt;strong&gt;Approval comments:&lt;/strong&gt; Proceed with the second supplier quote.&lt;/p&gt;
+
+&lt;p&gt;&lt;a href=&quot;https://crm.example.com/procurement-management/purchase-requests/sample&quot;&gt;Open purchase request&lt;/a&gt;&lt;/p&gt;
+&lt;/body&gt;&lt;/html&gt;"></iframe></figure>
+  </div>
+  <div class="row">
+    <figure><figcaption>After, desktop (600 card in a mail pane)</figcaption><iframe title="mail preview" sandbox="" style="width:680px;height:980px" srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot; xmlns=&quot;http://www.w3.org/1999/xhtml&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;x-apple-disable-message-reformatting&quot;&gt;
+&lt;meta name=&quot;format-detection&quot; content=&quot;telephone=no, date=no, address=no, email=no&quot;&gt;
+&lt;meta name=&quot;color-scheme&quot; content=&quot;light&quot;&gt;
+&lt;meta name=&quot;supported-color-schemes&quot; content=&quot;light&quot;&gt;
+&lt;title&gt;[Approved] Purchase Request PR26-0319&lt;/title&gt;
+&lt;style&gt;
+  /* Only what inline styles cannot say: the phone breakpoint. Every other rule is inline. */
+  @media only screen and (max-width: 620px) {
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+    .em-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .em-btn-table { width: 100% !important; }
+    .em-btn-link { display: block !important; }
+    .em-facts td { display: block !important; width: 100% !important; }
+    .em-facts td.em-fact-label { padding-bottom: 0 !important; }
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body data-sorento-layout=&quot;1&quot; style=&quot;margin:0;padding:0;width:100%;background-color:#F3F4F6;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;&quot;&gt;
+&lt;div style=&quot;display:none;max-height:0;max-width:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F3F4F6;opacity:0;&quot; aria-hidden=&quot;true&quot;&gt;Approved by Director Lim for ACME Sdn Bhd.&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&lt;/div&gt;
+&lt;table role=&quot;presentation&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#F3F4F6;&quot;&gt;
+  &lt;tr&gt;
+    &lt;td class=&quot;em-outer&quot; align=&quot;center&quot; style=&quot;padding:32px 12px;&quot;&gt;
+      &lt;table role=&quot;presentation&quot; class=&quot;em-card&quot; width=&quot;600&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:600px;max-width:600px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;&quot;&gt;
+
+        &lt;tr&gt;
+          &lt;td align=&quot;center&quot; style=&quot;padding:24px 40px;background-color:#2563EB;&quot; class=&quot;em-pad&quot;&gt;
+            &lt;span style=&quot;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;&quot;&gt;Sorento&lt;/span&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:36px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;&quot;&gt;
+            &lt;h1 style=&quot;margin:0;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:24px;line-height:32px;font-weight:700;color:#111827;&quot;&gt;Purchase Request PR26-0319 approved&lt;/h1&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:16px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;Hi Jason,&lt;/p&gt;&lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;Purchase Request PR26-0319 has been approved.&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 40px 0 40px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-facts&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#f9fafb;border:1px solid #eef0f3;border-radius:8px;border-collapse:separate;&quot;&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:14px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Customer&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:14px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;ACME Sdn Bhd&lt;/td&gt;
+              &lt;/tr&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Project&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;HQ Renovation&lt;/td&gt;
+              &lt;/tr&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Purpose&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;Office equipment refresh&lt;/td&gt;
+              &lt;/tr&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Requested by&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;Jane Doe&lt;/td&gt;
+              &lt;/tr&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Approved by&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;Director Lim&lt;/td&gt;
+              &lt;/tr&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Approved at&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;28/09/2026 10:15&lt;/td&gt;
+              &lt;/tr&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Expected delivery&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;15/10/2026&lt;/td&gt;
+              &lt;/tr&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:6px 16px 14px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Expected PO date&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:6px 16px 14px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;30/09/2026&lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 16px 0;&quot;&gt;&lt;strong&gt;Approval comments:&lt;/strong&gt; Proceed with the second supplier quote.&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:32px 40px 8px 40px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-btn-table&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; &gt;
+              &lt;tr&gt;
+                &lt;td align=&quot;center&quot; bgcolor=&quot;#2563EB&quot; style=&quot;border-radius:8px;background-color:#2563EB;&quot;&gt;
+                  &lt;a class=&quot;em-btn-link&quot; href=&quot;https://crm.example.com/procurement-management/purchase-requests/sample&quot; target=&quot;_blank&quot; style=&quot;display:inline-block;padding:16px 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;mso-padding-alt:0;&quot;&gt;Open purchase request&lt;/a&gt;
+                &lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:36px 40px 0 40px;&quot;&gt;&lt;div style=&quot;height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:20px 40px 32px 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#9ca3af;&quot;&gt;&lt;div style=&quot;font-weight:600;color:#6b7280;&quot;&gt;Sorento&lt;/div&gt;&lt;div&gt;Lot 12, Jalan Perusahaan 3, 47500 Subang Jaya, Selangor&lt;/div&gt;
+            &lt;div style=&quot;padding-top:8px;&quot;&gt;Need help? &lt;a href=&quot;mailto:support@sorento.com.my&quot; style=&quot;color:#2563EB;text-decoration:underline;&quot;&gt;support@sorento.com.my&lt;/a&gt;
+            &lt;/div&gt;&lt;div style=&quot;padding-top:12px;&quot;&gt;You received this email because you have an account on Sorento. It is a service message about your work in the system.&lt;/div&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+
+      &lt;/table&gt;
+    &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;"></iframe></figure>
+    <figure><figcaption>After, phone 375</figcaption><iframe title="mail preview" sandbox="" style="width:375px;height:1160px" srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot; xmlns=&quot;http://www.w3.org/1999/xhtml&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;x-apple-disable-message-reformatting&quot;&gt;
+&lt;meta name=&quot;format-detection&quot; content=&quot;telephone=no, date=no, address=no, email=no&quot;&gt;
+&lt;meta name=&quot;color-scheme&quot; content=&quot;light&quot;&gt;
+&lt;meta name=&quot;supported-color-schemes&quot; content=&quot;light&quot;&gt;
+&lt;title&gt;[Approved] Purchase Request PR26-0319&lt;/title&gt;
+&lt;style&gt;
+  /* Only what inline styles cannot say: the phone breakpoint. Every other rule is inline. */
+  @media only screen and (max-width: 620px) {
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+    .em-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .em-btn-table { width: 100% !important; }
+    .em-btn-link { display: block !important; }
+    .em-facts td { display: block !important; width: 100% !important; }
+    .em-facts td.em-fact-label { padding-bottom: 0 !important; }
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body data-sorento-layout=&quot;1&quot; style=&quot;margin:0;padding:0;width:100%;background-color:#F3F4F6;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;&quot;&gt;
+&lt;div style=&quot;display:none;max-height:0;max-width:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F3F4F6;opacity:0;&quot; aria-hidden=&quot;true&quot;&gt;Approved by Director Lim for ACME Sdn Bhd.&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&lt;/div&gt;
+&lt;table role=&quot;presentation&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#F3F4F6;&quot;&gt;
+  &lt;tr&gt;
+    &lt;td class=&quot;em-outer&quot; align=&quot;center&quot; style=&quot;padding:32px 12px;&quot;&gt;
+      &lt;table role=&quot;presentation&quot; class=&quot;em-card&quot; width=&quot;600&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:600px;max-width:600px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;&quot;&gt;
+
+        &lt;tr&gt;
+          &lt;td align=&quot;center&quot; style=&quot;padding:24px 40px;background-color:#2563EB;&quot; class=&quot;em-pad&quot;&gt;
+            &lt;span style=&quot;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;&quot;&gt;Sorento&lt;/span&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:36px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;&quot;&gt;
+            &lt;h1 style=&quot;margin:0;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:24px;line-height:32px;font-weight:700;color:#111827;&quot;&gt;Purchase Request PR26-0319 approved&lt;/h1&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:16px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;Hi Jason,&lt;/p&gt;&lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;Purchase Request PR26-0319 has been approved.&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 40px 0 40px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-facts&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#f9fafb;border:1px solid #eef0f3;border-radius:8px;border-collapse:separate;&quot;&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:14px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Customer&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:14px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;ACME Sdn Bhd&lt;/td&gt;
+              &lt;/tr&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Project&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;HQ Renovation&lt;/td&gt;
+              &lt;/tr&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Purpose&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;Office equipment refresh&lt;/td&gt;
+              &lt;/tr&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Requested by&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;Jane Doe&lt;/td&gt;
+              &lt;/tr&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Approved by&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;Director Lim&lt;/td&gt;
+              &lt;/tr&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Approved at&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;28/09/2026 10:15&lt;/td&gt;
+              &lt;/tr&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Expected delivery&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;15/10/2026&lt;/td&gt;
+              &lt;/tr&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:6px 16px 14px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Expected PO date&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:6px 16px 14px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;30/09/2026&lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 16px 0;&quot;&gt;&lt;strong&gt;Approval comments:&lt;/strong&gt; Proceed with the second supplier quote.&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:32px 40px 8px 40px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-btn-table&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; &gt;
+              &lt;tr&gt;
+                &lt;td align=&quot;center&quot; bgcolor=&quot;#2563EB&quot; style=&quot;border-radius:8px;background-color:#2563EB;&quot;&gt;
+                  &lt;a class=&quot;em-btn-link&quot; href=&quot;https://crm.example.com/procurement-management/purchase-requests/sample&quot; target=&quot;_blank&quot; style=&quot;display:inline-block;padding:16px 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;mso-padding-alt:0;&quot;&gt;Open purchase request&lt;/a&gt;
+                &lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:36px 40px 0 40px;&quot;&gt;&lt;div style=&quot;height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:20px 40px 32px 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#9ca3af;&quot;&gt;&lt;div style=&quot;font-weight:600;color:#6b7280;&quot;&gt;Sorento&lt;/div&gt;&lt;div&gt;Lot 12, Jalan Perusahaan 3, 47500 Subang Jaya, Selangor&lt;/div&gt;
+            &lt;div style=&quot;padding-top:8px;&quot;&gt;Need help? &lt;a href=&quot;mailto:support@sorento.com.my&quot; style=&quot;color:#2563EB;text-decoration:underline;&quot;&gt;support@sorento.com.my&lt;/a&gt;
+            &lt;/div&gt;&lt;div style=&quot;padding-top:12px;&quot;&gt;You received this email because you have an account on Sorento. It is a service message about your work in the system.&lt;/div&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+
+      &lt;/table&gt;
+    &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;"></iframe></figure>
+  </div>
+  <details><summary>Plain-text part (sent alongside the HTML)</summary><pre>Purchase Request PR26-0319 approved
+
+Hi Jason,
+
+Purchase Request PR26-0319 has been approved.
+
+Customer: ACME Sdn Bhd
+Project: HQ Renovation
+Purpose: Office equipment refresh
+Requested by: Jane Doe
+Approved by: Director Lim
+Approved at: 28/09/2026 10:15
+Expected delivery: 15/10/2026
+Expected PO date: 30/09/2026
+
+**Approval comments:** Proceed with the second supplier quote.
+
+Open purchase request: https://crm.example.com/procurement-management/purchase-requests/sample
+
+-- 
+Sorento
+Lot 12, Jalan Perusahaan 3, 47500 Subang Jaya, Selangor
+Need help? support@sorento.com.my
+You received this email because you have an account on Sorento. It is a service message about your work in the system.</pre></details>
+</section>
+<section class="mail" id="sla_digest">
+  <h3>Daily SLA summary</h3>
+  <p class="muted">Subject: <b>Your daily SLA summary (28/09/2026)</b>. Before: The only button-like element in the old codebase was this digest&#x27;s Unsubscribe link.</p>
+  <div class="row">
+    <figure><figcaption>Before (today)</figcaption><iframe title="mail preview" sandbox="" style="width:600px;height:520px" srcdoc="&lt;!DOCTYPE html&gt;&lt;html&gt;&lt;body style=&quot;font-family:system-ui,sans-serif;line-height:1.5;color:#111827&quot;&gt;&lt;p&gt;Hi Aina,&lt;/p&gt;&lt;p&gt;Below is your daily summary.&lt;/p&gt;&lt;h2 style=&quot;font-size:16px;margin-top:20px&quot;&gt;Performance&lt;/h2&gt;&lt;p&gt;Over last 7 days: &lt;strong&gt;12&lt;/strong&gt; responded, &lt;strong&gt;9&lt;/strong&gt; resolved.&lt;br/&gt;Over last 30 days: &lt;strong&gt;48&lt;/strong&gt; responded, &lt;strong&gt;41&lt;/strong&gt; resolved.&lt;/p&gt;&lt;h2 style=&quot;font-size:16px;margin-top:20px&quot;&gt;Outstanding conversations as of today (28/09/2026)&lt;/h2&gt;&lt;p&gt;&lt;strong&gt;3&lt;/strong&gt; conversation(s).&lt;/p&gt;&lt;table style=&quot;border-collapse:collapse;width:100%;max-width:640px;font-size:14px&quot;&gt;&lt;thead&gt;&lt;tr&gt;&lt;th align=&quot;left&quot; style=&quot;padding:8px;border:1px solid #e5e7eb;background:#f9fafb&quot;&gt;Name&lt;/th&gt;&lt;th align=&quot;left&quot; style=&quot;padding:8px;border:1px solid #e5e7eb;background:#f9fafb&quot;&gt;Phone number&lt;/th&gt;&lt;th align=&quot;left&quot; style=&quot;padding:8px;border:1px solid #e5e7eb;background:#f9fafb&quot;&gt;Conversation SLA tracking&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td style=&#x27;padding:8px;border:1px solid #e5e7eb&#x27;&gt;Tan Ah Kow&lt;/td&gt;&lt;td style=&#x27;padding:8px;border:1px solid #e5e7eb&#x27;&gt;+60 12-345 6789&lt;/td&gt;&lt;td style=&#x27;padding:8px;border:1px solid #e5e7eb&#x27;&gt;&lt;a href=&#x27;#&#x27;&gt;Open conversation&lt;/a&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style=&#x27;padding:8px;border:1px solid #e5e7eb&#x27;&gt;Siti Rahmah&lt;/td&gt;&lt;td style=&#x27;padding:8px;border:1px solid #e5e7eb&#x27;&gt;+60 13-222 1100&lt;/td&gt;&lt;td style=&#x27;padding:8px;border:1px solid #e5e7eb&#x27;&gt;&lt;a href=&#x27;#&#x27;&gt;Open conversation&lt;/a&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style=&#x27;padding:8px;border:1px solid #e5e7eb&#x27;&gt;Lim Hardware Sdn Bhd&lt;/td&gt;&lt;td style=&#x27;padding:8px;border:1px solid #e5e7eb&#x27;&gt;+60 3-7788 9900&lt;/td&gt;&lt;td style=&#x27;padding:8px;border:1px solid #e5e7eb&#x27;&gt;&lt;a href=&#x27;#&#x27;&gt;Open conversation&lt;/a&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p style=&quot;margin-top:24px&quot;&gt;Thanks for your help in making Sorento a better place to work.&lt;/p&gt;&lt;p style=&quot;margin-top:16px&quot;&gt;&lt;a href=&quot;#&quot; style=&quot;display:inline-block;padding:10px 14px;border:1px solid #d1d5db;border-radius:8px;text-decoration:none;color:#111827&quot;&gt;Unsubscribe from this daily summary&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;"></iframe></figure>
+  </div>
+  <div class="row">
+    <figure><figcaption>After, desktop (600 card in a mail pane)</figcaption><iframe title="mail preview" sandbox="" style="width:680px;height:1180px" srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot; xmlns=&quot;http://www.w3.org/1999/xhtml&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;x-apple-disable-message-reformatting&quot;&gt;
+&lt;meta name=&quot;format-detection&quot; content=&quot;telephone=no, date=no, address=no, email=no&quot;&gt;
+&lt;meta name=&quot;color-scheme&quot; content=&quot;light&quot;&gt;
+&lt;meta name=&quot;supported-color-schemes&quot; content=&quot;light&quot;&gt;
+&lt;title&gt;Your daily SLA summary (28/09/2026)&lt;/title&gt;
+&lt;style&gt;
+  /* Only what inline styles cannot say: the phone breakpoint. Every other rule is inline. */
+  @media only screen and (max-width: 620px) {
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+    .em-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .em-btn-table { width: 100% !important; }
+    .em-btn-link { display: block !important; }
+    .em-facts td { display: block !important; width: 100% !important; }
+    .em-facts td.em-fact-label { padding-bottom: 0 !important; }
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body data-sorento-layout=&quot;1&quot; style=&quot;margin:0;padding:0;width:100%;background-color:#F3F4F6;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;&quot;&gt;
+&lt;div style=&quot;display:none;max-height:0;max-width:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F3F4F6;opacity:0;&quot; aria-hidden=&quot;true&quot;&gt;3 outstanding conversations as of 28/09/2026.&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&lt;/div&gt;
+&lt;table role=&quot;presentation&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#F3F4F6;&quot;&gt;
+  &lt;tr&gt;
+    &lt;td class=&quot;em-outer&quot; align=&quot;center&quot; style=&quot;padding:32px 12px;&quot;&gt;
+      &lt;table role=&quot;presentation&quot; class=&quot;em-card&quot; width=&quot;600&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:600px;max-width:600px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;&quot;&gt;
+
+        &lt;tr&gt;
+          &lt;td align=&quot;center&quot; style=&quot;padding:24px 40px;background-color:#2563EB;&quot; class=&quot;em-pad&quot;&gt;
+            &lt;span style=&quot;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;&quot;&gt;Sorento&lt;/span&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:36px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;&quot;&gt;
+            &lt;h1 style=&quot;margin:0;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:24px;line-height:32px;font-weight:700;color:#111827;&quot;&gt;Your daily SLA summary&lt;/h1&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:16px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;Hi Aina,&lt;/p&gt;&lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;Here is where your conversations stand today, 28/09/2026.&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 40px 0 40px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-facts&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#f9fafb;border:1px solid #eef0f3;border-radius:8px;border-collapse:separate;&quot;&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:14px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Outstanding today&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:14px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;3&lt;/td&gt;
+              &lt;/tr&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Last 7 days&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;12 responded, 9 resolved&lt;/td&gt;
+              &lt;/tr&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:6px 16px 14px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Last 30 days&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:6px 16px 14px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;48 responded, 41 resolved&lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;h3 style=&quot;margin:0 0 8px 0;font-size:16px;line-height:24px;color:#111827;&quot;&gt;Outstanding conversations&lt;/h3&gt;&lt;table width=&quot;100%&quot; style=&quot;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;&quot;&gt;&lt;thead&gt;&lt;tr&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;Name&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;Phone&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;Conversation&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Tan Ah Kow&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;+60 12-345 6789&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;a href=&quot;https://crm.example.com/sla-management/conversation-sla-tracking/1&quot; style=&quot;color:#2563EB;text-decoration:underline;&quot;&gt;Open&lt;/a&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Siti Rahmah&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;+60 13-222 1100&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;a href=&quot;https://crm.example.com/sla-management/conversation-sla-tracking/2&quot; style=&quot;color:#2563EB;text-decoration:underline;&quot;&gt;Open&lt;/a&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Lim Hardware Sdn Bhd&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;+60 3-7788 9900&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;a href=&quot;https://crm.example.com/sla-management/conversation-sla-tracking/3&quot; style=&quot;color:#2563EB;text-decoration:underline;&quot;&gt;Open&lt;/a&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:32px 40px 8px 40px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-btn-table&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; &gt;
+              &lt;tr&gt;
+                &lt;td align=&quot;center&quot; bgcolor=&quot;#2563EB&quot; style=&quot;border-radius:8px;background-color:#2563EB;&quot;&gt;
+                  &lt;a class=&quot;em-btn-link&quot; href=&quot;https://crm.example.com/sla-management/conversation-sla-tracking&quot; target=&quot;_blank&quot; style=&quot;display:inline-block;padding:16px 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;mso-padding-alt:0;&quot;&gt;Open my SLA tracking&lt;/a&gt;
+                &lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 16px 0;font-size:13px;color:#6b7280;text-align:center;&quot;&gt;Thanks for your help in making Sorento a better place to work. &lt;a href=&quot;https://crm.example.com/unsubscribe/daily-sla-summary?token=sample&quot; style=&quot;color:#2563EB;text-decoration:underline;&quot;&gt;Unsubscribe from this daily summary&lt;/a&gt;&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:36px 40px 0 40px;&quot;&gt;&lt;div style=&quot;height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:20px 40px 32px 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#9ca3af;&quot;&gt;&lt;div style=&quot;font-weight:600;color:#6b7280;&quot;&gt;Sorento&lt;/div&gt;&lt;div&gt;Lot 12, Jalan Perusahaan 3, 47500 Subang Jaya, Selangor&lt;/div&gt;
+            &lt;div style=&quot;padding-top:8px;&quot;&gt;Need help? &lt;a href=&quot;mailto:support@sorento.com.my&quot; style=&quot;color:#2563EB;text-decoration:underline;&quot;&gt;support@sorento.com.my&lt;/a&gt;
+            &lt;/div&gt;&lt;div style=&quot;padding-top:12px;&quot;&gt;You receive this summary because you subscribed to the daily SLA summary.&lt;/div&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+
+      &lt;/table&gt;
+    &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;"></iframe></figure>
+    <figure><figcaption>After, phone 375</figcaption><iframe title="mail preview" sandbox="" style="width:375px;height:1360px" srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot; xmlns=&quot;http://www.w3.org/1999/xhtml&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;x-apple-disable-message-reformatting&quot;&gt;
+&lt;meta name=&quot;format-detection&quot; content=&quot;telephone=no, date=no, address=no, email=no&quot;&gt;
+&lt;meta name=&quot;color-scheme&quot; content=&quot;light&quot;&gt;
+&lt;meta name=&quot;supported-color-schemes&quot; content=&quot;light&quot;&gt;
+&lt;title&gt;Your daily SLA summary (28/09/2026)&lt;/title&gt;
+&lt;style&gt;
+  /* Only what inline styles cannot say: the phone breakpoint. Every other rule is inline. */
+  @media only screen and (max-width: 620px) {
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+    .em-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .em-btn-table { width: 100% !important; }
+    .em-btn-link { display: block !important; }
+    .em-facts td { display: block !important; width: 100% !important; }
+    .em-facts td.em-fact-label { padding-bottom: 0 !important; }
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body data-sorento-layout=&quot;1&quot; style=&quot;margin:0;padding:0;width:100%;background-color:#F3F4F6;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;&quot;&gt;
+&lt;div style=&quot;display:none;max-height:0;max-width:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F3F4F6;opacity:0;&quot; aria-hidden=&quot;true&quot;&gt;3 outstanding conversations as of 28/09/2026.&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&lt;/div&gt;
+&lt;table role=&quot;presentation&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#F3F4F6;&quot;&gt;
+  &lt;tr&gt;
+    &lt;td class=&quot;em-outer&quot; align=&quot;center&quot; style=&quot;padding:32px 12px;&quot;&gt;
+      &lt;table role=&quot;presentation&quot; class=&quot;em-card&quot; width=&quot;600&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:600px;max-width:600px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;&quot;&gt;
+
+        &lt;tr&gt;
+          &lt;td align=&quot;center&quot; style=&quot;padding:24px 40px;background-color:#2563EB;&quot; class=&quot;em-pad&quot;&gt;
+            &lt;span style=&quot;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;&quot;&gt;Sorento&lt;/span&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:36px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;&quot;&gt;
+            &lt;h1 style=&quot;margin:0;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:24px;line-height:32px;font-weight:700;color:#111827;&quot;&gt;Your daily SLA summary&lt;/h1&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:16px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;Hi Aina,&lt;/p&gt;&lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;Here is where your conversations stand today, 28/09/2026.&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 40px 0 40px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-facts&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#f9fafb;border:1px solid #eef0f3;border-radius:8px;border-collapse:separate;&quot;&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:14px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Outstanding today&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:14px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;3&lt;/td&gt;
+              &lt;/tr&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Last 7 days&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:6px 16px 6px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;12 responded, 9 resolved&lt;/td&gt;
+              &lt;/tr&gt;
+              &lt;tr&gt;
+                &lt;td class=&quot;em-fact-label&quot; valign=&quot;top&quot; width=&quot;38%&quot; style=&quot;padding:6px 16px 14px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#6b7280;&quot;&gt;Last 30 days&lt;/td&gt;
+                &lt;td valign=&quot;top&quot; style=&quot;padding:6px 16px 14px 16px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:20px;color:#111827;font-weight:600;&quot;&gt;48 responded, 41 resolved&lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;h3 style=&quot;margin:0 0 8px 0;font-size:16px;line-height:24px;color:#111827;&quot;&gt;Outstanding conversations&lt;/h3&gt;&lt;table width=&quot;100%&quot; style=&quot;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;&quot;&gt;&lt;thead&gt;&lt;tr&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;Name&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;Phone&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;&quot;&gt;Conversation&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Tan Ah Kow&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;+60 12-345 6789&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;a href=&quot;https://crm.example.com/sla-management/conversation-sla-tracking/1&quot; style=&quot;color:#2563EB;text-decoration:underline;&quot;&gt;Open&lt;/a&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Siti Rahmah&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;+60 13-222 1100&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;a href=&quot;https://crm.example.com/sla-management/conversation-sla-tracking/2&quot; style=&quot;color:#2563EB;text-decoration:underline;&quot;&gt;Open&lt;/a&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Lim Hardware Sdn Bhd&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;+60 3-7788 9900&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;a href=&quot;https://crm.example.com/sla-management/conversation-sla-tracking/3&quot; style=&quot;color:#2563EB;text-decoration:underline;&quot;&gt;Open&lt;/a&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:32px 40px 8px 40px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-btn-table&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; &gt;
+              &lt;tr&gt;
+                &lt;td align=&quot;center&quot; bgcolor=&quot;#2563EB&quot; style=&quot;border-radius:8px;background-color:#2563EB;&quot;&gt;
+                  &lt;a class=&quot;em-btn-link&quot; href=&quot;https://crm.example.com/sla-management/conversation-sla-tracking&quot; target=&quot;_blank&quot; style=&quot;display:inline-block;padding:16px 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;mso-padding-alt:0;&quot;&gt;Open my SLA tracking&lt;/a&gt;
+                &lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 40px 0 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 16px 0;font-size:13px;color:#6b7280;text-align:center;&quot;&gt;Thanks for your help in making Sorento a better place to work. &lt;a href=&quot;https://crm.example.com/unsubscribe/daily-sla-summary?token=sample&quot; style=&quot;color:#2563EB;text-decoration:underline;&quot;&gt;Unsubscribe from this daily summary&lt;/a&gt;&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:36px 40px 0 40px;&quot;&gt;&lt;div style=&quot;height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:20px 40px 32px 40px;font-family:-apple-system,BlinkMacSystemFont,&amp;#39;Segoe UI&amp;#39;,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#9ca3af;&quot;&gt;&lt;div style=&quot;font-weight:600;color:#6b7280;&quot;&gt;Sorento&lt;/div&gt;&lt;div&gt;Lot 12, Jalan Perusahaan 3, 47500 Subang Jaya, Selangor&lt;/div&gt;
+            &lt;div style=&quot;padding-top:8px;&quot;&gt;Need help? &lt;a href=&quot;mailto:support@sorento.com.my&quot; style=&quot;color:#2563EB;text-decoration:underline;&quot;&gt;support@sorento.com.my&lt;/a&gt;
+            &lt;/div&gt;&lt;div style=&quot;padding-top:12px;&quot;&gt;You receive this summary because you subscribed to the daily SLA summary.&lt;/div&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+
+      &lt;/table&gt;
+    &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;"></iframe></figure>
+  </div>
+  <details><summary>Plain-text part (sent alongside the HTML)</summary><pre>Your daily SLA summary
+
+Hi Aina,
+
+Here is where your conversations stand today, 28/09/2026.
+
+Outstanding today: 3
+Last 7 days: 12 responded, 9 resolved
+Last 30 days: 48 responded, 41 resolved
+
+### Outstanding conversations
+
+Name| Phone| Conversation  
+---|---|---  
+Tan Ah Kow| +60 12-345 6789| Open: https://crm.example.com/sla-management/conversation-sla-tracking/1  
+Siti Rahmah| +60 13-222 1100| Open: https://crm.example.com/sla-management/conversation-sla-tracking/2  
+Lim Hardware Sdn Bhd| +60 3-7788 9900| Open: https://crm.example.com/sla-management/conversation-sla-tracking/3
+
+Open my SLA tracking: https://crm.example.com/sla-management/conversation-sla-tracking
+
+Thanks for your help in making Sorento a better place to work. Unsubscribe from this daily summary: https://crm.example.com/unsubscribe/daily-sla-summary?token=sample
+
+-- 
+Sorento
+Lot 12, Jalan Perusahaan 3, 47500 Subang Jaya, Selangor
+Need help? support@sorento.com.my
+You receive this summary because you subscribed to the daily SLA summary.</pre></details>
+</section>
+
+<h2>Email Theme page (new, System Management)</h2>
+<p class="muted">A form page with one primary action (Save), no subtitle; every select is the system dropdown. Blank fields fall back to System Settings (company name, logo, address, support email, website, socials), so an untouched install is already branded. The preview renders one sample mail under the unsaved values at 600 and 375.</p>
+
+<div class="mock">
+  <div class="mock-head"><span class="crumb">System Management / Email Theme</span><button class="primary">Save</button></div>
+  <div class="mock-grid">
+    <div class="mock-form">
+      <h4>Brand</h4>
+      <label>Logo URL<input value="https://cdn.sorento.com.my/logo-white.png"></label>
+      <label>Logo alignment<select><option>Centre</option></select></label>
+      <label>Header style<select><option>Brand colour band</option></select></label>
+      <label>Primary colour<span class="sw" style="background:#2563EB"></span><input value="#2563EB"></label>
+      <label>Accent (links)<span class="sw" style="background:#2563EB"></span><input value="#2563EB"></label>
+      <label>Page background<span class="sw" style="background:#F3F4F6"></span><input value="#F3F4F6"></label>
+      <h4>Button</h4>
+      <label>Fill<span class="sw" style="background:#2563EB"></span><input value="(follows primary)"></label>
+      <label>Text colour<span class="sw" style="background:#fff"></span><input value="#FFFFFF"></label>
+      <label>Corner radius<input value="8"></label>
+      <label>Width<select><option>Fit the label</option></select></label>
+      <h4>Text</h4>
+      <label>Font<select><option>System (Apple, Segoe, Roboto)</option></select></label>
+      <h4>Footer</h4>
+      <label>Company name<input placeholder="Sorento (from System Settings)"></label>
+      <label>Address<input placeholder="from System Settings"></label>
+      <label>Help email<input placeholder="support email from System Settings"></label>
+      <label>Help centre URL<input placeholder="website from System Settings"></label>
+      <label>Why you received this<textarea>You received this email because you have an account on Sorento.</textarea></label>
+      <label>Social links<input value="LinkedIn  https://linkedin.com/company/sorento"></label>
+    </div>
+    <div class="mock-prev"><div class="seg"><b>Desktop 600</b> | Phone 375</div>PREVIEW</div>
+  </div>
+</div>
+
+<h2>Template editor: arrange the elements</h2>
+<p class="muted">Each template becomes an ordered list of blocks. Move a block with the arrows or drag it; add or remove blocks; each block has its own settings. The custom text block keeps today's rich-text editor, plus an HTML source switch so tables survive. The preview is the same iframe as the theme page.</p>
+
+<div class="mock">
+  <div class="mock-head"><span class="crumb">Email Templates / Password reset / Edit</span><button class="primary">Save</button></div>
+  <div class="mock-grid">
+    <div class="mock-form">
+      <label>Subject<input value="Reset your password"></label>
+      <label>Preheader<input value="Use this link within 1 hour to choose a new password."></label>
+      <h4>Blocks <span class="muted">(drag the handle, or use the arrows)</span></h4>
+      <ol class="blocks">
+        <li><span class="grip">&#8942;&#8942;</span> Brand header <span class="ctl">&#8593; &#8595; &#10005;</span></li>
+        <li><span class="grip">&#8942;&#8942;</span> Heading: "Reset your password" <span class="ctl">&#8593; &#8595; &#10005;</span></li>
+        <li class="open"><span class="grip">&#8942;&#8942;</span> Intro <span class="ctl">&#8593; &#8595; &#10005;</span><div class="set">Hi {{ recipient.name }}, We received a request to reset the password ...</div></li>
+        <li><span class="grip">&#8942;&#8942;</span> CTA button: "Reset password" -> {{ reset_link }} <span class="ctl">&#8593; &#8595; &#10005;</span></li>
+        <li><span class="grip">&#8942;&#8942;</span> Secondary link <span class="ctl">&#8593; &#8595; &#10005;</span></li>
+        <li><span class="grip">&#8942;&#8942;</span> Custom text (rich text | HTML) <span class="ctl">&#8593; &#8595; &#10005;</span></li>
+        <li><span class="grip">&#8942;&#8942;</span> Footer <span class="ctl">&#8593; &#8595; &#10005;</span></li>
+      </ol>
+      <button class="ghost">+ Add block</button> <span class="muted">heading, intro, facts table, CTA button, secondary link, custom text, brand header, footer</span>
+    </div>
+    <div class="mock-prev"><div class="seg"><b>Desktop 600</b> | Phone 375</div>PREVIEW (same iframe as the theme page)</div>
+  </div>
+</div>
+
+<h2>Slices</h2>
+<table class="t"><tr><th>#</th><th>Slice</th><th>Before</th><th>After</th></tr>
+<tr><td>S1</td><td>Layout + renderer + fallback</td><td>Bare HTML fragments; a template typo sends "[template-error:...]"</td><td>One layout for every mail; a broken template sends the safe layout and logs</td></tr>
+<tr><td>S2</td><td>Schema (preheader, block document, theme)</td><td>none</td><td>3 nullable columns, one migration</td></tr>
+<tr><td>S3</td><td>Theme API</td><td>none</td><td>read / save / preview</td></tr>
+<tr><td>S4</td><td>Template API: blocks, draft preview, handover + undo variables</td><td>HTML body only</td><td>block document round trip</td></tr>
+<tr><td>S5</td><td>6 seeded automation templates onto blocks</td><td>grey tables, underlined link</td><td>heading, tables, big button (only if not edited by an admin)</td></tr>
+<tr><td>S6</td><td>Every hand-built mail onto a template code; safety net for the rest</td><td>HTML built in Python</td><td>Python passes data; admins can edit the words</td></tr>
+<tr><td>S7</td><td>Email Theme page</td><td>none</td><td>form + live preview</td></tr>
+<tr><td>S8</td><td>Block editor + preview</td><td>one rich-text box</td><td>ordered blocks</td></tr>
+<tr><td>S9</td><td>Tests, browser pass 1280/375</td><td></td><td></td></tr>
+</table>
+
+<h2>SaaS patterns: adopted and rejected</h2>
+<table class="t"><tr><th>Adopted</th><th>Rejected (why)</th></tr>
+<tr><td>600px table card on a soft background; logo header; preheader; one big centred bulletproof button (48px tall, full width on phones); raw link under it; 16px body with generous whitespace; facts as label/value rows; inline CSS; system fonts; footer with company, address, help and why-you-got-this; plain-text part; mobile-safe at 375</td>
+<td>MJML/mrml (one fixed shell needs no compiler); hero and background images (blocked in Outlook); multi-column sections (cramped on phones); web fonts (Gmail/Outlook ignore them); social icon images (blocked); tracking pixels (not asked, a privacy cost on a security mail); dark-mode styles (out of scope); full drag-drop canvas (an ordered list does the job)</td></tr></table>
+
+<h2>Open questions (recommendation in bold)</h2>
+<div class="q"><b>Q1</b> Supplier loading notice and container request: keep text-only in this PR? It is a bilingual EN/中文 cover note with the PDF and xlsx to external suppliers. <b class="rec">Recommend: keep text-only now; brand it later if you want suppliers to see the card.</b></div>
+<div class="q"><b>Q2</b> Password reset and invitation: big button plus the raw link underneath (the old reset mail showed only the raw URL, to look less like phishing). <b class="rec">Recommend: button + visible link.</b></div>
+<div class="q"><b>Q3</b> Footer social links as text, not icon images. <b class="rec">Recommend: text links</b> (icons are blocked by default in Outlook).</div>
+<div class="q"><b>Q4</b> A system template switched inactive: still send with the built-in wording; stopping a mail stays the Email Event Configs switch. <b class="rec">Recommend this</b>, so a template toggle can never silently stop password resets.</div>
+<div class="q"><b>Q5</b> Default brand colour <code>#2563EB</code> (the app's own blue) until you set one. <b class="rec">Recommend this.</b></div>
+<div class="q"><b>Q6</b> Default header: logo centred on the brand-colour band (the dreamz look). Alternative: white header with a hairline. <b class="rec">Recommend the band.</b></div>
+<div class="q"><b>Q8</b> Password reset, invitation, onboarding intake link and approval link mails carry a one-time token. The security review showed an editable version could be rewritten to leak it, so their wording is fixed in code (the theme still applies). <b class="rec">Recommend: keep them fixed now; an editable variant with the link injected by code can follow.</b></div>
+<div class="q"><b>Q7</b> An unknown variable still shows as <code>[unknown:name]</code> (helps spot typos in preview). <b class="rec">Recommend keep for this PR.</b></div>
+</main></body></html>
