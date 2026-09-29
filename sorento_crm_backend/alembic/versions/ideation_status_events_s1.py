@@ -11,20 +11,19 @@ The CRM pulls the shared service's idea status-event feed every 60 s and sends t
   so the feed's at-least-once redelivery can never produce a second row (or send)
   for the same ``event_id``. Other tables keep repeating business ids freely.
 
-Also the merge point for main's two heads at branch time (``sales_agent_aliases_r7``
-and ``scm_reorder_run_scope_desc``). Additive and guarded, so a database that
+Chains onto main's single head ``merge_29sep_batch5``. Additive and guarded, so a database that
 already holds both objects (the shared dev copy converges through ``create_all``)
 is left alone.
 
 Revision ID: ideation_status_events_s1
-Revises: sales_agent_aliases_r7, scm_reorder_run_scope_desc
+Revises: merge_29sep_batch5
 """
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "ideation_status_events_s1"
-down_revision = ("sales_agent_aliases_r7", "scm_reorder_run_scope_desc")
+down_revision = "merge_29sep_batch5"
 branch_labels = None
 depends_on = None
 
