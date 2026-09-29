@@ -187,6 +187,9 @@ AUTOCOUNT_NOT_APPLIED_UNKNOWN = "AUTOCOUNT_NOT_APPLIED_UNKNOWN"
 #: read as negative on-hand. Display only, from the fetched header, never `bulk_import_
 #: stock`'s input (AC-SP-4).
 AUTOCOUNT_NEGATIVE = "AUTOCOUNT_NEGATIVE"
+#: A DO detail row whose delivery order the AutoCount DO ingest owns (`doc_key` set, #1354
+#: S2): its lines are AutoCount's, so the upload leaves them alone.
+AUTOCOUNT_OWNED = "autocount_owned"
 
 LABELS: dict[str, str] = {
     CREATED: "Created",
@@ -243,6 +246,7 @@ LABELS: dict[str, str] = {
     AUTOCOUNT_NOT_APPLIED_INACTIVE: "Not applied: warehouse is inactive",
     AUTOCOUNT_NOT_APPLIED_UNKNOWN: "Not applied: unknown location",
     AUTOCOUNT_NEGATIVE: "AutoCount reports a negative on-hand quantity",
+    AUTOCOUNT_OWNED: "Left alone: AutoCount sends this delivery order's lines",
 }
 
 

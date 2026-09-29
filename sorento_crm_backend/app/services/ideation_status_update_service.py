@@ -19,9 +19,11 @@ One tick (``poll_ideation_status_events``, every 60 s from the scheduler):
    unique index makes that a database guarantee.
 3. Guards in order: ``is_test`` -> never send; unknown kind; no requester phone;
    no Respond.io contact for the phone; contact opted out (``outbound_enabled``);
-   then the template through ``send_template_for_use_case`` - always the template,
-   never free text, whether or not the 24h window is open. No valid mapping ->
-   ``TemplateSendSkipped`` -> logged, the poller goes on.
+   then ``send_text_or_template``, the same 24h-window-aware sender every CRM auto-send
+   uses: window open -> the session text (idea number, new status, track link, and a
+   greeting only when the contact has a name); window closed or unknown -> the approved
+   template. A closed window with no valid mapping is ``TemplateSendSkipped`` -> logged
+   as skipped, the poller goes on.
 
 Never raises out of the tick: a feed failure leaves the cursor for the next tick, a
 failed log write rolls back and stops the tick with the cursor on the last handled
@@ -166,7 +168,21 @@ def _idea_label(event: dict[str, Any]) -> str:
     return str(event.get("idea_number") or event.get("idea_title") or "").strip()
 
 
-def build_context_vars(event: dict[str, Any]) -> dict[str, Any]:
+def _contact_name(contact: RespondContact) -> str | None:
+    """The contact's display name, or None. Never the phone number: a Respond.io
+    contact created from a bare number can carry the number as its name."""
+    phone = (contact.phone_number or "").strip()
+    name = (contact.name or "").strip()
+    if not name:
+        name = " ".join(
+            part for part in ((contact.first_name or "").strip(), (contact.last_name or "").strip()) if part
+        )
+    if not name or name == phone:
+        return None
+    return name
+
+
+def build_context_vars(event: dict[str, Any], *, contact_name: str | None = None) -> dict[str, Any]:
     """Template variables (Appendix A): {{1}} idea number (falls back to the title),
     {{2}} the new status, or the merged / separated wording, {{3}} the track link.
     ``message`` is the whole suggested sentence for a single-slot template."""
@@ -182,12 +198,23 @@ def build_context_vars(event: dict[str, Any]) -> dict[str, Any]:
     message = f"Update on your idea {idea}: it is now {status}."
     if track_url:
         message += f" Track it here: {track_url}"
-    return {
+    out = {
         "idea_number": idea,
         "status_label": status,
         "track_url": track_url,
         "message": message,
     }
+    if contact_name:
+        out["contact_name"] = contact_name
+    return out
+
+
+def build_session_text(event: dict[str, Any], contact_name: str | None) -> str:
+    """The in-window session message: the suggested sentence, greeted by name when known."""
+    message = build_context_vars(event)["message"]
+    if contact_name:
+        return f"Hi {contact_name}, {message[0].lower() + message[1:]}"
+    return message
 
 
 def _find_contact(db: Session, phone: str) -> RespondContact | None:
@@ -224,7 +251,9 @@ def _mapped_template_name(db: Session) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _rendered_request(db: Session, event: dict[str, Any]) -> dict[str, Any] | None:
+def _rendered_request(
+    db: Session, event: dict[str, Any], contact_name: str | None = None
+) -> dict[str, Any] | None:
     """The ``{"message": {...}}`` block this event's template would carry, built by the
     shared ``respond_messaging_service.build_template_request`` (no send), so a skipped
     row still shows the Respond outbox the template and its filled parameters. None
@@ -233,7 +262,7 @@ def _rendered_request(db: Session, event: dict[str, Any]) -> dict[str, Any] | No
 
     try:
         return build_template_request(
-            db, use_case=USE_CASE, context_vars=build_context_vars(event)
+            db, use_case=USE_CASE, context_vars=build_context_vars(event, contact_name=contact_name)
         )["request_payload"]
     except Exception:  # noqa: BLE001 - TemplateSendSkipped, or a render that cannot run
         return None
@@ -254,7 +283,7 @@ def _handle_event(db: Session, event: dict[str, Any], template_name: str | None)
     rolls back and stops the tick without moving the cursor)."""
     from app.services.respond_messaging_service import (
         TemplateSendSkipped,
-        send_template_for_use_case,
+        send_text_or_template,
     )
 
     if event.get("is_test"):
@@ -270,13 +299,17 @@ def _handle_event(db: Session, event: dict[str, Any], template_name: str | None)
     if not contact.outbound_enabled:
         return _skip(db, event, "OPTED_OUT", "the requester's outbound messaging is switched off")
 
-    context_vars = build_context_vars(event)
+    name = _contact_name(contact)
+    context_vars = build_context_vars(event, contact_name=name)
     try:
-        result = send_template_for_use_case(
+        result = send_text_or_template(
             db,
             identifier=contact.respond_io_id.strip(),
+            text=build_session_text(event, name),
             use_case=USE_CASE,
             context_vars=context_vars,
+            respond_contact_id=str(contact.id),
+            render_template_in_window=False,
         )
     except TemplateSendSkipped as exc:
         return {
@@ -284,28 +317,38 @@ def _handle_event(db: Session, event: dict[str, Any], template_name: str | None)
             "error_code": "NO_TEMPLATE",
             "error_message": str(exc),
             "template": template_name,
+            "sent_as": getattr(exc, "sent_as", None),
+            "window": getattr(exc, "window_state", None),
         }
     except Exception as exc:  # noqa: BLE001 - a send error is logged, never raised
         logger.warning(
             "ideation status update: send failed for event %s", event.get("event_id"), exc_info=True
         )
-        # ``send_template_for_use_case`` stamps the rendered request on a send error
-        # (``_attach_send_context``); render it here when the error came earlier.
+        # ``send_text_or_template`` stamps the attempted request, window and sent_as on a
+        # send error (``_attach_send_context``); render it here when the error came earlier.
         attempted = getattr(exc, "request_payload", None)
         return {
             "status": _FAILED,
             "error_code": "SEND_FAILED",
             "error_message": str(exc)[:2000],
             "template": template_name,
-            "request_payload": attempted if isinstance(attempted, dict) else _rendered_request(db, event),
+            # Defensive: the shared sender stamps a payload on every send error, so this
+            # fallback only runs when the error came before the send (the window lookup).
+            "request_payload": attempted if isinstance(attempted, dict) else _rendered_request(db, event, name),
             "respond_io_id": contact.respond_io_id,
+            "sent_as": getattr(exc, "sent_as", None),
+            "window": getattr(exc, "window_state", None),
         }
     return {
         "status": _SUCCESS,
-        "template": result.get("template_name"),
+        # A session text went out with no template; the meta says so instead of
+        # naming the mapped template that was not used.
+        "template": result.get("template_name") if result.get("sent_as") == "template" else None,
         "request_payload": result.get("request_payload"),
         "response": result.get("response"),
         "respond_io_id": contact.respond_io_id,
+        "sent_as": result.get("sent_as"),
+        "window": result.get("window_state"),
     }
 
 
@@ -327,6 +370,10 @@ def _commit_handled(db: Session, base_url: str, event: dict[str, Any], row: dict
     }
     if row.get("respond_io_id"):
         meta["respond_io_id"] = row["respond_io_id"]
+    if row.get("sent_as"):
+        meta["sent_as"] = row["sent_as"]
+    if row.get("window"):
+        meta["window"] = row["window"]
     rendered = row.get("request_payload")
     payload = {**(rendered if isinstance(rendered, dict) else {}), "event": meta}
     response = row.get("response")

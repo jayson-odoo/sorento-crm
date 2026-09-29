@@ -274,7 +274,10 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // purchase-request edit precedent) - no BODY_ONLY_SEGMENTS entry needed.
     // With all three lanes merged: 146 + 1 (contacts chatbot) + 1 (cost-price-uploads)
     // + 1 (customer Asks tab) = 149.
-    expect(requiredSegmentNames.length).toBe(149);
+    // AutoCount DO / GRN ingest (#1356): `order-management/branches` is a new DataGrid list
+    // segment (Customer Branches) with its own `loading.tsx`, found by the walk itself - no
+    // BODY_ONLY_SEGMENTS entry needed. Total: 150.
+    expect(requiredSegmentNames.length).toBe(150);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);

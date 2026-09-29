@@ -1,5 +1,5 @@
 """Procurement models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Numeric, Index, Date, Computed, UniqueConstraint, text
+from sqlalchemy import BigInteger, Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Numeric, Index, Date, Computed, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -697,9 +697,36 @@ class PickingHeader(Base, CompanyScopedMixin):
         ForeignKey("import_jobs.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # AutoCount GRN ingest (#1354 S2, plan 2.4). A GRN is AutoCount-OWNED when `doc_key` is
+    # set; the Excel GRN import then leaves its header and lines alone. `source_system`
+    # above keeps its written-once meaning ('autocount' only on a GRN the ingest created).
+    source_book = Column(String(20), nullable=True)
+    doc_key = Column(BigInteger, nullable=True)
+    source_modified_at = Column(DateTime(timezone=True), nullable=True)
+    source_vanished_at = Column(DateTime(timezone=True), nullable=True)
+    last_synced_at = Column(DateTime(timezone=False), nullable=True)
+    source_record = Column(JSONB, nullable=True)
+    creditor_code = Column(String(100), nullable=True)
+    creditor_name = Column(String(255), nullable=True)
+    supplier_do_no = Column(String(100), nullable=True)
+    purchase_agent = Column(String(100), nullable=True)
+    ship_via = Column(String(100), nullable=True)
+    ship_info = Column(String(255), nullable=True)
+    ref = Column(String(255), nullable=True)
+    ref_doc_no = Column(String(100), nullable=True)
+    remarks = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)
+    doc_status = Column(String(20), nullable=True)
+    is_cancelled = Column(Boolean, default=False, server_default=text("false"), nullable=False)
+    currency_code = Column(String(10), nullable=True)
+    currency_rate = Column(Numeric(18, 8), nullable=True)
+    subtotal_amount = Column(Numeric(15, 2), nullable=True)
+    tax_amount = Column(Numeric(15, 2), nullable=True)
+    total_amount = Column(Numeric(15, 2), nullable=True)
+    local_net_total = Column(Numeric(15, 2), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
-    
+
     picking_lines = relationship("PickingLine", back_populates="picking_header")
     
     __table_args__ = (
@@ -716,6 +743,12 @@ class PickingHeader(Base, CompanyScopedMixin):
         # indexed; created_by is for filtering a listing by uploader.
         Index("ix_picking_headers_import_job_id", "import_job_id"),
         Index("ix_picking_headers_created_by", "created_by"),
+        Index(
+            "uq_picking_headers_company_book_doc_key",
+            "company_id", "source_book", "doc_key",
+            unique=True,
+            postgresql_where=text("doc_key IS NOT NULL"),
+        ),
     )
 
 
@@ -761,7 +794,35 @@ class PickingLine(Base, CompanyScopedMixin):
     synced_to_excel = Column(Boolean, default=False, server_default="false", nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     updated_at = Column(DateTime(timezone=False), nullable=True)
-    
+    # AutoCount GRN ingest (#1354 S2, plan 2.5). `qty` is AutoCount's exact quantity; the
+    # integer quantity columns above carry it rounded. `purchase_order_id` is the
+    # document-number link from `OurPONo`; the line links are `po_line_id` /
+    # `spo_allocation_id`.
+    dtl_key = Column(BigInteger, nullable=True)
+    seq = Column(Integer, nullable=True)
+    item_code = Column(String(100), nullable=True)
+    location_code = Column(String(50), nullable=True)
+    description = Column(Text, nullable=True)
+    # `uom_code`, not `uom`: `uom` is this model's UnitOfMeasure relationship.
+    uom_code = Column(String(30), nullable=True)
+    qty = Column(Numeric(15, 4), nullable=True)
+    foc_qty = Column(Numeric(15, 4), nullable=True)
+    discount_text = Column(String(50), nullable=True)
+    discount_amount = Column(Numeric(15, 2), nullable=True)
+    tax_amount = Column(Numeric(15, 2), nullable=True)
+    delivery_date = Column(Date, nullable=True)
+    proj_no = Column(String(50), nullable=True)
+    our_po_no = Column(String(100), nullable=True)
+    our_po_date = Column(Date, nullable=True)
+    from_doc_type = Column(String(10), nullable=True)
+    from_doc_no = Column(String(100), nullable=True)
+    from_dtl_key = Column(BigInteger, nullable=True)
+    purchase_order_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("purchase_orders.id", ondelete="SET NULL", name="fk_picking_lines_purchase_order_id"),
+        nullable=True,
+    )
+
     picking_header = relationship("PickingHeader", back_populates="picking_lines")
     spo_allocation = relationship("SPOAllocation", back_populates="picking_lines")
     product = relationship("Product", back_populates="picking_lines")
@@ -774,6 +835,13 @@ class PickingLine(Base, CompanyScopedMixin):
         Index("ix_picking_lines_product_id", "product_id"),
         Index("ix_picking_lines_spo_allocation_id", "spo_allocation_id"),
         Index("ix_picking_lines_po_line_id", "po_line_id"),
+        Index("ix_picking_lines_purchase_order_id", "purchase_order_id"),
+        Index(
+            "uq_picking_lines_header_dtl_key",
+            "picking_header_id", "dtl_key",
+            unique=True,
+            postgresql_where=text("dtl_key IS NOT NULL"),
+        ),
         # The forward-matching query, exactly: "unlinked lines whose stated SPO
         # reduces to this match key". Partial, because a linked line is never a
         # candidate. `upper` and `regexp_replace` are both IMMUTABLE, so the

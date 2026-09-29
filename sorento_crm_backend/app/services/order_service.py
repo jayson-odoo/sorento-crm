@@ -43,6 +43,13 @@ from app.services.entity_resolver import (
 
 logger = logging.getLogger(__name__)
 
+# The Master sheet columns an AutoCount-owned delivery order (`doc_key` set) keeps from the
+# DO ingest (#1354 S2, plan section 3). `customer_id` is what the sheet's debtor text resolves.
+AUTOCOUNT_OWNED_MASTER_COLUMNS = frozenset(
+    {"order_date", "created_time", "debtor_code", "debtor_name", "agent", "is_cancelled",
+     "customer_id"}
+)
+
 
 # Date-axis relaxation cap (§3.4). When a customer-scoped delivery query returns
 # zero DOs on the asked date, surface at most this many nearest DISTINCT delivery
@@ -3041,8 +3048,11 @@ class OrderService:
                     # transporter text so the FKs stay populated on import too
                     # (parity with update_order). Idempotent.
                     mapped = self._sync_order_master_refs(mapped)
+                    # AutoCount DO ingest (#1354 S2, plan section 3): on a row AutoCount owns,
+                    # the columns it sends are its own; the sheet keeps writing the rest.
+                    skip = AUTOCOUNT_OWNED_MASTER_COLUMNS if existing_order.doc_key is not None else ()
                     for key, value in mapped.items():
-                        if key != "order_number":
+                        if key != "order_number" and key not in skip:
                             setattr(existing_order, key, value)
                     # Orders without actual delivery date should be "new"; Tracking will set
                     # "delivered" where applicable. But the Master sheet re-imports the FULL

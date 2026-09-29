@@ -152,7 +152,8 @@ class TestContractEndpoint:
         # SR0): "2.4" adds products code-wins deletion `codes`. Bumped again
         # (ingest-stock-balances-2-5, Foundryx SR5): "2.5" adds `stock_balances`.
         # Bumped again (finance S0, #1309): "2.6" adds `billing_documents`.
-        assert body["version"] == "2.6"
+        # Bumped again (#1354 S2): "2.7" adds `delivery_orders`, `goods_receive_notes`, `branches`.
+        assert body["version"] == "2.7"
         entities = set(body["entities"])
         for expected in (
             "sales_orders",

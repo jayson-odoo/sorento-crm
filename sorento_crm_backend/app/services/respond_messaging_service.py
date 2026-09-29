@@ -575,8 +575,12 @@ def send_text_or_template(
     use_case: str,
     context_vars: Optional[Dict[str, Any]] = None,
     respond_contact_id: Optional[str] = None,
+    render_template_in_window: bool = True,
 ) -> Dict[str, Any]:
     """The choke point for every CRM auto-send to a Respond.io contact.
+
+    ``render_template_in_window=False`` sends the caller's ``text`` verbatim inside the
+    window (ideation status update: the owner asked for a natural session message).
 
     Returns {sent_as, response, window_state, template_name?, request_payload}
   - callers attach ``request_payload`` to their integration log so template
@@ -638,8 +642,12 @@ def send_text_or_template(
         # Render the same template body the closed-window branch would send, so
         # the message is uniform across the 24h boundary. Falls back to raw text
         # when the use case has no configured default.
-        out_text = render_in_window_text(
-            db, use_case=use_case, context_vars=vars_resolved, fallback_text=text
+        out_text = (
+            render_in_window_text(
+                db, use_case=use_case, context_vars=vars_resolved, fallback_text=text
+            )
+            if render_template_in_window
+            else text
         )
         text_payload = {"message": {"type": "text", "text": out_text}}
         try:
@@ -704,6 +712,9 @@ def send_text_or_template(
                 "template_name": result["template_name"],
                 "template_id": result["template_id"],
                 "use_case": use_case,
+                # body_text lets the Respond outbox show the filled message, the
+                # same as the payload build_template_request stamps on a failure.
+                "body_text": _body_text,
                 "parameters": result["params"],
                 "button": result.get("button"),
             },

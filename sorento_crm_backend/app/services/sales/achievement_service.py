@@ -68,11 +68,11 @@ from sqlalchemy import (
     func,
     literal,
     literal_column,
+    not_,
     or_,
     select,
     true,
     tuple_,
-    union,
     union_all,
     values,
 )
@@ -330,30 +330,33 @@ def achieved_by_period(db: Session, specs: List[PeriodSpec], company_id: str) ->
         )
 
     # Only lines dated inside the span every period together covers count by their order date.
-    dated = credited_lines().where(
-        SO.order_date.between(min(s.period_start for s in specs), max(s.period_end for s in specs))
+    in_span = SO.order_date.between(
+        min(s.period_start for s in specs), max(s.period_end for s in specs)
     )
+    dated = credited_lines().where(in_span)
     if delivered:
         # A line ordered outside that span still counts where a DO dated inside a delivered
-        # period delivers it. Those DO lines are read first, by the DO date (MATERIALIZED, so
-        # the planner cannot turn it round into every line the agents ever sold); no company
-        # here, this only bounds which lines are read and `do_counted` gates the rest.
-        do_in_span = (
-            select(OL.sales_order_line_id.label("sol_id"))
-            .select_from(Order.__table__)
-            .join(OrderLine.__table__, OL.order_id == ORD.id)
+        # period delivers it; no company here, this only bounds which lines are read and
+        # `do_counted` gates the rest. The DO lines in the span are one hashed set each such line
+        # is looked up in, never a join: a statistics-less planner, sizing `order_lines` from
+        # its page count and declared column widths, estimated them at 5 rows and joined them to
+        # every line the agent sold by a filter instead of a hash, 26 million comparisons and
+        # 3.3 s at 7,200 DO lines once #1354 S2 widened `order_lines`. `IS TRUE` keeps the IN a
+        # filter: a bare one is pulled up into exactly such a join. Uncorrelated, so it is costed
+        # once (a correlated EXISTS was costed per line, which switched on JIT: 2.4 s of it).
+        delivered_in_span = SOL.id.in_(
+            select(OL.sales_order_line_id)
+            .select_from(OrderLine.__table__)
+            .join(Order.__table__, ORD.id == OL.order_id)
             .where(
                 ORD.order_date.between(
                     min(s.period_start for s in delivered), max(s.period_end for s in delivered)
                 )
             )
-            .cte("do_in_span")
-            .prefix_with("MATERIALIZED")
         )
-        by_do = credited_lines().join(do_in_span, do_in_span.c.sol_id == SOL.id)
-        # UNION, not UNION ALL: a line both dated in the span and delivered in it, or delivered
-        # by two DOs in it, is read once.
-        agent_lines = union(dated, by_do).cte("agent_lines")
+        by_do = credited_lines().where(not_(in_span), delivered_in_span.is_(true()))
+        # The two halves split on the order date, so no line is read twice.
+        agent_lines = union_all(dated, by_do).cte("agent_lines")
     else:
         agent_lines = dated.cte("agent_lines")
     line_cols = (

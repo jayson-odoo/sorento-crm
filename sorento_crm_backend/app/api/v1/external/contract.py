@@ -46,6 +46,7 @@ from app.schemas.canonical_documents import (
     CanonicalBillingDocument,
     CanonicalBillingDocumentLine,
 )
+from app.services.autocount_doc_ingest_service import CONTRACT_2_7_WARNINGS
 from app.services.finance.billing_document_ingest_service import (
     WARN_AGENT_UNRESOLVED,
     WARN_PRODUCT_UNRESOLVED,
@@ -113,6 +114,19 @@ FIELDS_ADDED: dict[str, list[str]] = {
         *(key for key in CanonicalBillingDocument.model_fields if key != "source_doc_no"),
         *(f"lines.{key}" for key in CanonicalBillingDocumentLine.model_fields),
     ],
+    # v2.7 (#1354 S2): the record is the AutoCount vendor API's own object, so the list is the
+    # envelope key plus the AutoCount keys the CRM reads; every other key is kept as sent.
+    "delivery_orders": ["book", "DocKey", "DocNo", "DocDate", "LastModified", "Cancelled",
+                        "BranchCode", "DebtorCode", "RefDocNo", "Details",
+                        "Details.DtlKey", "Details.FromDocType", "Details.FromDocNo",
+                        "Details.FromDocDtlKey"],
+    "goods_receive_notes": ["book", "DocKey", "DocNo", "DocDate", "LastModified", "Cancelled",
+                            "CreditorCode", "Details", "Details.DtlKey", "Details.OurPONo",
+                            "Details.FromDocType", "Details.FromDocNo",
+                            "Details.FromDocDtlKey"],
+    "branches": ["book", "AccNo", "BranchCode", "BranchName"],
+    "delivery_orders_deletions": ["book", "doc_date_from", "doc_date_to", "doc_keys"],
+    "goods_receive_notes_deletions": ["book", "doc_date_from", "doc_date_to", "doc_keys"],
 }
 
 # D24 (captain 2026-09-06): per-entity notes on a field's meaning that
@@ -167,6 +181,24 @@ FIELD_NOTES: dict[str, str] = {
         "status is posted or cancelled; cancelled is an update. /deletions hard-deletes, or "
         "sets cancelled (deactivated) when a credit or debit note still points at it."
     ),
+    "delivery_orders": (
+        "v2.7. Each record is the vendor API's DO object with its Details rows, unmapped, and is "
+        "stored whole. Envelope book is required. Key (company, book, DocKey); source_ref is "
+        "{book}:DO:{DocKey}. A DO whose DocNo matches an upload-created delivery order is "
+        "adopted (warning adopted_by_doc_no); the tracking columns stay the upload's. A naive "
+        "LastModified is Malaysia time; an older one answers unchanged + stale_ignored. An "
+        "unresolved ItemCode or Location is retryable. /deletions cancels the vanished "
+        "doc_keys of a DocDate range and never deletes."
+    ),
+    "goods_receive_notes": (
+        "v2.7. As delivery_orders, on the GRN (picking_headers). FromDocDtlKey links the PO or "
+        "SPO line; OurPONo alone links the purchase order only. source_ref is "
+        "{book}:GRN:{DocKey}."
+    ),
+    "branches": (
+        "v2.7. branchbypage rows as returned. Key (company, book, AccNo, BranchCode). No read "
+        "and no deletions door."
+    ),
 }
 
 # D15 end state (AC-P0-4): these now FAIL validation (extra=forbid), never
@@ -186,6 +218,9 @@ STATUS_OPTIONAL: dict[str, bool] = {
     "shipping_orders": True,
     # Required: posted or cancelled, AutoCount's Cancelled flag.
     "billing_documents": False,
+    # Cancelled is read off the AutoCount record itself.
+    "delivery_orders": False,
+    "goods_receive_notes": False,
 }
 
 # The fixed warning vocabulary, drawn from the constants each producing
@@ -216,6 +251,7 @@ WARNINGS: list[str] = sorted(
         WARN_AGENT_UNRESOLVED,
         WARN_PRODUCT_UNRESOLVED,
         WARN_STALE_IGNORED,
+        *CONTRACT_2_7_WARNINGS,
         "category_created",
         "uom_created",
         "brand_created",

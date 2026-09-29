@@ -2,6 +2,7 @@
 from fastapi import APIRouter
 from app.api.v1.order_management import (
     orders,
+    branches,
     customers,
     customers_select,
     order_statuses,
@@ -27,4 +28,6 @@ router.include_router(orders.sales_report_router, tags=["orders"])
 # as the SLA `/integration/escalate` shadowing.
 router.include_router(customers_select.router, prefix="/customers", tags=["customers"])
 router.include_router(customers.router, prefix="/customers", tags=["customers"])
+# Customer Branches (#1356): the AutoCount branch table, read only.
+router.include_router(branches.router, prefix="/branches", tags=["branches"])
 router.include_router(order_statuses.router, prefix="/order-statuses", tags=["order-statuses"])
