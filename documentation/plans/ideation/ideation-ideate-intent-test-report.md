@@ -1,8 +1,8 @@
 # Test Report - Sorento `ideate` intent + Ideas iframe host
 
 **Feature slug:** `ideation-ideate-intent`
-**UAC:** `documentation/plans/ideation/ideation-ideate-intent-acceptance-criteria.md`
-**Plan:** `documentation/plans/ideation/PLAN-ideation-ideate-intent.md`
+**UAC:** `documentation/plans/_archive/ideation/ideation-ideate-intent-acceptance-criteria.md`
+**Plan:** `documentation/plans/_archive/ideation/PLAN-ideation-ideate-intent.md`
 **Date:** 2026-07-19
 **Branch:** `fix/pr-rejected-by-uuid` (ideation work uncommitted on top)
 

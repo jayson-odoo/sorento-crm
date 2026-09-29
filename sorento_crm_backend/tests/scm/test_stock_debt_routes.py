@@ -26,6 +26,7 @@ from app.services.scm.supply_assignment import month_key
 from tests.scm.conftest import (
     SORENTO_COMPANY_ID,
     _REF_CATEGORY_CODE,
+    _REF_PRODUCT_CODE,
     as_user,
     ensure_reference_data,
     requires_pg,
@@ -90,12 +91,15 @@ def _client(scm_app, *, permission: str | None = VIEW):
 def _product(db, code: str):
     from app.models.product import Product
 
+    # Borrow from the reference product `ensure_reference_data` seeded in THIS test's
+    # savepoint, never from any product. An unordered LIMIT 1 over `products` can pick a
+    # row another xdist worker committed (test_spo_conversion, the outstanding import
+    # batch tests) and deletes with its category before this insert lands, which fails
+    # here as products_category_id_fkey.
     category_id, uom_id = db.execute(
-        text(
-            "SELECT category_id, base_uom_id FROM products "
-            "WHERE category_id IS NOT NULL AND base_uom_id IS NOT NULL LIMIT 1"
-        )
-    ).first()
+        text("SELECT category_id, base_uom_id FROM products WHERE product_code = :code"),
+        {"code": _REF_PRODUCT_CODE},
+    ).one()
     row = Product(
         id=_u(),
         product_code=code,

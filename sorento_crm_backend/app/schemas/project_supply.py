@@ -284,6 +284,8 @@ class SupplyFailingLine(BaseModel):
     """A line the server will not confirm, named the only way it may be (AC-C02)."""
 
     line_no: Optional[int] = None
+    #: #1362 item 5: AutoCount's own line number, the one the message names.
+    so_line_no: Optional[int] = None
     item_code: Optional[str] = None
     reason: str
 
@@ -456,7 +458,9 @@ class ConfirmException(BaseModel):
 
 
 class ConfirmResult(BaseModel):
-    revision_no: int
+    #: None only when every named line was already fulfilled and nothing was written
+    #: (#1362 item 3).
+    revision_no: Optional[int] = None
     confirmed_at: Optional[datetime] = None
     review_state: str = "confirmed"
     inquiry_rows_created: int = 0
@@ -486,6 +490,13 @@ class ConfirmResult(BaseModel):
     #: undeclared field silently, so it has to be named here rather than left in the
     #: in-process dict the way `settled_in_place`/`auto_place_products` are.
     rejected_count: int = 0
+    #: Named lines skipped because nothing was open on them any more, their saved
+    #: decision cleared (#1362 item 3). The toast says "1 line already fulfilled,
+    #: decision cleared".
+    lines_fulfilled_skipped: int = 0
+    #: #1362 (owner, 29 Sep 2026): Buys confirmed as decided over goods that landed for
+    #: their line. The link stays; purchasing adjusts it off the Buy's inquiry row.
+    landed_buy_notices: Optional[List[SupplyFailingLine]] = None
 
 
 # ------------------------------------------------------------------- the Plans page (D1)
@@ -578,6 +589,13 @@ class ConfirmManyOrderResult(BaseModel):
     #: How many covered lines this order's own press withdrew, the per-order twin of
     #: `ConfirmResult.rejected_count` (owner ruling 23 Sep 2026).
     rejected_count: Optional[int] = None
+    #: The per-order twin of `ConfirmResult.lines_fulfilled_skipped` (#1362 item 3).
+    lines_fulfilled_skipped: Optional[int] = None
+    #: #1362 hold-back: lines the recheck refused, left out so the rest of the order
+    #: confirmed. Each keeps its saved decision; named the way a refusal names a line.
+    lines_held_back: Optional[List[SupplyFailingLine]] = None
+    #: The per-order twin of `ConfirmResult.landed_buy_notices` (#1362).
+    landed_buy_notices: Optional[List[SupplyFailingLine]] = None
     error: Optional[str] = None
     #: The lines the server refused, named the way `SupplyFailingLine` always is (AC-C02),
     #: when the refusal named any.

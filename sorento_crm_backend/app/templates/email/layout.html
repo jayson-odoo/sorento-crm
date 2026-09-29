@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{#- Every outgoing mail renders through this file. `blocks` arrive already rendered
+    (their admin-authored Jinja ran in the user sandbox in email_layout.py); this file
+    only places them. Styles are inline by construction - Gmail drops <style> blocks it
+    cannot parse, so nothing here depends on the one in base.html except the phone
+    breakpoint. -#}
+{% set font = theme.font_stack %}
+{% block card %}
+{%- for block in blocks %}
+{%- if block.type == "brand_header" %}
+        <tr>
+          <td align="{{ theme.logo_alignment }}" style="padding:24px 40px;background-color:{{ theme.header_background }};{% if theme.header_style == 'white' %}border-bottom:1px solid #eef0f3;{% endif %}" class="em-pad">
+            {%- if theme.logo_url %}
+            <img src="{{ theme.logo_url }}" alt="{{ theme.company_name }}" height="{{ theme.logo_height }}" style="display:inline-block;height:{{ theme.logo_height }}px;width:auto;max-width:240px;border:0;outline:none;text-decoration:none;">
+            {%- else %}
+            <span style="font-family:{{ font }};font-size:20px;line-height:28px;font-weight:700;color:{{ theme.header_text_color }};">{{ theme.company_name }}</span>
+            {%- endif %}
+          </td>
+        </tr>
+{%- elif block.type == "heading" %}
+        <tr>
+          <td class="em-pad" align="{{ block.align }}" style="padding:{{ '36px' if loop.index0 <= first_content_index else '20px' }} 40px 0 40px;font-family:{{ font }};">
+            <h1 style="margin:0;font-family:{{ font }};font-size:24px;line-height:32px;font-weight:700;color:#111827;">{{ block.text }}</h1>
+          </td>
+        </tr>
+{%- elif block.type == "intro" %}
+        <tr>
+          <td class="em-pad" align="{{ block.align }}" style="padding:{{ '36px' if loop.index0 <= first_content_index else '16px' }} 40px 0 40px;font-family:{{ font }};font-size:16px;line-height:26px;color:#374151;">
+            {{ block.html }}
+          </td>
+        </tr>
+{%- elif block.type == "facts" and block.rows %}
+        <tr>
+          <td class="em-pad" style="padding:20px 40px 0 40px;">
+            <table role="presentation" class="em-facts" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:#f9fafb;border:1px solid #eef0f3;border-radius:8px;border-collapse:separate;">
+              {%- for row in block.rows %}
+              <tr>
+                <td class="em-fact-label" valign="top" width="38%" style="padding:{{ '14px' if loop.first else '6px' }} 16px {{ '14px' if loop.last else '6px' }} 16px;font-family:{{ font }};font-size:13px;line-height:20px;color:#6b7280;">{{ row.label }}</td>
+                <td valign="top" style="padding:{{ '14px' if loop.first else '6px' }} 16px {{ '14px' if loop.last else '6px' }} 16px;font-family:{{ font }};font-size:14px;line-height:20px;color:#111827;font-weight:600;">{{ row.value }}</td>
+              </tr>
+              {%- endfor %}
+            </table>
+          </td>
+        </tr>
+{%- elif block.type == "button" and block.url %}
+        <tr>
+          <td class="em-pad" align="center" style="padding:32px 40px 8px 40px;">
+            <table role="presentation" class="em-btn-table" cellpadding="0" cellspacing="0" border="0" {% if theme.button_width == 'full' %}width="100%" style="width:100%;"{% endif %}>
+              <tr>
+                <td align="center" bgcolor="{{ theme.button_color }}" style="border-radius:{{ theme.button_radius }}px;background-color:{{ theme.button_color }};">
+                  <a class="em-btn-link" href="{{ block.url }}" target="_blank" style="display:inline-block;padding:16px 40px;font-family:{{ font }};font-size:16px;line-height:20px;font-weight:700;color:{{ theme.button_text_color }};text-decoration:none;border-radius:{{ theme.button_radius }}px;mso-padding-alt:0;">{{ block.label }}</a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+{%- elif block.type == "link" and block.url %}
+        <tr>
+          <td class="em-pad" align="center" style="padding:12px 40px 0 40px;font-family:{{ font }};font-size:13px;line-height:20px;color:#6b7280;">
+            {{ block.label }}<br>
+            <a href="{{ block.url }}" target="_blank" style="color:{{ theme.accent_color }};text-decoration:underline;word-break:break-all;">{{ block.url }}</a>
+          </td>
+        </tr>
+{%- elif block.type == "custom_text" and block.html %}
+        <tr>
+          <td class="em-pad" style="padding:20px 40px 0 40px;font-family:{{ font }};font-size:15px;line-height:24px;color:#374151;">
+            <!--block:custom_text-->{{ block.html }}<!--/block:custom_text-->
+          </td>
+        </tr>
+{%- elif block.type == "footer" %}
+        <tr>
+          <td class="em-pad" style="padding:36px 40px 0 40px;"><div style="height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;">&nbsp;</div></td>
+        </tr>
+        <tr>
+          <td class="em-pad" align="center" style="padding:20px 40px 32px 40px;font-family:{{ font }};font-size:12px;line-height:18px;color:#9ca3af;">
+            {%- if theme.company_name %}<div style="font-weight:600;color:#6b7280;">{{ theme.company_name }}</div>{% endif %}
+            {%- if theme.address %}<div>{{ theme.address }}</div>{% endif %}
+            {%- if theme.help_email or theme.help_url %}
+            <div style="padding-top:8px;">Need help?
+              {%- if theme.help_url %} <a href="{{ theme.help_url }}" style="color:{{ theme.accent_color }};text-decoration:underline;">Help centre</a>{% endif %}
+              {%- if theme.help_email and theme.help_url %} or{% endif %}
+              {%- if theme.help_email %} <a href="mailto:{{ theme.help_email }}" style="color:{{ theme.accent_color }};text-decoration:underline;">{{ theme.help_email }}</a>{% endif %}
+            </div>
+            {%- endif %}
+            {%- if theme.social_links %}
+            <div style="padding-top:8px;">
+              {%- for s in theme.social_links %}<a href="{{ s.url }}" style="color:#6b7280;text-decoration:underline;">{{ s.label }}</a>{% if not loop.last %} &nbsp;&middot;&nbsp; {% endif %}{% endfor %}
+            </div>
+            {%- endif %}
+            {%- set note = block.note or theme.footer_note %}
+            {%- if note %}<div style="padding-top:12px;">{{ note }}</div>{% endif %}
+          </td>
+        </tr>
+{%- endif %}
+{%- endfor %}
+{%- if not has_footer %}
+        <tr><td style="padding:0 0 32px 0;font-size:1px;line-height:1px;">&nbsp;</td></tr>
+{%- endif %}
+{% endblock %}

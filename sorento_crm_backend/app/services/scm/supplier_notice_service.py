@@ -1627,6 +1627,9 @@ def _send_email(
                 attachment_filename=notice.document_filename,
                 attachment_storage_provider=notice.storage_provider,
                 attachment_storage_key=notice.storage_key,
+                # Text-only by design (PLAN-email-layout-28sep.md D9): bilingual EN/中文
+                # cover note to external suppliers, owner-verified in this form.
+                layout=False,
             )
     except Exception as exc:  # noqa: BLE001 - the attempt is logged, then reported on the row
         notice.status = "failed"

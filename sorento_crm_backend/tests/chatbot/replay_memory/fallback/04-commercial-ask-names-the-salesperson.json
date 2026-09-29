@@ -1,0 +1,86 @@
+{
+  "name": "04-commercial-ask-names-the-salesperson",
+  "about": "Plan 7.3 example 4, AC-MEM087: a commercial ask (discount) is handed over naming the linked salesperson; routing is the existing escalation lane. The salesperson is read live off the CRM link, not from memory, so this case is NOT red under ablation (plan 7.3 lists 4 as memory-reading; it names who from the CRM at every level).",
+  "needs_memory": false,
+  "console": true,
+  "given": {
+    "memory_level": "full",
+    "first_name": "Tan",
+    "frames": [
+      {
+        "days_ago": 3,
+        "domain": "inventory",
+        "summary": "Asked about stock for SRTWB1455 and incoming stock for M486-75-BL. M486-75-BL was not found, the rest got an answer. Chose not to be passed to the Stock team."
+      },
+      {
+        "days_ago": 5,
+        "domain": "order",
+        "summary": "Asked about outstanding DOs for CC001 Chin Chun Trading and got an answer."
+      }
+    ],
+    "profile_facts": [
+      {
+        "key": "usual_products",
+        "value": [
+          "SRTWB1455",
+          "M486-75-BL"
+        ],
+        "source": "tallied",
+        "source_ref": null,
+        "first_seen": "2026-09-01",
+        "last_seen": "2026-09-25",
+        "seen_count": 5,
+        "set_by": null
+      },
+      {
+        "key": "usual_sites",
+        "value": [
+          "Kuching"
+        ],
+        "source": "tallied",
+        "source_ref": null,
+        "first_seen": "2026-09-01",
+        "last_seen": "2026-09-25",
+        "seen_count": 4,
+        "set_by": null
+      }
+    ],
+    "customer": {
+      "name": "Chin Chun Trading",
+      "code": "CC001",
+      "salesperson": "Aina"
+    }
+  },
+  "turn": {
+    "message": "can give 10% discount for SO-2409-0112?",
+    "verdict": {
+      "message_type": "request_for_help",
+      "intent_hint": "commercial_request",
+      "domain_hint": null,
+      "user_goal": "asking for a discount",
+      "entities": [
+        {
+          "raw": "SO-2409-0112",
+          "hint": "order",
+          "canonical_code": "SO-2409-0112",
+          "current_message": true,
+          "confident": true,
+          "hint_confident": true
+        }
+      ],
+      "routing": {
+        "suggested_team": "customer_service",
+        "suggested_agent": null
+      }
+    }
+  },
+  "expected": {
+    "branch_kind": "out_of_scope",
+    "reply_contains": [
+      "Aina"
+    ],
+    "comment_contains": [
+      "Salesperson: Aina"
+    ]
+  }
+}

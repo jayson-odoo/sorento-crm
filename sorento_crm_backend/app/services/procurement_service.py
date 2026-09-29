@@ -5059,17 +5059,16 @@ class StockInquiryService:
         # Staff team notification → in-system detail link (login-required), not the
         # public /view token page. Recipients are internal team members.
         view_url = self._build_stock_inquiry_internal_url(inquiry_id, base_url_override=base_url_override)
-        # Requirement: include the link as a pure hyperlink (anchor text is the URL; no extra wording).
-        body_plain = (
-            f"{intro_plain}\n\n"
-            f"{view_url}\n\n"
-            "This is a system generated email. Please do not reply."
+
+        from app.services.email_template_service import EmailTemplateService
+
+        rendered = EmailTemplateService(self.db).render_code(
+            "stock_inquiry_created",
+            {"heading": title, "intro": intro_plain, "view_url": view_url},
         )
-        body_html = (
-            f"<p>{intro_html}</p>\n"
-            f'<p><a href="{view_url}">{view_url}</a></p>\n'
-            "<p>This is a system generated email. Please do not reply.</p>"
-        )
+        title = rendered["subject"]
+        body_plain = rendered["body_text"]
+        body_html = rendered["body_html"]
 
         notif_svc = NotificationService(self.db)
         first_uid = user_ids[0]
@@ -8446,24 +8445,21 @@ class PurchaseRequestService:
             else f"/procurement-management/purchase-requests/{header_id}"
         )
         view_url = f"{base_url}{detail_path}" if base_url else detail_path
-        detail_plain = f"Reference: {request_number}\nProject: {project_title}"
-        intro_plain = (
-            f"Dear Project Sales Team,\n\n{kind_sentence}\n\n{detail_plain}"
+
+        from app.services.email_template_service import EmailTemplateService
+
+        rendered = EmailTemplateService(self.db).render_code(
+            "purchase_request_submitted",
+            {
+                "heading": title,
+                "intro": kind_sentence,
+                "purchase_request": {"request_number": request_number, "project_title": project_title},
+                "view_url": view_url,
+            },
         )
-        intro_html = (
-            f"Dear Project Sales Team,<br /><br />{kind_sentence}<br /><br />"
-            f"Reference: {request_number}<br />Project: {project_title}"
-        )
-        body_plain = (
-            f"{intro_plain}\n\n"
-            f"{view_url}\n\n"
-            "This is a system generated email. Please do not reply."
-        )
-        body_html = (
-            f"<p>{intro_html}</p>\n"
-            f'<p><a href="{view_url}">{view_url}</a></p>\n'
-            "<p>This is a system generated email. Please do not reply.</p>"
-        )
+        title = rendered["subject"]
+        body_plain = rendered["body_text"]
+        body_html = rendered["body_html"]
         event_type = "external_updated" if updated else "external_created"
         notif_type = "purchase_request_updated" if updated else "purchase_request_created"
         notif_svc = NotificationService(self.db)
@@ -8588,8 +8584,6 @@ class PurchaseRequestService:
         type_label = "Purchase Request" if getattr(header, "request_type", None) == "purchase_request" else "Sponsorship Form"
         form_number = display_document_number(header) or "N/A"
         project = getattr(header, "project_title", None) or "N/A"
-        title = f"{type_label} approved"
-        body = f"{type_label} {form_number} (Project: {project}) has been approved."
 
         view_token = self.get_or_create_view_token(str(header.id))
         base_url = (settings.frontend_base_url or "").strip().rstrip("/")
@@ -8599,19 +8593,26 @@ class PurchaseRequestService:
             if sys_settings and getattr(sys_settings, "website_url", None):
                 base_url = (sys_settings.website_url or "").strip().rstrip("/")
         view_url = f"{base_url}/view/request?token={view_token}" if base_url else f"/view/request?token={view_token}"
-        body += f"\n\nView form: {view_url}"
-        body_html = (
-            f"<p>{type_label} {form_number} (Project: {project}) has been approved.</p>\n"
-            f'<p><a href="{view_url}">View form</a><br />{view_url}</p>'
+
+        from app.services.email_template_service import EmailTemplateService
+
+        rendered = EmailTemplateService(self.db).render_code(
+            "purchase_request_requester_approved",
+            {
+                "purchase_request": {"type_label": type_label, "request_number": form_number, "project_title": project},
+                "view_url": view_url,
+            },
         )
 
         from app.services.notification_service import NotificationService
         NotificationService(self.db).create(
             user_id=str(requested_by_uid),
             type="purchase_request_approved",
-            title=title,
-            body=body,
-            data={"body_html": body_html},
+            title=rendered["subject"],
+            # The bell and web push keep their one-line body; the email's text part is
+            # the rendered template (notification_tasks prefers data["body_text"]).
+            body=f"{type_label} {form_number} (Project: {project}) has been approved.\n\nView form: {view_url}",
+            data={"body_html": rendered["body_html"], "body_text": rendered["body_text"]},
             source_entity_type="purchase_request",
             source_entity_id=str(header.id),
             event_type="approved",
@@ -8625,8 +8626,6 @@ class PurchaseRequestService:
         type_label = "Purchase Request" if getattr(header, "request_type", None) == "purchase_request" else "Sponsorship Form"
         form_number = display_document_number(header) or "N/A"
         project = getattr(header, "project_title", None) or "N/A"
-        title = f"{type_label} rejected"
-        body = f"{type_label} {form_number} (Project: {project}) has been rejected."
 
         view_token = self.get_or_create_view_token(str(header.id))
         base_url = (settings.frontend_base_url or "").strip().rstrip("/")
@@ -8636,19 +8635,26 @@ class PurchaseRequestService:
             if sys_settings and getattr(sys_settings, "website_url", None):
                 base_url = (sys_settings.website_url or "").strip().rstrip("/")
         view_url = f"{base_url}/view/request?token={view_token}" if base_url else f"/view/request?token={view_token}"
-        body += f"\n\nView form: {view_url}"
-        body_html = (
-            f"<p>{type_label} {form_number} (Project: {project}) has been rejected.</p>\n"
-            f'<p><a href="{view_url}">View form</a><br />{view_url}</p>'
+
+        from app.services.email_template_service import EmailTemplateService
+
+        rendered = EmailTemplateService(self.db).render_code(
+            "purchase_request_requester_rejected",
+            {
+                "purchase_request": {"type_label": type_label, "request_number": form_number, "project_title": project},
+                "view_url": view_url,
+            },
         )
 
         from app.services.notification_service import NotificationService
         NotificationService(self.db).create(
             user_id=str(requested_by_uid),
             type="purchase_request_rejected",
-            title=title,
-            body=body,
-            data={"body_html": body_html},
+            title=rendered["subject"],
+            # The bell and web push keep their one-line body; the email's text part is
+            # the rendered template (notification_tasks prefers data["body_text"]).
+            body=f"{type_label} {form_number} (Project: {project}) has been rejected.\n\nView form: {view_url}",
+            data={"body_html": rendered["body_html"], "body_text": rendered["body_text"]},
             source_entity_type="purchase_request",
             source_entity_id=str(header.id),
             event_type="rejected",

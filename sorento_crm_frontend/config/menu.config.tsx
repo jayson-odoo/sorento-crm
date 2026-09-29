@@ -927,6 +927,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             permission: 'email_templates.templates.view',
           },
           {
+            title: 'Email Theme',
+            path: '/system-management/email-theme',
+            permission: 'email_templates.templates.view',
+          },
+          {
             title: 'Respond.io Workspaces',
             path: '/system-management/respond-workspaces',
             permission: 'system.respond_workspaces.view',
@@ -2211,6 +2216,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Email Templates',
         path: '/system-management/email-templates',
+        permission: 'email_templates.templates.view',
+      },
+      {
+        title: 'Email Theme',
+        path: '/system-management/email-theme',
         permission: 'email_templates.templates.view',
       },
       {

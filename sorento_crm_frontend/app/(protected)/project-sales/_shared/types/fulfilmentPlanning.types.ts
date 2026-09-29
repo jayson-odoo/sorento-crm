@@ -508,6 +508,8 @@ export interface SupplyDecision {
  */
 export interface SupplyFailingLine {
   line_no?: number | null;
+  /** #1362 item 5: AutoCount's own sales-order line number, the one a message names. */
+  so_line_no?: number | null;
   item_code?: string | null;
   reason: string;
 }
@@ -644,7 +646,8 @@ export interface ConfirmException {
 
 /** `POST /project-sales/sales-orders/{pso_id}/confirm`. */
 export interface ConfirmResult {
-  revision_no: number;
+  /** Null only when every named line was already fulfilled and nothing was written (#1362). */
+  revision_no: number | null;
   confirmed_at?: string | null;
   review_state: string;
   inquiry_rows_created: number;
@@ -673,6 +676,10 @@ export interface ConfirmResult {
    * says nothing about the lines this press also took OUT.
    */
   rejected_count?: number | null;
+  /** Named lines skipped because nothing was open on them, their saved decision cleared (#1362). */
+  lines_fulfilled_skipped?: number | null;
+  /** Buys confirmed as decided over goods that landed for their line (#1362). */
+  landed_buy_notices?: SupplyFailingLine[] | null;
 }
 
 export interface FulfilmentPlanningListEnvelope {
@@ -1153,6 +1160,13 @@ export interface BoardContribution {
    */
   project_key?: string | null;
   line_no: number;
+  /**
+   * #1362 item 5: AutoCount's own sales-order line number (`sales_order_lines.line_no`), the
+   * "No." the sales order's Lines tab shows. What the Line column, the drawer title and every
+   * confirm message print. `line_no` is the planning ADDRESS (the draft key) and is printed
+   * only as "row N" when AutoCount gave the line no number.
+   */
+  so_line_no?: number | null;
   item_code: string;
   /**
    * What this line ASKS FOR: the PLAN quantity, `coalesce(qty_required, qty_ordered)`.
@@ -2151,6 +2165,11 @@ export interface StockDetailSalesOrder {
    * and half of that question in this list made the one it answers harder to read.
    */
   is_this_line?: boolean;
+  /**
+   * Set only on the drawer's OWN line when nothing is open on it any more (#1362): what was
+   * delivered. Listed at `so_qty` "0" so "My line" still finds it.
+   */
+  fulfilled_qty?: string | null;
 }
 
 /** One purchase order standing behind the SPO quantity. */
@@ -2525,6 +2544,18 @@ export interface ConfirmManyOrderResult {
   /** How many covered lines THIS order's own press withdrew, the per-order twin of
    * `ConfirmResult.rejected_count` (owner ruling 23 Sep 2026). */
   rejected_count?: number | null;
+  /** The per-order twin of `ConfirmResult.lines_fulfilled_skipped` (#1362). */
+  lines_fulfilled_skipped?: number | null;
+  /**
+   * #1362 (owner, 29 Sep 2026): lines the server's recheck refused, left out so the rest of
+   * the order confirmed. Each keeps its saved decision.
+   */
+  lines_held_back?: SupplyFailingLine[] | null;
+  /**
+   * #1362: Buys confirmed as decided over goods that landed for their line. The link stays;
+   * purchasing adjusts it off the Buy's order inquiry row.
+   */
+  landed_buy_notices?: SupplyFailingLine[] | null;
   error?: string | null;
   failing_lines?: SupplyFailingLine[] | null;
 }

@@ -1,7 +1,7 @@
 # UAC - Chatbot Turn Engine (n8n business logic moves into the CRM)
 
 Plan: `documentation/plans/chatbot/PLAN-chatbot-turn-engine.md`
-Predecessors: `documentation/plans/ideation/PLAN-ideation-ideate-intent.md` (the one lane that
+Predecessors: `documentation/plans/_archive/ideation/PLAN-ideation-ideate-intent.md` (the one lane that
 already runs this way), n8n repo `sorento_crm_n8n/n8n-workflows-init/plans/spine-decomposition-plan.md`
 (RS-0 to RS-9, the decomposition this port consumes).
 

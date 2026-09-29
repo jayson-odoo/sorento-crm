@@ -1896,7 +1896,11 @@ def test_template_prints_blank_not_none_and_inline_borders():
         }
 
         rendered = EmailTemplateService(db).render(template, context)
-        html = rendered["body_html"]
+        # #1349: the mail is now a whole branded document; these pins are about the
+        # template's OWN cells, so they read the authored body, not the layout's table.
+        from tests._email_body import authored_html
+
+        html = authored_html(rendered["body_html"])
         text = rendered["body_text"]
 
         assert "None" not in html, "a blank field must print blank, not the word None"
@@ -2297,6 +2301,12 @@ def _load_r3_migration():
 
 def _table_rows(html: str) -> list[list[str]]:
     """Every `<tr>...</tr>`'s `<td>` cell texts, tags stripped, in document order."""
+    # #1349: a rendered mail wraps the template in the branded layout's own table; read
+    # only the authored body so the layout's footer row is not taken for a line.
+    if "<!--block:custom_text-->" in html:
+        from tests._email_body import authored_html
+
+        html = authored_html(html)
     rows = []
     for row_html in re.findall(r"<tr>(.*?)</tr>", html, re.S):
         cells = re.findall(r"<td[^>]*>(.*?)</td>", row_html, re.S)
