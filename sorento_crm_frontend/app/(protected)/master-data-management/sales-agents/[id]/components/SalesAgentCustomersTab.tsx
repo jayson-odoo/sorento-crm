@@ -28,7 +28,7 @@ import {
   searchCustomersSelect,
 } from '@/app/(protected)/order-management/customers/services/customerService';
 import {
-  salesAgentCustomersKey,
+  SALES_AGENT_CUSTOMERS_PREFIX,
   useAssignSalesAgentCustomer,
   useSalesAgentCustomers,
 } from '../../hooks/useSalesAgents';
@@ -68,7 +68,7 @@ export default function SalesAgentCustomersTab({ agentId }: { agentId: string })
     entityType: 'customer',
     verb: 'Unassigning',
     successMessage: 'Customer unassigned',
-    invalidateKeys: [salesAgentCustomersKey(agentId), ['contact-customers']],
+    invalidateKeys: [SALES_AGENT_CUSTOMERS_PREFIX, ['customer'], ['contact-customers']],
   });
   const { run: runUnassign } = unassign;
   const rowPending = useRowPending<AgentCustomer>('customer');

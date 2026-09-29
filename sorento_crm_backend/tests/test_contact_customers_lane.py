@@ -45,7 +45,8 @@ CONTACT_VIEW = "user_management.contacts.view"
 CONTACT_EDIT = "user_management.contacts.edit"
 AGENT_VIEW = "master_data.sales_agents.view"
 AGENT_EDIT = "master_data.sales_agents.edit"
-ALL_PERMS = {CONTACT_VIEW, CONTACT_EDIT, AGENT_VIEW, AGENT_EDIT}
+CUSTOMER_VIEW = "order_management.customers.view"
+ALL_PERMS = {CONTACT_VIEW, CONTACT_EDIT, AGENT_VIEW, AGENT_EDIT, CUSTOMER_VIEW}
 
 CONTACTS = "/api/v1/user-management/contacts"
 AGENTS = "/api/v1/master-data/sales-agents"
@@ -153,12 +154,11 @@ def _customer(db, *, company_id=SORENTO, agent=None, **overrides) -> Customer:
     return row
 
 
-def _link(db, contact, customer, *, is_primary=False, age_minutes=0) -> RespondContactCustomer:
+def _link(db, contact, customer, *, age_minutes=0) -> RespondContactCustomer:
     row = RespondContactCustomer(
         contact_id=contact.id,
         customer_id=customer.id,
         company_id=customer.company_id,
-        is_primary=is_primary,
         source="manual",
         created_at=datetime(2026, 1, 1) + timedelta(minutes=age_minutes),
     )
@@ -227,7 +227,7 @@ def test_ac20_get_contact_customers_lists_links_in_created_order(client, db):
     first = _customer(db, agent=agent_a)
     second = _customer(db, agent=agent_b)
     # Insert the later link first so ordering by created_at, not by insertion, is proven.
-    link_second = _link(db, contact, second, is_primary=True, age_minutes=10)
+    link_second = _link(db, contact, second, age_minutes=10)
     link_first = _link(db, contact, first, age_minutes=1)
     db.commit()
 
@@ -242,14 +242,17 @@ def test_ac20_get_contact_customers_lists_links_in_created_order(client, db):
     assert row["customer_code"] == first.customer_code
     assert row["customer_name"] == first.customer_name
     assert row["is_active"] is True
-    assert row["is_primary"] is False
+    # Round 2 (Q2 b): no primary anywhere in this lane.
+    assert "is_primary" not in row
     assert row["source"] == "manual"
     assert row["sales_agent_id"] == agent_a.id
     assert row["sales_agent_code"] == agent_a.sales_agent
     assert row["sales_agent_name"] == "ZZT Alice"
     assert row["created_at"]
-    assert body["data"][1]["is_primary"] is True
+    assert "is_primary" not in body["data"][1]
     assert body["data"][1]["sales_agent_code"] == agent_b.sales_agent
+    # Round 2 (Q4): suggestions are withdrawn, the body is `data` only.
+    assert "suggested" not in body
 
 
 def test_ac20_unlinked_contact_returns_empty_data(client, db):
@@ -260,58 +263,7 @@ def test_ac20_unlinked_contact_returns_empty_data(client, db):
 
     assert response.status_code == 200, response.text
     assert response.json()["data"] == []
-
-
-# ============================================================ AC-21 suggestions
-
-
-def test_ac21_suggested_lists_unlinked_phone_matches_only(client, db):
-    digits = _digits9()
-    contact = _contact(db, phone=f"60{digits}")
-    agent = _agent(db, person_label="ZZT Bob")
-    match = _customer(db, agent=agent, phone_number=f"0{digits}")
-    linked = _customer(db, phone_number=f"+60 {digits}")
-    other = _customer(db, phone_number="60999999999")
-    _link(db, contact, linked)
-    db.commit()
-
-    response = client.get(f"{CONTACTS}/{contact.id}/customers")
-
-    assert response.status_code == 200, response.text
-    suggested = response.json()["suggested"]
-    assert [row["customer_id"] for row in suggested] == [match.id]
-    row = suggested[0]
-    assert row["customer_code"] == match.customer_code
-    assert row["customer_name"] == match.customer_name
-    assert row["phone_number"] == f"0{digits}"
-    assert row["sales_agent_code"] == agent.sales_agent
-    assert row["sales_agent_name"] == "ZZT Bob"
-    assert other.id not in [r["customer_id"] for r in suggested]
-    assert linked.id not in [r["customer_id"] for r in suggested]
-
-
-def test_ac21_suggested_is_capped_at_five(client, db):
-    digits = _digits9()
-    contact = _contact(db, phone=f"60{digits}")
-    for _ in range(7):
-        _customer(db, phone_number=f"0{digits}")
-    db.commit()
-
-    response = client.get(f"{CONTACTS}/{contact.id}/customers")
-
-    assert response.status_code == 200, response.text
-    assert len(response.json()["suggested"]) == 5
-
-
-def test_ac21_no_phone_match_returns_empty_suggested(client, db):
-    contact = _contact(db, phone="60111111111")
-    _customer(db, phone_number="60999999999")
-    db.commit()
-
-    response = client.get(f"{CONTACTS}/{contact.id}/customers")
-
-    assert response.status_code == 200, response.text
-    assert response.json()["suggested"] == []
+    assert "suggested" not in response.json()
 
 
 # ============================================================ AC-22 link
@@ -327,6 +279,7 @@ def test_ac22_post_link_stamps_customer_company_and_is_idempotent(client, db, ac
     assert first.status_code == 201, first.text
     assert first.json()["customer_id"] == customer.id
     assert first.json()["id"] == _links_in_db(db, contact.id)[0].id
+    assert "is_primary" not in first.json()
     assert first.json()["customer_code"] == customer.customer_code
     links = _links_in_db(db, contact.id)
     assert len(links) == 1
@@ -395,68 +348,52 @@ def test_ac23_unknown_contact_is_404(client, db):
     assert _domain_404(response), response.text
 
 
-def test_ac23_post_is_primary_demotes_the_other_primary(client, db):
-    contact = _contact(db)
-    first = _customer(db)
-    second = _customer(db)
-    db.commit()
-
-    r1 = client.post(
-        f"{CONTACTS}/{contact.id}/customers", json={"customer_id": first.id, "is_primary": True}
-    )
-    r2 = client.post(
-        f"{CONTACTS}/{contact.id}/customers", json={"customer_id": second.id, "is_primary": True}
-    )
-
-    assert r1.status_code == 201, r1.text
-    assert r2.status_code == 201, r2.text
-    assert r2.json()["is_primary"] is True
-    primaries = {link.customer_id for link in _links_in_db(db, contact.id) if link.is_primary}
-    assert primaries == {second.id}
-
-
-# ============================================================ AC-24 patch primary
-
-
-def test_ac24_patch_true_demotes_other_primary_and_false_clears(client, db):
-    contact = _contact(db)
-    first = _customer(db)
-    second = _customer(db)
-    _link(db, contact, first, is_primary=True, age_minutes=1)
-    link_second = _link(db, contact, second, age_minutes=2)
-    db.commit()
-    link_second_id = link_second.id
-
-    promote = client.patch(
-        f"{CONTACTS}/{contact.id}/customers/{second.id}", json={"is_primary": True}
-    )
-
-    assert promote.status_code == 200, promote.text
-    assert promote.json()["customer_id"] == second.id
-    assert promote.json()["id"] == link_second_id
-    assert promote.json()["is_primary"] is True
-    assert {l.customer_id for l in _links_in_db(db, contact.id) if l.is_primary} == {second.id}
-
-    clear = client.patch(
-        f"{CONTACTS}/{contact.id}/customers/{second.id}", json={"is_primary": False}
-    )
-
-    assert clear.status_code == 200, clear.text
-    assert clear.json()["is_primary"] is False
-    assert clear.json()["id"] == link_second_id
-    assert [l for l in _links_in_db(db, contact.id) if l.is_primary] == []
-
-
-def test_ac24_patch_unlinked_pair_is_404(client, db):
+def test_ac23_post_body_carrying_is_primary_is_422(client, db):
     contact = _contact(db)
     customer = _customer(db)
+    db.commit()
+
+    response = client.post(
+        f"{CONTACTS}/{contact.id}/customers",
+        json={"customer_id": customer.id, "is_primary": True},
+    )
+
+    assert response.status_code == 422, response.text
+    assert _links_in_db(db, contact.id) == []
+
+
+def test_ac23_two_posts_for_the_same_pair_share_one_row(client, db):
+    """Reviewer nit 6. Sequential here (one shared session); the point is that the second
+    answer is the first row, not a unique-constraint 500."""
+    contact = _contact(db)
+    customer = _customer(db)
+    db.commit()
+    url = f"{CONTACTS}/{contact.id}/customers"
+
+    first = client.post(url, json={"customer_id": customer.id})
+    second = client.post(url, json={"customer_id": customer.id})
+
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert first.json()["id"] == second.json()["id"]
+    assert len(_links_in_db(db, contact.id)) == 1
+
+
+# ============================================================ AC-24 withdrawn
+
+
+def test_ac24_patch_route_no_longer_exists(client, db):
+    """Round 2 (Q2 b): no primary anywhere, so the PATCH route is gone."""
+    contact = _contact(db)
+    customer = _customer(db)
+    _link(db, contact, customer)
     db.commit()
 
     response = client.patch(
         f"{CONTACTS}/{contact.id}/customers/{customer.id}", json={"is_primary": True}
     )
 
-    assert _domain_404(response), response.text
+    assert response.status_code in (404, 405), response.text
 
 
 # ============================================================ AC-25 unlink action
@@ -514,7 +451,7 @@ def test_ac26_get_without_contacts_view_is_403(client, db, state):
     assert response.status_code == 403, response.text
 
 
-def test_ac26_post_and_patch_without_contacts_edit_are_403(client, db, state):
+def test_ac26_post_without_contacts_edit_is_403(client, db, state):
     contact = _contact(db)
     customer = _customer(db)
     _link(db, contact, customer)
@@ -522,12 +459,8 @@ def test_ac26_post_and_patch_without_contacts_edit_are_403(client, db, state):
     state["granted"] = {CONTACT_VIEW}
 
     posted = client.post(f"{CONTACTS}/{contact.id}/customers", json={"customer_id": customer.id})
-    patched = client.patch(
-        f"{CONTACTS}/{contact.id}/customers/{customer.id}", json={"is_primary": True}
-    )
 
     assert posted.status_code == 403, posted.text
-    assert patched.status_code == 403, patched.text
 
 
 # ============================================================ AC-27 agents_for_contact
@@ -775,7 +708,9 @@ def test_ac30_unassign_leaves_a_customer_moved_to_another_agent(client, db):
         client, db, entity_type="customer", entity_id=customer.id, action_id=parked.json()["id"]
     )
 
-    assert committed.json()["last_outcome"]["status"] == "committed", committed.json()
+    outcome = committed.json()["last_outcome"]
+    assert outcome["status"] == "failed", committed.json()
+    assert outcome["error_text"], committed.json()
     db.expire_all()
     assert db.get(Customer, customer.id).sales_agent_id == other.id
 
@@ -851,3 +786,144 @@ def test_ac32_assign_then_unassign_are_audited_with_the_sales_agent_change(clien
     ]
     # Assign wrote the agent id, unassign wrote null: the move is traceable.
     assert changes == [agent.id, None], [(r.action, r.new_values) for r in rows]
+
+
+# ============================================================ AC-34 linked contacts
+
+CUSTOMERS = "/api/v1/order-management/customers"
+
+
+def test_ac34_linked_contacts_lists_links_in_created_order(client, db):
+    customer = _customer(db)
+    named = _contact(db)
+    unnamed = _contact(db)
+    unnamed.name = None
+    db.flush()
+    # Later link inserted first so created_at ordering is proven, not insertion order.
+    link_late = _link(db, unnamed, customer, age_minutes=10)
+    link_early = _link(db, named, customer, age_minutes=1)
+    db.commit()
+
+    response = client.get(f"{CUSTOMERS}/{customer.id}/linked-contacts")
+
+    assert response.status_code == 200, response.text
+    rows = response.json()["data"]
+    assert [r["id"] for r in rows] == [link_early.id, link_late.id]
+    first = rows[0]
+    assert first["contact_id"] == named.id
+    assert first["name"] == named.name
+    assert first["phone_number"] == named.phone_number
+    assert "is_primary" not in first
+    assert first["created_at"]
+    assert rows[1]["contact_id"] == unnamed.id
+    assert rows[1]["name"] is None
+    assert "is_primary" not in rows[1]
+
+
+def test_ac34_customer_with_no_links_returns_empty_data(client, db):
+    customer = _customer(db)
+    db.commit()
+
+    response = client.get(f"{CUSTOMERS}/{customer.id}/linked-contacts")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == []
+
+
+def test_ac34_customer_outside_scope_or_unknown_is_404(client, db, state):
+    foreign = _customer(db, company_id=MOCHA_ID)
+    db.commit()
+    state["scope"] = frozenset({SORENTO})
+
+    hidden = client.get(f"{CUSTOMERS}/{foreign.id}/linked-contacts")
+    unknown = client.get(f"{CUSTOMERS}/{uuid.uuid4()}/linked-contacts")
+
+    assert _domain_404(hidden), hidden.text
+    assert _domain_404(unknown), unknown.text
+
+
+# ============================================================ AC-35 hardening
+
+
+def test_ac35_linked_contacts_without_customers_view_is_403(client, db, state):
+    customer = _customer(db)
+    db.commit()
+    state["granted"] = ALL_PERMS - {CUSTOMER_VIEW}
+
+    response = client.get(f"{CUSTOMERS}/{customer.id}/linked-contacts")
+
+    assert response.status_code == 403, response.text
+
+
+def test_ac35_parking_unlink_on_a_link_the_caller_cannot_see_is_404(client, db, state):
+    contact = _contact(db)
+    foreign_customer = _customer(db, company_id=MOCHA_ID)
+    foreign_link = _link(db, contact, foreign_customer)
+    db.commit()
+    foreign_link_id = foreign_link.id
+    state["scope"] = frozenset({SORENTO})
+
+    other_company = _park(
+        client,
+        action_key="contact_customer_link.unlink",
+        entity_type="contact_customer_link",
+        entity_id=foreign_link_id,
+    )
+    unknown = _park(
+        client,
+        action_key="contact_customer_link.unlink",
+        entity_type="contact_customer_link",
+        entity_id=uuid.uuid4(),
+    )
+
+    assert _domain_404(other_company), other_company.text
+    assert _domain_404(unknown), unknown.text
+    assert len(_links_in_db(db, contact.id)) == 1
+
+
+def test_ac35_parking_unassign_on_a_customer_in_another_company_is_404(client, db, state):
+    agent = _agent(db)
+    foreign = _customer(db, company_id=MOCHA_ID, agent=agent)
+    db.commit()
+    state["scope"] = frozenset({SORENTO})
+
+    response = _park(
+        client,
+        action_key="customer.unassign_sales_agent",
+        entity_type="customer",
+        entity_id=foreign.id,
+        payload={"sales_agent_id": agent.id},
+    )
+
+    assert _domain_404(response), response.text
+
+
+def test_ac35_unlink_of_a_link_that_vanished_fails_instead_of_committing(client, db):
+    contact = _contact(db)
+    customer = _customer(db)
+    link = _link(db, contact, customer)
+    db.commit()
+    link_id = link.id
+
+    parked = _park(
+        client,
+        action_key="contact_customer_link.unlink",
+        entity_type="contact_customer_link",
+        entity_id=link_id,
+    )
+    assert parked.status_code == 202, parked.text
+    # Gone during the window (someone else unlinked it).
+    db.query(RespondContactCustomer).filter(RespondContactCustomer.id == link_id).delete(
+        synchronize_session=False
+    )
+    db.commit()
+    outcome = _commit(
+        client,
+        db,
+        entity_type="contact_customer_link",
+        entity_id=link_id,
+        action_id=parked.json()["id"],
+    )
+
+    assert outcome.json()["last_outcome"]["status"] == "failed", outcome.json()
+    assert outcome.json()["last_outcome"]["error_text"], outcome.json()

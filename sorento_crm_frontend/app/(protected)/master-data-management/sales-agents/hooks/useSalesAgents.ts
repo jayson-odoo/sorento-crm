@@ -103,7 +103,8 @@ export function useAnnotateSalesAgent() {
 }
 
 /** The agent's customers key. The unassign countdown invalidates it after the server commits. */
-export const salesAgentCustomersKey = (agentId: string) => ['sales-agent-customers', agentId];
+export const SALES_AGENT_CUSTOMERS_PREFIX = ['sales-agent-customers'] as const;
+export const salesAgentCustomersKey = (agentId: string) => [...SALES_AGENT_CUSTOMERS_PREFIX, agentId];
 
 export function useSalesAgentCustomers(agentId: string, params: DataGridApiFetchParams) {
   return useQuery({
@@ -126,7 +127,10 @@ export function useAssignSalesAgentCustomer(agentId: string) {
   return useMutation({
     mutationFn: (customerId: string) => assignSalesAgentCustomer(agentId, customerId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: salesAgentCustomersKey(agentId) });
+      // The whole prefix: the customer left another agent's tab too, and that tab may be cached.
+      queryClient.invalidateQueries({ queryKey: SALES_AGENT_CUSTOMERS_PREFIX });
+      // The customer's own detail shows its agent.
+      queryClient.invalidateQueries({ queryKey: ['customer'] });
       // The contact card shows the agent per linked customer, so it must refetch too.
       queryClient.invalidateQueries({ queryKey: ['contact-customers'] });
       toast.success('Customer assigned');

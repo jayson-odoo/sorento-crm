@@ -3689,10 +3689,12 @@ class CustomerService:
         """Clear the agent, but only while the customer is still under `agent_id`.
 
         The unassign is parked for a few seconds; a customer moved to another agent in that
-        window is somebody else's now and is left alone."""
+        window is somebody else's now and is left alone. It is refused, not skipped, so the
+        parked action ends `failed` with this sentence instead of reporting a commit that
+        changed nothing (the same rule as unlinking a link that has vanished)."""
         customer = self.get_customer(customer_id)
         if str(customer.sales_agent_id or "") != str(agent_id or ""):
-            return False
+            raise handle_conflict("This customer is no longer assigned to that sales agent.")
         customer.sales_agent_id = None
         self.db.commit()
         return True

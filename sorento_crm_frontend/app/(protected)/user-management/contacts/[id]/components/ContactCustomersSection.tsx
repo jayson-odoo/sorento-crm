@@ -16,7 +16,6 @@ import {
   contactCustomersKey,
   useContactCustomers,
   useLinkContactCustomer,
-  useSetContactCustomerPrimary,
 } from '../hooks/useContactCustomers';
 
 function agentLabel(code: string | null, name: string | null): string | null {
@@ -33,7 +32,6 @@ export default function ContactCustomersSection({ contactId }: { contactId: stri
   const canEdit = useHasPermission('user_management.contacts.edit');
   const { data, isLoading } = useContactCustomers(contactId);
   const link = useLinkContactCustomer(contactId);
-  const setPrimary = useSetContactCustomerPrimary(contactId);
 
   // Unlink asks nothing (D7): the button becomes the countdown, the server commits on lapse.
   const unlink = useDeferredRowAction({
@@ -42,11 +40,10 @@ export default function ContactCustomersSection({ contactId }: { contactId: stri
     verb: 'Unlinking',
     successMessage: 'Customer unlinked',
     surface: 'inline',
-    invalidateKeys: [contactCustomersKey(contactId)],
+    invalidateKeys: [contactCustomersKey(contactId), ['customer-linked-contacts']],
   });
 
   const links = data?.data ?? [];
-  const suggested = data?.suggested ?? [];
 
   return (
     <Card>
@@ -114,26 +111,8 @@ export default function ContactCustomersSection({ contactId }: { contactId: stri
                     >
                       {agent ?? 'No sales agent'}
                     </span>
-                    {row.is_primary ? (
-                      <Badge variant="info" appearance="light" size="md">
-                        Primary
-                      </Badge>
-                    ) : null}
                     {canEdit ? (
                       <>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={setPrimary.isPending}
-                          onClick={() =>
-                            setPrimary.mutate({
-                              customerId: row.customer_id,
-                              isPrimary: !row.is_primary,
-                            })
-                          }
-                        >
-                          {row.is_primary ? 'Clear primary' : 'Make primary'}
-                        </Button>
                         {counting ? (
                           counting
                         ) : (
@@ -158,48 +137,6 @@ export default function ContactCustomersSection({ contactId }: { contactId: stri
           </ul>
         )}
 
-        {suggested.length > 0 ? (
-          <div className="space-y-2">
-            <p className="text-sm font-medium">Suggested</p>
-            <ul className="divide-y rounded-md border">
-              {suggested.map((s) => {
-                const agent = agentLabel(s.sales_agent_code, s.sales_agent_name);
-                const customer = `${s.customer_code} - ${s.customer_name}`;
-                return (
-                  <li
-                    key={s.customer_id}
-                    className="flex flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <span className="min-w-0 truncate text-sm font-medium" title={customer}>
-                      {customer}
-                    </span>
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 sm:justify-end">
-                      <span className="font-mono text-sm text-muted-foreground">
-                        {s.phone_number ?? '-'}
-                      </span>
-                      <span
-                        className="min-w-0 truncate text-sm text-muted-foreground"
-                        title={agent ?? 'No sales agent'}
-                      >
-                        {agent ?? 'No sales agent'}
-                      </span>
-                      {canEdit ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={link.isPending}
-                          onClick={() => link.mutate({ customerId: s.customer_id })}
-                        >
-                          Link
-                        </Button>
-                      ) : null}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        ) : null}
       </CardContent>
     </Card>
   );

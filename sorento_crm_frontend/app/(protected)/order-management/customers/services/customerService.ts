@@ -126,3 +126,29 @@ export async function searchCustomersSelect(
       : 'No sales agent',
   }));
 }
+
+export interface CustomerLinkedContact {
+  /** The link row id. Never rendered. */
+  id: string;
+  contact_id: string;
+  name: string | null;
+  phone_number: string | null;
+  created_at: string;
+}
+
+/**
+ * The WhatsApp contacts linked to a customer, for the customer detail page. Read-only.
+ *
+ *   GET /api/v1/order-management/customers/{customer_id}/linked-contacts
+ *     -> { data: { id, contact_id, name, phone_number, created_at }[] }
+ *   Gated `order_management.customers.view`; ordered by created_at; a customer hidden by
+ *   the caller's company scope, or unknown, is a 404.
+ */
+export async function getCustomerLinkedContacts(customerId: string): Promise<CustomerLinkedContact[]> {
+  const response = await apiFetch(`/api/v1/order-management/customers/${customerId}/linked-contacts`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load linked contacts'));
+  }
+  const body: { data?: CustomerLinkedContact[] } = await response.json();
+  return body.data ?? [];
+}

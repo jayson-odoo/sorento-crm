@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class ContactCustomerLinkResponse(BaseModel):
@@ -12,7 +12,6 @@ class ContactCustomerLinkResponse(BaseModel):
     customer_code: str
     customer_name: str
     is_active: bool
-    is_primary: bool
     source: str
     sales_agent_id: Optional[str] = None
     sales_agent_code: Optional[str] = None
@@ -20,27 +19,29 @@ class ContactCustomerLinkResponse(BaseModel):
     created_at: datetime
 
 
-class SuggestedCustomerResponse(BaseModel):
-    customer_id: str
-    customer_code: str
-    customer_name: str
-    phone_number: Optional[str] = None
-    sales_agent_code: Optional[str] = None
-    sales_agent_name: Optional[str] = None
-
-
 class ContactCustomersResponse(BaseModel):
     data: list[ContactCustomerLinkResponse]
-    suggested: list[SuggestedCustomerResponse]
 
 
 class ContactCustomerLinkCreate(BaseModel):
+    # `extra="forbid"`: there is no primary customer in this lane, so a body that still
+    # carries `is_primary` is a 422 rather than a silently ignored field.
+    model_config = ConfigDict(extra="forbid")
+
     customer_id: str
-    is_primary: bool = False
 
 
-class ContactCustomerPrimaryUpdate(BaseModel):
-    is_primary: bool
+class CustomerLinkedContactResponse(BaseModel):
+    # The link row id, then the contact it points at.
+    id: str
+    contact_id: str
+    name: Optional[str] = None
+    phone_number: Optional[str] = None
+    created_at: datetime
+
+
+class CustomerLinkedContactsResponse(BaseModel):
+    data: list[CustomerLinkedContactResponse]
 
 
 class AgentCustomerAssign(BaseModel):
