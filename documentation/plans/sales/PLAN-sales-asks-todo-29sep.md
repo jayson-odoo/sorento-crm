@@ -1,6 +1,6 @@
 # PLAN: sales asks as a salesperson's to-do list, date-first (lane SALES-ASKS-TODO)
 
-Status: built 29 Sep 2026, Track: full. Owner rulings Q1 to Q8 (section 0b) applied; Phase 2 green (section 7c evidence); awaiting the owner's hand test on the real rows and Phase 3 review. The plan was first written
+Status: PAUSED for Lavish review 29 Sep 2026 (owner: reuse the Price Tag Request list shell, a lighter card, explicit note save, open a card to see the conversation): static mockup at `documentation/mockups/sales-asks-todo/index.html`; the code built so far (Phase 2 green, Phase 3 reviewed and fixed, section 7c) stays on the branch and is reshaped to the annotated mockup. Track: full. The plan was first written
 under the recommendations and each pending question is marked `[Q<n> pending]` where its answer
 changes the design. Track: full (one migration, two new routes under RBAC, one portal route).
 Plan created: 2026-09-29T08:20:00Z

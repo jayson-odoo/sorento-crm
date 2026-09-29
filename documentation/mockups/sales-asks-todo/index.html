@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Customer asks to-do (mockup)</title>
+<style>
+/* Tokens copied from sorento_crm_frontend/css/config.reui.css (light theme) */
+:root{
+  --background:#fff;--foreground:#09090b;--card:#fff;--muted:#f4f4f5;--muted-fg:#71717a;
+  --border:#ececee;--primary:#3b82f6;--primary-fg:#fff;--primary-soft:#eff6ff;--primary-line:#bfdbfe;
+  --secondary:#f4f4f5;--destructive:#dc2626;--destructive-soft:#fef2f2;--destructive-line:#fecaca;
+  --success:#15803d;--success-soft:#f0fdf4;--warning:#a16207;--warning-soft:#fefce8;--info:#7c3aed;
+  --radius:8px;--page:#f7f7f8;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--foreground);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+a{color:inherit}
+h1{font-size:22px;margin:0 0 4px}
+.doc{max-width:1400px;margin:0 auto;padding:16px}
+.intro{color:var(--muted-fg);font-size:13px;margin:0 0 12px}
+.nav{position:sticky;top:0;z-index:5;background:var(--page);padding:8px 0 10px;border-bottom:1px solid var(--border);margin-bottom:16px;display:flex;flex-wrap:wrap;gap:6px}
+.nav a{font-size:12px;text-decoration:none;border:1px solid var(--border);background:#fff;border-radius:999px;padding:3px 10px;color:var(--muted-fg)}
+.nav a:hover{color:var(--foreground)}
+section{margin:0 0 34px}
+section>h2{font-size:15px;margin:0 0 4px}
+section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:820px}
+.row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.note{font-size:12px;color:var(--muted-fg);border-left:2px solid var(--border);padding:2px 0 2px 10px;margin:8px 0 0;max-width:820px}
+.num{display:inline-block;min-width:18px;height:18px;border-radius:9px;background:var(--foreground);color:#fff;font-size:11px;line-height:18px;text-align:center;margin-right:6px}
+
+/* phone frame 375 */
+.phone{width:375px;flex:none;background:#fff;border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.phone .screen{height:812px;overflow:auto;background:var(--page)}
+.phone .cap{font-size:11px;color:var(--muted-fg);text-align:center;padding:6px;border-top:1px solid var(--border);background:#fff}
+/* desktop frame 1280 */
+.desk{width:1280px;flex:none;background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.desk .screen{height:800px;overflow:auto;display:flex;background:#fff}
+.desk .cap{font-size:11px;color:var(--muted-fg);text-align:center;padding:6px;border-top:1px solid var(--border)}
+.sidebar{width:250px;flex:none;border-right:1px solid var(--border);padding:16px 12px;font-size:13px}
+.sidebar .brand{font-weight:700;font-size:18px;padding:0 8px 18px}
+.sidebar .grp{font-size:10.5px;letter-spacing:.06em;color:var(--muted-fg);padding:10px 8px 6px}
+.sidebar .it{padding:6px 8px;border-radius:6px;color:var(--foreground)}
+.sidebar .it.sub{padding-left:36px;color:var(--muted-fg)}
+.sidebar .it.on{background:var(--muted);color:var(--primary);font-weight:500}
+.main{flex:1;min-width:0;padding:22px 26px;background:#fff;position:relative}
+.topbar{display:flex;justify-content:flex-end;gap:10px;padding:0 0 14px;color:var(--muted-fg);font-size:12px}
+.pagehead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:14px}
+.pagehead .t{font-size:22px;font-weight:600;line-height:1.2}
+.crumbs{font-size:13px;color:var(--muted-fg);margin-top:4px}
+.crumbs b{color:var(--foreground);font-weight:500}
+
+/* portal shell */
+.pwrap{padding:12px}
+.welcome{display:flex;justify-content:space-between;align-items:center;margin:4px 0 12px}
+.welcome b{font-size:18px}
+.search,.kind{height:48px;border:1px solid var(--border);border-radius:var(--radius);background:#fff;padding:0 12px;display:flex;align-items:center;gap:8px;margin-bottom:10px;color:var(--muted-fg)}
+.kind{color:var(--foreground);justify-content:space-between}
+.kind .l{display:flex;align-items:center;gap:8px}
+.pill{background:var(--secondary);border-radius:6px;padding:0 6px;font-size:12px;line-height:20px}
+.star{color:#eab308}
+
+/* toolbar (LandingToolbar: Filter, Sort, view toggle) */
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin:2px 0 10px}
+.toolbar .left{display:flex;gap:8px;align-items:center}
+.btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 10px;border:1px solid var(--border);background:#fff;border-radius:6px;font-size:13px;color:var(--foreground);white-space:nowrap}
+.btn.sm{height:28px;font-size:12.5px}
+.btn.primary{background:var(--primary);color:var(--primary-fg);border-color:var(--primary);font-weight:500}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted-fg)}
+.btn.block{width:100%;justify-content:center;height:36px}
+.btn .cnt{background:var(--secondary);border-radius:5px;padding:0 5px;font-size:11px;line-height:16px}
+.toggle{display:inline-flex;gap:2px;border:1px solid var(--border);background:var(--muted);border-radius:6px;padding:2px}
+.toggle span{width:30px;height:26px;display:inline-grid;place-items:center;border-radius:5px;color:var(--muted-fg);font-size:14px}
+.toggle span.on{background:#fff;color:var(--foreground);box-shadow:0 1px 1px rgba(0,0,0,.05)}
+.ico{width:14px;height:14px;display:inline-block;vertical-align:-2px}
+
+/* counts + groups */
+.counts{font-size:13px;color:var(--muted-fg);margin:0 0 10px}
+.counts b{color:var(--foreground);font-variant-numeric:tabular-nums}
+.counts b.red{color:var(--destructive)}
+.gh{font-size:13px;font-weight:600;margin:14px 0 6px}
+.gh.red{color:var(--destructive)}
+.dh{font-size:12px;color:var(--muted-fg);margin:8px 0 6px}
+
+/* card = the price tag request card shell (SubmissionCard): tinted border, status top-right */
+.card{position:relative;display:block;border:1px solid var(--primary-line);background:var(--primary-soft);border-radius:var(--radius);padding:12px 14px;margin-bottom:10px}
+.card.plain{background:#fff;border-color:var(--border)}
+.card.done{background:var(--success-soft);border-color:#bbf7d0}
+.card .who{font-size:15px;font-weight:600;padding-right:35%}
+.card .who span{font-weight:400;color:var(--muted-fg);font-size:13px}
+.card .ask{margin-top:4px;font-size:14px}
+.card .ask .lbl,.card .ans .lbl{color:var(--muted-fg)}
+.card .ans{margin-top:2px;font-size:14px;color:rgba(9,9,11,.85)}
+.card .when{margin-top:6px;font-size:12px;color:var(--muted-fg);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.age{color:var(--destructive);font-weight:500}
+.card .top{position:absolute;top:8px;right:10px;display:flex;gap:6px;align-items:center}
+.card .open{position:absolute;right:12px;bottom:12px;color:var(--muted-fg);font-size:12px}
+.card .actions{margin-top:10px;display:flex;gap:8px}
+.card.done .who,.card.done .ask,.card.done .ans{opacity:.65}
+.doneby{font-size:12px;color:var(--success);margin-top:6px}
+
+/* list view rows (DataGrid look) */
+.table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;background:#fff;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.table th{font-weight:500;color:var(--muted-fg);text-align:left;padding:8px 10px;background:var(--muted);border-bottom:1px solid var(--border);white-space:nowrap}
+.table td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+.table tr:last-child td{border-bottom:0}
+.table td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.table .ell{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.table tr.sec td{background:var(--muted);font-weight:600;font-size:12px;color:var(--muted-fg);padding:6px 10px}
+.table tr.sec.red td{color:var(--destructive)}
+.rowlist .r{display:flex;gap:8px;align-items:center;background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;margin-bottom:6px;font-size:13px}
+.rowlist .r .m{min-width:0;flex:1}
+.rowlist .r .m .a{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted-fg);font-size:12px}
+.rowlist .r .m .b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* popover / menu */
+.pop{position:absolute;z-index:3;background:#fff;border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 10px 30px rgba(0,0,0,.12);padding:12px;width:300px;font-size:13px}
+.pop .f{margin-bottom:10px}
+.pop label{display:block;font-size:12px;color:var(--muted-fg);margin-bottom:4px}
+.sel{height:34px;border:1px solid var(--border);border-radius:6px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;background:#fff}
+.menu{position:absolute;z-index:3;background:#fff;border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 10px 30px rgba(0,0,0,.12);padding:4px;min-width:200px;font-size:13px}
+.menu div{padding:7px 10px;border-radius:5px;display:flex;justify-content:space-between}
+.menu div.on{background:var(--muted)}
+.menu .hint{font-size:11px;color:var(--muted-fg);padding:6px 10px 4px;border-top:1px solid var(--border);margin-top:4px}
+
+/* opened card: sheet */
+.sheet{background:#fff;border-top:1px solid var(--border);border-radius:16px 16px 0 0;box-shadow:0 -10px 30px rgba(0,0,0,.12);padding:12px 14px 14px;min-height:640px}
+.sheet .grab{width:36px;height:4px;border-radius:2px;background:var(--border);margin:0 auto 10px}
+.sheet .hd{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.sheet .hd b{font-size:16px}
+.sheet .hd .x{color:var(--muted-fg);font-size:18px;line-height:1}
+.sheet .meta{font-size:12px;color:var(--muted-fg);margin-top:2px}
+.askbox{margin:12px 0;border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;background:var(--page)}
+.askbox .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-fg)}
+.askbox p{margin:2px 0 0}
+.sect{font-size:12px;font-weight:600;color:var(--muted-fg);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 8px}
+.chat{display:flex;flex-direction:column;gap:6px}
+.bub{max-width:82%;padding:8px 11px;border-radius:14px;font-size:13.5px;line-height:1.4;position:relative}
+.bub.in{align-self:flex-start;background:var(--muted);border-bottom-left-radius:4px}
+.bub.out{align-self:flex-end;background:var(--primary-soft);border:1px solid var(--primary-line);border-bottom-right-radius:4px}
+.bub.hl{outline:2px solid var(--primary);outline-offset:1px}
+.bub .t{display:block;font-size:10.5px;color:var(--muted-fg);margin-top:3px;text-align:right}
+.bub .tag{position:absolute;top:-9px;right:8px;background:var(--primary);color:#fff;font-size:10px;border-radius:999px;padding:1px 7px;font-weight:500}
+.daysep{align-self:center;font-size:11px;color:var(--muted-fg);background:#fff;border:1px solid var(--border);border-radius:999px;padding:1px 8px;margin:4px 0}
+.notebox textarea{width:100%;min-height:64px;border:1px solid var(--border);border-radius:6px;padding:8px 10px;font:inherit;resize:vertical;background:#fff}
+.notebox .bar{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:6px;font-size:12px;color:var(--muted-fg)}
+.saved{color:var(--success)}
+.sheet .foot{display:flex;gap:8px;margin-top:14px;position:sticky;bottom:0;background:#fff;padding-top:8px}
+.dim{opacity:.55}
+
+/* CRM right sheet */
+.rsheet{position:absolute;top:0;right:0;bottom:0;width:480px;background:#fff;border-left:1px solid var(--border);box-shadow:-10px 0 30px rgba(0,0,0,.10);padding:18px 20px;overflow:auto}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid2 .card{margin:0}
+.agent{display:flex;gap:8px;align-items:center}
+.empty{border:1px dashed var(--border);border-radius:var(--radius);padding:28px 12px;text-align:center;background:#fff}
+.empty .h{font-weight:500}
+.empty .p{font-size:13px;color:var(--muted-fg);margin-top:2px}
+.scrim{background:rgba(0,0,0,.35);height:150px}
+kbd{font:inherit}
+.legend{font-size:12px;color:var(--muted-fg);margin:6px 0 0}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Customer asks as a salesperson's to-do</h1>
+<p class="intro">Static mockup for Lavish review, lane SALES-ASKS-TODO (PR #1364). Built on the portal's own Price Tag Request list shell (Filter, Sort, list/cards toggle, the same card) and the CRM page shell. Sample data only. Frames: phone 375 and desktop 1280.</p>
+<nav class="nav">
+  <a href="#p-cards">Portal 375: cards</a>
+  <a href="#p-list">Portal 375: list</a>
+  <a href="#p-open">Portal 375: opened card + conversation</a>
+  <a href="#p-filter">Portal 375: Filter and Sort open</a>
+  <a href="#p-states">Portal 375: done state and empty state</a>
+  <a href="#c-cards">CRM 1280: cards + opened card</a>
+  <a href="#c-list">CRM 1280: list view</a>
+  <a href="#decisions">Decisions to annotate</a>
+</nav>
+
+<!-- ============================================================ PORTAL CARDS -->
+<section id="p-cards">
+<h2>Portal, phone 375, cards view (default)</h2>
+<p class="why">The same shell as Price Tag Request: Welcome, search, kind selector with its open count, then the toolbar (Filter, Sort by Created, list/cards toggle). No New button: asks come from the chatbot. Date-first groups as agreed: Needs attention pinned (open, asked before today), then Today. A card shows only the customer and contact, what was asked, what the system answered, and when.</p>
+<div class="row">
+<div class="phone"><div class="screen"><div class="pwrap">
+  <div class="welcome"><b>Welcome, Sean Tan</b><span class="btn sm">Log out</span></div>
+  <div class="search">&#128269; Search submissions</div>
+  <div class="kind"><span class="l">Customer asks <span class="pill">5</span></span><span class="star">&#9733;</span></div>
+  <div class="toolbar">
+    <div class="left">
+      <span class="btn">&#9776; Filter</span>
+      <span class="btn">&#8645; Created</span>
+    </div>
+    <span class="toggle"><span>&#8801;</span><span class="on">&#9638;</span></span>
+  </div>
+  <p class="counts">Open <b>5</b> &middot; Needs attention <b class="red">2</b> &middot; Done today <b>1</b></p>
+
+  <div class="gh red">Needs attention</div>
+  <div class="dh">Sat 27 Sep</div>
+  <div class="card">
+    <div class="who">Hock Lee Trading <span>Ah Seng</span></div>
+    <div class="ask"><span class="lbl">Asked: </span>SRT5674 x 50</div>
+    <div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div>
+    <div class="when">27/09/2026, 11:00 am <span class="age">2 days ago</span></div>
+    <div class="top"><span class="btn sm primary">Done</span></div>
+    <div class="open">Open &rsaquo;</div>
+  </div>
+  <div class="dh">Yesterday</div>
+  <div class="card">
+    <div class="who">Kim Hong Hardware <span>Mei Ling</span></div>
+    <div class="ask"><span class="lbl">Asked: </span>BLT2210 x 20</div>
+    <div class="ans"><span class="lbl">Answered: </span>No stock and no incoming at the moment, please refer to your salesman.</div>
+    <div class="when">28/09/2026, 3:00 pm <span class="age">Yesterday</span></div>
+    <div class="top"><span class="btn sm primary">Done</span></div>
+    <div class="open">Open &rsaquo;</div>
+  </div>
+
+  <div class="gh">Today</div>
+  <div class="card">
+    <div class="who">Ah Huat Trading <span>Huat</span></div>
+    <div class="ask"><span class="lbl">Asked: </span>PLT1042 x 10</div>
+    <div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div>
+    <div class="when">29/09/2026, 10:40 am</div>
+    <div class="top"><span class="btn sm primary">Done</span></div>
+    <div class="open">Open &rsaquo;</div>
+  </div>
+  <div class="card">
+    <div class="who">Hock Lee Trading <span>Ah Seng</span></div>
+    <div class="ask"><span class="lbl">Asked: </span>CWCX604 x 300</div>
+    <div class="ans"><span class="lbl">Answered: </span>The quantity is more than what I can confirm here, please refer to your salesman.</div>
+    <div class="when">29/09/2026, 10:25 am</div>
+    <div class="top"><span class="btn sm primary">Done</span></div>
+    <div class="open">Open &rsaquo;</div>
+  </div>
+  <div class="card">
+    <div class="who">Seri Indah Renovation <span>Mei Ling</span></div>
+    <div class="ask"><span class="lbl">Asked: </span>SRTW2000 x 150</div>
+    <div class="ans"><span class="lbl">Answered: </span>No stock at the moment, ETA 19/10/2026.</div>
+    <div class="when">29/09/2026, 9:12 am</div>
+    <div class="top"><span class="btn sm primary">Done</span></div>
+    <div class="open">Open &rsaquo;</div>
+  </div>
+
+  <div class="gh">Done today</div>
+  <div class="card done">
+    <div class="who">Tan Hardware Sdn Bhd <span>Mr Tan</span></div>
+    <div class="ask"><span class="lbl">Asked: </span>GLV0310 x 200</div>
+    <div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div>
+    <div class="when">28/09/2026, 9:00 pm</div>
+    <div class="doneby">Done by Sean Tan, 29/09/2026, 8:05 am</div>
+    <div class="top"><span class="btn sm">Reopen</span></div>
+  </div>
+  <div style="text-align:center;margin:8px 0 16px"><span class="btn ghost sm">Show done</span></div>
+</div></div><div class="cap">Portal, 375 x 812, cards. Tap a card to open it; Done clears it in place.</div></div>
+
+<div style="max-width:420px">
+  <p class="note"><span class="num">1</span>Card content is only: customer + contact, the ask, the system's answer, the datetime. No Sent / Not sent / Console / Pending chips, no branch badge: the answer sentence already says in stock, too big, no stock, ETA.</p>
+  <p class="note"><span class="num">2</span>The card shell, tint and top-right slot are the Price Tag Request card's; the status badge slot holds the one CTA, Done.</p>
+  <p class="note"><span class="num">3</span>Needs attention is pinned and split by day, oldest day first; Today below it. Done today stays visible, greyed, with Reopen; the full history is behind Show done.</p>
+  <p class="note"><span class="num">4</span>Toolbar is the landing's own: Filter (with an active count), Sort (Created by default, remembered per contact / per user like the DataGrid listing preference), list / cards toggle.</p>
+</div>
+</div>
+</section>
+
+<!-- ============================================================ PORTAL LIST -->
+<section id="p-list">
+<h2>Portal, phone 375, list view</h2>
+<p class="why">The landing's list view is the DataGrid. On a phone that grid scrolls sideways, so the to-do's list view keeps one line per ask with the same four facts and the Done button, under the same day headings. On the desktop the CRM list view is the real grid (see below).</p>
+<div class="row">
+<div class="phone"><div class="screen"><div class="pwrap">
+  <div class="welcome"><b>Welcome, Sean Tan</b><span class="btn sm">Log out</span></div>
+  <div class="search">&#128269; Search submissions</div>
+  <div class="kind"><span class="l">Customer asks <span class="pill">5</span></span><span class="star">&#9733;</span></div>
+  <div class="toolbar">
+    <div class="left"><span class="btn">&#9776; Filter</span><span class="btn">&#8645; Created</span></div>
+    <span class="toggle"><span class="on">&#8801;</span><span>&#9638;</span></span>
+  </div>
+  <p class="counts">Open <b>5</b> &middot; Needs attention <b class="red">2</b> &middot; Done today <b>1</b></p>
+  <div class="rowlist">
+    <div class="gh red">Needs attention</div>
+    <div class="dh">Sat 27 Sep</div>
+    <div class="r"><div class="m"><div class="b"><b>Hock Lee Trading</b> &middot; SRT5674 x 50</div><div class="a">Yes, we have stock, please refer to your salesman &middot; 11:00 am &middot; <span class="age">2 days ago</span></div></div><span class="btn sm primary">Done</span></div>
+    <div class="dh">Yesterday</div>
+    <div class="r"><div class="m"><div class="b"><b>Kim Hong Hardware</b> &middot; BLT2210 x 20</div><div class="a">No stock and no incoming, please refer to your salesman &middot; 3:00 pm &middot; <span class="age">Yesterday</span></div></div><span class="btn sm primary">Done</span></div>
+    <div class="gh">Today</div>
+    <div class="r"><div class="m"><div class="b"><b>Ah Huat Trading</b> &middot; PLT1042 x 10</div><div class="a">Yes, we have stock, please refer to your salesman &middot; 10:40 am</div></div><span class="btn sm primary">Done</span></div>
+    <div class="r"><div class="m"><div class="b"><b>Hock Lee Trading</b> &middot; CWCX604 x 300</div><div class="a">More than I can confirm here, please refer to your salesman &middot; 10:25 am</div></div><span class="btn sm primary">Done</span></div>
+    <div class="r"><div class="m"><div class="b"><b>Seri Indah Renovation</b> &middot; SRTW2000 x 150</div><div class="a">No stock at the moment, ETA 19/10/2026 &middot; 9:12 am</div></div><span class="btn sm primary">Done</span></div>
+    <div class="gh">Done today</div>
+    <div class="r dim"><div class="m"><div class="b"><b>Tan Hardware Sdn Bhd</b> &middot; GLV0310 x 200</div><div class="a">Done by Sean Tan, 8:05 am</div></div><span class="btn sm">Reopen</span></div>
+  </div>
+  <div style="text-align:center;margin:8px 0 16px"><span class="btn ghost sm">Show done</span></div>
+</div></div><div class="cap">Portal, 375 x 812, list. Tapping the row text opens the card.</div></div>
+<div style="max-width:420px">
+  <p class="note"><span class="num">5</span>List view on a phone: one row per ask, same facts, same groups. The Sort button applies inside each day; the day order itself never changes (oldest day first under Needs attention).</p>
+</div>
+</div>
+</section>
+
+<!-- ============================================================ PORTAL OPENED CARD -->
+<section id="p-open">
+<h2>Portal, phone 375, opened card with the conversation</h2>
+<p class="why">Tapping a card slides up a sheet: the ask and the answer on top, then the WhatsApp conversation around that ask (the dealer's messages on the left, the assistant's on the right, the answering turn marked), then the note with its own Save button, and the one CTA at the foot. The conversation is the chat history panel the SLA ticket uses, without its technical parts (no turn ids, no parser output, no event log).</p>
+<div class="row">
+<div class="phone"><div class="screen">
+  <div class="scrim"></div>
+  <div class="sheet">
+    <div class="grab"></div>
+    <div class="hd"><div><b>Hock Lee Trading</b> <span class="meta">Ah Seng &middot; +60 12-000 0002</span><div class="meta">Asked 27/09/2026, 11:00 am &middot; <span class="age">2 days ago</span></div></div><span class="x">&times;</span></div>
+    <div class="askbox">
+      <div class="lbl">Asked</div><p><b>SRT5674 x 50</b> <span style="color:var(--muted-fg)">(SRT5674 Wiper Blade 24in)</span></p>
+      <div class="lbl" style="margin-top:8px">Answered</div><p>Yes, we have stock, please refer to your salesman to proceed.</p>
+    </div>
+    <div class="sect">Conversation</div>
+    <div class="chat">
+      <div class="daysep">Sat 27 Sep</div>
+      <div class="bub in">Boss, SRT5674 ada stock?<span class="t">10:58 am</span></div>
+      <div class="bub out">How many units of SRT5674 do you need?<span class="t">10:58 am</span></div>
+      <div class="bub in">50<span class="t">11:00 am</span></div>
+      <div class="bub out hl"><span class="tag">This ask</span>SRT5674 x 50: yes, we have stock, please refer to your salesman to proceed.<span class="t">11:00 am</span></div>
+      <div class="bub in">ok tq, I call Sean<span class="t">11:01 am</span></div>
+    </div>
+    <div class="legend">Left: Ah Seng on WhatsApp. Right: the Sorento assistant. Only the messages around this ask are shown; "Show the whole day" loads more.</div>
+    <div style="margin:6px 0 0"><span class="btn ghost sm">Show the whole day</span></div>
+    <div class="sect">Note</div>
+    <div class="notebox">
+      <textarea>Called Ah Seng, wants delivery Thursday. 50 confirmed.</textarea>
+      <div class="bar"><span class="saved">&#10003; Saved 29/09/2026, 4:02 pm</span><span class="btn sm">Save note</span></div>
+    </div>
+    <div class="foot"><span class="btn primary block">Done</span></div>
+  </div>
+</div><div class="cap">Portal, 375 x 812, the opened card (bottom sheet).</div></div>
+<div style="max-width:420px">
+  <p class="note"><span class="num">6</span>Note saving is explicit: a Save note button and a "Saved &lt;time&gt;" line. The note also lives on the card list as a one-line preview once it has text (not shown to keep the card light; say if you want it on the card).</p>
+  <p class="note"><span class="num">7</span>The conversation shows the messages around the ask only, the answering turn marked "This ask"; the dealer's own words are left, the assistant right. No Sent / template / turn details.</p>
+  <p class="note"><span class="num">8</span>One CTA in the sheet: Done. The sheet closes and the card leaves its group.</p>
+</div>
+</div>
+</section>
+
+<!-- ============================================================ FILTER + SORT -->
+<section id="p-filter">
+<h2>Portal, phone 375, Filter open and Sort open</h2>
+<p class="why">The landing's Filter popover and Sort menu, with this kind's fields. Sort is remembered per contact (portal) and per user (CRM), the same way the DataGrid listing preference remembers sort and columns.</p>
+<div class="row">
+<div class="phone"><div class="screen"><div class="pwrap" style="position:relative">
+  <div class="welcome"><b>Welcome, Sean Tan</b><span class="btn sm">Log out</span></div>
+  <div class="search">&#128269; Search submissions</div>
+  <div class="kind"><span class="l">Customer asks <span class="pill">5</span></span><span class="star">&#9733;</span></div>
+  <div class="toolbar">
+    <div class="left"><span class="btn" style="border-color:var(--primary)">&#9776; Filter <span class="cnt">2</span></span><span class="btn">&#8645; Created</span></div>
+    <span class="toggle"><span>&#8801;</span><span class="on">&#9638;</span></span>
+  </div>
+  <div class="pop" style="left:12px;top:172px;width:340px">
+    <div class="f"><label>Customer</label><div class="sel">Hock Lee Trading <span>&#9662;</span></div></div>
+    <div class="f"><label>Answer</label><div class="sel">In stock <span>&#9662;</span></div></div>
+    <div class="f"><label>Asked</label><div class="sel">Any day <span>&#9662;</span></div></div>
+    <div class="f"><label>State</label><div class="sel">Open <span>&#9662;</span></div></div>
+    <div style="display:flex;justify-content:flex-end"><span class="btn sm">Clear filters</span></div>
+  </div>
+  <div style="height:280px"></div>
+  <p class="counts">Open <b>2</b> &middot; Needs attention <b class="red">1</b> &middot; Done today <b>0</b></p>
+  <div class="gh red">Needs attention</div>
+  <div class="dh">Sat 27 Sep</div>
+  <div class="card"><div class="who">Hock Lee Trading <span>Ah Seng</span></div><div class="ask"><span class="lbl">Asked: </span>SRT5674 x 50</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">27/09/2026, 11:00 am <span class="age">2 days ago</span></div><div class="top"><span class="btn sm primary">Done</span></div></div>
+</div></div><div class="cap">Filter popover: Customer, Answer, Asked (day), State.</div></div>
+
+<div class="phone"><div class="screen"><div class="pwrap" style="position:relative">
+  <div class="welcome"><b>Welcome, Sean Tan</b><span class="btn sm">Log out</span></div>
+  <div class="search">&#128269; Search submissions</div>
+  <div class="kind"><span class="l">Customer asks <span class="pill">5</span></span><span class="star">&#9733;</span></div>
+  <div class="toolbar">
+    <div class="left"><span class="btn">&#9776; Filter</span><span class="btn" style="border-color:var(--primary)">&#8645; Created</span></div>
+    <span class="toggle"><span>&#8801;</span><span class="on">&#9638;</span></span>
+  </div>
+  <div class="menu" style="left:96px;top:172px">
+    <div class="on"><span>Created</span><span>&#8595; oldest first</span></div>
+    <div><span>Customer</span><span>A to Z</span></div>
+    <div><span>Product</span><span>A to Z</span></div>
+    <div><span>Answer</span><span></span></div>
+    <div class="hint">Remembered for you on this account</div>
+  </div>
+  <div style="height:180px"></div>
+  <p class="counts">Open <b>5</b> &middot; Needs attention <b class="red">2</b> &middot; Done today <b>1</b></p>
+  <div class="gh red">Needs attention</div>
+  <div class="dh">Sat 27 Sep</div>
+  <div class="card"><div class="who">Hock Lee Trading <span>Ah Seng</span></div><div class="ask"><span class="lbl">Asked: </span>SRT5674 x 50</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">27/09/2026, 11:00 am <span class="age">2 days ago</span></div><div class="top"><span class="btn sm primary">Done</span></div></div>
+</div></div><div class="cap">Sort menu: Created (default, oldest first), Customer, Product, Answer. Tap the same entry again to flip direction.</div></div>
+<div style="max-width:420px">
+  <p class="note"><span class="num">9</span>Filter fields for this kind: Customer, Answer (in stock / too big / no stock / incoming), Asked (today / yesterday / older), State (open / done). Filtering to Done is the other way to reach the history.</p>
+  <p class="note"><span class="num">10</span>Sort is the toolbar's own Sort button; Created is the default (oldest first, so the longest-waiting is on top). Stored on the same listing preference row the CRM DataGrids use (`sorting`), per user in the CRM; per contact on the portal.</p>
+</div>
+</div>
+</section>
+
+<!-- ============================================================ STATES -->
+<section id="p-states">
+<h2>Portal, phone 375, done state and empty state</h2>
+<p class="why">Left: right after tapping Done on the oldest card. Right: nothing open.</p>
+<div class="row">
+<div class="phone"><div class="screen"><div class="pwrap">
+  <div class="welcome"><b>Welcome, Sean Tan</b><span class="btn sm">Log out</span></div>
+  <div class="search">&#128269; Search submissions</div>
+  <div class="kind"><span class="l">Customer asks <span class="pill">4</span></span><span class="star">&#9733;</span></div>
+  <div class="toolbar"><div class="left"><span class="btn">&#9776; Filter</span><span class="btn">&#8645; Created</span></div><span class="toggle"><span>&#8801;</span><span class="on">&#9638;</span></span></div>
+  <p class="counts">Open <b>4</b> &middot; Needs attention <b class="red">1</b> &middot; Done today <b>2</b></p>
+  <div class="gh red">Needs attention</div>
+  <div class="dh">Yesterday</div>
+  <div class="card"><div class="who">Kim Hong Hardware <span>Mei Ling</span></div><div class="ask"><span class="lbl">Asked: </span>BLT2210 x 20</div><div class="ans"><span class="lbl">Answered: </span>No stock and no incoming at the moment, please refer to your salesman.</div><div class="when">28/09/2026, 3:00 pm <span class="age">Yesterday</span></div><div class="top"><span class="btn sm primary">Done</span></div><div class="open">Open &rsaquo;</div></div>
+  <div class="gh">Today</div>
+  <div class="card"><div class="who">Ah Huat Trading <span>Huat</span></div><div class="ask"><span class="lbl">Asked: </span>PLT1042 x 10</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">29/09/2026, 10:40 am</div><div class="top"><span class="btn sm primary">Done</span></div><div class="open">Open &rsaquo;</div></div>
+  <div class="card"><div class="who">Hock Lee Trading <span>Ah Seng</span></div><div class="ask"><span class="lbl">Asked: </span>CWCX604 x 300</div><div class="ans"><span class="lbl">Answered: </span>The quantity is more than what I can confirm here, please refer to your salesman.</div><div class="when">29/09/2026, 10:25 am</div><div class="top"><span class="btn sm primary">Done</span></div><div class="open">Open &rsaquo;</div></div>
+  <div class="gh">Done today</div>
+  <div class="card done"><div class="who">Hock Lee Trading <span>Ah Seng</span></div><div class="ask"><span class="lbl">Asked: </span>SRT5674 x 50</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">27/09/2026, 11:00 am</div><div class="doneby">Done by Sean Tan, 29/09/2026, 4:05 pm</div><div class="top"><span class="btn sm">Reopen</span></div></div>
+  <div class="card done"><div class="who">Tan Hardware Sdn Bhd <span>Mr Tan</span></div><div class="ask"><span class="lbl">Asked: </span>GLV0310 x 200</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">28/09/2026, 9:00 pm</div><div class="doneby">Done by Sean Tan, 29/09/2026, 8:05 am</div><div class="top"><span class="btn sm">Reopen</span></div></div>
+</div></div><div class="cap">After Done: the card fades out of its day and lands under Done today, counts move, kind badge drops to 4.</div></div>
+
+<div class="phone"><div class="screen"><div class="pwrap">
+  <div class="welcome"><b>Welcome, Sean Tan</b><span class="btn sm">Log out</span></div>
+  <div class="search">&#128269; Search submissions</div>
+  <div class="kind"><span class="l">Customer asks <span class="pill">0</span></span><span class="star">&#9733;</span></div>
+  <div class="toolbar"><div class="left"><span class="btn">&#9776; Filter</span><span class="btn">&#8645; Created</span></div><span class="toggle"><span>&#8801;</span><span class="on">&#9638;</span></span></div>
+  <p class="counts">Open <b>0</b> &middot; Needs attention <b>0</b> &middot; Done today <b>3</b></p>
+  <div class="empty"><div style="font-size:26px;color:var(--muted-fg)">&#128172;</div><div class="h">Nothing waiting</div><div class="p">Asks your customers make on WhatsApp land here.</div></div>
+  <div class="gh">Done today</div>
+  <div class="card done"><div class="who">Kim Hong Hardware <span>Mei Ling</span></div><div class="ask"><span class="lbl">Asked: </span>BLT2210 x 20</div><div class="ans"><span class="lbl">Answered: </span>No stock and no incoming at the moment, please refer to your salesman.</div><div class="when">28/09/2026, 3:00 pm</div><div class="doneby">Done by Sean Tan, 29/09/2026, 4:31 pm</div><div class="top"><span class="btn sm">Reopen</span></div></div>
+  <div style="text-align:center;margin:8px 0 16px"><span class="btn ghost sm">Show done</span></div>
+</div></div><div class="cap">Empty state: heading and hint, no button. The day's cleared rows stay visible.</div></div>
+</div>
+</section>
+
+<!-- ============================================================ CRM CARDS + OPEN -->
+<section id="c-cards">
+<h2>CRM, desktop 1280, Sales &gt; Customer asks, cards view with a card opened</h2>
+<p class="why">The same component inside the CRM page shell: PageHeader "Customer asks", breadcrumb, the Agent select on the right (every agent for view_all; a team leader sees their team's members; a salesperson sees only their own list, no select). Same toolbar, two card columns at this width. Opening a card slides in a right sheet with the conversation.</p>
+<div class="row">
+<div class="desk"><div class="screen">
+  <div class="sidebar">
+    <div class="brand">Sorento</div>
+    <div class="grp">OVERVIEW</div><div class="it">Dashboards</div><div class="it">Ideas</div>
+    <div class="grp">SALES</div><div class="it">Sales &#9662;</div>
+    <div class="it sub">Targets</div><div class="it sub">Opportunities</div><div class="it sub on" style="padding-left:36px">Customer asks</div><div class="it sub">Sales Teams</div><div class="it sub">Sales Agents</div><div class="it sub">Yearly comparison</div>
+    <div class="it">Project Sales</div><div class="it">Delivery Orders</div><div class="it">Marketing</div>
+    <div class="grp">SUPPLY CHAIN</div><div class="it">Supply Chain</div><div class="it">Procurement</div><div class="it">Inventory</div>
+  </div>
+  <div class="main">
+    <div class="topbar">Search menu... Ctrl+K &nbsp;&middot;&nbsp; Sorento SRT &nbsp;&middot;&nbsp; &#128276; &nbsp;&middot;&nbsp; &#9679;</div>
+    <div class="pagehead">
+      <div><div class="t">Customer asks</div><div class="crumbs">Dashboards &rsaquo; Sales &rsaquo; <b>Customer asks</b></div></div>
+      <div class="agent"><span style="font-size:12px;color:var(--muted-fg)">Agent</span><span class="sel" style="width:300px">SEAN I &middot; 5 open &middot; 2 need attention <span>&#215;</span></span></div>
+    </div>
+    <div class="toolbar">
+      <div class="left"><span class="btn">&#9776; Filter</span><span class="btn">&#8645; Created</span></div>
+      <span class="toggle"><span>&#8801;</span><span class="on">&#9638;</span></span>
+    </div>
+    <p class="counts">Open <b>5</b> &middot; Needs attention <b class="red">2</b> &middot; Done today <b>1</b></p>
+    <div class="gh red" style="margin-top:4px">Needs attention</div>
+    <div class="dh">Sat 27 Sep</div>
+    <div class="grid2">
+      <div class="card" style="outline:2px solid var(--primary);outline-offset:1px"><div class="who">Hock Lee Trading <span>Ah Seng</span></div><div class="ask"><span class="lbl">Asked: </span>SRT5674 x 50</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">27/09/2026, 11:00 am <span class="age">2 days ago</span></div><div class="top"><span class="btn sm primary">Done</span></div><div class="open">Open &rsaquo;</div></div>
+    </div>
+    <div class="dh">Yesterday</div>
+    <div class="grid2">
+      <div class="card"><div class="who">Kim Hong Hardware <span>Mei Ling</span></div><div class="ask"><span class="lbl">Asked: </span>BLT2210 x 20</div><div class="ans"><span class="lbl">Answered: </span>No stock and no incoming at the moment, please refer to your salesman.</div><div class="when">28/09/2026, 3:00 pm <span class="age">Yesterday</span></div><div class="top"><span class="btn sm primary">Done</span></div><div class="open">Open &rsaquo;</div></div>
+    </div>
+    <div class="gh">Today</div>
+    <div class="grid2">
+      <div class="card"><div class="who">Ah Huat Trading <span>Huat</span></div><div class="ask"><span class="lbl">Asked: </span>PLT1042 x 10</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">29/09/2026, 10:40 am</div><div class="top"><span class="btn sm primary">Done</span></div><div class="open">Open &rsaquo;</div></div>
+      <div class="card"><div class="who">Hock Lee Trading <span>Ah Seng</span></div><div class="ask"><span class="lbl">Asked: </span>CWCX604 x 300</div><div class="ans"><span class="lbl">Answered: </span>The quantity is more than what I can confirm here, please refer to your salesman.</div><div class="when">29/09/2026, 10:25 am</div><div class="top"><span class="btn sm primary">Done</span></div><div class="open">Open &rsaquo;</div></div>
+      <div class="card"><div class="who">Seri Indah Renovation <span>Mei Ling</span></div><div class="ask"><span class="lbl">Asked: </span>SRTW2000 x 150</div><div class="ans"><span class="lbl">Answered: </span>No stock at the moment, ETA 19/10/2026.</div><div class="when">29/09/2026, 9:12 am</div><div class="top"><span class="btn sm primary">Done</span></div><div class="open">Open &rsaquo;</div></div>
+    </div>
+    <div class="gh">Done today</div>
+    <div class="grid2">
+      <div class="card done"><div class="who">Tan Hardware Sdn Bhd <span>Mr Tan</span></div><div class="ask"><span class="lbl">Asked: </span>GLV0310 x 200</div><div class="ans"><span class="lbl">Answered: </span>Yes, we have stock, please refer to your salesman to proceed.</div><div class="when">28/09/2026, 9:00 pm</div><div class="doneby">Done by Sean Tan, 29/09/2026, 8:05 am</div><div class="top"><span class="btn sm">Reopen</span></div></div>
+    </div>
+
+    <div class="rsheet">
+      <div class="hd" style="display:flex;justify-content:space-between;align-items:flex-start"><div><b style="font-size:16px">Hock Lee Trading</b> <span class="meta">Ah Seng &middot; +60 12-000 0002</span><div class="meta">Asked 27/09/2026, 11:00 am &middot; <span class="age">2 days ago</span> &middot; Agent SEAN I</div></div><span style="color:var(--muted-fg);font-size:18px">&times;</span></div>
+      <div class="askbox"><div class="lbl">Asked</div><p><b>SRT5674 x 50</b> <span style="color:var(--muted-fg)">(SRT5674 Wiper Blade 24in)</span></p><div class="lbl" style="margin-top:8px">Answered</div><p>Yes, we have stock, please refer to your salesman to proceed.</p></div>
+      <div class="sect">Conversation</div>
+      <div class="chat">
+        <div class="daysep">Sat 27 Sep</div>
+        <div class="bub in">Boss, SRT5674 ada stock?<span class="t">10:58 am</span></div>
+        <div class="bub out">How many units of SRT5674 do you need?<span class="t">10:58 am</span></div>
+        <div class="bub in">50<span class="t">11:00 am</span></div>
+        <div class="bub out hl"><span class="tag">This ask</span>SRT5674 x 50: yes, we have stock, please refer to your salesman to proceed.<span class="t">11:00 am</span></div>
+        <div class="bub in">ok tq, I call Sean<span class="t">11:01 am</span></div>
+      </div>
+      <div style="margin:6px 0 0"><span class="btn ghost sm">Show the whole day</span> <span class="btn ghost sm">Open in Conversations</span></div>
+      <div class="sect">Note</div>
+      <div class="notebox"><textarea>Called Ah Seng, wants delivery Thursday. 50 confirmed.</textarea><div class="bar"><span class="saved">&#10003; Saved 29/09/2026, 4:02 pm</span><span class="btn sm">Save note</span></div></div>
+      <div class="foot"><span class="btn primary block">Done</span></div>
+    </div>
+  </div>
+</div><div class="cap">CRM, 1280 x 800, cards view; the first card opened in a right sheet.</div></div>
+</div>
+<p class="note"><span class="num">11</span>The CRM opened card adds "Open in Conversations" (the full chat history page for staff) under the same short conversation; the portal has no such link.</p>
+<p class="note"><span class="num">12</span>Agent select: view_all sees every agent; a team leader sees their current team; a salesperson sees no select. All agents shows the agent code on each card.</p>
+</section>
+
+<!-- ============================================================ CRM LIST -->
+<section id="c-list">
+<h2>CRM, desktop 1280, list view</h2>
+<p class="why">The list view is the repo DataGrid (sortable headers, resizable and reorderable columns, remembered per user like every other listing). The day groups become section rows so the date-first order survives; a header click sorts inside the day.</p>
+<div class="row">
+<div class="desk"><div class="screen">
+  <div class="sidebar">
+    <div class="brand">Sorento</div>
+    <div class="grp">OVERVIEW</div><div class="it">Dashboards</div><div class="it">Ideas</div>
+    <div class="grp">SALES</div><div class="it">Sales &#9662;</div>
+    <div class="it sub">Targets</div><div class="it sub">Opportunities</div><div class="it sub on" style="padding-left:36px">Customer asks</div><div class="it sub">Sales Teams</div><div class="it sub">Sales Agents</div><div class="it sub">Yearly comparison</div>
+    <div class="it">Project Sales</div><div class="it">Delivery Orders</div><div class="it">Marketing</div>
+  </div>
+  <div class="main">
+    <div class="topbar">Search menu... Ctrl+K &nbsp;&middot;&nbsp; Sorento SRT &nbsp;&middot;&nbsp; &#128276; &nbsp;&middot;&nbsp; &#9679;</div>
+    <div class="pagehead">
+      <div><div class="t">Customer asks</div><div class="crumbs">Dashboards &rsaquo; Sales &rsaquo; <b>Customer asks</b></div></div>
+      <div class="agent"><span style="font-size:12px;color:var(--muted-fg)">Agent</span><span class="sel" style="width:300px">All agents <span>&#215;</span></span></div>
+    </div>
+    <div class="toolbar">
+      <div class="left"><span class="btn">&#9776; Filter</span><span class="btn">&#8645; Created</span></div>
+      <span class="toggle"><span class="on">&#8801;</span><span>&#9638;</span></span>
+    </div>
+    <p class="counts">Open <b>7</b> &middot; Needs attention <b class="red">3</b> &middot; Done today <b>1</b></p>
+    <table class="table">
+      <thead><tr><th>Asked at &#8595;</th><th>Agent</th><th>Customer</th><th>Contact</th><th>Asked</th><th>Answered</th><th>Done by</th><th></th></tr></thead>
+      <tbody>
+        <tr class="sec red"><td colspan="8">Needs attention &middot; Sat 27 Sep</td></tr>
+        <tr><td class="num">27/09/2026, 11:00 am <span class="age">2 days ago</span></td><td>SEAN I</td><td>Hock Lee Trading</td><td>Ah Seng</td><td class="num">SRT5674 x 50</td><td class="ell" title="Yes, we have stock, please refer to your salesman to proceed.">Yes, we have stock, please refer to your salesman to proceed.</td><td>-</td><td><span class="btn sm primary">Done</span></td></tr>
+        <tr class="sec red"><td colspan="8">Needs attention &middot; Yesterday</td></tr>
+        <tr><td class="num">28/09/2026, 3:00 pm <span class="age">Yesterday</span></td><td>SEAN I</td><td>Kim Hong Hardware</td><td>Mei Ling</td><td class="num">BLT2210 x 20</td><td class="ell">No stock and no incoming at the moment, please refer to your salesman.</td><td>-</td><td><span class="btn sm primary">Done</span></td></tr>
+        <tr><td class="num">28/09/2026, 5:20 pm <span class="age">Yesterday</span></td><td>LCL</td><td>Lim Chong Hardware</td><td>Mei Ling</td><td class="num">SRT5674 x 8</td><td class="ell">Yes, we have stock, please refer to your salesman to proceed.</td><td>-</td><td><span class="btn sm primary">Done</span></td></tr>
+        <tr class="sec"><td colspan="8">Today</td></tr>
+        <tr><td class="num">29/09/2026, 10:40 am</td><td>SEAN I</td><td>Ah Huat Trading</td><td>Huat</td><td class="num">PLT1042 x 10</td><td class="ell">Yes, we have stock, please refer to your salesman to proceed.</td><td>-</td><td><span class="btn sm primary">Done</span></td></tr>
+        <tr><td class="num">29/09/2026, 10:25 am</td><td>SEAN I</td><td>Hock Lee Trading</td><td>Ah Seng</td><td class="num">CWCX604 x 300</td><td class="ell">The quantity is more than what I can confirm here, please refer to your salesman.</td><td>-</td><td><span class="btn sm primary">Done</span></td></tr>
+        <tr><td class="num">29/09/2026, 9:12 am</td><td>SEAN I</td><td>Seri Indah Renovation</td><td>Mei Ling</td><td class="num">SRTW2000 x 150</td><td class="ell">No stock at the moment, ETA 19/10/2026.</td><td>-</td><td><span class="btn sm primary">Done</span></td></tr>
+        <tr><td class="num">29/09/2026, 8:50 am</td><td>LCL</td><td>Lim Chong Hardware</td><td>Mei Ling</td><td class="num">ELP3756 x 5</td><td class="ell">Yes, we have stock, please refer to your salesman to proceed.</td><td>-</td><td><span class="btn sm primary">Done</span></td></tr>
+        <tr class="sec"><td colspan="8">Done today</td></tr>
+        <tr class="dim"><td class="num">28/09/2026, 9:00 pm</td><td>SEAN I</td><td>Tan Hardware Sdn Bhd</td><td>Mr Tan</td><td class="num">GLV0310 x 200</td><td class="ell">Yes, we have stock, please refer to your salesman to proceed.</td><td>Sean Tan, 8:05 am</td><td><span class="btn sm">Reopen</span></td></tr>
+      </tbody>
+    </table>
+    <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted-fg);padding:10px 4px"><span>Rows per page 20</span><span>1 - 8 of 8</span></div>
+  </div>
+</div><div class="cap">CRM, 1280 x 800, list view as All agents (view_all).</div></div>
+</div>
+<p class="note"><span class="num">13</span>Columns: Asked at, Agent (only when more than one agent is shown), Customer, Contact, Asked, Answered, Done by, the Done action. Clicking a row opens the same right sheet as the cards view.</p>
+</section>
+
+<!-- ============================================================ DECISIONS -->
+<section id="decisions">
+<h2>Decisions to annotate</h2>
+<p class="why">Numbered like the notes above. Each is a yes / no / change for Lavish.</p>
+<ol style="font-size:13.5px;line-height:1.6;max-width:820px;padding-left:22px">
+  <li>Card content: customer + contact, Asked, Answered, datetime. Nothing else on the card.</li>
+  <li>Done is the one CTA and sits in the card's top-right badge slot; Reopen replaces it on a done card.</li>
+  <li>Groups: Needs attention (pinned, by day, oldest first), Today, Done today (greyed), Show done for history.</li>
+  <li>Toolbar reused from the landing: Filter, Sort (Created default), list / cards. No New button.</li>
+  <li>List view on the phone: one line per ask; on the desktop: the DataGrid with section rows.</li>
+  <li>Note: explicit Save note button and a Saved time; the note lives in the opened card, not on the list card.</li>
+  <li>Opened card shows the WhatsApp conversation around the ask, the answering turn marked; dealer left, assistant right; "Show the whole day" for more.</li>
+  <li>Done at the foot of the opened card closes it and clears the row.</li>
+  <li>Filter fields: Customer, Answer, Asked (day), State.</li>
+  <li>Sort remembered per user (CRM) / per contact (portal), on the listing preference row the DataGrids use.</li>
+  <li>CRM opened card adds "Open in Conversations"; portal does not.</li>
+  <li>Agent select: view_all sees everyone, a team leader their team, a salesperson none.</li>
+  <li>CRM list columns: Asked at, Agent, Customer, Contact, Asked, Answered, Done by, action.</li>
+</ol>
+</section>
+</div>
+</body>
+</html>
