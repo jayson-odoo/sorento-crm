@@ -127,20 +127,50 @@ jobs:
               )
           PY
 
-  # Which areas a pull request touches, so the multi-minute jobs below only
-  # run when the code they test can have changed. Before this, every job ran
-  # on every PR regardless of what it changed, which is the main reason CI
+  # Which areas a change touches, so the multi-minute jobs below only run
+  # when the code they test can have changed. Before this, every job ran on
+  # every PR regardless of what it changed, which is the main reason CI
   # minutes kept growing on a metered plan.
   #
-  # Pull requests ONLY. A push to main, a merge-queue entry and a manual
-  # dispatch all report every area as changed, so main, the queue and the
-  # deploy keep gating on the full set. The alembic gate above is deliberately
-  # NOT behind this: it is the fast check, and it must run on every PR. The
-  # workflow file itself counts as every area, or a change to it could never
-  # be exercised by the PR that makes it.
+  # Two questions, answered from one file list:
   #
-  # Plain `gh api` over the PR's file list, no third-party action and no
-  # checkout: it is one HTTP call and it finishes in seconds.
+  # 1. `docs_only`: is EVERY changed file documentation? Docs-only means
+  #    every path matches `DOCS_RE` below: `documentation/**`, `.claude/**`,
+  #    `.cursor/**`, a root-level `*.md` (CLAUDE.md, PRINCIPLES.md,
+  #    LESSONS-LEARNT.md, ...) or the PR template. Nothing under the four
+  #    service trees counts, whatever its extension: `*.md` files inside
+  #    them are test fixtures (tests/chatbot/replay_turns, e2e/fixtures) and
+  #    the MCP Dockerfile copies its README into the image. A workflow, a
+  #    Dockerfile, a migration, a lockfile or any config file is therefore
+  #    never docs-only either, because none of them match. When the answer
+  #    is yes, every area flag is false, so the validate/test/typecheck
+  #    jobs skip through their existing `if`s, and build-images,
+  #    build-and-deploy and notify-owner gate on it directly: a docs merge
+  #    to main runs this job and the alembic gate above (about 30 seconds
+  #    between them) and nothing else. Owner ruling 29 Sep 2026: "all the
+  #    docs merge don't need to trigger deployment"; on the Free plan a
+  #    docs-only push to main was taking the same full build + test +
+  #    deploy cycle as a code change and queuing behind it.
+  #
+  #    Fail-safe direction is always the full pipeline: an empty file list,
+  #    a compare call that fails, a branch-creation push (zero `before`
+  #    SHA), a manual dispatch, or a list that hits the compare API's
+  #    300-file cap (so it may be truncated) all report docs_only=false.
+  #
+  # 2. `backend` / `frontend` / `mcp`: which service trees a PULL REQUEST
+  #    touches. A push to main and a merge-queue entry that are not
+  #    docs-only still report every area as changed, so main, the queue and
+  #    the deploy keep gating on the full set. The alembic gate above is
+  #    deliberately NOT behind this: it is the fast check, and it must run
+  #    on every PR. The workflow file itself counts as every area, or a
+  #    change to it could never be exercised by the PR that makes it.
+  #
+  # Plain `gh api` over the file list (the PR's files, or the compare of
+  # the push / merge-queue range), no third-party action and no checkout:
+  # it is one HTTP call and it finishes in seconds. The regex is asserted
+  # by sorento_crm_backend/tests/test_ci_docs_only_filter.py, which reads
+  # the `DOCS_RE=` line out of this file and runs the same `grep -Ev` over
+  # docs-only and mixed file lists, so the two cannot drift.
   changes:
     name: Changed areas
     runs-on: ubuntu-latest
@@ -154,6 +184,7 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
       mcp: ${{ steps.filter.outputs.mcp }}
+      docs_only: ${{ steps.filter.outputs.docs_only }}
     steps:
       - name: Detect changed areas
         id: filter
@@ -161,16 +192,81 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           PR: ${{ github.event.pull_request.number }}
+          # push: the range main moved by. `before` is the zero SHA only on a
+          # branch-creation push, which main never sees; guarded anyway.
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+          # merge_group: the candidate merge result against the base it was
+          # built on, so the queue classifies exactly the files it would land.
+          MG_BASE: ${{ github.event.merge_group.base_sha }}
+          MG_HEAD: ${{ github.event.merge_group.head_sha }}
         run: |
+          # One line per changed path, or empty with `why` set when the list
+          # cannot be established (which means: full pipeline).
+          files=""
+          why=""
+          compare() {
+            gh api "repos/$GITHUB_REPOSITORY/compare/$1...$2" --paginate --jq '.files[].filename'
+          }
+          case "$EVENT" in
+            pull_request)
+              files=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --paginate --jq '.[].filename') \
+                || { files=""; why="PR file list call failed"; }
+              ;;
+            push)
+              if [ "$PUSH_BEFORE" = "0000000000000000000000000000000000000000" ]; then
+                why="branch-creation push (before is the zero SHA)"
+              else
+                files=$(compare "$PUSH_BEFORE" "$PUSH_AFTER") \
+                  || { files=""; why="compare $PUSH_BEFORE...$PUSH_AFTER failed"; }
+              fi
+              ;;
+            merge_group)
+              files=$(compare "$MG_BASE" "$MG_HEAD") \
+                || { files=""; why="compare $MG_BASE...$MG_HEAD failed"; }
+              ;;
+            *)
+              why="$EVENT never skips: every area counts as changed"
+              ;;
+          esac
+          files=$(printf '%s\n' "$files" | sed '/^$/d' | sort -u)
+          count=$(printf '%s' "$files" | grep -c . || true)
+          if [ -n "$files" ]; then
+            echo "changed files ($count):"; printf '%s\n' "$files" | sed 's/^/  /'
+          fi
+
+          # Docs-only classification. Keep this regex on ONE line starting with
+          # `DOCS_RE=`: the pytest named in the job comment extracts it by that
+          # prefix.
+          DOCS_RE='^(documentation/|\.claude/|\.cursor/|[^/]+\.md$|\.github/PULL_REQUEST_TEMPLATE\.md$)'
+          docs_only=false
+          if [ -n "$why" ]; then
+            echo "docs_only=false: $why"
+          elif [ -z "$files" ]; then
+            echo "docs_only=false: no changed files reported"
+          elif [ "$count" -ge 300 ]; then
+            echo "docs_only=false: $count files reaches the compare API's 300-file cap, list may be truncated"
+          elif printf '%s\n' "$files" | grep -Evq "$DOCS_RE"; then
+            echo "docs_only=false: non-docs paths present:"
+            printf '%s\n' "$files" | grep -Ev "$DOCS_RE" | sed 's/^/  /'
+          else
+            docs_only=true
+            echo "docs_only=true: every changed file is documentation"
+          fi
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+
+          if [ "$docs_only" = "true" ]; then
+            for area in backend frontend mcp; do echo "$area=false"; done | tee -a "$GITHUB_OUTPUT"
+            echo "docs-only change: no service area counts as changed"
+            exit 0
+          fi
           if [ "$EVENT" != "pull_request" ]; then
-            for area in backend frontend mcp; do echo "$area=true" >> "$GITHUB_OUTPUT"; done
+            for area in backend frontend mcp; do echo "$area=true"; done | tee -a "$GITHUB_OUTPUT"
             echo "$EVENT is not a pull_request: every area counts as changed"
             exit 0
           fi
-          files=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --paginate --jq '.[].filename')
-          echo "changed files:"; echo "$files" | sed 's/^/  /'
           flag() {
-            if echo "$files" | grep -Eq "$2"; then echo "$1=true"; else echo "$1=false"; fi
+            if printf '%s\n' "$files" | grep -Eq "$2"; then echo "$1=true"; else echo "$1=false"; fi
           }
           {
             flag backend  '^(sorento_crm_backend/|\.github/workflows/deploy\.yml$)'
@@ -871,10 +967,14 @@ jobs:
     name: Build and push images
     needs: [changes]
     # Same condition as build-and-deploy: only build for real on a push to
-    # main or a manual dispatch. A PR run still needs the images to exist for
-    # its own validate-backend/validate-mcp legs, which build separately
-    # (load: true, no push) and are unaffected by this job's `if`.
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    # main or a manual dispatch, and never for a docs-only push (see
+    # `changes`: nothing that ships can have changed, so there is no image
+    # to build). A PR run still needs the images to exist for its own
+    # validate-backend/validate-mcp legs, which build separately (load:
+    # true, no push) and are unaffected by this job's `if`.
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -972,6 +1072,7 @@ jobs:
   build-and-deploy:
     needs:
       [
+        changes,
         check-migration-heads,
         validate-backend,
         validate-mcp,
@@ -984,7 +1085,14 @@ jobs:
     # Deliberately NOT `merge_group`: a queue entry only validates the merge
     # candidate. The deploy belongs to the `push` to main that lands after the
     # queue merges it, so each change still deploys exactly once, from main.
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    #
+    # A docs-only push to main deploys nothing. The gates in `needs` are
+    # already skipped for it (every area flag is false), which on its own
+    # skips this job, but the condition is stated here too so the rule is
+    # readable at the deploy and does not depend on the skip propagating.
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     # Job-level, and a fixed group name rather than the workflow-level group
     # above (which is per-run for push events, so it never serializes deploys
@@ -1130,8 +1238,16 @@ jobs:
   notify-owner:
     name: Notify owner by email
     runs-on: ubuntu-latest
-    needs: [build-and-deploy]
-    if: always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [changes, build-and-deploy]
+    # `always()` so a FAILED deploy still mails, which is also why the
+    # docs-only case must be excluded here explicitly: with build-and-deploy
+    # skipped, `needs.build-and-deploy.result` is `skipped`, and the step
+    # below would otherwise mail "deploy failed" for a docs merge that was
+    # never meant to deploy.
+    if: >-
+      always()
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && needs.changes.outputs.docs_only != 'true'
     steps:
       - name: Check SMTP configuration
         id: smtp
