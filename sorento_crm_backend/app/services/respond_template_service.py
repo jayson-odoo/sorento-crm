@@ -97,6 +97,7 @@ PARAM_VARIABLES = (
 # "every slot mapped to *something*" check. Enforced in set_default.
 REQUIRED_PARAM_VARIABLE: Dict[str, str] = {
     "portal_otp": "otp_code",
+    "login_otp": "otp_code",
 }
 
 _PARAM_RE = re.compile(r"\{\{(\d+)\}\}")

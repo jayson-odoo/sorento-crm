@@ -44,6 +44,7 @@ import { useBrandSelectQuery } from '../../shared/hooks/use-brand-select-query';
 import { CHAT_SEARCH_LABEL, chatSearchState, type ProductListItem } from '../types/product.types';
 import { bulkImportProducts, validateProductsImport } from '../services/productService';
 import ProductBulkChatSearchDialog from './ProductBulkChatSearchDialog';
+import { UploadCostPriceAction } from './UploadCostPriceAction';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { useImportJobDrawer } from '@/components/upload-activity';
 import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
@@ -850,16 +851,7 @@ const ProductsList = () => {
     discontinued_to: discontinuedTo ?? undefined,
   });
 
-  // The one offer this listing makes, in both places it belongs: the
-  // toolbar, and the empty state's next step (S5-06).
-  const listPrimaryAction = (
-    <Button
-      onClick={() => router.push('/master-data-management/products/new')}
-    >
-      <Plus className="size-4" />
-      Create Product
-    </Button>
-  );
+  const openCreateProduct = () => router.push('/master-data-management/products/new');
 
   return (
     <DataGrid
@@ -976,8 +968,14 @@ const ProductsList = () => {
               filename: 'products_export.xlsx',
               getPayload: getExportPayload,
             }}
-            primaryAction={listPrimaryAction}
+            primaryAction={<UploadCostPriceAction />}
             secondaryActions={[
+              {
+                key: 'create-product',
+                label: 'Create product',
+                icon: Plus,
+                onClick: openCreateProduct,
+              },
               {
                 key: 'advanced-filter',
                 label: 'Advanced filters',
