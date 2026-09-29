@@ -361,14 +361,18 @@ def _seed_scope_universe(db) -> dict:
 
 def _project_so_delivered_line_with_order_back(
     db, *, product_id, warehouse_id, donor_warehouse_code, qty="3",
-    company_id: str = SORENTO_COMPANY_ID,
+    company_id: str = SORENTO_COMPANY_ID, sibling_order: bool = True,
 ):
     """AC-OB-7/AC-OB-9's own seed (`PLAN-oi-order-back-not-capped.md`): ONE project SO,
     ONE core line delivered in full (3/3 - nothing outstanding, `line_status` closed the
     way SO417310 line 16 reads), and TWO sibling confirmed-leg rows on it - an
     ORDER_BACK of `qty` at the DONOR location its `stock_location` names, and an ORDER
-    of the same `qty` at the line's own location - so a caller reading "the ORDER_BACK
-    is uncapped, the sibling ORDER stays capped" gets both off ONE delivered line.
+    of the same `qty` at the line's own location - so a caller gets both off ONE
+    delivered line. Under R1 (`PLAN-oi-order-rows-uncapped.md`, 23 Sep 2026) BOTH rows
+    are owed in full, so a caller that wants the owner's measured single-row shape (one
+    ORDER_BACK of `qty`, nothing else on the line - `tests/scm/test_reorder_plan_oi_need_
+    in_full.py`) passes ``sibling_order=False`` and gets ``order_row=None`` back; with
+    the sibling in, the line carries `2 * qty` of confirmed demand.
     """
     so_number = _code("SO")
     so = SalesOrder(
@@ -426,13 +430,16 @@ def _project_so_delivered_line_with_order_back(
         state=INQUIRY_RAISED, supply_decision_id=decision.id,
         ack_state=ACK_ACKNOWLEDGED, stock_location=donor_warehouse_code,
     )
-    order_row = OrderInquiryRow(
-        id=_u(), company_id=company_id, order_inquiry_id=inquiry.id,
-        so_line_id=pso_line.id, qty=Decimal(qty), verb=IV_ORDER,
-        state=INQUIRY_RAISED, supply_decision_id=decision.id,
-        ack_state=ACK_ACKNOWLEDGED,
-    )
-    db.add_all([order_back_row, order_row])
+    order_row = None
+    if sibling_order:
+        order_row = OrderInquiryRow(
+            id=_u(), company_id=company_id, order_inquiry_id=inquiry.id,
+            so_line_id=pso_line.id, qty=Decimal(qty), verb=IV_ORDER,
+            state=INQUIRY_RAISED, supply_decision_id=decision.id,
+            ack_state=ACK_ACKNOWLEDGED,
+        )
+        db.add(order_row)
+    db.add(order_back_row)
     db.flush()
     return {
         "so_number": so_number, "pso": pso, "inquiry": inquiry,
