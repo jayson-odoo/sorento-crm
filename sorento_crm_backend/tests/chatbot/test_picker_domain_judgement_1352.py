@@ -519,6 +519,21 @@ _SECOND_PICK_READINGS = {
     "carried_domain_flagged": {
         "domain_hint": "promotion", "intent_hint": "check_promotion", "domain_in_message": True,
     },
+    # PR #1353 fix round 2, the LIVE v48 reading (chatbot.turns, 29 Sep 2026 10:22 MYT,
+    # contact 487555417): with `previous_conversation_state` carrying access_levels
+    # ["Sorento Office"] after "1", the parser echoed that level on the bare "2"
+    # (parser_raw: domain_hint promotion, domain_in_message false, access_levels
+    # ["Sorento Office"]), and the fetch answered Office again. The carried level names
+    # none of the picked options, so the picked option decides.
+    "carried_office_level": {
+        "domain_hint": "promotion", "intent_hint": "check_promotion", "domain_in_message": False,
+        "access_levels": ["Sorento Office"],
+    },
+    # The same echo one turn earlier: a stale Dealer level on the "1" that picked Office.
+    "carried_dealer_level": {
+        "domain_hint": "promotion", "intent_hint": "check_promotion", "domain_in_message": False,
+        "access_levels": ["Sorento Dealer"],
+    },
 }
 
 
@@ -602,7 +617,7 @@ def test_f_two_successive_tier_picks_keep_the_product(session_factory, monkeypat
 
     for position, level in ((1, "Sorento Office"), (2, "Sorento Dealer")):
         reading = _parser_output(
-            entities=[], access_levels=[], reference_positions=[position], **_SECOND_PICK_READINGS[shape]
+            **{"entities": [], "access_levels": [], "reference_positions": [position], **_SECOND_PICK_READINGS[shape]}
         )
         text, calls = turn(str(position), reading)
         assert calls, f"'{position}' must fetch promotions: {text!r}"
@@ -686,3 +701,148 @@ def test_f_a_tier_roster_records_the_promotion_domain():
         [{"tier": "office", "label": "Office"}, {"tier": "dealer", "label": "Dealer"}], asked_at_turn=1
     )
     assert question is not None and question.payload.get("domain") == "promotion", question
+
+
+# =============================================================================== #
+# G. The picked option decides the roster's own axis (PR #1353 fix round 2)
+#
+# Owner retest of round 1 on the :3105 copy, parser v48 (chatbot.turns, 29 Sep 2026 10:22
+# MYT, contact 487555417): "promo srtwc286" -> roster (1 Office, 2 Dealer, 3 End user) ->
+# "1" Office files (correct) -> "2" the SAME Office files. Turn "2"'s parser_raw:
+# domain_hint promotion, domain_in_message false, access_levels ["Sorento Office"] - the
+# level `previous_conversation_state` carried after "1", echoed on a bare position. The
+# fetch trace read access_levels ["Sorento Office", "Mocha Office", "Cabana Office"]: the
+# resolver's own tier gate (`tier_gate.tier_gate`) states the tier off the parser's
+# `access_levels`, so it answered Office over the Dealer the customer had just picked.
+# Owner ruling: the parser reports, the engine judges. On a bare pick answered in the
+# roster's domain the picked option(s) are the axis, and a carried value of that axis
+# naming none of them is ignored (tier, product, customer alike).
+# =============================================================================== #
+
+
+def _seed_live_entitlement(session_factory) -> None:
+    """The live contact's entitlement: Office and Dealer in all three brands, plus End
+    User, so a tier recomposes to three compound levels exactly as the live fetch did."""
+    from tests.chatbot.test_rearch_r6_review_round import _grant_access_type, _seed_access_type
+
+    for brand in ("Sorento", "Mocha", "Cabana"):
+        for tier in ("Office", "Dealer"):
+            code = f"{brand.lower()}_{tier.lower()}"
+            _seed_access_type(session_factory, code=code, name=f"{brand} {tier}")
+            _grant_access_type(session_factory, code=code)
+    _seed_access_type(session_factory, code="end_user", name="End User")
+    _grant_access_type(session_factory, code="end_user")
+
+
+_OFFICE_ALL = ["Cabana Office", "Mocha Office", "Sorento Office"]
+_DEALER_ALL = ["Cabana Dealer", "Mocha Dealer", "Sorento Dealer"]
+
+
+@pytest.mark.parametrize(
+    "carried",
+    [["Sorento Office"], ["Sorento Office", "Mocha Office", "Cabana Office"]],
+    ids=["live_parser_raw", "all_office_levels"],
+)
+def test_g_a_carried_office_level_on_a_bare_2_answers_dealer(session_factory, monkeypatch, carried):
+    """The live v48 reading, replayed: "promo <family>" -> "1" (parser access_levels
+    ["Sorento Office"]) -> "2" (the SAME ["Sorento Office"], carried). Turn "2" fetches
+    Dealer, and the resolver's own tier gate states Dealer too, never the carried Office."""
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.lanes.business import fetch as fetch_mod
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests._pg_fixture import unique_code
+    from tests.chatbot.test_engine import _parser_output
+    from tests.chatbot.test_engine_company_scope import _seed_product
+    from tests.chatbot.test_rearch_r5_production_decides import _seed_contact_and_get
+    from tests.chatbot.test_rearch_r6_review_round import _mark_workspace_default, _run_turn_engine
+
+    gates: list[dict[str, Any]] = []
+    real_resolve = engine_mod.turn_runtime.resolve_kinds
+
+    def traced_resolve(*args: Any, **kwargs: Any):
+        outcome = real_resolve(*args, **kwargs)
+        gates.append(dict(((outcome.payload or {}).get("tier_gate")) or {}))
+        return outcome
+
+    monkeypatch.setattr(engine_mod.turn_runtime, "resolve_kinds", traced_resolve)
+    _seed_contact_and_get(session_factory)
+    _mark_workspace_default(session_factory)
+    _seed_live_entitlement(session_factory)
+    code = unique_code("ZZT1353LIVE")
+    ids = {
+        _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=f"{code}-SH"),
+        _seed_product(session_factory, company_id=DEFAULT_COMPANY_ID, code=f"{code}-SH-NEW"),
+    }
+
+    def turn(text: str, qf: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+        captured: list[tuple[str, dict[str, Any]]] = []
+        result = _run_turn_engine(
+            session_factory, monkeypatch, qf=qf, text_body=text, msg_id=f"zzt-1353-g-{len(carried)}-{text}",
+            mcp_call=_promotion_double(captured), real_entitlement=True,
+        )
+        return (result.reply or {}).get("text") or "", [a for n, a in captured if n == fetch_mod.TIER_PROBE_TOOL]
+
+    text, _ = turn(f"promo {code}", _parser_output(
+        domain_hint="promotion", intent_hint="check_promotion", domain_in_message=True,
+        entities=[{"raw": code, "hint": "product", "canonical_code": None, "current_message": True, "confident": True}],
+    ))
+    assert "1. Office" in text and "2. Dealer" in text and "3. End user" in text, text
+
+    for position, expected in ((1, _OFFICE_ALL), (2, _DEALER_ALL)):
+        gates.clear()
+        text, calls = turn(str(position), _parser_output(
+            domain_hint="promotion", intent_hint="check_promotion", domain_in_message=False,
+            entities=[], access_levels=list(carried), reference_positions=[position],
+        ))
+        assert calls, f"'{position}' must fetch promotions: {text!r}"
+        assert set(calls[-1].get("product_ids") or []) == ids, calls
+        assert sorted(calls[-1].get("access_levels") or []) == expected, calls[-1].get("access_levels")
+        assert gates and sorted(gates[-1].get("access_levels_recomposed") or []) == expected, gates
+        tier = expected[0].split()[-1].lower()
+        assert gates[-1].get("tier_stated") == [tier], gates[-1]
+
+
+@pytest.mark.parametrize("carried_current", [False, True], ids=["carried", "echoed_as_typed"])
+def test_g_a_carried_product_on_a_bare_7_answers_the_7th(session_factory, monkeypatch, stub_access, carried_current):
+    """product_pick: "incoming srtwc286" -> "4" -> "7", where the parser echoes the 4th's
+    code (the carried subject) on the bare "7". The 7th option is what "7" answers."""
+    from tests.chatbot._turn_helpers import entity
+
+    c = _console(session_factory, monkeypatch, stub_access, f"+6000013532{int(carried_current)}")
+    _picked_roster(c)
+    reading = _bare_pick(7)
+    reading["entities"] = [entity("SRTWC286-SH-NEW", hint="product", canonical_code="SRTWC286-SH-NEW", current_message=carried_current)]
+    _text, calls = _say(c, "7", reading)
+    assert calls and calls[0] == (INCOMING, ["SRTWC286-SH-NEW-P"]), calls
+    assert c.stored_question["kind"] == "product_pick" and _answered_positions(c) == [4, 7]
+
+
+def test_g_the_picked_axis_replaces_a_carried_value_that_names_no_picked_option():
+    """The engine's rule, pure, for each roster axis the parser may carry: tier
+    (`access_levels`), product and customer (`entities` of the roster's kind)."""
+    from app.services.chatbot.engine import _with_the_picked_axis
+
+    tiers = pending_ask(
+        "tier_pick",
+        [
+            {"position": 1, "label": "Office", "entity_type": "tier", "payload": {"value": "office"}},
+            {"position": 2, "label": "Dealer", "entity_type": "tier", "payload": {"value": "dealer"}},
+            {"position": 3, "label": "End user", "entity_type": "tier", "payload": {"value": "end_user"}},
+        ],
+        asked_at_turn=1,
+        payload={"domain": "promotion"},
+    )
+    out = _with_the_picked_axis(verdict(access_levels=["Sorento Office"], reference_positions=[2]), tiers, [2])
+    assert out["access_levels"] == ["dealer"], out["access_levels"]
+    out = _with_the_picked_axis(verdict(access_levels=["Sorento Dealer"], reference_positions=[2]), tiers, [2])
+    assert out["access_levels"] == ["Sorento Dealer"], "a carried level naming the pick stays"
+    out = _with_the_picked_axis(verdict(access_levels=["Sorento Office"], reference_positions=[1, 2]), tiers, [1, 2])
+    assert out["access_levels"] == ["Sorento Office", "dealer"], out["access_levels"]
+
+    customers = pending_ask("customer_pick", [dict(o) for o in _CUSTOMER_OPTIONS], asked_at_turn=1, payload={"domain": "order"})
+    carried = {"raw": "HANLIM TRADING SDN BHD", "hint": "customer", "canonical_code": "C-HAN-1", "uuid": "c-1", "current_message": True}
+    out = _with_the_picked_axis(verdict(entities=[carried, dict(_CARRIED_PRODUCT)], reference_positions=[2]), customers, [2])
+    assert [e.get("hint") for e in out["entities"]] == ["product"], out["entities"]
+    picked = {"raw": "HANLIM TRADING (JB) SDN BHD", "hint": "customer", "current_message": True}
+    out = _with_the_picked_axis(verdict(entities=[picked], reference_positions=[2]), customers, [2])
+    assert out["entities"] == [picked], "an entity naming the picked option stays"

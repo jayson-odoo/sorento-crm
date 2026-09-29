@@ -197,6 +197,113 @@ def _without_carried_domain_on_a_roster_pick(
     return {**parse_output, "domain_hint": None}
 
 
+def _picks_in_the_roster_domain(pending: Any, verdict: dict[str, Any]) -> list[int]:
+    """The positions a bare pick answered over an open roster, in the roster's domain.
+
+    PR #1353 fix round 2: the parser resolves WHICH position (a number, an ordinal, a
+    typed label); this is only the engine's reading of whether the message also named a
+    domain of its own. A pick naming none, or naming only the roster's own domain, is
+    answered in the roster's domain (`apply._answer_pending`, contract 121). Anything
+    else returns [] and the verdict is left as the parser wrote it.
+    """
+    from app.services.chatbot.turn.apply import _names_only_the_roster_domain
+    from app.services.chatbot.turn.decide import names_its_own_domain, picked_positions
+
+    if pending is None or not turn_pending.is_roster(pending.kind) or not pending.options:
+        return []
+    picked = picked_positions(pending, verdict)
+    if picked is None:
+        return []
+    asked_for = pending.payload.get("domains") or (
+        [pending.payload["domain"]] if pending.payload.get("domain") else []
+    )
+    if names_its_own_domain(verdict) and not _names_only_the_roster_domain(verdict, asked_for):
+        return []
+    return list(picked[0])
+
+
+def _option_words(option: dict[str, Any]) -> set[str]:
+    """Every name a roster option goes by: its label, code, name, uuids and tier value."""
+    payload = option.get("payload") if isinstance(option.get("payload"), dict) else {}
+    values = [
+        option.get("label"), option.get("code"), option.get("name"), option.get("uuid"),
+        payload.get("value"), payload.get("tier"), *(option.get("uuids") or []),
+    ]
+    return {str(v).strip().lower().replace("_", " ") for v in values if isinstance(v, str) and v.strip()}
+
+
+def _with_the_picked_axis(
+    verdict: dict[str, Any], pending: Any, positions: list[int]
+) -> dict[str, Any]:
+    """The roster's own axis, off the option(s) the customer picked.
+
+    PR #1353 fix round 2 (owner retest, v48, chatbot.turns 29 Sep 2026 10:22 MYT):
+    "promo srtwc286" -> tier roster -> "1" Office -> "2" answered Office again. With
+    `previous_conversation_state` carrying access_levels ["Sorento Office"], the parser
+    echoed that level on the bare "2", and the resolver's tier gate
+    (`lanes/business/tier_gate.tier_gate`) stated the tier off the parser's
+    `access_levels`: Office, recomposed to all three Office levels, over the Dealer just
+    picked. Owner ruling: the parser reports, the engine judges. On a bare pick the
+    picked option IS the axis, so a carried value of it that names none of the picked
+    options is dropped:
+
+    * `tier_pick`: `access_levels` keeps each carried level naming a picked tier ("Sorento
+      Dealer" over a Dealer pick) and adds the picked tier's own value for every picked
+      tier no carried level names. `tier_gate` reads a bare tier value as stated.
+    * any other roster (product, customer): an entity of the roster's kind naming no
+      picked option is dropped - the parser's echo of the previous pick is not a second
+      subject. The picked option itself reaches the focus through `_answer_pending`.
+    """
+    matched = [o for o in pending.options if o.get("position") in positions]
+    if not matched:
+        return verdict
+    kind = str(matched[0].get("entity_type") or "")
+    if pending.kind == "tier_pick" or kind == "tier":
+        from app.services.chatbot.lanes.business.tier_gate import parse_level
+
+        picked: list[str] = []
+        for o in matched:
+            payload = o.get("payload") if isinstance(o.get("payload"), dict) else {}
+            value = o.get("code") or payload.get("value") or payload.get("tier") or o.get("label")
+            if isinstance(value, str) and value and value.strip().lower() not in picked:
+                picked.append(value.strip().lower())
+        carried = [a for a in (verdict.get("access_levels") or []) if isinstance(a, str)]
+
+        def tier_of(level: str) -> str:
+            parsed = parse_level(level)
+            return parsed["tier"] if parsed else level.strip().lower().replace(" ", "_")
+
+        kept = [a for a in carried if tier_of(a) in picked]
+        named = {tier_of(a) for a in kept}
+        levels = kept + [t for t in picked if t not in named]
+        entities = [
+            e for e in (verdict.get("entities") or [])
+            if not (isinstance(e, dict) and e.get("hint") == "tier" and str(e.get("canonical_code") or e.get("raw") or "").strip().lower() not in picked)
+        ]
+        if levels == carried and len(entities) == len(verdict.get("entities") or []):
+            return verdict
+        return {**verdict, "access_levels": levels, "entities": entities}
+    if not kind:
+        return verdict
+    words: set[str] = set()
+    for o in matched:
+        words |= _option_words(o)
+
+    def names_a_pick(e: dict[str, Any]) -> bool:
+        return any(
+            isinstance(v, str) and v.strip().lower().replace("_", " ") in words
+            for v in (e.get("uuid"), e.get("canonical_code"), e.get("raw"), e.get("name"))
+        )
+
+    entities = verdict.get("entities") or []
+    kept_entities = [
+        e for e in entities if not (isinstance(e, dict) and e.get("hint") == kind and not names_a_pick(e))
+    ]
+    if len(kept_entities) == len(entities):
+        return verdict
+    return {**verdict, "entities": kept_entities}
+
+
 @contextmanager
 def _session(factory: SessionFactory) -> Iterator[Session]:
     db = factory()
@@ -2685,6 +2792,23 @@ def _run_stages(  # noqa: PLR0915
         )
         if order_list_rule:
             turn_trace.add("order_list", {"verdict_rule": order_list_rule})
+
+        # PR #1353 fix round 2: a bare pick answered in the roster's domain takes the
+        # roster's axis from the option picked, never from a value the parser carried.
+        roster_picks = _picks_in_the_roster_domain(state_in.pending, verdict)
+        if roster_picks:
+            picked_verdict = _with_the_picked_axis(verdict, state_in.pending, roster_picks)
+            if picked_verdict is not verdict:
+                turn_trace.add(
+                    "picked_axis",
+                    {
+                        "roster": state_in.pending.kind,
+                        "positions": roster_picks,
+                        "access_levels": [verdict.get("access_levels"), picked_verdict.get("access_levels")],
+                        "entities_dropped": len(verdict.get("entities") or []) - len(picked_verdict.get("entities") or []),
+                    },
+                )
+                verdict = picked_verdict
 
         # C APPLY, first pass: state and plan from the verdict alone.
         state_out, plan = turn_apply(state_in, verdict, policy)
