@@ -86,7 +86,11 @@ def test_head_chain():  # AC-EM097
     parent = mods["eml_0001_layout_columns"].down_revision
     assert isinstance(parent, str) and not parent.startswith("eml_")
     assert sd.get_revision(parent) is not None
-    assert sd.get_heads() == ["eml_0002_seed_layouts"]
+    # One head, with this chain in its history: a later lane's migration may sit on top
+    # (#1356 chains ac_grn_do_0001_ingest onto eml_0002), so the head is not pinned by name.
+    heads = sd.get_heads()
+    assert len(heads) == 1
+    assert "eml_0002_seed_layouts" in {r.revision for r in sd.iterate_revisions(heads[0], "base")}
     for rev in ("eml_0001_layout_columns", "eml_0002_seed_layouts"):
         assert len(rev) <= 32
 
