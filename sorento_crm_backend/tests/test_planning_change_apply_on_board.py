@@ -597,16 +597,17 @@ def _released_line(api, *, linked: bool):
 # is the shape that now covers this territory.
 
 
-def test_release_moves_a_linked_row_to_the_pool_with_its_links_and_raises_nothing(api):
-    """Slice D semantics (AC-D1-D3, issue #859), superseding the C1-era premise this
-    docstring used to carry (a linked Buy delayed past the window composed "keep" and
-    kept its links in place): the coder's own fixture now composes `reallocate po 40 to
-    pool` + `buy 40 for the new date`, measured directly on HEAD 4fc3b1c37. Confirming it,
-    the row GIVES UP its document - its own links are gone - and the freed 40 lands on a
-    fresh pool-location row linked to the SAME purchase-order line for the same 40 (D1:
-    a pool row carries the links it was created for), so the PO line reads fully claimed
-    throughout. The line's own row is reused (never duplicated) and now reads raised for
-    the fresh Buy the new, far date needs."""
+def test_release_of_a_linked_row_keeps_its_link_and_records_the_intent(api):
+    """A linked Buy delayed past the window composes `reallocate po 40 to pool` + `buy 40
+    for the new date` (Slice D, measured on HEAD 4fc3b1c37). Owner ruling 29 Sep 2026
+    (PR #1369, option (c)), in the owner's own words for exactly this shape: "from
+    fulfilment planning, [it] is kind of requesting it to be delayed while the link is
+    intact, then only purchasing will do the adjustment in the linkage". So the row KEEPS
+    its document - its link stays, the PO line reads fully claimed by the row itself, no
+    pool row is written - and the batch records the intent for purchasing to carry out in
+    AutoCount. The line's own row is reused (never duplicated), settled in place at the
+    new, far date. Was "...moves_a_linked_row_to_the_pool_with_its_links_and_raises_
+    nothing", asserting the retired re-deal."""
     fixture = _released_line(api, linked=True)
     world = fixture["world"]
     line = fixture["line"]
@@ -634,7 +635,10 @@ def test_release_moves_a_linked_row_to_the_pool_with_its_links_and_raises_nothin
     svc = ProjectOrderInquiryService(world.db)
     row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_id).one()
     assert row.state != INQUIRY_CANCELLED
-    assert svc._links_of(row.id) == [], "the row gives its document up - no link stays on it"
+    own_links = svc._links_of(row.id)
+    assert sum(Decimal(str(l.qty)) for l in own_links) == Decimal("40"), (
+        "the link stays intact while the delay is requested (owner, 29 Sep 2026)", own_links,
+    )
     assert row.note and "2026-08-25" in row.note, "the note names what it was"
 
     pool_rows = (
@@ -643,10 +647,16 @@ def test_release_moves_a_linked_row_to_the_pool_with_its_links_and_raises_nothin
                 OrderInquiryRow.stock_location == world.pool_wh.warehouse_code)
         .all()
     )
-    assert len(pool_rows) == 1, pool_rows
-    assert pool_rows[0].qty == Decimal("40")
-    pool_links = svc._links_of(pool_rows[0].id)
-    assert sum(Decimal(str(l.qty)) for l in pool_links) == Decimal("40"), pool_links
+    assert pool_rows == [], ("the planning side never writes a pool row", pool_rows)
+
+    from app.models.planning_change import PlanningChangeRow
+
+    said = world.db.get(PlanningChangeRow, row_out["id"]).result_json or {}
+    assert not (said.get("executed_reallocations") or []), said
+    assert any(
+        reallocate["document"] in text and "40" in text and "AutoCount" in text
+        for text in (said.get("released_documents") or [])
+    ), said
 
     from app.models.procurement import PurchaseOrderLine
 

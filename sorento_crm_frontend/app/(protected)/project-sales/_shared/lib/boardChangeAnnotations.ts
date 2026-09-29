@@ -26,8 +26,16 @@
  * Pure: no fetch, no clock, no React. The panel hands it the batch and the cells it is about
  * to render, and gets back the annotations keyed exactly as the matrix keys its cells.
  */
-import { LABELS, partsBreakdown, rowText, type SupplyPart } from './supplyVocabulary';
-import type { BoardCell, BoardContribution } from '../types/fulfilmentPlanning.types';
+import {
+  LABELS,
+  partsBreakdown,
+  rowText,
+  type SupplyPart,
+} from './supplyVocabulary';
+import type {
+  BoardCell,
+  BoardContribution,
+} from '../types/fulfilmentPlanning.types';
 import type {
   PlanningChangeBatch,
   PlanningChangeHeld,
@@ -123,8 +131,18 @@ export interface BoardChangeAnnotation {
  * different facts.
  */
 const SHORT_MONTHS = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
 ];
 
 export function shortDay(value: string | null | undefined): string {
@@ -157,10 +175,20 @@ export function changedFieldsOf(
     return [{ key: 'qty', label: 'Cancelled', from: '', to: '' }];
   }
   const out: BoardChangeField[] = [];
-  const push = (key: BoardChangeField['key'], label: string, from: string, to: string) => {
+  const push = (
+    key: BoardChangeField['key'],
+    label: string,
+    from: string,
+    to: string,
+  ) => {
     if (!from && !to) return;
     if (from === to) return;
-    out.push({ key, label, from: from || 'Not stated', to: to || 'Not stated' });
+    out.push({
+      key,
+      label,
+      from: from || 'Not stated',
+      to: to || 'Not stated',
+    });
   };
   push('qty', 'Qty', was.qty ?? '', now.qty ?? '');
   push('date', 'Date', shortDay(was.date), shortDay(now.date));
@@ -169,7 +197,9 @@ export function changedFieldsOf(
 }
 
 /** How the matrix keys a cell: the row's key (item code, or an id on a pivoted axis). */
-export function cellKeyOf(cell: Pick<BoardCell, 'item_code' | 'row_key' | 'bucket_key'>): string {
+export function cellKeyOf(
+  cell: Pick<BoardCell, 'item_code' | 'row_key' | 'bucket_key'>,
+): string {
   return `${cell.row_key ?? cell.item_code}|${cell.bucket_key}`;
 }
 
@@ -178,7 +208,11 @@ function heldParts(held: PlanningChangeHeld | null | undefined): SupplyPart[] {
   if (!held) return [];
   const parts: SupplyPart[] = [];
   for (const reserve of held.reserve ?? []) {
-    parts.push({ kind: 'reserve', qty: reserve.qty, location: reserve.location });
+    parts.push({
+      kind: 'reserve',
+      qty: reserve.qty,
+      location: reserve.location,
+    });
   }
   for (const borrow of held.borrow ?? []) {
     parts.push({ kind: 'borrow', qty: borrow.qty, location: borrow.location });
@@ -186,7 +220,8 @@ function heldParts(held: PlanningChangeHeld | null | undefined): SupplyPart[] {
   if (Number(held.timely_spo_qty ?? '0') > 0) {
     parts.push({ kind: 'timely_spo', qty: held.timely_spo_qty });
   }
-  if (Number(held.buy_qty ?? '0') > 0) parts.push({ kind: 'buy', qty: held.buy_qty });
+  if (Number(held.buy_qty ?? '0') > 0)
+    parts.push({ kind: 'buy', qty: held.buy_qty });
   return parts;
 }
 
@@ -257,12 +292,17 @@ function locationOf(
  */
 function warehouseCodesOf(row: PlanningChangeRow): Map<string, string> {
   const codes = new Map<string, string>();
-  const note = (id: string | null | undefined, code: string | null | undefined) => {
+  const note = (
+    id: string | null | undefined,
+    code: string | null | undefined,
+  ) => {
     if (!id || !code) return;
     if (!codes.has(String(id))) codes.set(String(id), code);
   };
-  for (const reserve of row.held?.reserve ?? []) note(reserve.warehouse_id, reserve.location);
-  for (const borrow of row.held?.borrow ?? []) note(borrow.warehouse_id, borrow.location);
+  for (const reserve of row.held?.reserve ?? [])
+    note(reserve.warehouse_id, reserve.location);
+  for (const borrow of row.held?.borrow ?? [])
+    note(borrow.warehouse_id, borrow.location);
   const proposal = (row.proposal ?? null) as BoardContribution | null;
   for (const source of proposal?.sources ?? []) {
     note(
@@ -313,21 +353,23 @@ function proposedParts(row: PlanningChangeRow): SupplyPart[] {
  * The executed sentences are the server's own words, printed verbatim for the same reason the
  * suggestion is - only the engine knows which document covered what, and re-phrasing here
  * could only drift from the record. A released document is a bare document number in the
- * result, so it is the one thing given a sentence around it.
+ * result, so it is the one thing given a sentence around it. A released entry that is already
+ * a sentence (a skipped closed purchase-order line's notice, a "nothing to move" record) is
+ * printed verbatim for the same reason the executed ones are.
  *
  * Takes the RESULT rather than the row: the sales-order detail reads the same fact off a line
  * that carries only the batch row's result (a cancelled line leaves the board once Apply has
  * run, so the dialog it would have opened there is unreachable), and the two screens must not
  * word it differently.
  */
-export function whereItWentFrom(
-  result: PlanningChangeRow['result'],
-): string[] {
+export function whereItWentFrom(result: PlanningChangeRow['result']): string[] {
   if (!result) return [];
   return [
     ...(result.executed_reallocations ?? []),
-    ...(result.released_documents ?? []).map(
-      (document) => `Released ${document} for purchasing`,
+    ...(result.released_documents ?? []).map((document) =>
+      /\s/.test(document.trim())
+        ? document
+        : `Released ${document} for purchasing`,
     ),
   ];
 }
@@ -357,8 +399,8 @@ export function annotationOf(
     decision: decisionWords(heldParts(row.held), location),
   };
   const now: BoardChangeSide = {
-    qty: closed ? null : row.to?.qty ?? null,
-    date: closed ? null : row.to?.required_date ?? null,
+    qty: closed ? null : (row.to?.qty ?? null),
+    date: closed ? null : (row.to?.required_date ?? null),
     decision: closed ? null : decisionWords(proposedParts(row), location),
   };
   return {
@@ -376,7 +418,7 @@ export function annotationOf(
     // The row's own `item_code` is already the NEW product (Slice A: `Change.item_code` is
     // built from the after side), so the product that CHANGED is the one on the from side.
     productChangedFrom:
-      row.kind === 'product_changed' ? row.from?.item_code ?? null : null,
+      row.kind === 'product_changed' ? (row.from?.item_code ?? null) : null,
     movedTransfer: row.moved_transfer ?? null,
     whereItWent: whereItWentFrom(row.result),
     projectLineId: lineId,
@@ -429,12 +471,14 @@ export function annotationsByCell(
       const lineId = row.project_line_id ?? proposal?.project_line_id ?? null;
       const pair = `${order.so_number} ${row.item_code}`;
       const key =
-        (lineId ? cellByLine.get(lineId) : undefined) ?? cellByOrderItem.get(pair) ?? null;
+        (lineId ? cellByLine.get(lineId) : undefined) ??
+        cellByOrderItem.get(pair) ??
+        null;
       if (!key) continue;
       const annotation = annotationOf(
         row,
         order.so_number,
-        lineId ? locationByLine.get(lineId) ?? null : null,
+        lineId ? (locationByLine.get(lineId) ?? null) : null,
       );
       const held = out.get(key);
       if (held) held.push(annotation);
@@ -465,7 +509,11 @@ export function annotationsByLine(
       // the grid still drew - `annotationsByCell` has always had a fallback of its own.
       // The sales order and the line number are what both sides of that shape do carry.
       const key = lineId ?? lineKeyOf(order.so_number, row.line_no);
-      const annotation = annotationOf(row, order.so_number, proposal?.fulfilment_location ?? null);
+      const annotation = annotationOf(
+        row,
+        order.so_number,
+        proposal?.fulfilment_location ?? null,
+      );
       const held = out.get(key);
       if (held) held.push(annotation);
       else out.set(key, [annotation]);
@@ -475,7 +523,10 @@ export function annotationsByLine(
 }
 
 /** How a list row is addressed when it has no planning line of its own: `SO400875|2`. */
-export function lineKeyOf(soNumber: string, lineNo: number | null | undefined): string {
+export function lineKeyOf(
+  soNumber: string,
+  lineNo: number | null | undefined,
+): string {
   return `${soNumber}|${lineNo ?? ''}`;
 }
 
@@ -533,7 +584,9 @@ function isRetiredChangeRow(row: PlanningChangeRow): boolean {
  * - the ladder walked at the batch's new date, not a fact about the line itself - so they
  * belong here beside `sources`, not left to leak the live board's own (stale, pre-change) walk.
  */
-function compositionOf(proposal: BoardContribution): Partial<BoardContribution> {
+function compositionOf(
+  proposal: BoardContribution,
+): Partial<BoardContribution> {
   return {
     sources: proposal.sources,
     qty_proposed_reserve: proposal.qty_proposed_reserve,

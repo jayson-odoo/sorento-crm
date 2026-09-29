@@ -1143,8 +1143,8 @@ def free_claim_if_orphaned(
 ) -> None:
     """Delete a `source = 'order_inquiry'` claim, unless another surviving order-inquiry
     link still leans on it (S3, review round - the guard `_remove_links`
-    [`project_order_inquiry_service.py`] and `_unclaim_shares`
-    [`planning_change_service.py`] each used to write out for themselves).
+    [`project_order_inquiry_service.py`] and the planning-change re-deal's own unclaim,
+    retired 29 Sep 2026, each used to write out for themselves).
 
     The claim's identity is the DOCUMENT, not the line - two links on one purchase-order
     line share the one claim - so it only goes when nothing else still points at it.

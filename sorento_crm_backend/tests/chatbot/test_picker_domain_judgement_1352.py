@@ -892,7 +892,6 @@ def test_h_the_live_2_read_as_1_answers_dealer_with_the_live_user_block(session_
     carried after the first pick. The second run's "2" is shown exactly the block the
     owner quoted, and answers Dealer."""
     from app.services.chatbot import engine as engine_mod
-    from app.services.chatbot.head import parser as parser_mod
     from app.services.chatbot.lanes.business import fetch as fetch_mod
     from app.services.company_scope import DEFAULT_COMPANY_ID
     from tests._pg_fixture import unique_code
@@ -901,15 +900,19 @@ def test_h_the_live_2_read_as_1_answers_dealer_with_the_live_user_block(session_
     from tests.chatbot.test_rearch_r5_production_decides import _seed_contact_and_get
     from tests.chatbot.test_rearch_r6_review_round import _mark_workspace_default, _run_turn_engine
 
+    from app.services.chatbot.turn import context as context_mod
+
+    # Chatbot memory lane A (S3): the engine builds the parser's user block with
+    # `turn/context.assemble`, not `parser.build_user_block`, so the block is traced there.
     blocks: list[str] = []
-    real_block = parser_mod.build_user_block
+    real_assemble = context_mod.assemble
 
-    def traced_block(*args: Any, **kwargs: Any) -> str:
-        block = real_block(*args, **kwargs)
+    def traced_assemble(*args: Any, **kwargs: Any) -> Any:
+        block, report = real_assemble(*args, **kwargs)
         blocks.append(block)
-        return block
+        return block, report
 
-    monkeypatch.setattr(parser_mod, "build_user_block", traced_block)
+    monkeypatch.setattr(context_mod, "assemble", traced_assemble)
     _seed_contact_and_get(session_factory)
     _mark_workspace_default(session_factory)
     _seed_live_entitlement(session_factory)

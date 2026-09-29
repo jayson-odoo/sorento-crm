@@ -210,9 +210,9 @@ export default function ContactAccessAgentsTable({ contactId }: ContactAccessAge
   return (
     <>
       <CardContent>
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
           <h3 className="text-lg font-semibold">Access Agents</h3>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => setCopyFromDialogOpen(true)} size="sm">
               <Copy className="size-4" />
               Copy from another user

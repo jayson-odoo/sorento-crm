@@ -34,6 +34,9 @@ class ChatMessageRowResponse(BaseModel):
     # from this (mirroring the v_turn_state_transition view) and offers the raw document
     # in a searchable JSON viewer.
     state_trace: Optional[dict] = None
+    # AC-MEM015 (chatbot memory lane A round 3): the per-contact ordering ticket this
+    # turn took, off `chatbot.turns.trace` - null for a turn that never queued.
+    queue_ticket: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 
