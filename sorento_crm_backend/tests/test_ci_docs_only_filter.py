@@ -8,15 +8,14 @@ Three rules live in that workflow and are pinned here:
    `NOT_DOCS_RE` names the documentation/ paths that tests READ as live
    inputs, both ends of a rename count, and `SCM_RE` decides whether the SCM
    shards run on a PR.
-2. Validated push (job `changes`, step "Look for a prior green run of this
-   exact code"): a push to main whose code a prior run already passed every
-   gate on (a merge-queue run on the same SHA, or a full PR run on the merged
-   PR's head) runs only build + deploy.
+2. Release by dispatch (the jobs' `if` lines): a push to main runs the alembic
+   gate and nothing else; a `workflow_dispatch` on main runs the full suite
+   (or, with `skip_tests`, nothing) then build-images and build-and-deploy,
+   which carries `environment: production` so the owner approves each deploy.
 3. Fast PR gate + queue (the jobs' `if` lines and the workflow `concurrency`):
    a `ci`-labelled PR runs the fast gates and the SCM shards only when SCM
-   paths changed, the six backend shards run in the merge queue and on an
-   unvalidated push, and only a `ci` label run joins the per-PR concurrency
-   group.
+   paths changed, the six backend shards run in the merge queue and in a
+   release, and only a `ci` label run joins the per-PR concurrency group.
 
 The shell steps are extracted from the workflow file and executed under the
 same bash flags GitHub uses, with a stub `gh` that answers every API call from
@@ -24,8 +23,7 @@ a canned payload through the real `jq` filter the step passes. The `if`
 expressions are evaluated as written with a small evaluator for the operators
 they use. So nothing here is a copy that can drift from the workflow: the test
 scans every backend and MCP test for the documentation/ paths test code reads
-and fails when one would classify as docs (extend NOT_DOCS_RE), and asserts the
-`GATES` list in the "prior" step names exactly the test jobs main runs.
+and fails when one would classify as docs (extend NOT_DOCS_RE).
 
 Needs `bash` and `jq`, which the CI runner has; skipped when the workflow file
 is not present, which is the case inside the backend Docker image
@@ -149,7 +147,7 @@ def run_step(
     *,
     gh_fails: bool = False,
     before: str = BEFORE,
-    validated: str = "",
+    skip_tests: str = "",
 ) -> dict[str, str]:
     """Run the real step with `files` as the API answer; return $GITHUB_OUTPUT.
 
@@ -170,7 +168,7 @@ def run_step(
     }
     env = {
         "EVENT": event, "PR": "1", "PUSH_BEFORE": before, "PUSH_AFTER": SHA,
-        "MG_BASE": "c" * 40, "MG_HEAD": "d" * 40, "VALIDATED": validated,
+        "MG_BASE": "c" * 40, "MG_HEAD": "d" * 40, "SKIP_TESTS": skip_tests,
     }
     outputs = _run_shell(tmp_path, _step_script("Detect changed areas"), env, fixtures, gh_fails=gh_fails)
     assert set(outputs) == AREA_KEYS, outputs
@@ -315,7 +313,7 @@ def test_non_scm_backend_path_on_a_pull_request_skips_the_scm_shards(tmp_path, p
 
 @pytest.mark.parametrize("event", ["push", "merge_group"])
 def test_scm_follows_backend_off_a_pull_request(tmp_path, event):
-    """The queue and an unvalidated push run the SCM shards for any code change."""
+    """Off a PR the SCM shards run for any code change (the queue; a push's flags are unused)."""
     out = run_step(tmp_path, event, ["sorento_crm_frontend/app/page.tsx"])
     assert out == FULL_PIPELINE
 
@@ -366,166 +364,20 @@ def test_fail_safes_land_on_the_full_pipeline(tmp_path):
     assert run_step(tmp_path, "push", many[:299]) == DOCS_SKIP
 
 
-def test_validated_push_zeroes_every_area_but_is_not_docs_only(tmp_path):
-    """build-images and build-and-deploy gate on docs_only, so they still run."""
-    out = run_step(tmp_path, "push", ["sorento_crm_backend/app/main.py"], validated="true")
+def test_release_always_tests_the_whole_head(tmp_path):
+    """A dispatch has no diff: every area counts, docs_only is never true."""
+    assert run_step(tmp_path, "workflow_dispatch", DOCS_ONLY) == FULL_PIPELINE
+    assert run_step(tmp_path, "workflow_dispatch", [], skip_tests="false") == FULL_PIPELINE
+
+
+def test_release_with_skip_tests_zeroes_every_area_but_is_not_docs_only(tmp_path):
+    """build-images and build-and-deploy gate on the event, so they still run."""
+    out = run_step(tmp_path, "workflow_dispatch", [], skip_tests="true")
     assert out == {"docs_only": "false", **NO_AREA}
-    # A docs-only push stays docs-only whether or not a prior run covers it.
-    assert run_step(tmp_path, "push", DOCS_ONLY, validated="true") == DOCS_SKIP
-    # Anything but the literal "true" (empty on every other event) changes nothing.
-    assert run_step(tmp_path, "push", ["sorento_crm_backend/app/main.py"], validated="false") == FULL_PIPELINE
-    assert run_step(tmp_path, "pull_request", ["sorento_crm_frontend/x.ts"], validated="true")["frontend"] == "false"
-
-
-# ---------------------------------------------------------------------------
-# Step "Look for a prior green run of this exact code"
-# ---------------------------------------------------------------------------
-
-PR_HEAD = "e" * 40
-RUNS_ON = "actions/workflows/deploy.yml/runs?head_sha={sha}&status=success&per_page=20"
-
-
-def _job_names_main_runs() -> list[str]:
-    """Every test job's reported name(s) from the workflow text, matrix expanded."""
-    text = _workflow_text()
-    jobs_text = text[text.index("\njobs:\n"):]
-    names: list[str] = []
-    for block in re.split(r"\n(?=  [a-z][\w-]*:\n)", jobs_text):
-        head = re.match(r"  ([a-z][\w-]*):\n", block)
-        if not head:
-            continue
-        job_id = head.group(1)
-        if job_id in {"changes", "build-images", "build-and-deploy", "notify-owner", "release-ci-label"}:
-            continue
-        name = re.search(r"^    name: (.+)$", block, re.M)
-        assert name, f"job {job_id} has no name"
-        shards = re.search(r"^        shard: \[([^\]]+)\]", block, re.M)
-        if shards:
-            names += [f"{name.group(1)} ({s.strip()})" for s in shards.group(1).split(",")]
-        else:
-            names.append(name.group(1))
-    return names
-
-
-def _gates_in_prior_step() -> list[str]:
-    script = _step_script("Look for a prior green run of this exact code")
-    block = re.search(r"GATES='([^']+)'", script)
-    assert block, "GATES list not found"
-    return [line.strip() for line in block.group(1).splitlines() if line.strip()]
-
-
-def test_prior_gates_name_exactly_the_test_jobs_main_runs():
-    """A job missing from GATES is one a validated push would silently never run."""
-    assert sorted(_gates_in_prior_step()) == sorted(_job_names_main_runs())
-    assert len(_gates_in_prior_step()) == 17
-
-
-def _jobs(conclusions: dict[str, str]) -> dict:
-    return {"jobs": [{"name": n, "conclusion": c} for n, c in conclusions.items()]}
-
-
-def _all_green() -> dict[str, str]:
-    return {name: "success" for name in _job_names_main_runs()}
-
-
-def run_prior(tmp_path: Path, fixtures: dict, *, gh_fails: bool = False) -> str:
-    script = _step_script("Look for a prior green run of this exact code")
-    out = _run_shell(tmp_path, script, {"SHA": SHA}, fixtures, gh_fails=gh_fails)
-    assert set(out) == {"validated"}, out
-    return out["validated"]
-
-
-def test_prior_merge_queue_run_on_the_same_sha_validates(tmp_path):
-    fixtures = {
-        RUNS_ON.format(sha=SHA): {"workflow_runs": [{"id": 501, "event": "merge_group"}]},
-        "actions/runs/501/jobs?per_page=100": _jobs(_all_green()),
-    }
-    assert run_prior(tmp_path, fixtures) == "true"
-
-
-def test_prior_run_with_a_skipped_gate_does_not_validate(tmp_path):
-    """A docs-only queue run, a non-ci label run and a fast-gate PR run all
-    conclude "success" with jobs skipped; none of them validated anything."""
-    for skipped in ["Backend test suite (Postgres, xdist) (4)", "Type-check frontend", "Validate MCP imports"]:
-        conclusions = _all_green()
-        conclusions[skipped] = "skipped"
-        fixtures = {
-            RUNS_ON.format(sha=SHA): {"workflow_runs": [{"id": 502, "event": "merge_group"}]},
-            "actions/runs/502/jobs?per_page=100": _jobs(conclusions),
-        }
-        assert run_prior(tmp_path, fixtures) == "false", skipped
-    everything_skipped = {name: "skipped" for name in _job_names_main_runs()}
-    fixtures = {
-        RUNS_ON.format(sha=SHA): {"workflow_runs": [{"id": 503, "event": "pull_request"}]},
-        "actions/runs/503/jobs?per_page=100": _jobs(everything_skipped),
-    }
-    assert run_prior(tmp_path, fixtures) == "false"
-
-
-def test_prior_run_with_a_failed_gate_does_not_validate(tmp_path):
-    conclusions = _all_green()
-    conclusions["Backend test suite - SCM (Postgres, xdist) (2)"] = "failure"
-    fixtures = {
-        RUNS_ON.format(sha=SHA): {"workflow_runs": [{"id": 504, "event": "merge_group"}]},
-        "actions/runs/504/jobs?per_page=100": _jobs(conclusions),
-    }
-    assert run_prior(tmp_path, fixtures) == "false"
-
-
-def test_prior_full_pr_run_on_the_merged_pr_head_validates(tmp_path):
-    """No run on the merge commit itself; the merged PR's head had a full green run."""
-    fixtures = {
-        RUNS_ON.format(sha=SHA): {"workflow_runs": []},
-        f"commits/{SHA}/pulls": [
-            {"number": 1, "merged_at": None, "head": {"sha": "f" * 40}},
-            {"number": 2, "merged_at": "2026-09-29T20:25:00Z", "head": {"sha": PR_HEAD}},
-        ],
-        RUNS_ON.format(sha=PR_HEAD): {"workflow_runs": [{"id": 601, "event": "pull_request"}]},
-        "actions/runs/601/jobs?per_page=100": _jobs(_all_green()),
-    }
-    assert run_prior(tmp_path, fixtures) == "true"
-
-
-def test_prior_fast_gate_pr_run_does_not_validate(tmp_path):
-    """After the fast PR gate a PR run never ran the six backend shards."""
-    conclusions = _all_green()
-    for shard in range(1, 7):
-        conclusions[f"Backend test suite (Postgres, xdist) ({shard})"] = "skipped"
-    fixtures = {
-        RUNS_ON.format(sha=SHA): {"workflow_runs": []},
-        f"commits/{SHA}/pulls": [{"number": 2, "merged_at": "2026-09-29T20:25:00Z", "head": {"sha": PR_HEAD}}],
-        RUNS_ON.format(sha=PR_HEAD): {"workflow_runs": [{"id": 602, "event": "pull_request"}]},
-        "actions/runs/602/jobs?per_page=100": _jobs(conclusions),
-    }
-    assert run_prior(tmp_path, fixtures) == "false"
-
-
-def test_prior_second_candidate_can_validate_when_the_first_does_not(tmp_path):
-    partial = _all_green()
-    partial["Validate frontend (vitest) (3)"] = "skipped"
-    fixtures = {
-        RUNS_ON.format(sha=SHA): {"workflow_runs": [{"id": 701, "event": "pull_request"}, {"id": 702, "event": "merge_group"}]},
-        "actions/runs/701/jobs?per_page=100": _jobs(partial),
-        "actions/runs/702/jobs?per_page=100": _jobs(_all_green()),
-    }
-    assert run_prior(tmp_path, fixtures) == "true"
-
-
-def test_prior_uncertainty_means_the_full_suite(tmp_path):
-    # direct push: no run on the SHA, no PR for the commit
-    assert run_prior(tmp_path, {RUNS_ON.format(sha=SHA): {"workflow_runs": []}, f"commits/{SHA}/pulls": []}) == "false"
-    # PR found but no run on its head
-    fixtures = {
-        RUNS_ON.format(sha=SHA): {"workflow_runs": []},
-        f"commits/{SHA}/pulls": [{"number": 2, "merged_at": "2026-09-29T20:25:00Z", "head": {"sha": PR_HEAD}}],
-        RUNS_ON.format(sha=PR_HEAD): {"workflow_runs": []},
-    }
-    assert run_prior(tmp_path, fixtures) == "false"
-    # the jobs call for the candidate fails
-    fixtures = {RUNS_ON.format(sha=SHA): {"workflow_runs": [{"id": 801, "event": "merge_group"}]}}
-    assert run_prior(tmp_path, fixtures) == "false"
-    # every API call fails
-    assert run_prior(tmp_path, {}, gh_fails=True) == "false"
+    # The input is honoured on a dispatch only: it is empty on every other
+    # event, and even a stray "true" must not silence a PR or queue run.
+    assert run_step(tmp_path, "pull_request", ["sorento_crm_frontend/x.ts"], skip_tests="true")["frontend"] == "true"
+    assert run_step(tmp_path, "merge_group", ["sorento_crm_backend/app/main.py"], skip_tests="true") == FULL_PIPELINE
 
 
 # ---------------------------------------------------------------------------
@@ -633,14 +485,14 @@ def _job_ifs() -> dict[str, dict]:
 
 
 def _simulate(event: str, *, label: str | None = None, outputs: dict | None = None,
-              forced: dict | None = None) -> dict[str, str]:
+              forced: dict | None = None, ref: str = "refs/heads/main") -> dict[str, str]:
     """Result of every job (success/skipped/failure) for one run, in file order.
 
     Mirrors GitHub's rule: a job whose `if` names no status function skips
     when any need did not succeed; `always()` / `!cancelled()` conditions are
     evaluated against the needs' results instead.
     """
-    github = {"event_name": event, "event": {}, "run_id": 1, "workflow": "Build and Deploy Sorento"}
+    github = {"event_name": event, "event": {}, "run_id": 1, "workflow": "Build and Deploy Sorento", "ref": ref}
     if event == "pull_request":
         github["event"] = {"pull_request": {"number": 1370}, "label": {"name": label or "ci"}}
     results: dict[str, str] = {}
@@ -699,43 +551,71 @@ def test_merge_group_runs_the_full_suite_and_never_deploys():
     }
 
 
-def test_push_validated_runs_build_and_deploy_only():
-    ran = _ran(_simulate("push", outputs={"docs_only": "false", "validated": "true", **NO_AREA}))
-    assert ran == {"check-migration-heads", "changes", "build-images", "build-and-deploy", "notify-owner"}
+RELEASE_ONLY = {"check-migration-heads", "changes", "build-images", "build-and-deploy", "notify-owner"}
+FULL_SUITE = {
+    "check-migration-heads", "changes", "validate-backend", "validate-mcp",
+    "test-backend-scm", "test-backend", "validate-frontend", "typecheck-frontend",
+}
 
 
-def test_push_unvalidated_runs_everything_and_deploys():
-    ran = _ran(_simulate("push", outputs={**FULL_PIPELINE, "validated": "false"}))
-    assert ran == {
-        "check-migration-heads", "changes", "validate-backend", "validate-mcp",
-        "test-backend-scm", "test-backend", "validate-frontend", "typecheck-frontend",
-        "build-images", "build-and-deploy", "notify-owner",
-    }
+def test_push_to_main_runs_the_alembic_gate_and_nothing_else():
+    """Owner decision 29 Sep 2026: a merge does not test or deploy."""
+    for outputs in (FULL_PIPELINE, {**NO_AREA, "docs_only": "true"}):
+        results = _simulate("push", outputs=outputs)
+        assert _ran(results) == {"check-migration-heads"}, results
+        assert results["changes"] == "skipped"
+        assert results["build-images"] == "skipped"
+        assert results["build-and-deploy"] == "skipped"
+        assert results["notify-owner"] == "skipped"
 
 
-def test_push_docs_only_runs_the_root_jobs_only():
-    ran = _ran(_simulate("push", outputs={**NO_AREA, "docs_only": "true"}))
-    assert ran == {"check-migration-heads", "changes"}
+def test_release_runs_the_full_suite_then_builds_and_deploys():
+    ran = _ran(_simulate("workflow_dispatch", outputs=FULL_PIPELINE))
+    assert ran == FULL_SUITE | RELEASE_ONLY
+
+
+def test_release_with_skip_tests_builds_and_deploys_only():
+    ran = _ran(_simulate("workflow_dispatch", outputs={"docs_only": "false", **NO_AREA}))
+    assert ran == RELEASE_ONLY
+
+
+def test_release_dispatched_on_another_ref_tests_but_never_ships():
+    results = _simulate("workflow_dispatch", outputs=FULL_PIPELINE, ref="refs/heads/crew/ci-fast-gate")
+    assert _ran(results) == FULL_SUITE
+    assert results["build-images"] == "skipped"
+    assert results["build-and-deploy"] == "skipped"
+    assert results["notify-owner"] == "skipped"
 
 
 @pytest.mark.parametrize("failed", ["test-backend", "test-backend-scm", "validate-frontend", "typecheck-frontend",
                                     "validate-backend", "validate-mcp", "check-migration-heads", "build-images"])
-def test_push_with_a_failed_gate_does_not_deploy_but_still_notifies(failed):
-    results = _simulate("push", outputs={**FULL_PIPELINE, "validated": "false"}, forced={failed: "failure"})
+def test_release_with_a_failed_gate_does_not_deploy_but_still_notifies(failed):
+    results = _simulate("workflow_dispatch", outputs=FULL_PIPELINE, forced={failed: "failure"})
     assert results["build-and-deploy"] == "skipped", failed
-    assert results["notify-owner"] == "success", "the owner is mailed about the failed deploy"
+    assert results["notify-owner"] == "success", "the owner is mailed about the failed release"
 
 
-def test_push_validated_with_a_failed_build_does_not_deploy():
-    results = _simulate("push", outputs={"docs_only": "false", "validated": "true", **NO_AREA}, forced={"build-images": "failure"})
+def test_release_with_skip_tests_and_a_failed_build_does_not_deploy():
+    for failed in ("build-images", "check-migration-heads"):
+        results = _simulate("workflow_dispatch", outputs={"docs_only": "false", **NO_AREA}, forced={failed: "failure"})
+        assert results["build-and-deploy"] == "skipped", failed
+
+
+def test_deploy_job_carries_the_production_environment():
+    """The owner's approval gate: the only job that touches the server."""
+    text = _workflow_text()
+    block = re.search(r"\n  build-and-deploy:\n(.*?)\n  [a-z][\w-]*:\n", text, re.S).group(1)
+    assert re.search(r"^    environment:\n      name: production$", block, re.M), block
+    for other in ("build-images", "notify-owner", "test-backend", "changes"):
+        other_block = re.search(rf"\n  {other}:\n(.*?)\n  [a-z][\w-]*:\n", text, re.S).group(1)
+        assert "environment:" not in other_block, other
+
+
+def test_merge_group_never_deploys_whatever_the_flags():
+    results = _simulate("merge_group", outputs=FULL_PIPELINE)
+    assert results["build-images"] == "skipped"
     assert results["build-and-deploy"] == "skipped"
-    results = _simulate("push", outputs={"docs_only": "false", "validated": "true", **NO_AREA}, forced={"check-migration-heads": "failure"})
-    assert results["build-and-deploy"] == "skipped"
-
-
-def test_workflow_dispatch_runs_everything_and_deploys():
-    ran = _ran(_simulate("workflow_dispatch", outputs=FULL_PIPELINE))
-    assert {"test-backend", "test-backend-scm", "build-images", "build-and-deploy", "notify-owner"} <= ran
+    assert results["notify-owner"] == "skipped"
 
 
 def _concurrency() -> tuple[str, str]:

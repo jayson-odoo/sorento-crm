@@ -1,6 +1,11 @@
 name: Build and Deploy Sorento
 
 on:
+  # A push to main runs ONLY the alembic fast gate (`check-migration-heads`,
+  # about 20 seconds): no test suite, no image build, no deploy. Owner
+  # decision 2026-09-29 23:05: "control the running of main branch CI so not
+  # every merge will trigger the CI automatically", and a live deploy waits
+  # for the owner's approval. A release is the `workflow_dispatch` below.
   push:
     branches:
       - main
@@ -30,15 +35,24 @@ on:
   # typecheck, vitest, and the SCM shards when SCM paths changed), while the
   # six main backend shards run here and nowhere else before main. The queue
   # therefore also catches two individually-green branches that only break
-  # combined (duplicate alembic heads, a shared count assertion off by one),
-  # and the push to main that lands after a green queue run re-runs none of
-  # it (see `changes`, step "prior"). Until the ruleset carries a merge-queue
-  # rule, PRs merge directly and that push to main runs the full suite.
+  # combined (duplicate alembic heads, a shared count assertion off by one).
+  # Until the ruleset carries a merge-queue rule, PRs merge directly and
+  # nothing but the alembic gate runs on the resulting push to main.
   merge_group:
+  # THE RELEASE. Run on main by the orchestrator after the owner has merged a
+  # batch:
+  #   gh workflow run deploy.yml --repo jayson-odoo/sorento-crm --ref main
+  #   gh workflow run deploy.yml --repo jayson-odoo/sorento-crm --ref main -f skip_tests=true
+  # It runs the full suite on main's head (unless skip_tests), then
+  # build-images, then build-and-deploy, which carries `environment:
+  # production` and therefore PAUSES until the owner approves the deployment
+  # in GitHub (environment "production", required reviewer jayson-odoo,
+  # deployment branches: main only). On any other ref a dispatch runs the
+  # suite only: build-images and build-and-deploy also require main.
   workflow_dispatch:
     inputs:
-      deploy_all:
-        description: "Build and deploy all services (ignore path filters)"
+      skip_tests:
+        description: "Skip the test suite and go straight to build + deploy (main's head was already validated, e.g. by a green merge-queue run)"
         required: false
         default: false
         type: boolean
@@ -61,12 +75,13 @@ on:
 #     github.run_id: a unique group that collides with nothing, and
 #     cancel-in-progress is false for it besides. It finishes in seconds with
 #     every job skipped and cancels nothing.
-#   - push (to main) and merge_group: github.event.pull_request.number is
-#     empty, so the group key is github.run_id here too, unique to this run,
-#     and cancel-in-progress is false, so every main push still runs its
-#     full matrix independently. The dedicated `deploy-production` job-level
-#     group below is untouched (cancel-in-progress false) so no merge ever
-#     loses its deploy.
+#   - push (to main), merge_group and workflow_dispatch:
+#     github.event.pull_request.number is empty, so the group key is
+#     github.run_id here too, unique to this run, and cancel-in-progress is
+#     false, so two releases dispatched close together both run. The
+#     dedicated `deploy-production` job-level group below is untouched
+#     (cancel-in-progress false) so the second release's deploy queues
+#     behind the first instead of overlapping it.
 # The expression is `a && b && c || d`, GitHub's ternary idiom: the PR number
 # when this is a `ci` label event (a truthy number), else the run id. Both
 # lines are evaluated as written by
@@ -111,6 +126,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # On a push to main this job is the whole run (see the `push` trigger
+      # comment): a fork of the migration graph is reported within a minute
+      # of the merge that caused it, and nothing else runs until a release.
       - name: Assert exactly one migration head
         run: |
           python3 - <<'PY'
@@ -175,13 +193,13 @@ jobs:
   #    the jq filters), so a file moved between a service tree and
   #    documentation/ is never docs-only in either direction. When the
   #    answer is yes, every area flag is false, so the validate/test/
-  #    typecheck jobs skip through their existing `if`s, and build-images,
-  #    build-and-deploy and notify-owner gate on it directly: a docs merge
-  #    to main runs this job and the alembic gate above (about 30 seconds
-  #    between them) and nothing else. Owner ruling 29 Sep 2026: "all the
-  #    docs merge don't need to trigger deployment"; on the Free plan a
-  #    docs-only push to main was taking the same full build + test +
-  #    deploy cycle as a code change and queuing behind it.
+  #    typecheck jobs skip through their existing `if`s: a docs-only PR run
+  #    or queue entry is this job and the alembic gate above (about 30
+  #    seconds between them) and nothing else. Owner ruling 29 Sep 2026:
+  #    "all the docs merge don't need to trigger deployment"; on the Free
+  #    plan a docs-only change was taking the same full test cycle as a code
+  #    change and queuing behind it. A release (workflow_dispatch) is never
+  #    docs-only: it has no diff, it tests and ships main's head.
   #
   #    Fail-safe direction is always the full pipeline: an empty file list,
   #    a compare call that fails, a branch-creation push (zero `before`
@@ -193,30 +211,25 @@ jobs:
   #    the three SCM shards run on a PR (`SCM_RE`: the scm API, service,
   #    module and model files, `tests/scm/`, an scm migration, and the
   #    test-harness files every backend test depends on); the six main
-  #    backend shards never run on a PR (see `test-backend`). A push to main
-  #    and a merge-queue entry that are not docs-only report every area as
-  #    changed, so the queue and an unvalidated push gate on the full set.
+  #    backend shards never run on a PR (see `test-backend`). A merge-queue
+  #    entry that is not docs-only, and a release (workflow_dispatch, which
+  #    has no diff to filter: it tests main's head as a whole), report every
+  #    area as changed, so the queue and the release gate on the full set.
   #    The alembic gate above is deliberately NOT behind this: it is the fast
   #    check, and it must run on every PR. The workflow file itself counts as
   #    every area, or a change to it could never be exercised by the PR that
   #    makes it.
   #
-  # 3. `validated`: on a push to main, did a prior run of this workflow
-  #    already pass every gate main would run, on this exact code? Step
-  #    "prior" looks for a successful run whose head_sha is this push's SHA
-  #    (a merge-queue run: the queue fast-forwards main to the very commit
-  #    it tested), then for a successful `pull_request` run on the head of
-  #    the PR this commit merged (the commits/{sha}/pulls lookup). A
-  #    candidate counts only when every job in `GATES` reports `success` in
-  #    it, never `skipped`: a docs-only queue run, a non-`ci` label run and a
-  #    fast-gate PR run all conclude "success" with most jobs skipped, and
-  #    none of them validated anything. When one qualifies, every area flag
-  #    is false and the 16 test jobs skip, so the push runs the alembic gate,
-  #    build-images, build-and-deploy and notify-owner (about 15 job-minutes
-  #    instead of ~190; measured 2026-09-29: main pushes replaying the suite
-  #    were ~18% of daily job-minutes on the 20-concurrent-job Free plan).
-  #    Anything uncertain (a direct push, no qualifying run, an API error)
-  #    leaves `validated` false and the full suite runs, exactly as before.
+  # 3. `skip_tests` (release input): the orchestrator dispatching a release
+  #    can declare main's head already validated (a green merge-queue run on
+  #    that very commit, say). Every area flag is then false, the 16 test
+  #    jobs skip, and the run is build-images + build-and-deploy +
+  #    notify-owner (about 15 job-minutes instead of ~190). It is the
+  #    dispatcher's call, made per release; nothing here infers it.
+  #
+  # This job does not run on a push to main at all (see the `push` trigger
+  # comment): nothing downstream of it does either, so there is nothing to
+  # classify.
   #
   # Plain `gh api` over the file list (the PR's files, or the compare of
   # the push / merge-queue range), no third-party action and no checkout:
@@ -236,96 +249,27 @@ jobs:
     # is the other root job (no `needs`), so skipping it here skips every job
     # that depends on it transitively (validate-backend, validate-mcp,
     # test-backend, test-backend-scm, validate-frontend, typecheck-frontend,
-    # build-images) without touching their own `if` conditions.
-    if: github.event_name != 'pull_request' || github.event.label.name == 'ci'
+    # build-images) without touching their own `if` conditions. `push` is
+    # excluded the same way: a push to main runs the alembic gate and nothing
+    # else.
+    if: >-
+      github.event_name != 'push'
+      && (github.event_name != 'pull_request' || github.event.label.name == 'ci')
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
       mcp: ${{ steps.filter.outputs.mcp }}
       scm: ${{ steps.filter.outputs.scm }}
       docs_only: ${{ steps.filter.outputs.docs_only }}
-      validated: ${{ steps.prior.outputs.validated }}
     steps:
-      # Push to main only (see point 3 in the job comment). Every API call is
-      # wrapped so a failure reads as "not validated", never as a red job.
-      - name: Look for a prior green run of this exact code
-        id: prior
-        if: github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SHA: ${{ github.sha }}
-        run: |
-          # The jobs main would otherwise run, by the name each reports (a
-          # matrix leg reports "<job name> (<shard>)"). Keep in step with the
-          # job list below: a job missing here is one a validated push would
-          # silently never run.
-          GATES='Single alembic head (fast gate)
-          Validate backend imports
-          Validate MCP imports
-          Backend test suite (Postgres, xdist) (1)
-          Backend test suite (Postgres, xdist) (2)
-          Backend test suite (Postgres, xdist) (3)
-          Backend test suite (Postgres, xdist) (4)
-          Backend test suite (Postgres, xdist) (5)
-          Backend test suite (Postgres, xdist) (6)
-          Backend test suite - SCM (Postgres, xdist) (1)
-          Backend test suite - SCM (Postgres, xdist) (2)
-          Backend test suite - SCM (Postgres, xdist) (3)
-          Validate frontend (vitest) (1)
-          Validate frontend (vitest) (2)
-          Validate frontend (vitest) (3)
-          Validate frontend (vitest) (4)
-          Type-check frontend'
-          runs_for() {
-            # Successful runs of THIS workflow file for a head SHA, as "id event".
-            gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy.yml/runs?head_sha=$1&status=success&per_page=20" \
-              --jq '.workflow_runs[] | "\(.id) \(.event)"'
-          }
-          covers() {
-            # Does run $1 report success (not skipped) for every gate?
-            local jobs missing
-            jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$1/jobs?per_page=100" --paginate \
-                     --jq '.jobs[] | select(.conclusion == "success") | .name') || return 1
-            missing=$(printf '%s\n' "$GATES" | grep -Fxvf <(printf '%s\n' "$jobs") || true)
-            if [ -n "$missing" ]; then
-              echo "  run $1 does not cover main's gates; not successful there:"
-              printf '%s\n' "$missing" | sed 's/^/    /'
-              return 1
-            fi
-          }
-          validated=false
-          candidates=$(runs_for "$SHA" || true)
-          if [ -z "$candidates" ]; then
-            echo "no successful run has head_sha $SHA; looking at the merged PR's head"
-            heads=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" \
-                      --jq '.[] | select(.merged_at != null) | .head.sha' 2>/dev/null || true)
-            for head in $heads; do
-              candidates=$(printf '%s\n%s\n' "$candidates" "$(runs_for "$head" || true)")
-            done
-          fi
-          candidates=$(printf '%s\n' "$candidates" | sed '/^\s*$/d')
-          if [ -z "$candidates" ]; then
-            echo "no candidate run: full suite"
-          fi
-          while read -r id event; do
-            [ -n "$id" ] || continue
-            echo "candidate run $id ($event)"
-            if covers "$id"; then
-              validated=true
-              echo "validated=true: run $id ($event) passed every gate main would run on this code"
-              break
-            fi
-          done <<< "$candidates"
-          [ "$validated" = "true" ] || echo "validated=false: the full suite runs"
-          echo "validated=$validated" >> "$GITHUB_OUTPUT"
-
       - name: Detect changed areas
         id: filter
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           PR: ${{ github.event.pull_request.number }}
-          VALIDATED: ${{ steps.prior.outputs.validated }}
+          # Release input (workflow_dispatch only; empty on every other event).
+          SKIP_TESTS: ${{ inputs.skip_tests }}
           # push: the range main moved by. `before` is the zero SHA only on a
           # branch-creation push, which main never sees; guarded anyway.
           PUSH_BEFORE: ${{ github.event.before }}
@@ -406,12 +350,12 @@ jobs:
             echo "docs-only change: no service area counts as changed"
             exit 0
           fi
-          # A push to main that step "prior" validated (a prior run passed
-          # every gate on this exact code): no test job runs, only the build
-          # and the deploy, which gate on docs_only rather than on the areas.
-          if [ "$VALIDATED" = "true" ]; then
+          # A release dispatched with skip_tests: no test job runs, only the
+          # build and the deploy, which gate on the event rather than on the
+          # areas.
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$SKIP_TESTS" = "true" ]; then
             for area in backend frontend mcp scm; do echo "$area=false"; done | tee -a "$GITHUB_OUTPUT"
-            echo "validated push: a prior green run covers every gate, no test job runs"
+            echo "release with skip_tests=true: no test job runs"
             exit 0
           fi
           # A PR whose file list could not be fetched is treated like a push:
@@ -634,7 +578,7 @@ jobs:
   # are the full tests/scm suite and no test runs twice or is dropped.
   #
   # On a PR this runs only when SCM paths changed (`scm` flag, see `changes`);
-  # a merge-queue entry and an unvalidated push to main run it regardless.
+  # a merge-queue entry and a release run it regardless.
   test-backend-scm:
     name: Backend test suite - SCM (Postgres, xdist)
     needs: [changes]
@@ -829,10 +773,10 @@ jobs:
   # Never on a `pull_request` event (owner ruling 2026-09-29, fast PR gate):
   # six shards at ~15 min each were ~60% of a PR run's ~190 job-minutes on
   # the 20-concurrent-job Free plan. The suite runs for the merge-queue
-  # entry (the exact merge result) and for an unvalidated push to main. A
-  # skipped job still reports, as "skipped", which a ruleset's required
-  # status check accepts, so listing these six as required blocks nothing
-  # on the PR and gates the queue for real.
+  # entry (the exact merge result) and for a release (workflow_dispatch
+  # without skip_tests). A skipped job still reports, as "skipped", which a
+  # ruleset's required status check accepts, so listing these six as
+  # required blocks nothing on the PR and gates the queue for real.
   test-backend:
     name: Backend test suite (Postgres, xdist)
     needs: [changes]
@@ -1143,15 +1087,13 @@ jobs:
   build-images:
     name: Build and push images
     needs: [changes]
-    # Same condition as build-and-deploy: only build for real on a push to
-    # main or a manual dispatch, and never for a docs-only push (see
-    # `changes`: nothing that ships can have changed, so there is no image
-    # to build). A PR run still needs the images to exist for its own
+    # Same condition as build-and-deploy: only build for real on a release
+    # (workflow_dispatch on main). A push to main builds nothing (see the
+    # `push` trigger comment), a dispatch on any other ref runs the suite
+    # only, and a PR run still needs the images to exist for its own
     # validate-backend/validate-mcp legs, which build separately (load:
     # true, no push) and are unaffected by this job's `if`.
-    if: >-
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-      && needs.changes.outputs.docs_only != 'true'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -1259,29 +1201,37 @@ jobs:
         build-images,
         typecheck-frontend,
       ]
-    # Deliberately NOT `merge_group`: a queue entry only validates the merge
-    # candidate. The deploy belongs to the `push` to main that lands after the
-    # queue merges it, so each change still deploys exactly once, from main.
+    # A release only: workflow_dispatch on main. Never a push to main (owner
+    # decision 2026-09-29: a merge does not deploy), never a merge-queue
+    # entry (it only validates the merge candidate).
     #
     # `!cancelled()` instead of the default success-of-every-need: on a
-    # validated push to main (see `changes`, point 3) every test job in
-    # `needs` is SKIPPED on purpose, and the default rule would skip this
-    # job with them. So the gates are checked by result instead: the alembic
-    # gate and the image build must have succeeded, and no need may have
-    # failed or been cancelled; a skipped need is accepted because the only
-    # ways a need skips on a push are docs-only (excluded on the next line)
-    # and validated. A docs-only push to main deploys nothing.
-    # Wrapped in `${{ }}` because the expression starts with `!`, which YAML
-    # would otherwise read as a tag.
+    # release with skip_tests every test job in `needs` is SKIPPED on
+    # purpose, and the default rule would skip this job with them. So the
+    # gates are checked by result instead: the alembic gate and the image
+    # build must have succeeded, and no need may have failed or been
+    # cancelled; a skipped need is accepted because on a dispatch the only
+    # way a need skips is skip_tests. Wrapped in `${{ }}` because the
+    # expression starts with `!`, which YAML would otherwise read as a tag.
     if: >-
       ${{ !cancelled()
-      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-      && needs.changes.outputs.docs_only != 'true'
+      && github.event_name == 'workflow_dispatch'
+      && github.ref == 'refs/heads/main'
       && needs.check-migration-heads.result == 'success'
       && needs.build-images.result == 'success'
       && !contains(needs.*.result, 'failure')
       && !contains(needs.*.result, 'cancelled') }}
     runs-on: ubuntu-latest
+    # The owner's approval gate. The GitHub environment "production" (required
+    # reviewer jayson-odoo, deployment branches: main only) holds this job
+    # BEFORE its first step until the owner approves it under the run's
+    # "Review deployments" button (or rejects it, which fails the job and
+    # mails "deploy failed"). Everything that touches the server (the release
+    # tag promotion, the scp, the two ssh steps) lives in this one job, so
+    # this is the only place the environment is needed.
+    environment:
+      name: production
+      url: https://fe-sorento.foundryx.my
     # Job-level, and a fixed group name rather than the workflow-level group
     # above (which is per-run for push events, so it never serializes deploys
     # on its own). Two merges close together used to run two deploys overlapped
@@ -1426,16 +1376,15 @@ jobs:
   notify-owner:
     name: Notify owner by email
     runs-on: ubuntu-latest
-    needs: [changes, build-and-deploy]
-    # `always()` so a FAILED deploy still mails, which is also why the
-    # docs-only case must be excluded here explicitly: with build-and-deploy
-    # skipped, `needs.build-and-deploy.result` is `skipped`, and the step
-    # below would otherwise mail "deploy failed" for a docs merge that was
-    # never meant to deploy.
+    needs: [build-and-deploy]
+    # `always()` so a FAILED deploy still mails (a failed gate skips
+    # build-and-deploy, whose result is then `skipped`, and that mails
+    # "failed" too, which is right: the release did not ship). Releases
+    # only: a push to main and a queue entry deploy nothing and mail nothing.
     if: >-
       always()
-      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-      && needs.changes.outputs.docs_only != 'true'
+      && github.event_name == 'workflow_dispatch'
+      && github.ref == 'refs/heads/main'
     steps:
       - name: Check SMTP configuration
         id: smtp

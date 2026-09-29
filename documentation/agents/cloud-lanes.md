@@ -66,15 +66,18 @@ do not trigger runs on their own, and it still matters for pushes to `main`.
 
 A `ci`-labelled PR run is the fast gate only: alembic head, image imports, typecheck, vitest, and
 the three SCM shards when SCM paths changed. The six main backend shards run in the merge queue
-(`merge_group`) and on an unvalidated push to main, never on a PR; a push to main that lands after
-a green queue run on the same commit runs build + deploy only (owner ruling 29 Sep 2026;
-`documentation/plans/ci/PLAN-ci-fast-gate-29sep.md`, which also lists the ruleset changes that
-turn the label into the real merge gate).
+(`merge_group`) and in a release, never on a PR. **A merge does not deploy**: a push to main runs
+only the alembic head gate. The release is `gh workflow run deploy.yml --repo jayson-odoo/sorento-crm
+--ref main` (add `-f skip_tests=true` when main's head was already validated by a green queue run),
+dispatched by the orchestrator after a batch has merged; it runs the full suite, builds the images,
+and its deploy job then waits for the owner's approval in the GitHub `production` environment
+(owner decision 29 Sep 2026; `documentation/plans/ci/PLAN-ci-fast-gate-29sep.md`, which also
+lists the ruleset changes that turn the label into the real merge gate).
 
 A docs-only change (every path under `documentation/**`, `.claude/**`, `.cursor/**`, a root-level
-`*.md` or the PR template) runs only the `Changed areas` and `Single alembic head` jobs, on a PR,
-a merge-queue entry and a push to main alike: no image build, no test suite, no deploy, no deploy
-email (owner ruling 29 Sep 2026; `documentation/plans/ci/PLAN-ci-docs-skip-29sep.md`). One
+`*.md` or the PR template) runs only the `Changed areas` and `Single alembic head` jobs on a PR
+and on a merge-queue entry: no image build, no test suite (owner ruling 29 Sep 2026;
+`documentation/plans/ci/PLAN-ci-docs-skip-29sep.md`). One
 non-docs path anywhere in the change keeps the full pipeline: a markdown file inside a service
 tree, either end of a rename, or documentation a test reads as input (`documentation/reference/`,
 a plan's `fixtures/`, `samples/` or `seed-assets/` folder, and the plan files listed in the

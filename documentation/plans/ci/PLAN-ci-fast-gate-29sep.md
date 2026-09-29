@@ -1,90 +1,93 @@
-Status: small fix track - in review (PR pending; follow-up to #1370)
+Status: small fix track - in review (PR #1375; follow-up to #1370)
 
-# CI: fast PR gate, full suite in the merge queue, no replay on a validated push
+# CI: fast PR gate, full suite in the merge queue, release by dispatch with owner approval
 
-## Ruling
+## Rulings
 
-Owner, 29 Sep 2026, on the options the orchestrator put forward: "I lean towards
-3 for now, and also 2 okay". Option 3 is the fast PR gate with the full suite in
-the merge queue; option 2 is the push to main not replaying a suite that already
-passed on the same code. Both land here, in one workflow change. The ruleset
-changes that make option 3 real are the owner's to apply (section "Ruleset
-changes" below); the orchestrator gets the approval and applies them, this lane
-changes no repo setting.
+- Owner, 29 Sep 2026, on the options the orchestrator put forward: "I lean towards
+  3 for now, and also 2 okay". Option 3 is the fast PR gate with the full suite in
+  the merge queue.
+- Owner, 29 Sep 2026 23:05, replacing option 2: "control the running of main branch
+  CI so not every merge will trigger the CI automatically", and a live deploy must
+  wait for the owner's approval. The orchestrator created the GitHub environment
+  `production` (required reviewer jayson-odoo, deployment branches: main only).
+
+Nothing in this lane changes a repository setting. The ruleset changes that make
+the fast gate the real merge gate are listed below for the owner to apply.
 
 ## Measured facts (29 Sep 2026, from gh)
 
 - Every job runs on GitHub-hosted `ubuntu-latest`; no self-hosted runner. The
   account is capped at 20 concurrent jobs (Free plan).
 - One `ci`-labelled PR run: 18 jobs, about 190 job-minutes. The six main backend
-  shards (`test-backend`, deploy.yml matrix `shard: [1..6]`) are about 60% of
-  that; the SCM shards are 3 jobs, vitest 4.
-- One push to main: 23 jobs (the 18 above plus build-images x3, build-and-deploy,
-  notify-owner). Main pushes replaying the full suite were about 18% of daily
-  job-minutes.
-- The `merge_group` trigger is wired (deploy.yml `on:`), but the
-  `protect-main-branch` ruleset has no merge-queue rule and no required status
-  checks. The two comments in deploy.yml that said an unlabelled PR "cannot
-  merge" were therefore false; both are rewritten in this lane.
+  shards (`test-backend`, matrix `shard: [1..6]`) are about 60% of that; the SCM
+  shards are 3 jobs, vitest 4.
+- One push to main used to be 23 jobs (the 18 above plus build-images x3,
+  build-and-deploy, notify-owner); main pushes replaying the full suite were
+  about 18% of daily job-minutes.
+- The `merge_group` trigger is wired, but the `protect-main-branch` ruleset has no
+  merge-queue rule and no required status checks. The two comments in deploy.yml
+  that said an unlabelled PR "cannot merge" were therefore false; both are
+  rewritten in this lane.
 - `npm run lint` on main today: 287 errors, 706 warnings (run in this lane's
   sandbox on f0880989). Lint is NOT added as a gate: it would block every PR on
   pre-existing errors. It stays a local command until the count is zero.
-- Tests that read `documentation/` as input, and `.md` fixtures inside the
-  service trees, are handled by #1370 and unchanged here.
 
 ## Change
 
-One file, `.github/workflows/deploy.yml`, no migration, no auth change.
+One file, `.github/workflows/deploy.yml`, no migration, no auth change. The
+docs-only rule from #1370 is unchanged and applies to PR and queue runs.
 
-### Fix 3: fast PR gate, full suite in the queue
+### A push to main runs the alembic gate and nothing else
 
-- `test-backend` (six shards) gets `&& github.event_name != 'pull_request'`. It
-  runs for a merge-queue entry and for an unvalidated push to main, never for a
-  PR.
-- `changes` gains an `scm` area flag. On a PR it is true when a path matches
+`changes` (and with it every test job) skips on `push`; `build-images`,
+`build-and-deploy` and `notify-owner` require `workflow_dispatch`. A merge to main
+is therefore one 20-second job, `Single alembic head (fast gate)`, so a fork of
+the migration graph is still reported within a minute of the merge that caused
+it. No test suite, no image, no deploy, no email.
+
+### The release is a `workflow_dispatch` on main
+
+Input `skip_tests` (boolean, default false). The run is:
+
+1. `check-migration-heads`, `changes` (every area true; with `skip_tests` every
+   area false, so the 16 test jobs skip), the full suite unless skipped.
+2. `build-images` (three SHA-tagged images), in parallel with the suite.
+3. `build-and-deploy`, `if: !cancelled()` plus explicit results (alembic gate and
+   image build `success`, no need `failure` or `cancelled`; a skipped need is
+   accepted because `skip_tests` is the only way a need skips on a dispatch),
+   and now `environment: production`. GitHub holds the job before its first
+   step until the owner approves it under the run's "Review deployments"
+   button; a rejection fails the job. Everything that touches the server (the
+   release-tag promotion, the scp, both ssh steps) is in this one job, so it is
+   the only job that carries the environment. The `deploy-production`
+   concurrency group stays: two releases dispatched close together deploy one
+   after the other.
+4. `notify-owner` mails the result (a failed gate skips the deploy and mails
+   "failed", which is right: the release did not ship).
+
+`build-images`, `build-and-deploy` and `notify-owner` also require
+`github.ref == 'refs/heads/main'`: a dispatch on any other ref runs the suite
+only. The environment's branch policy would refuse such a deploy anyway; the
+condition keeps it from building and pushing images for a branch.
+
+### Fast PR gate, full suite in the queue (unchanged from the first cut)
+
+- `test-backend` (six shards) never runs on a `pull_request` event; it runs for a
+  merge-queue entry and for a release.
+- `changes` has an `scm` area flag. On a PR it is true when a path matches
   `SCM_RE`: `app/api/v1/scm/`, `app/services/scm/`, `app/modules/scm/`,
   `app/models/scm*`, `app/schemas/scm_*`, `tests/scm/`, an `alembic/versions/*scm*`
   migration, and the harness every backend test depends on (`tests/conftest.py`,
   `tests/_pg_fixture.py`, `tests/ci_excluded.txt`, `.test_durations`,
   `scripts/bootstrap_env.py`, `requirements.txt`), plus the workflow file. Off a
-  PR it equals `backend`. `test-backend-scm` gates on `scm` instead of `backend`.
-  54 non-scm backend files import scm services, so a change outside `SCM_RE`
-  can still break an SCM test; the queue's full run is what catches that, by
-  design.
-- A `ci`-labelled PR therefore runs: alembic head, Changed areas, Validate
-  backend imports (image build + collect + regression guards), Validate MCP
-  imports (when mcp changed), Type-check frontend and the four vitest shards
-  (when frontend changed), and the three SCM shards (when `scm` changed). About
-  8 to 11 jobs and 50 to 80 job-minutes instead of 18 jobs and 190.
-- A merge-queue entry runs everything as today (the `if` lines do not filter on
-  `merge_group`).
-
-### Fix 2: a validated push to main runs build + deploy only
-
-- New step "Look for a prior green run of this exact code" in `changes`, push
-  events only. It lists successful runs of this workflow whose `head_sha` is the
-  push's SHA (a merge-queue run: the queue fast-forwards main to the commit it
-  tested), and, when there is none, the merged PR(s) for the commit
-  (`commits/{sha}/pulls`, `merged_at` set) and successful runs on their head
-  SHA. A candidate validates only when every job in `GATES` (the 17 test jobs
-  main would run, by reported name) has conclusion `success` in it; `skipped`
-  does not count, so a docs-only queue run, a non-`ci` label run and a
-  fast-gate PR run (six shards skipped) never validate. First qualifying
-  candidate wins.
-- `validated=true` zeroes every area flag (the 16 test jobs skip) while
-  `docs_only` stays false, so `build-images`, `build-and-deploy` and
-  `notify-owner` run: about 15 job-minutes.
-- `build-and-deploy` no longer relies on the default "every need succeeded"
-  rule (its needs are skipped on purpose now). It is `!cancelled()` plus
-  explicit results: alembic gate and image build `success`, no need `failure`
-  or `cancelled`, not docs-only. A failed gate on an unvalidated push still
-  skips the deploy and still mails the owner.
-- Anything uncertain (direct push, no candidate, a skipped or failed gate in
-  every candidate, an API error) leaves `validated=false` and the full suite
-  runs exactly as before.
-- Until the merge queue is on, PRs merge directly, the PR run was a fast-gate
-  run, and the push to main runs the full suite (as today, minus docs-only).
-  Fix 2 pays out once Fix 3's ruleset is applied.
+  PR it equals `backend`. `test-backend-scm` gates on `scm`. 54 non-scm backend
+  files import scm services, so a change outside `SCM_RE` can still break an SCM
+  test; the queue's full run is what catches that, by design.
+- A `ci`-labelled PR runs: alembic head, Changed areas, Validate backend imports,
+  Validate MCP imports (when mcp changed), Type-check frontend and the four
+  vitest shards (when frontend changed), the three SCM shards (when `scm`
+  changed). About 8 to 11 jobs and 50 to 80 job-minutes instead of 18 and 190.
 
 ### The two false comments
 
@@ -92,9 +95,37 @@ The trigger comment and the `check-migration-heads` comment now say: an
 unlabelled PR shows no checks; whether that blocks a merge is the ruleset's
 call, and as of 29 Sep 2026 it does not.
 
+## How to trigger a release (orchestrator, after the owner has merged a batch)
+
+```bash
+# 1. Start the release on main's current head (full suite, then build, then deploy).
+gh workflow run deploy.yml --repo jayson-odoo/sorento-crm --ref main
+
+#    Or skip the suite when main's head was already validated (a green
+#    merge-queue run on that exact commit): build + deploy only, ~15 job-minutes.
+gh workflow run deploy.yml --repo jayson-odoo/sorento-crm --ref main -f skip_tests=true
+
+# 2. Find the run and follow it.
+gh run list --repo jayson-odoo/sorento-crm --workflow deploy.yml --event workflow_dispatch -L 1
+gh run watch <run-id> --repo jayson-odoo/sorento-crm
+
+# 3. When every gate is green the run pauses at "build-and-deploy" with
+#    "Waiting for review". The OWNER approves it: run page > Review deployments
+#    > tick production > Approve and deploy. Or, from the CLI as the owner:
+ENV_ID=$(gh api repos/jayson-odoo/sorento-crm/environments/production --jq .id)
+gh api -X POST repos/jayson-odoo/sorento-crm/actions/runs/<run-id>/pending_deployments \
+  -F 'environment_ids[]='"$ENV_ID" -f state=approved -f comment="release <short sha>"
+#    (state=rejected cancels the deploy; the run then reports failed and mails.)
+```
+
+The approval must come from the required reviewer (jayson-odoo); the
+orchestrator's token cannot approve it. The pending approval waits up to 30 days
+(GitHub's default); the alembic gate, the suite and the images are already done
+by then, so approving later costs nothing.
+
 ## Ruleset changes the owner applies (Settings > Rules > Rulesets > `protect-main-branch`)
 
-Nothing in this PR changes a setting. Apply after this PR merges, in this order.
+Apply after this PR merges, in this order.
 
 1. **Require status checks to pass**: enable. "Require branches to be up to
    date before merging": OFF (the queue tests the merge result; ON would force a
@@ -133,8 +164,7 @@ Nothing in this PR changes a setting. Apply after this PR merges, in this order.
 2. **Require merge queue**: enable, with:
    - Merge method: **Squash and merge** (main's history is one squash commit per
      PR, `... (#NNNN)`).
-   - Build concurrency: **1** (runners are scarce; one queue run at a time, and
-     deploys are serial anyway via the `deploy-production` group).
+   - Build concurrency: **1** (runners are scarce; one queue run at a time).
    - Minimum group size: **1**; maximum group size: **5**; wait time to meet
      minimum: **5 minutes**.
    - Only merge non-failing pull requests: **ON**.
@@ -142,47 +172,42 @@ Nothing in this PR changes a setting. Apply after this PR merges, in this order.
      entry queued behind one in flight waits its turn).
 3. Leave the existing bypass list (the owner's admin bypass) as it is.
 
-After the first queue merge, confirm on the push-to-main run that step "Look
-for a prior green run of this exact code" printed `validated=true` for the
-`merge_group` run: that proves the queue's tested SHA is the SHA that landed on
-main. If it printed "no successful run has head_sha", the fallback through the
-merged PR's head ran instead (full suite, safe), and the step needs the queue's
-`merge_group.head_sha` recorded differently; report it rather than loosening
-`GATES`.
+Until the queue is on, PRs merge directly; the push to main still runs only the
+alembic gate, and the release's full suite is the first time the six backend
+shards run for that code.
 
 ## Operating notes
 
-- Orchestrator flow is unchanged: add `ci` once, the run removes it; re-add to
-  re-run on a new head. To merge: "Merge when ready" puts the PR in the queue;
-  the queue's `merge_group` run is the full suite.
-- A hotfix that must skip the queue is a direct push; it runs the full suite on
-  main, as today.
-- `workflow_dispatch` always runs the full suite and deploys.
+- Orchestrator flow for a PR is unchanged: add `ci` once, the run removes it;
+  re-add to re-run on a new head. To merge with the queue on: "Merge when
+  ready"; the queue's `merge_group` run is the full suite.
+- A merge never deploys. Batch merges, then one release dispatch, then one
+  owner approval.
+- A hotfix is the same path: merge, dispatch, approve. There is no automatic
+  route to the server any more.
 
 ## Tests
 
-`sorento_crm_backend/tests/test_ci_docs_only_filter.py` (111 tests), the same
-mechanism as #1370: the two `changes` steps are extracted from the workflow and
-executed under GitHub's bash flags with a stub `gh` that answers each endpoint
-from a canned payload through the real `jq` filter; the jobs' `if` lines and
-the concurrency expressions are evaluated as written. New in this lane:
+`sorento_crm_backend/tests/test_ci_docs_only_filter.py`, the same mechanism as
+#1370: the `changes` step is extracted from the workflow and executed under
+GitHub's bash flags with a stub `gh` that answers each endpoint from a canned
+payload through the real `jq` filter; the jobs' `if` lines and the concurrency
+expressions are evaluated as written, with a job table per event.
 
 - `scm` flag: every `SCM_RE` path on a PR runs the SCM shards; non-scm backend
   paths do not; off a PR `scm` follows `backend`.
-- "prior" step: a queue run on the same SHA validates; one skipped or failed
-  gate does not; an all-skipped run does not; a full PR run on the merged PR's
-  head validates; a fast-gate PR run does not; a second candidate can validate;
-  direct push, no run, a failed jobs call and a failed API all leave
-  `validated=false`. `GATES` is asserted equal to the 17 test-job names parsed
-  from the workflow.
-- Job table: which jobs run for a PR (backend with and without scm paths,
-  frontend + mcp, docs-only, another label), a merge_group entry, a validated
-  push, an unvalidated push, a docs-only push, dispatch; a failed gate skips the
-  deploy and still notifies; a validated push with a failed build or alembic
-  gate does not deploy.
-
-Kill tests: putting the backend shards back on `pull_request` fails the PR
-scenario tests; removing a name from `GATES` fails the drift test; restoring the
-old `build-and-deploy` condition fails the validated-push tests.
+- `skip_tests`: honoured on a dispatch only (every area false, docs_only false);
+  a stray value on a PR or queue run changes nothing; a dispatch without it
+  counts every area even for a docs-only file list.
+- Job table: a push to main runs `check-migration-heads` only, whatever the
+  flags; a release runs the full suite then build + deploy + notify; a release
+  with `skip_tests` runs build + deploy + notify only; a dispatch on another
+  ref runs the suite and never builds or ships; a failed gate (8 variants)
+  skips the deploy and still notifies; `skip_tests` with a failed build or
+  alembic gate does not deploy; a merge-queue entry never deploys; PR scenarios
+  (backend with and without scm paths, frontend + mcp, docs-only, another
+  label) as before.
+- `build-and-deploy` is asserted to carry `environment: production`, and no
+  other job to carry an environment.
 
 UAC: `ci-fast-gate-29sep-acceptance-criteria.md` alongside.
