@@ -83,7 +83,8 @@ export type UseCase =
   | 'ticket_resolved'
   | 'price_tag_update'
   | 'ideation_draft_reminder'
-  | 'supplier_request_chat';
+  | 'supplier_request_chat'
+  | 'stock_ask_salesman';
 
 export type ParamVariable =
   | 'contact_name'
@@ -111,7 +112,12 @@ export type ParamVariable =
   | 'project'
   | 'product_code'
   | 'initiator'
-  | 'handler_name';
+  | 'handler_name'
+  | 'outcome'
+  | 'customer_name'
+  | 'product'
+  | 'quantity'
+  | 'asked_at';
 
 export interface WhatsAppTemplate {
   id: string;
@@ -349,6 +355,12 @@ export const USE_CASES: {
     description:
       'Sent once, 24h after the last turn on an open idea draft, when the free-text window has closed. Map a parameter to "Full update message" (the reminder text naming the idea).',
   },
+  {
+    key: 'stock_ask_salesman',
+    label: 'Stock Ask - Salesman Notification',
+    description:
+      'Sent to the customer\'s sales agent when the chatbot answers a dealer\'s stock ask (too big, in stock, or no stock and no incoming) and the dealer contact has "Notify salesman" on. Map params to "Customer", "Contact name" (the dealer who asked), "Product", "Quantity", "Outcome" and "Asked at".',
+  },
 ];
 
 export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: string }[] = [
@@ -378,6 +390,11 @@ export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: 
   { key: 'product_code', label: 'Product code', description: 'Product code on the stock inquiry' },
   { key: 'initiator', label: 'Initiator', description: 'SLA takeover: teammate who requested the takeover ("Requested by")' },
   { key: 'update', label: 'Update', description: 'Lean action core - technical reply / "Approved" / "Rejected, reason: X" / "Processed by CS" / "Root cause is X" / "Resolution is X". No preamble or link.' },
+  { key: 'outcome', label: 'Outcome', description: 'Stock ask: in stock / too big / no stock no incoming / no cap set for <category>' },
+  { key: 'customer_name', label: 'Customer', description: 'Stock ask: the customer the dealer contact buys for' },
+  { key: 'product', label: 'Product', description: 'Stock ask: product code - name' },
+  { key: 'quantity', label: 'Quantity', description: 'Stock ask: the quantity the dealer asked for' },
+  { key: 'asked_at', label: 'Asked at', description: 'Stock ask: when the dealer asked (DD/MM/YYYY HH:MM, Malaysia time)' },
 ];
 
 

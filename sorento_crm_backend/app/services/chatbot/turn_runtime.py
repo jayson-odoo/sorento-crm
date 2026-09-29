@@ -252,7 +252,11 @@ def previous_reply_text(
             query = query.filter(ChatbotTurn.ingress == _CONSOLE_INGRESS)
         else:
             query = query.filter(ChatbotTurn.ingress != _CONSOLE_INGRESS)
-        row = query.order_by(ChatbotTurn.created_at.desc()).first()
+        # PR #1353 fix round 3: `created_at` is Postgres `now()`, the TRANSACTION's start,
+        # so two turns written in one transaction tie and the order was arbitrary;
+        # `started_at` (the head's own clock, per row) breaks the tie. Same order as
+        # `recent_exchanges`, so its newest pair's answer IS this reply.
+        row = query.order_by(*_newest_turn_first(ChatbotTurn)).first()
     except Exception:  # noqa: BLE001 - no previous reply is a blank line, never a failure
         logger.warning(
             "chatbot: previous reply lookup failed for %s", contact_respond_id, exc_info=True
@@ -278,6 +282,11 @@ def _envelope_text(envelope: Any) -> str | None:
         attachment = inner.get("attachment")
         text = attachment.get("description") if isinstance(attachment, dict) else None
     return text if isinstance(text, str) and text.strip() else None
+
+
+def _newest_turn_first(model: Any) -> tuple[Any, ...]:
+    """Newest turn first: `created_at`, then `started_at` for rows that tie on it."""
+    return (model.created_at.desc(), model.started_at.desc().nullslast())
 
 
 def recent_exchanges(
@@ -309,7 +318,7 @@ def recent_exchanges(
             query = query.filter(ChatbotTurn.ingress == _CONSOLE_INGRESS)
         else:
             query = query.filter(ChatbotTurn.ingress != _CONSOLE_INGRESS)
-        rows = query.order_by(ChatbotTurn.created_at.desc()).limit(limit * 2).all()
+        rows = query.order_by(*_newest_turn_first(ChatbotTurn)).limit(limit * 2).all()
     except Exception:  # noqa: BLE001 - no history is no lines, never a failure
         logger.warning(
             "chatbot: recent exchanges lookup failed for %s", contact_respond_id, exc_info=True

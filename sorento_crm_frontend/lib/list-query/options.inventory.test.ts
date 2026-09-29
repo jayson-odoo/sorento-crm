@@ -502,6 +502,8 @@ const MANUAL_PAGINATION_ALLOWLIST: Record<string, string> = {
     'fetches in a useEffect, not react-query, so no query reports isPlaceholderData',
   'app/(protected)/ticket-management/tickets/components/TicketsList.tsx':
     'fetches in a useEffect, not react-query, so no query reports isPlaceholderData',
+  'app/(auth)/portal/components/CustomerAsksList.tsx':
+    'fetches in a useEffect, not react-query, so no query reports isPlaceholderData',
   'components/spec-table/SpecTable.tsx':
     'manualPagination with pageCount 1 turns paging OFF on prop-fed rows; there is no page to turn',
   'components/spec-proposals/SpecProposalReview.tsx':
