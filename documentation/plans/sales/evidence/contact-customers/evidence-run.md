@@ -59,6 +59,25 @@ Console: no errors on any of the pages above (`errors` empty; the only entries w
 Refresh logs and NextAuth token debug lines). Nothing new animates beyond the existing
 countdown bar.
 
+## Round 3 (owner hand test: multi-select pickers), same stack, 29 Sep 09:00Z
+
+12. Contact record (reached earlier by sidebar): the Customers card now reads "Add customers"
+    (the shared `SearchableMultiSelect`) and a "Link 0 customers" button, disabled. Opened:
+    options list every customer as `code - name` with the current agent underneath; the
+    already-linked 300-H002 is a disabled option.
+13. Ticked four options (one by keyboard Enter, three by click after `scrollintoview`; an
+    option below the viewport clicked by coordinates closes the popover, which is the
+    documented "scroll before click" rule, not a defect: a programmatic click on the same
+    off-screen option toggled it). The button read "Link 4 customers"; the list stayed open
+    across ticks. One click: `POST /api/v1/user-management/contacts/{id}/customers` 201 (one
+    request, four ids); the card then listed five rows (H002 plus the four), the selection
+    cleared and the button read "Link 0 customers" again.
+14. Agent SEAN I > Customers tab: "Assign customers" multi-select; customers already on this
+    agent are disabled options, the others show their current agent or "No sales agent".
+    Ticked two, button "Assign 2 customers", one click: `POST
+    /api/v1/master-data/sales-agents/{id}/customers` 200 (one request, two ids); the grid
+    re-read with both rows added.
+
 ## Not covered here
 
 Two-company scope in the browser (the sandbox has Sorento only; AC-22's two-company case is

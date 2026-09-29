@@ -27,17 +27,18 @@ Element.prototype.scrollIntoView = vi.fn();
 
 const services = vi.hoisted(() => ({
   getSalesAgentCustomers: vi.fn(),
-  assignSalesAgentCustomer: vi.fn(),
+  assignSalesAgentCustomers: vi.fn(),
 }));
 vi.mock('../../services/salesAgentService', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   ...services,
 }));
 
-vi.mock('@/app/(protected)/order-management/customers/services/customerService', () => ({
-  searchCustomersSelect: vi.fn(async () => []),
+const customerSvc = vi.hoisted(() => ({
+  searchCustomersSelect: vi.fn(),
   CUSTOMER_SELECT_PAGE_SIZE: 50,
 }));
+vi.mock('@/app/(protected)/order-management/customers/services/customerService', () => customerSvc);
 
 const permissionState = vi.hoisted(() => ({
   granted: new Set<string>(['master_data.sales_agents.edit']),
@@ -80,12 +81,45 @@ vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => (
   resetUserListColumnConfig: vi.fn(async () => undefined),
 }));
 
-vi.mock('@/components/common/SearchableSelect', () => ({
-  SearchableSelect: (props: { onChange: (v: string) => void; 'aria-label'?: string }) => (
-    <button type="button" onClick={() => props.onChange('99999999-8888-4777-8666-555555555555')}>
-      pick:{props['aria-label']}
-    </button>
-  ),
+// The real multi-select is a Radix popover; this stand-in lists the fetched options as checkboxes.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: (props: {
+    value: string[];
+    onChange: (v: string[]) => void;
+    fetchOptions?: (q: string) => Promise<
+      { value: string; label: string; description?: string; disabled?: boolean }[]
+    >;
+  }) => {
+    const [opts, setOpts] = React.useState<
+      { value: string; label: string; description?: string; disabled?: boolean }[]
+    >([]);
+    // The real control fetches when it opens, not on mount, so options reflect the rows
+    // loaded by then (which is what disables "already linked").
+    return (
+      <div>
+        <button type="button" onClick={() => void props.fetchOptions?.('').then(setOpts)}>
+          open picker
+        </button>
+        {opts.map((o) => (
+          <label key={o.value}>
+            <input
+              type="checkbox"
+              aria-label={o.label}
+              checked={props.value.includes(o.value)}
+              disabled={o.disabled}
+              onChange={(e) =>
+                props.onChange(
+                  e.target.checked
+                    ? [...props.value, o.value]
+                    : props.value.filter((v) => v !== o.value),
+                )
+              }
+            />
+          </label>
+        ))}
+      </div>
+    );
+  },
 }));
 
 import SalesAgentCustomersTab from './SalesAgentCustomersTab';
@@ -115,8 +149,19 @@ const ROWS = [
   },
 ];
 
+// `salesAgentId` is what the tab reads to disable "already on this agent".
+const OPTIONS = [
+  { value: 'own-1', label: 'Option own', description: 'AG-1 - Alice', salesAgentId: 'agent-1' },
+  { value: 'other-1', label: 'Option other', description: 'AG-2 - Bob', salesAgentId: 'agent-2' },
+  { value: 'free-1', label: 'Option free', description: 'No sales agent', salesAgentId: null },
+].map((o) => ({ ...o, disabled: false }));
+
 function page(rows: typeof ROWS) {
   return { data: rows, pagination: { total: rows.length, page: 1, limit: 50 }, empty: rows.length === 0 };
+}
+
+async function openPicker() {
+  fireEvent.click(await screen.findByRole('button', { name: 'open picker' }));
 }
 
 function renderTab() {
@@ -132,7 +177,9 @@ beforeEach(() => {
   Object.values(services).forEach((fn) => fn.mockReset());
   permissionState.granted = new Set(['master_data.sales_agents.edit']);
   nav.push.mockReset();
-  services.assignSalesAgentCustomer.mockResolvedValue(ROWS[0]);
+  services.assignSalesAgentCustomers.mockResolvedValue([ROWS[0]]);
+  customerSvc.searchCustomersSelect.mockReset();
+  customerSvc.searchCustomersSelect.mockResolvedValue(OPTIONS);
 });
 
 afterEach(() => cleanup());
@@ -174,17 +221,43 @@ describe('SalesAgentCustomersTab', () => {
     expect(screen.getByText('Assign the customers this agent handles')).toBeInTheDocument();
   });
 
-  it('AC-9: picking a customer calls assign with the agent and that customer id, no refusal', async () => {
+  it('AC-9 / AC-15: two ticked (one handled by another agent) reads "Assign 2 customers", one call with both ids', async () => {
     services.getSalesAgentCustomers.mockResolvedValue(page(ROWS));
     renderTab();
 
-    fireEvent.click(await screen.findByRole('button', { name: /pick:Assign customer/ }));
+    await openPicker();
+    fireEvent.click(await screen.findByLabelText('Option other'));
+    fireEvent.click(screen.getByLabelText('Option free'));
 
-    await waitFor(() => expect(services.assignSalesAgentCustomer).toHaveBeenCalledTimes(1));
-    expect(services.assignSalesAgentCustomer).toHaveBeenCalledWith(
-      'agent-1',
-      '99999999-8888-4777-8666-555555555555',
-    );
+    const button = screen.getByRole('button', { name: 'Assign customers' });
+    expect(button).toHaveTextContent('Assign 2 customers');
+    fireEvent.click(button);
+
+    await waitFor(() => expect(services.assignSalesAgentCustomers).toHaveBeenCalledTimes(1));
+    expect(services.assignSalesAgentCustomers).toHaveBeenCalledWith('agent-1', [
+      'other-1',
+      'free-1',
+    ]);
+  });
+
+  it('AC-15: with nothing ticked the Assign button is disabled', async () => {
+    services.getSalesAgentCustomers.mockResolvedValue(page(ROWS));
+    renderTab();
+
+    await openPicker();
+    await screen.findByLabelText('Option free');
+    expect(screen.getByRole('button', { name: 'Assign customers' })).toBeDisabled();
+    expect(services.assignSalesAgentCustomers).not.toHaveBeenCalled();
+  });
+
+  it('AC-9: a customer already on this agent is a disabled option, the others are not', async () => {
+    services.getSalesAgentCustomers.mockResolvedValue(page(ROWS));
+    renderTab();
+
+    await openPicker();
+    expect(await screen.findByLabelText('Option own')).toBeDisabled();
+    expect(screen.getByLabelText('Option other')).toBeEnabled();
+    expect(screen.getByLabelText('Option free')).toBeEnabled();
   });
 
   it('AC-12: with sales_agents.edit each row has Unassign and the assign select shows', async () => {
@@ -193,7 +266,7 @@ describe('SalesAgentCustomersTab', () => {
 
     await screen.findByText('C-100');
     expect(screen.getAllByRole('button', { name: /unassign/i })).toHaveLength(2);
-    expect(screen.getByRole('button', { name: /pick:Assign customer/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Assign customers' })).toBeInTheDocument();
   });
 
   it('AC-12: without sales_agents.edit the tab is read-only (no select, no Unassign)', async () => {
@@ -202,7 +275,8 @@ describe('SalesAgentCustomersTab', () => {
     renderTab();
 
     expect(await screen.findByText('C-100')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /pick:Assign customer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Assign customers' })).toBeNull();
+    expect(screen.queryByLabelText('Option free')).toBeNull();
     expect(screen.queryByRole('button', { name: /unassign/i })).toBeNull();
   });
 });

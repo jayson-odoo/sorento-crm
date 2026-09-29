@@ -8,14 +8,15 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const services = vi.hoisted(() => ({
   getContactCustomers: vi.fn(),
-  linkContactCustomer: vi.fn(),
+  linkContactCustomers: vi.fn(),
 }));
 vi.mock('../services/contactCustomersService', () => services);
 
-vi.mock('@/app/(protected)/order-management/customers/services/customerService', () => ({
-  searchCustomersSelect: vi.fn(async () => []),
+const customerSvc = vi.hoisted(() => ({
+  searchCustomersSelect: vi.fn(),
   CUSTOMER_SELECT_PAGE_SIZE: 50,
 }));
+vi.mock('@/app/(protected)/order-management/customers/services/customerService', () => customerSvc);
 
 const permissionState = vi.hoisted(() => ({
   granted: new Set<string>(['user_management.contacts.edit']),
@@ -38,13 +39,45 @@ vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
-// The real select is a Radix popover; this stand-in exposes one pick that reports a customer id.
-vi.mock('@/components/common/SearchableSelect', () => ({
-  SearchableSelect: (props: { onChange: (v: string) => void; 'aria-label'?: string }) => (
-    <button type="button" onClick={() => props.onChange('11111111-2222-4333-8444-555555555555')}>
-      pick:{props['aria-label']}
-    </button>
-  ),
+// The real multi-select is a Radix popover; this stand-in lists the fetched options as checkboxes.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: (props: {
+    value: string[];
+    onChange: (v: string[]) => void;
+    fetchOptions?: (q: string) => Promise<
+      { value: string; label: string; description?: string; disabled?: boolean }[]
+    >;
+  }) => {
+    const [opts, setOpts] = React.useState<
+      { value: string; label: string; description?: string; disabled?: boolean }[]
+    >([]);
+    // The real control fetches when it opens, not on mount, so options reflect the rows
+    // loaded by then (which is what disables "already linked").
+    return (
+      <div>
+        <button type="button" onClick={() => void props.fetchOptions?.('').then(setOpts)}>
+          open picker
+        </button>
+        {opts.map((o) => (
+          <label key={o.value}>
+            <input
+              type="checkbox"
+              aria-label={o.label}
+              checked={props.value.includes(o.value)}
+              disabled={o.disabled}
+              onChange={(e) =>
+                props.onChange(
+                  e.target.checked
+                    ? [...props.value, o.value]
+                    : props.value.filter((v) => v !== o.value),
+                )
+              }
+            />
+          </label>
+        ))}
+      </div>
+    );
+  },
 }));
 
 import ContactCustomersSection from './ContactCustomersSection';
@@ -78,6 +111,18 @@ const LINKS = [
   },
 ];
 
+// Option labels differ from the row text on purpose, so a row and its option never collide.
+const OPTIONS = [
+  { value: LINKS[0].customer_id, label: 'Option C-100', description: 'AG-1 - Alice' },
+  { value: 'opt-2', label: 'Option C-300', description: 'No sales agent' },
+  { value: 'opt-3', label: 'Option C-400', description: 'No sales agent' },
+  { value: 'opt-4', label: 'Option C-500', description: 'No sales agent' },
+].map((o) => ({ ...o, disabled: false }));
+
+async function openPicker() {
+  fireEvent.click(await screen.findByRole('button', { name: 'open picker' }));
+}
+
 function renderSection() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -90,7 +135,9 @@ function renderSection() {
 beforeEach(() => {
   Object.values(services).forEach((fn) => fn.mockReset());
   permissionState.granted = new Set(['user_management.contacts.edit']);
-  services.linkContactCustomer.mockResolvedValue(LINKS[0]);
+  services.linkContactCustomers.mockResolvedValue(LINKS);
+  customerSvc.searchCustomersSelect.mockReset();
+  customerSvc.searchCustomersSelect.mockResolvedValue(OPTIONS);
 });
 
 afterEach(() => cleanup());
@@ -116,20 +163,49 @@ describe('ContactCustomersSection', () => {
     expect(
       screen.getByText('Link the customer accounts this contact belongs to'),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /pick:Add customer/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Link customers' })).toBeInTheDocument();
   });
 
-  it('AC-3: picking a customer calls the link service with that customer id', async () => {
+  it('AC-3 / AC-14: ticking three customers reads "Link 3 customers" and one click sends all three ids once', async () => {
+    services.getContactCustomers.mockResolvedValue({ data: [] });
+    renderSection();
+    await screen.findByText('No customers linked');
+    await openPicker();
+    fireEvent.click(await screen.findByLabelText('Option C-300'));
+    fireEvent.click(screen.getByLabelText('Option C-400'));
+    fireEvent.click(screen.getByLabelText('Option C-500'));
+
+    const button = screen.getByRole('button', { name: 'Link customers' });
+    expect(button).toHaveTextContent('Link 3 customers');
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+
+    await waitFor(() => expect(services.linkContactCustomers).toHaveBeenCalledTimes(1));
+    expect(services.linkContactCustomers).toHaveBeenCalledWith('contact-1', [
+      'opt-2',
+      'opt-3',
+      'opt-4',
+    ]);
+  });
+
+  it('AC-14: with nothing ticked the Link button is disabled', async () => {
     services.getContactCustomers.mockResolvedValue({ data: [] });
     renderSection();
 
-    fireEvent.click(await screen.findByRole('button', { name: /pick:Add customer/ }));
+    await openPicker();
+    await screen.findByLabelText('Option C-300');
+    expect(screen.getByRole('button', { name: 'Link customers' })).toBeDisabled();
+    expect(services.linkContactCustomers).not.toHaveBeenCalled();
+  });
 
-    await waitFor(() => expect(services.linkContactCustomer).toHaveBeenCalledTimes(1));
-    expect(services.linkContactCustomer.mock.calls[0][0]).toBe('contact-1');
-    expect(services.linkContactCustomer.mock.calls[0][1]).toBe(
-      '11111111-2222-4333-8444-555555555555',
-    );
+  it('AC-3: an already-linked customer is a disabled option', async () => {
+    services.getContactCustomers.mockResolvedValue({ data: LINKS });
+    renderSection();
+
+    await screen.findByText('C-100 - Hanlim Alpha');
+    await openPicker();
+    expect(await screen.findByLabelText('Option C-100')).toBeDisabled();
+    expect(screen.getByLabelText('Option C-300')).toBeEnabled();
   });
 
   it('AC-12: without contacts.edit the card is read-only (no select, no Unlink)', async () => {
@@ -138,7 +214,8 @@ describe('ContactCustomersSection', () => {
     renderSection();
 
     expect(await screen.findByText('C-100 - Hanlim Alpha')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /pick:Add customer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Link customers' })).toBeNull();
+    expect(screen.queryByLabelText('Option C-300')).toBeNull();
     expect(screen.queryByRole('button', { name: /unlink/i })).toBeNull();
   });
 

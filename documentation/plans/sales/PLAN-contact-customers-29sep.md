@@ -1,6 +1,6 @@
 # PLAN: contact <-> customer links, and a sales agent's customers from the agent side
 
-Status: hand test round 1 feedback being applied (round 3, 29 Sep 2026); full track, no migration. PR #1366. Evidence: `evidence/contact-customers/evidence-run.md`.
+Status: round 3 built (multi-select pickers), review passed, hand test round 2 pending (29 Sep 2026); full track, no migration. PR #1366. Evidence: `evidence/contact-customers/evidence-run.md`.
 Domain: sales (customer master, sales agents) + user_management (contacts).
 UAC: `contact-customers-29sep-acceptance-criteria.md` alongside.
 Lane: CONTACT-CUSTOMERS. Siblings that build on this: SALES-ASKS-TODO, CHATBOT-CUSTOMER-SCOPE.
