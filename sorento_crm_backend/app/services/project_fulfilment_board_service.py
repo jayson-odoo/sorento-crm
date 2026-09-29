@@ -114,6 +114,7 @@ from app.services.scm.front_planning_engine import (
     RUNG_SUPPLY_BORROW,
     TIMELY_SPO,
     date_text,
+    own_arrival_reason,
     pool_reserve_capacity,
     pool_share_capacity,
     qty_text,
@@ -3314,7 +3315,13 @@ class FulfilmentBoardService:
         # PO landed it before the group-net sentence that follows - read off `components`
         # (what was DRAWN), the same as `group_drawn` above.
         own_arrival_drawn = [
-            (_dec(component.qty), getattr(component, "supply_document", None))
+            (
+                _dec(component.qty),
+                getattr(component, "supply_document", None),
+                component.source_location,
+                getattr(component, "landed_qty", None),
+                getattr(component, "free_qty", None),
+            )
             for component in components
             if getattr(component, "rung", None) == RUNG_GROUP_TAKE
             and getattr(component, "source", None) == "own_arrival"
@@ -3955,7 +3962,9 @@ class FulfilmentBoardService:
         drawn: Sequence[Tuple[str, Decimal, bool]] = (),
         other: Sequence[Dict[str, Any]] = (),
         offer: Optional[Decimal] = None,
-        own_arrival: Sequence[Tuple[Decimal, Optional[str]]] = (),
+        own_arrival: Sequence[
+            Tuple[Decimal, Optional[str], Optional[str], Optional[Decimal], Optional[Decimal]]
+        ] = (),
     ) -> str:
         """Why rung 2 (the ownership group) ended where it did (section 1d).
 
@@ -3983,14 +3992,24 @@ class FulfilmentBoardService:
         the SPO the goods physically landed on, never the PO - a PO line's own
         `qty_received` is the AutoCount TRANSFER onto a shipping order, not a receipt - so
         the noun in front of it is dropped rather than saying "PO" of an SPO number.
+
+        #1362 (owner ruling 29 Sep 2026): what landed for the line and how much of it is
+        still free at the bin, taken first, are two facts and are said apart - "100 landed
+        for this line on SPO-2026/06-0152; 40 free at BRW-BB, taken first." - the engine's
+        own `own_arrival_reason`, so the trail and the component's reason cannot drift.
         """
         prefix = "".join(
             (
-                f"{qty_text(qty)} landed for this line on {document}, taken first. "
-                if document
-                else f"{qty_text(qty)} landed for this line, taken first. "
+                own_arrival_reason(location, qty, document, landed=landed, free=free)
+                + ". "
+                if location and landed is not None and free is not None
+                else (
+                    f"{qty_text(qty)} landed for this line on {document}, taken first. "
+                    if document
+                    else f"{qty_text(qty)} landed for this line, taken first. "
+                )
             )
-            for qty, document in own_arrival
+            for qty, document, location, landed, free in own_arrival
             if qty > _ZERO
         )
         if outcome == "none_needed":

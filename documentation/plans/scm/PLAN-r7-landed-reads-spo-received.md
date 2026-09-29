@@ -103,6 +103,25 @@ keep their `quantity_received` and are counted by both R7 joins, the same way
 double-count. Built as A (count them, consistent with the board); owner may rule B (exclude
 `retired_at IS NOT NULL` from R7 only).
 
+## Follow-up: #1362, landed and free said apart (owner ruling 29 Sep 2026)
+
+Owner, 29 Sep 2026, on SO382618 line SRT357 (100 landed on SPO-2026/06-0152 at BRW-BB, on
+hand 261, trail read "40 landed for this line"): "i check 100 is for this line, why it says
+40 ah?" then "please fix this". Ruling: the sentence states two facts apart. The first is what
+landed for the line (tier 1 plus tier-2 spare, capped by the line's need). The second is how
+much of it is still free at the bin and taken first. Example: "100 landed for this line on
+SPO-2026/06-0152; 40 free at BRW-BB, taken first". When less is taken than is free (a pool
+share covered part of the line first), the taken figure is said as a third number.
+`front_planning_engine.own_arrival_reason` builds it for both the component reason and the
+board trail (`_group_take_why`).
+
+Measured cause of the 40 (reproduction, 29 Sep): the credit ledger is already per (product,
+bin) (`compose_lines`, `_check_line`, the order-inquiry picker), so no other product is
+involved. An EARLIER-due line of the SAME product at the same bin, with no PO of its own,
+drew 221 of the 261 through the ordinary group take, and AC-S3-11 charges that draw to the
+same ledger. Whether landed-for-a-line goods should outrank an earlier line's ordinary draw
+is an open owner ruling on #1362. It is not changed here.
+
 ## Out of scope
 
 - The board proposing Buy for a late own-SPO (R2 keeps it).

@@ -1483,11 +1483,23 @@ class ProjectSupplyService:
                 )
             )
             if credit_qty > _ZERO:
+                # #1362: the sentence states two facts apart - what landed for this line
+                # (tier 1 plus the tier-2 spare, capped by what the line needs) and how
+                # much of it is still free at the bin (`credit_qty`, that figure capped by
+                # what is left of this product's on hand there in this walk). Read as one
+                # number, "40 landed" was taken to mean the SPO carried 40.
+                landed = min(
+                    credit_tier1_qty
+                    + sum((spare for _ref, spare, _po in credit_tier2), _ZERO),
+                    max(_dec(fact.open_qty), _ZERO),
+                )
                 own_arrival_candidates = [{
                     "location": fact.own_code,
                     "qty": credit_qty,
                     "source": "own_arrival",
                     "supply_document": credit_po,
+                    "landed_qty": landed,
+                    "free_qty": credit_qty,
                 }]
             order_borrow = self.order_borrow_candidates_for(
                 fact, as_of=as_of, borrow_left=borrow_left
