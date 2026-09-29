@@ -5,8 +5,8 @@
  * Sales-asks-todo S1 (plan 3.2, 3.5) API CONTRACT, same gate as the list (linked agent AND the
  * per-contact `customer_asks` switch; 403 `NOT_A_SALES_AGENT` / `FORM_TYPE_NOT_VISIBLE`):
  *   GET   /api/v1/public/portal/customer-asks/todo
- *     -> { today_start: ISO UTC of Malaysia midnight, open: StockAsk[] (state open, branch not
- *          incoming, oldest first, cap 500), done_today: StockAsk[] (done_at >= today_start,
+ *     -> { today_start: ISO UTC of Malaysia midnight, open: StockAsk[] (state open, EVERY branch
+ *          including incoming, oldest first, cap 500), done_today: StockAsk[] (done_at >= today_start,
  *          newest first), truncated: boolean }
  *   PATCH /api/v1/public/portal/customer-asks/{id}  { state?, note? }  -> StockAsk
  *          (unchanged route; a transition to done now stamps `done_at` and the actor ids; `done_by` on the wire is the

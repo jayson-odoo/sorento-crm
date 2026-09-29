@@ -29,9 +29,8 @@ export interface StockAsk {
   /** Sales-asks-todo S1: the name of who marked it done (a portal contact or a CRM user). */
   done_by?: string | null;
   /**
-   * PHASE 1 CONTRACT ADDITION (not in plan 3.2): the owning agent's code, only sent by the CRM
-   * to-do when the caller asked for `agent_id=all`, so the manager view can name the agent
-   * on line 1 of each row.
+   * The owning agent's code, only sent by the CRM to-do when the caller asked for
+   * `agent_id=all`, so the manager view can name the agent on line 1 of each row.
    */
   agent_code?: string | null;
 }

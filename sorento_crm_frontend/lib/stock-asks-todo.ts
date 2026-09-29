@@ -4,7 +4,7 @@
  * turns it into counts and groups. The server owns the day boundary (`today_start`); nothing
  * here guesses a timezone.
  *
- * Rules that may still move with the grill (plan section 3, marks `[Q<n> pending]`):
+ * Rules (owner rulings, plan section 0b):
  * - Q3 grouping: `Needs attention` pinned (one group per Malaysia day, oldest first), then `Today`.
  * - Q4 overdue: needs attention = open and asked before `today_start`.
  */

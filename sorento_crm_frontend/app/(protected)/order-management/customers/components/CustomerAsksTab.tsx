@@ -12,7 +12,7 @@ import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
-import { AskedAtCell, AskNoteCell, AskStateCell } from '@/components/stock-asks/AskEditCells';
+import { AskDoneByCell, AskedAtCell, AskNoteCell, AskStateCell } from '@/components/stock-asks/AskEditCells';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { BRANCH_LABEL, BRANCH_VARIANT, notifiedLabel, type StockAsk } from '@/lib/stock-asks';
 import { useCustomerAsksQuery, useUpdateAskMutation } from '../hooks/useCustomerAsks';
@@ -108,6 +108,12 @@ export function CustomerAsksTab({ customerId }: { customerId: string }) {
             onSave={(patch) => updateAsk({ askId: row.original.id, patch })}
           />
         ),
+      },
+      {
+        id: 'done_by',
+        header: 'Done by',
+        size: 240,
+        cell: ({ row }) => <AskDoneByCell ask={row.original} />,
       },
       {
         id: 'note',

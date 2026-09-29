@@ -61,6 +61,21 @@ export const REDUCED_MOTION_TRANSITION: Transition = {
 };
 
 /**
+ * A row or block leaving a list on a plain 150 ms opacity fade (`--duration-fast`): no scale, no
+ * travel. For content that is cleared out of a working list (a done ask), not a surface, so it
+ * sits below the lightbox and menu springs. Under `prefers-reduced-motion` it collapses to the
+ * same-frame `REDUCED_MOTION_TRANSITION`.
+ */
+export const FADE_EXIT_TRANSITION: Transition = {
+  duration: 0.15,
+  ease: 'easeOut',
+};
+
+export function fadeExitTransition(prefersReducedMotion: boolean | null): Transition {
+  return prefersReducedMotion ? REDUCED_MOTION_TRANSITION : FADE_EXIT_TRANSITION;
+}
+
+/**
  * The transition a surface should ENTER with, given the user's motion
  * preference and what kind of surface it is. `'lightbox'` (Dialog, Sheet,
  * AlertDialog) is the default so every existing call site keeps its 0.3s

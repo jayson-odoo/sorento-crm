@@ -18,6 +18,8 @@ export function useCustomerAsksTodo() {
   const [notAgent, setNotAgent] = useState(false);
   /** Bumped after each write so the Show done history reloads too. */
   const [version, setVersion] = useState(0);
+  /** The ask whose PATCH is in flight; its Done / Reopen button is disabled meanwhile. */
+  const [pendingAskId, setPendingAskId] = useState<string | null>(null);
 
   const load = useCallback(() => {
     return getCustomerAsksTodo()
@@ -37,11 +39,14 @@ export function useCustomerAsksTodo() {
   }, [load]);
 
   const save = useCallback(
-    (askId: string, patch: StockAskPatch) =>
-      updateCustomerAsk(askId, patch)
+    (askId: string, patch: StockAskPatch) => {
+      setPendingAskId(askId);
+      return updateCustomerAsk(askId, patch)
         .then(() => load())
         .then(() => setVersion((v) => v + 1))
-        .catch((e: unknown) => toast.error(e instanceof Error ? e.message : 'Failed to update the ask')),
+        .catch((e: unknown) => toast.error(e instanceof Error ? e.message : 'Failed to update the ask'))
+        .finally(() => setPendingAskId(null));
+    },
     [load],
   );
 
@@ -51,6 +56,7 @@ export function useCustomerAsksTodo() {
     error,
     notAgent,
     version,
+    pendingAskId,
     done: (askId: string) => save(askId, { state: 'done' }),
     reopen: (askId: string) => save(askId, { state: 'open' }),
     note: (askId: string, note: string) => save(askId, { note }),

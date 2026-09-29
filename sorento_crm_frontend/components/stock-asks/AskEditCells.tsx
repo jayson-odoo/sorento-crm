@@ -101,3 +101,23 @@ export function AskedAtCell({ ask }: { ask: StockAsk }) {
     </span>
   );
 }
+
+/**
+ * Who cleared an ask and when: "Done by Sean, 29/09/2026, 2:02 pm", "Done" when it is done with
+ * no name on record, "-" while it is open.
+ */
+export function doneByText(ask: Pick<StockAsk, 'state' | 'done_by' | 'done_at'>): string {
+  if (ask.state !== 'done') return '-';
+  const when = ask.done_at ? formatDateTimeInMalaysia(ask.done_at) : '';
+  if (!ask.done_by) return 'Done';
+  return when ? `Done by ${ask.done_by}, ${when}` : `Done by ${ask.done_by}`;
+}
+
+export function AskDoneByCell({ ask }: { ask: StockAsk }) {
+  const text = doneByText(ask);
+  return (
+    <span className="block truncate" title={text}>
+      {text}
+    </span>
+  );
+}

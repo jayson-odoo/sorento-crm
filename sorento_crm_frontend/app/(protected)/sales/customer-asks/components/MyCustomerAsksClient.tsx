@@ -70,8 +70,11 @@ export function MyCustomerAsksClient() {
       />
 
       {unlinked ? (
-        <div className="rounded-lg border px-6 py-8 text-center text-sm text-muted-foreground">
-          You are not linked to a sales agent
+        <div className="space-y-1 rounded-lg border px-6 py-8 text-center">
+          <h2 className="font-medium">Not linked to a sales agent</h2>
+          <p className="text-sm text-muted-foreground">
+            Ask an admin to link your WhatsApp contact to your sales agent.
+          </p>
         </div>
       ) : (
         <AskTodoList
@@ -81,6 +84,7 @@ export function MyCustomerAsksClient() {
           onSortChange={(next) => prefs.setSorting([{ id: next.id, desc: next.desc }])}
           error={todo.isError ? (todo.error instanceof Error ? todo.error.message : 'Try again shortly.') : null}
           showAgent={Boolean(agentId)}
+          pendingAskId={save.isPending ? (save.variables?.askId ?? null) : null}
           onDone={(askId) => save.mutate({ askId, patch: { state: 'done' } })}
           onReopen={(askId) => save.mutate({ askId, patch: { state: 'open' } })}
           onNote={(askId, note) => save.mutate({ askId, patch: { note } })}

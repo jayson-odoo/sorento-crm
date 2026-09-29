@@ -6,9 +6,8 @@ import { MessageSquareText } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { AskedAtCell, AskNoteCell } from '@/components/stock-asks/AskEditCells';
-import { NOOP_ON_UPDATE, surfaceExitTransition, useReducedMotion } from '@/lib/motion';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { AskedAtCell, AskNoteCell, doneByText } from '@/components/stock-asks/AskEditCells';
+import { NOOP_ON_UPDATE, fadeExitTransition, useReducedMotion } from '@/lib/motion';
 import { BRANCH_LABEL, BRANCH_VARIANT, notifiedLabel, type StockAsk } from '@/lib/stock-asks';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
@@ -35,6 +34,8 @@ export interface AskTodoListProps {
   /** Orders the rows inside every day. The mount owns where it is remembered. */
   sort?: AskSort;
   onSortChange?: (sort: AskSort) => void;
+  /** The ask whose Done / Reopen PATCH is in flight: its button is disabled meanwhile. */
+  pendingAskId?: string | null;
 }
 
 /**
@@ -42,7 +43,7 @@ export interface AskTodoListProps {
  * Sales > Customer asks in the CRM. Presentational: the mount fetches, this groups (one pure
  * function, `bucketTodo`) and renders. One action per row, the row leaves the list.
  */
-export function AskTodoList({ payload, loading, error, onDone, onReopen, onNote, showAgent = false, sort = DEFAULT_ASK_SORT, onSortChange }: AskTodoListProps) {
+export function AskTodoList({ payload, loading, error, onDone, onReopen, onNote, showAgent = false, sort = DEFAULT_ASK_SORT, onSortChange, pendingAskId = null }: AskTodoListProps) {
   const reduced = useReducedMotion();
   const bucketed = useMemo(() => (payload ? bucketTodo(payload, sort) : null), [payload, sort]);
 
@@ -66,7 +67,7 @@ export function AskTodoList({ payload, loading, error, onDone, onReopen, onNote,
   if (!payload || !bucketed) return null;
 
   const { counts, sections, done } = bucketed;
-  const exit = { opacity: 0, transition: surfaceExitTransition(reduced) };
+  const exit = { opacity: 0, transition: fadeExitTransition(reduced) };
 
   return (
     <div className="space-y-5">
@@ -119,29 +120,37 @@ export function AskTodoList({ payload, loading, error, onDone, onReopen, onNote,
           >
             {section.label}
           </h2>
-          {section.days.map((day) => (
-            <div key={day.key} className="space-y-2">
-              {section.days.length === 1 && day.label === section.label ? null : (
-                <h3 className="text-xs font-medium text-muted-foreground">{day.label}</h3>
-              )}
-              <ul className="space-y-2.5">
-                <AnimatePresence initial={false}>
-                  {day.asks.map((ask) => (
-                    <motion.li key={ask.id} exit={exit} onUpdate={NOOP_ON_UPDATE} className="rounded-lg border">
-                      <AskRow
-                        ask={ask}
-                        todayStart={payload.today_start}
-                        showAge={section.key === 'needs_attention'}
-                        showAgent={showAgent}
-                        onDone={() => onDone(ask.id)}
-                        onNote={(note) => onNote(ask.id, note)}
-                      />
-                    </motion.li>
-                  ))}
-                </AnimatePresence>
-              </ul>
-            </div>
-          ))}
+          <AnimatePresence initial={false}>
+            {section.days.map((day) => (
+              <motion.div
+                key={day.key}
+                exit={exit}
+                onUpdate={NOOP_ON_UPDATE}
+                className="space-y-2"
+              >
+                {section.days.length === 1 && day.label === section.label ? null : (
+                  <h3 className="text-xs font-medium text-muted-foreground">{day.label}</h3>
+                )}
+                <ul className="space-y-2.5">
+                  <AnimatePresence initial={false}>
+                    {day.asks.map((ask) => (
+                      <motion.li key={ask.id} exit={exit} onUpdate={NOOP_ON_UPDATE} className="rounded-lg border">
+                        <AskRow
+                          ask={ask}
+                          todayStart={payload.today_start}
+                          showAge={section.key === 'needs_attention'}
+                          showAgent={showAgent}
+                          pending={pendingAskId === ask.id}
+                          onDone={() => onDone(ask.id)}
+                          onNote={(note) => onNote(ask.id, note)}
+                        />
+                      </motion.li>
+                    ))}
+                  </AnimatePresence>
+                </ul>
+              </motion.div>
+            ))}
+          </AnimatePresence>
         </section>
       ))}
 
@@ -162,6 +171,7 @@ export function AskTodoList({ payload, loading, error, onDone, onReopen, onNote,
                   todayStart={payload.today_start}
                   showAge={false}
                   showAgent={showAgent}
+                  pending={pendingAskId === ask.id}
                   onReopen={() => onReopen(ask.id)}
                   onNote={(note) => onNote(ask.id, note)}
                 />
@@ -184,6 +194,7 @@ function AskRow({
   todayStart,
   showAge,
   showAgent,
+  pending,
   onDone,
   onReopen,
   onNote,
@@ -192,6 +203,7 @@ function AskRow({
   todayStart: string;
   showAge: boolean;
   showAgent: boolean;
+  pending: boolean;
   onDone?: () => void;
   onReopen?: () => void;
   onNote: (note: string) => void;
@@ -228,20 +240,17 @@ function AskRow({
           </Badge>
         </div>
         {isDone ? (
-          <p className="text-xs text-muted-foreground">
-            {ask.done_by ? `Done by ${ask.done_by}` : 'Done'}
-            {ask.done_at ? ` ${formatDateTimeInMalaysia(ask.done_at)}` : ''}
-          </p>
+          <p className="text-xs text-muted-foreground">{doneByText(ask)}</p>
         ) : null}
       </div>
       <div className="flex flex-col gap-2 sm:w-56">
         {onDone ? (
-          <Button size="sm" variant="primary" className="w-full" onClick={onDone}>
+          <Button size="sm" variant="primary" className="w-full" disabled={pending} onClick={onDone}>
             Done
           </Button>
         ) : null}
         {onReopen ? (
-          <Button size="sm" variant="outline" className="w-full" onClick={onReopen}>
+          <Button size="sm" variant="outline" className="w-full" disabled={pending} onClick={onReopen}>
             Reopen
           </Button>
         ) : null}

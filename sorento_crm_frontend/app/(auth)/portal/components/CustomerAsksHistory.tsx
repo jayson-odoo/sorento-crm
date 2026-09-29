@@ -7,7 +7,7 @@ import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
-import { AskedAtCell, AskNoteCell, AskStateCell } from '@/components/stock-asks/AskEditCells';
+import { AskDoneByCell, AskedAtCell, AskNoteCell, AskStateCell } from '@/components/stock-asks/AskEditCells';
 import { toast } from '@/lib/toast';
 import {
   BRANCH_LABEL,
@@ -162,6 +162,12 @@ export function CustomerAsksHistory({ search, refreshKey }: { search: string; re
         cell: ({ row }) => (
           <AskStateCell ask={row.original} editable onSave={(patch) => save(row.original.id, patch)} />
         ),
+      },
+      {
+        id: 'done_by',
+        header: 'Done by',
+        size: 240,
+        cell: ({ row }) => <AskDoneByCell ask={row.original} />,
       },
       {
         id: 'note',
