@@ -26,6 +26,7 @@ import pytest
 
 from app.services.chatbot_parser_prompt import (
     ESCALATION_CONFIRMATION_ADDENDUM,
+    SELF_REFERENCE_ADDENDUM,
     GROWTH_R1_ADDENDUM,
     KNOWN_BRANDS_ADDENDUM,
     LAST_COST_ADDENDUM,
@@ -216,6 +217,8 @@ def _without_growth_r1_addendum(text: str) -> str:
     # SPECIFICATION_ADDENDUM (fix round 8 on PR #833), then SALES_ANALYSIS_ADDENDUM
     # (#1267 S1), then STOCK_TASK_ADDENDUM (ported from PR #1118, not merged,
     # chatbot-stock-ask-v2 S3).
+    if text.endswith(SELF_REFERENCE_ADDENDUM):
+        text = text[: -len(SELF_REFERENCE_ADDENDUM)]
     if text.endswith(ESCALATION_CONFIRMATION_ADDENDUM):
         text = text[: -len(ESCALATION_CONFIRMATION_ADDENDUM)]
     if text.endswith(TOP_SELLING_ADDENDUM):

@@ -117,10 +117,13 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     # Fix lane round 4 (owner retest, 27 Sep 2026): "cold selling", "least sold".
     # 41 declared keys -> 42.
     "rank_direction": "app/services/chatbot/turn/apply.py",
+    # 29 Sep 2026 (PLAN-chatbot-customer-scope-29sep D2): "my" / "me" as the asker's own
+    # account; the engine's `_customer_scope_gate` reads it off the verdict. 44 -> 45.
+    "self_reference": "app/services/chatbot/engine.py",
 }
 
 
-def test_measured_read_set_matches_the_44_declared_keys():
+def test_measured_read_set_matches_the_45_declared_keys():
     """The table above is complete and has no typo - every declared key is measured read
     exactly once, and the table names nothing DECLARED_KEYS does not also carry. Catches a
     stale table before it can hide a real drift in the two tests below."""

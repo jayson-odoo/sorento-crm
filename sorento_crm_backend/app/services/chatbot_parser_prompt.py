@@ -510,6 +510,37 @@ SEMANTIC_PARSER_PROMPT = SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMA
 SEMANTIC_PARSER_PROMPT += TOP_SELLING_ADDENDUM
 SEMANTIC_PARSER_PROMPT += ESCALATION_CONFIRMATION_ADDENDUM
 
+# PLAN-chatbot-customer-scope-29sep.md, D2. ADDITIVE ONLY and the very tail, for the same
+# reason `TOP_SELLING_ADDENDUM` is a trailing block. Teaches the boolean `self_reference`.
+# Published as a new UNLABELLED version by migration `chatbot_self_reference_vocab`.
+SELF_REFERENCE_ADDENDUM = """
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SELF REFERENCE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Everything below is IN ADDITION to the OUTPUT object above. Emit this key on every
+object, exactly as if it were listed there:
+
+  "self_reference": true|false
+
+== SELF_REFERENCE: the asker means their OWN account ==
+true when the message asks about the asker's own orders, delivery, outstanding, account or
+figures, by a first-person word used as the asker's own account (not the company):
+  - "my", "mine", "me", "our", "ours", "us" ("what's my outstanding", "my DO", "where is
+    my shipment", "show me my orders", "what did we order", "our orders in September")
+  - "saya punya", "kami punya", "punya saya", "punya kami" ("outstanding saya punya",
+    "order kami punya")
+  - "我的", "我们的" ("我的订单", "我们的欠款")
+"where is my shipment" keeps its ETA reading AND is self_reference true.
+"we" or "us" as the ASKER'S BUSINESS ("what did we order") is self_reference true. "do
+you / can you" about Sorento itself stays the company rule: false.
+false when the message names another party ("outstanding for hanlim") or no one ("list
+outstanding DO", "top selling items"). Never guess: no first-person word about an account,
+no true. A name in the message stays an entity exactly as anywhere else.
+"""
+SEMANTIC_PARSER_PROMPT += SELF_REFERENCE_ADDENDUM
+
 # S1b (D16, AC-151 to AC-155): the same parser, 40.0% fewer characters (28,124 against the
 # live 46,906). Classified section by section in
 # `documentation/plans/chatbot/parser-prompt-inventory.md`.

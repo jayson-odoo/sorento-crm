@@ -198,6 +198,7 @@ def test_the_guard_keeps_a_confident_digit_code():
 def test_the_stock_task_addendum_teaches_the_last_answered_line():
     from app.services.chatbot_parser_prompt import (
         ESCALATION_CONFIRMATION_ADDENDUM,
+        SELF_REFERENCE_ADDENDUM,
         KNOWN_BRANDS_ADDENDUM,
         QUANTITY_ADDENDUM,
         SALES_ANALYSIS_ADDENDUM,
@@ -215,7 +216,7 @@ def test_the_stock_task_addendum_teaches_the_last_answered_line():
     # then the top selling addendum (PR #1273), then #1323's
     # ESCALATION_CONFIRMATION_ADDENDUM, newest outermost.
     assert (
-        SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
+        SEMANTIC_PARSER_PROMPT.removesuffix(SELF_REFERENCE_ADDENDUM).removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
         .removesuffix(TOP_SELLING_ADDENDUM)
         .removesuffix(KNOWN_BRANDS_ADDENDUM)
         .removesuffix(QUANTITY_ADDENDUM)
