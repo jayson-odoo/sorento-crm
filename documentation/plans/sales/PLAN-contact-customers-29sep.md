@@ -163,7 +163,7 @@ Agent side, in `app/api/v1/master_data/sales_agents.py`, read under
 - `POST .../customers` body `{ "customer_id": str }` -> 200 `CustomerResponse`. Calls
   `CustomerService.update_customer(customer_id, CustomerUpdate(sales_agent_id=agent.id))`, so
   an inactive agent or a cross-company pair is the same 422 the customer form gets, and the
-  customer audit row (`sales_agent_id` is an audited column, `order.py:85`) is written the
+  customer audit row (`sales_agent_id` joins `Customer.__audit_columns__`, `order.py:69-92`; it is not audited today) is written the
   same way. Reassignment from another agent is allowed (Q6a).
 - Unassign: pending action `customer.unassign_sales_agent`, `entity_types=("customer",)`,
   `entity_id` = customer id, payload `{ "sales_agent_id": <agent> }`, `window=
