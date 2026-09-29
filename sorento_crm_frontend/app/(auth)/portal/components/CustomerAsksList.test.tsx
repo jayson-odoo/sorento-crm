@@ -1,11 +1,12 @@
 /**
- * Chatbot stock ask v2 S6 - the portal's Customer asks (AC-SA605). Since fix round 5 it is the
- * body of the landing's Customer asks kind: cards by default, the grid in list view, the
- * landing's own search box feeding `search`.
+ * Sales-asks-todo AC-ST117 (replaces the #1333 pins of the cards / grid body): the portal's
+ * Customer asks tab body is the salesperson's to-do, `AskTodoList` fed by
+ * `getCustomerAsksTodo`; `Show done` opens the #1333 done history (`state=done`) under it.
+ * The service functions are mocked, never the Phase 1 mock store.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render as rtlRender, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 function render(ui: React.ReactElement) {
@@ -21,23 +22,8 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
-vi.mock('@/components/common/SearchableSelect', () => ({
-  SearchableSelect: (props: {
-    id?: string;
-    value: string;
-    onChange: (v: string) => void;
-    options?: { value: string; label: string }[];
-  }) => (
-    <select id={props.id} value={props.value} onChange={(e) => props.onChange(e.target.value)}>
-      {(props.options ?? []).map((o) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
-  ),
-}));
 
+const getCustomerAsksTodo = vi.fn();
 const listCustomerAsks = vi.fn();
 const updateCustomerAsk = vi.fn();
 vi.mock('../lib/customer-asks-service', async () => {
@@ -46,6 +32,7 @@ vi.mock('../lib/customer-asks-service', async () => {
   );
   return {
     ...actual,
+    getCustomerAsksTodo: (...a: unknown[]) => getCustomerAsksTodo(...a),
     listCustomerAsks: (...a: unknown[]) => listCustomerAsks(...a),
     updateCustomerAsk: (...a: unknown[]) => updateCustomerAsk(...a),
   };
@@ -53,6 +40,8 @@ vi.mock('../lib/customer-asks-service', async () => {
 
 import { CustomerAsksList } from './CustomerAsksList';
 import { NotASalesAgentError } from '../lib/customer-asks-service';
+
+const TODAY_START = '2026-09-28T16:00:00Z';
 
 const ROW = {
   id: 'ask-1',
@@ -67,118 +56,113 @@ const ROW = {
   notify_skip_reason: null,
   state: 'open',
   note: null,
-  created_at: '2026-09-24T07:05:00',
+  source: 'live',
+  created_at: '2026-09-27T05:00:00Z',
   updated_at: null,
+  done_at: null,
+  done_by: null,
 };
+const TODAY_ROW = { ...ROW, id: 'ask-2', customer_name: 'Seng Heng Motor', product_code: 'SRT9999', created_at: '2026-09-29T01:00:00Z' };
+const DONE_ROW = {
+  ...ROW,
+  id: 'ask-3',
+  customer_name: 'Cleared Trading',
+  product_code: 'SRT-CLEARED',
+  state: 'done',
+  done_at: '2026-09-29T02:00:00Z',
+  done_by: 'Agent Lim',
+};
+
+function payload(over: Record<string, unknown> = {}) {
+  return { today_start: TODAY_START, open: [ROW, TODAY_ROW], done_today: [], truncated: false, ...over };
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
-  listCustomerAsks.mockResolvedValue({ data: [ROW], pagination: { total: 1, page: 1, limit: 20 } });
+  getCustomerAsksTodo.mockResolvedValue(payload());
+  listCustomerAsks.mockResolvedValue({ data: [DONE_ROW], pagination: { total: 1, page: 1, limit: 20 } });
   updateCustomerAsk.mockResolvedValue({ ...ROW, state: 'done' });
 });
 
-function Harness({ search = '', initialView = 'list' }: { search?: string; initialView?: 'list' | 'board' }) {
-  const [view, setView] = React.useState<'list' | 'board'>(initialView);
-  return <CustomerAsksList search={search} view={view} onViewChange={setView} />;
-}
-
-describe('CustomerAsksList', () => {
-  it('renders the grid with every column in list view', async () => {
-    render(<Harness />);
-    await waitFor(() => expect(screen.getByText('SRT5674')).toBeInTheDocument());
-    for (const header of [
-      'Asked at',
-      'Customer',
-      'Contact',
-      'Product',
-      'Qty',
-      'Branch',
-      'Answer',
-      'Notified',
-      'State',
-      'Note',
-    ]) {
-      expect(screen.getByText(header)).toBeInTheDocument();
-    }
-    expect(screen.getByText('Hock Lee Trading')).toBeInTheDocument();
-    expect(screen.getByText('Ah Seng')).toBeInTheDocument();
-    expect(screen.getByText('Sent')).toBeInTheDocument();
-    expect(screen.queryByText('ask-1')).not.toBeInTheDocument();
+describe('CustomerAsksList (portal to-do body)', () => {
+  it('renders the to-do from getCustomerAsksTodo: counts, groups, rows, and no grid or state filter', async () => {
+    render(<CustomerAsksList search="" />);
+    expect(await screen.findByText('Hock Lee Trading')).toBeInTheDocument();
+    expect(getCustomerAsksTodo).toHaveBeenCalled();
+    expect(screen.getByTestId('ask-todo-counts').textContent?.replace(/\s+/g, ' ')).toContain(
+      'Open 2 · Needs attention 1 · Done today 0',
+    );
+    expect(screen.getAllByRole('heading').map((h) => h.textContent)).toEqual(['Needs attention', 'Today']);
+    expect(screen.getByText('SRT5674 x 150')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Filter by state')).toBeNull();
+    expect(screen.queryByText('Asked at')).toBeNull(); // no grid header
+    expect(screen.queryByText('ask-1')).toBeNull(); // no ids in the UI
+    // The done history is closed until asked for.
+    expect(listCustomerAsks).not.toHaveBeenCalled();
   });
 
-  // Owner ruling 28 Sep 2026: a chat console hand test writes asks rows too; they carry
-  // a "Console" badge so they are never mistaken for a dealer's real ask.
-  it('marks a console ask with a Console badge and a live ask with none', async () => {
-    listCustomerAsks.mockResolvedValue({
-      data: [
-        { ...ROW, source: 'console' },
-        { ...ROW, id: 'ask-2', product_code: 'SRT9999', source: 'live' },
-      ],
-      pagination: { total: 2, page: 1, limit: 20 },
-    });
-    render(<Harness />);
-    await waitFor(() => expect(screen.getByText('SRT9999')).toBeInTheDocument());
-    const badges = screen.getAllByText('Console');
-    expect(badges).toHaveLength(1);
-    expect(badges[0]).toHaveAttribute('title', 'Written by a chat console hand test, not by a dealer');
-  });
-
-  it('shows an explicit empty state', async () => {
-    listCustomerAsks.mockResolvedValue({ data: [], pagination: { total: 0, page: 1, limit: 20 } });
-    render(<Harness />);
-    await waitFor(() => expect(screen.getByText('No customer asks yet')).toBeInTheDocument());
-  });
-
-  it.each(['list', 'board'] as const)('edits state and note in place (%s view)', async (initialView) => {
-    render(<Harness initialView={initialView} />);
-    const state = await screen.findByLabelText('State for SRT5674');
-    fireEvent.change(state, { target: { value: 'done' } });
+  it('Done patches the ask and refetches the to-do', async () => {
+    render(<CustomerAsksList search="" />);
+    const row = (await screen.findByText('Hock Lee Trading')).closest('li') as HTMLElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'Done' }));
     await waitFor(() => expect(updateCustomerAsk).toHaveBeenCalledWith('ask-1', { state: 'done' }));
-    const note = screen.getByLabelText('Note for SRT5674');
+    await waitFor(() => expect(getCustomerAsksTodo).toHaveBeenCalledTimes(2));
+  });
+
+  it('Reopen and note edits go through updateCustomerAsk', async () => {
+    getCustomerAsksTodo.mockResolvedValue(payload({ open: [TODAY_ROW], done_today: [DONE_ROW] }));
+    render(<CustomerAsksList search="" />);
+    const done = (await screen.findByText('Cleared Trading')).closest('li') as HTMLElement;
+    fireEvent.click(within(done).getByRole('button', { name: 'Reopen' }));
+    await waitFor(() => expect(updateCustomerAsk).toHaveBeenCalledWith('ask-3', { state: 'open' }));
+
+    const note = screen.getByLabelText('Note for SRT9999');
     fireEvent.change(note, { target: { value: 'Visited, ordering Friday' } });
     fireEvent.blur(note);
-    await waitFor(() =>
-      expect(updateCustomerAsk).toHaveBeenCalledWith('ask-1', { note: 'Visited, ordering Friday' }),
-    );
+    await waitFor(() => expect(updateCustomerAsk).toHaveBeenCalledWith('ask-2', { note: 'Visited, ordering Friday' }));
   });
 
-  it('searches by the search it is handed, from page 1', async () => {
-    const { rerender } = render(<Harness search="" />);
-    await screen.findByText('SRT5674');
-    rerender(
-      <QueryClientProvider client={new QueryClient()}>
-        <Harness search="hock" />
-      </QueryClientProvider>,
-    );
+  it('Show done toggles the done history (state=done) under the to-do', async () => {
+    render(<CustomerAsksList search="" />);
+    await screen.findByText('Hock Lee Trading');
+    fireEvent.click(screen.getByRole('button', { name: 'Show done' }));
     await waitFor(() =>
-      expect(listCustomerAsks).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'hock', page: 1 })),
+      expect(listCustomerAsks).toHaveBeenCalledWith(expect.objectContaining({ state: 'done', page: 1 })),
     );
+    expect(await screen.findByText('SRT-CLEARED')).toBeInTheDocument();
+    expect(screen.getByText('Hock Lee Trading')).toBeInTheDocument(); // the to-do stays
+    fireEvent.click(screen.getByRole('button', { name: 'Hide done' }));
+    await waitFor(() => expect(screen.queryByText('SRT-CLEARED')).toBeNull());
   });
 
-  it('shows cards in board view: customer, product and qty, branch, answer', async () => {
-    render(<Harness initialView="board" />);
-    const card = (await screen.findByText('Hock Lee Trading')).closest('li') as HTMLElement;
-    expect(card).not.toBeNull();
-    expect(card.textContent).toContain('SRT5674');
-    expect(card.textContent).toContain('150');
-    expect(card.textContent).toContain('Ah Seng');
-    expect(screen.queryByText('Asked at')).toBeNull(); // no grid header in board view
+  it('narrows the to-do by the landing search box', async () => {
+    render(<CustomerAsksList search="seng heng" />);
+    expect(await screen.findByText('Seng Heng Motor')).toBeInTheDocument();
+    expect(screen.queryByText('Hock Lee Trading')).toBeNull();
   });
 
-  it('filters by state', async () => {
-    render(<Harness />);
-    await screen.findByText('SRT5674');
-    fireEvent.change(screen.getByLabelText('Filter by state'), { target: { value: 'done' } });
-    await waitFor(() =>
-      expect(listCustomerAsks).toHaveBeenLastCalledWith(expect.objectContaining({ state: 'done', page: 1 })),
-    );
+  it('marks a console ask with a Console badge and a live ask with none', async () => {
+    getCustomerAsksTodo.mockResolvedValue(payload({ open: [{ ...ROW, source: 'console' }, TODAY_ROW] }));
+    render(<CustomerAsksList search="" />);
+    await screen.findByText('Seng Heng Motor');
+    expect(screen.getAllByText('Console')).toHaveLength(1);
+  });
+
+  it('shows the empty state when nothing is waiting', async () => {
+    getCustomerAsksTodo.mockResolvedValue(payload({ open: [] }));
+    render(<CustomerAsksList search="" />);
+    expect(await screen.findByText('Nothing waiting')).toBeInTheDocument();
+  });
+
+  it('shows the error state when the to-do cannot be loaded', async () => {
+    getCustomerAsksTodo.mockRejectedValue(new Error('Server down'));
+    render(<CustomerAsksList search="" />);
+    expect(await screen.findByText('Server down')).toBeInTheDocument();
   });
 
   it('tells a contact who is no sales agent', async () => {
-    listCustomerAsks.mockRejectedValue(new NotASalesAgentError());
-    render(<Harness />);
-    await waitFor(() =>
-      expect(screen.getByText('Customer asks are for sales agents only.')).toBeInTheDocument(),
-    );
+    getCustomerAsksTodo.mockRejectedValue(new NotASalesAgentError());
+    render(<CustomerAsksList search="" />);
+    expect(await screen.findByText('Customer asks are for sales agents only.')).toBeInTheDocument();
   });
 });

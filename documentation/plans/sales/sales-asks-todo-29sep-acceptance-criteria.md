@@ -59,7 +59,7 @@ to A, customer Z assigned to B, asks with `created_at` set explicitly around a f
 - **AC-ST113 [FE][T]** `bucketTodo(payload)` with `today_start = 2026-09-28T16:00Z`: an open ask
   at `2026-09-28T15:59Z` is in `Needs attention`; one at `2026-09-28T16:00Z` is in `Today`; one at
   `2026-09-27T20:00Z` is in `Needs attention` and its group label for the day list is
-  `Yesterday`; one at `2026-09-22T05:00Z` shows `Mon 22 Sep`; counts read `{open: 4,
+  `Yesterday`; one at `2026-09-22T05:00Z` shows `Tue 22 Sep`; counts read `{open: 4,
   needs_attention: 3, done_today: <len done_today>}`. `Needs attention` rows are oldest first;
   `Today` rows newest first. [Q3][Q4]
 - **AC-ST114 [FE]** `AskTodoList` renders the counts line, the group headings in order (`Needs
