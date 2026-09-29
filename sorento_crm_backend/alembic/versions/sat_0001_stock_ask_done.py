@@ -19,14 +19,14 @@ Downgrade drops the two columns and leaves the permission rows (`sync_permission
 from the registry on boot, and a grant an admin made by hand must not vanish with a rollback).
 
 Revision ID: sat_0001_stock_ask_done
-Revises: merge_29sep_batch6
+Revises: merge_29sep_batch7
 Create Date: 2026-09-29
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "sat_0001_stock_ask_done"
-down_revision = "merge_29sep_batch6"
+down_revision = "merge_29sep_batch7"
 branch_labels = None
 depends_on = None
 
