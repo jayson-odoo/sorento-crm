@@ -304,6 +304,35 @@ name is simply not shown to the contact (fail closed).
   `test_top_selling_report.py` fixtures (`_contact`, `_link`, `_access`, `_as_contact`).
 - `tests/chatbot/console_cases/2026-09-29-customer-scope.yaml`: AC-CS-50.
 
+### Review round 1 (29 Sep 2026, reviewer + security-reviewer, both Opus)
+
+Both reviewers reproduced their findings against real code and Postgres; the kill tests on
+AC-CS-10 / 31 / 40 went red with the code removed. Fixed in fix round 1 (red tests first):
+a refused turn kept the foreign word on `focus.customers` and refused every later turn; a
+customer word tagged brand / category / order / product by the parser (`entity_resolver.
+_DOMAIN_HINT_EXPANSIONS["order"]`), or asked under `purchase_order`, still reached the
+resolver's picker (name oracle), so the scope is now ALSO applied after the resolver,
+domain-independent; the order routes' legacy `debtor_name` OR let a same-named ledger's DOs
+through (the name branch now applies to `customer_id IS NULL` rows only); a space-padded
+`contact_id` turned the customer scope off while the company scope stayed on (stripped at
+the three scope call sites); sales report's subject check ran before the scope; a foreign DO
+number could print the other customer's name on the resolver-echo miss path; a fan-out
+refused twice; the orders list `entities=` echo; own customer code via `customer_query`.
+
+Known limitations, recorded and not built:
+
+- **The route defence is opt-in by the caller.** A direct MCP or n8n call that omits
+  `contact_id` + `space_id` stays company-scoped (AC-F1, the standing X-API-Key rule), as
+  before this lane. Trigger to revisit: making the contact pair mandatory on the
+  customer-scoped catalogue tools in `sorento_crm_mcp/server.py`, once every n8n caller sends
+  it.
+- **Complaints are joined on name.** Complaints carry `customer_name` text only, so a
+  complaint filed under another customer sharing the linked name is shown; a name that differs
+  by spelling is hidden (fails closed). Needs a customer id on complaints to do better.
+- **A lone `contact_id` or `space_id` is 422** on orders list, by-product, debtors, analytics
+  and the outstanding report (the sales report's shipped rule, now shared). The lane always
+  sends both, non-blank.
+
 ### Not built (named triggers)
 
 - A picker of the contact's own customers (Q6b) - built if the owner rules (b).
