@@ -21,7 +21,8 @@ describe('isLandingKind', () => {
   });
 
   it('lists it after Price Tag Request', () => {
-    expect(LANDING_KINDS.slice(-2)).toEqual(['price_tag_request', 'sales_opportunity']);
+    // Fix round 5 appends Customer asks after it; the pair's order is unchanged.
+    expect(LANDING_KINDS.slice(-3)).toEqual(['price_tag_request', 'sales_opportunity', 'customer_asks']);
   });
 
   it('still matches every real LANDING_KINDS entry', () => {
