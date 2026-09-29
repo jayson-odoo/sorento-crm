@@ -1184,20 +1184,23 @@ class TestParserPromptAndContractsTeachSalesReport:
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
+            SPECIFICATION_ADDENDUM,
             STOCK_TASK_ADDENDUM,
             TOP_SELLING_ADDENDUM,
         )
 
         # `STOCK_TASK_ADDENDUM` (ported from PR #1118, not merged, chatbot-stock-ask-v2
-        # S3), `SALES_ANALYSIS_ADDENDUM` (#1267 S1), the #1262 pair, `TOP_SELLING_ADDENDUM`
-        # and then `ESCALATION_CONFIRMATION_ADDENDUM` (#1323, always the tail) stacked
-        # after this one, newest outermost, so they come off first.
+        # S3), `SALES_ANALYSIS_ADDENDUM` (#1267 S1), `SPECIFICATION_ADDENDUM` (fix round
+        # 8 on PR #833), the #1262 pair, `TOP_SELLING_ADDENDUM` and then
+        # `ESCALATION_CONFIRMATION_ADDENDUM` (#1323, always the tail) stacked after this
+        # one, newest outermost, so they come off first.
         assert SEMANTIC_PARSER_PROMPT.endswith(ESCALATION_CONFIRMATION_ADDENDUM)
         assert (
             SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM)
             .removesuffix(TOP_SELLING_ADDENDUM)
             .removesuffix(KNOWN_BRANDS_ADDENDUM)
             .removesuffix(QUANTITY_ADDENDUM)
+            .removesuffix(SPECIFICATION_ADDENDUM)
             .removesuffix(SALES_ANALYSIS_ADDENDUM)
             .removesuffix(STOCK_TASK_ADDENDUM)
             .endswith(SALES_REPORT_ADDENDUM)
@@ -1223,6 +1226,7 @@ class TestParserPromptAndContractsTeachSalesReport:
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
             SEMANTIC_PARSER_PROMPT,
+            SPECIFICATION_ADDENDUM,
             STOCK_TASK_ADDENDUM,
             TOP_SELLING_ADDENDUM,
         )
@@ -1232,6 +1236,7 @@ class TestParserPromptAndContractsTeachSalesReport:
             .removesuffix(TOP_SELLING_ADDENDUM)
             .removesuffix(KNOWN_BRANDS_ADDENDUM)
             .removesuffix(QUANTITY_ADDENDUM)
+            .removesuffix(SPECIFICATION_ADDENDUM)
             .removesuffix(SALES_ANALYSIS_ADDENDUM)
             .removesuffix(STOCK_TASK_ADDENDUM)
             .removesuffix(SALES_REPORT_ADDENDUM)

@@ -116,10 +116,10 @@ def _build_json_schema() -> dict[str, Any]:
             "is_affirmative": {"type": ["boolean", "null"]},
             "user_goal": string_or_null,
             # AC-1317: true when the message asks for more of the set the LAST answer
-            # counted ("more", "next", "lagi", ...) - a dedicated boolean rather than a
-            # free-text `user_goal` word the code matches against a list, which was
-            # still a text rule wearing the parser's clothes (captain ruling, 16 Sep
-            # 2026). `turn/apply.py::_is_continuation` reads this key only.
+            # counted ("more", "next", "lagi", ...). Declared and still emitted, but
+            # nothing pages on it any more (owner ruling, 26 Sep 2026: no paging); the
+            # answer to "how many should I show?" is `top_n`, read by
+            # `turn/apply.py::_named_count`.
             "continuation": {"type": ["boolean", "null"]},
             "access_levels": {"type": "array", "items": {"type": "string"}},
             "broaden_axis": string_or_null,
@@ -169,6 +169,14 @@ def _build_json_schema() -> dict[str, Any]:
                         # absent from `required`, and a key the provider is never
                         # forced to reason about is a key it never fills.
                         "quantity": {"type": ["number", "null"]},
+                        # Fix round 8 on PR #833 (owner retest of round 7): a
+                        # `specification` entity names its registry key and the choice
+                        # (or number) the words mean; null on every other kind. The
+                        # vocabulary is the policy block's Specification lines, and
+                        # `head/grounding.py` checks both against the registry after the
+                        # parse. Required like every other key: strict mode.
+                        "spec_key": string_or_null,
+                        "spec_value": {"type": ["string", "number", "boolean", "null"]},
                     },
                     "required": [
                         "raw",
@@ -178,6 +186,8 @@ def _build_json_schema() -> dict[str, Any]:
                         "confident",
                         "hint_confident",
                         "quantity",
+                        "spec_key",
+                        "spec_value",
                     ],
                 },
             },

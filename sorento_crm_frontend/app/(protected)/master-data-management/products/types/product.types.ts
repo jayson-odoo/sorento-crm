@@ -174,6 +174,10 @@ export interface Brand {
   // A brand marked false is bought locally by CS and never raises an Order
   // Inquiry - PLAN-brand-flows-to-purchasing.md.
   flows_to_purchasing: boolean;
+  // The chatbot's brand preference: when a customer names no brand, the highest
+  // weighted brand is answered first and the others follow by weight (0 = none).
+  // Owner ruling R1 on PR #833, replacing round 2's default-brand switch.
+  chatbot_weight?: number;
   // Default true; false for the placeholder brands OTHERS and NO LOGO (S0,
   // PLAN-product-specs-non-technical-26sep.md D3). Search and the understanding
   // prompt skip a brand where this is false - nobody ever names OTHERS.

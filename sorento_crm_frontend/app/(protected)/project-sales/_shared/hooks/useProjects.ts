@@ -719,6 +719,21 @@ export function useLeads(params: LeadListParams) {
   });
 }
 
+/**
+ * The project form's Lead picker (D4): a server search over OPEN leads only, capped at
+ * 20, by title or lead code. Returned as options rather than raw leads so `ProjectForm`
+ * never has to know the field is async-searched vs static.
+ */
+export function useFetchLeadOptions() {
+  return React.useCallback(async (query: string) => {
+    const result = await listLeads({ query: query || undefined, outcome: ['open'], limit: 20 });
+    return result.data.map((lead) => ({
+      value: lead.id,
+      label: `${lead.lead_code} · ${lead.title}`,
+    }));
+  }, []);
+}
+
 /** The leads list a detail URL describes, in the shape `LeadsClient` passes. */
 export function leadsListParamsFromUrl(params: ListPagerParams): LeadListParams {
   return {

@@ -60,6 +60,7 @@ _PROFILE_KEYS = (
     "expected_delivery_to",
     "type_id",
     "template_id",
+    "admin_ref",
 )
 
 
@@ -232,6 +233,18 @@ async def register_project(
             details=details,
             brand_ids=payload.brand_ids,
         )
+        if payload.lead_id:
+            # Same transaction as the registration: a refused link rolls the project
+            # back with it, so no project is left without the lead it was meant to carry.
+            from app.services.project_lead_service import set_project_lead
+
+            set_project_lead(
+                db,
+                project,
+                payload.lead_id,
+                actor_user_id=current_user["id"],
+                permissions=permissions,
+            )
         db.commit()
         db.refresh(project)
         return svc.serialize_project(
