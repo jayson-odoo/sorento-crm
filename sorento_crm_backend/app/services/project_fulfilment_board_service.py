@@ -114,6 +114,8 @@ from app.services.scm.front_planning_engine import (
     RUNG_SUPPLY_BORROW,
     TIMELY_SPO,
     date_text,
+    landed_on,
+    own_arrival_reason,
     pool_reserve_capacity,
     pool_share_capacity,
     qty_text,
@@ -390,7 +392,8 @@ class _Row:
     __slots__ = (
         "line_id", "sales_order_id", "so_number", "customer_id", "customer_name",
         "agent_code", "agent_label", "agent_location_group",
-        "project_label", "order_date", "line_no", "item_code", "product_id", "qty",
+        "project_label", "order_date", "line_no", "so_line_no", "item_code", "product_id",
+        "qty",
         "qty_outstanding",
         "required_date", "warehouse_id", "location", "priority", "demand_class",
         "payment_terms_days", "bucket_key", "is_past", "rank_score", "rank_factors",
@@ -1026,6 +1029,48 @@ class FulfilmentBoardService:
         # (R5): the earliest claim on the pile leads, and a document with no date lists
         # last rather than first, because "not stated" is not "wanted immediately".
         sales_orders = [_so_row(row) for row in rows]
+        # #1362 item 3: a line the drawer was opened for that has nothing open any more
+        # (delivered) is no claim on the pile, so the ledger above never lists it and "My
+        # line" found nothing. It is listed after the claims, at zero, saying what was
+        # delivered - never counted into SO Qty, which sums `rows` alone.
+        listed = {row["line_id"] for row in sales_orders}
+        missing = [line_id for line_id in asking if line_id not in listed]
+        if missing:
+            done = (
+                self.db.query(
+                    SalesOrderLine.id.label("line_id"),
+                    SalesOrder.id.label("sales_order_id"),
+                    SalesOrder.so_number,
+                    SalesOrder.order_date,
+                    SalesOrder.internal_note,
+                    SalesOrder.project_label,
+                    SalesOrder.demand_class,
+                    Customer.customer_name,
+                    Customer.id.label("customer_id"),
+                    SalesOrderLine.required_date,
+                    SalesOrderLine.warehouse_id.label("warehouse_id"),
+                    owed.label("owed"),
+                    SalesOrderLine.qty_delivered,
+                    Warehouse.warehouse_code.label("line_location"),
+                    SalesAgent.sales_agent.label("agent_code"),
+                )
+                .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+                .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
+                .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
+                .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
+                .filter(
+                    SalesOrderLine.id.in_(missing),
+                    SalesOrderLine.product_id == product_id,
+                    ~is_open_demand(),
+                )
+                .order_by(SalesOrderLine.required_date.asc().nullslast(), SalesOrderLine.id)
+                .all()
+            )
+            for row in done:
+                entry = _so_row(row)
+                entry["location"] = entry["location"] or row.line_location
+                entry["fulfilled_qty"] = qty_text(_dec(row.qty_delivered))
+                sales_orders.append(entry)
         by_location = self.supply.incoming_by_location([product_id], target_ids)
         incoming_rows = [
             (bin_id, ref)
@@ -1535,6 +1580,10 @@ class FulfilmentBoardService:
                 project_label=_project_label(order),
                 order_date=order.order_date,
                 line_no=line_numbers[str(line.id)],
+                # #1362 item 5: AutoCount's own line number off the core row, the "No." the
+                # sales order's Lines tab shows. `line_no` above stays the ADDRESS (the
+                # draft key and the confirm endpoint read it); this is what a person reads.
+                so_line_no=line.line_no,
                 item_code=product.product_code,
                 product_id=str(line.product_id),
                 # The PLAN quantity, not the still-owed one: a delivered unit nobody
@@ -1715,6 +1764,7 @@ class FulfilmentBoardService:
                     # and a non-open row is shown beside ordinary demand on the same board.
                     agent_location_group=agent.location_group if agent else None,
                     line_no=change_row.line_no,
+                    so_line_no=core_line.line_no,
                     item_code=change_row.item_code,
                     product_id=str(core_line.product_id) if core_line.product_id else None,
                     project_sales_order_id=str(project_line.project_sales_order_id),
@@ -3314,7 +3364,14 @@ class FulfilmentBoardService:
         # PO landed it before the group-net sentence that follows - read off `components`
         # (what was DRAWN), the same as `group_drawn` above.
         own_arrival_drawn = [
-            (_dec(component.qty), getattr(component, "supply_document", None))
+            (
+                _dec(component.qty),
+                getattr(component, "supply_document", None),
+                component.source_location,
+                getattr(component, "landed_qty", None),
+                getattr(component, "free_qty", None),
+                getattr(component, "landed_text", None),
+            )
             for component in components
             if getattr(component, "rung", None) == RUNG_GROUP_TAKE
             and getattr(component, "source", None) == "own_arrival"
@@ -3955,7 +4012,12 @@ class FulfilmentBoardService:
         drawn: Sequence[Tuple[str, Decimal, bool]] = (),
         other: Sequence[Dict[str, Any]] = (),
         offer: Optional[Decimal] = None,
-        own_arrival: Sequence[Tuple[Decimal, Optional[str]]] = (),
+        own_arrival: Sequence[
+            Tuple[
+                Decimal, Optional[str], Optional[str], Optional[Decimal], Optional[Decimal],
+                Optional[str],
+            ]
+        ] = (),
     ) -> str:
         """Why rung 2 (the ownership group) ended where it did (section 1d).
 
@@ -3983,14 +4045,23 @@ class FulfilmentBoardService:
         the SPO the goods physically landed on, never the PO - a PO line's own
         `qty_received` is the AutoCount TRANSFER onto a shipping order, not a receipt - so
         the noun in front of it is dropped rather than saying "PO" of an SPO number.
+
+        #1362 (owner ruling 29 Sep 2026): what landed for the line and how much of it is
+        still free at the bin, taken first, are two facts and are said apart - "100 landed
+        for this line on SPO-2026/06-0152; 40 free at BRW-BB, taken first." - the engine's
+        own `own_arrival_reason`, so the trail and the component's reason cannot drift.
         """
         prefix = "".join(
             (
-                f"{qty_text(qty)} landed for this line on {document}, taken first. "
-                if document
-                else f"{qty_text(qty)} landed for this line, taken first. "
+                own_arrival_reason(
+                    location, qty, document, landed=landed, free=free,
+                    landed_text=landed_text,
+                )
+                + ". "
+                if location and landed is not None and free is not None
+                else f"{qty_text(qty)} landed for this line{landed_on(document)}, taken first. "
             )
-            for qty, document in own_arrival
+            for qty, document, location, landed, free, landed_text in own_arrival
             if qty > _ZERO
         )
         if outcome == "none_needed":
@@ -4225,6 +4296,9 @@ class FulfilmentBoardService:
             #: (or the rest of its own order), `None` on an ordinary group-take Reserve -
             #: what the cell's "Received N (own arrival)" chip keys off.
             "source": getattr(component, "source", None),
+            #: #1362 item 4: how an own-arrival credit that is partly a sibling's spare is
+            #: said, so the amend refusal names the purchase the way the board does.
+            "landed_text": getattr(component, "landed_text", None),
         }
 
     # ------------------------------------------------------------ the answer
@@ -4980,6 +5054,10 @@ class FulfilmentBoardService:
             #: The key a pivot BY PROJECT groups on (see `_project_key`).
             "project_key": row.project_key,
             "line_no": row.line_no,
+            #: #1362 item 5: the AutoCount sales-order line number (`sales_order_lines
+            #: .line_no`), `None` when AutoCount gave the line none. What the Line column,
+            #: the drawer title and every confirm message print; `line_no` is addressing.
+            "so_line_no": row.so_line_no,
             "item_code": row.item_code,
             #: The quantity this board PLANS for, kept under its old name because the
             #: frontend reads it. Since the 14 September 2026 ruling that is

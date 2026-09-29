@@ -19,6 +19,7 @@ import {
   rerunReconciliation,
 } from '../services/fulfilmentPlanningService';
 import { listPlans } from '../services/plansService';
+import { failingLineText } from '../lib/fulfilmentBoard';
 import type {
   AdoptSalesOrderResult,
   BoardCell,
@@ -224,11 +225,24 @@ export function useReconciliationMutations() {
       queryClient.invalidateQueries({ queryKey: [BOARD_TRANSFERS_KEY] });
       queryClient.invalidateQueries({ queryKey: [PLANNING_CHANGE_BATCH_KEY] });
       const rows = result.inquiry_rows_created;
+      // #1362: lines the server skipped because nothing was open on them any more.
+      const fulfilled = result.lines_fulfilled_skipped ?? 0;
+      const fulfilledText =
+        fulfilled > 0
+          ? ` ${fulfilled} line${fulfilled === 1 ? '' : 's'} already fulfilled, decision cleared.`
+          : '';
       toast.success(
-        `Confirmed as revision ${result.revision_no}. ${rows} purchase row${
-          rows === 1 ? '' : 's'
-        } handed over.`,
+        result.revision_no === null
+          ? `Nothing to confirm.${fulfilledText}`
+          : `Confirmed as revision ${result.revision_no}. ${rows} purchase row${
+              rows === 1 ? '' : 's'
+            } handed over.${fulfilledText}`,
       );
+      // #1362 (owner, 29 Sep 2026): a Buy kept over goods that landed for its line is
+      // confirmed as decided; say it, the way purchasing reads it on the Buy's row.
+      for (const notice of result.landed_buy_notices ?? []) {
+        toast.warning(failingLineText(notice));
+      }
       // Only when something went wrong. The successful count is on the Transfers page and
       // does not need saying twice; an unwritten movement has no other way to be noticed.
       const failed = result.transfers_failed ?? 0;
