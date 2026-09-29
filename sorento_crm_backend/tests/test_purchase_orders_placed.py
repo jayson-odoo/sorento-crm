@@ -587,3 +587,117 @@ def test_b1_both_summary_legs_apply_the_company_scope_by_hand(db):
 
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
     assert purchase_orders_placed_summary(db, product_ids=[prod.id]) == {"po_placed_qty": 168, "po_placed_count": 4}
+
+
+# ---------------------------------------------------------------------------
+# PLAN-po-spo-warehouse-29sep.md W3 / O1; UAC AC-12 (RED until the lane lands)
+# ---------------------------------------------------------------------------
+
+
+def _numbers(rows):
+    return [r["po_number"] for r in rows]
+
+
+def test_po_warehouse_filter_keeps_only_po_lines_at_those_warehouses(db):
+    brw = _warehouse(db, code="ZZBRW")
+    kl = _warehouse(db, code="ZZKL")
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    _po_line(db, product_id=prod.id, ordered=5, received=0, po_number="PO-BRW", warehouse_id=brw.id)
+    _po_line(db, product_id=prod.id, ordered=5, received=0, po_number="PO-KL", warehouse_id=kl.id)
+    _po_line(db, product_id=prod.id, ordered=5, received=0, po_number="PO-NOWH")
+    db.commit()
+
+    rows = purchase_orders_placed_rows(db, product_ids=[prod.id], warehouse_ids=[brw.id])
+    assert _numbers(rows) == ["PO-BRW"]
+
+
+def test_po_warehouse_filter_matches_an_spo_by_id_and_by_location_code(db):
+    brw = _warehouse(db, code="ZZBRW")
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    _spo(db, product_id=prod.id, allocated=4, number="SPO-BY-ID", warehouse_id=brw.id)
+    _spo(db, product_id=prod.id, allocated=4, number="SPO-BY-CODE", location_code="ZZBRW")
+    _spo(db, product_id=prod.id, allocated=4, number="SPO-ELSEWHERE", location_code="ZZOTHER")
+    _spo(db, product_id=prod.id, allocated=4, number="SPO-NOWHERE")
+    db.commit()
+
+    rows = purchase_orders_placed_rows(db, product_ids=[prod.id], warehouse_ids=[brw.id])
+    assert sorted(_numbers(rows)) == ["SPO-BY-CODE", "SPO-BY-ID"]
+
+
+def test_po_warehouse_filter_summary_counts_exactly_the_filtered_rows(db):
+    brw = _warehouse(db, code="ZZBRW")
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    _po_line(db, product_id=prod.id, ordered=10, received=4, po_number="PO-BRW", warehouse_id=brw.id)
+    _po_line(db, product_id=prod.id, ordered=7, received=0, po_number="PO-NOWH")
+    _spo(db, product_id=prod.id, allocated=3, number="SPO-BY-CODE", location_code="ZZBRW")
+    _spo(db, product_id=prod.id, allocated=9, number="SPO-ELSEWHERE", location_code="ZZOTHER")
+    db.commit()
+
+    rows = purchase_orders_placed_rows(db, product_ids=[prod.id], warehouse_ids=[brw.id])
+    summary = purchase_orders_placed_summary(db, product_ids=[prod.id], warehouse_ids=[brw.id])
+    assert len(rows) == 2
+    assert summary["po_placed_count"] == 2
+    assert summary["po_placed_qty"] == 6 + 3
+
+
+def test_po_warehouse_filter_route_passes_warehouse_ids_through(client, db):
+    brw = _warehouse(db, code="ZZBRW")
+    kl = _warehouse(db, code="ZZKL")
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    _po_line(db, product_id=prod.id, ordered=5, received=0, po_number="PO-BRW", warehouse_id=brw.id)
+    _po_line(db, product_id=prod.id, ordered=5, received=0, po_number="PO-KL", warehouse_id=kl.id)
+    db.commit()
+
+    resp = client.get(
+        f"{BASE}/placed",
+        params={"product_ids": prod.id, "warehouse_ids": brw.id, "include_summary": "true"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert _numbers(body["data"]) == ["PO-BRW"]
+    assert body["summary"]["po_placed_count"] == 1
+
+
+def test_po_sort_po_date_and_ordered_qty(db):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    _po_line(db, product_id=prod.id, ordered=5, received=0, po_number="PO-A",
+             header_issue=date(2026, 5, 1))
+    _spo(db, product_id=prod.id, allocated=20, number="SPO-B", issue=date(2026, 6, 10))
+    _po_line(db, product_id=prod.id, ordered=12, received=0, po_number="PO-C",
+             header_issue=date(2026, 4, 1))
+    db.commit()
+
+    by_date = purchase_orders_placed_rows(db, product_ids=[prod.id], sort="po_date", dir="desc")
+    assert _numbers(by_date) == ["SPO-B", "PO-A", "PO-C"]
+    by_date_asc = purchase_orders_placed_rows(db, product_ids=[prod.id], sort="po_date", dir="asc")
+    assert _numbers(by_date_asc) == ["PO-C", "PO-A", "SPO-B"]
+    by_qty = purchase_orders_placed_rows(db, product_ids=[prod.id], sort="ordered_qty", dir="desc")
+    assert _numbers(by_qty) == ["SPO-B", "PO-C", "PO-A"]
+
+
+def test_route_rejects_unknown_sort_and_dir(client, db):
+    bad_sort = client.get(f"{BASE}/placed", params={"sort": "bogus"})
+    assert bad_sort.status_code == 422, bad_sort.text
+    assert bad_sort.json()["code"] == "invalid_sort"
+
+    bad_dir = client.get(f"{BASE}/placed", params={"dir": "sideways"})
+    assert bad_dir.status_code == 422, bad_dir.text
+    assert bad_dir.json()["code"] == "invalid_dir"
+
+
+def test_route_accepts_the_new_sort_keys(client, db):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    _po_line(db, product_id=prod.id, ordered=5, received=0, po_number="PO-A")
+    db.commit()
+    for key in ("po_date", "ordered_qty", "expected_date", "product", "supplier", "outstanding_qty"):
+        resp = client.get(f"{BASE}/placed", params={"product_ids": prod.id, "sort": key, "dir": "desc"})
+        assert resp.status_code == 200, (key, resp.text)
+
+
+def test_the_sort_constants_are_published_by_the_service():
+    from app.services import purchase_order_service as svc
+
+    assert set(svc.PO_SORT_KEYS) == {
+        "expected_date", "product", "supplier", "outstanding_qty", "po_date", "ordered_qty",
+    }
+    assert set(svc.PO_SORT_DIRS) == {"asc", "desc"}
