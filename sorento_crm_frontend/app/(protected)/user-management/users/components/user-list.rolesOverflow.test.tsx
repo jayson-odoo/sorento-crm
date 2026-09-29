@@ -22,7 +22,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 const fetchUsersListPageMock = vi.fn();
 vi.mock('../lib/listQuery', async () => {
   const actual =
-    await vi.importActual<typeof import('../lib/listQuery')>('../lib/listQuery');
+    await vi.importActual<typeof import('../lib/listQuery')>(
+      '../lib/listQuery',
+    );
   return {
     ...actual,
     fetchUsersListPage: (...args: unknown[]) => fetchUsersListPageMock(...args),
@@ -38,20 +40,29 @@ vi.mock('./user-add-dialog', () => ({
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+  useListingColumnPreferences: () => ({
+    resetToDefaults: vi.fn(),
+    isLoading: false,
+  }),
 }));
 
+// Exposed so a test can assert the row behind a pill or a popover never opens.
+const routerPush = vi.hoisted(() => vi.fn());
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+  useRouter: () => ({ replace: vi.fn(), push: routerPush }),
   usePathname: () => '/user-management/users',
   useSearchParams: () => new URLSearchParams(),
 }));
 
 // A real row renders its actions menu, which reads the signed-in user.
 vi.mock('next-auth/react', () => ({
-  useSession: () => ({ data: { user: { id: 'admin', email: 'admin@zzt.test' } } }),
+  useSession: () => ({
+    data: { user: { id: 'admin', email: 'admin@zzt.test' } },
+  }),
 }));
-vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+}));
 
 import UserList from './user-list';
 
@@ -79,7 +90,9 @@ const ONE_ROLE = {
 };
 
 function renderWithClient() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <UserList />
@@ -89,6 +102,7 @@ function renderWithClient() {
 
 beforeEach(() => {
   fetchUsersListPageMock.mockReset();
+  routerPush.mockReset();
   fetchUsersListPageMock.mockResolvedValue({
     data: [MR_LOO, ONE_ROLE],
     pagination: { total: 2, page: 1 },
@@ -126,7 +140,9 @@ describe('UserList - Roles column folds to one line with "+N" (AC-PO-1, AC-PO-2)
     expect(cell.getByText('+2')).toBeInTheDocument();
     expect(cell.queryByText('Purchasing Executive')).not.toBeInTheDocument();
     // The whole strip is one labelled group, so a screen reader names whose roles these are.
-    expect(screen.getByRole('group', { name: 'Roles of Mr Loo' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('group', { name: 'Roles of Mr Loo' }),
+    ).toBeInTheDocument();
   });
 
   it('shows no "+N" for a user with one role (AC-PO-6)', async () => {
@@ -143,15 +159,36 @@ describe('UserList - Roles column folds to one line with "+N" (AC-PO-1, AC-PO-2)
 
     fireEvent.click(cell.getByText('+2'));
 
-    const popover = within(await screen.findByTestId('user-roles-user-loo-popover'));
+    const popover = within(
+      await screen.findByTestId('user-roles-user-loo-popover'),
+    );
     expect(popover.getByText('Purchasing Manager Role')).toBeInTheDocument();
     expect(popover.getByText('Purchasing Executive')).toBeInTheDocument();
     expect(popover.getByText('Purchasing')).toBeInTheDocument();
 
-    fireEvent.keyDown(screen.getByTestId('user-roles-user-loo-popover'), { key: 'Escape' });
+    fireEvent.keyDown(screen.getByTestId('user-roles-user-loo-popover'), {
+      key: 'Escape',
+    });
     await waitFor(() =>
-      expect(screen.queryByTestId('user-roles-user-loo-popover')).not.toBeInTheDocument(),
+      expect(
+        screen.queryByTestId('user-roles-user-loo-popover'),
+      ).not.toBeInTheDocument(),
     );
+  });
+
+  it('neither "+N" nor an item inside the popover opens the row behind it (review must-fix)', async () => {
+    renderWithClient();
+    const cell = within(await screen.findByTestId('user-roles-user-loo'));
+
+    fireEvent.click(cell.getByText('+2'));
+    const popover = within(
+      await screen.findByTestId('user-roles-user-loo-popover'),
+    );
+    // The portal moves the popover out of the row in the DOM, but React events still
+    // bubble up the component tree to the row's own click handler.
+    fireEvent.click(popover.getByText('Purchasing Executive'));
+
+    expect(routerPush).not.toHaveBeenCalled();
   });
 
   it('"+N" is keyboard reachable: Enter opens the same popover', async () => {
@@ -163,6 +200,8 @@ describe('UserList - Roles column folds to one line with "+N" (AC-PO-1, AC-PO-2)
     more.focus();
     fireEvent.keyDown(more, { key: 'Enter' });
 
-    expect(await screen.findByTestId('user-roles-user-loo-popover')).toBeInTheDocument();
+    expect(
+      await screen.findByTestId('user-roles-user-loo-popover'),
+    ).toBeInTheDocument();
   });
 });

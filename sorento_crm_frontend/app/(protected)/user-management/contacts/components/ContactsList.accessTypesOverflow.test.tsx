@@ -42,7 +42,9 @@ if (!('ResizeObserver' in window)) {
 Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? vi.fn();
 
 const apiFetchMock = vi.fn();
-vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetchMock(...a) }));
+vi.mock('@/lib/api', () => ({
+  apiFetch: (...a: unknown[]) => apiFetchMock(...a),
+}));
 
 vi.mock('@/hooks/useRespondContactOutbound', () => ({
   RESPOND_CONTACTS_OUTBOUND_KEY: 'respond-contacts-outbound',
@@ -52,7 +54,9 @@ vi.mock('@/hooks/useRespondContactOutbound', () => ({
   }),
 }));
 
-vi.mock('@/components/contacts/PortalLinkButton', () => ({ default: () => null }));
+vi.mock('@/components/contacts/PortalLinkButton', () => ({
+  default: () => null,
+}));
 vi.mock('@/services/contactImpersonationService', () => ({
   startContactImpersonation: vi.fn(),
 }));
@@ -67,7 +71,10 @@ vi.mock('@/hooks/usePermissions', () => ({
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+  useListingColumnPreferences: () => ({
+    resetToDefaults: vi.fn(),
+    isLoading: false,
+  }),
 }));
 
 vi.mock('next/navigation', () => ({
@@ -76,7 +83,9 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => ({ get: () => null }),
 }));
 
-vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+}));
 
 const ACCESS_TYPES = [
   { code: 'sorento_office', name: 'Sorento Office' },
@@ -126,7 +135,9 @@ vi.mock('../[id]/services/contactService', () => ({
 import ContactsList from './ContactsList';
 
 function renderList() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <ContactsList />
@@ -140,7 +151,10 @@ beforeEach(() => {
     data: [SEVEN_TYPES_ROW, ONE_TYPE_ROW],
     pagination: { total: 2 },
   } as never);
-  apiFetchMock.mockResolvedValue({ ok: true, json: async () => [] } as unknown as Response);
+  apiFetchMock.mockResolvedValue({
+    ok: true,
+    json: async () => [],
+  } as unknown as Response);
 });
 
 afterEach(() => cleanup());
@@ -148,7 +162,9 @@ afterEach(() => cleanup());
 describe('ContactsList - Access types column folds to one line with "+N" (AC-PO-3)', () => {
   it('shows the first access type and a "+N" chip counting the folded ones', async () => {
     renderList();
-    const cell = within(await screen.findByTestId('contact-access-types-contact-seven'));
+    const cell = within(
+      await screen.findByTestId('contact-access-types-contact-seven'),
+    );
 
     expect(cell.getByText('Sorento Office')).toBeInTheDocument();
     expect(cell.getByText('+6')).toBeInTheDocument();
@@ -160,7 +176,9 @@ describe('ContactsList - Access types column folds to one line with "+N" (AC-PO-
 
   it('shows no "+N" for a contact with one access type (AC-PO-6)', async () => {
     renderList();
-    const cell = within(await screen.findByTestId('contact-access-types-contact-one'));
+    const cell = within(
+      await screen.findByTestId('contact-access-types-contact-one'),
+    );
 
     expect(cell.getByText('End User')).toBeInTheDocument();
     expect(cell.queryByText(/^\+\d+$/)).not.toBeInTheDocument();
@@ -168,7 +186,9 @@ describe('ContactsList - Access types column folds to one line with "+N" (AC-PO-
 
   it('"+N" opens a popover listing every access type, and Escape closes it', async () => {
     renderList();
-    const cell = within(await screen.findByTestId('contact-access-types-contact-seven'));
+    const cell = within(
+      await screen.findByTestId('contact-access-types-contact-seven'),
+    );
 
     fireEvent.click(cell.getByText('+6'));
 
@@ -179,12 +199,16 @@ describe('ContactsList - Access types column folds to one line with "+N" (AC-PO-
     }
 
     fireEvent.keyDown(screen.getByTestId(popoverId), { key: 'Escape' });
-    await waitFor(() => expect(screen.queryByTestId(popoverId)).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByTestId(popoverId)).not.toBeInTheDocument(),
+    );
   });
 
   it('"+N" is keyboard reachable: Space opens the same popover', async () => {
     renderList();
-    const cell = within(await screen.findByTestId('contact-access-types-contact-seven'));
+    const cell = within(
+      await screen.findByTestId('contact-access-types-contact-seven'),
+    );
     const more = cell.getByText('+6');
     expect(more).toHaveAttribute('tabindex', '0');
 
