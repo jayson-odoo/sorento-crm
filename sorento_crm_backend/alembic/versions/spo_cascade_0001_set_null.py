@@ -23,7 +23,7 @@ transaction. No row changes. Idempotent: a database whose FK already reads SET N
 alone.
 
 Revision ID: spo_cascade_0001_set_null
-Revises: eml_0002_seed_layouts
+Revises: eml_0002_seed_layouts, mem_0003_parser_history
 """
 import logging
 
@@ -31,7 +31,12 @@ from alembic import op
 from sqlalchemy import inspect
 
 revision = "spo_cascade_0001_set_null"
-down_revision = "eml_0002_seed_layouts"
+# A merge revision as well as a migration: main forked when #1350 (eml_0002_seed_layouts)
+# and #1304 (mem_0003_parser_history) merged back to back, each parented on the head
+# before the other, so `check-migration-heads` was red on main itself. Joining both here
+# is the fix the gate names ("add a merge revision joining these heads"); the lane's own
+# DDL below is unaffected by which branch a database took to get here.
+down_revision = ("eml_0002_seed_layouts", "mem_0003_parser_history")
 branch_labels = None
 depends_on = None
 
