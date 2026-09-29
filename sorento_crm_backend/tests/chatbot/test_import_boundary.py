@@ -38,6 +38,19 @@ ALLOWED = {
     # boundary this script is exactly the kind of file that has to be updated with it - so
     # it belongs in the list that says so.
     "scripts/chatbot_parser_parity.py",
+    # Chatbot memory lane A (contract section 3/5.3): a maintenance script, not core, not
+    # on any request path - it seeds closed episodes over EXISTING history by calling
+    # `turn.memory.write_episode_for_reset` (the SAME writer the live engine calls, so a
+    # backfilled frame and a live one can never disagree, AC-MEM029) and needs it directly.
+    "scripts/backfill_chatbot_episodes.py",
+    # Chatbot memory lane A S2 (contract section 4/5): the contact's memory/facts
+    # surface is a `user_management.contacts` route, so it cannot live under
+    # `app/services/chatbot/`, yet its vocabulary, precedence and row-lock rules
+    # are exactly `turn/profile_facts.py`'s own - reusing them directly is the
+    # alternative to a second, drifting copy of that logic in core. The same
+    # doorway shape as `app/api/v1/system/chatbot.py` above: a core surface that
+    # happens to need one chatbot-module read/write path.
+    "app/services/contact_service.py",
 }
 ALLOWED_PREFIXES = (
     "app/services/chatbot/",

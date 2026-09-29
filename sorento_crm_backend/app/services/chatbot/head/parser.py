@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.services.ai_prompt_registry import agent_model, render
 from app.services.chatbot.contracts import ParserOutputError  # noqa: F401 - re-export
+from app.services.chatbot.turn import context as context_mod
 from app.services.chatbot.turn import question as question_mod
 from app.services.chatbot.turn import task as task_mod
 
@@ -421,6 +422,33 @@ def _build_json_schema() -> dict[str, Any]:
                 },
                 "required": ["backward_reference"],
             },
+            # Chatbot memory lane A (contract section 6.5, round 3): set only when the
+            # dealer states something about THEMSELVES ("I'm the purchaser", "reply in
+            # Malay") - `turn/apply.py` applies each entry as a `stated` fact through
+            # `profile_facts.apply_statement`, in the tail. A LIST (round 3 renames the
+            # singular `profile_statement`) because one message can state more than one
+            # fact ("I'm in Penang and I prefer Malay"), capped at 3 (`maxItems`) so one
+            # turn cannot flood the profile. ENUM'd `key` (unlike the free-string
+            # `domain_hint` et al.) because this vocabulary is closed and small, and a
+            # value outside it is dropped by APPLY with a trace line rather than read as
+            # a fact (contract section 6.5's own six keys - `about` included, per the
+            # vocabulary table in section 4).
+            "profile_statements": {
+                "type": ["array", "null"],
+                "maxItems": 3,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "key": {
+                            "type": "string",
+                            "enum": ["language", "role", "usual_brands", "usual_sites", "project", "about"],
+                        },
+                        "value": {"type": ["string", "array"], "items": {"type": "string"}},
+                    },
+                    "required": ["key", "value"],
+                },
+            },
         },
         "required": [
             "message_type",
@@ -468,6 +496,7 @@ def _build_json_schema() -> dict[str, Any]:
             "proceed_anyway",
             "open_question_answer",
             "anaphora",
+            "profile_statements",
         ],
     }
 
@@ -516,6 +545,7 @@ TOLERATED_ABSENT: frozenset[str] = frozenset(
         "proceed_anyway",
         "open_question_answer",
         "self_reference",
+        "profile_statements",
     }
 )
 
@@ -678,18 +708,10 @@ def build_user_block(
         # and a domain switch are judged against something. One line, omitted whole when
         # the focus is empty.
         lines.append(subject)
-    for task_line in task_mod.hint_lines(
-        getattr(focus, "tasks", None),
-        # Round 9: a pick or an offer is not the stock question, so the task's own
-        # line still prints under it.
-        open_question_shown=question_mod.is_the_stock_question(open_question),
-    ):
-        lines.append(task_line)
-    if open_question:
-        lines.append(
-            "Open question: "
-            + json.dumps(open_question, separators=(",", ":"), ensure_ascii=False)
-        )
+    lines.extend(open_task_lines(focus, open_question))
+    question_line = open_question_line(open_question)
+    if question_line:
+        lines.append(question_line)
     if pending_kind:
         lines.append(f"Pending: the assistant is waiting for a {pending_kind} reply.")
     if pending_options:
@@ -708,49 +730,44 @@ def build_user_block(
         # AC-1547: the recalled frames, on the SECOND parse of a turn that pointed
         # backwards. Absent on every other turn, which keeps their block unchanged.
         lines.append(episodes_block)
-    if brands:
-        # #1262 slice 9 (F1a): deduped by name - a brand active in more than one of
-        # the contact's companies must still print once, not once per company.
-        seen: set[str] = set()
-        pairs: list[str] = []
-        for row in brands:
-            name = str((row or {}).get("brand_name") or "").strip()
-            code = str((row or {}).get("brand_code") or "").strip()
-            if not name or name in seen:
-                continue
-            seen.add(name)
-            pairs.append(f"{name} ({code})" if code else name)
-        if pairs:
-            lines.append(f"Known brands: {', '.join(pairs)}")
-    if recent_exchanges:
+    brands_line = context_mod.known_brands_line(brands)
+    if brands_line:
+        # #1262 slice 9 (F1a): one line, deduped by name (`context.known_brands_line`,
+        # shared with the memory lane's assembler so both print the same line).
+        lines.append(brands_line)
+    exchanges = context_mod.recent_exchange_lines(recent_exchanges, previous)
+    if exchanges:
         lines.append("Recent exchanges, oldest first:")
-        last = len(recent_exchanges) - 1
-        for index, (user_text, assistant_text) in enumerate(recent_exchanges):
-            lines.append(f"User: {_exchange_text(user_text)}")
-            # The newest reply IS the Previous response line; not paid for twice. Only
-            # when it really is that reply (review S4): otherwise it is printed.
-            lines.append(
-                "Assistant: (the Previous response)"
-                if index == last and str(assistant_text or "").strip() == previous.strip()
-                else f"Assistant: {_exchange_text(assistant_text)}"
-            )
+        lines.extend(line for pair in exchanges for line in pair)
     return "\n".join(lines)
 
 
-#: How much of one exchange's text the parser reads (round 8). A ten-line point-form
-#: question is about 250 characters; a stock answer for ten products is longer, and its
-#: head is what a short reply refers to.
-EXCHANGE_TEXT_CAP = 500
-
-
-def _exchange_text(value: Any) -> str:
-    """One line of one exchange: newlines become " / ", at most `EXCHANGE_TEXT_CAP`."""
-    text = " / ".join(
-        part.strip() for part in str(value or "").splitlines() if part.strip()
+def open_task_lines(focus: Any, open_question: dict[str, Any] | None) -> list[str]:
+    """The `Open task: ...` lines (ported from PR #1118, D21), most recently touched
+    first. Shared by `build_user_block` and the memory lane's `context.assemble`
+    caller, so both print the same lines."""
+    return list(
+        task_mod.hint_lines(
+            getattr(focus, "tasks", None),
+            # Round 9: a pick or an offer is not the stock question, so the task's own
+            # line still prints under it.
+            open_question_shown=question_mod.is_the_stock_question(open_question),
+        )
     )
-    if len(text) > EXCHANGE_TEXT_CAP:
-        return text[:EXCHANGE_TEXT_CAP] + "..."
-    return text
+
+
+def open_question_line(open_question: dict[str, Any] | None) -> str | None:
+    """PR #1247 round 8: the one question on the table as its `Open question: {...}`
+    line, or None when there is none."""
+    if not open_question:
+        return None
+    return "Open question: " + json.dumps(open_question, separators=(",", ":"), ensure_ascii=False)
+
+
+#: Round 8's exchange cap and line helper now live in `turn/context.py` (the assembler
+#: prints the same lines); re-exported under their old names for existing readers.
+EXCHANGE_TEXT_CAP = context_mod.EXCHANGE_TEXT_CAP
+_exchange_text = context_mod.exchange_text
 
 
 class ParsedOutput(dict):

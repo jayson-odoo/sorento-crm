@@ -68,6 +68,7 @@ def test_the_prompt_teaches_the_kind_and_never_files_a_property_as_a_document():
         ESCALATION_CONFIRMATION_ADDENDUM,
         SELF_REFERENCE_ADDENDUM,
         KNOWN_BRANDS_ADDENDUM,
+        MEMORY_ADDENDUM,
         QUANTITY_ADDENDUM,
         SEMANTIC_PARSER_PROMPT,
         SPECIFICATION_ADDENDUM,
@@ -78,7 +79,8 @@ def test_the_prompt_teaches_the_kind_and_never_files_a_property_as_a_document():
     # Integration round 11 (#1301): the #1262 pair (QUANTITY, KNOWN_BRANDS) sits between.
     # Fix round 13 merge of origin/main b9552578 (#1273): TOP_SELLING sits under the tail.
     assert (
-        SEMANTIC_PARSER_PROMPT.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SELF_REFERENCE_ADDENDUM)
+        SEMANTIC_PARSER_PROMPT.removesuffix(MEMORY_ADDENDUM)
+        .removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SELF_REFERENCE_ADDENDUM)
         .removesuffix(TOP_SELLING_ADDENDUM)
         .removesuffix(KNOWN_BRANDS_ADDENDUM)
         .removesuffix(QUANTITY_ADDENDUM)

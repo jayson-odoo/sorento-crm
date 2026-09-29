@@ -16,7 +16,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from app.services.chatbot_reply_copy import CHATBOT_REPLY_COPY
+from app.services.chatbot_reply_copy import CHATBOT_REPLY_COPY, FALLBACK_LANGUAGES, language_suffix
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,15 @@ class CannedCopy:
         for name, value in variables.items():
             text = text.replace("{{" + name + "}}", "" if value is None else str(value))
         return text
+
+    def render_in(self, key: str, language: str | None, **variables: Any) -> str:
+        """A graceful-fallback template in the dealer's language (AC-MEM089): the
+        `.ms` / `.zh` key when that language is asked for and the key exists, else the
+        bare (English) key."""
+        suffix = language_suffix(language) if language in FALLBACK_LANGUAGES else ""
+        if suffix and f"{key}{suffix}" in self.templates:
+            return self.render(f"{key}{suffix}", **variables)
+        return self.render(key, **variables)
 
 
 def fallback_copy() -> CannedCopy:

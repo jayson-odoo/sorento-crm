@@ -86,12 +86,15 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         as the tail - the same treatment `LAST_COST_ADDENDUM` got here when
         `LOW_STOCK_ADDENDUM` landed. `STOCK_TASK_ADDENDUM` and `SALES_ANALYSIS_ADDENDUM`
         stacked after THAT, then `QUANTITY_ADDENDUM` (issue #1262 slice 5, 26 Sep 2026),
-        then `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep 2026) after that, so it
-        comes off first of all."""
+        then `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep 2026), then
+        `ESCALATION_CONFIRMATION_ADDENDUM` (#1323), then `MEMORY_ADDENDUM` (chatbot memory
+        lane A, migration `mem_0002_parser_memory`) after that, so it comes off first of
+        all."""
         from app.services.chatbot_parser_prompt import (
             ESCALATION_CONFIRMATION_ADDENDUM,
             SELF_REFERENCE_ADDENDUM,
             KNOWN_BRANDS_ADDENDUM,
+            MEMORY_ADDENDUM,
             QUANTITY_ADDENDUM,
             SALES_ANALYSIS_ADDENDUM,
             SALES_REPORT_ADDENDUM,
@@ -106,7 +109,8 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
             assert (
-                body.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SELF_REFERENCE_ADDENDUM)
+                body.removesuffix(MEMORY_ADDENDUM)
+                .removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SELF_REFERENCE_ADDENDUM)
                 .removesuffix(TOP_SELLING_ADDENDUM)
                 .removesuffix(KNOWN_BRANDS_ADDENDUM)
                 .removesuffix(QUANTITY_ADDENDUM)
@@ -117,7 +121,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
                 .endswith(addendum)
             ), (
                 f"{name} body does not end with LOW_STOCK_ADDENDUM once the newer "
-                "KNOWN_BRANDS_ADDENDUM/QUANTITY_ADDENDUM/SALES_ANALYSIS_ADDENDUM/"
+                "MEMORY_ADDENDUM/KNOWN_BRANDS_ADDENDUM/QUANTITY_ADDENDUM/SALES_ANALYSIS_ADDENDUM/"
                 "STOCK_TASK_ADDENDUM/SALES_REPORT_ADDENDUM are stripped - "
                 "LOW_STOCK_ADDENDUM must stay the tail beneath them"
             )
@@ -132,6 +136,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
             KNOWN_BRANDS_ADDENDUM,
             LAST_COST_ADDENDUM,
             ESCALATION_CONFIRMATION_ADDENDUM,
+            MEMORY_ADDENDUM,
             SELF_REFERENCE_ADDENDUM,
             QUANTITY_ADDENDUM,
             SALES_ANALYSIS_ADDENDUM,
@@ -144,7 +149,8 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
             assert (
-                body.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SELF_REFERENCE_ADDENDUM)
+                body.removesuffix(MEMORY_ADDENDUM)
+                .removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SELF_REFERENCE_ADDENDUM)
                 .removesuffix(TOP_SELLING_ADDENDUM)
                 .removesuffix(KNOWN_BRANDS_ADDENDUM)
                 .removesuffix(QUANTITY_ADDENDUM)

@@ -41,6 +41,7 @@ from app.services.chatbot_parser_prompt import (
     LAST_COST_ADDENDUM,
     LOW_STOCK_ADDENDUM,
     ESCALATION_CONFIRMATION_ADDENDUM,
+    MEMORY_ADDENDUM,
     SELF_REFERENCE_ADDENDUM,
     QUANTITY_ADDENDUM,
     SALES_ANALYSIS_ADDENDUM,
@@ -161,8 +162,9 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         FULL body and dev's is on the SLIM one.
 
         The strong `.endswith` form is restored (review S4, 12 Sep 2026) by stripping the
-        LATER addenda first, outermost first: `ESCALATION_CONFIRMATION_ADDENDUM` (#1323,
-        the tail), `TOP_SELLING_ADDENDUM` (PLAN-chatbot-top-x-hot-selling-24sep.md S4),
+        LATER addenda first, outermost first: `MEMORY_ADDENDUM` (chatbot memory lane A,
+        migration `mem_0002_parser_memory`), then `ESCALATION_CONFIRMATION_ADDENDUM` (#1323),
+        then `TOP_SELLING_ADDENDUM` (PLAN-chatbot-top-x-hot-selling-24sep.md S4),
         then `KNOWN_BRANDS_ADDENDUM` (issue #1262 slice 9, 26 Sep 2026), then
         `QUANTITY_ADDENDUM` (issue #1262 slice 5, 26 Sep 2026), then
         `SALES_ANALYSIS_ADDENDUM` (#1267 S1), then `STOCK_TASK_ADDENDUM`
@@ -173,9 +175,11 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         stacked after the live text, so `GROWTH_R1_ADDENDUM` is still exactly the tail
         once the later ones are off."""
         for body in (SEMANTIC_PARSER_PROMPT,):
-            assert body.removesuffix(ESCALATION_CONFIRMATION_ADDENDUM).removesuffix(SELF_REFERENCE_ADDENDUM).removesuffix(
-                TOP_SELLING_ADDENDUM
-            ).removesuffix(KNOWN_BRANDS_ADDENDUM).removesuffix(QUANTITY_ADDENDUM).removesuffix(
+            assert body.removesuffix(MEMORY_ADDENDUM).removesuffix(
+                ESCALATION_CONFIRMATION_ADDENDUM
+            ).removesuffix(SELF_REFERENCE_ADDENDUM).removesuffix(TOP_SELLING_ADDENDUM).removesuffix(
+                KNOWN_BRANDS_ADDENDUM
+            ).removesuffix(QUANTITY_ADDENDUM).removesuffix(
                 SPECIFICATION_ADDENDUM
             ).removesuffix(
                 SALES_ANALYSIS_ADDENDUM

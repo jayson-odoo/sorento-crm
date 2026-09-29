@@ -120,10 +120,16 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     # 29 Sep 2026 (PLAN-chatbot-customer-scope-29sep D2): "my" / "me" as the asker's own
     # account; the engine's `_customer_scope_gate` reads it off the verdict. 44 -> 45.
     "self_reference": "app/services/chatbot/engine.py",
+    # 26 Sep 2026 (chatbot memory lane A S3, migration `mem_0002_parser_memory`):
+    # `profile_statement` joins the schema - `engine.py`'s tail reads it and applies it
+    # as a `stated` fact through `profile_facts.apply_statement`. Counted after main's rows above.
+    # Round 3 (AC-MEM033/069, merged 5b110df8) RENAMES it `profile_statements` (a LIST,
+    # up to 3) - same reader, same count.
+    "profile_statements": "app/services/chatbot/engine.py",
 }
 
 
-def test_measured_read_set_matches_the_45_declared_keys():
+def test_measured_read_set_matches_the_46_declared_keys():
     """The table above is complete and has no typo - every declared key is measured read
     exactly once, and the table names nothing DECLARED_KEYS does not also carry. Catches a
     stale table before it can hide a real drift in the two tests below."""

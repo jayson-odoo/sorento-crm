@@ -9,14 +9,17 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { SearchableCode } from '@/components/common/find-in-text/SearchableCode';
 import { useChatbotTurn } from '../hooks/useChatbotTurns';
 import { shortTurnId } from '../turnPresentation';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type {
   TurnDetail,
   TurnDetailApplyDiff,
   TurnDetailApplyDiffEntry,
+  TurnDetailContextLayer,
   TurnDetailCrossdomain,
   TurnDetailDecay,
   TurnDetailFocus,
-  TurnDetailMemorySlot,
+  TurnDetailOrder,
+  TurnDetailOrderNeighbor,
 } from '../types/chatbotTurn.types';
 
 /**
@@ -74,6 +77,9 @@ export function TurnDetailDrawer({
 function Sections({ detail }: { detail: TurnDetail }) {
   return (
     <>
+      <Section title="Order" testId="section-order" defaultOpen>
+        <OrderSection order={detail.order ?? null} />
+      </Section>
       <Section title="Stages" testId="section-stages" defaultOpen>
         <StagesSection stages={detail.stages} />
       </Section>
@@ -85,6 +91,9 @@ function Sections({ detail }: { detail: TurnDetail }) {
       </Section>
       <Section title="Memory" testId="section-memory">
         <MemorySection memory={detail.memory ?? null} />
+      </Section>
+      <Section title="Context sent to the AI" testId="section-context">
+        <ContextSection context={detail.context ?? null} />
       </Section>
       <Section title="Decay" testId="section-decay">
         <DecaySection decay={detail.decay} />
@@ -372,76 +381,242 @@ function ApplySection({ apply }: { apply: TurnDetail['apply'] }) {
   );
 }
 
-function MemorySlotTable({ slots }: { slots: TurnDetailMemorySlot[] }) {
-  if (slots.length === 0) return <Empty>Nothing on this shelf.</Empty>;
-  return (
-    <table className="w-full text-xs">
-      <tbody>
-        {slots.map((slot) => (
-          <tr key={slot.key} className="border-b last:border-0">
-            <td className="w-24 py-1 pe-2 align-top font-medium">{slot.key}</td>
-            <td className="py-1 align-top text-muted-foreground">
-              {typeof slot.value === 'string' ? slot.value : JSON.stringify(slot.value)}
-              {slot.writer && (
-                <Badge variant="secondary" appearance="light" size="sm" className="ms-1.5">
-                  {slot.writer}
-                </Badge>
-              )}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
+/**
+ * One row's human label off `focus.after` - an entity dict (products, customers) or
+ * a bare code/string (domains, document). Mirrors the backend's own fallback order
+ * (`head/parser.py::_subject_names`: `name || raw || canonical_code`), with
+ * `display_name` checked first for whichever FE-only shape carries it.
+ */
+function focusEntityLabel(row: unknown): string {
+  if (row == null) return '';
+  if (typeof row === 'string') return row.trim();
+  if (typeof row === 'number') return String(row);
+  if (typeof row === 'object') {
+    const entity = row as Record<string, unknown>;
+    const value = entity.display_name ?? entity.name ?? entity.raw ?? entity.canonical_code;
+    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'number') return String(value);
+  }
+  return '';
+}
+
+/** The names on one focus axis, in order, deduped - the backend's own `_subject_names`. */
+function focusAxisNames(rows: unknown): string[] {
+  if (!Array.isArray(rows)) return [];
+  const names: string[] = [];
+  for (const row of rows) {
+    const text = focusEntityLabel(row);
+    if (text && !names.includes(text)) names.push(text);
+  }
+  return names;
+}
+
+/**
+ * The current subject, from `focus.after` (chatbot memory lane A, contract section 6) -
+ * rendered the same way the backend's own `head/parser.py::current_subject_line` reads
+ * it (domain, customer, product, document, status), since `focus.after` is the SAME
+ * `Focus` dataclass shape that function reads, not a flat list of primitives: every
+ * real field the engine writes there (`domains`, `products`, `customers`, `document`)
+ * is an array of entity dicts or bare codes, which a plain `Object.values` +
+ * string/number filter always empties out.
+ */
+function currentSubjectText(after: unknown): string | null {
+  if (after == null || typeof after !== 'object') return null;
+  const focus = after as Record<string, unknown>;
+  const parts: string[] = [];
+  for (const [label, key] of [
+    ['domain', 'domains'],
+    ['customer', 'customers'],
+    ['product', 'products'],
+    ['document', 'document'],
+  ] as const) {
+    const names = focusAxisNames(focus[key]);
+    if (names.length) parts.push(`${label} ${names.join(', ')}`);
+  }
+  const status = focus.status;
+  if (typeof status === 'string' && status.trim()) parts.push(`status ${status.trim()}`);
+  return parts.length ? parts.join('; ') : null;
+}
+
+// Same wording the level picker already uses (`ContactChatbotSection.tsx`'s own
+// `LEVEL_LABEL` / `MemorySettingsCard.tsx`'s `LEVEL_OPTIONS`) - a raw `full`/
+// `conversation`/`episodes`/`off` code has no business reaching an operator's screen
+// (review finding N7).
+const MEMORY_LEVEL_LABEL: Record<string, string> = {
+  off: 'Off',
+  conversation: 'This conversation',
+  episodes: 'Past conversations',
+  full: 'Full memory',
+};
+
+// `profile_facts.VOCABULARY`'s own labels (`app/services/chatbot/turn/
+// profile_facts.py`) - the vocabulary the contact's own "What the bot knows" grid
+// already renders these facts under.
+const MEMORY_FACT_LABEL: Record<string, string> = {
+  customer: 'Customer',
+  segment: 'Segment',
+  salesperson: 'Salesperson',
+  language: 'Language',
+  role: 'Role',
+  usual_products: 'Usual products',
+  usual_brands: 'Usual brands',
+  usual_sites: 'Usual sites',
+  project: 'Project',
+  about: 'About',
+  note: 'Note',
+};
+
+// `SOURCE_BADGE`'s own wording (`ContactChatbotSection.tsx`).
+const MEMORY_FACT_SOURCE_LABEL: Record<string, string> = {
+  crm: 'CRM',
+  tallied: 'Learned',
+  stated: 'Said',
+  staff: 'Staff',
+};
+
+function memoryLevelLabel(level: string): string {
+  return MEMORY_LEVEL_LABEL[level] ?? level;
+}
+
+function factSavedLabel(fact: { key: string; source: string }): string {
+  const label = MEMORY_FACT_LABEL[fact.key] ?? fact.key;
+  const source = MEMORY_FACT_SOURCE_LABEL[fact.source] ?? fact.source;
+  return `${label} (${source})`;
 }
 
 function MemorySection({ memory }: { memory: TurnDetail['memory'] }) {
-  if (!memory) return <Empty>Not recorded on this turn (Memory shipped in S3).</Empty>;
+  if (!memory) return <Empty>Not recorded on this turn.</Empty>;
+  const ownSet = memory.level?.own != null;
+  const subject = currentSubjectText(memory.focus?.after);
+  const written = memory.episodes?.written;
+  const factsSaved = memory.facts_saved ?? [];
+
   return (
-    <div className="space-y-3 text-xs">
-      <div>
-        <div className="mb-1 font-medium text-muted-foreground">Focus - writer: APPLY</div>
-        <MemorySlotTable slots={memory.focus} />
-      </div>
-      <div>
-        <div className="mb-1 font-medium text-muted-foreground">Profile - writer: explicit picks</div>
-        <MemorySlotTable slots={memory.profile} />
-      </div>
-      <div>
-        <div className="mb-1 font-medium text-muted-foreground">
-          Episodes - writer: TAIL on topic switch
-        </div>
-        {memory.episodes ? (
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              {memory.episodes.recall_hit ? (
-                <Badge variant="success" appearance="light" size="sm">
-                  recall hit
-                </Badge>
-              ) : (
-                <Badge variant="secondary" appearance="light" size="sm">
-                  not triggered
-                </Badge>
-              )}
-              {memory.episodes.reason && (
-                <span className="text-muted-foreground">{memory.episodes.reason}</span>
-              )}
+    <dl className="grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-1.5 text-xs">
+      <dt className="text-muted-foreground">Context level</dt>
+      <dd>
+        {memory.level ? memoryLevelLabel(memory.level.effective) : '-'}{' '}
+        <Badge variant="secondary" appearance="light" size="sm" className="ms-1">
+          {ownSet ? 'own level' : 'system default'}
+        </Badge>
+      </dd>
+      <dt className="text-muted-foreground">Current subject</dt>
+      <dd className="text-muted-foreground">{subject ?? 'Not recorded on this turn.'}</dd>
+      <dt className="text-muted-foreground">Conversation closed</dt>
+      <dd className="text-muted-foreground">
+        {written
+          ? written.domain
+            ? `${written.domain[0].toUpperCase()}${written.domain.slice(1)}: ${written.summary}`
+            : written.summary
+          : 'none this turn'}
+      </dd>
+      <dt className="text-muted-foreground">Facts saved</dt>
+      <dd className="text-muted-foreground">
+        {factsSaved.length === 0 ? 'none this turn' : factsSaved.map(factSavedLabel).join(', ')}
+      </dd>
+    </dl>
+  );
+}
+
+/**
+ * "Context sent to the AI" (chatbot memory lane A, contract section 6's `context`
+ * trace event) - each layer's estimated tokens against its own cap, and the total
+ * against the turn cap.
+ */
+// `turn/context.py::CAPS` names exactly these five layers - L1 (current message,
+// `_render_l1`) and L2 (current subject + the open question, `_render_l2`) were
+// missing here and rendered as their raw code (browser pass, 26 Sep 2026).
+const CONTEXT_LAYER_LABEL: Record<string, string> = {
+  L1: 'Current message',
+  L2: 'Current subject and open question',
+  L3: 'This conversation',
+  L4: 'Past conversations',
+  L5: 'About this contact',
+};
+
+function layerLabel(layer: TurnDetailContextLayer): string {
+  return CONTEXT_LAYER_LABEL[layer.layer] ?? layer.layer;
+}
+
+function layerDropped(layer: TurnDetailContextLayer): string[] {
+  if (Array.isArray(layer.dropped)) return layer.dropped;
+  return layer.dropped ? [layerLabel(layer)] : [];
+}
+
+function ContextSection({ context }: { context: TurnDetail['context'] }) {
+  if (!context) return <Empty>Not recorded on this turn.</Empty>;
+  const dropped = context.layers.flatMap(layerDropped);
+  return (
+    <div className="space-y-2 text-xs">
+      {context.layers.map((layer, i) => {
+        const pct = layer.cap > 0 ? Math.min(100, (layer.est_tokens / layer.cap) * 100) : 0;
+        return (
+          <div key={`${layer.layer}-${i}`} className="flex items-center gap-2">
+            <span className="w-36 shrink-0 truncate text-muted-foreground" title={layerLabel(layer)}>
+              {layerLabel(layer)}
+            </span>
+            <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
             </div>
-            {memory.episodes.last_frame_summary && (
-              <p className="text-muted-foreground">{memory.episodes.last_frame_summary}</p>
-            )}
-            {memory.episodes.frame_count != null && (
-              <p className="text-muted-foreground">
-                {memory.episodes.frame_count} frame{memory.episodes.frame_count === 1 ? '' : 's'}{' '}
-                for this contact
-              </p>
-            )}
+            <span className="w-20 shrink-0 text-end tabular-nums text-muted-foreground">
+              {layer.est_tokens} / {layer.cap}
+            </span>
           </div>
-        ) : (
-          <Empty>No episode recorded yet.</Empty>
-        )}
+        );
+      })}
+      <div className="flex items-center gap-2 font-medium">
+        <span className="w-36 shrink-0">Total memory + message</span>
+        <div className="flex-1" />
+        <span className="w-20 shrink-0 text-end tabular-nums">
+          {context.total_est_tokens} / {context.cap}
+        </span>
       </div>
+      <p className="text-muted-foreground">
+        Dropped: {dropped.length === 0 ? 'nothing' : dropped.join(', ')}
+      </p>
     </div>
+  );
+}
+
+/**
+ * The per-contact ordering ticket (chatbot memory lane A, contract section 6's `order`
+ * trace event) - read-only, nothing to set.
+ */
+function orderNeighborText(neighbor: TurnDetailOrderNeighbor): string {
+  const ticket = neighbor.ticket != null ? `#${neighbor.ticket} ` : '';
+  return `${ticket}${formatDateTimeInMalaysia(neighbor.created_at)} "${neighbor.message}"`;
+}
+
+/**
+ * A queue TIMEOUT never finishes waiting, so `wait_ms` is `null` (AC-MEM014) - the
+ * mockup names the ticket it was waiting on instead of a waited duration
+ * (`chatbot-memory-27sep-mockup-ticket.html`: "Timed out ... waited 45 s for #13,
+ * which never finished"). `previous` is this contact's own preceding turn, off its
+ * OWN "queued" stage ticket (`trace_detail.py::_order_neighbor`).
+ */
+function waitedText(order: TurnDetailOrder): string {
+  if (order.wait_ms != null) return `${(order.wait_ms / 1000).toFixed(1)} s`;
+  if (order.previous?.ticket != null) return `Timed out, waited for #${order.previous.ticket}`;
+  return 'Timed out';
+}
+
+function OrderSection({ order }: { order: TurnDetail['order'] }) {
+  if (!order) return <Empty>Not recorded on this turn.</Empty>;
+  return (
+    <dl className="grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-1.5 text-xs">
+      <dt className="text-muted-foreground">Place in line</dt>
+      <dd>#{order.ticket} for this contact</dd>
+      <dt className="text-muted-foreground">Waited</dt>
+      <dd>{waitedText(order)}</dd>
+      <dt className="text-muted-foreground">Ran after</dt>
+      <dd className="text-muted-foreground">
+        {order.previous ? orderNeighborText(order.previous) : 'Not recorded on this turn.'}
+      </dd>
+      <dt className="text-muted-foreground">Next</dt>
+      <dd className="text-muted-foreground">
+        {order.next ? orderNeighborText(order.next) : 'Not recorded on this turn.'}
+      </dd>
+    </dl>
   );
 }
 

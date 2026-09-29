@@ -156,7 +156,7 @@ def contact_phone(db: Session, contact_respond_id: str) -> str | None:
 
 
 _PROFILE_COLUMNS = (
-    "c.chatbot_profile, c.chatbot_recall_enabled, c.chatbot_stock_allowed, "
+    "c.chatbot_profile, c.chatbot_stock_allowed, "
     "c.notify_salesman, c.packing_list_allowed "
     "FROM respond_contacts c"
 )
@@ -212,6 +212,65 @@ def _profile_rows(db: Session, contact_respond_id: str, space_id: str | None) ->
             {"cid": contact_respond_id},
         ).fetchall()
     )
+
+
+_MEMORY_COLUMNS = "c.id, c.chatbot_memory_level FROM respond_contacts c"
+
+
+def resolve_contact_pk(
+    db: Session, contact_respond_id: str, space_id: str | None
+) -> tuple[str, str | None] | None:
+    """The ONE `respond_contacts` row this `contact_respond_id` resolves to -
+    workspace first, then the NULL-workspace fallback, exactly `_profile_rows`'s
+    own two-tier lookup (chatbot memory lane A, security review 26 Sep 2026, B1).
+
+    Returns `(id, chatbot_memory_level)`, or `None` when the id is ambiguous (more
+    than one row) or absent. `None` is not "pick one" - every caller reads it as
+    "cannot safely touch this contact's memory": no fact write, no frame read, the
+    turn's own memory degrades to `off` rather than risking another workspace's
+    namesake. Memory reads/writes are stricter than `load_profile`'s own stock/
+    recall resolution (which still answers a single ambiguous match by denying
+    just those two flags) because a wrong pick here would leak or corrupt a
+    DIFFERENT contact's stored profile facts and episodes, not just this turn's
+    business answer.
+    """
+    if not space_id:
+        rows = list(
+            db.execute(
+                text(f"SELECT {_MEMORY_COLUMNS} WHERE c.respond_io_id = :cid LIMIT 2"),
+                {"cid": contact_respond_id},
+            ).fetchall()
+        )
+    else:
+        scoped = list(
+            db.execute(
+                text(
+                    f"SELECT {_MEMORY_COLUMNS} "
+                    "JOIN respond_workspaces w ON w.id = c.workspace_id "
+                    "WHERE c.respond_io_id = :cid AND w.space_id = :space LIMIT 2"
+                ),
+                {"cid": contact_respond_id, "space": str(space_id)},
+            ).fetchall()
+        )
+        rows = scoped or list(
+            db.execute(
+                text(
+                    f"SELECT {_MEMORY_COLUMNS} "
+                    "WHERE c.respond_io_id = :cid AND c.workspace_id IS NULL LIMIT 2"
+                ),
+                {"cid": contact_respond_id},
+            ).fetchall()
+        )
+    if len(rows) != 1:
+        if len(rows) > 1:
+            logger.warning(
+                "chatbot: respond_io_id %s matches %s contacts; memory degraded to "
+                "off for this turn rather than picking one",
+                contact_respond_id,
+                len(rows),
+            )
+        return None
+    return str(rows[0][0]), rows[0][1]
 
 
 # `console` is its own world: a console turn replays against the operator's own thread
@@ -339,9 +398,15 @@ def recent_exchanges(
 def load_profile(
     db: Session, contact_respond_id: str, *, space_id: str | None = None
 ) -> tuple[Profile, bool]:
-    """`respond_contacts.chatbot_profile` + `chatbot_recall_enabled` (AC-1503, AC-1548),
-    and `chatbot_stock_allowed` onto `Profile.stock_allowed` (S6) - the contact facts the
-    engine reads before it routes.
+    """`respond_contacts.chatbot_profile` (AC-1503, AC-1548) and `chatbot_stock_allowed`
+    onto `Profile.stock_allowed` (S6) - the contact facts the engine reads before it
+    routes.
+
+    The second tuple member is a RETIRED recall flag (round 3, AC-MEM054: the
+    `chatbot_recall_enabled` column it read is dropped outright, model and DB both -
+    the recall re-parse it gated is deleted) - always `False` now, kept only so the
+    handful of callers unpacking a 2-tuple do not need their own signature change for
+    a value nothing reads any more.
 
     Resolved inside the workspace, not by `respond_io_id` alone: a respond.io id is only
     unique WITHIN a workspace, so the old single-row SELECT could have handed one
@@ -387,17 +452,17 @@ def load_profile(
             default_ledgers=list(ledgers) if isinstance(ledgers, list) else None,
             # NULL cannot happen (NOT NULL, default true); `is not False` keeps the
             # fail-open reading if it ever did.
-            stock_allowed=row[2] is not False,
+            stock_allowed=row[1] is not False,
             # S2 (PLAN-chatbot-stock-ask-v2-24sep.md, R7): NULL cannot happen either
             # (NOT NULL, default false) - `is True` keeps the fail-closed reading if it
             # somehow did, matching these two columns' default-OFF rule.
-            notify_salesman=row[3] is True,
-            packing_list_allowed=row[4] is True,
+            notify_salesman=row[2] is True,
+            packing_list_allowed=row[3] is True,
             stock_availability_only=_stock_availability_only(
                 db, contact_respond_id, space_id
             ),
         ),
-        bool(row[1]),
+        False,
     )
 
 

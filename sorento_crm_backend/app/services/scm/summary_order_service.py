@@ -530,13 +530,15 @@ def _belongs_on_the_book(recs: list, decision_grain: Optional[str]) -> bool:
     WHAT THE SECOND CLAUSE REACHES, since the one formula (PLAN-reorder-one-formula.md):
     `exception` rows, and only those. `plan_basis.project_need` is now the DISPLAY split of
     what the group SIZED (`_emit_cell` caps it at the sized quantity), so a covered
-    location-grain row carrying firm project demand reads 0 there and no longer earns a
-    Summary Order row - which is correct, because the one formula found its stock already
-    covers that demand and there is nothing to report buying. An `exception` still earns
-    one: it sized a real quantity and simply could not be sourced, and its basis says so
-    (`_emit_cell`'s exception branch passes `recommended`/`rounded`). Pinned by
-    `test_channel_read_model.py::test_project_need_is_netted_once_against_the_stock_that_covers_it`
-    (covered, no row) and `::test_confirmed_project_buy_survives_a_location_with_no_supplier`
+    location-grain row reads 0 there and earns no Summary Order row. Since Lane F
+    (`PLAN-order-sheet-oi-reports-22sep.md`, owner ruling 23 Sep 2026) a location-grain
+    row carrying confirmed project demand is no longer covered at all on an All run - the
+    need is bought in full on top of the stock, so it is a `buy` and the FIRST clause
+    admits it. An `exception` still earns one through this clause: it sized a real
+    quantity and simply could not be sourced, and its basis says so (`_emit_cell`'s
+    exception branch passes `recommended`/`rounded`). Pinned by
+    `test_channel_read_model.py::test_project_need_is_bought_in_full_on_top_of_the_stock_that_would_cover_it`
+    (a buy of 5) and `::test_confirmed_project_buy_survives_a_location_with_no_supplier`
     (exception, a row stating 12).
     """
     if decision_grain == plan_grain.PRODUCT_GRAIN:

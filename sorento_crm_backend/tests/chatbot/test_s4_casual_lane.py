@@ -101,9 +101,9 @@ _CLARIFIER_LIVE_PROMPT_JSON = '''"You are the Sorento Small Talk and Clarificati
 CLARIFIER_LIVE_PROMPT = json.loads(_CLARIFIER_LIVE_PROMPT_JSON)
 CLARIFIER_LIVE_PROMPT_SHA256 = "97f1d279793d6125574bc33866e0cc079935b1d4ecb69cd235ba3e78ed1d4afa"
 
-# `set-ran-query-formulator.js` (sub-error-logger), the ONE error-reply n8n has ever
-# built for this lane, byte for byte: `` `There is some error encountered by the AI:
-# ${error}` ``.
+# `set-ran-query-formulator.js` (sub-error-logger)'s old interpolation, which put the
+# provider's exception text in the dealer's WhatsApp. Retired by chatbot memory S4
+# (AC-MEM086, owner ruling Q10): the dealer reads the turn's own apology instead.
 CLARIFIER_ERROR_PREFIX = "There is some error encountered by the AI: "
 
 # AC-402: `construct-user-prompt` and `central-exchange` are registered in the SHARED
@@ -516,7 +516,12 @@ class TestLowSignalLaneIntegration:
         assert after == before, "the failed clarifier call must not write a session"
 
         assert result.delegate is None
-        assert result.reply["text"] == CLARIFIER_ERROR_PREFIX + "provider timeout"
+        # AC-MEM086: the apology, never the exception text (the row keeps the reason).
+        from app.services.chatbot_reply_copy import CHATBOT_TURN_ERROR_REPLY
+
+        assert result.reply["text"] == CHATBOT_TURN_ERROR_REPLY
+        assert "provider timeout" not in result.reply["text"]
+        assert not result.reply["text"].startswith(CLARIFIER_ERROR_PREFIX)
         assert [a["kind"] for a in result.actions] == ["send_message"]
 
         row = _turn_row(session_factory, result.turn_id)

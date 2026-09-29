@@ -151,25 +151,29 @@ def _seed_contact_with_brand(session_factory) -> None:
 
 
 class TestEngineCallSitesPassBrands:
-    """AC-S9-1's other half: BOTH `engine.py` call sites (first parse ~1423, recall
-    re-parse ~1496) must pass the live brand list, not just `build_user_block` accepting
-    one. `parser_mod.build_user_block` is monkeypatched to a recorder that forwards to
-    the real function filtered to the kwargs it currently accepts, so a turn that
-    exercises the ORIGINAL (non-brand-aware) call sites still runs to completion and
-    this file can grade what it was actually called with."""
+    """AC-S9-1's other half: the engine's parse must carry the live brand list, not
+    just `build_user_block` accepting one.
 
-    def _capture(self, monkeypatch) -> list[dict[str, Any]]:
-        calls: list[dict[str, Any]] = []
-        real = parser_mod.build_user_block
+    Re-pointed in integration round 5 of the chatbot memory lane (PR #1304, 28 Sep
+    2026), call shape only: the engine now builds the user block through
+    `turn.context.assemble(ContextLayers)` (memory lane A, contract section 6.1), and the
+    recall re-parse is deleted (contract section 3, Q5 ruling), so the frames a
+    backward reference needs ride the ONE parse. `context_mod.assemble` is wrapped by a
+    recorder that forwards to the real function, and each test grades both the
+    `brands` the layers carried and the `Known brands:` line the parser actually read."""
 
-        def _spy(**kwargs: Any) -> str:
-            calls.append(dict(kwargs))
-            import inspect
+    def _capture(self, monkeypatch) -> list[tuple[Any, str]]:
+        from app.services.chatbot.turn import context as context_mod
 
-            accepted = set(inspect.signature(real).parameters)
-            return real(**{k: v for k, v in kwargs.items() if k in accepted})
+        calls: list[tuple[Any, str]] = []
+        real = context_mod.assemble
 
-        monkeypatch.setattr(parser_mod, "build_user_block", _spy)
+        def _spy(layers: Any) -> Any:
+            text_out, report = real(layers)
+            calls.append((layers, text_out))
+            return text_out, report
+
+        monkeypatch.setattr(context_mod, "assemble", _spy)
         return calls
 
     def test_the_first_parse_passes_brands(
@@ -185,19 +189,21 @@ class TestEngineCallSitesPassBrands:
 
         engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
-        assert calls, "build_user_block was never called"
-        assert "brands" in calls[0], (
-            f"the first-parse call site must pass `brands`: {calls[0].keys()}"
-        )
+        assert calls, "context.assemble was never called"
+        layers, block = calls[0]
         assert any(
             isinstance(b, dict) and b.get("brand_name") == "Sorento"
-            for b in (calls[0].get("brands") or [])
-        ), calls[0].get("brands")
+            for b in (layers.brands or [])
+        ), layers.brands
+        assert "Known brands: Sorento (SRT)" in block, block
 
     def test_the_recall_reparse_also_passes_brands(
         self, session_factory, stub_access, monkeypatch
     ) -> None:
-        from app.services import embedding_worker as embedding_worker_mod
+        """Was: the recall re-parse also passes `brands`. The re-parse is gone (memory
+        lane A, Q5), so the same promise now reads: a backward-reference turn at a level
+        that recalls frames parses ONCE, and that one parse carries both the recalled
+        frame and the brand list."""
         from app.models.conversation_frame import ConversationFrame
         from tests.chatbot._turn_helpers import verdict
 
@@ -205,7 +211,7 @@ class TestEngineCallSitesPassBrands:
         _seed_brand(session_factory, name="Sorento", code="SRT")
         db = session_factory()
         db.execute(
-            text("UPDATE respond_contacts SET chatbot_recall_enabled = true WHERE respond_io_id = :cid"),
+            text("UPDATE respond_contacts SET chatbot_memory_level = 'episodes' WHERE respond_io_id = :cid"),
             {"cid": str(CONTACT_ID)},
         )
         db.commit()
@@ -222,27 +228,35 @@ class TestEngineCallSitesPassBrands:
             )
         )
         db.commit()
-        monkeypatch.setattr(embedding_worker_mod, "_embed_text_chunks", lambda texts: [[0.1] * 8])
 
         calls = self._capture(monkeypatch)
+        parses: list[str] = []
 
         def fake_resolve_config(db, *, current_date, override_version_id=None):
             return parser_mod.ParserConfig(
                 system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
             )
 
+        def fake_parse(config, user_block):
+            parses.append(user_block)
+            return verdict(anaphora={"backward_reference": True})
+
         monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)
-        v = verdict(anaphora={"backward_reference": True})
-        monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: v)
+        monkeypatch.setattr(parser_mod, "parse", fake_parse)
         stub_access()
 
         from app.services.chatbot import engine as engine_mod
 
         engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
-        assert len(calls) == 2, f"expected first parse + recall re-parse, got {len(calls)}"
-        for i, call in enumerate(calls):
-            assert "brands" in call, f"call {i} must pass `brands`: {call.keys()}"
+        assert len(parses) == 1, f"one parse per turn, no recall re-parse: got {len(parses)}"
+        assert len(calls) == 1, f"one assembled user block per turn: got {len(calls)}"
+        layers, block = calls[0]
+        assert any(
+            isinstance(b, dict) and b.get("brand_name") == "Sorento" for b in (layers.brands or [])
+        ), layers.brands
+        assert "Known brands: Sorento (SRT)" in parses[0], parses[0]
+        assert "ZZT recall summary for brand feed" in parses[0], parses[0]
 
 
 class TestPromptHasNoHardCodedBrandList:

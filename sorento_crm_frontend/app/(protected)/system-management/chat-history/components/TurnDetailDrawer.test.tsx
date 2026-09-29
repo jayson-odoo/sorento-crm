@@ -271,4 +271,100 @@ describe('TurnDetailDrawer', () => {
     render(<TurnDetailDrawer turnId={null} onOpenChange={vi.fn()} />);
     expect(screen.queryByTestId('section-stages')).not.toBeInTheDocument();
   });
+
+  it('browser pass finding (26 Sep 2026): Current subject renders the REAL focus.after shape - domains are bare strings, customers/products are entity dicts', () => {
+    const detail = emptyDetail();
+    detail.memory = {
+      level: { own: 'full', effective: 'full' },
+      focus: {
+        before: null,
+        after: {
+          domains: ['order'],
+          customers: [{ raw: 'CC001', canonical_code: 'CC001', name: 'Chin Chun Trading' }],
+          products: [{ raw: 'SRTWB1455', canonical_code: 'SRTWB1455' }],
+          document: [],
+          status: null,
+        },
+        writer: 'apply',
+      },
+      profile: { before: {}, after: {}, writer: null },
+      episodes: { read: [], written: null, writer: 'none' },
+      facts_saved: [],
+    };
+    turnState = { data: detailTurn(detail), isLoading: false, isError: false };
+    render(<TurnDetailDrawer turnId="ZZT-turn-detail-1" onOpenChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId('section-memory-trigger'));
+
+    const panel = screen.getByTestId('section-memory');
+    expect(
+      within(panel).getByText('domain order; customer Chin Chun Trading; product SRTWB1455'),
+    ).toBeInTheDocument();
+  });
+
+  it('Current subject falls back through raw then canonical_code when an entity has no name', () => {
+    const detail = emptyDetail();
+    detail.memory = {
+      level: { own: null, effective: 'full' },
+      focus: {
+        before: null,
+        after: { products: [{ canonical_code: 'M483-BL' }], status: 'outstanding' },
+        writer: 'apply',
+      },
+      profile: { before: {}, after: {}, writer: null },
+      episodes: { read: [], written: null, writer: 'none' },
+      facts_saved: [],
+    };
+    turnState = { data: detailTurn(detail), isLoading: false, isError: false };
+    render(<TurnDetailDrawer turnId="ZZT-turn-detail-1" onOpenChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId('section-memory-trigger'));
+
+    const panel = screen.getByTestId('section-memory');
+    expect(within(panel).getByText('product M483-BL; status outstanding')).toBeInTheDocument();
+  });
+
+  it('Current subject stays "Not recorded on this turn." for an empty focus', () => {
+    const detail = emptyDetail();
+    detail.memory = {
+      level: { own: null, effective: 'off' },
+      focus: { before: null, after: {}, writer: null },
+      profile: { before: {}, after: {}, writer: null },
+      episodes: { read: [], written: null, writer: 'none' },
+      facts_saved: [],
+    };
+    turnState = { data: detailTurn(detail), isLoading: false, isError: false };
+    render(<TurnDetailDrawer turnId="ZZT-turn-detail-1" onOpenChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId('section-memory-trigger'));
+
+    const panel = screen.getByTestId('section-memory');
+    expect(within(panel).getByText('Not recorded on this turn.')).toBeInTheDocument();
+  });
+
+  it('browser pass finding (26 Sep 2026): Context sent to the AI names L1/L2 with friendly labels, not the raw code', () => {
+    const detail = emptyDetail();
+    detail.context = {
+      level: 'full',
+      layers: [
+        { layer: 'L5', est_tokens: 33, cap: 150 },
+        { layer: 'L4', est_tokens: 0, cap: 250 },
+        { layer: 'L3', est_tokens: 100, cap: 450 },
+        { layer: 'L2', est_tokens: 46, cap: 350 },
+        { layer: 'L1', est_tokens: 24, cap: 600 },
+      ],
+      total_est_tokens: 203,
+      cap: 1800,
+    };
+    turnState = { data: detailTurn(detail), isLoading: false, isError: false };
+    render(<TurnDetailDrawer turnId="ZZT-turn-detail-1" onOpenChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId('section-context-trigger'));
+
+    const panel = screen.getByTestId('section-context');
+    expect(within(panel).getByText('Current message')).toBeInTheDocument();
+    expect(within(panel).getByText('Current subject and open question')).toBeInTheDocument();
+    expect(within(panel).queryByText('L1')).not.toBeInTheDocument();
+    expect(within(panel).queryByText('L2')).not.toBeInTheDocument();
+  });
 });

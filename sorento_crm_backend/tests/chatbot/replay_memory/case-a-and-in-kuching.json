@@ -1,0 +1,28 @@
+{
+  "name": "and-in-kuching-carries-live-product",
+  "needs_memory": false,
+  "note": "Replayed at a true level off with the same history (reviewer pass at d89110c0, S19), the previous turn still reaches the parser through the recent exchanges every level carries (PR #1247 round 8), so this case passes without memory and is not counted as one that needs it.",
+  "given": {
+    "memory_level": "full",
+    "live_turns": [
+      {
+        "message": "stock SRTWB1455",
+        "minutes_ago": 2,
+        "verdict": {
+          "domain_hint": "inventory",
+          "entities": [{"raw": "SRTWB1455", "hint": "product", "canonical_code": "SRTWB1455", "current_message": true, "confident": true}]
+        }
+      }
+    ]
+  },
+  "turn": {
+    "message": "and in kuching?",
+    "verdict": {
+      "domain_hint": "inventory",
+      "entities": [{"raw": "kuching", "hint": "warehouse", "canonical_code": null, "current_message": true, "confident": true}]
+    }
+  },
+  "expected": {
+    "prompt_contains": ["stock SRTWB1455"]
+  }
+}

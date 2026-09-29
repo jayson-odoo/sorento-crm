@@ -1,0 +1,27 @@
+{
+  "name": "12-ack-guard-replaces-an-invented-figure",
+  "about": "AC-MEM081: an ack that states a number, a code or a price its input never had is replaced by the canned acknowledgement.",
+  "needs_memory": false,
+  "given": {
+    "memory_level": "full"
+  },
+  "turn": {
+    "message": "thanks",
+    "verdict": {
+      "message_type": "casual"
+    },
+    "clarifier": {
+      "ack": "You're welcome, SRTWB9999 has 25 units at RM12.50.",
+      "language": "en"
+    }
+  },
+  "expected": {
+    "branch_kind": "low_signal",
+    "reply_starts_with": "Noted.",
+    "reply_not_contains": [
+      "SRTWB9999",
+      "25 units",
+      "RM12.50"
+    ]
+  }
+}
