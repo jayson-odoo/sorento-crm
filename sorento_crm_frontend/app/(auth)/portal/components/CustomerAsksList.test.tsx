@@ -55,6 +55,7 @@ vi.mock('../lib/customer-asks-service', async () => {
 });
 
 import { CustomerAsksList } from './CustomerAsksList';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { NotASalesAgentError } from '../lib/customer-asks-service';
 
 const TODAY_START = '2026-09-28T16:00:00Z';
@@ -226,5 +227,34 @@ describe('CustomerAsksList (portal to-do body)', () => {
       });
       expect(window.localStorage.getItem('sorento.portalAsksSort.contact-2')).toBeNull();
     });
+  });
+});
+
+// AC-ST214 (FE half): the Show done history names who cleared each ask.
+
+function doneByCells(rowText: string): string {
+  const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
+  const at = headers.indexOf('Done by');
+  expect(at, `a "Done by" column header in ${JSON.stringify(headers)}`).toBeGreaterThan(-1);
+  const row = screen.getByText(rowText).closest('tr') as HTMLElement;
+  return (within(row).getAllByRole('cell')[at].textContent ?? '').trim();
+}
+
+describe('CustomerAsksList Show done history: Done by column (AC-ST214)', () => {
+  it('reads "Done by <name>, <time>" or "Done" alone', async () => {
+    const doneAt = '2026-09-29T02:00:00';
+    listCustomerAsks.mockResolvedValue({
+      data: [
+        { ...DONE_ROW, id: 'h1', product_code: 'SRT-NAMED', done_at: doneAt, done_by: 'Agent Lim' },
+        { ...DONE_ROW, id: 'h2', product_code: 'SRT-NONAME', done_at: doneAt, done_by: null },
+      ],
+      pagination: { total: 2, page: 1, limit: 20 },
+    });
+    render(<CustomerAsksList search="" />);
+    await screen.findByText('Hock Lee Trading');
+    fireEvent.click(screen.getByRole('button', { name: 'Show done' }));
+    await screen.findByText('SRT-NAMED');
+    expect(doneByCells('SRT-NAMED')).toBe(`Done by Agent Lim, ${formatDateTimeInMalaysia(doneAt)}`);
+    expect(doneByCells('SRT-NONAME')).toBe('Done');
   });
 });

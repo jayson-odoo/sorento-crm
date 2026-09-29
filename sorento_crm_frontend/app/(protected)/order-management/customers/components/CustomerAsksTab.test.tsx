@@ -3,7 +3,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render as rtlRender, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/lib/toast', () => ({
@@ -56,6 +56,7 @@ vi.mock('@/services/stockAskService', async () => {
 });
 
 import { CustomerAsksTab } from './CustomerAsksTab';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 const ROW = {
   id: 'ask-1',
@@ -152,5 +153,34 @@ describe('CustomerAsksTab', () => {
     await waitFor(() =>
       expect(updateCustomerAsk).toHaveBeenCalledWith('cust-1', 'ask-1', { note: 'Called, quoted 50' }),
     );
+  });
+});
+
+// AC-ST214 (FE half): who cleared it, and when, on the office's Asks tab.
+
+function doneByCells(rowText: string): string {
+  const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
+  const at = headers.indexOf('Done by');
+  expect(at, `a "Done by" column header in ${JSON.stringify(headers)}`).toBeGreaterThan(-1);
+  const row = screen.getByText(rowText).closest('tr') as HTMLElement;
+  return (within(row).getAllByRole('cell')[at].textContent ?? '').trim();
+}
+
+describe('CustomerAsksTab Done by column (AC-ST214)', () => {
+  it('reads "Done by <name>, <time>", "Done" alone, or "-" for an open row', async () => {
+    const doneAt = '2026-09-29T02:00:00';
+    listCustomerAsks.mockResolvedValue({
+      data: [
+        { ...ROW, id: 'a1', product_code: 'SRT-NAMED', state: 'done', done_at: doneAt, done_by: 'Sean Ibrahim' },
+        { ...ROW, id: 'a2', product_code: 'SRT-NONAME', state: 'done', done_at: doneAt, done_by: null },
+        { ...ROW, id: 'a3', product_code: 'SRT-OPEN', state: 'open', done_at: null, done_by: null },
+      ],
+      pagination: { total: 3, page: 1, limit: 20 },
+    });
+    render(<CustomerAsksTab customerId="cust-1" />);
+    await screen.findByText('SRT-NAMED');
+    expect(doneByCells('SRT-NAMED')).toBe(`Done by Sean Ibrahim, ${formatDateTimeInMalaysia(doneAt)}`);
+    expect(doneByCells('SRT-NONAME')).toBe('Done');
+    expect(doneByCells('SRT-OPEN')).toBe('-');
   });
 });

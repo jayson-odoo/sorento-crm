@@ -290,9 +290,14 @@ with the contact's label (`_contact_label`). Nothing else on the portal changes.
 
 ## 4. Coordination with CONTACT-CUSTOMERS
 
-Every read in this lane goes through `_agent_scope(db, agent_id)` (`stock_ask_service.py:588`).
-When that lane lands its agent -> customers relation, this function's `filter` is the one line
-that changes; the to-do, the counts, the CRM page and the portal page all follow. Nothing here
+Every read in this lane goes through `_agent_scope(db, agent_id)` (`stock_ask_service.py`), and
+that function reads the relation from ONE expression, `_owning_agent_column()`. Three call sites
+use it: `_agent_scope` (the to-do, the lists, the PATCH scopes), `serialize(with_agent=True)`
+(the `agent_code` of the All agents view) and `agent_counts` (the Agent select's counts). When
+that lane lands its agent -> customers relation, `_owning_agent_column` is the one edit; the
+to-do, the counts, the CRM page and the portal page all follow. (The S4 salesman notification,
+`stock_ask_service.py` around the `sales_agent_id` read in the send path, is #1333's and is
+outside this lane.) Nothing here
 adds a second copy of "whose customers", and no schema for the relation is added here.
 Ruled (crew, 29 Sep 2026): (a), build on `customers.sales_agent_id` now; swap when PR #1366 lands.
 

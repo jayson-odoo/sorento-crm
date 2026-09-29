@@ -190,6 +190,27 @@ describe('AskTodoList actions (AC-ST115)', () => {
   });
 });
 
+describe('AskTodoList pending save', () => {
+  it('disables the Done button of the pending ask only, and Reopen when it is the pending one', () => {
+    setup(payload({ open: [OLD, NEW] }), { pendingAskId: 'new' });
+    const pending = screen.getByText('New Customer').closest('li') as HTMLElement;
+    const other = screen.getByText('Old Customer').closest('li') as HTMLElement;
+    expect(within(pending).getByRole('button', { name: 'Done' })).toBeDisabled();
+    expect(within(other).getByRole('button', { name: 'Done' })).toBeEnabled();
+  });
+
+  it('disables Reopen for a pending done row', () => {
+    setup(payload(), { pendingAskId: 'done1' });
+    const row = screen.getByText('Finished Customer').closest('li') as HTMLElement;
+    expect(within(row).getByRole('button', { name: 'Reopen' })).toBeDisabled();
+  });
+
+  it('enables every button when nothing is pending', () => {
+    setup(payload({ open: [NEW] }), { pendingAskId: null });
+    expect(screen.getByRole('button', { name: 'Done' })).toBeEnabled();
+  });
+});
+
 describe('AskTodoList states (AC-ST116)', () => {
   it('renders Nothing waiting with the hint and no button when there is nothing at all', () => {
     setup(payload({ open: [], done_today: [] }));

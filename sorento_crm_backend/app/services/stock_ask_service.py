@@ -534,7 +534,7 @@ def serialize(db: Session, rows: list[Any], *, with_agent: bool = False) -> list
         agent_codes = {
             cid: code
             for cid, code in db.query(_Customer.id, SalesAgent.sales_agent)
-            .join(SalesAgent, SalesAgent.id == _Customer.sales_agent_id)
+            .join(SalesAgent, SalesAgent.id == _owning_agent_column())
             .filter(_Customer.id.in_(customer_ids))
         }
     return [
@@ -647,6 +647,15 @@ def update_for_customer(
     return serialize(db, [_apply_update(db, ask, data, actor_user_id=actor_user_id)])[0]
 
 
+def _owning_agent_column() -> Any:
+    """The customer-to-agent relation, in ONE place: today `customers.sales_agent_id`. The
+    agent scope, `serialize(with_agent=True)` and `agent_counts` all read it from here, so the
+    swap to CONTACT-CUSTOMERS' relation (#1366, plan section 4) is one edit."""
+    from app.models.order import Customer
+
+    return Customer.sales_agent_id
+
+
 def _agent_scope(db: Session, agent_id: Optional[str | Iterable[str]]) -> Any:
     """S6 (R9): asks of customers assigned to this agent NOW (`customers.sales_agent_id`).
     An ask with no customer belongs to nobody's list. `agent_id=None` is every agent's asks
@@ -657,11 +666,12 @@ def _agent_scope(db: Session, agent_id: Optional[str | Iterable[str]]) -> Any:
     from app.models.stock_ask import StockAsk
 
     query = db.query(StockAsk).join(Customer, Customer.id == StockAsk.customer_id)
+    owner = _owning_agent_column()
     if agent_id is None:
-        return query.filter(Customer.sales_agent_id.isnot(None))
+        return query.filter(owner.isnot(None))
     if isinstance(agent_id, str):
-        return query.filter(Customer.sales_agent_id == agent_id)
-    return query.filter(Customer.sales_agent_id.in_(list(agent_id)))
+        return query.filter(owner == agent_id)
+    return query.filter(owner.in_(list(agent_id)))
 
 
 def list_for_agent(
@@ -803,7 +813,7 @@ def agent_counts(
         )
         .select_from(StockAsk)
         .join(Customer, Customer.id == StockAsk.customer_id)
-        .join(SalesAgent, SalesAgent.id == Customer.sales_agent_id)
+        .join(SalesAgent, SalesAgent.id == _owning_agent_column())
         .filter(StockAsk.state == "open")
     )
     if ids is not None:

@@ -149,7 +149,12 @@ describe('MyCustomerAsksClient (AC-ST209)', () => {
   it('shows the unlinked message in place of the list when the caller has no agent', async () => {
     getCustomerAsksTodo.mockResolvedValue(payload({ open: [], agent: null }));
     render(<MyCustomerAsksClient />);
-    expect(await screen.findByText('You are not linked to a sales agent')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Not linked to a sales agent' })).toBeInTheDocument();
+    // A hint line under the heading, and no button (one CTA per page, none here).
+    const box = screen.getByRole('heading', { name: 'Not linked to a sales agent' }).parentElement as HTMLElement;
+    expect((box.textContent ?? '').replace('Not linked to a sales agent', '').trim().length).toBeGreaterThan(0);
+    expect(within(box).queryByRole('button')).toBeNull();
+    expect(screen.queryByText('You are not linked to a sales agent')).toBeNull();
     expect(screen.queryByTestId('ask-todo-counts')).toBeNull();
   });
 

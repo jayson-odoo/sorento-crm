@@ -358,5 +358,6 @@ def test_company_scope_holds(w):
     assert todo.status_code == 200, todo.text
     assert todo.json()["open"] == [] and todo.json()["done_today"] == []
     assert patched.status_code == 404
-    assert "SRT-X" not in agents.text and "SRT-Z" not in agents.text
-    assert all(r["open"] == 0 for r in agents.json()) if agents.status_code == 200 else True
+    assert agents.status_code == 200, agents.text
+    codes = {r["code"] for r in agents.json()}
+    assert w["a"].sales_agent not in codes and w["b"].sales_agent not in codes
