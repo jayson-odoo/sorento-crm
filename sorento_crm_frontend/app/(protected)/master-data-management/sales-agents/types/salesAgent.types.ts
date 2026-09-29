@@ -78,3 +78,16 @@ export interface SalesAgentBulkAnnotatePayload {
   demand_class?: string | null;
   location_group?: string | null;
 }
+
+/** One customer an agent handles: `CustomerResponse` plus the two columns the tab shows. */
+export interface AgentCustomer {
+  id: string;
+  customer_code: string;
+  customer_name: string;
+  is_active: boolean;
+  region: string | null;
+  market_segment_code: string | null;
+  sales_agent_id: string | null;
+  sales_agent_code: string | null;
+  sales_agent_name: string | null;
+}

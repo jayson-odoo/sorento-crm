@@ -2,6 +2,8 @@ import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type { Customer, CustomerFormData, CustomerDetail } from '../types/customer.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
+import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
+import { searchMockCustomers } from './customerSelectMock';
 
 
 export async function getCustomers(params: DataGridApiFetchParams & { status?: string }): Promise<DataGridApiResponse<Customer>> {
@@ -78,4 +80,59 @@ export async function getCustomerSalesAgentsSelect(): Promise<CustomerSalesAgent
   }
   const body: { data?: CustomerSalesAgentOption[] } = await response.json();
   return body.data ?? [];
+}
+
+/** PHASE 1 (PLAN-contact-customers-29sep): flip to false in S2 and delete `customerSelectMock.ts`. */
+const USE_MOCK = true;
+
+/** Page size of `searchCustomersSelect`; hand the same number to `SearchableSelect`'s `pageSize`. */
+export const CUSTOMER_SELECT_PAGE_SIZE = 50;
+
+/**
+ * Customers for the contact card's "Add customer" and the sales agent tab's "Assign customer".
+ * Server-searched, one page at a time, keyed by customer ID (a code is not unique).
+ *
+ *   GET /api/v1/order-management/customers/select?limit=50&offset&query
+ *     -> { data: { id, customer_code, customer_name, sales_agent_id, sales_agent_code,
+ *          sales_agent_name }[] }
+ *   The three sales_agent_* fields are additive (UAC AC-31), null when unassigned.
+ *
+ * value = customer id, label = `code - name`, description = the customer's current agent as
+ * `code - name`, or "No sales agent". `pageIndex` is what `SearchableSelect` hands back on
+ * "Load more".
+ */
+export async function searchCustomersSelect(
+  query: string,
+  pageIndex = 0,
+): Promise<SearchableSelectOption[]> {
+  type Row = {
+    id: string;
+    customer_code: string;
+    customer_name: string;
+    sales_agent_code?: string | null;
+    sales_agent_name?: string | null;
+  };
+  const offset = pageIndex * CUSTOMER_SELECT_PAGE_SIZE;
+  let rows: Row[];
+  if (USE_MOCK) {
+    rows = searchMockCustomers(query, CUSTOMER_SELECT_PAGE_SIZE, offset);
+  } else {
+    const search = new URLSearchParams({
+      limit: String(CUSTOMER_SELECT_PAGE_SIZE),
+      offset: String(offset),
+    });
+    if (query.trim()) search.set('query', query.trim());
+    const response = await apiFetch(`/api/v1/order-management/customers/select?${search.toString()}`);
+    if (!response.ok) {
+      throw new Error(await extractApiError(response, 'Failed to load customers'));
+    }
+    rows = ((await response.json()) as { data?: Row[] }).data ?? [];
+  }
+  return rows.map((c) => ({
+    value: c.id,
+    label: `${c.customer_code} - ${c.customer_name}`,
+    description: c.sales_agent_code
+      ? `${c.sales_agent_code} - ${c.sales_agent_name ?? ''}`.replace(/ - $/, '')
+      : 'No sales agent',
+  }));
 }

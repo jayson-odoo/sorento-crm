@@ -5,7 +5,9 @@ import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import {
   annotateSalesAgent,
   bulkAnnotateSalesAgents,
+  assignSalesAgentCustomer,
   getSalesAgent,
+  getSalesAgentCustomers,
   getSalesAgents,
 } from '../services/salesAgentService';
 import type {
@@ -97,5 +99,38 @@ export function useAnnotateSalesAgent() {
       toast.success('Sales agent updated');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to save sales agent'),
+  });
+}
+
+/** The agent's customers key. The unassign countdown invalidates it after the server commits. */
+export const salesAgentCustomersKey = (agentId: string) => ['sales-agent-customers', agentId];
+
+export function useSalesAgentCustomers(agentId: string, params: DataGridApiFetchParams) {
+  return useQuery({
+    ...LIST_QUERY_OPTIONS,
+    queryKey: [
+      ...salesAgentCustomersKey(agentId),
+      params.pageIndex,
+      params.pageSize,
+      params.sorting,
+      params.searchQuery,
+    ],
+    queryFn: () => getSalesAgentCustomers(agentId, params),
+    enabled: !!agentId,
+    retry: 1,
+  });
+}
+
+export function useAssignSalesAgentCustomer(agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (customerId: string) => assignSalesAgentCustomer(agentId, customerId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: salesAgentCustomersKey(agentId) });
+      // The contact card shows the agent per linked customer, so it must refetch too.
+      queryClient.invalidateQueries({ queryKey: ['contact-customers'] });
+      toast.success('Customer assigned');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to assign customer'),
   });
 }

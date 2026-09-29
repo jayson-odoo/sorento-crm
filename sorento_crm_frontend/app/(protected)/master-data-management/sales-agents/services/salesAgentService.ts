@@ -14,13 +14,34 @@
  *           An omitted key is left alone; `null` unsets. An unknown key is a 422, and a
  *           demand class outside the vocabulary is a 400 naming the allowed words.
  *
+ * Customers handled by an agent (PLAN-contact-customers-29sep D2), read `.view`, write `.edit`:
+ *   GET  /api/v1/master-data/sales-agents/{id}/customers?page&limit&query&sort&dir
+ *          -> { data: AgentCustomer[], pagination: { total, page }, empty }
+ *          customers whose sales_agent_id is this agent, under the caller's company scope;
+ *          `query` matches code or name; default sort `customer_code asc`.
+ *   POST /api/v1/master-data/sales-agents/{id}/customers  body { customer_id } -> 200 AgentCustomer
+ *          moves the customer to this agent (from another agent too). Inactive agent or a
+ *          cross-company pair: 422; unknown customer: 404.
+ *   Unassign has NO route: pending action `customer.unassign_sales_agent`, entity type
+ *   `customer`, entity id = customer id, payload { sales_agent_id: <agent id> }, reversible
+ *   window, permission `master_data.sales_agents.edit`. Parked by `useDeferredRowAction`.
+ *   AgentCustomer is `CustomerResponse` plus `region` and `market_segment_code`: the tab shows
+ *   both columns and the schema does not carry them today, so S2 adds them (contract addition).
+ * PHASE 1: `USE_MOCK` serves the two customer calls from `customerSelectMock.ts`; S2 flips it.
+ *
  * There is no create and no delete: rows appear when an upload meets a code nobody
  * holds, and deleting one would orphan the orders that name it.
  */
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
+import {
+  assignMockCustomer,
+  findMockCustomer,
+  mockCustomers,
+} from '@/app/(protected)/order-management/customers/services/customerSelectMock';
 import type {
+  AgentCustomer,
   ContactSelectOption,
   MirrorAnnotationPayload,
   SalesAgent,
@@ -28,6 +49,7 @@ import type {
 } from '../types/salesAgent.types';
 
 const BASE = '/api/v1/master-data/sales-agents';
+const USE_MOCK = true;
 const CONTACTS = '/api/v1/user-management/contacts';
 
 export async function getSalesAgents(
@@ -136,4 +158,56 @@ function maskPhone(phone: string | null | undefined): string | null {
   if (!digits) return null;
   if (digits.length <= 4) return digits;
   return `***${digits.slice(-4)}`;
+}
+
+/** The customers this agent handles, one DataGrid page. */
+export async function getSalesAgentCustomers(
+  agentId: string,
+  params: DataGridApiFetchParams,
+): Promise<DataGridApiResponse<AgentCustomer>> {
+  if (USE_MOCK) {
+    const q = (params.searchQuery ?? '').trim().toLowerCase();
+    const desc = params.sorting?.[0]?.desc ?? false;
+    const mine = mockCustomers
+      .filter((c) => c.sales_agent_id === agentId)
+      .filter(
+        (c) =>
+          !q ||
+          c.customer_code.toLowerCase().includes(q) ||
+          c.customer_name.toLowerCase().includes(q),
+      )
+      .sort((a, b) => a.customer_code.localeCompare(b.customer_code) * (desc ? -1 : 1));
+    const start = params.pageIndex * params.pageSize;
+    return {
+      data: mine.slice(start, start + params.pageSize),
+      empty: mine.length === 0,
+      pagination: { total: mine.length, page: params.pageIndex + 1 },
+    };
+  }
+  const search = buildDataGridParams(params);
+  const response = await apiFetch(`${BASE}/${agentId}/customers?${search.toString()}`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load customers'));
+  }
+  return response.json();
+}
+
+/** Move a customer to this agent. */
+export async function assignSalesAgentCustomer(
+  agentId: string,
+  customerId: string,
+): Promise<AgentCustomer> {
+  if (USE_MOCK) {
+    if (!findMockCustomer(customerId)) throw new Error('Customer not found');
+    return assignMockCustomer(customerId, agentId);
+  }
+  const response = await apiFetch(`${BASE}/${agentId}/customers`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customer_id: customerId }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to assign customer'));
+  }
+  return response.json();
 }
