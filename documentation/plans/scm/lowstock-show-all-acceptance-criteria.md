@@ -14,8 +14,11 @@ Plan: `PLAN-lowstock-show-all.md`. Numbering continues
   `decision_service._refresh_run_counts` (`planned_count`) and the run's own `planned_count`
   stamped at generation all count the covered-above-level rec: 1 buy + 1 covered-above-level
   + 1 covered-below-level = 3 (`recommendation_count` also counts an `exception` rec: 4).
-- **AC-69** `_build_rec` writes `hidden_by_default = false` on a covered rec whose net is above
-  its manual level (the column is retired, never stamped true again).
+- **AC-69** Migration `lsa_0001_show_all_counts` recounts every run's stored counters without
+  the hidden filter and drops `scm.reorder_recommendation.hidden_by_default`: a run stamped the
+  old way (`planned_count = 2`, `run_log.recommendation_count = 2`) holding 2 buys + 1
+  covered-above-level + 1 exception reads 3 / 4 after `_recount_runs()`, and the same after a
+  second call; `ReorderRecommendation` no longer maps the column; `alembic heads` is one head.
 - **AC-70** The plan Lines tab renders every line `usePlanLines` returns, with no status filter
   and no Filters condition; the tile totals (`onTotalsChange`) and `PlanBudgetReview` count the
   same lines. A line whose payload still says `hidden_by_default: true` (an old run) renders.
@@ -25,17 +28,17 @@ Plan: `PLAN-lowstock-show-all.md`. Numbering continues
 
 ## Order sheet and low stock workbook
 
-- **AC-72** For a run with 3 frozen `order_summary_row`s of which 1 product's rec is stamped
-  `hidden_by_default = true` (an old run): `export_report(fmt="xlsx")` prints 3 data rows,
+- **AC-72** For a run with 3 frozen `order_summary_row`s of which 1 product's rec is covered
+  with net above its manual level: `export_report(fmt="xlsx")` prints 3 data rows,
   `export_guard_stats.row_count == 3`, `report()` lists 3.
 - **AC-73** Low stock "All" sheet == every `report()` row for the run, in `(category_code,
-  product_code)` order, regardless of any `hidden_by_default` stamp; `export_low_stock`
-  returns `counts["all"]` equal to that number.
+  product_code)` order, covered-above-level products included; `export_low_stock` returns
+  `counts["all"]` equal to that number.
 - **AC-74** Low stock "Low" sheet == the rows with `pool_on_hand < reorder_level`, both known,
-  strictly below; a row stamped hidden with on hand 40 against level 100 IS on Low. At the
-  level, above it, NULL level or NULL on hand are not low (unchanged).
+  strictly below; a covered-above-level product with on hand 40 against level 100 IS on Low.
+  At the level, above it, NULL level or NULL on hand are not low (unchanged).
 - **AC-75** `MAX_LOW_STOCK_ROWS` applies to every frozen row: 5 frozen rows with a cap of 2
-  refuse 422 whatever the stamps say; the export route's guard reads the plain
+  refuse 422 whatever their recs say; the export route's guard reads the plain
   `export_guard_stats` count for the same run (5) and refuses at a cap of 3.
 - **AC-76** `build_low_stock_view` (in-app preview), `export_low_stock` (Excel, chat push) and
   `ready_context` (daily trigger `report.rows` / `report.low`) all report the whole-run counts

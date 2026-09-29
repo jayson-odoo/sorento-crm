@@ -428,16 +428,9 @@ class ReorderRecommendation(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
     )
     pool_warehouse_code = Column(String(50), nullable=True)
-    # RETIRED (PLAN-lowstock-show-all, owner 30 Sep 2026: "show all hidden items again").
-    # Migration 512 added it for PLAN-reorder-one-formula S3 (covered + manual level + net
-    # above level => off the list by default); nothing stamps or reads it any more, so new
-    # rows land on the server default. Rows written 10-30 Sep still hold `true` and are
-    # rendered like any other. Drop it in the next SCM lane that already carries a
-    # migration (`op.drop_column("reorder_recommendation", "hidden_by_default",
-    # schema="scm")`); kept here so the ORM and the live table agree until then.
-    hidden_by_default = Column(
-        Boolean, nullable=False, default=False, server_default=text("false")
-    )
+    # `hidden_by_default` (migration 512, PLAN-reorder-one-formula S3) is GONE: migration
+    # `lsa_0001_show_all_counts` dropped it (PLAN-lowstock-show-all, owner 30 Sep 2026,
+    # "show all hidden items again"). Every planned row is on the buyer's list.
 
     run = relationship("ReorderRun", back_populates="recommendations")
     overrides = relationship(

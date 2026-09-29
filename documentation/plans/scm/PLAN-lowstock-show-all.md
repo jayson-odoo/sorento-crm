@@ -1,6 +1,6 @@
 # PLAN - Plan list and low stock report show every planned product; Low = on hand below reorder level
 
-Status: implemented - awaiting review (PR #1382); small fix track (no migration, no auth change, no new UI)
+Status: implemented - awaiting review (PR #1382); feature track by the diff (one data + drop-column migration, `lsa_0001_show_all_counts`; no auth change, no new UI)
 Domain: scm
 Lane: LOWSTOCK-SHOW-ALL
 Owner ruling source: chat, 30 Sep 2026 06:30 ("SHOW ALL HIDDEN ITEMS AGAIN")
@@ -60,11 +60,17 @@ those runs. So:
   `visibleLines`, `appliedFilterGroup`, `lib/planLineFilters.ts` and the grid's
   `onFilterGroupChange` prop go (the reveal has nothing left to reveal). The serializer
   drops the key and `reorder.types.ts` drops the field.
-- **The column stays** (`scm.reorder_recommendation.hidden_by_default`, NOT NULL DEFAULT
-  false, migration 512): new rows land `false` through the server default, nothing reads
-  it. Dropping it is a migration, which puts this lane on the migration track for no
-  behaviour. Trigger to drop it: the next SCM lane that already carries a migration adds
-  `op.drop_column("reorder_recommendation", "hidden_by_default", schema="scm")`.
+- **One migration, `lsa_0001_show_all_counts`** (reviewer B1, 30 Sep): migration 512
+  backfilled `reorder_run.planned_count` and `run_log.recommendation_count` WITH the
+  hidden filter, and every run written 10-30 Sep stamped them the same way at generation.
+  Nothing recomputes them on an existing run except a decision, so the plans list's
+  Lines / Products columns would keep 980 on run dd28049a while its Lines tab shows 1,393.
+  The migration recounts both counters for every run (no filter, the same populations
+  `_summarise` and `_refresh_run_counts` count today) and then drops the column: with
+  the recount done there is nothing left that a lingering column could serve, and a
+  column nothing writes is the kind of thing that gets read again by accident. The lane
+  therefore carries a migration (pre-PR gate: `./scripts/alembic-reparent.sh` onto main's
+  head before merge; merge one migration PR at a time).
 
 ## Expected effect (dev DB, run `dd28049a`, 18 Sep)
 
@@ -95,7 +101,9 @@ below level, but net above it once SPO/PO supply is counted).
 - `reorder_run_service`: `_build_rec` stops stamping; `planned_count` and `_summarise`'s
   `recommendation_count` count every rec of the decidable / every type respectively.
 - `reorder_runs.py`: serializer and its SELECT drop `hidden_by_default`.
-- `models/scm.py`: the column stays, its comment says it is retired and why.
+- `models/scm.py`: the column is removed from `ReorderRecommendation`.
+- `alembic/versions/lsa_0001_show_all_counts.py` (down_revision `sat_0001_stock_ask_done`):
+  `_recount_runs()` then `drop_column`; downgrade re-adds the column empty.
 - `plan_scope.py`: deleted.
 
 ### S2 - Frontend: the list is the run
@@ -117,7 +125,8 @@ below level, but net above it once SPO/PO supply is counted).
   `tests/scm/test_plan_shows_every_row.py`: the serializer carries no `hidden_by_default`
   key; `plan-row-decisions` `total_count` counts the covered-above-level product; export,
   guard and `report()` agree on 3 of 3; `_summarise`, `_refresh_run_counts` and
-  `planned_count` count the covered-above-level rec; `_build_rec` leaves the column false.
+  `planned_count` count the covered-above-level rec; the migration's `_recount_runs` lifts
+  a run stamped the old way from 2 / 2 to 3 / 4, idempotently.
 - FE: `PlanLinesSection.test.tsx` cases that pin hiding flip to "renders every line";
   `planLineFilters.test.ts` and `PlanLinesSection.visibleLines.test.tsx` deleted.
 
@@ -128,7 +137,6 @@ below level, but net above it once SPO/PO supply is counted).
   `PLAN-plan-list-tile-sheet-one-scope.md` and `PLAN-reorder-one-formula.md` S3.
 
 ## Not in scope
-- Dropping the `hidden_by_default` column (trigger named above).
 - Any new column on the workbook (owner: no "covered by PO/SPO" column).
 - `orderQtyLedger.lineBreachStatus` ("Line not breached" sentence on the ledger) - a
   per-row explanation, not a visibility rule; untouched.
