@@ -1,21 +1,19 @@
 'use client';
 
+import { useMemo } from 'react';
 import { Unlink } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardHeading, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useHasPermission } from '@/hooks/usePermissions';
-import {
-  CUSTOMER_SELECT_PAGE_SIZE,
-  searchCustomersSelect,
-} from '@/app/(protected)/order-management/customers/services/customerService';
+import { useCustomerMultiPicker } from '@/app/(protected)/order-management/customers/hooks/useCustomerMultiPicker';
 import {
   contactCustomersKey,
   useContactCustomers,
-  useLinkContactCustomer,
+  useLinkContactCustomers,
 } from '../hooks/useContactCustomers';
 
 function agentLabel(code: string | null, name: string | null): string | null {
@@ -31,7 +29,7 @@ function agentLabel(code: string | null, name: string | null): string | null {
 export default function ContactCustomersSection({ contactId }: { contactId: string }) {
   const canEdit = useHasPermission('user_management.contacts.edit');
   const { data, isLoading } = useContactCustomers(contactId);
-  const link = useLinkContactCustomer(contactId);
+  const link = useLinkContactCustomers(contactId);
 
   // Unlink asks nothing (D7): the button becomes the countdown, the server commits on lapse.
   const unlink = useDeferredRowAction({
@@ -44,6 +42,8 @@ export default function ContactCustomersSection({ contactId }: { contactId: stri
   });
 
   const links = data?.data ?? [];
+  const linkedIds = useMemo(() => new Set(links.map((l) => l.customer_id)), [links]);
+  const picker = useCustomerMultiPicker((row) => linkedIds.has(row.id));
 
   return (
     <Card>
@@ -54,21 +54,30 @@ export default function ContactCustomersSection({ contactId }: { contactId: stri
       </CardHeader>
       <CardContent className="space-y-4">
         {canEdit ? (
-          <SearchableSelect
-            value=""
-            onChange={(customerId) => {
-              if (customerId) link.mutate({ customerId });
-            }}
-            fetchOptions={searchCustomersSelect}
-            paginated
-            pageSize={CUSTOMER_SELECT_PAGE_SIZE}
-            clearable
-            placeholder="Add customer"
-            emptyMessage="No customers match."
-            aria-label="Add customer"
-            disabled={link.isPending}
-            className="w-full"
-          />
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <SearchableMultiSelect
+              value={picker.selected}
+              onChange={picker.setSelected}
+              fetchOptions={picker.fetchOptions}
+              selectedOptions={picker.selectedOptions}
+              placeholder="Add customers"
+              emptyMessage="No customers match."
+              disabled={link.isPending}
+              className="w-full"
+            />
+            <Button
+              type="button"
+              aria-label="Link customers"
+              disabled={picker.selected.length === 0 || link.isPending}
+              onClick={() =>
+                link.mutate(picker.selected, { onSuccess: () => picker.clear() })
+              }
+            >
+              {picker.selected.length === 1
+                ? 'Link 1 customer'
+                : `Link ${picker.selected.length} customers`}
+            </Button>
+          </div>
         ) : null}
 
         {isLoading ? (

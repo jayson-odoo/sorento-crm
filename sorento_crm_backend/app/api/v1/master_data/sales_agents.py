@@ -29,7 +29,7 @@ from app.schemas.autocount_mirror import (
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.order import CustomerResponse
-from app.schemas.contact_customer import AgentCustomerAssign
+from app.schemas.contact_customer import AgentCustomerAssign, AgentCustomersAssignedResponse
 from app.services.autocount_mirror_service import MirrorReadService
 from app.services import contact_customer_service
 from app.services.error_handler import handle_internal_error, handle_not_found
@@ -178,22 +178,30 @@ async def list_sales_agent_customers(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{sales_agent_id}/customers", response_model=CustomerResponse)
-async def assign_sales_agent_customer(
+@router.post("/{sales_agent_id}/customers", response_model=AgentCustomersAssignedResponse)
+async def assign_sales_agent_customers(
     sales_agent_id: str,
     payload: AgentCustomerAssign,
     current_user: dict = Depends(require_permission("master_data.sales_agents.edit")),
     db: Session = Depends(get_db),
 ):
-    """Move a customer to this agent, from another agent too."""
+    """Move several customers to this agent, from other agents too. All or nothing.
+
+    Like `bulk-annotate`: any unknown or hidden id (404) or any customer the agent may not
+    take (422) refuses the whole selection and writes nothing. A customer already on this
+    agent is a no-op. Rows come back in request order."""
     try:
         validate_uuid_path(sales_agent_id, resource=_RESOURCE)
         MirrorReadService(db).get(SalesAgent, sales_agent_id, resource=_RESOURCE)
-        customer = contact_customer_service.get_customer_in_scope(db, payload.customer_id)
-        if customer is None:
-            raise handle_not_found("Customer", payload.customer_id)
-        return CustomerService(db).assign_sales_agent(customer.id, sales_agent_id)
+        customers = []
+        for customer_id in dict.fromkeys(payload.customer_ids):
+            customer = contact_customer_service.get_customer_in_scope(db, customer_id)
+            if customer is None:
+                raise handle_not_found("Customer", customer_id)
+            customers.append(customer)
+        return {"data": CustomerService(db).assign_sales_agent_many(customers, sales_agent_id)}
     except HTTPException:
+        db.rollback()
         raise
     except Exception as e:
         db.rollback()

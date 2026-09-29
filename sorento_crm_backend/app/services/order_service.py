@@ -3678,12 +3678,25 @@ class CustomerService:
         self.db.refresh(customer)
         return customer
 
-    def assign_sales_agent(self, customer_id: str, agent_id: str):
-        """Put a customer under `agent_id`, from whichever agent held it before.
+    def assign_sales_agent_many(self, customers: list, agent_id: str) -> list:
+        """Put several customers under `agent_id` in ONE transaction, from any agent.
 
-        Goes through `update_customer`, so an inactive agent or a cross-company pair is the
-        same 422 the customer form gets and the audit row is written the same way."""
-        return self.update_customer(customer_id, CustomerUpdate(sales_agent_id=agent_id))
+        Each pair is checked the way `update_customer` checks it (`_resolve_sales_agent`:
+        inactive agent or cross-company pair is a 422), and nothing is committed until every
+        one has passed, so a refusal leaves the whole selection as it was. A customer already
+        on this agent is skipped: re-saving the same agent is not a change. The customer
+        audit rows are written by the listener on flush, the same as for the form."""
+        for customer in customers:
+            if str(customer.sales_agent_id or "") == str(agent_id):
+                continue
+            self._resolve_sales_agent(
+                agent_id, customer_company_id=customer.company_id, require_active=True
+            )
+            customer.sales_agent_id = agent_id
+        self.db.commit()
+        for customer in customers:
+            self.db.refresh(customer)
+        return customers
 
     def unassign_sales_agent(self, customer_id: str, agent_id: Optional[str]) -> bool:
         """Clear the agent, but only while the customer is still under `agent_id`.

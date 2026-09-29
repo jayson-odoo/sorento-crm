@@ -18,25 +18,22 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { useDeferredRowAction, useRowPending } from '@/hooks/useDeferredRowAction';
 import { useHasPermission } from '@/hooks/usePermissions';
-import {
-  CUSTOMER_SELECT_PAGE_SIZE,
-  searchCustomersSelect,
-} from '@/app/(protected)/order-management/customers/services/customerService';
+import { useCustomerMultiPicker } from '@/app/(protected)/order-management/customers/hooks/useCustomerMultiPicker';
 import {
   SALES_AGENT_CUSTOMERS_PREFIX,
-  useAssignSalesAgentCustomer,
+  useAssignSalesAgentCustomers,
   useSalesAgentCustomers,
 } from '../../hooks/useSalesAgents';
 import type { AgentCustomer } from '../../types/salesAgent.types';
 
 /**
  * Sales agent -> Customers tab: the customers this agent handles (`customers.sales_agent_id`),
- * searchable and paged. "Assign customer" moves a customer here from wherever it was; the
+ * searchable and paged. "Assign customers" moves the ticked customers here from wherever it was; the
  * customer form's own "Sales agent" field writes the same column. Read-only without
  * `master_data.sales_agents.edit`.
  */
@@ -59,7 +56,9 @@ export default function SalesAgentCustomersTab({ agentId }: { agentId: string })
       sorting,
       searchQuery: debouncedSearch,
     });
-  const assign = useAssignSalesAgentCustomer(agentId);
+  const assign = useAssignSalesAgentCustomers(agentId);
+  // Customers already on this agent are shown but cannot be ticked; the rest show their agent.
+  const picker = useCustomerMultiPicker((row) => row.sales_agent_id === agentId);
 
   // Unassign asks nothing (D7): the row dims and a toast counts down with Cancel. The payload
   // names the agent so the server clears the column only while it still equals it.
@@ -228,21 +227,30 @@ export default function SalesAgentCustomersTab({ agentId }: { agentId: string })
                 className="w-full sm:w-64"
               />
               {canEdit ? (
-                <SearchableSelect
-                  value=""
-                  onChange={(customerId) => {
-                    if (customerId) assign.mutate(customerId);
-                  }}
-                  fetchOptions={searchCustomersSelect}
-                  paginated
-                  pageSize={CUSTOMER_SELECT_PAGE_SIZE}
-                  clearable
-                  placeholder="Assign customer"
-                  emptyMessage="No customers match."
-                  aria-label="Assign customer"
-                  disabled={assign.isPending}
-                  className="w-full sm:w-80"
-                />
+                <>
+                  <SearchableMultiSelect
+                    value={picker.selected}
+                    onChange={picker.setSelected}
+                    fetchOptions={picker.fetchOptions}
+                    selectedOptions={picker.selectedOptions}
+                    placeholder="Select customers"
+                    emptyMessage="No customers match."
+                    disabled={assign.isPending}
+                    className="w-full sm:w-80"
+                  />
+                  <Button
+                    type="button"
+                    aria-label="Assign customers"
+                    disabled={picker.selected.length === 0 || assign.isPending}
+                    onClick={() =>
+                      assign.mutate(picker.selected, { onSuccess: () => picker.clear() })
+                    }
+                  >
+                    {picker.selected.length === 1
+                      ? 'Assign 1 customer'
+                      : `Assign ${picker.selected.length} customers`}
+                  </Button>
+                </>
               ) : null}
             </div>
           </CardHeader>

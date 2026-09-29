@@ -19,9 +19,12 @@
  *          -> { data: AgentCustomer[], pagination: { total, page }, empty }
  *          customers whose sales_agent_id is this agent, under the caller's company scope;
  *          `query` matches code or name; default sort `customer_code asc`.
- *   POST /api/v1/master-data/sales-agents/{id}/customers  body { customer_id } -> 200 AgentCustomer
- *          moves the customer to this agent (from another agent too). Inactive agent or a
- *          cross-company pair: 422; unknown customer: 404.
+ *   POST /api/v1/master-data/sales-agents/{id}/customers  body { customer_ids: string[] }
+ *          (min 1; any other key is a 422) -> 200 { data: AgentCustomer[] } in request order.
+ *          Moves every customer to this agent (from another agent too), all or nothing like
+ *          bulk-annotate: an unknown or out-of-scope id is a 404, an inactive agent or a
+ *          cross-company customer a 422, and either writes nothing. A customer already on
+ *          this agent is a no-op.
  *   Unassign has NO route: pending action `customer.unassign_sales_agent`, entity type
  *   `customer`, entity id = customer id, payload { sales_agent_id: <agent id> }, reversible
  *   window, permission `master_data.sales_agents.edit`. Parked by `useDeferredRowAction`.
@@ -165,18 +168,19 @@ export async function getSalesAgentCustomers(
   return response.json();
 }
 
-/** Move a customer to this agent. */
-export async function assignSalesAgentCustomer(
+/** Move several customers to this agent in one request. */
+export async function assignSalesAgentCustomers(
   agentId: string,
-  customerId: string,
-): Promise<AgentCustomer> {
+  customerIds: string[],
+): Promise<AgentCustomer[]> {
   const response = await apiFetch(`${BASE}/${agentId}/customers`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ customer_id: customerId }),
+    body: JSON.stringify({ customer_ids: customerIds }),
   });
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to assign customer'));
+    throw new Error(await extractApiError(response, 'Failed to assign customers'));
   }
-  return response.json();
+  const body: { data?: AgentCustomer[] } = await response.json();
+  return body.data ?? [];
 }

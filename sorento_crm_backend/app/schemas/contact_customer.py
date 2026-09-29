@@ -2,7 +2,9 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.schemas.order import CustomerResponse
 
 
 class ContactCustomerLinkResponse(BaseModel):
@@ -24,11 +26,15 @@ class ContactCustomersResponse(BaseModel):
 
 
 class ContactCustomerLinkCreate(BaseModel):
-    # `extra="forbid"`: there is no primary customer in this lane, so a body that still
-    # carries `is_primary` is a 422 rather than a silently ignored field.
+    # `extra="forbid"`: there is no primary customer in this lane, and the singular
+    # `customer_id` is gone, so an old body is a 422 rather than a silently ignored field.
     model_config = ConfigDict(extra="forbid")
 
-    customer_id: str
+    customer_ids: list[str] = Field(min_length=1)
+
+
+class ContactCustomerLinksResponse(BaseModel):
+    data: list[ContactCustomerLinkResponse]
 
 
 class CustomerLinkedContactResponse(BaseModel):
@@ -45,4 +51,10 @@ class CustomerLinkedContactsResponse(BaseModel):
 
 
 class AgentCustomerAssign(BaseModel):
-    customer_id: str
+    model_config = ConfigDict(extra="forbid")
+
+    customer_ids: list[str] = Field(min_length=1)
+
+
+class AgentCustomersAssignedResponse(BaseModel):
+    data: list[CustomerResponse]

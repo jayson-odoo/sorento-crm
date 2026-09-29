@@ -81,33 +81,31 @@ export async function getCustomerSalesAgentsSelect(): Promise<CustomerSalesAgent
   return body.data ?? [];
 }
 
-/** Page size of `searchCustomersSelect`; hand the same number to `SearchableSelect`'s `pageSize`. */
+/** Page size of the customers select. */
 export const CUSTOMER_SELECT_PAGE_SIZE = 50;
 
+export interface CustomerSelectRow {
+  id: string;
+  customer_code: string;
+  customer_name: string;
+  sales_agent_id?: string | null;
+  sales_agent_code?: string | null;
+  sales_agent_name?: string | null;
+}
+
 /**
- * Customers for the contact card's "Add customer" and the sales agent tab's "Assign customer".
- * Server-searched, one page at a time, keyed by customer ID (a code is not unique).
+ * One page of customers for the contact card's "Add customers" and the sales agent tab's
+ * "Assign customers". Server-searched, keyed by customer ID (a code is not unique).
  *
  *   GET /api/v1/order-management/customers/select?limit=50&offset&query
  *     -> { data: { id, customer_code, customer_name, sales_agent_id, sales_agent_code,
  *          sales_agent_name }[] }
  *   The three sales_agent_* fields are additive (UAC AC-31), null when unassigned.
- *
- * value = customer id, label = `code - name`, description = the customer's current agent as
- * `code - name`, or "No sales agent". `pageIndex` is what `SearchableSelect` hands back on
- * "Load more".
  */
-export async function searchCustomersSelect(
+export async function searchCustomerSelectRows(
   query: string,
   pageIndex = 0,
-): Promise<SearchableSelectOption[]> {
-  type Row = {
-    id: string;
-    customer_code: string;
-    customer_name: string;
-    sales_agent_code?: string | null;
-    sales_agent_name?: string | null;
-  };
+): Promise<CustomerSelectRow[]> {
   const search = new URLSearchParams({
     limit: String(CUSTOMER_SELECT_PAGE_SIZE),
     offset: String(pageIndex * CUSTOMER_SELECT_PAGE_SIZE),
@@ -117,14 +115,18 @@ export async function searchCustomersSelect(
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to load customers'));
   }
-  const rows = ((await response.json()) as { data?: Row[] }).data ?? [];
-  return rows.map((c) => ({
+  return ((await response.json()) as { data?: CustomerSelectRow[] }).data ?? [];
+}
+
+/** The option label (`code - name`) and description (current agent, or "No sales agent"). */
+export function customerSelectOption(c: CustomerSelectRow): SearchableSelectOption {
+  return {
     value: c.id,
     label: `${c.customer_code} - ${c.customer_name}`,
     description: c.sales_agent_code
       ? `${c.sales_agent_code} - ${c.sales_agent_name ?? ''}`.replace(/ - $/, '')
       : 'No sales agent',
-  }));
+  };
 }
 
 export interface CustomerLinkedContact {

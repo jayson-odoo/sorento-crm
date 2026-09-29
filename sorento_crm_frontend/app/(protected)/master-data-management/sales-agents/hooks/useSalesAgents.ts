@@ -5,7 +5,7 @@ import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import {
   annotateSalesAgent,
   bulkAnnotateSalesAgents,
-  assignSalesAgentCustomer,
+  assignSalesAgentCustomers,
   getSalesAgent,
   getSalesAgentCustomers,
   getSalesAgents,
@@ -122,19 +122,21 @@ export function useSalesAgentCustomers(agentId: string, params: DataGridApiFetch
   });
 }
 
-export function useAssignSalesAgentCustomer(agentId: string) {
+export function useAssignSalesAgentCustomers(agentId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (customerId: string) => assignSalesAgentCustomer(agentId, customerId),
-    onSuccess: () => {
+    mutationFn: (customerIds: string[]) => assignSalesAgentCustomers(agentId, customerIds),
+    onSuccess: (customers) => {
       // The whole prefix: the customer left another agent's tab too, and that tab may be cached.
       queryClient.invalidateQueries({ queryKey: SALES_AGENT_CUSTOMERS_PREFIX });
       // The customer's own detail shows its agent.
       queryClient.invalidateQueries({ queryKey: ['customer'] });
       // The contact card shows the agent per linked customer, so it must refetch too.
       queryClient.invalidateQueries({ queryKey: ['contact-customers'] });
-      toast.success('Customer assigned');
+      toast.success(
+        customers.length === 1 ? 'Customer assigned' : `${customers.length} customers assigned`,
+      );
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to assign customer'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to assign customers'),
   });
 }

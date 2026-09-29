@@ -48,17 +48,18 @@ export async function getContactCustomers(contactId: string): Promise<ContactCus
   return { data: body.data ?? [] };
 }
 
-export async function linkContactCustomer(
+export async function linkContactCustomers(
   contactId: string,
-  customerId: string,
-): Promise<ContactCustomerLink> {
+  customerIds: string[],
+): Promise<ContactCustomerLink[]> {
   const response = await apiFetch(base(contactId), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ customer_id: customerId }),
+    body: JSON.stringify({ customer_ids: customerIds }),
   });
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to link customer'));
+    throw new Error(await extractApiError(response, 'Failed to link customers'));
   }
-  return response.json();
+  const body: { data?: ContactCustomerLink[] } = await response.json();
+  return body.data ?? [];
 }

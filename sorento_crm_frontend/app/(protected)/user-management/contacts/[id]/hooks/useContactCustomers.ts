@@ -3,7 +3,7 @@ import { toast } from '@/lib/toast';
 
 import {
   getContactCustomers,
-  linkContactCustomer,
+  linkContactCustomers,
 } from '../services/contactCustomersService';
 
 export const contactCustomersKey = (contactId: string) => ['contact-customers', contactId];
@@ -17,15 +17,15 @@ export function useContactCustomers(contactId: string) {
   });
 }
 
-export function useLinkContactCustomer(contactId: string) {
+export function useLinkContactCustomers(contactId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ customerId }: { customerId: string }) =>
-      linkContactCustomer(contactId, customerId),
-    onSuccess: () => {
+    mutationFn: (customerIds: string[]) => linkContactCustomers(contactId, customerIds),
+    onSuccess: (links) => {
       queryClient.invalidateQueries({ queryKey: contactCustomersKey(contactId) });
-      toast.success('Customer linked');
+      queryClient.invalidateQueries({ queryKey: ['customer-linked-contacts'] });
+      toast.success(links.length === 1 ? 'Customer linked' : `${links.length} customers linked`);
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to link customer'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to link customers'),
   });
 }
