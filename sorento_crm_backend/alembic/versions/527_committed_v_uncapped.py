@@ -1,7 +1,7 @@
 """`scm.committed_v` never caps an ORDER row's owed quantity at its line's outstanding
 
 Revision ID: 527_committed_v_uncapped
-Revises: eml_0002_seed_layouts
+Revises: merge_29sep_batch7
 Create Date: 2026-09-23 00:00:00.000000
 
 Owner ruling R1, 23 Sep 2026 (`PLAN-oi-order-rows-uncapped.md`, SO421985): "this is
@@ -31,7 +31,7 @@ revision = "527_committed_v_uncapped"
 #: `oirs_0001_reserve_requests` and `oirs_0002_reserve_round2` sit between them and touch
 #: no view, so none of them is a link in the `test_committed_v_migration_chain.py` replay
 #: chain, but `down_revision` still has to name the real single head.
-down_revision = "eml_0002_seed_layouts"
+down_revision = "merge_29sep_batch7"
 branch_labels = None
 depends_on = None
 
