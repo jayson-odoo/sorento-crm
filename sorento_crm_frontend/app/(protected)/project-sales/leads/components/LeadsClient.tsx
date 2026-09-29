@@ -150,12 +150,7 @@ export function LeadsClient() {
             Record a lead
           </Button>
         }
-      >
-        <p className="text-sm text-muted-foreground">
-          Developments we have heard about. Nobody owns one until a salesperson
-          accepts it.
-        </p>
-      </PageHeader>
+      />
 
       {leads.isError ? (
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">
@@ -244,10 +239,6 @@ export function LeadsClient() {
                 nothing and claims nothing: it becomes somebody&apos;s only when they
                 accept it.
               </p>
-              <Button type="button" className="mt-4" onClick={() => setWizardOpen(true)}>
-                <Plus className="size-4" aria-hidden />
-                Record a lead
-              </Button>
             </div>
           }
         />

@@ -282,4 +282,14 @@ describe('PageHeader', () => {
       screen.getByRole('button', { name: 'Back to delivery orders' }),
     ).toBeInTheDocument();
   });
+
+  it('PR #1336: has no subtitle slot; a passed description line never renders', () => {
+    pathname = '/order-management/orders';
+    const smuggled = { title: 'Orders', children: <p>Every order in the company</p> };
+    // @ts-expect-error the slot is gone: title, trail and actions only (CRM-wide rule)
+    render(<PageHeader {...smuggled} />);
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Orders' })).toBeInTheDocument();
+    expect(screen.queryByText('Every order in the company')).toBeNull();
+  });
 });

@@ -174,7 +174,7 @@ DIVERGENCES: list[Divergence] = [
             "tests/chatbot/test_s6b_fetch_lane.py::"
             "TestLabelledNotFoundLineNeverLeaksInternalDebtorCode."
         ),
-        strip_paths=(("response",), ("set_header",)),
+        strip_paths=(("response",), ("set_header",), ("set_described",)),
     ),
     # E2/E3 (attribute-first asks, AC-1316/AC-1317, `lanes/business/fetch.py::
     # output_structurer`): a HAS turn's set-answer header now travels out as its OWN
@@ -194,9 +194,10 @@ DIVERGENCES: list[Divergence] = [
         reason=(
             "output_structurer now also returns `set_header`, a HAS turn's counted-set "
             "header as its own key so a composer with no `response` string to reuse can "
-            "still prepend it. No n8n capture emits this key."
+            "still prepend it. No n8n capture emits this key. `set_described` (integration "
+            "round 11 on PR #833) rides beside it: whether that header names a described set."
         ),
-        strip_paths=(("set_header",),),
+        strip_paths=(("set_header",), ("set_described",)),
     ),
     Divergence(
         node="crossdomain-render",

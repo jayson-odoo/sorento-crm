@@ -467,11 +467,10 @@ export function DeliveryScheduleReviewClient({
             {primary}
           </div>
         }
-      >
-        <p className="text-sm text-muted-foreground" data-testid="schedule-meta">
-          <MetaLine version={version} project={project.data} poHref={poHref} />
-        </p>
-      </PageHeader>
+      />
+      <p className="text-sm text-muted-foreground" data-testid="schedule-meta">
+        <MetaLine version={version} project={project.data} poHref={poHref} />
+      </p>
 
       {readingNow && <POIntakeExtractionProgress version={version} />}
 

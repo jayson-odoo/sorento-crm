@@ -461,12 +461,6 @@ export function OrderInquiryHeadersList() {
       : stateFilter === 'all'
         ? 'No order inquiries yet'
         : 'No completed order inquiries yet';
-  const emptyAction =
-    !isFiltered && stateFilter === 'outstanding' ? (
-      <Button variant="outline" size="sm" onClick={() => setStateFilter('all')}>
-        Show all
-      </Button>
-    ) : undefined;
 
   return (
     <DataGrid
@@ -476,7 +470,6 @@ export function OrderInquiryHeadersList() {
       isPlaceholderData={isPlaceholderData}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       emptyMessage={emptyMessage}
-      emptyAction={emptyAction}
       rowHref={detailHref}
       listingKey={LISTING_KEY}
     >

@@ -166,7 +166,6 @@ export default function CountryList() {
       rowPending={rowPending}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
       emptyMessage="No countries yet. Add one to set on a supplier."
-      emptyAction={listPrimaryAction}
     >
       <Card>
         <CardHeader className="block">

@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useRouter } from 'next/navigation';
 import { ChevronDown, Filter, KanbanSquare, Table2 } from 'lucide-react';
 import type { PaginationState, SortingState } from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
@@ -26,7 +27,6 @@ import {
 } from '../../_shared/hooks/useProjects';
 import { ProjectsGrid } from '../../_shared/components/ProjectsGrid';
 import { EmptyState, PipelineBoard } from './PipelineBoard';
-import { RegisterProjectDialog } from './RegisterProjectDialog';
 import { POIntakeUploadDialog } from '../../[projectId]/components/POIntakeUploadDialog';
 import { DeliveryScheduleUploadDialog } from '../../[projectId]/components/DeliveryScheduleUploadDialog';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -51,8 +51,8 @@ type PipelineView = 'board' | 'grid';
  * the shape of the funnel at a glance.
  */
 export function PipelineClient() {
+  const router = useRouter();
   const [view, setView] = React.useState<PipelineView>('board');
-  const [registerOpen, setRegisterOpen] = React.useState(false);
   const [startAction, setStartAction] = React.useState<StartAction>(null);
   const {
     value: search,
@@ -312,7 +312,7 @@ export function PipelineClient() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => setRegisterOpen(true)}>
+                <DropdownMenuItem onSelect={() => router.push('/project-sales/new')}>
                   Register a project
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => setStartAction('upload-po')}>
@@ -325,11 +325,7 @@ export function PipelineClient() {
             </DropdownMenu>
           </div>
         }
-      >
-        <p className="text-sm text-muted-foreground">
-          Every project in the company, so nobody works a development twice.
-        </p>
-      </PageHeader>
+      />
 
       {/* Board has no grid toolbar to host them, so it carries the same two controls in
           the same order the toolbar uses. Grid view feeds them into the toolbar instead,
@@ -422,8 +418,6 @@ export function PipelineClient() {
           }
         />
       )}
-
-      <RegisterProjectDialog open={registerOpen} onOpenChange={setRegisterOpen} />
 
       {startAction === 'upload-po' && (
         <POIntakeUploadDialog

@@ -1,12 +1,10 @@
 'use client';
 
 import * as React from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { ColumnDef } from '@tanstack/react-table';
-import { ExternalLink, HandCoins } from 'lucide-react';
+import { HandCoins } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -189,14 +187,6 @@ export function SponsorshipsPanel({ project }: { project: Project }) {
       isLoading={sponsorships.isLoading}
       error={sponsorships.isError ? sponsorships.error : undefined}
       emptyTitle="Nothing sponsored on this project"
-      emptyAction={
-        <Button asChild variant="outline">
-          <Link href="/procurement-management/sponsorship-forms">
-            Open sponsorship forms
-            <ExternalLink className="size-4" aria-hidden />
-          </Link>
-        </Button>
-      }
       onRowClick={(row) =>
         router.push(`/procurement-management/sponsorship-forms/${row.id}`)
       }

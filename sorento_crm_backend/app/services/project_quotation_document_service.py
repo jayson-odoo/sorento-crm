@@ -22,7 +22,7 @@ import logging
 import secrets
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -169,7 +169,10 @@ def create_document(
     project: Project,
     actor_user_id: str,
     payload: Optional[Dict[str, Any]] = None,
+    render_templates: bool = True,
 ) -> ProjectQuotationDocument:
+    """``render_templates=False`` leaves the letter to the caller, which renders it once the
+    quotation's lines exist (the form's create, #1341), so ``{{grand_total}}`` is the real one."""
     payload = payload or {}
     document = ProjectQuotationDocument(
         company_id=project.company_id,
@@ -188,7 +191,8 @@ def create_document(
     )
     db.add(document)
     db.flush()
-    _render_templates_onto(db, document, payload)
+    if render_templates:
+        _render_templates_onto(db, document, payload)
     return document
 
 
@@ -287,6 +291,191 @@ def add_scope(
     quotation.sort_order = 0 if highest is None else int(highest) + 1
     db.flush()
     return quotation
+
+
+# ------------------------------------------------------------------ the form's save (#1341)
+
+_RECIPIENT_FIELDS = (
+    "recipient_name_snapshot",
+    "recipient_address_snapshot",
+    "recipient_phone_snapshot",
+)
+_SCOPE_FIELDS = ("scope_label", "series_id", "notes")
+
+
+def create_document_with_scopes(
+    db: Session,
+    *,
+    project: Project,
+    actor_user_id: str,
+    payload: Dict[str, Any],
+) -> Tuple[ProjectQuotationDocument, List[ProjectQuotationLine]]:
+    """The quotation form's Save in create mode: letterhead, scopes and lines in one go.
+
+    The owner's words: "I should be able to add product straight away and save when I am
+    satisfied". So nothing exists until this runs, and it writes everything the page holds in the
+    caller's ONE transaction: a line the server refuses raises before the route commits, and the
+    rollback takes the document and every scope with it. No half quotation is ever left behind.
+
+    Everything is written through the paths the rest of the module already uses - ``add_scope``
+    for a scope and its version 1, ``replace_lines`` for the lines - so the snapshotting, the
+    guardrails and the rate-only totals are the same rules, not a copy of them. A scope sent with
+    no lines is saved with none: there is no placeholder line anywhere on this path.
+
+    Returns the lines written so the route can raise below-floor notifications for them, exactly
+    as the bulk line route does.
+    """
+    body = dict(payload)
+    scopes = body.pop("scopes", None) or []
+    corrections = {field: body.pop(field, None) for field in _RECIPIENT_FIELDS}
+    # The letter typed in the create form's own tabs (#1341, "show them on create as well"). Held
+    # back from ``create_document`` so the company template renders there as it always did, and
+    # the typed text replaces it once the scopes exist: its merge fields then quote the real
+    # number and total, not the ones a half-made quotation would give.
+    letter = {
+        field: body.pop(field)
+        for field in ("cover_letter_html", "terms_html")
+        if (body.get(field) or "").strip()
+    }
+
+    document = create_document(
+        db, project=project, actor_user_id=actor_user_id, payload=body, render_templates=False
+    )
+    # A typed recipient CORRECTS the party snapshot (the result create-then-edit gave before); a
+    # blank one keeps what the developer party says rather than blanking the letterhead.
+    for field, value in corrections.items():
+        if value is not None and str(value).strip():
+            setattr(document, field, value)
+    db.flush()
+
+    written: List[ProjectQuotationLine] = []
+    for item in scopes:
+        written.extend(
+            _add_form_scope(db, document=document, actor_user_id=actor_user_id, item=item)
+        )
+    # The letter, once the lines exist: typed text has its merge fields filled, and a blank tab
+    # takes the company template, both against the real total rather than 0.00.
+    db.flush()
+    if letter:
+        from app.services import project_quotation_template_service as templates
+
+        context = templates.build_document_context(db, document=document)
+        for field, text in letter.items():
+            setattr(document, field, templates.render(text, context))
+    _render_templates_onto(db, document, letter)
+    return document, written
+
+
+def letter_templates(db: Session, *, project: Project) -> Dict[str, Optional[str]]:
+    """The company's active cover letter and terms, as written, for the create form (#1341).
+
+    Unrendered on purpose: before Save there is no quotation number and no total, so a merge
+    field rendered now would bake in a blank. The tokens are filled when the quotation is saved.
+    """
+    from app.services import project_quotation_template_service as templates
+
+    out: Dict[str, Optional[str]] = {}
+    for field, kind in (
+        ("cover_letter_html", templates.TEMPLATE_KIND_COVER_LETTER),
+        ("terms_html", templates.TEMPLATE_KIND_TERMS),
+    ):
+        template = templates.active_template(db, company_id=project.company_id, kind=kind)
+        out[field] = template.body_html if template is not None else None
+    return out
+
+
+def remove_form_scopes(
+    db: Session, *, document: ProjectQuotationDocument, scope_ids: List[str]
+) -> None:
+    """Edit quotation deletes saved scopes (#1341, owner on Q2: "yes can").
+
+    Only while nothing in the scope has been issued: ANY version of it in any issue, not only the
+    open one, because the customer holds that paper and a revision opened since does not change
+    that. Refused before anything is deleted, so one issued scope in the list stops them all.
+    """
+    scopes = [get_scope_or_404(db, document, str(scope_id)) for scope_id in scope_ids]
+    for scope in scopes:
+        issued = (
+            db.query(ProjectQuotationIssueScope.id)
+            .filter(ProjectQuotationIssueScope.quotation_id == scope.id)
+            .first()
+        )
+        if issued is not None:
+            raise AppException(
+                status_code=422,
+                message=(
+                    f"{scope.scope_label} has been sent to the customer and cannot be removed "
+                    "from this quotation."
+                ),
+                code="quotation_scope_issued",
+            )
+    for scope in scopes:
+        scope_service.delete_quotation(db, scope)
+
+
+def apply_form_scopes(
+    db: Session,
+    *,
+    document: ProjectQuotationDocument,
+    actor_user_id: str,
+    scopes: List[Dict[str, Any]],
+) -> List[ProjectQuotationLine]:
+    """The quotation form's Save in edit mode, for the scopes (#1341).
+
+    Each item with an ``id`` is a scope already on THIS document (another document's scope 404s):
+    its name, series and notes are applied when present, and ``lines`` when present is the FULL
+    line set of its current version. That goes through ``replace_lines``, so a version the
+    customer holds or that was superseded refuses with the existing 422 before anything moves -
+    the status rules are the bulk line route's, unchanged. An item without an ``id`` is a new
+    scope. A saved scope the payload leaves out is not touched.
+    """
+    written: List[ProjectQuotationLine] = []
+    for item in scopes:
+        scope_id = item.get("id")
+        if not scope_id:
+            written.extend(
+                _add_form_scope(db, document=document, actor_user_id=actor_user_id, item=item)
+            )
+            continue
+        scope = get_scope_or_404(db, document, str(scope_id))
+        fields = {key: item[key] for key in _SCOPE_FIELDS if key in item}
+        if fields:
+            scope_service.update_quotation(db, quotation=scope, payload=fields)
+        if item.get("lines") is not None:
+            written.extend(
+                scope_service.replace_lines(
+                    db,
+                    version=scope_service.current_version(db, scope.id),
+                    actor_user_id=actor_user_id,
+                    lines=item["lines"],
+                )
+            )
+    return written
+
+
+def _add_form_scope(
+    db: Session,
+    *,
+    document: ProjectQuotationDocument,
+    actor_user_id: str,
+    item: Dict[str, Any],
+) -> List[ProjectQuotationLine]:
+    lines = item.get("lines") or []
+    scope = add_scope(
+        db,
+        document=document,
+        scope_label=item.get("scope_label") or "",
+        actor_user_id=actor_user_id,
+        payload={key: item[key] for key in ("series_id", "notes") if key in item},
+    )
+    if not lines:
+        return []
+    return scope_service.replace_lines(
+        db,
+        version=scope_service.current_version(db, scope.id),
+        actor_user_id=actor_user_id,
+        lines=lines,
+    )
 
 
 # ------------------------------------------------------------------ issue

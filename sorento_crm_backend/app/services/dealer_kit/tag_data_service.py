@@ -26,7 +26,6 @@ Three rules it does not get to decide for itself:
 from __future__ import annotations
 
 import logging
-import re
 from datetime import datetime
 from decimal import Decimal
 from typing import Iterable, Optional, Sequence
@@ -39,6 +38,7 @@ from app.models.product_set import ProductSet, ProductSetMember
 from app.services.dealer_kit.pricing import DEFAULT_CURRENCY, resolve_prices
 from app.services.dealer_kit.product_images import gallery_images
 from app.services.dealer_kit.viewer import ViewerContext
+from app.services.product_spec_registry import display_spec_value
 
 logger = logging.getLogger(__name__)
 
@@ -241,46 +241,12 @@ def spec_lines(db: Session, product: Product, spec_row=None) -> list[str]:
     return _clean_lines((product.description or "").splitlines())
 
 
-#: Words a slug's title-cased form prints in full capitals rather than
-#: `Pvc`/`Led` - the flyer's own acronyms (S3, PLAN D-readable-spec-values).
-SPEC_ACRONYMS = {"pvc", "abs", "pp", "led", "uv", "ss", "sus"}
-
-#: A slug is lowercase words joined by `_` and nothing else (S3) - free text
-#: ("Made in Malaysia") and a bare number ("407") both fail this and are
-#: returned unchanged, since there is nothing to reformat.
-_SLUG_RE = re.compile(r"^[a-z0-9]+(_[a-z0-9]+)*$")
-
-
 def _spec_display_value(raw, value_labels: Optional[dict] = None) -> str:
-    """One reviewed spec value, as a person reads it (S3).
-
-    `True` prints as `Yes` because a tag that said `True` under "Overflow"
-    would be reading a database out loud. A whole number prints without the
-    `.0` JSON gives a float, for the same reason `format_dimensions_mm`
-    normalises a Decimal: the flyer says `407 mm`, never `407.0 mm`.
-
-    `value_labels` (the registry key's own override map, keyed by the raw
-    stored value) wins over everything below it - a curator who named an
-    exact reading for this value gets it verbatim, not the automatic form.
-    Otherwise a slug (`stainless_steel`) title-cases with spaces
-    (`Stainless Steel`), upper-casing any word that is a known acronym
-    (`pvc_pipe` -> `PVC Pipe`); anything that is not a slug - free text, a
-    bare number - passes through unchanged.
-    """
-    if isinstance(raw, bool):
-        return "Yes" if raw else "No"
-    if isinstance(raw, float) and raw.is_integer():
-        return str(int(raw))
-    text = str(raw)
-    labels = value_labels or {}
-    if text in labels:
-        return labels[text]
-    if _SLUG_RE.match(text):
-        return " ".join(
-            word.upper() if word in SPEC_ACRONYMS else word.capitalize()
-            for word in text.split("_")
-        )
-    return text
+    """One reviewed spec value, as a person reads it on a tag (S3): the registry's own
+    `display_spec_value` in title case (`stainless_steel` -> `Stainless Steel`, `pvc_pipe`
+    -> `PVC Pipe`), so a tag and the chatbot read a value by one set of rules (PR #833
+    round 5 S2)."""
+    return display_spec_value(raw, value_labels, title_case=True)
 
 
 def product_specs(db: Session, product: Product, spec_row=None) -> list[dict]:
