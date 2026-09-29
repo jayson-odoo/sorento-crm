@@ -12,3 +12,6 @@
 - AC-PO-5: Column resize reflows the folded count live: dragging the column wider shows more
   pills and shrinks N, with no reload.
 - AC-PO-6: A cell with one pill shows no "+N".
+- AC-PO-7 (follow-up lane PILL-OVERFLOW-2): On Sales > Sales Teams, the Agents column's "+N"
+  popover lists every agent one per line (leader first, tagged "(Leader)") through the shared
+  `PillOverflowList` body, on top of the list; Escape closes it. Same read as the People pages.

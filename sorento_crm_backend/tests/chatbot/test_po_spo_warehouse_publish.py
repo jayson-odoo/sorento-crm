@@ -16,7 +16,6 @@ from pathlib import Path
 
 from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from tests._pg_fixture import blank_session
-from tests.chatbot.test_parser_growth_r1_reachability import _alembic_heads_excluding
 
 BACKEND = Path(__file__).resolve().parents[2]
 REVISION = "chatbot_po_spo_warehouse_vocab"
@@ -53,15 +52,26 @@ class TestTheMigrationIsAMergeRevision:
         assert module.revision == REVISION
         assert len(module.revision) <= 32
 
-    def test_down_revision_is_exactly_the_heads_without_it(self) -> None:
+    def test_down_revision_is_a_real_revision_that_is_not_ours(self) -> None:
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
         module = _migration()
-        heads = _alembic_heads_excluding(REVISION)
         down = module.down_revision
-        # A string parent when main has one head (re-parented onto `merge_29sep_batch7`
-        # after #1374), a tuple when the lane had to join two - either way the parents are
-        # exactly the heads the graph has without this revision.
+        # The parent is whatever main's head was at the last re-parent
+        # (scripts/alembic-reparent.sh): a string when main had one head, a tuple when
+        # the lane had to join several. It is checked as "a real revision that is not
+        # ours", never by name and never as "the heads without this file": the join
+        # migration main adds after this one merges (merge_29sep_batch8 after #1373)
+        # references the sibling heads, so a pinned parent set goes red on every main
+        # merge.
         parents = set(down) if isinstance(down, (tuple, list)) else {down}
-        assert parents == heads, (parents, heads)
+        cfg = Config(str(BACKEND / "alembic.ini"))
+        cfg.set_main_option("script_location", str(BACKEND / "alembic"))
+        sd = ScriptDirectory.from_config(cfg)
+        for parent in parents:
+            assert isinstance(parent, str) and parent != REVISION, parents
+            assert sd.get_revision(parent) is not None, parent
 
     def test_with_it_the_graph_has_one_head(self) -> None:
         from alembic.config import Config
@@ -70,7 +80,13 @@ class TestTheMigrationIsAMergeRevision:
         _migration()  # the file must exist before the graph can be said to have it
         cfg = Config(str(BACKEND / "alembic.ini"))
         cfg.set_main_option("script_location", str(BACKEND / "alembic"))
-        assert ScriptDirectory.from_config(cfg).get_heads() == [REVISION]
+        sd = ScriptDirectory.from_config(cfg)
+        # A later migration chained on top (a join batch on main) must not turn this
+        # red, so check the revision is on the single head's ancestry, not that it IS
+        # the head.
+        heads = list(sd.get_heads())
+        assert len(heads) == 1, heads
+        assert REVISION in {r.revision for r in sd.walk_revisions(base="base", head=heads[0])}
 
 
 class TestPublishBehaviour:
