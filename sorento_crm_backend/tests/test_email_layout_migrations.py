@@ -86,7 +86,14 @@ def test_head_chain():  # AC-EM097
     parent = mods["eml_0001_layout_columns"].down_revision
     assert isinstance(parent, str) and not parent.startswith("eml_")
     assert sd.get_revision(parent) is not None
-    assert sd.get_heads() == ["eml_0002_seed_layouts"]
+    # One head, with both eml revisions on its chain. Not `== ["eml_0002_seed_layouts"]`:
+    # that pins the head by name, which the comment above already rules out, and it went
+    # red on the first migration merged after this one (spo_cascade_0001_set_null).
+    heads = sd.get_heads()
+    assert len(heads) == 1, heads
+    # `iterate_revisions` excludes its lower bound, so walk down to the eml root's parent.
+    on_chain = {rev.revision for rev in sd.iterate_revisions(heads[0], parent)}
+    assert {"eml_0001_layout_columns", "eml_0002_seed_layouts"} <= on_chain
     for rev in ("eml_0001_layout_columns", "eml_0002_seed_layouts"):
         assert len(rev) <= 32
 
